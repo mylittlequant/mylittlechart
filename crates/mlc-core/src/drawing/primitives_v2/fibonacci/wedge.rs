@@ -13,14 +13,14 @@ use super::super::{
     HIT_TOLERANCE,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
-    config::FibLevelConfig,
+    config::{FibLevelConfig, LevelSetPreset},
     BAND_FILL_OPACITY, default_band_fill_opacity,
 };
 // Shared level table with retracement, band fill on by default — see the
 // doc comment on `default_level_configs_filled` for why this family qualifies.
 // Unrelated to `self.fill` below, which paints the whole wedge as one flat
 // triangle and stays off by default.
-use super::retracement::default_level_configs_filled as default_level_configs;
+use super::retracement::{default_level_configs_filled as default_level_configs, LEVEL_SET_PRESETS};
 
 /// Fibonacci Wedge
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -391,6 +391,7 @@ impl Primitive for FibWedge {
 
     fn level_configs(&self) -> Option<Vec<FibLevelConfig>> { Some(self.level_configs.clone()) }
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool { self.level_configs = configs; true }
+    fn level_set_presets(&self) -> &'static [LevelSetPreset] { LEVEL_SET_PRESETS }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
         use super::super::config::{ConfigProperty, PropertyCategory};

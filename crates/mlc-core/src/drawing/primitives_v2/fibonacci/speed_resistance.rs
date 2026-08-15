@@ -10,9 +10,9 @@ use super::super::{
     HIT_TOLERANCE,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params, draw_label_plate, stagger_t, level_rank,
-    config::{FibLevelConfig, LabelStyle},
+    config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
-use super::retracement::default_level_configs;
+use super::retracement::{default_level_configs, LEVEL_SET_PRESETS};
 
 fn deserialize_level_configs<'de, D>(deserializer: D) -> Result<Vec<FibLevelConfig>, D::Error>
 where
@@ -406,6 +406,7 @@ impl Primitive for FibSpeedResistance {
 
     fn level_configs(&self) -> Option<Vec<FibLevelConfig>> { Some(self.level_configs.clone()) }
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool { self.level_configs = configs; true }
+    fn level_set_presets(&self) -> &'static [LevelSetPreset] { LEVEL_SET_PRESETS }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
         use super::super::config::{ConfigProperty, PropertyCategory};

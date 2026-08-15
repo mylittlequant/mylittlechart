@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
-use crate::i18n::{ConfigKey, SettingsKey, current_language};
+use crate::i18n::{ConfigKey, SettingsKey, StyleKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -14,7 +14,7 @@ use super::super::{
     HIT_TOLERANCE, point_to_line_distance, control_point_style,
     RenderContext, crisp,
     render_primitive_text, draw_label_plate,
-    config::{FibLevelConfig, LabelStyle},
+    config::{FibLevelConfig, LabelStyle, LevelSetPreset},
     BAND_FILL_OPACITY, default_band_fill_opacity,
 };
 
@@ -47,53 +47,66 @@ pub const EXTENDED_LEVELS: &[f64] = &[0.0, 0.236, 0.382, 0.5, 0.618, 0.786, 1.0,
 /// `level_presets::KEY_ONLY_LEVELS`). Moved here 2026-08-09 (primitive-
 /// settings "Save as…" reference fix) so both `mlc-backend`
 /// (creation-time `StyleReference::System` stamping) and `mlc-app-layout`
-/// (the Levels tab UI) read the exact same list — see
-/// [`level_set_values`]/[`level_set_id_for_composition`].
+/// (the Levels tab UI) read the exact same list — see [`LEVEL_SET_PRESETS`]/
+/// [`level_set_id_for_composition`].
 pub const KEY_ONLY_LEVELS: &[f64] = &[0.0, 0.382, 0.5, 0.618, 1.0];
 
 /// Floating-point tolerance for comparing a level value against a system
 /// level-set preset's own canonical value list.
 const LEVEL_SET_MATCH_EPS: f64 = 1e-9;
 
-/// The four system level-set preset ids
-/// [`crate::drawing::StyleReference::System`] can name, in display order —
-/// also the four ids
-/// [`crate::templates::PrimitiveTemplate::system_templates`] mints for any
-/// level-having primitive type. Never `"custom"` — see that variant's own
-/// doc for why "custom" names no fixed definition of its own.
-pub const LEVEL_SET_IDS: [&str; 4] = ["standard", "extended", "key_only", "all"];
-
-/// The canonical value list a system level-set preset id stands for, or
-/// `None` for any id that does not name one of the four real presets
-/// (including `"custom"`, or a stale/unknown id).
-pub fn level_set_values(id: &str) -> Option<&'static [f64]> {
-    match id {
-        "standard" => Some(MAIN_LEVELS),
-        "extended" => Some(EXTENDED_LEVELS),
-        "key_only" => Some(KEY_ONLY_LEVELS),
-        "all" => Some(ALL_LEVELS),
-        _ => None,
-    }
-}
-
-/// Which system level-set preset id (if any) a raw composition of level
-/// values exactly matches: same value set, order-independent, no partial
-/// credit. `None` means the composition matches none of the four — a
-/// "custom" composition, which has no fixed definition of its own to name
-/// it with.
+/// The four level-set presets the Fibonacci family offers, in display
+/// order — shared by every primitive type that seeds its ladder from
+/// [`default_level_configs`]/[`default_level_configs_filled`] (retracement,
+/// fan, arcs, wedge, circles, channel, spiral, trend_extension, trend_time,
+/// speed_resistance), each via its own `Primitive::level_set_presets`
+/// override returning this exact slice.
 ///
-/// The single canonical "which preset does this composition match" answer
-/// — both `mlc-backend` (stamping a freshly-created primitive's
+/// This is the ONE canonical definition — `crate::templates::
+/// PrimitiveTemplate::system_templates` reads ids/names/values straight off
+/// it (no separate id list or match-by-string), and
+/// [`level_set_id_for_composition`] matches a composition against it the
+/// same way. Deliberately NOT offered by every level-having type: Fibonacci
+/// Time Zones lives in this same module but its "levels" are bar-count
+/// offsets (1, 2, 3, 5, 8, ...), not these price ratios, so it does not
+/// return this slice from its own `level_set_presets` — see that method's
+/// doc on the `Primitive` trait for why narrowing a foreign ladder to these
+/// values was the defect, not a feature.
+pub const LEVEL_SET_PRESETS: &[LevelSetPreset] = &[
+    LevelSetPreset { id: "standard", name: |lang| StyleKey::Standard.get(lang), values: MAIN_LEVELS },
+    LevelSetPreset { id: "extended", name: |lang| StyleKey::Extended.get(lang), values: EXTENDED_LEVELS },
+    LevelSetPreset { id: "key_only", name: |lang| ConfigKey::LevelSetKeyOnly.get(lang), values: KEY_ONLY_LEVELS },
+    LevelSetPreset { id: "all", name: |lang| ConfigKey::LevelSetAll.get(lang), values: ALL_LEVELS },
+];
+
+/// Which preset in `presets` (if any) a raw composition of level values
+/// exactly matches: same value set, order-independent, no partial credit.
+/// `None` means the composition matches none of them — a "custom"
+/// composition, which has no fixed definition of its own to name it with,
+/// OR `presets` is empty (a type with no preset catalogue at all, e.g. Gann
+/// or Fibonacci Time Zones) — either way there is nothing to name the
+/// composition with.
+///
+/// Takes `presets` rather than reaching for [`LEVEL_SET_PRESETS`] directly
+/// so the SAME function serves every primitive type: a caller with a
+/// `&dyn Primitive` in hand passes `prim.level_set_presets()`, which is
+/// empty for a type with no catalogue and correctly yields `None` here
+/// instead of matching that type's composition against ratios it never
+/// had. The single canonical "which preset does this composition match"
+/// answer — both `mlc-backend` (stamping a freshly-created primitive's
 /// `StyleReference::System` from its seeded composition) and
 /// `mlc-app-layout` (the Levels tab's own `current_level_set` display,
-/// keyed off [`level_set_values`] the same way) read off this, so the two
-/// can never independently redefine "what a preset means" and drift apart.
-pub fn level_set_id_for_composition(levels: &[f64]) -> Option<&'static str> {
-    LEVEL_SET_IDS.into_iter().find(|id| {
-        let target = level_set_values(id).unwrap_or(&[]);
-        levels.len() == target.len()
-            && target.iter().all(|v| levels.iter().any(|c| (*c - *v).abs() < LEVEL_SET_MATCH_EPS))
-    })
+/// keyed off [`LEVEL_SET_PRESETS`]'s value lists directly) read off the
+/// same four value lists, so the two can never independently redefine
+/// "what a preset means" and drift apart.
+pub fn level_set_id_for_composition(presets: &[LevelSetPreset], levels: &[f64]) -> Option<&'static str> {
+    presets
+        .iter()
+        .find(|preset| {
+            levels.len() == preset.values.len()
+                && preset.values.iter().all(|v| levels.iter().any(|c| (*c - *v).abs() < LEVEL_SET_MATCH_EPS))
+        })
+        .map(|preset| preset.id)
 }
 
 /// Create default level configurations — the approved Levels-tab ladder
@@ -770,6 +783,10 @@ impl Primitive for FibRetracement {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool {
         self.level_configs = configs;
         true
+    }
+
+    fn level_set_presets(&self) -> &'static [LevelSetPreset] {
+        LEVEL_SET_PRESETS
     }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {

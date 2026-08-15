@@ -650,7 +650,7 @@ pub use crate::render::{
 };
 pub use config::{
     ConfigProperty, PropertyType, PropertyValue, PropertyKind, PropertyCategory, PropertyGroup,
-    FibLevelConfig, TimeframeVisibilityConfig,
+    FibLevelConfig, LevelSetPreset, TimeframeVisibilityConfig,
     SelectOption, WaveDegree, LabelStyle,
 };
 pub use fill_defaults::{

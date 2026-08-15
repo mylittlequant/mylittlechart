@@ -824,6 +824,42 @@ impl FibLevelConfig {
     }
 }
 
+/// One named level-set preset a primitive TYPE can offer — the Template
+/// menu's system rows ([`crate::templates::PrimitiveTemplate::system_templates`])
+/// and the Levels tab's "Набор" selector both narrow/extend a factory ladder
+/// to one of these, never to a hardcoded value list of their own.
+///
+/// A primitive declares its OWN list via `Primitive::level_set_presets`
+/// (default: empty). Only a type that actually owns a fixed catalogue of
+/// named ratios returns a non-empty slice — today, the Fibonacci family
+/// (`fibonacci::retracement::LEVEL_SET_PRESETS`). A type with a level ladder
+/// but no such catalogue (Gann, pitchfork, Fibonacci Time Zones — whose
+/// "levels" are bar-count offsets, not price ratios) must return the
+/// default empty slice: offering these four presets to a type that never
+/// had them is exactly the defect this type exists to close (see that
+/// trait method's own doc).
+#[derive(Clone, Copy)]
+pub struct LevelSetPreset {
+    /// Preset id, e.g. `"standard"` — the id `StyleReference::System`
+    /// (`crate::drawing::StyleReference`) names and
+    /// `PrimitiveTemplate::resolve_system` looks a row up by.
+    pub id: &'static str,
+    /// Display-name resolver. The four presets the Fibonacci family ships
+    /// today draw their names from two different key enums —
+    /// `StyleKey::Standard`/`StyleKey::Extended` and
+    /// `ConfigKey::LevelSetKeyOnly`/`ConfigKey::LevelSetAll` — that happen
+    /// to share the exact same `fn(Language) -> &'static str` shape every
+    /// localized key already exposes via its own `.get(lang)`. A bare
+    /// function pointer is the smallest honest representation that covers
+    /// both without forcing one enum to host the other's variants and
+    /// without resolving a language at definition time — the language is
+    /// supplied at read time, same as every other key lookup in this
+    /// codebase.
+    pub name: fn(Language) -> &'static str,
+    /// The exact level values this preset seeds/narrows a ladder to.
+    pub values: &'static [f64],
+}
+
 /// Timeframe visibility configuration
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub struct TimeframeVisibilityConfig {

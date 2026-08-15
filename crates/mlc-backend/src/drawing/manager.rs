@@ -1013,35 +1013,39 @@ impl DrawingManager {
     /// A level-capable primitive's seeded composition (only the currently
     /// VISIBLE levels — an invisible entry inherited from a `last_style`
     /// snapshot is not "in" the composition any more than a deleted level
-    /// on a live primitive is) is matched against the four system template
-    /// ids via [`level_set_id_for_composition`] — the SAME canonical
-    /// matching `mlc-app-layout`'s own `current_level_set`
-    /// (`primitive_settings_intent.rs`) uses, both sourced off
-    /// `mlc_core::drawing::primitives_v2::fibonacci::retracement`'s preset
-    /// value lists — so creation-time stamping here and the modal's own
-    /// live read of "which набор is this" can never independently redefine
-    /// "what a preset means" and drift apart. A composition matching none
-    /// of the four presets is "custom" — there is no id to name it with,
-    /// so this falls through to `None`, same as a primitive with no ladder
-    /// at all.
+    /// on a live primitive is) is matched against `prim`'s OWN preset
+    /// catalogue ([`Primitive::level_set_presets`]) via
+    /// [`level_set_id_for_composition`] — the SAME canonical matching
+    /// `mlc-app-layout`'s own `current_level_set`
+    /// (`primitive_settings_intent.rs`) uses for the Fibonacci family, both
+    /// sourced off `mlc_core::drawing::primitives_v2::fibonacci::retracement`'s
+    /// preset value lists — so creation-time stamping here and the modal's
+    /// own live read of "which набор is this" can never independently
+    /// redefine "what a preset means" and drift apart. A composition
+    /// matching none of `prim`'s presets is "custom" — there is no id to
+    /// name it with, so this falls through to `None`, same as a primitive
+    /// whose type offers no presets at all (Gann, pitchfork, Fibonacci Time
+    /// Zones — `level_set_presets()` empty, so `level_set_id_for_composition`
+    /// has nothing to match against and always returns `None` for them).
     ///
     /// A primitive with no level ladder has nothing else nameable to stamp
     /// either — unchanged by
     /// [`mlc_core::templates::PrimitiveTemplate::system_templates`] now
     /// also minting a `"standard"` row for a non-ladder type: this
     /// function only ever matches a seeded LADDER composition against the
-    /// four preset value lists, so a non-ladder type still falls through to
-    /// `None` here (pre-existing behaviour, unchanged by this rename — a
-    /// freshly drawn non-ladder primitive still shows "Save as…" rather
-    /// than reading as already matching its own "standard" row). The only
-    /// OTHER starting point `apply_last_style_snapshot` can seed it from is
-    /// a raw `TemplateStyle` snapshot, which — unlike a `PrimitiveTemplate`
-    /// — carries no id of its own to resolve back against later (see
-    /// `TemplateStyle`'s own doc).
+    /// primitive's own preset value lists, so a non-ladder type still falls
+    /// through to `None` here (pre-existing behaviour, unchanged by this
+    /// rename — a freshly drawn non-ladder primitive still shows "Save
+    /// as…" rather than reading as already matching its own "standard"
+    /// row). The only OTHER starting point `apply_last_style_snapshot` can
+    /// seed it from is a raw `TemplateStyle` snapshot, which — unlike a
+    /// `PrimitiveTemplate` — carries no id of its own to resolve back
+    /// against later (see `TemplateStyle`'s own doc).
     fn initial_style_reference(prim: &dyn Primitive) -> Option<StyleReference> {
         let levels = prim.level_configs()?;
         let composition: Vec<f64> = levels.iter().filter(|c| c.visible).map(|c| c.level).collect();
-        level_set_id_for_composition(&composition).map(|id| StyleReference::System(id.to_string()))
+        level_set_id_for_composition(prim.level_set_presets(), &composition)
+            .map(|id| StyleReference::System(id.to_string()))
     }
 
     fn apply_variant_to_primitive(prim: &mut Box<dyn Primitive>, variant: &str) {

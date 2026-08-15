@@ -13,9 +13,9 @@ use super::super::{
     HIT_TOLERANCE,
     RenderContext,
     render_primitive_text, draw_label_plate,
-    config::{FibLevelConfig, LabelStyle},
+    config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
-use super::retracement::default_level_configs;
+use super::retracement::{default_level_configs, LEVEL_SET_PRESETS};
 
 pub const PHI: f64 = 1.618033988749895;
 
@@ -397,6 +397,7 @@ impl Primitive for FibSpiral {
 
     fn level_configs(&self) -> Option<Vec<FibLevelConfig>> { Some(self.level_configs.clone()) }
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool { self.level_configs = configs; true }
+    fn level_set_presets(&self) -> &'static [LevelSetPreset] { LEVEL_SET_PRESETS }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
         use super::super::config::{ConfigProperty, PropertyCategory};

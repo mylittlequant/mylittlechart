@@ -47,8 +47,7 @@ use crate::drawing::primitives_v2::{
     PrimitiveColor, PrimitiveText, TextAlign, LineStyle,
     Primitive, PrimitiveData, StyleReference,
 };
-use crate::drawing::primitives_v2::fibonacci::retracement::{level_set_values, LEVEL_SET_IDS};
-use crate::i18n::{current_language, ConfigKey, StyleKey};
+use crate::i18n::{current_language, StyleKey};
 use crate::utils::unix_timestamp_parts;
 
 // =============================================================================
@@ -322,24 +321,24 @@ impl PrimitiveTemplate {
     /// for other reasons (creating/previewing a primitive), instead of
     /// growing a second, possibly-diverging copy of it here.
     ///
-    /// A level-capable type (`prim.level_configs()` is `Some`) gets the four
-    /// canonical rows — `"standard"`/`"extended"`/`"key_only"`/`"all"`, the
-    /// SAME ids [`level_set_values`]/
-    /// [`crate::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition`]
-    /// name — each narrowed/extended from `prim`'s own seeded ladder to that
-    /// preset's value list (see [`narrow_to_target`]). This is what closes
-    /// the level-seeding inconsistency documented for the nine non-
-    /// `fib_retracement` level types that share this same preset menu
-    /// (`docs/mlc/audits/primitive-settings-state-and-remaining-types-2026-08-09.md`
-    /// §3.1): "standard" is never a hardcoded fib value list here, it is
-    /// whatever `prim` — the type's OWN factory — actually seeded, so a
-    /// freshly drawn primitive of ANY level-having type always matches its
-    /// own "standard" row, by construction, without this function needing
-    /// to know which types happen to seed filled vs. unfilled bands.
+    /// A type whose [`Primitive::level_set_presets`] is non-empty gets one
+    /// row per preset — for the Fibonacci family that is the four canonical
+    /// rows `"standard"`/`"extended"`/`"key_only"`/`"all"` — each narrowed/
+    /// extended from `prim`'s own seeded ladder to that preset's value list
+    /// (see [`narrow_to_target`]). Ids, names and values all come straight
+    /// off `prim.level_set_presets()` — never a hardcoded list here, and
+    /// never assumed just because `prim` happens to have a ladder at all:
+    /// a level-having type with no preset catalogue of its own (Gann,
+    /// pitchfork, Fibonacci Time Zones — see that trait method's own doc)
+    /// falls to the branch below exactly like a type with no ladder at
+    /// all, which is what closes the defect where every level-having type
+    /// used to be offered the Fibonacci ratios regardless of whether it
+    /// actually had any.
     ///
-    /// A type with no ladder at all gets exactly one row, `"standard"`,
-    /// that IS the type's factory look (flat style fields + typed style/
-    /// text properties, nothing to narrow).
+    /// Any type with no presets — with or without a ladder — gets exactly
+    /// one row, `"standard"`, that IS the type's factory look (its own
+    /// seeded ladder if it has one, untouched; flat style fields + typed
+    /// style/text properties otherwise; nothing to narrow either way).
     ///
     /// Every row also merges
     /// [`crate::drawing::primitives_v2::config::level_set_label_defaults`]
@@ -349,24 +348,14 @@ impl PrimitiveTemplate {
     /// same way applying one already does.
     pub fn system_templates(prim: &dyn Primitive) -> Vec<PrimitiveTemplate> {
         let lang = current_language();
-        if prim.level_configs().is_some() {
-            LEVEL_SET_IDS
-                .iter()
-                .map(|&id| {
-                    let name = match id {
-                        "standard" => StyleKey::Standard.get(lang),
-                        "extended" => StyleKey::Extended.get(lang),
-                        "key_only" => ConfigKey::LevelSetKeyOnly.get(lang),
-                        "all" => ConfigKey::LevelSetAll.get(lang),
-                        // LEVEL_SET_IDS is the fixed 4-entry array named
-                        // above — no fifth id ever reaches this arm.
-                        _ => id,
-                    };
-                    Self::system_template(prim, id, name, level_set_values(id).unwrap_or(&[]))
-                })
-                .collect()
-        } else {
+        let presets = prim.level_set_presets();
+        if presets.is_empty() {
             vec![Self::system_template(prim, "standard", StyleKey::Standard.get(lang), &[])]
+        } else {
+            presets
+                .iter()
+                .map(|preset| Self::system_template(prim, preset.id, (preset.name)(lang), preset.values))
+                .collect()
         }
     }
 
@@ -731,4 +720,106 @@ fn narrow_to_target(factory_configs: &[FibLevelConfig], target: &[f64]) -> Vec<F
             cfg
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::drawing::primitives_v2::fibonacci::FibRetracement;
+    use crate::drawing::primitives_v2::fibonacci::retracement::{
+        level_set_id_for_composition, ALL_LEVELS, EXTENDED_LEVELS, KEY_ONLY_LEVELS, LEVEL_SET_PRESETS,
+        MAIN_LEVELS,
+    };
+    use crate::drawing::primitives_v2::gann::GannFan;
+    use crate::drawing::primitives_v2::gann::gann_fan::ALL_GANN_ANGLES;
+    use crate::drawing::primitives_v2::lines::TrendLine;
+
+    /// A fib retracement's system rows are the four Fibonacci presets,
+    /// unchanged by the move off `system_templates`' own hardcoded id/value
+    /// lookup onto `Primitive::level_set_presets` — this is the "pure move"
+    /// the fix promises for the Fibonacci family: same ids, same names,
+    /// same narrowed value lists as before.
+    #[test]
+    fn fib_retracement_system_templates_has_four_presets_with_same_values() {
+        let fib = FibRetracement::new(0, 100.0, 1_000, 200.0, "#F7B93E");
+        let rows = PrimitiveTemplate::system_templates(&fib);
+
+        assert_eq!(rows.len(), 4);
+        assert_eq!(
+            rows.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(),
+            vec!["standard", "extended", "key_only", "all"]
+        );
+
+        let lang = current_language();
+        for (row, preset) in rows.iter().zip(LEVEL_SET_PRESETS.iter()) {
+            assert_eq!(row.id, preset.id);
+            assert_eq!(row.name, (preset.name)(lang));
+            let levels: Vec<f64> = row.level_configs.iter().map(|c| c.level).collect();
+            assert_eq!(levels, preset.values);
+        }
+
+        // Spot-check the raw value tables directly too — the assertion above
+        // already covers them transitively via `LEVEL_SET_PRESETS`, but this
+        // pins the actual numbers so a future edit to the shared preset
+        // table cannot silently drag the fib family's own rows along with it
+        // unnoticed.
+        let standard: Vec<f64> = rows[0].level_configs.iter().map(|c| c.level).collect();
+        assert_eq!(standard, MAIN_LEVELS);
+        let extended: Vec<f64> = rows[1].level_configs.iter().map(|c| c.level).collect();
+        assert_eq!(extended, EXTENDED_LEVELS);
+        let key_only: Vec<f64> = rows[2].level_configs.iter().map(|c| c.level).collect();
+        assert_eq!(key_only, KEY_ONLY_LEVELS);
+        let all: Vec<f64> = rows[3].level_configs.iter().map(|c| c.level).collect();
+        assert_eq!(all, ALL_LEVELS);
+    }
+
+    /// A Gann fan has its own level ladder (`level_configs()` is `Some`) but
+    /// no Fibonacci preset catalogue of its own — `level_set_presets()`
+    /// stays the trait default (empty). It must get exactly one system
+    /// row, and that row's ladder must be Gann's OWN factory angles, never
+    /// narrowed toward the Fibonacci ratios it never had — the defect this
+    /// closes.
+    #[test]
+    fn gann_fan_system_templates_has_one_row_with_own_ladder_not_narrowed_to_fib() {
+        let gann = GannFan::new(0, 100.0, 1_000, 200.0, "#00ff00");
+        assert!(gann.level_set_presets().is_empty());
+
+        let rows = PrimitiveTemplate::system_templates(&gann);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "standard");
+
+        let levels: Vec<f64> = rows[0].level_configs.iter().map(|c| c.level).collect();
+        assert_eq!(levels, ALL_GANN_ANGLES);
+        // Never the fib ladder this type never owned.
+        assert_ne!(levels, MAIN_LEVELS);
+    }
+
+    /// A primitive with no level ladder at all — unaffected by this fix,
+    /// still exactly one "standard" row with no levels to narrow.
+    #[test]
+    fn no_ladder_primitive_still_gets_one_standard_row() {
+        let trend_line = TrendLine::new(0, 100.0, 1_000, 200.0, "#2962ff");
+        assert!(trend_line.level_configs().is_none());
+        assert!(trend_line.level_set_presets().is_empty());
+
+        let rows = PrimitiveTemplate::system_templates(&trend_line);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].id, "standard");
+        assert!(!rows[0].has_levels());
+    }
+
+    /// `level_set_id_for_composition` names a fib composition against the
+    /// Fibonacci family's own preset table, and returns `None` for the
+    /// identical values matched against a type that offers no presets at
+    /// all (e.g. a Gann fan) — there is nothing to match against, so
+    /// nothing is named.
+    #[test]
+    fn level_set_id_for_composition_none_without_presets() {
+        let composition = MAIN_LEVELS.to_vec();
+
+        assert_eq!(level_set_id_for_composition(LEVEL_SET_PRESETS, &composition), Some("standard"));
+
+        let gann = GannFan::new(0, 100.0, 1_000, 200.0, "#00ff00");
+        assert_eq!(level_set_id_for_composition(gann.level_set_presets(), &composition), None);
+    }
 }

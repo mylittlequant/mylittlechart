@@ -179,9 +179,11 @@ pub enum StyleReference {
     /// A built-in system template id — names one row of
     /// [`crate::templates::PrimitiveTemplate::system_templates`] for this
     /// primitive's type: `"standard"`/`"extended"`/`"key_only"`/`"all"` for
-    /// a level-having type (the same four ids
-    /// `fibonacci::retracement::level_set_values`/`level_set_id_for_composition`
-    /// name), or just `"standard"` for any other type. Never `"custom"`,
+    /// a type whose [`Primitive::level_set_presets`] is non-empty (the same
+    /// four ids `fibonacci::retracement::LEVEL_SET_PRESETS`/
+    /// `level_set_id_for_composition` name), or just `"standard"` for any
+    /// other type — including a level-having type with no such preset
+    /// catalogue (Gann, pitchfork, Fibonacci Time Zones). Never `"custom"`,
     /// which is a derived display state with no fixed definition of its
     /// own, not a real system row.
     ///
@@ -752,6 +754,27 @@ pub trait Primitive: Send + Sync {
     /// Returns true if the primitive supports levels and they were set
     fn set_level_configs(&mut self, _configs: Vec<super::config::FibLevelConfig>) -> bool {
         false
+    }
+
+    /// The level-set presets this primitive TYPE offers — see
+    /// [`super::config::LevelSetPreset`]'s own doc. Default: none, which is
+    /// the honest answer for a type whose ladder has no fixed catalogue of
+    /// named ratios behind it (Gann, pitchfork, Fibonacci Time Zones, or
+    /// any primitive with no ladder at all) — and it is what makes
+    /// [`crate::templates::PrimitiveTemplate::system_templates`] give such
+    /// a type exactly ONE `"standard"` row, built from its own factory
+    /// seed, same as a type with no ladder at all.
+    ///
+    /// Override only where the type genuinely owns a fixed catalogue —
+    /// today, only the Fibonacci family
+    /// (`fibonacci::retracement::LEVEL_SET_PRESETS`, shared by every type
+    /// that seeds its ladder from `retracement::default_level_configs`/
+    /// `default_level_configs_filled`). Do NOT invent a catalogue for a
+    /// type that never had one: it would narrow that type's own ladder
+    /// toward Fibonacci ratios it never carried — the defect this method
+    /// exists to close.
+    fn level_set_presets(&self) -> &'static [super::config::LevelSetPreset] {
+        &[]
     }
 
     // =========================================================================

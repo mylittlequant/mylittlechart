@@ -13,11 +13,11 @@ use super::super::{
     HIT_TOLERANCE,
     RenderContext, crisp,
     render_primitive_text, draw_label_plate,
-    config::{FibLevelConfig, LabelStyle},
+    config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
 // Shared level table with retracement, band fill on by default — see the
 // doc comment on `default_level_configs_filled` for why this family qualifies.
-use super::retracement::default_level_configs_filled as default_level_configs;
+use super::retracement::{default_level_configs_filled as default_level_configs, LEVEL_SET_PRESETS};
 
 fn deserialize_level_configs<'de, D>(deserializer: D) -> Result<Vec<FibLevelConfig>, D::Error>
 where
@@ -402,6 +402,7 @@ impl Primitive for FibTrendExtension {
 
     fn level_configs(&self) -> Option<Vec<FibLevelConfig>> { Some(self.level_configs.clone()) }
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool { self.level_configs = configs; true }
+    fn level_set_presets(&self) -> &'static [LevelSetPreset] { LEVEL_SET_PRESETS }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
         use super::super::config::{ConfigProperty, PropertyCategory};

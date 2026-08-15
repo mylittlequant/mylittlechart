@@ -14,13 +14,13 @@ use super::super::{
     HIT_TOLERANCE,
     RenderContext, crisp,
     render_primitive_text,
-    config::FibLevelConfig,
+    config::{FibLevelConfig, LevelSetPreset},
 };
 // Shared level table with retracement, band fill on by default — see the
 // doc comment on `default_level_configs_filled` for why this family qualifies
 // (the ring/wedge fill here uses the same nonzero-winding two-ellipse trick
 // as `circles`, so it's a real closed region, not an ambiguous curved one).
-use super::retracement::default_level_configs_filled as default_level_configs;
+use super::retracement::{default_level_configs_filled as default_level_configs, LEVEL_SET_PRESETS};
 
 /// Fibonacci Arcs
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -565,6 +565,10 @@ impl Primitive for FibArcs {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool {
         self.level_configs = configs;
         true
+    }
+
+    fn level_set_presets(&self) -> &'static [LevelSetPreset] {
+        LEVEL_SET_PRESETS
     }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
