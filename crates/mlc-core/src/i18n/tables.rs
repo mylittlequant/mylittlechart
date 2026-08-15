@@ -1292,7 +1292,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 331] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 332] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1624,6 +1624,7 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 331] = [
     /* 328 RuleWave5BeyondWave3              */ [ "Wave 5 does not end beyond wave 3's own end", "Волна 5 не заходит дальше конца волны 3", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 329 MarkTruncatedFifthLabel           */ [ "Mark truncated", "Отметить усечённой", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 330 ClearTruncatedFifthLabel          */ [ "Clear truncated", "Снять отметку усечения", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 331 RuleWave5NotTruncated             */ [ "Declared this fifth truncated, but wave 5 ends beyond wave 3's own end", "Пятая волна заявлена усечённой, но волна 5 заходит дальше конца волны 3", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

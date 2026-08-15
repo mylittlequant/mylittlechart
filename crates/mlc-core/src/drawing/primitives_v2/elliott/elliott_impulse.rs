@@ -75,23 +75,34 @@ pub struct ElliottImpulse {
     /// real Elliott shape (`EwaPatternKind::TruncatedImpulse`, whose fifth
     /// legitimately fails to make new ground past wave 3) rather than a
     /// drawing mistake (owner ruling 2026-08-15: a fifth that fails to
-    /// exceed wave 3 is a rare, real shape, not automatically an error —
-    /// `guard::impulse_violations`'s own `"wave5_beyond_wave3"` check needed
-    /// a per-structure way to excuse it). `false` (the default) — an
-    /// existing drawing loads with the rule ACTIVE, so every drawing saved
-    /// before this field existed keeps being checked exactly as before: the
-    /// analyst opts INTO calling his own fifth truncated, not the other way
-    /// around. Its ONLY effect is skipping `"wave5_beyond_wave3"` for THIS
-    /// structure — every other hard rule (wave 2/4 overlap, wave 3
-    /// progression, wave 3 not shortest, ...) keeps checking exactly as
-    /// before (see `guard`'s own `wave5_truncation_tests` module, the test
-    /// asserting a structure that ALSO overlaps wave 1 still reports that
-    /// violation with this flag on). Deliberately per-structure, not an
-    /// `EwaEngineConfig` toggle — truncation is a property of ONE fifth
-    /// wave, and a process-global switch would silence the rule on every
-    /// count on the chart (owner: "по дефолту выключены, но кликая по
-    /// конкретной 5 и настройкам там просто тугл — усечённая, и оно снимает
-    /// ошибку").
+    /// exceed wave 3 is a rare, real shape, not automatically an error).
+    /// `false` (the default) — an existing drawing loads with wave 5
+    /// checked for PROGRESSION, so every drawing saved before this field
+    /// existed keeps being checked exactly as before: the analyst opts INTO
+    /// calling his own fifth truncated, not the other way around.
+    ///
+    /// It does NOT silence a rule — owner correction, same day: "если
+    /// поставил укороченную, то она уже должна давать ошибку если она
+    /// выходит за пределы 3, раз уж её выбрал как укороченную". The flag is
+    /// a CLAIM about the shape, and `guard::impulse_violations` judges the
+    /// measured shape against whichever half of the claim is active:
+    /// `false` reports `"wave5_beyond_wave3"` when wave 5 FAILS to exceed
+    /// wave 3 (the progression check); `true` reports
+    /// `"wave5_not_truncated"` when wave 5 DOES exceed wave 3 (the analyst's
+    /// own claim contradicted by the measured shape). Exactly one of the
+    /// two can ever be active for a given structure — see that function's
+    /// own doc for why both reuse the identical `beyond` call, one negated.
+    /// Every other hard rule (wave 2/4 overlap, wave 3 progression, wave 3
+    /// not shortest, ...) keeps checking exactly as before regardless of
+    /// this flag (see `guard`'s own `wave5_truncation_tests` module, the
+    /// test asserting a structure that ALSO overlaps wave 1 still reports
+    /// that violation with this flag on).
+    ///
+    /// Deliberately per-structure, not an `EwaEngineConfig` toggle —
+    /// truncation is a property of ONE fifth wave, and a process-global
+    /// switch would apply the same claim to every count on the chart
+    /// (owner: "по дефолту выключены, но кликая по конкретной 5 и
+    /// настройкам там просто тугл — усечённая, и оно снимает ошибку").
     #[serde(default)]
     pub truncated_fifth: bool,
     /// How many of `points` are REAL — i.e. correspond to an actually-drawn

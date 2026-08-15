@@ -2976,10 +2976,19 @@ pub enum ConceptKey {
     // back as the row's current state.
     MarkTruncatedFifthLabel = 329,
     ClearTruncatedFifthLabel = 330,
+
+    // ---- Elliott declared-truncated-vs-measured-shape guard message
+    // (2026-08-15, owner correction: `truncated_fifth` is a CLAIM about the
+    // shape, not permission to stop checking it — the GRAMMAR-family
+    // counterpart of `RuleWave5BeyondWave3` above, mirroring
+    // `RuleFlatRequiresBNearAOrigin`'s own "declared subtype vs measured
+    // shape" precedent). See `elliott::guard::impulse_violations`'s own
+    // `"wave5_not_truncated"` check.
+    RuleWave5NotTruncated = 331,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 331;
+    pub const COUNT: usize = 332;
 
     /// Get translation for this key.
     #[inline]
