@@ -15,6 +15,20 @@ use super::{guard, ratio, projection, wave_hit};
 fn default_true() -> bool { true }
 fn default_ratio_rib_style() -> LineStyle { LineStyle::Dotted }
 
+/// Appended AFTER whatever bracket style the degree's own
+/// [`WaveDegree::impulse_labels`] already produced for wave 5 — `(5)`
+/// becomes `(5)ᵗ`, `[5]`-style degrees would become `[5]ᵗ`, and so on for
+/// every degree, because it composes with the FINAL rendered string rather
+/// than being special-cased per degree (see
+/// [`ElliottImpulse::rendered_wave_labels`]).
+///
+/// NOT routed through `crate::i18n`: like the parentheses/brackets it sits
+/// beside, this is Elliott notation punctuation, not prose — an analyst
+/// reads "(5)ᵗ" the same way regardless of the UI's display language,
+/// exactly as "(5)" itself is never translated. U+1D57 MODIFIER LETTER
+/// SMALL T — a raised "t" for "truncated".
+const TRUNCATED_FIFTH_MARK: char = '\u{1D57}';
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ElliottImpulse {
     pub data: PrimitiveData,
@@ -199,6 +213,27 @@ impl ElliottImpulse {
         ["", impulse[0], impulse[1], impulse[2], impulse[3], impulse[4]]
     }
 
+    /// The labels actually drawn and hit-tested — [`wave_labels`](Self::wave_labels)'s
+    /// own degree-notation strings, with [`TRUNCATED_FIFTH_MARK`] appended
+    /// to wave 5's own label (index 5, the last slot) when
+    /// [`truncated_fifth`](Self::truncated_fifth) is set. This is the ONE
+    /// place the mark is applied — `render`, `hit_test`, `wave_at` and
+    /// `point_labels` all read THIS method, never `wave_labels()` directly,
+    /// so the mark can never appear on the drawn plate but not the hit
+    /// area (or vice versa), and never needs a second per-degree branch.
+    ///
+    /// `truncated_fifth == false` returns exactly `wave_labels()`'s own
+    /// strings, byte for byte (`plate`/offset/collision handling/colour are
+    /// untouched either way) — the flag being off changes nothing about
+    /// what this method produces or what any of its callers do with it.
+    fn rendered_wave_labels(&self) -> [String; 6] {
+        let mut labels = self.wave_labels().map(|s| s.to_string());
+        if self.truncated_fifth {
+            labels[5].push(TRUNCATED_FIFTH_MARK);
+        }
+        labels
+    }
+
     /// How many of [`points`](Self::points) are real right now — see
     /// [`realized_points`](Self::realized_points)'s own field doc. Never
     /// exceeds `points.len()`.
@@ -262,7 +297,7 @@ impl Primitive for ElliottImpulse {
         self.grow_realized(pts.len().min(6));
     }
     fn point_labels(&self) -> Option<Vec<String>> {
-        Some(self.wave_labels().iter().map(|s| s.to_string()).collect())
+        Some(self.rendered_wave_labels().to_vec())
     }
     fn translate(&mut self, td: i64, pd: f64) { for p in &mut self.points { p.0 += td; p.1 += pd; } }
     fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
@@ -299,8 +334,10 @@ impl Primitive for ElliottImpulse {
         }
         // A wave label's own plate is clickable too (owner ask 2026-08-13),
         // gated on `show_labels` exactly like the render side.
+        let hit_labels = self.rendered_wave_labels();
+        let hit_label_refs: [&str; 6] = std::array::from_fn(|i| hit_labels[i].as_str());
         if self.show_labels
-            && hit_test_label_plates(sx, sy, &screen, &self.wave_labels(), self.realized_len(), &self.label_style, &self.label_collisions)
+            && hit_test_label_plates(sx, sy, &screen, &hit_label_refs, self.realized_len(), &self.label_style, &self.label_collisions)
         {
             return HitTestResult::Body;
         }
@@ -318,10 +355,11 @@ impl Primitive for ElliottImpulse {
             let b = timestamp_ms_to_bar_f64(bars, *ts);
             (vp.bar_to_x_f64(b), vp.price_to_y(*p, ps.price_min, ps.price_max))
         }).collect();
-        let labels = self.wave_labels();
+        let labels = self.rendered_wave_labels();
+        let label_refs: [&str; 6] = std::array::from_fn(|i| labels[i].as_str());
         wave_hit::wave_slot_at(
             sx, sy, self.type_id(), &screen, self.realized_len(), self.wave_slots(),
-            &labels, &self.label_style, &self.label_collisions, self.show_labels, self.show_ratios, &ratio::IMPULSE_RATIO_RIBS,
+            &label_refs, &self.label_style, &self.label_collisions, self.show_labels, self.show_ratios, &ratio::IMPULSE_RATIO_RIBS,
         )
     }
 
@@ -400,7 +438,7 @@ impl Primitive for ElliottImpulse {
         }
 
         if self.show_labels {
-            let labels = self.wave_labels();
+            let labels = self.rendered_wave_labels();
             let label_color = self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke);
             ctx.set_fill_color(label_color);
             ctx.set_font(&self.label_style.font_string());
@@ -663,5 +701,88 @@ mod subdivision_overlay_tests {
             Some(WaveSlot::Impulse4),
             "wave 4's own label plate still answers wave_at even though its leg no longer draws"
         );
+    }
+}
+
+#[cfg(test)]
+mod truncated_fifth_label_tests {
+    use super::*;
+    use super::super::count::label_collision_indices;
+
+    fn sample_points() -> [(i64, f64); 6] {
+        [
+            (0, 100.0),
+            (1_000, 110.0),
+            (2_000, 105.0),
+            (3_000, 130.0),
+            (4_000, 120.0),
+            (5_000, 140.0),
+        ]
+    }
+
+    /// Flag off: `point_labels` is byte-for-byte what `wave_labels` itself
+    /// produces — the mark is never applied — for two different degrees.
+    #[test]
+    fn flag_off_matches_wave_labels_exactly_for_two_degrees() {
+        for degree in [WaveDegree::Intermediate, WaveDegree::Primary] {
+            let mut impulse = ElliottImpulse::new(sample_points(), "#2196F3");
+            impulse.degree = degree;
+            let expected: Vec<String> = impulse.wave_labels().iter().map(|s| s.to_string()).collect();
+
+            let labels = impulse.point_labels().expect("an ElliottImpulse always returns Some point_labels");
+            assert_eq!(labels, expected, "flag off: point_labels equals wave_labels byte for byte for {degree:?}");
+        }
+    }
+
+    /// Flag on: wave 5's own label (index 5, the last slot) gains
+    /// [`TRUNCATED_FIFTH_MARK`] appended AFTER whatever bracket style the
+    /// degree already produced — every other label (including the empty
+    /// start-point label at index 0) is untouched, for two different
+    /// degrees.
+    #[test]
+    fn flag_on_appends_mark_to_wave5_only_for_two_degrees() {
+        for degree in [WaveDegree::Intermediate, WaveDegree::Primary] {
+            let mut impulse = ElliottImpulse::new(sample_points(), "#2196F3");
+            impulse.degree = degree;
+            let unmarked: Vec<String> = impulse.wave_labels().iter().map(|s| s.to_string()).collect();
+
+            impulse.truncated_fifth = true;
+            let labels = impulse.point_labels().expect("an ElliottImpulse always returns Some point_labels");
+
+            for i in 0..5 {
+                assert_eq!(labels[i], unmarked[i], "point {i} untouched by the flag for {degree:?}");
+            }
+            assert_eq!(
+                labels[5],
+                format!("{}{}", unmarked[5], TRUNCATED_FIFTH_MARK),
+                "wave 5's own label gains the trailing mark, appended after the degree's own notation, for {degree:?}"
+            );
+        }
+    }
+
+    /// `label_collision_indices` (`super::super::count`) derives a
+    /// collision solely from whether the CHILD's own first/last
+    /// `point_labels` are empty (see that function's own doc) — appending
+    /// the mark never changes emptiness, so a parent's collision indices
+    /// for a child nested at the same slot are identical whether the
+    /// child's own `truncated_fifth` is on or off, on the same geometry: a
+    /// pivot that was labelled stays labelled, a blank one stays blank.
+    #[test]
+    fn label_collision_indices_unaffected_by_truncated_fifth_flag() {
+        let parent = ElliottImpulse::new(sample_points(), "#2196F3");
+        let mut child = ElliottImpulse::new(sample_points(), "#2196F3");
+
+        child.truncated_fifth = false;
+        let indices_off = label_collision_indices(&parent, &[(&child, WaveSlot::Impulse3)]);
+
+        child.truncated_fifth = true;
+        let indices_on = label_collision_indices(&parent, &[(&child, WaveSlot::Impulse3)]);
+
+        assert_eq!(indices_off, indices_on, "the truncation mark never changes whether a label counts as empty/non-empty");
+        // The child's own last label (wave 5) is always non-empty (marked
+        // or not), so its span's own END pivot on the parent always
+        // collides — sanity check that this geometry exercises the rule
+        // rather than vacuously comparing two empty vectors.
+        assert!(!indices_off.is_empty(), "sanity: this geometry does produce a collision to compare");
     }
 }
