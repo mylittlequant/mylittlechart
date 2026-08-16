@@ -9,7 +9,7 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, crisp, contrasting_text_color,
     BOX_ANNOTATION_FILL_OPACITY, default_box_annotation_fill_opacity,
-    config::{ConfigProperty, PropertyValue, PropertyCategory},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 fn default_true() -> bool { true }
@@ -158,6 +158,14 @@ impl Primitive for Note {
         }
     }
 
+    /// Text archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`,
+    /// fifth wave): `text_tabs()` — Content/Font/Plate groups apply.
+    /// `expanded` is this type's own quirk (its sticky-note collapse state)
+    /// with no home in the design's groups, so it stays in the default run.
+    /// Layout has no backing field here either (no align/word-wrap/width on
+    /// this box) and Border/BorderColor/Rounding/Padding/Shadow have no
+    /// field to back them — this box paints sharp corners at a fixed radius
+    /// only for its folded-corner mark, never user-set.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or(&self.content);
@@ -168,13 +176,13 @@ impl Primitive for Note {
         Some(vec![
             ConfigProperty::comment(content)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(0),
+                .with_order(0).in_group(PropertyGroup::Content),
             ConfigProperty::font_size(font_size)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(1),
+                .with_order(1).in_group(PropertyGroup::Font),
             ConfigProperty::text_color(color)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(2),
+                .with_order(2).in_group(PropertyGroup::Font),
             ConfigProperty::expanded(self.expanded)
                 .with_category(PropertyCategory::LabelsText)
                 .with_order(3),
@@ -219,14 +227,18 @@ impl Primitive for Note {
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
+    /// Plate group (fill on/off + opacity) — the design's own Background
+    /// toggle/opacity, differently shaped than the lab's full border+colour+
+    /// rounding+padding+shadow set but the same named group, exactly as
+    /// `PropertyGroup::Plate`'s own doc records for Callout.
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::fill(self.fill)
                 .with_category(PropertyCategory::AppearanceFill)
-                .with_order(19),
+                .with_order(19).in_group(PropertyGroup::Plate),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
                 .with_category(PropertyCategory::AppearanceFill)
-                .with_order(20),
+                .with_order(20).in_group(PropertyGroup::Plate),
         ]
     }
 

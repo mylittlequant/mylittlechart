@@ -9,7 +9,7 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, CONTROL_POINT_HIT_RADIUS,
     render_primitive_text,
-    config::{ConfigProperty, PropertyValue, PropertyCategory},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -125,6 +125,25 @@ impl Primitive for Text {
 
     }
 
+    /// Text archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`,
+    /// fifth wave): `text_tabs()` (`mlc-ui-lab`'s `spec.rs`, reference type
+    /// "callout") declares Content/Font/Layout/Plate groups on the "text"
+    /// subject tab. This is the plainest member of the archetype — a bare
+    /// label with no plate/background at all (`render` above draws nothing
+    /// but the glyphs) — so only Content and Font apply.
+    ///
+    /// Content: the free-text body, already a real property.
+    /// Font: size/colour are real fields; `bold`/`italic` are this type's own
+    /// pair standing in for the design's single Bold/Italic/Strikethrough
+    /// pills row (`Row::Pills`, W4 — no strikethrough field exists either) —
+    /// same "differently-shaped but same-titled" placement `PropertyGroup::Plate`
+    /// already documents for Callout's fill pair.
+    ///
+    /// Layout (align/word-wrap/width) and Plate (border/background) are not
+    /// declared at all: the design's align control is the same pills kind,
+    /// word-wrap/width-fits-content/max-width have no backing field on this
+    /// type, and `render` never paints a background plate behind this text —
+    /// there is no fill/background field to gate a Plate group with.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or("");
@@ -136,19 +155,19 @@ impl Primitive for Text {
         Some(vec![
             ConfigProperty::content(content)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(0),
+                .with_order(0).in_group(PropertyGroup::Content),
             ConfigProperty::font_size(font_size)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(1),
+                .with_order(1).in_group(PropertyGroup::Font),
             ConfigProperty::bold(bold)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(2),
+                .with_order(2).in_group(PropertyGroup::Font),
             ConfigProperty::italic(italic)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(3),
+                .with_order(3).in_group(PropertyGroup::Font),
             ConfigProperty::text_color(color)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(4),
+                .with_order(4).in_group(PropertyGroup::Font),
         ])
     }
 

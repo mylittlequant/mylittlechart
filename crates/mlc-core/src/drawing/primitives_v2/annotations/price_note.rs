@@ -10,7 +10,7 @@ use super::super::{
     RenderContext, crisp,
     PLATE_FILL_OPACITY, default_plate_fill_opacity,
 };
-use super::super::config::{ConfigProperty, PropertyValue, PropertyCategory};
+use super::super::config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PriceNote {
@@ -187,6 +187,12 @@ impl Primitive for PriceNote {
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
+    /// Text archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`,
+    /// fifth wave): `text_tabs()` — Content/Font/Plate groups apply.
+    /// `show_price` is this type's own quirk (prefixing the label with the
+    /// anchor's price) with no home in the design's groups, kept in the
+    /// default run. Layout/Border/Rounding/Padding/Shadow have no backing
+    /// field — this chip is a fixed-radius rectangle, never user-adjustable.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or("");
@@ -198,19 +204,19 @@ impl Primitive for PriceNote {
         Some(vec![
             ConfigProperty::content(content)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(0),
+                .with_order(0).in_group(PropertyGroup::Content),
             ConfigProperty::font_size(font_size)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(1),
+                .with_order(1).in_group(PropertyGroup::Font),
             ConfigProperty::bold(bold)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(2),
+                .with_order(2).in_group(PropertyGroup::Font),
             ConfigProperty::italic(italic)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(3),
+                .with_order(3).in_group(PropertyGroup::Font),
             ConfigProperty::text_color(text_color)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(4),
+                .with_order(4).in_group(PropertyGroup::Font),
             ConfigProperty::show_price(self.show_price)
                 .with_category(PropertyCategory::LabelsText)
                 .with_order(5),
@@ -265,14 +271,17 @@ impl Primitive for PriceNote {
         false
     }
 
+    /// Plate group — see `note.rs`'s own `style_properties()` doc for why
+    /// fill/opacity, not the lab's full border+colour+rounding+padding+
+    /// shadow set, is this type's shape of the same named group.
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::fill(self.fill)
                 .with_category(PropertyCategory::AppearanceFill)
-                .with_order(0),
+                .with_order(0).in_group(PropertyGroup::Plate),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
                 .with_category(PropertyCategory::AppearanceFill)
-                .with_order(1),
+                .with_order(1).in_group(PropertyGroup::Plate),
         ]
     }
 

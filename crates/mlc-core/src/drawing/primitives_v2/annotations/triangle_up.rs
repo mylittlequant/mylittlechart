@@ -10,7 +10,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text, TextAlign,
     AREA_FILL_OPACITY, default_area_fill_opacity,
-    config::{ConfigProperty, PropertyValue, PropertyCategory},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -160,7 +160,26 @@ impl Primitive for TriangleUp {
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
+    /// This type's `kind()` is `PrimitiveKind::Signal`, which
+    /// `Primitive::archetype()`'s own default maps to `Archetype::Icon`, NOT
+    /// `Archetype::Text` — measured before declaring anything (W3, fifth
+    /// wave). Icon archetype was already done in the fourth wave for
+    /// `Flag`/`Emoji`; this brings TriangleUp in line with THAT wave —
+    /// `icon_tabs()` (`mlc-ui-lab`'s `spec.rs`) LabelNextToIcon group: font
+    /// size / side, real `data.text` fields `render`'s own `text_offset`/
+    /// `text_x` match already reads.
+    ///
+    /// No glyph picker to report here (unlike `Sign`'s `SignType`): this
+    /// type always draws the same fixed triangle, with no chosen-glyph
+    /// field at all — the same shape `Flag` was in the fourth wave.
+    /// Rendering needs no declaration for the same reasons as `Sign`:
+    /// colour is the universal base-stroke row, size is two independent
+    /// points not one scalar, and the outline stroke is unconditional.
+    /// "Show" and the free-text content stay out too — no on/off field
+    /// backs "Show", and content goes through the existing Labels-tab
+    /// surface `supports_text: true` opens, not a per-type property.
     fn style_properties(&self) -> Vec<ConfigProperty> {
+        let default_text = PrimitiveText::default();
         vec![
             ConfigProperty::fill(self.fill)
                 .with_category(PropertyCategory::AppearanceFill)
@@ -168,6 +187,10 @@ impl Primitive for TriangleUp {
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
                 .with_category(PropertyCategory::AppearanceFill)
                 .with_order(1),
+            ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
+                .with_category(PropertyCategory::AppearanceLine).with_order(20).in_group(PropertyGroup::LabelNextToIcon),
+            ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
+                .with_category(PropertyCategory::AppearanceLine).with_order(21).in_group(PropertyGroup::LabelNextToIcon),
         ]
     }
 
@@ -177,6 +200,18 @@ impl Primitive for TriangleUp {
             "fill_opacity" => {
                 if let Some(v) = value.as_number() {
                     self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                    return true;
+                }
+            }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.data.text.get_or_insert_with(PrimitiveText::default).font_size = v.clamp(8.0, 32.0);
+                    return true;
+                }
+            }
+            "text_h_align" => {
+                if let PropertyValue::String(v) = value {
+                    self.data.text.get_or_insert_with(PrimitiveText::default).h_align = TextAlign::from_str(v);
                     return true;
                 }
             }

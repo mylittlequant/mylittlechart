@@ -10,7 +10,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text, TextAlign,
     AREA_FILL_OPACITY, default_area_fill_opacity,
-    config::{ConfigProperty, PropertyValue, PropertyCategory},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Default)]
@@ -235,7 +235,36 @@ impl Primitive for Sign {
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
+    /// This type's `kind()` is `PrimitiveKind::Signal`, which
+    /// `Primitive::archetype()`'s own default maps to `Archetype::Icon`, NOT
+    /// `Archetype::Text` — despite living in the `annotations/` module
+    /// alongside the text-shaped types (W3, fifth wave, measured this before
+    /// declaring anything). Icon archetype was already done in the fourth
+    /// wave for `Flag`/`Emoji`; this brings Sign in line with THAT wave
+    /// instead — `icon_tabs()` (`mlc-ui-lab`'s `spec.rs`) declares a glyph
+    /// picker, a Rendering group and a LabelNextToIcon group.
+    ///
+    /// The glyph picker (`Row::Icons`) stays out — needs a property kind
+    /// this crate has none of yet (W4). Unlike `Flag` (no chosen-glyph field
+    /// at all) THIS type already carries the field a future picker would
+    /// bind to: `sign_type: SignType`, an 8-variant catalogue.
+    ///
+    /// Rendering needs no declaration: colour is the universal base-stroke
+    /// row every primitive without a level ladder already gets; `size` has
+    /// no single scalar to drive (`ts1,price1`/`ts2,price2`, two independent
+    /// points, set `calculate_size`); `IconOutlineToggle` has nothing to
+    /// gate (the stroke outline in `render` above is unconditional for
+    /// every `SignType` arm).
+    ///
+    /// LabelNextToIcon: font size / side, real `data.text` fields `render`'s
+    /// own `text_offset`/`text_x` match already reads — same pair `Flag`/
+    /// `Emoji` got in the fourth wave. "Show" and the free-text content stay
+    /// out for the same reason as there: no on/off field backs "Show", and
+    /// the content is not separately declared here either — same as those
+    /// two types, it goes through the existing Labels-tab text-content
+    /// surface `supports_text: true` opens, not a per-type property.
     fn style_properties(&self) -> Vec<ConfigProperty> {
+        let default_text = PrimitiveText::default();
         vec![
             ConfigProperty::fill(self.fill)
                 .with_category(PropertyCategory::AppearanceFill)
@@ -243,6 +272,10 @@ impl Primitive for Sign {
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
                 .with_category(PropertyCategory::AppearanceFill)
                 .with_order(1),
+            ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
+                .with_category(PropertyCategory::AppearanceLine).with_order(20).in_group(PropertyGroup::LabelNextToIcon),
+            ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
+                .with_category(PropertyCategory::AppearanceLine).with_order(21).in_group(PropertyGroup::LabelNextToIcon),
         ]
     }
 
@@ -252,6 +285,18 @@ impl Primitive for Sign {
             "fill_opacity" => {
                 if let Some(v) = value.as_number() {
                     self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                    return true;
+                }
+            }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.data.text.get_or_insert_with(PrimitiveText::default).font_size = v.clamp(8.0, 32.0);
+                    return true;
+                }
+            }
+            "text_h_align" => {
+                if let PropertyValue::String(v) = value {
+                    self.data.text.get_or_insert_with(PrimitiveText::default).h_align = TextAlign::from_str(v);
                     return true;
                 }
             }

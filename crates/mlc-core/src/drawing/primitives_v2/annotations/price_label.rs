@@ -9,7 +9,7 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, crisp,
     PLATE_FILL_OPACITY, default_plate_fill_opacity,
-    config::{ConfigProperty, PropertyValue, PropertyCategory},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -153,6 +153,17 @@ impl Primitive for PriceLabel {
 
     }
 
+    /// Text archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`,
+    /// fifth wave): `text_tabs()` — Font/Plate groups apply; no Content group
+    /// here, because the label text is always the formatted price
+    /// (`fmt_price(self.price)` in `render` above), never user-editable —
+    /// there is no free-text field this type reads for its own label.
+    ///
+    /// (`custom_text: Option<String>` looks like that field, but it is a
+    /// genuine dead field: declared, constructed to `None`, never read by
+    /// `render`, `text_properties` or `apply_text_property` here, and not
+    /// referenced anywhere else in the crate — reported, not wired, same as
+    /// `Comment`'s `author`/`timestamp` in this same wave.)
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
         let font_size = text_data.map(|t| t.font_size).unwrap_or(12.0);
@@ -163,16 +174,16 @@ impl Primitive for PriceLabel {
         Some(vec![
             ConfigProperty::font_size(font_size)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(0),
+                .with_order(0).in_group(PropertyGroup::Font),
             ConfigProperty::bold(bold)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(1),
+                .with_order(1).in_group(PropertyGroup::Font),
             ConfigProperty::italic(italic)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(2),
+                .with_order(2).in_group(PropertyGroup::Font),
             ConfigProperty::text_color(text_color)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(3),
+                .with_order(3).in_group(PropertyGroup::Font),
         ])
     }
 
@@ -211,6 +222,11 @@ impl Primitive for PriceLabel {
         false
     }
 
+    /// `show_line` is this type's own quirk (the dashed line out to the
+    /// axis) with no home in the design's groups, kept in the default run.
+    /// `fill`/`fill_opacity` are this type's Plate group — the price chip's
+    /// Background toggle + opacity, per [`PropertyGroup::Plate`]'s own
+    /// "differently-shaped but same-titled" placement.
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::show_line(self.show_line)
@@ -218,10 +234,10 @@ impl Primitive for PriceLabel {
                 .with_order(0),
             ConfigProperty::fill(self.fill)
                 .with_category(PropertyCategory::AppearanceFill)
-                .with_order(1),
+                .with_order(1).in_group(PropertyGroup::Plate),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
                 .with_category(PropertyCategory::AppearanceFill)
-                .with_order(2),
+                .with_order(2).in_group(PropertyGroup::Plate),
         ]
     }
 

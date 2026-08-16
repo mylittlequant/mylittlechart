@@ -9,7 +9,7 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, CONTROL_POINT_HIT_RADIUS,
     render_primitive_text, render_text_with_background, PLATE_FILL_OPACITY,
-    config::{ConfigProperty, PropertyValue, PropertyCategory},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -130,6 +130,19 @@ impl Primitive for AnchoredText {
         }
     }
 
+    /// Text archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`,
+    /// fifth wave): `text_tabs()` — Content/Font/Plate groups apply. Layout
+    /// (align/word-wrap/width) has no backing field on this type and the
+    /// design's align row is a pills control (W4) either way, so it stays
+    /// undeclared.
+    ///
+    /// Plate: `background` is the design's own "Background" toggle — a real
+    /// field `render`'s own `if self.background` branch already reads to
+    /// switch between a plated and a bare draw. There is no independent
+    /// background COLOUR or border/rounding/padding/shadow field: the plate
+    /// paints at a fixed translucent constant (`PLATE_FILL_OPACITY`) over
+    /// `data.color.fill.unwrap_or(stroke)`, never user-adjustable, so those
+    /// rows stay out rather than get a control over nothing.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or("");
@@ -141,22 +154,22 @@ impl Primitive for AnchoredText {
         Some(vec![
             ConfigProperty::content(content)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(0),
+                .with_order(0).in_group(PropertyGroup::Content),
             ConfigProperty::font_size(font_size)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(1),
+                .with_order(1).in_group(PropertyGroup::Font),
             ConfigProperty::bold(bold)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(2),
+                .with_order(2).in_group(PropertyGroup::Font),
             ConfigProperty::italic(italic)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(3),
+                .with_order(3).in_group(PropertyGroup::Font),
             ConfigProperty::text_color(color)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(4),
+                .with_order(4).in_group(PropertyGroup::Font),
             ConfigProperty::show_background(self.background)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(5),
+                .with_order(5).in_group(PropertyGroup::Plate),
         ])
     }
 
