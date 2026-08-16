@@ -15,16 +15,21 @@
 //! (`crate::layout::modals::primitive_settings::render_primitive_settings_modal`).
 //! `draw_ramps_row` (the four palettes) stays where it was.
 //!
-//! `PrimitiveSettingsState::{level_set, palette}` are what the prototype's
-//! own `DesignUiState` fields of the same name folded into on the app side
-//! (see their own doc comments on `PrimitiveSettingsState`); `composition()`
-//! below is the app's value-excluded-list view standing in for the
-//! prototype's own positive `composition: Vec<f64>` list — see its own doc
-//! comment for why that state-model difference exists. Every mutation
-//! (набор swap, add, delete, colour/width/style edits, palette recolour)
-//! happens in `crate::layout::modals::primitive_settings_intent` in
-//! response to the widget ids this module registers, mirrored 1:1 by
+//! `PrimitiveSettingsState::palette` is what the prototype's own
+//! `DesignUiState` field of the same name folded into on the app side (see
+//! its own doc comment on `PrimitiveSettingsState`); `composition()` below
+//! is the app's value-excluded-list view standing in for the prototype's
+//! own positive `composition: Vec<f64>` list — see its own doc comment for
+//! why that state-model difference exists. Every mutation (набор swap,
+//! add, delete, colour/width/style edits, palette recolour) happens in
+//! `crate::layout::modals::primitive_settings_intent` in response to the
+//! widget ids this module registers, mirrored 1:1 by
 //! `mlc-app/src/input/settings.rs` for the app-owned persistence half.
+//! Which набор the primitive's own composition currently matches (the
+//! prototype's deleted "Набор" row used to show this) is now
+//! `primitive_settings_intent::level_set_options_and_current` — a pure,
+//! tested read of `Primitive::level_set_presets()`, not a session-cached
+//! field.
 
 use crate::layout::render_frame::{PrimitiveSettingsResult, SliderTrackInfo};
 use crate::layout::modals::primitive_settings_intent::{is_fill_palette_mode, is_line_palette_mode};

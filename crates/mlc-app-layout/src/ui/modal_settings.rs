@@ -377,39 +377,27 @@ pub enum TimeDisplayMode {
     BarIndex,
 }
 
-/// Which canned level set the Levels tab's ladder COMPOSITION currently
-/// matches — a read-only derived classification
-/// ([`crate::layout::modals::primitive_settings_intent::current_level_set`]),
-/// not a control any more: the standalone "Набор" row + its own dropdown
-/// were deleted 2026-08-08 (owner review), and applying one of these value
-/// lists moved into the footer Template menu as a real
-/// [`mlc_core::templates::PrimitiveTemplate`] system row (2026-08-09,
-/// `PrimitiveTemplate::system_templates`) — this type carries no id/label
-/// of its own any more, only the four value lists themselves
-/// (`primitive_settings_intent::preset_values`), sourced from
-/// `mlc_core::drawing::primitives_v2::fibonacci::retracement::{MAIN_LEVELS,
-/// EXTENDED_LEVELS, KEY_ONLY_LEVELS, ALL_LEVELS}`. `Custom` is not a
-/// generator — it is what this classification reads as once the level
-/// VALUES on the primitive (not their colours) no longer match any of the
-/// four, per the approved spec: "как только тронул что-то руками, набор
-/// становится «Свой»".
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum LevelSet {
-    #[default]
-    Standard,
-    Extended,
-    KeyOnly,
-    All,
-    Custom,
-}
-
-impl LevelSet {
-    pub const PRESETS: [LevelSet; 4] = [LevelSet::Standard, LevelSet::Extended, LevelSet::KeyOnly, LevelSet::All];
-}
-
 // =============================================================================
 // Primitive Settings State
 // =============================================================================
+//
+// The standalone "Набор" row + its own dropdown were deleted 2026-08-08
+// (owner review) — applying one of a primitive's own level-set presets
+// moved into the footer Template menu as a real
+// `mlc_core::templates::PrimitiveTemplate` system row
+// (`PrimitiveTemplate::system_templates`, itself built off
+// `Primitive::level_set_presets`). The closed, Fibonacci-shaped `LevelSet`
+// enum that used to live here (`Standard`/`Extended`/`KeyOnly`/`All`/
+// `Custom`) and `PrimitiveSettingsState::level_set` that cached one — a
+// SECOND, hardcoded definition of "what a preset means" that could never
+// answer correctly for a Gann/pitchfork/time-zones type — were deleted
+// 2026-08-17 with nothing to replace them: no renderer ever read either
+// one (the footer menu above answers this question already, per-type, via
+// `Primitive::level_set_presets`). The generic, tested replacement for
+// "which набор does this composition match" is
+// `crate::layout::modals::primitive_settings_intent::level_set_options_and_current`
+// — a pure function of `&dyn Primitive` alone, not a cached field, so it
+// can never go stale the way the deleted field could.
 
 /// State for primitive settings modal
 #[derive(Clone, Debug, Default)]
@@ -522,11 +510,6 @@ pub struct PrimitiveSettingsState {
     /// Level value whose inspector row is expanded, if any. Value-keyed for
     /// the same reason `levels_excluded` is.
     pub selected_level: Option<f64>,
-    /// Which canned level set the ladder currently matches — the "Набор"
-    /// selector's own value. Recomputed after every composition-changing
-    /// action (add/delete/rename a level), not just when the user picks a
-    /// preset directly.
-    pub level_set: LevelSet,
     /// Index into the Levels tab's own palette table
     /// (`crate::layout::modals::primitive_settings_palettes::PALETTES`) for
     /// the chosen colour ramp.
@@ -572,7 +555,6 @@ impl PrimitiveSettingsState {
         self.levels_excluded.clear();
         self.level_overridden.clear();
         self.selected_level = None;
-        self.level_set = LevelSet::Standard;
         self.palette = 0;
         self.time_display_mode = TimeDisplayMode::Time;
         self.open_value_dropdown = None;

@@ -46,35 +46,15 @@
 //! `mlc-app` side, meaningless in a lab with no data plane).
 
 use mlc_core::drawing::primitives_v2::config::FibLevelConfig;
-use mlc_core::drawing::primitives_v2::fibonacci::retracement::{
-    ALL_LEVELS, EXTENDED_LEVELS, KEY_ONLY_LEVELS, MAIN_LEVELS,
-};
+use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
+use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::drawing::{LineStyle, TimeframeVisibilityConfig};
+use mlc_core::i18n::current_language;
 
 use crate::layout::modals::primitive_settings_palettes::PALETTES;
-use crate::ui::modal_settings::{LevelSet, PrimitiveSettingsState, TimeDisplayMode};
+use crate::ui::modal_settings::{PrimitiveSettingsState, TimeDisplayMode};
 
 const EPS: f64 = 1e-9;
-
-/// The value list a preset stands for. `Custom` has none — it is not a
-/// generator, see [`LevelSet`]. Sourced from
-/// `mlc_core::drawing::primitives_v2::fibonacci::retracement` — the single
-/// canonical home for these four lists (`KEY_ONLY_LEVELS`'s own "needs
-/// owner sign-off" flag lives there now too) — so this crate's own
-/// `current_level_set` (the Levels tab's own "which набор is this"
-/// display), `mlc-backend`'s creation-time `StyleReference::System`
-/// stamping, and `mlc_core::templates::PrimitiveTemplate::system_templates`
-/// (the Template menu's system rows) can never read two different
-/// definitions of the same preset.
-fn preset_values(set: LevelSet) -> &'static [f64] {
-    match set {
-        LevelSet::Standard => MAIN_LEVELS,
-        LevelSet::Extended => EXTENDED_LEVELS,
-        LevelSet::KeyOnly => KEY_ONLY_LEVELS,
-        LevelSet::All => ALL_LEVELS,
-        LevelSet::Custom => &[],
-    }
-}
 
 // =============================================================================
 // Уровни
@@ -214,7 +194,6 @@ pub fn apply_levels_intent(intent: &LevelsIntent, state: &mut PrimitiveSettingsS
                 state.selected_level = None;
             }
             set_level_config(configs, *level, |c| c.visible = false);
-            state.level_set = current_level_set(configs, state);
         }
         LevelsIntent::SetStyle(level, style) => {
             set_level_config(configs, *level, |c| c.style = style.as_str().to_string());
@@ -275,20 +254,55 @@ pub fn apply_levels_intent(intent: &LevelsIntent, state: &mut PrimitiveSettingsS
     }
 }
 
-fn matches_preset(composition: &[f64], set: LevelSet) -> bool {
-    let target = preset_values(set);
-    if composition.len() != target.len() {
-        return false;
-    }
-    target.iter().all(|v| composition.iter().any(|c| (*c - v).abs() < EPS))
+/// One набор `prim`'s own TYPE offers, as the Levels tab's own selector
+/// would read it: the id [`Primitive::level_set_presets`] names, paired
+/// with its localized display name for the CURRENT language — resolved
+/// here (a preset's `name` field is a bare `fn(Language) -> &'static str`,
+/// see [`mlc_core::drawing::primitives_v2::config::LevelSetPreset`]'s own
+/// doc) so a caller gets a ready-to-draw string, not a resolver to call
+/// again itself.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LevelSetOption {
+    pub id: &'static str,
+    pub name: &'static str,
 }
 
-/// The набор currently in effect: the first preset whose value set still
-/// matches the (non-excluded) composition, or `Custom` if none does.
-pub fn current_level_set(configs: &[FibLevelConfig], state: &PrimitiveSettingsState) -> LevelSet {
-    let composition: Vec<f64> =
-        configs.iter().map(|c| c.level).filter(|level| !state.is_level_excluded(*level)).collect();
-    LevelSet::PRESETS.into_iter().find(|s| matches_preset(&composition, *s)).unwrap_or(LevelSet::Custom)
+/// Which набор(ы) `prim`'s own TYPE offers, and which one (if any) its
+/// LIVE composition currently matches — "the modal asks the primitive",
+/// routed through EXACTLY the pair `mlc-backend`'s `DrawingManager::
+/// initial_style_reference` stamps `StyleReference::System` with:
+/// [`Primitive::level_set_presets`] for the catalogue,
+/// [`level_set_id_for_composition`] for the match, over the SAME
+/// VISIBLE-only composition that function reads (`level_configs().filter
+/// (|c| c.visible)`) — so the persisted creation-time stamp and this live
+/// read can never independently redefine "what a preset means" and drift
+/// apart. Every family that owns a preset catalogue seeds its FULL own
+/// value catalogue at construction with only the "standard" subset marked
+/// `visible` (see e.g. `gann::gann_fan::default_gann_fan_configs`) — an
+/// excluded-only filter (ignoring `visible`) reads a fresh instance of any
+/// of them as "all", not "standard"; visible-only is what actually agrees
+/// with the backend's own stamp.
+///
+/// Replaces the hardcoded four-entry Fibonacci list this function used to
+/// carry (`preset_values`/`matches_preset`, keyed off a closed `LevelSet`
+/// enum): that list narrowed EVERY level-having type's own composition
+/// toward Fibonacci ratios it never had, so a freshly placed Gann fan
+/// (etc.) could never read as its own "Standard" here — exactly the
+/// second, independently-drifting definition of "what a preset means"
+/// the owning [`Primitive::level_set_presets`] doc warns against.
+///
+/// Empty options and `None` current for a primitive with no level ladder
+/// at all (`level_set_presets()` empty) — never a fabricated
+/// Fibonacci-shaped answer for a type that never had one.
+pub fn level_set_options_and_current(prim: &dyn Primitive) -> (Vec<LevelSetOption>, Option<&'static str>) {
+    let lang = current_language();
+    let presets = prim.level_set_presets();
+    let options: Vec<LevelSetOption> =
+        presets.iter().map(|p| LevelSetOption { id: p.id, name: (p.name)(lang) }).collect();
+    let Some(levels) = prim.level_configs() else { return (options, None) };
+    let composition: Vec<f64> = levels.iter().filter(|c| c.visible).map(|c| c.level).collect();
+    let current = level_set_id_for_composition(presets, &composition);
+    (options, current)
 }
 
 /// Recolour every non-overridden level's own LINE colour (`cfg.color`) in
@@ -424,7 +438,6 @@ pub fn add_level(configs: &mut Vec<FibLevelConfig>, state: &mut PrimitiveSetting
     } else {
         configs.push(FibLevelConfig::new(level));
     }
-    state.level_set = current_level_set(configs, state);
 }
 
 /// Change a level's own VALUE — the ladder's "double-click to edit"
@@ -455,7 +468,6 @@ pub fn rename_level(configs: &mut [FibLevelConfig], state: &mut PrimitiveSetting
     if state.is_level_selected(old_level) {
         state.selected_level = Some(new_level);
     }
-    state.level_set = current_level_set(configs, state);
 }
 
 // =============================================================================
@@ -578,5 +590,138 @@ fn toggle_tf_class(tf: &mut TimeframeVisibilityConfig, class_id: &str) {
     let default_range = tf_class_default_range(class_id);
     let Some(slot) = tf_slot_mut(tf, class_id) else { return };
     *slot = if slot.is_some() { None } else { Some(default_range) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mlc_core::drawing::primitives_v2::config::LevelSetPreset;
+    use mlc_core::drawing::primitives_v2::fibonacci::retracement::{
+        LEVEL_SET_PRESETS as FIB_LEVEL_SET_PRESETS, MAIN_LEVELS,
+    };
+    use mlc_core::drawing::primitives_v2::fibonacci::time_zones::LEVEL_SET_PRESETS as TIME_ZONES_LEVEL_SET_PRESETS;
+    use mlc_core::drawing::primitives_v2::fibonacci::{FibRetracement, FibTimeZones};
+    use mlc_core::drawing::primitives_v2::gann::gann_box::LEVEL_SET_PRESETS as GANN_BOX_LEVEL_SET_PRESETS;
+    use mlc_core::drawing::primitives_v2::gann::gann_fan::LEVEL_SET_PRESETS as GANN_FAN_LEVEL_SET_PRESETS;
+    use mlc_core::drawing::primitives_v2::gann::gann_square::LEVEL_SET_PRESETS as GANN_SQUARE_LEVEL_SET_PRESETS;
+    use mlc_core::drawing::primitives_v2::gann::{GannBox, GannFan, GannSquare};
+    use mlc_core::drawing::primitives_v2::lines::TrendLine;
+    use mlc_core::drawing::primitives_v2::pitchforks::pitchfork::LEVEL_SET_PRESETS as PITCHFORK_LEVEL_SET_PRESETS;
+    use mlc_core::drawing::primitives_v2::pitchforks::Pitchfork;
+
+    /// `options` (the Levels tab's own set LIST for this primitive) must be
+    /// exactly `presets` (`Primitive::level_set_presets()`'s own catalogue)
+    /// — same ids, in the same order, each paired with that preset's own
+    /// localized name — never a hardcoded stand-in list.
+    fn assert_options_match_presets(options: &[LevelSetOption], presets: &'static [LevelSetPreset], label: &str) {
+        let lang = current_language();
+        assert_eq!(options.len(), presets.len(), "{label}: option count");
+        for (opt, preset) in options.iter().zip(presets.iter()) {
+            assert_eq!(opt.id, preset.id, "{label}: id");
+            assert_eq!(opt.name, (preset.name)(lang), "{label}: name");
+        }
+    }
+
+    /// A fibonacci retracement's Levels tab must keep listing exactly its
+    /// four sets, with the same names, and still mark "standard" as current
+    /// for a freshly placed instance — unchanged by this pass.
+    #[test]
+    fn fib_retracement_lists_its_four_sets_and_marks_standard_current() {
+        let fib = FibRetracement::new(0, 100.0, 1_000, 200.0, "#F7B93E");
+        let (options, current) = level_set_options_and_current(&fib);
+        assert_eq!(options.len(), 4);
+        assert_options_match_presets(&options, FIB_LEVEL_SET_PRESETS, "fib_retracement");
+        assert_eq!(current, Some("standard"));
+    }
+
+    /// Hiding one of a fresh fib retracement's own levels (unchecking its
+    /// row — `FibLevelConfig::visible = false`) must read as a custom
+    /// composition, not silently keep matching "standard" — this is a LIVE
+    /// read of the primitive's own current levels, not a one-time creation
+    /// snapshot.
+    #[test]
+    fn hiding_a_level_reads_as_custom() {
+        let mut fib = FibRetracement::new(0, 100.0, 1_000, 200.0, "#F7B93E");
+        let mut configs = fib.level_configs().expect("fib retracement has a level ladder");
+        let cfg = configs.iter_mut().find(|c| (c.level - MAIN_LEVELS[3]).abs() < 1e-9); // 0.5
+        cfg.expect("0.5 is a member of MAIN_LEVELS").visible = false;
+        fib.set_level_configs(configs);
+        let (_, current) = level_set_options_and_current(&fib);
+        assert_eq!(current, None);
+    }
+
+    /// A Gann fan now lists its OWN angle presets and marks its OWN
+    /// "standard" as current when freshly placed — the exact defect this
+    /// pass closes: the deleted hardcoded fib-only matcher would have
+    /// compared this composition against `MAIN_LEVELS` and always landed
+    /// on "Custom".
+    #[test]
+    fn gann_fan_lists_its_own_sets_and_marks_standard_current() {
+        let gann = GannFan::new(0, 100.0, 1_000, 200.0, "#00ff00");
+        let (options, current) = level_set_options_and_current(&gann);
+        assert_options_match_presets(&options, GANN_FAN_LEVEL_SET_PRESETS, "gann_fan");
+        assert_eq!(current, Some("standard"));
+        // Regression guard: a Gann fan's own angles are not Fibonacci price
+        // ratios — under the deleted matcher this composition could never
+        // equal `MAIN_LEVELS`, which is exactly why it always read "Custom".
+        for preset in GANN_FAN_LEVEL_SET_PRESETS {
+            assert_ne!(preset.values, MAIN_LEVELS, "gann_fan must not borrow retracement's ratios");
+        }
+    }
+
+    /// A Gann box lists its own fraction presets and marks its own
+    /// "standard" as current when freshly placed.
+    #[test]
+    fn gann_box_lists_its_own_sets_and_marks_standard_current() {
+        let gann = GannBox::new(0, 100.0, 1_000, 50.0, "#00ff00");
+        let (options, current) = level_set_options_and_current(&gann);
+        assert_options_match_presets(&options, GANN_BOX_LEVEL_SET_PRESETS, "gann_box");
+        assert_eq!(current, Some("standard"));
+    }
+
+    /// A Gann square lists its own ring presets and marks its own
+    /// "standard" as current when freshly placed.
+    #[test]
+    fn gann_square_lists_its_own_sets_and_marks_standard_current() {
+        let sq = GannSquare::new(0, 100.0, 1_000, 50.0, "#00ff00");
+        let (options, current) = level_set_options_and_current(&sq);
+        assert_options_match_presets(&options, GANN_SQUARE_LEVEL_SET_PRESETS, "gann_square");
+        assert_eq!(current, Some("standard"));
+    }
+
+    /// A pitchfork lists its own quarter/Fibonacci-ratio presets and marks
+    /// its own "standard" as current when freshly placed.
+    #[test]
+    fn pitchfork_lists_its_own_sets_and_marks_standard_current() {
+        let pf = Pitchfork::new(0, 100.0, 1_000_000, 150.0, 1_000_000, 50.0, "#F7B93E");
+        let (options, current) = level_set_options_and_current(&pf);
+        assert_options_match_presets(&options, PITCHFORK_LEVEL_SET_PRESETS, "pitchfork");
+        assert_eq!(current, Some("standard"));
+    }
+
+    /// A Fibonacci Time Zones instance lists its own bar-count presets —
+    /// never `retracement`'s price ratios, despite living in the same
+    /// module — and marks its own "standard" as current when freshly
+    /// placed.
+    #[test]
+    fn fib_time_zones_lists_its_own_sets_and_marks_standard_current() {
+        let tz = FibTimeZones::new(0, 100.0, "#F7B93E");
+        let (options, current) = level_set_options_and_current(&tz);
+        assert_options_match_presets(&options, TIME_ZONES_LEVEL_SET_PRESETS, "fib_time_zones");
+        assert_eq!(current, Some("standard"));
+        for preset in TIME_ZONES_LEVEL_SET_PRESETS {
+            assert_ne!(preset.values, MAIN_LEVELS, "time zones must not borrow retracement's ratios");
+        }
+    }
+
+    /// A primitive with no level ladder at all shows no set list and no
+    /// current id — never a fabricated (previously: empty Fibonacci) list.
+    #[test]
+    fn no_ladder_primitive_offers_no_sets() {
+        let trend_line = TrendLine::new(0, 100.0, 1_000, 200.0, "#2962ff");
+        let (options, current) = level_set_options_and_current(&trend_line);
+        assert!(options.is_empty());
+        assert_eq!(current, None);
+    }
 }
 
