@@ -2366,7 +2366,14 @@ impl ChartApp {
                         self.autosave_snapshot();
                         eprintln!("[ChartApp] prim_settings style_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
-                    PropertyType::Select { ref options } => {
+                    // `Pills` shares this arm: a Pills row's own segments
+                    // register `{fid}::opt:{value}` ids directly (handled
+                    // by the `"::opt:"` block above), but a row that fell
+                    // back to `Select`'s own dropdown control (too many
+                    // options for the available width — `pills_fits`) still
+                    // registers this bare `fid` as its cycle region, same as
+                    // any `Select` row, and must cycle the same way.
+                    PropertyType::Select { ref options } | PropertyType::Pills { ref options } => {
                         let current = prop_value.as_string().unwrap_or_default().to_string();
                         let current_idx = options.iter().position(|o| o.value == current).unwrap_or(0);
                         let next_idx = (current_idx + 1) % options.len().max(1);
@@ -2441,7 +2448,9 @@ impl ChartApp {
                         self.autosave_snapshot();
                         eprintln!("[ChartApp] prim_settings level_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
-                    PropertyType::Select { ref options } => {
+                    // See the `style_prop:` block's own Select|Pills arm
+                    // doc above — same reasoning, Level family.
+                    PropertyType::Select { ref options } | PropertyType::Pills { ref options } => {
                         let current = prop_value.as_string().unwrap_or_default().to_string();
                         let current_idx = options.iter().position(|o| o.value == current).unwrap_or(0);
                         let next_idx = (current_idx + 1) % options.len().max(1);
@@ -2509,7 +2518,9 @@ impl ChartApp {
                         }
                         eprintln!("[ChartApp] prim_settings text_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
-                    PropertyType::Select { ref options } => {
+                    // See the `style_prop:` block's own Select|Pills arm
+                    // doc above — same reasoning, Text family.
+                    PropertyType::Select { ref options } | PropertyType::Pills { ref options } => {
                         let current = prop_value.as_string().unwrap_or_default().to_string();
                         let current_idx = options.iter().position(|o| o.value == current).unwrap_or(0);
                         let next_idx = (current_idx + 1) % options.len().max(1);

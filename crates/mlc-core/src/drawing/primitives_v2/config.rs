@@ -604,6 +604,22 @@ pub enum PropertyType {
     Select {
         options: Vec<SelectOption>,
     },
+    /// Segmented single-choice control — same closed option list a
+    /// `Select` carries (reuses [`SelectOption`], never a parallel shape;
+    /// see [`ConfigProperty::pills`]'s own doc) rendered as adjacent
+    /// buttons showing every option at once instead of a dropdown hiding
+    /// all but one. Wire shape is identical to `Select` — a
+    /// `PropertyValue::String` naming one of `options`' own values — so
+    /// applying a click on any segment reaches the exact same
+    /// `apply_{style,text,level}_property` path an existing `Select` row
+    /// already does; only the presentation differs. A row whose own
+    /// segments would not fit the modal's current width degrades to
+    /// `Select`'s own dropdown control rather than overflow — see
+    /// `mlc-app-layout`'s `primitive_settings_property::draw_property_row`'s
+    /// `Pills` arm and `primitive_settings_intent::pills_fits`.
+    Pills {
+        options: Vec<SelectOption>,
+    },
     /// Line style selector
     LineStyle,
     /// Text input
@@ -1512,6 +1528,25 @@ impl ConfigProperty {
             id: id.to_string(),
             name: name.to_string(),
             prop_type: PropertyType::Select { options },
+            value: PropertyValue::String(value.to_string()),
+            category: PropertyCategory::AppearanceLine,
+            order: 0,
+            readonly: false,
+            tooltip: None,
+            group: None,
+        }
+    }
+
+    /// Create a pills (segmented single-choice) property — mirrors
+    /// [`Self::select`] byte-for-byte apart from `prop_type`: same id,
+    /// same `PropertyValue::String` wire shape, same options list. See
+    /// [`PropertyType::Pills`]'s own doc for why the two are wire-
+    /// identical and only the rendered control differs.
+    pub fn pills(id: &str, name: &str, value: &str, options: Vec<SelectOption>) -> Self {
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            prop_type: PropertyType::Pills { options },
             value: PropertyValue::String(value.to_string()),
             category: PropertyCategory::AppearanceLine,
             order: 0,

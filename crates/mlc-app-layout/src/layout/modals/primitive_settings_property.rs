@@ -9,9 +9,11 @@
 //! (position within that group). A tab body buckets the primitive's own
 //! declared properties by category, sorts each bucket by `order`, and
 //! renders every row from its own `PropertyType` — colour swatch, slider,
-//! checkbox, cycle button, single-line input — via the helpers already used
-//! for the base `PrimitiveData` fields (`primitive_settings_vid::{draw_label,
-//! draw_bool_row, draw_slider_row, draw_split_value_control, line_style_display_name}`).
+//! checkbox, cycle button, segmented pills (or the same cycle button when
+//! the row's own options do not fit — see the `Pills` arm), single-line
+//! input — via the helpers already used for the base `PrimitiveData` fields
+//! (`primitive_settings_vid::{draw_label, draw_bool_row, draw_slider_row,
+//! draw_split_value_control, draw_toggle_segment, line_style_display_name}`).
 //! A category nobody declared into collects zero properties, so the caller's
 //! `if !rows.is_empty()` naturally draws nothing for it — no header, no gap,
 //! no reserved height.
@@ -35,9 +37,10 @@ use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType, WidgetTheme};
 use crate::layout::render_frame::PrimitiveSettingsResult;
 
+use super::primitive_settings_intent::{pills_fits, pills_segments, PILLS_SEGMENT_GAP};
 use super::primitive_settings_vid::{
-    draw_bool_row, draw_label, draw_slider_row, draw_split_value_control, line_style_display_name, SplitValueKind,
-    ROW_H,
+    draw_bool_row, draw_label, draw_slider_row, draw_split_value_control, draw_toggle_segment,
+    line_style_display_name, SplitValueKind, ROW_H,
 };
 
 /// One declared property plus which generically-dispatchable family it came
@@ -246,6 +249,40 @@ pub(crate) fn draw_property_row(
                 ctx, toolbar_theme, state, result, rect, &fid, &display,
                 SplitValueKind::Select { options: opts, current },
             );
+        }
+        // A `Pills` row draws its own options as adjacent segments when
+        // they fit the row's own width (`pills_fits`), and degrades to the
+        // exact same control a `Select` row draws otherwise (W4's own
+        // "fall back honestly" rule — never overflow the modal). Either
+        // way the click id a segment or dropdown option registers is
+        // `{fid}::opt:{value}` — the SAME id a `Select` row's own dropdown
+        // option already registers (`draw_value_dropdown`), so both shapes
+        // reach the existing `"::opt:"` apply path with zero new dispatch
+        // code (see `pills_segments`'s own doc).
+        PropertyType::Pills { options } => {
+            draw_label(ctx, toolbar_theme, x0, label_col, y, &prop.name);
+            let current = prop.value.as_string().unwrap_or("").to_string();
+            let control_w = (x1 - (x0 + label_col)).max(100.0);
+            if pills_fits(options.len(), control_w) {
+                let n = options.len() as f64;
+                let gap_total = PILLS_SEGMENT_GAP * (n - 1.0).max(0.0);
+                let seg_w = ((control_w - gap_total) / n).max(0.0);
+                let mut seg_x = x0 + label_col;
+                for seg in pills_segments(&fid, options, &current) {
+                    let rect = WidgetRect::new(seg_x, y + 2.0, seg_w, ROW_H - 4.0);
+                    draw_toggle_segment(ctx, toolbar_theme, rect, &seg.label, seg.active);
+                    result.content_items.push((seg.click_id, rect));
+                    seg_x += seg_w + PILLS_SEGMENT_GAP;
+                }
+            } else {
+                let display = options.iter().find(|o| o.value == current).map(|o| o.label.clone()).unwrap_or_else(|| current.clone());
+                let rect = WidgetRect::new(x0 + label_col, y + 2.0, control_w, ROW_H - 4.0);
+                let opts: Vec<(String, String)> = options.iter().map(|o| (o.value.clone(), o.label.clone())).collect();
+                draw_split_value_control(
+                    ctx, toolbar_theme, state, result, rect, &fid, &display,
+                    SplitValueKind::Select { options: opts, current },
+                );
+            }
         }
         PropertyType::Text { .. } => {
             draw_label(ctx, toolbar_theme, x0, label_col, y, &prop.name);

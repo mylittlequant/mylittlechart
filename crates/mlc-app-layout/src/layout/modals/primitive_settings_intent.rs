@@ -45,7 +45,7 @@
 //! `snapshot_primitive_settings_to_user_manager` — real only on the
 //! `mlc-app` side, meaningless in a lab with no data plane).
 
-use mlc_core::drawing::primitives_v2::config::FibLevelConfig;
+use mlc_core::drawing::primitives_v2::config::{FibLevelConfig, SelectOption};
 use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
 use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::drawing::{LineStyle, TimeframeVisibilityConfig};
@@ -640,6 +640,83 @@ fn toggle_tf_class(tf: &mut TimeframeVisibilityConfig, class_id: &str) {
     *slot = if slot.is_some() { None } else { Some(default_range) };
 }
 
+// =============================================================================
+// Pills (W4, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`)
+// =============================================================================
+//
+// A `PropertyType::Pills` row's own three questions — "which segments, which
+// is active, what does a click on segment N mean" — read as one pure
+// function over `(field_id, options, current)`, not logic trapped inside
+// `primitive_settings_property::draw_property_row`'s `Pills` arm. Same
+// discipline `level_set_options_and_current`/`add_level_quick_chips` above
+// follow for the Levels tab's own derived rows.
+
+/// Minimum width (px) one Pills segment may shrink to before a row gives up
+/// on fitting its segments side by side and degrades to `Select`'s own
+/// dropdown control (`primitive_settings_property::draw_property_row`'s
+/// `Pills` arm — "fall back honestly", W4's own rule: never overflow the
+/// modal). Not invented for this row: it is the exact floor the closest
+/// existing kin to a Pills row already ships at — the Levels tab's own
+/// two-way "Линии"/"Заливка" mode toggle (`primitive_settings_levels`'s
+/// `line_seg_w`/`fill_seg_w`, both `(measured_text_width + 16.0).max(56.0)`).
+pub const PILLS_MIN_SEGMENT_W: f64 = 56.0;
+
+/// Gap (px) between two adjacent Pills segments — the same spacing
+/// `primitive_settings_levels`'s own two-way mode toggle already draws
+/// between its two segments (`mono_rect.right() + 4.0`), named here instead
+/// of a second bare `4.0` so a future change to that spacing has one place
+/// to make it.
+pub const PILLS_SEGMENT_GAP: f64 = 4.0;
+
+/// Whether `options_len` Pills segments fit side by side in `control_w`
+/// without any one shrinking below [`PILLS_MIN_SEGMENT_W`]. Zero options
+/// never fit — a `Pills` row declared with an empty options list is a bug
+/// in the caller, not a case this treats as fitting.
+pub fn pills_fits(options_len: usize, control_w: f64) -> bool {
+    if options_len == 0 {
+        return false;
+    }
+    let n = options_len as f64;
+    let gap_total = PILLS_SEGMENT_GAP * (n - 1.0).max(0.0);
+    let per_segment = (control_w - gap_total) / n;
+    per_segment >= PILLS_MIN_SEGMENT_W
+}
+
+/// One Pills row's own segment, in declared order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PillsSegment {
+    /// The segment's own visible label — `SelectOption::label`, unchanged.
+    pub label: String,
+    /// Whether this segment is the row's own CURRENTLY active option.
+    pub active: bool,
+    /// `{field_id}::opt:{value}` — IDENTICAL in shape to a `Select` row's
+    /// own dropdown-option click id
+    /// (`mlc-app-layout`'s `primitive_settings_vid::draw_value_dropdown`,
+    /// `format!("{}::opt:{}", anchor.field_id, value)`). A click on ANY
+    /// segment therefore reaches the exact same apply path an existing
+    /// `Select` dropdown option already does (`mlc-app`'s
+    /// `input/settings.rs`, the `"::opt:"` block) — zero new dispatch code,
+    /// per this wave's own rule against a second parser.
+    pub click_id: String,
+}
+
+/// `options` (a `Pills` row's own declared option list), read as the row's
+/// own segments: each paired with whether it is the CURRENTLY active
+/// option (`opt.value == current`) and the click id a tap on it registers
+/// under. `field_id` is the row's own already-prefixed id
+/// (`style_prop:{id}`/`text_prop:{id}`/`level_prop:{id}`, from
+/// `primitive_settings_property::field_id`).
+pub fn pills_segments(field_id: &str, options: &[SelectOption], current: &str) -> Vec<PillsSegment> {
+    options
+        .iter()
+        .map(|opt| PillsSegment {
+            label: opt.label.clone(),
+            active: opt.value == current,
+            click_id: format!("{field_id}::opt:{}", opt.value),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -871,6 +948,69 @@ mod tests {
         let trend_line = TrendLine::new(0, 100.0, 1_000, 200.0, "#2962ff");
         assert!(trend_line.level_set_presets().is_empty());
         assert!(add_level_quick_chips(&trend_line, &[]).is_empty());
+    }
+
+    // =========================================================================
+    // Pills — `pills_segments`/`pills_fits` (W4).
+    // =========================================================================
+
+    /// `pills_segments` marks exactly the option matching `current` as
+    /// active and encodes every click id as `{field_id}::opt:{value}` — the
+    /// same suffix shape a `Select` row's own dropdown option already uses
+    /// (see [`pills_segments`]'s own doc for why that matters).
+    #[test]
+    fn pills_segments_marks_the_current_value_active_and_encodes_opt_click_ids() {
+        let options = vec![
+            SelectOption::new("start", "Left"),
+            SelectOption::new("center", "Center"),
+            SelectOption::new("end", "Right"),
+        ];
+        let segs = pills_segments("style_prop:text_h_align", &options, "center");
+        assert_eq!(segs.len(), 3);
+        assert!(!segs[0].active);
+        assert!(segs[1].active);
+        assert!(!segs[2].active);
+        assert_eq!(segs[0].click_id, "style_prop:text_h_align::opt:start");
+        assert_eq!(segs[1].click_id, "style_prop:text_h_align::opt:center");
+        assert_eq!(segs[2].click_id, "style_prop:text_h_align::opt:end");
+    }
+
+    /// A `current` value that names none of the options (a freshly declared
+    /// row whose value has not settled to any of them yet) marks nothing
+    /// active — never a fabricated first-option default.
+    #[test]
+    fn pills_segments_current_not_among_options_marks_none_active() {
+        let options = vec![SelectOption::new("a", "A"), SelectOption::new("b", "B")];
+        let segs = pills_segments("text_prop:x", &options, "z");
+        assert!(segs.iter().all(|s| !s.active));
+    }
+
+    /// Two segments comfortably fit a wide row.
+    #[test]
+    fn pills_fits_two_narrow_options_in_a_wide_row() {
+        assert!(pills_fits(2, 200.0));
+    }
+
+    /// Six segments at the 56px floor plus five 4px gaps need 356px total —
+    /// a 200px row cannot hold them, so the row must fall back to `Select`.
+    #[test]
+    fn pills_fits_refuses_many_options_in_a_narrow_row() {
+        assert!(!pills_fits(6, 200.0));
+    }
+
+    /// The boundary itself: two segments with one gap need exactly
+    /// `2 * 56.0 + 4.0 = 116.0`px — fits at 116, refuses at 115.
+    #[test]
+    fn pills_fits_exact_boundary() {
+        assert!(pills_fits(2, 116.0));
+        assert!(!pills_fits(2, 115.0));
+    }
+
+    /// A `Pills` row declared with zero options never fits — there is
+    /// nothing to click, so this is not a degenerate "always fits" case.
+    #[test]
+    fn pills_fits_zero_options_never_fits() {
+        assert!(!pills_fits(0, 1000.0));
     }
 }
 
