@@ -10,8 +10,10 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, ControlPointCursor, PrimitiveColor,
+    PrimitiveText,
     RenderContext, CONTROL_POINT_RADIUS,
     render_primitive_text, TextAlign,
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 /// Available emoji/icon types
@@ -1203,6 +1205,66 @@ impl Primitive for Emoji {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    /// Icon archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`):
+    /// `icon_tabs()` (`mlc-ui-lab`'s `spec.rs`, reference type "flag")
+    /// declares a glyph picker, a Rendering group (colour/size/outline) and
+    /// a LabelNextToIcon group on the "icon" subject tab.
+    ///
+    /// The glyph picker (`Row::Icons`) stays OUT — it needs a property kind
+    /// this crate has none of yet (W4; see `PropertyGroup`'s own doc for why
+    /// no variant exists for it either). Unlike `Flag`/`Image`, THIS type
+    /// already carries the exact field a future picker would bind to:
+    /// `emoji_type: EmojiType`, a 34-variant catalogue that already has
+    /// `id()`/`label()`/`svg()`/`from_id()` — W4's picker can enumerate
+    /// `EmojiType::all()` directly, no new catalogue needed.
+    ///
+    /// Rendering's colour needs no declaration — the bespoke base-stroke row
+    /// (`primitive_settings_vid`'s own doc) already writes `data.color.stroke`,
+    /// the same colour `render_icon` reads for every glyph. Its `size` and
+    /// `IconOutlineToggle` rows stay out: this primitive's on-screen size is
+    /// TWO independent radii (`radius_ms`/`radius_price`, set by dragging the
+    /// corner/edge control points), not one scalar a slider could drive, and
+    /// every glyph's fill/stroke mix is fixed per `EmojiType` match arm — there
+    /// is no "outline on/off" branch in `render_icon` to gate.
+    ///
+    /// LabelNextToIcon: font size / side, both real `data.text` fields
+    /// `render`'s own `text_offset`/`text_x` match already reads — same shape
+    /// as `Rectangle`'s `TextOnShape` pair (W3 second wave) and `Flag`'s
+    /// identical pair (W3 fourth wave). "Show" and the free-text content
+    /// itself stay out: no on/off field backs "Show" (content emptiness is
+    /// the only signal, as everywhere else this wave has found it), and the
+    /// content is already editable through the existing Labels-tab text-
+    /// content block — a second control for the same field would duplicate
+    /// it, not add one.
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        let default_text = PrimitiveText::default();
+        vec![
+            ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
+                .with_category(PropertyCategory::AppearanceLine).with_order(20).in_group(PropertyGroup::LabelNextToIcon),
+            ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
+                .with_category(PropertyCategory::AppearanceLine).with_order(21).in_group(PropertyGroup::LabelNextToIcon),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.data.text.get_or_insert_with(PrimitiveText::default).font_size = v.clamp(8.0, 32.0);
+                    return true;
+                }
+            }
+            "text_h_align" => {
+                if let PropertyValue::String(v) = value {
+                    self.data.text.get_or_insert_with(PrimitiveText::default).h_align = TextAlign::from_str(v);
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        false
+    }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

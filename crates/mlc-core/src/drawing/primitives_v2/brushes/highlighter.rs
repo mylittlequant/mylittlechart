@@ -7,7 +7,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext,
-    config::{ConfigProperty, PropertyValue, PropertyCategory},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -113,13 +113,31 @@ impl Primitive for Highlighter {
         // (0.4) over a dark chart is what read as a muddy, khaki-looking
         // stroke instead of a bright highlighter; this at least lets the
         // owner brighten it per-primitive instead of only via the source default.
+        //
+        // Brush archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`):
+        // same "Stroke" group as `Brush::style_properties` (see that file's
+        // own doc — the group repeats the tab's own title, `Archetype::Brush`'s
+        // `ConceptKey::StrokeGroupTitle`). `opacity` IS the lab's Stroke-group
+        // "opacity" row here — `render` applies it to `data.color.stroke`
+        // itself (`apply_opacity`), so it is the STROKE's own alpha, not a
+        // fill; recategorised out of `AppearanceFill` (its home before this
+        // wave — a naming leftover from reusing the `fill_opacity` slider-
+        // shape constructor for a field that was never a fill) into
+        // `AppearanceLine`'s "Stroke" group, alongside `brush_size`, so both
+        // land in the SAME named run instead of two separate ones split
+        // across the Line/Fill categories. Point shape / Fill closed outline
+        // stay out for the identical reasons `Brush::style_properties`
+        // documents (no smoothing/cap/fill field or render branch on this
+        // type either).
         vec![
             ConfigProperty::fill_opacity(self.opacity * 100.0)
-                .with_category(PropertyCategory::AppearanceFill)
-                .with_order(20),
+                .with_category(PropertyCategory::AppearanceLine)
+                .with_order(20)
+                .in_group(PropertyGroup::Stroke),
             ConfigProperty::number("brush_size", ConfigKey::BrushSize.get(current_language()), self.brush_size, Some(4.0), Some(60.0))
                 .with_category(PropertyCategory::AppearanceLine)
-                .with_order(21),
+                .with_order(21)
+                .in_group(PropertyGroup::Stroke),
         ]
     }
 

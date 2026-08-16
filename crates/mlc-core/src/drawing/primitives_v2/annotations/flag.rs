@@ -4,13 +4,14 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{SettingsKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, crisp,
     render_primitive_text, TextAlign,
     AREA_FILL_OPACITY, default_area_fill_opacity,
-    config::{ConfigProperty, PropertyValue, PropertyCategory},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -181,6 +182,43 @@ impl Primitive for Flag {
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
+        // Icon archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`):
+        // `icon_tabs()` (`mlc-ui-lab`'s `spec.rs`) — this crate's `Flag` is
+        // its reference concept type — declares a glyph picker, a Rendering
+        // group (colour/size/outline) and a LabelNextToIcon group on the
+        // "icon" subject tab. `fill`/`fill_opacity` are a `Flag`-only quirk
+        // the archetype has no group for (the lab draws no fill row at all
+        // for the Icon archetype) — kept in the category's own default,
+        // unnamed run, exactly as before this wave; per this plan's own
+        // overriding rule a quirk with no archetype home stays visible, not
+        // dropped, and an unnamed default run is a visible home.
+        //
+        // Rendering: colour is a real gap this wave closes — `flag_color`
+        // (the BANNER's own colour, distinct from `data.color.stroke`, the
+        // POLE's) is read unconditionally by `render`'s banner outline and
+        // conditionally by its fill, but had no declared control at all
+        // before this wave — same "field exists, nothing reaches it from
+        // the modal" gap `Brush::style_properties` closed for `brush_size`.
+        // `size`/`IconOutlineToggle` stay out: this primitive's on-screen
+        // size comes from two independent points (`ts1,price1`/`ts2,price2`,
+        // dragged directly), not one scalar a slider could drive, and the
+        // banner's outline stroke is unconditional in `render` — there is no
+        // on/off branch to gate.
+        //
+        // LabelNextToIcon: font size / side, both real `data.text` fields
+        // `render`'s own `text_offset`/`text_x` match already reads — same
+        // shape as `Rectangle`'s `TextOnShape` pair (W3 second wave).
+        // "Show" and the free-text content itself stay out: no on/off field
+        // backs "Show" (content emptiness is the only signal, as everywhere
+        // else this wave has found it), and the content is already editable
+        // through the existing Labels-tab text-content block — a second
+        // control for the same field would duplicate it, not add one. The
+        // glyph picker itself (`Row::Icons`) needs a property kind this
+        // crate has none of yet (W4) — `Flag` has no chosen-icon field at
+        // all (it always draws the same pole+banner shape), so unlike
+        // `Emoji` there is nothing for a future picker to bind to here
+        // without a new field first.
+        let default_text = PrimitiveText::default();
         vec![
             ConfigProperty::fill(self.fill)
                 .with_category(PropertyCategory::AppearanceFill)
@@ -188,6 +226,12 @@ impl Primitive for Flag {
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
                 .with_category(PropertyCategory::AppearanceFill)
                 .with_order(1),
+            ConfigProperty::color("flag_color", SettingsKey::Color.get(current_language()), &self.flag_color)
+                .with_category(PropertyCategory::AppearanceLine).with_order(20).in_group(PropertyGroup::Rendering),
+            ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
+                .with_category(PropertyCategory::AppearanceLine).with_order(21).in_group(PropertyGroup::LabelNextToIcon),
+            ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
+                .with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::LabelNextToIcon),
         ]
     }
 
@@ -197,6 +241,24 @@ impl Primitive for Flag {
             "fill_opacity" => {
                 if let Some(v) = value.as_number() {
                     self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
+                    return true;
+                }
+            }
+            "flag_color" => {
+                if let Some(v) = value.as_color() {
+                    self.flag_color = v.to_string();
+                    return true;
+                }
+            }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.data.text.get_or_insert_with(PrimitiveText::default).font_size = v.clamp(8.0, 32.0);
+                    return true;
+                }
+            }
+            "text_h_align" => {
+                if let PropertyValue::String(v) = value {
+                    self.data.text.get_or_insert_with(PrimitiveText::default).h_align = TextAlign::from_str(v);
                     return true;
                 }
             }

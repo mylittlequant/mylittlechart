@@ -7,7 +7,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, LineStyle,
-    config::{ConfigProperty, PropertyValue, PropertyCategory},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -135,11 +135,45 @@ impl Primitive for Brush {
     /// `data.width` the moment the base-stroke row's own width control was
     /// used). Mirrors `Highlighter::style_properties`'s identical fix for
     /// the same field, same bounds shape.
+    ///
+    /// Brush archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`):
+    /// `brush_tabs()` (`mlc-ui-lab`'s `spec.rs`) puts colour/width/opacity/
+    /// style under a "Stroke" group whose own title is the SAME key as the
+    /// tab label itself (`ConceptKey::StrokeGroupTitle` — see
+    /// `subject_tab_label`'s `Archetype::Brush` arm) — the design repeats
+    /// the subject word as the first group's own header too. `brush_size`
+    /// is pulled into that group so it reads as belonging with the base
+    /// stroke row rather than as an unlabeled extra.
+    ///
+    /// Colour/width/line style need no separate declaration: the bespoke
+    /// base-stroke row every primitive without a level ladder already gets
+    /// (`primitive_settings_vid`'s own doc) supplies exactly those three,
+    /// reading/writing `data.color`/`data.width`/`data.style` directly.
+    ///
+    /// The lab's own "opacity" row in this group stays out: unlike
+    /// `Highlighter` (see that file's own doc), `Brush` has no opacity field
+    /// of any kind — `render` strokes at full alpha — so there is nothing to
+    /// wire a slider to.
+    ///
+    /// `PropertyGroup::PointShape` (smooth / smoothing-strength / round-caps
+    /// / close-outline) is left out entirely: `render` always draws rounded
+    /// caps/joins and always applies the SAME fixed quadratic-bezier
+    /// smoothing to every stroke with 3+ points (see the `set_line_cap` call
+    /// above's own comment) — none of the four toggles/sliders the lab
+    /// draws has a field, a strength parameter, or a conditional branch
+    /// behind it; the smoothing is not optional today.
+    ///
+    /// `PropertyGroup::FillClosedOutline` is also left out: a brush stroke
+    /// has no fill concept at all — `render`'s only `ctx.fill()` call is the
+    /// degenerate single-point case (a stroke-coloured dot, not a togglable
+    /// fill), so `fill`/`closed`/a separate fill colour have nothing to
+    /// read from.
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::number("brush_size", ConfigKey::BrushSize.get(current_language()), self.brush_size, Some(1.0), Some(20.0))
                 .with_category(PropertyCategory::AppearanceLine)
-                .with_order(20),
+                .with_order(20)
+                .in_group(PropertyGroup::Stroke),
         ]
     }
 
