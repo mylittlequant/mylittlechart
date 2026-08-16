@@ -871,6 +871,78 @@ pub fn point_to_ray_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f6
     (ddx * ddx + ddy * ddy).sqrt()
 }
 
+/// Extend a screen-space segment `(x1,y1)-(x2,y2)` horizontally to the panel
+/// edges, independently per side: `extend_left` walks the `(x1,y1)` end back
+/// along the segment's own slope to `x = 0`; `extend_right` walks the
+/// `(x2,y2)` end forward to `x = chart_width`. A side left `false` keeps its
+/// original anchor untouched — the return value is `(x1,y1,x2,y2)` unchanged
+/// when both flags are `false`.
+///
+/// Same per-side slope-projection math as `TrendLine`'s own `ExtendMode`
+/// render arms (`lines/trend_line.rs`), the working reference this
+/// generalizes — parameterized by two independent bools instead of one
+/// shared enum because the channel family (`channels/*.rs`,
+/// `regression_trend.rs`) needs each side toggleable across MULTIPLE
+/// boundary lines with independent slopes (`disjoint_channel`'s two lines
+/// are not parallel), not one mode shared by a single line. Callers use the
+/// SAME returned coordinates for both the drawn stroke and the hit-test
+/// segment, so a click reaches exactly as far as the line is actually drawn.
+///
+/// Near-vertical segments (`dx` ~ 0) fall back to a large parametric `t`
+/// rather than a defined intersection — a segment with (about) zero
+/// horizontal run has no meaningful "reach the edge" height, so this keeps
+/// `TrendLine`'s own guard-band intent (`-1000.0`/`1000.0`) without
+/// hardcoding the literal at every call site.
+pub fn extend_segment_to_edges(
+    x1: f64, y1: f64, x2: f64, y2: f64,
+    extend_left: bool, extend_right: bool,
+    chart_width: f64,
+) -> (f64, f64, f64, f64) {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let (ex1, ey1) = if extend_left {
+        let t = if dx.abs() > 0.001 { -x1 / dx } else { -1000.0 };
+        (0.0, y1 + dy * t)
+    } else {
+        (x1, y1)
+    };
+    let (ex2, ey2) = if extend_right {
+        let t = if dx.abs() > 0.001 { (chart_width - x1) / dx } else { 1000.0 };
+        (chart_width, y1 + dy * t)
+    } else {
+        (x2, y2)
+    };
+    (ex1, ey1, ex2, ey2)
+}
+
+#[cfg(test)]
+mod extend_segment_to_edges_tests {
+    use super::extend_segment_to_edges;
+
+    /// Neither side extended: the segment is returned byte-for-byte, the
+    /// exact "today's rendering" guarantee every new `extend_left`/
+    /// `extend_right` field on the channel family relies on.
+    #[test]
+    fn no_extension_returns_original_segment() {
+        let (x1, y1, x2, y2) = extend_segment_to_edges(100.0, 50.0, 300.0, 150.0, false, false, 1200.0);
+        assert_eq!((x1, y1, x2, y2), (100.0, 50.0, 300.0, 150.0));
+    }
+
+    /// Extending reaches the panel edges and moves the reached endpoint
+    /// FURTHER from the original segment's own midpoint than the
+    /// unextended endpoint was — the "reaches further" behaviour every
+    /// extend-geometry test in the channel family asserts.
+    #[test]
+    fn extension_reaches_further_than_unextended_segment() {
+        let (ux1, _uy1, ux2, _uy2) = extend_segment_to_edges(100.0, 50.0, 300.0, 150.0, false, false, 1200.0);
+        let (ex1, _ey1, ex2, _ey2) = extend_segment_to_edges(100.0, 50.0, 300.0, 150.0, true, true, 1200.0);
+        assert_eq!(ex1, 0.0, "extend_left reaches the left panel edge exactly");
+        assert_eq!(ex2, 1200.0, "extend_right reaches the right panel edge exactly");
+        assert!(ex1 < ux1, "extended left endpoint is further left than the unextended one");
+        assert!(ex2 > ux2, "extended right endpoint is further right than the unextended one");
+    }
+}
+
 // =============================================================================
 // Stroke hit-testing — shared by every family whose `hit_test` must cover
 // every segment its `render` actually draws (doctrine: every drawn edge is

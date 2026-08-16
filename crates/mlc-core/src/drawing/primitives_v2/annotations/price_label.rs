@@ -59,6 +59,18 @@ impl PriceLabel {
             12.0
         }
     }
+
+    /// The label's own drawn text: `custom_text` when set to a non-empty
+    /// string, the formatted price otherwise — the single source of truth
+    /// `render` reads, so `custom_text: None` renders byte-for-byte what
+    /// `fmt_price(self.price)` alone used to produce.
+    fn display_text(&self) -> String {
+        self.custom_text
+            .as_deref()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| super::super::fmt_price(self.price))
+    }
 }
 
 impl Primitive for PriceLabel {
@@ -111,8 +123,9 @@ impl Primitive for PriceLabel {
         };
         ctx.set_font(&font);
 
-        // Price text
-        let price_text = super::super::fmt_price(self.price);
+        // Price text — `custom_text` when set, the formatted price
+        // otherwise (`display_text`'s own doc).
+        let price_text = self.display_text();
 
         // Measure actual text width and calculate label dimensions
         let text_width = ctx.measure_text(&price_text);
@@ -154,16 +167,14 @@ impl Primitive for PriceLabel {
     }
 
     /// Text archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`,
-    /// fifth wave): `text_tabs()` — Font/Plate groups apply; no Content group
-    /// here, because the label text is always the formatted price
-    /// (`fmt_price(self.price)` in `render` above), never user-editable —
-    /// there is no free-text field this type reads for its own label.
-    ///
-    /// (`custom_text: Option<String>` looks like that field, but it is a
-    /// genuine dead field: declared, constructed to `None`, never read by
-    /// `render`, `text_properties` or `apply_text_property` here, and not
-    /// referenced anywhere else in the crate — reported, not wired, same as
-    /// `Comment`'s `author`/`timestamp` in this same wave.)
+    /// fifth wave): `text_tabs()` — Content/Font/Plate groups apply.
+    /// `custom_text` used to be a genuine dead field (declared, constructed
+    /// to `None`, never read anywhere) — closed in the 2026-08-16 defect
+    /// pass: `render` now draws it via `display_text()` (that method's own
+    /// doc), falling back to the formatted price when unset. This IS the
+    /// Content row the archetype's Content group wants — the "no free-text
+    /// field" reasoning that used to keep this type out of that group no
+    /// longer holds.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
         let font_size = text_data.map(|t| t.font_size).unwrap_or(12.0);
@@ -172,23 +183,32 @@ impl Primitive for PriceLabel {
         let text_color = text_data.and_then(|t| t.color.as_deref()).unwrap_or(&self.data.color.stroke);
 
         Some(vec![
+            ConfigProperty::content(self.custom_text.as_deref().unwrap_or(""))
+                .with_category(PropertyCategory::LabelsText)
+                .with_order(0).in_group(PropertyGroup::Content),
             ConfigProperty::font_size(font_size)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(0).in_group(PropertyGroup::Font),
+                .with_order(1).in_group(PropertyGroup::Font),
             ConfigProperty::bold(bold)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(1).in_group(PropertyGroup::Font),
+                .with_order(2).in_group(PropertyGroup::Font),
             ConfigProperty::italic(italic)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(2).in_group(PropertyGroup::Font),
+                .with_order(3).in_group(PropertyGroup::Font),
             ConfigProperty::text_color(text_color)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(3).in_group(PropertyGroup::Font),
+                .with_order(4).in_group(PropertyGroup::Font),
         ])
     }
 
     fn apply_text_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
+            "content" => {
+                if let Some(s) = value.as_string() {
+                    self.custom_text = if s.is_empty() { None } else { Some(s.to_string()) };
+                    return true;
+                }
+            }
             "font_size" => {
                 if let Some(v) = value.as_number() {
                     let text_data = self.data.text.get_or_insert_with(|| PrimitiveText::new(""));
@@ -267,5 +287,29 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: |points, color| { let (t, p) = points.first().copied().unwrap_or((0, 0.0)); Box::new(PriceLabel::new(t, p, color)) },
         supports_text: true, // Has custom text_properties
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod custom_text_tests {
+    use super::*;
+
+    /// `custom_text: None` (the default, and every drawing saved before
+    /// this field was wired) draws byte-for-byte what `fmt_price` alone
+    /// used to produce — `display_text` is the single source of truth both
+    /// `render` and this test read.
+    #[test]
+    fn custom_text_none_renders_the_formatted_price_unchanged() {
+        let label = PriceLabel::new(0, 12345.678, "#FF9800");
+        assert_eq!(label.custom_text, None, "custom_text defaults to None");
+        assert_eq!(label.display_text(), super::super::super::fmt_price(label.price));
+    }
+
+    /// `custom_text: Some(_)` draws the custom string instead of the price.
+    #[test]
+    fn custom_text_some_draws_the_custom_string() {
+        let mut label = PriceLabel::new(0, 12345.678, "#FF9800");
+        label.custom_text = Some("Target".to_string());
+        assert_eq!(label.display_text(), "Target");
     }
 }

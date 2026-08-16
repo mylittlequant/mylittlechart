@@ -2985,10 +2985,30 @@ pub enum ConceptKey {
     // shape" precedent). See `elliott::guard::impulse_violations`'s own
     // `"wave5_not_truncated"` check.
     RuleWave5NotTruncated = 331,
+
+    // ---- Gann family's own undeclared toggles (2026-08-16, defect pass:
+    // real fields `render`/`hit_test` already read, with no
+    // `ConfigProperty` anywhere to reach them from the UI). Declared into
+    // each type's own `level_properties()`, `PropertyGroup::General` — the
+    // ladder archetype's own General group, mirroring `pitchfork.rs`'s
+    // `extend`/`show_labels` (the design has no dedicated Gann-toggle slot,
+    // so this is the closest honest home). `gann_fan`'s own `extend` reuses
+    // the existing `ConfigKey::Extend` — only `upward` needs a new label.
+    ShowGrid = 332,
+    ShowDiagonals = 333,
+    ShowCardinal = 334,
+    ShowOrdinal = 335,
+    Upward = 336,
+
+    // ---- Comment's own `author`/`timestamp` (2026-08-16, defect pass):
+    // both were declared, constructed and read by nothing — see
+    // `Comment::render`'s own doc. Gated behind this single toggle,
+    // defaulting off so no existing drawing changes.
+    ShowAuthorTimestamp = 337,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 332;
+    pub const COUNT: usize = 338;
 
     /// Get translation for this key.
     #[inline]

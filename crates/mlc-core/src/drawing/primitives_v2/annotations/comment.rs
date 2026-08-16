@@ -4,6 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::chart::types::time_scale::format_time_full;
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
@@ -26,6 +27,14 @@ pub struct Comment {
     pub text: String,
     #[serde(default)] pub author: String,
     #[serde(default)] pub timestamp: i64,
+    /// Gate for drawing `author`/`timestamp` alongside the body (`render`,
+    /// below). Defaults `false` (`#[serde(default)]`, not `default_true`)
+    /// so a drawing saved before this field existed — where `author`/
+    /// `timestamp` were a genuine dead pair, never drawn — keeps rendering
+    /// exactly as before; a `true` default would have silently added a
+    /// visible meta line to every already-saved comment on load.
+    #[serde(default)]
+    pub show_meta: bool,
     /// Paint the bubble fill at all — off leaves only the outline + tail edge.
     #[serde(default = "default_true")]
     pub fill: bool,
@@ -51,6 +60,7 @@ impl Comment {
             text: String::new(),
             author: String::new(),
             timestamp: 0,
+            show_meta: false,
             fill: true,
             fill_opacity: PLATE_FILL_OPACITY,
         }
@@ -64,6 +74,27 @@ impl Comment {
         } else {
             "Comment"
         }
+    }
+
+    /// The author/time caption `render` draws below the body, or `None`
+    /// when there is nothing honest to show: the toggle is off, or it's on
+    /// but neither field ever got a value. `timestamp` is Unix MS (matching
+    /// every sibling `ts1`/`ts2` field's own convention across this crate),
+    /// converted to seconds for `format_time_full` — same unit contract
+    /// `cross_line.rs`/`vertical_line.rs` already use for their own
+    /// `ts_ms`.
+    fn meta_line(&self) -> Option<String> {
+        if !self.show_meta {
+            return None;
+        }
+        let mut parts = Vec::new();
+        if !self.author.is_empty() {
+            parts.push(self.author.clone());
+        }
+        if self.timestamp != 0 {
+            parts.push(format_time_full(self.timestamp / 1000));
+        }
+        if parts.is_empty() { None } else { Some(parts.join(" · ")) }
     }
 }
 
@@ -185,16 +216,29 @@ impl Primitive for Comment {
             }
         }
 
+        // `author`/`timestamp` used to be a genuine dead pair — declared,
+        // constructed, read by nothing. `show_meta` (off by default) gates
+        // a small caption near the bubble's own bottom, below whatever the
+        // body drew above (main label or the placeholder dots) — drawn only
+        // when there is real data (`meta_line` returns `None` otherwise).
+        if let Some(meta_text) = self.meta_line() {
+            let meta_font_size = (height * 0.28).clamp(6.0, 10.0);
+            ctx.set_fill_color(text_color);
+            ctx.set_font(&format!("{}px sans-serif", meta_font_size as i32));
+            ctx.set_text_align(crate::render::TextAlign::Center);
+            ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+            let meta_y = (max_y - meta_font_size * 0.9).max(center_y + 4.0);
+            ctx.fill_text(&meta_text, center_x, meta_y);
+        }
     }
 
     /// Text archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`,
-    /// fifth wave): `text_tabs()` — Content/Font/Plate groups apply. `author`
-    /// and `timestamp` are declared struct fields that `render`, `hit_test`
-    /// and every property method here leave untouched — a genuine dead pair
-    /// (same class Wave 3 already found four of), reported rather than wired
-    /// or given a control, and NOT the same thing as `expanded`/`show_price`/
-    /// `direction` elsewhere in this archetype, which ARE read by their own
-    /// `render` just outside the design's named groups.
+    /// fifth wave): `text_tabs()` — Content/Font/Plate groups apply.
+    /// `author`/`timestamp` used to be a genuine dead pair (declared,
+    /// constructed, read by nothing) — closed in the 2026-08-16 defect
+    /// pass: `render` now draws them (see `meta_line`'s own doc), gated by
+    /// `show_meta` — declared here, in Content, next to the body text it
+    /// draws alongside.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or(&self.text);
@@ -206,17 +250,26 @@ impl Primitive for Comment {
             ConfigProperty::comment(content)
                 .with_category(PropertyCategory::LabelsText)
                 .with_order(0).in_group(PropertyGroup::Content),
+            ConfigProperty::show_meta(self.show_meta)
+                .with_category(PropertyCategory::LabelsText)
+                .with_order(1).in_group(PropertyGroup::Content),
             ConfigProperty::font_size(font_size)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(1).in_group(PropertyGroup::Font),
+                .with_order(2).in_group(PropertyGroup::Font),
             ConfigProperty::text_color(color)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(2).in_group(PropertyGroup::Font),
+                .with_order(3).in_group(PropertyGroup::Font),
         ])
     }
 
     fn apply_text_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
+            "show_meta" => {
+                if let Some(v) = value.as_bool() {
+                    self.show_meta = v;
+                    return true;
+                }
+            }
             "content" => {
                 if let Some(s) = value.as_string() {
                     let text_data = self.data.text.get_or_insert_with(|| PrimitiveText::new(""));
@@ -284,5 +337,48 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: |points, color| { let (t1, p1) = points.first().copied().unwrap_or((0, 0.0)); let (t2, p2) = points.get(1).copied().unwrap_or((t1+180_000, p1+20.0)); Box::new(Comment::new(t1, p1, t2, p2, color)) },
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod show_meta_tests {
+    use super::*;
+
+    /// `render`'s own meta block is entirely gated by `meta_line()` — this
+    /// is the single source of truth both the render path and this test
+    /// read, so asserting it here IS asserting "renders exactly as before"
+    /// when the toggle is off, for every combination of `author`/
+    /// `timestamp`, not a shadow reimplementation of the gate.
+    #[test]
+    fn show_meta_off_never_draws_regardless_of_author_or_timestamp() {
+        let mut comment = Comment::new(0, 100.0, 60_000, 100.0, "#00BCD4");
+        assert!(!comment.show_meta, "show_meta defaults off — new saved-before-this-field drawings must not change");
+        assert_eq!(comment.meta_line(), None, "off with no data draws nothing");
+
+        comment.author = "Nemo".to_string();
+        comment.timestamp = 1_700_000_000_000;
+        assert_eq!(comment.meta_line(), None, "off still draws nothing even once author/timestamp are set");
+    }
+
+    /// Once on, the caption reflects whichever of `author`/`timestamp` is
+    /// actually set — the custom text draws instead of nothing, never a
+    /// silent no-op.
+    #[test]
+    fn show_meta_on_draws_whatever_data_is_actually_set() {
+        let mut comment = Comment::new(0, 100.0, 60_000, 100.0, "#00BCD4");
+        comment.show_meta = true;
+        assert_eq!(comment.meta_line(), None, "on with no author/timestamp still has nothing honest to show");
+
+        comment.author = "Nemo".to_string();
+        assert_eq!(comment.meta_line().as_deref(), Some("Nemo"), "author alone draws just the author");
+
+        comment.author = String::new();
+        comment.timestamp = 1_700_000_000_000; // 2023-11-14 22:13 UTC
+        let time_only = comment.meta_line().expect("timestamp alone must draw something");
+        assert!(!time_only.is_empty());
+
+        comment.author = "Nemo".to_string();
+        let both = comment.meta_line().expect("author + timestamp must draw something");
+        assert!(both.starts_with("Nemo"), "author leads the combined caption: {both:?}");
     }
 }

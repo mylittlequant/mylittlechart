@@ -10,6 +10,7 @@ use super::super::{
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle,
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS,
+    extend_segment_to_edges,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
@@ -25,6 +26,7 @@ pub struct DisjointChannel {
     pub line2_ts2: i64, pub line2_price2: f64,
     #[serde(default = "default_true")] pub fill: bool,
     #[serde(default = "default_area_fill_opacity")] pub fill_opacity: f64,
+    #[serde(default)] pub extend_left: bool,
     #[serde(default)] pub extend_right: bool,
 }
 
@@ -44,7 +46,7 @@ impl DisjointChannel {
             line1_ts2: ts2, line1_price2: price2,
             line2_ts1: ts1, line2_price1: price1 + offset,
             line2_ts2: ts2, line2_price2: price2 + offset,
-            fill: true, fill_opacity: AREA_FILL_OPACITY, extend_right: false,
+            fill: true, fill_opacity: AREA_FILL_OPACITY, extend_left: false, extend_right: false,
         }
     }
 
@@ -65,7 +67,7 @@ impl DisjointChannel {
             line1_ts2: l1_ts2, line1_price2: l1_price2,
             line2_ts1: l2_ts1, line2_price1: l2_price1,
             line2_ts2: l2_ts2, line2_price2: l2_price2,
-            fill: true, fill_opacity: AREA_FILL_OPACITY, extend_right: false,
+            fill: true, fill_opacity: AREA_FILL_OPACITY, extend_left: false, extend_right: false,
         }
     }
 }
@@ -147,8 +149,13 @@ impl Primitive for DisjointChannel {
         let cy = (l1_y1 + l1_y2 + l2_y1 + l2_y2) / 4.0;
         if check_point_hit(screen_x, screen_y, cx, cy) { return HitTestResult::ControlPoint(ControlPointType::Move); }
 
-        if point_to_line_distance(screen_x, screen_y, l1_x1, l1_y1, l1_x2, l1_y2) < HIT_TOLERANCE { return HitTestResult::Body; }
-        if point_to_line_distance(screen_x, screen_y, l2_x1, l2_y1, l2_x2, l2_y2) < HIT_TOLERANCE { return HitTestResult::Body; }
+        // Reach exactly as far as `render` draws — the two lines are NOT
+        // parallel in general, so each extends independently along its own
+        // slope to the same panel edge.
+        let (e1x1, e1y1, e1x2, e1y2) = extend_segment_to_edges(l1_x1, l1_y1, l1_x2, l1_y2, self.extend_left, self.extend_right, viewport.chart_width);
+        let (e2x1, e2y1, e2x2, e2y2) = extend_segment_to_edges(l2_x1, l2_y1, l2_x2, l2_y2, self.extend_left, self.extend_right, viewport.chart_width);
+        if point_to_line_distance(screen_x, screen_y, e1x1, e1y1, e1x2, e1y2) < HIT_TOLERANCE { return HitTestResult::Body; }
+        if point_to_line_distance(screen_x, screen_y, e2x1, e2y1, e2x2, e2y2) < HIT_TOLERANCE { return HitTestResult::Body; }
         HitTestResult::Miss
     }
 
@@ -190,13 +197,21 @@ impl Primitive for DisjointChannel {
         let l2_x2 = ctx.ts_to_x_ms(self.line2_ts2);
         let l2_y2 = ctx.price_to_y(self.line2_price2);
 
+        // An extended side draws to the panel edge in that direction — off
+        // by default, so an unextended primitive draws the exact same two
+        // segments as before this pass. The two lines are NOT parallel in
+        // general, so each extends independently along its own slope.
+        let chart_width = ctx.chart_width();
+        let (e1x1, e1y1, e1x2, e1y2) = extend_segment_to_edges(l1_x1, l1_y1, l1_x2, l1_y2, self.extend_left, self.extend_right, chart_width);
+        let (e2x1, e2y1, e2x2, e2y2) = extend_segment_to_edges(l2_x1, l2_y1, l2_x2, l2_y2, self.extend_left, self.extend_right, chart_width);
+
         if self.fill {
             let base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
             let fill_color = format!("{}{:02x}", &base[..7], (self.fill_opacity * 255.0) as u8);
             ctx.set_fill_color(&fill_color);
             ctx.begin_path();
-            ctx.move_to(l1_x1, l1_y1); ctx.line_to(l1_x2, l1_y2);
-            ctx.line_to(l2_x2, l2_y2); ctx.line_to(l2_x1, l2_y1);
+            ctx.move_to(e1x1, e1y1); ctx.line_to(e1x2, e1y2);
+            ctx.line_to(e2x2, e2y2); ctx.line_to(e2x1, e2y1);
             ctx.close_path(); ctx.fill();
         }
 
@@ -211,13 +226,13 @@ impl Primitive for DisjointChannel {
         }
 
         ctx.begin_path();
-        ctx.move_to(crisp(l1_x1, dpr), crisp(l1_y1, dpr));
-        ctx.line_to(crisp(l1_x2, dpr), crisp(l1_y2, dpr));
+        ctx.move_to(crisp(e1x1, dpr), crisp(e1y1, dpr));
+        ctx.line_to(crisp(e1x2, dpr), crisp(e1y2, dpr));
         ctx.stroke();
 
         ctx.begin_path();
-        ctx.move_to(crisp(l2_x1, dpr), crisp(l2_y1, dpr));
-        ctx.line_to(crisp(l2_x2, dpr), crisp(l2_y2, dpr));
+        ctx.move_to(crisp(e2x1, dpr), crisp(e2y1, dpr));
+        ctx.line_to(crisp(e2x2, dpr), crisp(e2y2, dpr));
         ctx.stroke();
         ctx.set_line_dash(&[]);
 
@@ -256,20 +271,23 @@ impl Primitive for DisjointChannel {
         // `PropertyGroup::MiddleLine`'s own doc); a disjoint (non-parallel)
         // channel has no single trend line a "middle" would even average.
         //
-        // `PropertyGroup::Extend` stays out for the same dead-field reason
-        // as `parallel_channel.rs`: `extend_right` exists on this struct but
-        // neither `render` nor `hit_test` nor `geometry` ever reads it.
+        // `PropertyGroup::Extend` — `extend_left`/`extend_right` now really
+        // extend both (independently sloped) lines to the panel edge
+        // (`render`/`hit_test` above, via `extend_segment_to_edges`), so
+        // this is a real declared toggle, matching `parallel_channel.rs`.
         let default_text = super::super::PrimitiveText::default();
         vec![
             ConfigProperty::fill(self.fill).with_category(PropertyCategory::AppearanceFill).with_order(20),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_category(PropertyCategory::AppearanceFill).with_order(21),
+            ConfigProperty::extend_left(self.extend_left).with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::Extend),
+            ConfigProperty::extend_right(self.extend_right).with_category(PropertyCategory::AppearanceLine).with_order(23).in_group(PropertyGroup::Extend),
             // `PropertyGroup::TextOnShape` — font size + horizontal
             // position write into `data.text`, already read by `render`
             // above (`render_primitive_text_rotated`) to place the caption.
             ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
-                .with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::TextOnShape),
+                .with_category(PropertyCategory::AppearanceLine).with_order(24).in_group(PropertyGroup::TextOnShape),
             ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
-                .with_category(PropertyCategory::AppearanceLine).with_order(23).in_group(PropertyGroup::TextOnShape),
+                .with_category(PropertyCategory::AppearanceLine).with_order(25).in_group(PropertyGroup::TextOnShape),
         ]
     }
 
@@ -277,6 +295,8 @@ impl Primitive for DisjointChannel {
         match id {
             "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
             "fill_opacity" => { if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; } }
+            "extend_left" => { if let Some(v) = value.as_bool() { self.extend_left = v; return true; } }
+            "extend_right" => { if let Some(v) = value.as_bool() { self.extend_right = v; return true; } }
             "label_font_size" => {
                 if let Some(v) = value.as_number() {
                     self.data.text.get_or_insert_with(super::super::PrimitiveText::default).font_size = v.clamp(8.0, 32.0);
@@ -330,5 +350,59 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_disjoint_channel,
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod extend_tests {
+    use super::*;
+    use crate::{Bar, PriceScale, Viewport};
+
+    fn fixture() -> (Vec<Bar>, Viewport, PriceScale) {
+        let bars: Vec<Bar> = (0..6).map(|i| Bar::new(i, 100.0, 102.0, 98.0, 100.0)).collect();
+        let viewport = Viewport { chart_width: 1200.0, chart_height: 600.0, bar_count: bars.len(), ..Default::default() };
+        let price_scale = PriceScale { price_min: 50.0, price_max: 150.0, ..Default::default() };
+        (bars, viewport, price_scale)
+    }
+
+    /// The two lines are independently sloped (`with_points`, not the
+    /// shared-slope `new`), so `extend_left` must extend each one along its
+    /// OWN slope — a probe on line 2's extended left reach misses when
+    /// unextended and resolves to `Body` once `extend_left` is on.
+    #[test]
+    fn extend_left_reaches_the_panel_edge_on_the_second_line() {
+        let (bars, viewport, price_scale) = fixture();
+        // ts values land exactly on bar indices of `fixture()`'s 6-bar
+        // slice, so every anchor sits well inside `chart_width` at the
+        // fixture's default 8px bar spacing. Line 2 starts at bar index 2
+        // (not 0), so its own left endpoint is NOT already at the panel's
+        // left edge — the probe below is only reachable via extension, not
+        // because line 2 already starts there on its own.
+        let channel = DisjointChannel::with_points(
+            0, 100.0, 5_000, 105.0,
+            2_000, 90.0, 5_000, 120.0,
+            "#4CAF50",
+        );
+
+        let l2_bar1 = timestamp_ms_to_bar_f64(&bars, channel.line2_ts1);
+        let l2_bar2 = timestamp_ms_to_bar_f64(&bars, channel.line2_ts2);
+        let l2x1 = viewport.bar_to_x_f64(l2_bar1);
+        let l2y1 = viewport.price_to_y(channel.line2_price1, price_scale.price_min, price_scale.price_max);
+        let l2x2 = viewport.bar_to_x_f64(l2_bar2);
+        let l2y2 = viewport.price_to_y(channel.line2_price2, price_scale.price_min, price_scale.price_max);
+        let (probe_x, probe_y, _, _) = extend_segment_to_edges(l2x1, l2y1, l2x2, l2y2, true, false, viewport.chart_width);
+        assert_eq!(probe_x, 0.0, "the probe sits at the panel's own left edge");
+
+        assert!(
+            matches!(channel.hit_test(probe_x, probe_y, &bars, &viewport, &price_scale), HitTestResult::Miss),
+            "unextended channel misses a point on the panel's left edge",
+        );
+
+        let mut extended = channel;
+        extended.extend_left = true;
+        assert!(
+            matches!(extended.hit_test(probe_x, probe_y, &bars, &viewport, &price_scale), HitTestResult::Body),
+            "extend_left reaches the same point once line 2 is drawn that far",
+        );
     }
 }

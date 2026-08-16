@@ -575,6 +575,32 @@ impl Primitive for GannBox {
         Box::new(self.clone())
     }
 
+    /// `show_grid`/`show_diagonals` are real fields `render`/`hit_test`
+    /// already read (the grid loop and the two diagonal strokes, both
+    /// above), with no `ConfigProperty` anywhere to reach them from the UI
+    /// — a defect pass fix (2026-08-16). The approved ladder archetype's
+    /// own design has no dedicated Gann-toggle slot, so `PropertyGroup::
+    /// General` (`ladder_tabs()`'s own General group) is the closest honest
+    /// home, mirroring `pitchfork.rs`'s own `extend`/`show_labels` placement.
+    fn level_properties(&self) -> Vec<super::super::config::ConfigProperty> {
+        use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
+        vec![
+            ConfigProperty::show_grid(self.show_grid)
+                .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
+            ConfigProperty::show_diagonals(self.show_diagonals)
+                .with_category(PropertyCategory::LevelsBase).with_order(1).in_group(PropertyGroup::General),
+        ]
+    }
+
+    fn apply_level_property(&mut self, id: &str, value: &super::super::config::PropertyValue) -> bool {
+        match id {
+            "show_grid" => { if let Some(v) = value.as_bool() { self.show_grid = v; return true; } }
+            "show_diagonals" => { if let Some(v) = value.as_bool() { self.show_diagonals = v; return true; } }
+            _ => {}
+        }
+        false
+    }
+
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
         use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
         // `show_labels` stays ungrouped (W2), matching `gann_fan`'s own
@@ -657,5 +683,21 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_gann_box,
         supports_text: true,
         has_levels: true,
+    }
+}
+
+#[cfg(test)]
+mod declared_toggles_tests {
+    use super::*;
+
+    /// `show_grid`/`show_diagonals` are real fields `render` already reads
+    /// — this asserts they are reachable from the UI at all, not just that
+    /// the field exists.
+    #[test]
+    fn property_list_contains_show_grid_and_show_diagonals() {
+        let gann = GannBox::new(0, 100.0, 3_600_000, 90.0, "#FF9800");
+        let ids: Vec<String> = gann.level_properties().into_iter().map(|p| p.id).collect();
+        assert!(ids.iter().any(|id| id == "show_grid"), "level_properties() must declare show_grid: {ids:?}");
+        assert!(ids.iter().any(|id| id == "show_diagonals"), "level_properties() must declare show_diagonals: {ids:?}");
     }
 }

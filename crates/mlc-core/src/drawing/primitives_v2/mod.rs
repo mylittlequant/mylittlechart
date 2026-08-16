@@ -635,7 +635,7 @@ pub use types::{
     // (render/settings-modal) need these names and neither owns `types.rs`.
     ControlPointShape, ControlPointSize, ControlPointStyle,
     control_point_style, set_control_point_style,
-    point_to_line_distance, point_to_ray_distance,
+    point_to_line_distance, point_to_ray_distance, extend_segment_to_edges,
     Segment, nearest_segment_distance, hit_test_strokes,
     TextAnchor, normalize_text_rotation,
     LineTextParams, calculate_line_text_params,

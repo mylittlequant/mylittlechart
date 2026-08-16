@@ -12,6 +12,7 @@ use super::super::{
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle,
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS,
+    extend_segment_to_edges,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
@@ -38,6 +39,8 @@ pub struct RegressionTrend {
     #[serde(default = "default_area_fill_opacity")]
     pub fill_opacity: f64,
     #[serde(default)]
+    pub extend_left: bool,
+    #[serde(default)]
     pub extend_right: bool,
 }
 
@@ -60,6 +63,7 @@ impl RegressionTrend {
             show_center: true,
             fill: true,
             fill_opacity: AREA_FILL_OPACITY,
+            extend_left: false,
             extend_right: false,
         }
     }
@@ -131,9 +135,14 @@ impl Primitive for RegressionTrend {
         let cx = (x1 + x2) / 2.0; let cy = (y1 + y2) / 2.0;
         if check_point_hit(screen_x, screen_y, cx, cy) { return HitTestResult::ControlPoint(ControlPointType::Move); }
 
-        if self.show_center && point_to_line_distance(screen_x, screen_y, x1, y1, x2, y2) < HIT_TOLERANCE { return HitTestResult::Body; }
-        if point_to_line_distance(screen_x, screen_y, x1, upper_y1, x2, upper_y2) < HIT_TOLERANCE { return HitTestResult::Body; }
-        if point_to_line_distance(screen_x, screen_y, x1, lower_y1, x2, lower_y2) < HIT_TOLERANCE { return HitTestResult::Body; }
+        // Reach exactly as far as `render` draws — all three lines share
+        // `ts1`/`ts2`, so their extended x-coordinates always agree.
+        let (cx1, cy1, cx2, cy2) = extend_segment_to_edges(x1, y1, x2, y2, self.extend_left, self.extend_right, viewport.chart_width);
+        let (eu_x1, eu_y1, eu_x2, eu_y2) = extend_segment_to_edges(x1, upper_y1, x2, upper_y2, self.extend_left, self.extend_right, viewport.chart_width);
+        let (el_x1, el_y1, el_x2, el_y2) = extend_segment_to_edges(x1, lower_y1, x2, lower_y2, self.extend_left, self.extend_right, viewport.chart_width);
+        if self.show_center && point_to_line_distance(screen_x, screen_y, cx1, cy1, cx2, cy2) < HIT_TOLERANCE { return HitTestResult::Body; }
+        if point_to_line_distance(screen_x, screen_y, eu_x1, eu_y1, eu_x2, eu_y2) < HIT_TOLERANCE { return HitTestResult::Body; }
+        if point_to_line_distance(screen_x, screen_y, el_x1, el_y1, el_x2, el_y2) < HIT_TOLERANCE { return HitTestResult::Body; }
         HitTestResult::Miss
     }
 
@@ -165,13 +174,22 @@ impl Primitive for RegressionTrend {
         let lower_y1 = ctx.price_to_y(self.price1 - offset);
         let lower_y2 = ctx.price_to_y(self.price2 - offset);
 
+        // An extended side draws to the panel edge in that direction — off
+        // by default, so an unextended primitive draws the exact same
+        // three segments as before this pass. All three lines share
+        // `ts1`/`ts2`, so their extended x-coordinates always agree.
+        let chart_width = ctx.chart_width();
+        let (cx1, cy1, cx2, cy2) = extend_segment_to_edges(x1, y1, x2, y2, self.extend_left, self.extend_right, chart_width);
+        let (eu_x1, eu_y1, eu_x2, eu_y2) = extend_segment_to_edges(x1, upper_y1, x2, upper_y2, self.extend_left, self.extend_right, chart_width);
+        let (el_x1, el_y1, el_x2, el_y2) = extend_segment_to_edges(x1, lower_y1, x2, lower_y2, self.extend_left, self.extend_right, chart_width);
+
         if self.fill {
             let base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
             let fill_color = format!("{}{:02x}", &base[..7], (self.fill_opacity * 255.0) as u8);
             ctx.set_fill_color(&fill_color);
             ctx.begin_path();
-            ctx.move_to(x1, upper_y1); ctx.line_to(x2, upper_y2);
-            ctx.line_to(x2, lower_y2); ctx.line_to(x1, lower_y1);
+            ctx.move_to(eu_x1, eu_y1); ctx.line_to(eu_x2, eu_y2);
+            ctx.line_to(el_x2, el_y2); ctx.line_to(el_x1, el_y1);
             ctx.close_path(); ctx.fill();
         }
 
@@ -186,20 +204,20 @@ impl Primitive for RegressionTrend {
         }
 
         ctx.begin_path();
-        ctx.move_to(crisp(x1, dpr), crisp(upper_y1, dpr));
-        ctx.line_to(crisp(x2, dpr), crisp(upper_y2, dpr));
+        ctx.move_to(crisp(eu_x1, dpr), crisp(eu_y1, dpr));
+        ctx.line_to(crisp(eu_x2, dpr), crisp(eu_y2, dpr));
         ctx.stroke();
 
         ctx.begin_path();
-        ctx.move_to(crisp(x1, dpr), crisp(lower_y1, dpr));
-        ctx.line_to(crisp(x2, dpr), crisp(lower_y2, dpr));
+        ctx.move_to(crisp(el_x1, dpr), crisp(el_y1, dpr));
+        ctx.line_to(crisp(el_x2, dpr), crisp(el_y2, dpr));
         ctx.stroke();
 
         if self.show_center {
             ctx.set_line_dash(&[4.0, 4.0]);
             ctx.begin_path();
-            ctx.move_to(crisp(x1, dpr), crisp(y1, dpr));
-            ctx.line_to(crisp(x2, dpr), crisp(y2, dpr));
+            ctx.move_to(crisp(cx1, dpr), crisp(cy1, dpr));
+            ctx.line_to(crisp(cx2, dpr), crisp(cy2, dpr));
             ctx.stroke();
         }
         ctx.set_line_dash(&[]);
@@ -261,10 +279,11 @@ impl Primitive for RegressionTrend {
         // baseline-only colour/width control could write into without
         // silently also repainting the bands.
         //
-        // `PropertyGroup::Extend` stays out for the same dead-field reason
-        // as every other channel type in this module: `extend_right` exists
-        // on this struct but neither `render` nor `hit_test` nor `geometry`
-        // ever reads it.
+        // `PropertyGroup::Extend` — `extend_left`/`extend_right` now really
+        // extend all three lines (centre + both sigma bands) to the panel
+        // edge (`render`/`hit_test` above, via `extend_segment_to_edges`),
+        // so this is a real declared toggle rather than the dead field it
+        // used to be.
         //
         // The Metrics group (`ShowSlope`/`ShowRSquared` toggles + the
         // Slope/R² stat rows) is left out ENTIRELY: the two stat rows need
@@ -278,6 +297,8 @@ impl Primitive for RegressionTrend {
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_category(PropertyCategory::AppearanceFill).with_order(21).in_group(PropertyGroup::Sigmas),
             ConfigProperty::boolean("show_center", SettingsKey::Show.get(current_language()), self.show_center)
                 .with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::Baseline),
+            ConfigProperty::extend_left(self.extend_left).with_category(PropertyCategory::AppearanceLine).with_order(23).in_group(PropertyGroup::Extend),
+            ConfigProperty::extend_right(self.extend_right).with_category(PropertyCategory::AppearanceLine).with_order(24).in_group(PropertyGroup::Extend),
         ]
     }
 
@@ -286,6 +307,8 @@ impl Primitive for RegressionTrend {
             "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
             "fill_opacity" => { if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; } }
             "show_center" => { if let Some(v) = value.as_bool() { self.show_center = v; return true; } }
+            "extend_left" => { if let Some(v) = value.as_bool() { self.extend_left = v; return true; } }
+            "extend_right" => { if let Some(v) = value.as_bool() { self.extend_right = v; return true; } }
             _ => {}
         }
         false
@@ -314,5 +337,55 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_regression_trend,
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod extend_tests {
+    use super::*;
+    use crate::{Bar, PriceScale, Viewport};
+
+    fn fixture() -> (Vec<Bar>, Viewport, PriceScale) {
+        let bars: Vec<Bar> = (0..6).map(|i| Bar::new(i, 100.0, 102.0, 98.0, 100.0)).collect();
+        let viewport = Viewport { chart_width: 1200.0, chart_height: 600.0, bar_count: bars.len(), ..Default::default() };
+        let price_scale = PriceScale { price_min: 50.0, price_max: 150.0, ..Default::default() };
+        (bars, viewport, price_scale)
+    }
+
+    /// A probe point sitting exactly on the extended centre line, at the
+    /// panel's own left edge — misses an unextended regression channel but
+    /// resolves to `Body` once `extend_left` is on, because `hit_test` now
+    /// tests the SAME extended segment `render` draws
+    /// (`extend_segment_to_edges`).
+    #[test]
+    fn extend_left_reaches_the_panel_edge_on_the_centre_line() {
+        let (bars, viewport, price_scale) = fixture();
+        // ts values land exactly on bar indices 2 and 5 of `fixture()`'s
+        // 6-bar slice (NOT 0 — the left anchor must not already sit at the
+        // panel's own left edge, or "extending" it would be a no-op and
+        // the probe would already be an existing control point).
+        let channel = RegressionTrend::new(2_000, 100.0, 5_000, 110.0, "#9C27B0");
+        assert!(channel.show_center, "the centre line must be on for this probe to land on it");
+
+        let bar1 = timestamp_ms_to_bar_f64(&bars, channel.ts1);
+        let bar2 = timestamp_ms_to_bar_f64(&bars, channel.ts2);
+        let x1 = viewport.bar_to_x_f64(bar1);
+        let y1 = viewport.price_to_y(channel.price1, price_scale.price_min, price_scale.price_max);
+        let x2 = viewport.bar_to_x_f64(bar2);
+        let y2 = viewport.price_to_y(channel.price2, price_scale.price_min, price_scale.price_max);
+        let (probe_x, probe_y, _, _) = extend_segment_to_edges(x1, y1, x2, y2, true, false, viewport.chart_width);
+        assert_eq!(probe_x, 0.0, "the probe sits at the panel's own left edge");
+
+        assert!(
+            matches!(channel.hit_test(probe_x, probe_y, &bars, &viewport, &price_scale), HitTestResult::Miss),
+            "unextended channel misses a point on the panel's left edge",
+        );
+
+        let mut extended = channel;
+        extended.extend_left = true;
+        assert!(
+            matches!(extended.hit_test(probe_x, probe_y, &bars, &viewport, &price_scale), HitTestResult::Body),
+            "extend_left reaches the same point once the centre line is drawn that far",
+        );
     }
 }

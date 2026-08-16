@@ -102,7 +102,18 @@ pub struct GannSquareFixed {
     /// Show labels
     #[serde(default = "default_true")]
     pub show_labels: bool,
-    /// Show spiral numbers
+    /// Show spiral numbers — NOT wired (defect pass, 2026-08-16 audit):
+    /// unlike this type's four Gann siblings' own undeclared toggles, this
+    /// field is read by NOTHING at all, not just undeclared — `render`
+    /// never draws any spiral numbering. It also has no honest geometry to
+    /// gate: this primitive's rings are concentric SQUARES (`level_configs`
+    /// over `ALL_GANN_SQUARE_LEVELS`, shared with `gann_square`), not the
+    /// Square-of-Nine unit-cell grid a real number spiral walks — there is
+    /// no cell sequence here to number. Declaring a toggle that would still
+    /// draw nothing (or building a fabricated numbering with no real Gann
+    /// meaning) would trade one defect for another; reported instead, same
+    /// as `Comment`'s `author`/`timestamp` were before this same pass wired
+    /// them into a real render path.
     #[serde(default)]
     pub show_numbers: bool,
     /// Style for ring fraction labels (font, background plate, offset, border)

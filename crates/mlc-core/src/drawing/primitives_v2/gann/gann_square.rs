@@ -534,6 +534,32 @@ impl Primitive for GannSquare {
         Box::new(self.clone())
     }
 
+    /// `show_cardinal`/`show_ordinal` are real fields `render`/`hit_test`
+    /// already read (the cardinal cross and the two ordinal diagonals, both
+    /// above), with no `ConfigProperty` anywhere to reach them from the UI
+    /// — a defect pass fix (2026-08-16). The approved ladder archetype's
+    /// own design has no dedicated Gann-toggle slot, so `PropertyGroup::
+    /// General` (`ladder_tabs()`'s own General group) is the closest honest
+    /// home, mirroring `pitchfork.rs`'s own `extend`/`show_labels` placement.
+    fn level_properties(&self) -> Vec<super::super::config::ConfigProperty> {
+        use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
+        vec![
+            ConfigProperty::show_cardinal(self.show_cardinal)
+                .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
+            ConfigProperty::show_ordinal(self.show_ordinal)
+                .with_category(PropertyCategory::LevelsBase).with_order(1).in_group(PropertyGroup::General),
+        ]
+    }
+
+    fn apply_level_property(&mut self, id: &str, value: &super::super::config::PropertyValue) -> bool {
+        match id {
+            "show_cardinal" => { if let Some(v) = value.as_bool() { self.show_cardinal = v; return true; } }
+            "show_ordinal" => { if let Some(v) = value.as_bool() { self.show_ordinal = v; return true; } }
+            _ => {}
+        }
+        false
+    }
+
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
         use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
         // `show_labels` stays ungrouped (W2), matching `gann_fan`'s own
@@ -617,5 +643,21 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_gann_square,
         supports_text: true,
         has_levels: true,
+    }
+}
+
+#[cfg(test)]
+mod declared_toggles_tests {
+    use super::*;
+
+    /// `show_cardinal`/`show_ordinal` are real fields `render` already
+    /// reads — this asserts they are reachable from the UI at all, not just
+    /// that the field exists.
+    #[test]
+    fn property_list_contains_show_cardinal_and_show_ordinal() {
+        let gann = GannSquare::new(0, 100.0, 3_600_000, 80.0, "#FF9800");
+        let ids: Vec<String> = gann.level_properties().into_iter().map(|p| p.id).collect();
+        assert!(ids.iter().any(|id| id == "show_cardinal"), "level_properties() must declare show_cardinal: {ids:?}");
+        assert!(ids.iter().any(|id| id == "show_ordinal"), "level_properties() must declare show_ordinal: {ids:?}");
     }
 }

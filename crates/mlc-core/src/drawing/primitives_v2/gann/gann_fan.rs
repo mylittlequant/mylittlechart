@@ -577,6 +577,34 @@ impl Primitive for GannFan {
         Box::new(self.clone())
     }
 
+    /// `extend`/`upward` are real fields `render`/`hit_test` already read
+    /// (whether the fan rays reach the panel edge, and which direction the
+    /// fan points), with no `ConfigProperty` anywhere to reach them from
+    /// the UI — a defect pass fix (2026-08-16). The approved ladder
+    /// archetype's own design has no dedicated Gann-toggle slot, so
+    /// `PropertyGroup::General` (`ladder_tabs()`'s own General group) is
+    /// the closest honest home, mirroring `pitchfork.rs`'s own `extend`/
+    /// `show_labels` placement — `extend` reuses the SAME `"extend"` id
+    /// pitchfork and its three siblings use for their own equivalent.
+    fn level_properties(&self) -> Vec<super::super::config::ConfigProperty> {
+        use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
+        vec![
+            ConfigProperty::extend(self.extend)
+                .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
+            ConfigProperty::upward(self.upward)
+                .with_category(PropertyCategory::LevelsBase).with_order(1).in_group(PropertyGroup::General),
+        ]
+    }
+
+    fn apply_level_property(&mut self, id: &str, value: &super::super::config::PropertyValue) -> bool {
+        match id {
+            "extend" => { if let Some(v) = value.as_bool() { self.extend = v; return true; } }
+            "upward" => { if let Some(v) = value.as_bool() { self.upward = v; return true; } }
+            _ => {}
+        }
+        false
+    }
+
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
         use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
         // `show_labels` stays ungrouped (W2): it renders on the Subject tab
@@ -656,5 +684,21 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_gann_fan,
         supports_text: true,
         has_levels: true,
+    }
+}
+
+#[cfg(test)]
+mod declared_toggles_tests {
+    use super::*;
+
+    /// `extend`/`upward` are real fields `render`/`hit_test` already read
+    /// — this asserts they are reachable from the UI at all, not just that
+    /// the field exists.
+    #[test]
+    fn property_list_contains_extend_and_upward() {
+        let gann = GannFan::new(0, 100.0, 3_600_000, 120.0, "#FF9800");
+        let ids: Vec<String> = gann.level_properties().into_iter().map(|p| p.id).collect();
+        assert!(ids.iter().any(|id| id == "extend"), "level_properties() must declare extend: {ids:?}");
+        assert!(ids.iter().any(|id| id == "upward"), "level_properties() must declare upward: {ids:?}");
     }
 }

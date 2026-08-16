@@ -1292,7 +1292,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 332] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 338] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1625,6 +1625,12 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 332] = [
     /* 329 MarkTruncatedFifthLabel           */ [ "Mark truncated", "Отметить усечённой", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 330 ClearTruncatedFifthLabel          */ [ "Clear truncated", "Снять отметку усечения", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 331 RuleWave5NotTruncated             */ [ "Declared this fifth truncated, but wave 5 ends beyond wave 3's own end", "Пятая волна заявлена усечённой, но волна 5 заходит дальше конца волны 3", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 332 ShowGrid                          */ [ "Show Grid", "Показывать сетку", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 333 ShowDiagonals                     */ [ "Show Diagonals", "Показывать диагонали", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 334 ShowCardinal                      */ [ "Show Cardinal Lines", "Показывать кардинальные линии", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 335 ShowOrdinal                       */ [ "Show Ordinal Lines", "Показывать ординальные линии", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 336 Upward                            */ [ "Upward", "Вверх", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 337 ShowAuthorTimestamp               */ [ "Show author & time", "Показывать автора и время", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

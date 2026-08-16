@@ -1682,6 +1682,42 @@ impl ConfigProperty {
         Self::boolean("extend", ConfigKey::Extend.get(current_language()), value)
     }
 
+    /// Create "Upward" boolean property with i18n — `gann_fan`'s own fan
+    /// direction toggle (`true` = upward fan, `false` = downward).
+    pub fn upward(value: bool) -> Self {
+        Self::boolean("upward", ConceptKey::Upward.get(current_language()), value)
+    }
+
+    /// Create "Show Grid" boolean property with i18n — `gann_box`'s own
+    /// horizontal/vertical grid toggle.
+    pub fn show_grid(value: bool) -> Self {
+        Self::boolean("show_grid", ConceptKey::ShowGrid.get(current_language()), value)
+    }
+
+    /// Create "Show Diagonals" boolean property with i18n — `gann_box`'s
+    /// own 1x1 + anti-diagonal toggle.
+    pub fn show_diagonals(value: bool) -> Self {
+        Self::boolean("show_diagonals", ConceptKey::ShowDiagonals.get(current_language()), value)
+    }
+
+    /// Create "Show Cardinal Lines" boolean property with i18n —
+    /// `gann_square`'s own horizontal/vertical-through-center toggle.
+    pub fn show_cardinal(value: bool) -> Self {
+        Self::boolean("show_cardinal", ConceptKey::ShowCardinal.get(current_language()), value)
+    }
+
+    /// Create "Show Ordinal Lines" boolean property with i18n —
+    /// `gann_square`'s own diagonal toggle.
+    pub fn show_ordinal(value: bool) -> Self {
+        Self::boolean("show_ordinal", ConceptKey::ShowOrdinal.get(current_language()), value)
+    }
+
+    /// Create "Show author & time" boolean property with i18n — `Comment`'s
+    /// own `author`/`timestamp` display gate.
+    pub fn show_meta(value: bool) -> Self {
+        Self::boolean("show_meta", ConceptKey::ShowAuthorTimestamp.get(current_language()), value)
+    }
+
     /// Create "Levels" (show_percentages) boolean property with i18n
     pub fn levels(value: bool) -> Self {
         Self::boolean("show_percentages", ConfigKey::Levels.get(current_language()), value)

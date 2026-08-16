@@ -12,6 +12,7 @@ use super::super::{
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle,
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS,
+    extend_segment_to_edges,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
@@ -127,8 +128,15 @@ impl Primitive for ParallelChannel {
         let cy = (y1 + y2 + py1 + py2) / 4.0;
         if check_point_hit(screen_x, screen_y, cx, cy) { return HitTestResult::ControlPoint(ControlPointType::Move); }
 
-        if point_to_line_distance(screen_x, screen_y, x1, y1, x2, y2) < HIT_TOLERANCE { return HitTestResult::Body; }
-        if point_to_line_distance(screen_x, screen_y, x1, py1, x2, py2) < HIT_TOLERANCE { return HitTestResult::Body; }
+        // Reach exactly as far as `render` draws — both boundary lines
+        // extend to the same panel edge (they share `ts1`/`ts2`), computed
+        // independently per line so a click on either extended boundary
+        // resolves to Body, not just the unextended segment between the
+        // two anchors.
+        let (l1x1, l1y1, l1x2, l1y2) = extend_segment_to_edges(x1, y1, x2, y2, self.extend_left, self.extend_right, viewport.chart_width);
+        let (l2x1, l2y1, l2x2, l2y2) = extend_segment_to_edges(x1, py1, x2, py2, self.extend_left, self.extend_right, viewport.chart_width);
+        if point_to_line_distance(screen_x, screen_y, l1x1, l1y1, l1x2, l1y2) < HIT_TOLERANCE { return HitTestResult::Body; }
+        if point_to_line_distance(screen_x, screen_y, l2x1, l2y1, l2x2, l2y2) < HIT_TOLERANCE { return HitTestResult::Body; }
         HitTestResult::Miss
     }
 
@@ -166,13 +174,23 @@ impl Primitive for ParallelChannel {
         let py1 = ctx.price_to_y(self.price1 + self.channel_offset);
         let py2 = ctx.price_to_y(self.price2 + self.channel_offset);
 
+        // An extended side draws to the panel edge in that direction — off
+        // by default (`extend_left`/`extend_right` both `false`), so an
+        // unextended primitive draws the exact same two segments as before
+        // this pass. Both boundary lines extend independently (they happen
+        // to share `ts1`/`ts2` here, so their extended x-coordinates always
+        // agree, keeping the fill quad closed).
+        let chart_width = ctx.chart_width();
+        let (l1x1, l1y1, l1x2, l1y2) = extend_segment_to_edges(x1, y1, x2, y2, self.extend_left, self.extend_right, chart_width);
+        let (l2x1, l2y1, l2x2, l2y2) = extend_segment_to_edges(x1, py1, x2, py2, self.extend_left, self.extend_right, chart_width);
+
         if self.fill {
             let base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
             let fill_color = format!("{}{:02x}", &base[..7], (self.fill_opacity * 255.0) as u8);
             ctx.set_fill_color(&fill_color);
             ctx.begin_path();
-            ctx.move_to(x1, y1); ctx.line_to(x2, y2);
-            ctx.line_to(x2, py2); ctx.line_to(x1, py1);
+            ctx.move_to(l1x1, l1y1); ctx.line_to(l1x2, l1y2);
+            ctx.line_to(l2x2, l2y2); ctx.line_to(l2x1, l2y1);
             ctx.close_path(); ctx.fill();
         }
 
@@ -187,13 +205,13 @@ impl Primitive for ParallelChannel {
         }
 
         ctx.begin_path();
-        ctx.move_to(crisp(x1, dpr), crisp(y1, dpr));
-        ctx.line_to(crisp(x2, dpr), crisp(y2, dpr));
+        ctx.move_to(crisp(l1x1, dpr), crisp(l1y1, dpr));
+        ctx.line_to(crisp(l1x2, dpr), crisp(l1y2, dpr));
         ctx.stroke();
 
         ctx.begin_path();
-        ctx.move_to(crisp(x1, dpr), crisp(py1, dpr));
-        ctx.line_to(crisp(x2, dpr), crisp(py2, dpr));
+        ctx.move_to(crisp(l2x1, dpr), crisp(l2y1, dpr));
+        ctx.line_to(crisp(l2x2, dpr), crisp(l2y2, dpr));
         ctx.stroke();
         ctx.set_line_dash(&[]);
 
@@ -232,26 +250,25 @@ impl Primitive for ParallelChannel {
         // declaration — out of scope for this wave (see the plan's own W3
         // doc: a lab row with no backing gets reported, not stubbed).
         //
-        // `PropertyGroup::Extend` is also NOT declared, for a related but
-        // different reason: `extend_left`/`extend_right` already exist as
-        // fields on this struct, but neither `render` nor `hit_test` nor
-        // `geometry` ever reads them — they are dead today. Exposing a
-        // toggle that writes a field nothing draws from would be the exact
-        // "toggle with nothing behind it" wave 1 (Elliott) already declined
-        // for `ShowDegree`; wiring the two lines to actually extend is a
-        // rendering-logic change, not a declarative one, so it stays out
-        // and is reported instead.
+        // `PropertyGroup::Extend` — `extend_left`/`extend_right` now really
+        // extend both boundary lines to the panel edge (`render`/`hit_test`
+        // above, via the shared `extend_segment_to_edges` helper), so this
+        // is a real declared toggle rather than the "nothing behind it"
+        // wave 1 (Elliott) declined for `ShowDegree` — matches what wave 3
+        // left this type's own doc explaining as the reason it stayed out.
         let default_text = super::super::PrimitiveText::default();
         vec![
             ConfigProperty::fill(self.fill).with_category(PropertyCategory::AppearanceFill).with_order(20),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_category(PropertyCategory::AppearanceFill).with_order(21),
+            ConfigProperty::extend_left(self.extend_left).with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::Extend),
+            ConfigProperty::extend_right(self.extend_right).with_category(PropertyCategory::AppearanceLine).with_order(23).in_group(PropertyGroup::Extend),
             // `PropertyGroup::TextOnShape` — font size + horizontal
             // position write into `data.text`, already read by `render`
             // above (`render_primitive_text_rotated`) to place the caption.
             ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
-                .with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::TextOnShape),
+                .with_category(PropertyCategory::AppearanceLine).with_order(24).in_group(PropertyGroup::TextOnShape),
             ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
-                .with_category(PropertyCategory::AppearanceLine).with_order(23).in_group(PropertyGroup::TextOnShape),
+                .with_category(PropertyCategory::AppearanceLine).with_order(25).in_group(PropertyGroup::TextOnShape),
         ]
     }
 
@@ -259,6 +276,8 @@ impl Primitive for ParallelChannel {
         match id {
             "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
             "fill_opacity" => { if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; } }
+            "extend_left" => { if let Some(v) = value.as_bool() { self.extend_left = v; return true; } }
+            "extend_right" => { if let Some(v) = value.as_bool() { self.extend_right = v; return true; } }
             "label_font_size" => {
                 if let Some(v) = value.as_number() {
                     self.data.text.get_or_insert_with(super::super::PrimitiveText::default).font_size = v.clamp(8.0, 32.0);
@@ -304,5 +323,56 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_parallel_channel,
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod extend_tests {
+    use super::*;
+    use crate::{Bar, PriceScale, Viewport};
+
+    fn fixture() -> (Vec<Bar>, Viewport, PriceScale) {
+        let bars: Vec<Bar> = (0..6).map(|i| Bar::new(i, 100.0, 102.0, 98.0, 100.0)).collect();
+        let viewport = Viewport { chart_width: 1200.0, chart_height: 600.0, bar_count: bars.len(), ..Default::default() };
+        let price_scale = PriceScale { price_min: 50.0, price_max: 150.0, ..Default::default() };
+        (bars, viewport, price_scale)
+    }
+
+    /// A probe point sitting exactly on the extended main boundary line, at
+    /// the panel's own right edge — misses an unextended channel (it is
+    /// far past both anchors) but resolves to `Body` once `extend_right` is
+    /// on, because `hit_test` now tests the SAME extended segment `render`
+    /// draws (`extend_segment_to_edges`), so the drawn/hit geometry reaches
+    /// further than the unextended primitive.
+    #[test]
+    fn extend_right_reaches_the_panel_edge() {
+        let (bars, viewport, price_scale) = fixture();
+        // ts values land exactly on bar indices 0 and 5 of `fixture()`'s
+        // 6-bar slice, so both anchors sit well inside `chart_width` at the
+        // fixture's default 8px bar spacing (x2 = 40) — the probe below is
+        // only reachable via extension, not because the raw segment already
+        // overshoots the panel on its own.
+        let channel = ParallelChannel::new(0, 100.0, 5_000, 110.0, 5.0, "#2196F3");
+
+        let bar1 = timestamp_ms_to_bar_f64(&bars, channel.ts1);
+        let bar2 = timestamp_ms_to_bar_f64(&bars, channel.ts2);
+        let x1 = viewport.bar_to_x_f64(bar1);
+        let y1 = viewport.price_to_y(channel.price1, price_scale.price_min, price_scale.price_max);
+        let x2 = viewport.bar_to_x_f64(bar2);
+        let y2 = viewport.price_to_y(channel.price2, price_scale.price_min, price_scale.price_max);
+        let (_, _, probe_x, probe_y) = extend_segment_to_edges(x1, y1, x2, y2, false, true, viewport.chart_width);
+        assert_eq!(probe_x, viewport.chart_width, "the probe sits at the panel's own right edge");
+
+        assert!(
+            matches!(channel.hit_test(probe_x, probe_y, &bars, &viewport, &price_scale), HitTestResult::Miss),
+            "unextended channel misses a point on the panel's right edge",
+        );
+
+        let mut extended = channel;
+        extended.extend_right = true;
+        assert!(
+            matches!(extended.hit_test(probe_x, probe_y, &bars, &viewport, &price_scale), HitTestResult::Body),
+            "extend_right reaches the same point once the boundary line is drawn that far",
+        );
     }
 }

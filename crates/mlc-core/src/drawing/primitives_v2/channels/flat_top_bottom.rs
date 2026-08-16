@@ -10,6 +10,7 @@ use super::super::{
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle,
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS,
+    extend_segment_to_edges,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
@@ -38,6 +39,10 @@ pub struct FlatTopBottom {
     pub fill: bool,
     #[serde(default = "default_area_fill_opacity")]
     pub fill_opacity: f64,
+    #[serde(default)]
+    pub extend_left: bool,
+    #[serde(default)]
+    pub extend_right: bool,
 }
 
 fn default_true() -> bool { true }
@@ -56,6 +61,7 @@ impl FlatTopBottom {
             ts1, price1, ts2, price2,
             flat_price, flat_type,
             fill: true, fill_opacity: AREA_FILL_OPACITY,
+            extend_left: false, extend_right: false,
         }
     }
 }
@@ -124,8 +130,14 @@ impl Primitive for FlatTopBottom {
         let cy = (y1 + y2 + flat_y + flat_y) / 4.0;
         if check_point_hit(screen_x, screen_y, cx, cy) { return HitTestResult::ControlPoint(ControlPointType::Move); }
 
-        if point_to_line_distance(screen_x, screen_y, x1, y1, x2, y2) < HIT_TOLERANCE { return HitTestResult::Body; }
-        if point_to_line_distance(screen_x, screen_y, x1, flat_y, x2, flat_y) < HIT_TOLERANCE { return HitTestResult::Body; }
+        // Reach exactly as far as `render` draws — the flat line has zero
+        // slope, so extending it just moves its x-endpoints; the sloped
+        // line extends along its own slope. Independent per line, same as
+        // the other channel types.
+        let (sx1, sy1, sx2, sy2) = extend_segment_to_edges(x1, y1, x2, y2, self.extend_left, self.extend_right, viewport.chart_width);
+        let (fx1, fy1, fx2, fy2) = extend_segment_to_edges(x1, flat_y, x2, flat_y, self.extend_left, self.extend_right, viewport.chart_width);
+        if point_to_line_distance(screen_x, screen_y, sx1, sy1, sx2, sy2) < HIT_TOLERANCE { return HitTestResult::Body; }
+        if point_to_line_distance(screen_x, screen_y, fx1, fy1, fx2, fy2) < HIT_TOLERANCE { return HitTestResult::Body; }
         HitTestResult::Miss
     }
 
@@ -159,13 +171,20 @@ impl Primitive for FlatTopBottom {
         let y2 = ctx.price_to_y(self.price2);
         let flat_y = ctx.price_to_y(self.flat_price);
 
+        // An extended side draws to the panel edge in that direction — off
+        // by default, so an unextended primitive draws the exact same two
+        // segments as before this pass.
+        let chart_width = ctx.chart_width();
+        let (sx1, sy1, sx2, sy2) = extend_segment_to_edges(x1, y1, x2, y2, self.extend_left, self.extend_right, chart_width);
+        let (fx1, fy1, fx2, fy2) = extend_segment_to_edges(x1, flat_y, x2, flat_y, self.extend_left, self.extend_right, chart_width);
+
         if self.fill {
             let base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
             let fill_color = format!("{}{:02x}", &base[..7], (self.fill_opacity * 255.0) as u8);
             ctx.set_fill_color(&fill_color);
             ctx.begin_path();
-            ctx.move_to(x1, y1); ctx.line_to(x2, y2);
-            ctx.line_to(x2, flat_y); ctx.line_to(x1, flat_y);
+            ctx.move_to(sx1, sy1); ctx.line_to(sx2, sy2);
+            ctx.line_to(fx2, fy2); ctx.line_to(fx1, fy1);
             ctx.close_path(); ctx.fill();
         }
 
@@ -180,13 +199,13 @@ impl Primitive for FlatTopBottom {
         }
 
         ctx.begin_path();
-        ctx.move_to(crisp(x1, dpr), crisp(y1, dpr));
-        ctx.line_to(crisp(x2, dpr), crisp(y2, dpr));
+        ctx.move_to(crisp(sx1, dpr), crisp(sy1, dpr));
+        ctx.line_to(crisp(sx2, dpr), crisp(sy2, dpr));
         ctx.stroke();
 
         ctx.begin_path();
-        ctx.move_to(crisp(x1, dpr), crisp(flat_y, dpr));
-        ctx.line_to(crisp(x2, dpr), crisp(flat_y, dpr));
+        ctx.move_to(crisp(fx1, dpr), crisp(fy1, dpr));
+        ctx.line_to(crisp(fx2, dpr), crisp(fy2, dpr));
         ctx.stroke();
         ctx.set_line_dash(&[]);
 
@@ -219,20 +238,25 @@ impl Primitive for FlatTopBottom {
         // sloped line and one horizontal line, not a pair a middle would
         // average between, so there is no home for it here either.
         //
-        // `PropertyGroup::Extend` has nothing to declare: unlike its two
-        // siblings, this struct never grew `extend_left`/`extend_right`
-        // fields at all.
+        // `PropertyGroup::Extend` — `extend_left`/`extend_right` are new
+        // fields on this struct (this type never had them before this
+        // pass, unlike its two siblings): the sloped line extends along its
+        // own slope, the flat line's own zero slope just moves its
+        // x-endpoints (`render`/`hit_test` above, via
+        // `extend_segment_to_edges`).
         let default_text = super::super::PrimitiveText::default();
         vec![
             ConfigProperty::fill(self.fill).with_category(PropertyCategory::AppearanceFill).with_order(20),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_category(PropertyCategory::AppearanceFill).with_order(21),
+            ConfigProperty::extend_left(self.extend_left).with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::Extend),
+            ConfigProperty::extend_right(self.extend_right).with_category(PropertyCategory::AppearanceLine).with_order(23).in_group(PropertyGroup::Extend),
             // `PropertyGroup::TextOnShape` — font size + horizontal
             // position write into `data.text`, already read by `render`
             // above (`render_primitive_text_rotated`) to place the caption.
             ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
-                .with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::TextOnShape),
+                .with_category(PropertyCategory::AppearanceLine).with_order(24).in_group(PropertyGroup::TextOnShape),
             ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
-                .with_category(PropertyCategory::AppearanceLine).with_order(23).in_group(PropertyGroup::TextOnShape),
+                .with_category(PropertyCategory::AppearanceLine).with_order(25).in_group(PropertyGroup::TextOnShape),
         ]
     }
 
@@ -240,6 +264,8 @@ impl Primitive for FlatTopBottom {
         match id {
             "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
             "fill_opacity" => { if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; } }
+            "extend_left" => { if let Some(v) = value.as_bool() { self.extend_left = v; return true; } }
+            "extend_right" => { if let Some(v) = value.as_bool() { self.extend_right = v; return true; } }
             "label_font_size" => {
                 if let Some(v) = value.as_number() {
                     self.data.text.get_or_insert_with(super::super::PrimitiveText::default).font_size = v.clamp(8.0, 32.0);
@@ -281,5 +307,49 @@ pub fn metadata() -> PrimitiveMetadata {
         factory: create_flat_top_bottom,
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod extend_tests {
+    use super::*;
+    use crate::{Bar, PriceScale, Viewport};
+
+    fn fixture() -> (Vec<Bar>, Viewport, PriceScale) {
+        let bars: Vec<Bar> = (0..6).map(|i| Bar::new(i, 100.0, 102.0, 98.0, 100.0)).collect();
+        let viewport = Viewport { chart_width: 1200.0, chart_height: 600.0, bar_count: bars.len(), ..Default::default() };
+        let price_scale = PriceScale { price_min: 50.0, price_max: 150.0, ..Default::default() };
+        (bars, viewport, price_scale)
+    }
+
+    /// The flat (horizontal) line has zero slope, so extending it just
+    /// moves its x-endpoints at the same screen y — a probe at the panel's
+    /// own right edge, level with the flat line, misses an unextended
+    /// primitive and resolves to `Body` once `extend_right` is on.
+    #[test]
+    fn extend_right_reaches_the_panel_edge_on_the_flat_line() {
+        let (bars, viewport, price_scale) = fixture();
+        // ts values land exactly on bar indices 0 and 5 of `fixture()`'s
+        // 6-bar slice, so both anchors sit well inside `chart_width` at the
+        // fixture's default 8px bar spacing — the probe below is only
+        // reachable via extension, not because the raw segment already
+        // overshoots the panel on its own.
+        let channel = FlatTopBottom::new(0, 100.0, 5_000, 105.0, 120.0, "#FF9800");
+
+        let flat_y = viewport.price_to_y(channel.flat_price, price_scale.price_min, price_scale.price_max);
+        let probe_x = viewport.chart_width;
+        let probe_y = flat_y;
+
+        assert!(
+            matches!(channel.hit_test(probe_x, probe_y, &bars, &viewport, &price_scale), HitTestResult::Miss),
+            "unextended channel misses a point on the panel's right edge",
+        );
+
+        let mut extended = channel;
+        extended.extend_right = true;
+        assert!(
+            matches!(extended.hit_test(probe_x, probe_y, &bars, &viewport, &price_scale), HitTestResult::Body),
+            "extend_right reaches the same point once the flat line is drawn that far",
+        );
     }
 }
