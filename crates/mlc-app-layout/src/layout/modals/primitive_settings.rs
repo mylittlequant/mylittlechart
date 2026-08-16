@@ -729,7 +729,7 @@ pub fn render_primitive_settings_modal(
     // the space between the input and this same viewport's bottom edge —
     // the only place that knows it (item 2 follow-up, 2026-08-08).
     if let Some((field_rect, open_upward)) = result.add_chip_dropdown_anchor {
-        primitive_settings_levels::draw_add_chip_dropdown(ctx, toolbar_theme, &mut result, field_rect, content_right, open_upward);
+        primitive_settings_levels::draw_add_chip_dropdown(ctx, toolbar_theme, &mut result, field_rect, content_right, open_upward, prim, state);
     }
 
     // === Split cycle+chevron control's dropdown (item 1, 2026-08-09

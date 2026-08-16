@@ -305,6 +305,54 @@ pub fn level_set_options_and_current(prim: &dyn Primitive) -> (Vec<LevelSetOptio
     (options, current)
 }
 
+/// Cap on the "+ добавить уровень" quick-add dropdown
+/// ([`add_level_quick_chips`]) — the row's own fixed layout
+/// (`primitive_settings_levels::ADD_CHIP_ROW_H`) assumes this many rows; a
+/// family whose remaining catalogue is wider than this just shows the first
+/// [`ADD_CHIP_LIMIT`] in catalogue order, the same count the three old
+/// static values this replaced always capped at.
+pub const ADD_CHIP_LIMIT: usize = 3;
+
+/// The "+ добавить уровень" quick-add dropdown's own offer for `prim` right
+/// now — the last hiding place of the defect [`level_set_options_and_current`]
+/// closed for the набор selector: every level-having type used to be offered
+/// the SAME three Fibonacci extensions (1.272/1.618/2.618), which meant
+/// nothing to a Gann fan, a pitchfork or a time zone.
+///
+/// The source list is `prim`'s own WIDEST [`Primitive::level_set_presets`]
+/// entry — the one with the most values (`"all"` for every family that ships
+/// one today; found structurally by length, not by matching the id `"all"`,
+/// so a future family's own widest tier is picked up automatically without
+/// touching this function). `ladder` is the caller's own current ladder read
+/// (`primitive_settings_levels::composition`'s own value list — every row
+/// shown, dimmed or not; only a session `Delete` removes a value from it, see
+/// that function's own doc) — every catalogue member NOT already one of
+/// `ladder`'s values, in the catalogue's own declared order, capped at
+/// [`ADD_CHIP_LIMIT`] so the row's fixed layout never changes shape.
+///
+/// Empty when `ladder` already covers the whole catalogue — every
+/// non-Fibonacci-retracement family (Gann, pitchfork, time zones) seeds its
+/// FULL catalogue at construction with most rows merely hidden (see e.g.
+/// `gann::gann_fan::default_gann_fan_configs`'s own doc), so a FRESHLY
+/// placed instance of any of them already offers nothing here — never a
+/// fabricated extra value to keep the row full. Also empty for a primitive
+/// with no catalogue at all (`level_set_presets()` empty, the default) — the
+/// same "no fabricated list" rule [`level_set_options_and_current`] already
+/// follows; that falls straight out of `max_by_key` on an empty slice, no
+/// special case needed.
+pub fn add_level_quick_chips(prim: &dyn Primitive, ladder: &[f64]) -> Vec<f64> {
+    let Some(widest) = prim.level_set_presets().iter().max_by_key(|p| p.values.len()) else {
+        return Vec::new();
+    };
+    widest
+        .values
+        .iter()
+        .copied()
+        .filter(|v| !ladder.iter().any(|c| (*c - *v).abs() < EPS))
+        .take(ADD_CHIP_LIMIT)
+        .collect()
+}
+
 /// Recolour every non-overridden level's own LINE colour (`cfg.color`) in
 /// the (non-excluded) composition from `palette_idx`'s five stops, ranked
 /// by ascending level value — the "Линии" axis's own half of what a single
@@ -597,16 +645,22 @@ mod tests {
     use super::*;
     use mlc_core::drawing::primitives_v2::config::LevelSetPreset;
     use mlc_core::drawing::primitives_v2::fibonacci::retracement::{
-        LEVEL_SET_PRESETS as FIB_LEVEL_SET_PRESETS, MAIN_LEVELS,
+        ALL_LEVELS, LEVEL_SET_PRESETS as FIB_LEVEL_SET_PRESETS, MAIN_LEVELS,
     };
-    use mlc_core::drawing::primitives_v2::fibonacci::time_zones::LEVEL_SET_PRESETS as TIME_ZONES_LEVEL_SET_PRESETS;
+    use mlc_core::drawing::primitives_v2::fibonacci::time_zones::{
+        ALL_TIME_ZONES, LEVEL_SET_PRESETS as TIME_ZONES_LEVEL_SET_PRESETS,
+    };
     use mlc_core::drawing::primitives_v2::fibonacci::{FibRetracement, FibTimeZones};
     use mlc_core::drawing::primitives_v2::gann::gann_box::LEVEL_SET_PRESETS as GANN_BOX_LEVEL_SET_PRESETS;
-    use mlc_core::drawing::primitives_v2::gann::gann_fan::LEVEL_SET_PRESETS as GANN_FAN_LEVEL_SET_PRESETS;
+    use mlc_core::drawing::primitives_v2::gann::gann_fan::{
+        ALL_GANN_ANGLES, LEVEL_SET_PRESETS as GANN_FAN_LEVEL_SET_PRESETS,
+    };
     use mlc_core::drawing::primitives_v2::gann::gann_square::LEVEL_SET_PRESETS as GANN_SQUARE_LEVEL_SET_PRESETS;
     use mlc_core::drawing::primitives_v2::gann::{GannBox, GannFan, GannSquare};
     use mlc_core::drawing::primitives_v2::lines::TrendLine;
-    use mlc_core::drawing::primitives_v2::pitchforks::pitchfork::LEVEL_SET_PRESETS as PITCHFORK_LEVEL_SET_PRESETS;
+    use mlc_core::drawing::primitives_v2::pitchforks::pitchfork::{
+        ALL_PITCHFORK_LEVELS, LEVEL_SET_PRESETS as PITCHFORK_LEVEL_SET_PRESETS,
+    };
     use mlc_core::drawing::primitives_v2::pitchforks::Pitchfork;
 
     /// `options` (the Levels tab's own set LIST for this primitive) must be
@@ -722,6 +776,101 @@ mod tests {
         let (options, current) = level_set_options_and_current(&trend_line);
         assert!(options.is_empty());
         assert_eq!(current, None);
+    }
+
+    // =========================================================================
+    // `add_level_quick_chips` — the "+ добавить уровень" quick-add dropdown.
+    // Same defect, same fix, as `level_set_options_and_current` above: the
+    // chips used to be a hardcoded Fibonacci-only list offered to every
+    // level-having type. Now they come from that type's own widest catalogue.
+    // =========================================================================
+
+    /// A fresh fibonacci retracement's ladder is exactly [`MAIN_LEVELS`]; the
+    /// quick-add chips are the first three [`ALL_LEVELS`] entries not already
+    /// in it, in `ALL_LEVELS`' own declared order. All three of the OLD
+    /// hardcoded chips (1.272/1.618/2.618, the defect this pass closes) ARE
+    /// themselves members of `ALL_LEVELS` — the fix never drops a foreign
+    /// value — but the new rule walks the catalogue in ITS OWN order and caps
+    /// at three: `1.414` sits between `1.272` and `1.618` in that order, so
+    /// it displaces `2.618` from the visible three. A retracement keeps its
+    /// first two familiar chips, not its third — a consequence of catalogue
+    /// order, not a regression: `2.618` is still reachable, it becomes the
+    /// fourth entry once one of the first three is added.
+    #[test]
+    fn fib_retracement_quick_add_chips_come_from_its_own_catalogue() {
+        let fib = FibRetracement::new(0, 100.0, 1_000, 200.0, "#F7B93E");
+        let ladder: Vec<f64> = fib.level_configs().expect("fib retracement has a level ladder").iter().map(|c| c.level).collect();
+        assert_eq!(ladder, MAIN_LEVELS, "a fresh retracement's ladder is exactly MAIN_LEVELS");
+        let chips = add_level_quick_chips(&fib, &ladder);
+        assert_eq!(chips, vec![1.272, 1.414, 1.618]);
+        for legacy in [1.272_f64, 1.618, 2.618] {
+            assert!(ALL_LEVELS.contains(&legacy), "the old hardcoded {legacy} is still a real member of this type's own catalogue");
+        }
+    }
+
+    /// A freshly placed Gann fan already carries a ladder row for every one
+    /// of its own nine angles (`default_gann_fan_configs` seeds all of
+    /// `ALL_GANN_ANGLES`, most merely hidden) — its ladder already covers the
+    /// whole catalogue, so the quick-add dropdown offers nothing. The exact
+    /// degenerate case the fix must answer honestly rather than paper over
+    /// with a fabricated value.
+    #[test]
+    fn gann_fan_fresh_ladder_already_covers_its_catalogue_offers_no_chips() {
+        let gann = GannFan::new(0, 100.0, 1_000, 200.0, "#00ff00");
+        let ladder: Vec<f64> = gann.level_configs().expect("gann fan has a level ladder").iter().map(|c| c.level).collect();
+        assert_eq!(ladder.len(), ALL_GANN_ANGLES.len(), "a fresh fan's own ladder already seeds the whole catalogue");
+        assert!(add_level_quick_chips(&gann, &ladder).is_empty());
+    }
+
+    /// Once some of a Gann fan's own rows are gone from the ladder (the
+    /// `LevelsIntent::Delete` path `primitive_settings_levels::composition`
+    /// reads off), the quick-add dropdown offers the REST of its own angle
+    /// catalogue, in the catalogue's own order — never a Fibonacci ratio,
+    /// which this type's angles are not.
+    #[test]
+    fn gann_fan_quick_add_chips_come_from_its_own_angle_catalogue() {
+        let gann = GannFan::new(0, 100.0, 1_000, 200.0, "#00ff00");
+        let ladder = [8.0, 4.0]; // simulates every other row deleted from the ladder
+        let chips = add_level_quick_chips(&gann, &ladder);
+        assert_eq!(chips, vec![3.0, 2.0, 1.0]);
+        assert!(chips.iter().all(|c| ALL_GANN_ANGLES.contains(c)));
+        assert!(!chips.contains(&1.618), "1.618 is a Fibonacci ratio, not a Gann angle this type owns");
+    }
+
+    /// A pitchfork's own quick-add chips, once part of its ladder is gone —
+    /// same reasoning as the Gann fan test above, applied to the pitchfork's
+    /// own quarter/Fibonacci-ratio catalogue.
+    #[test]
+    fn pitchfork_quick_add_chips_come_from_its_own_catalogue() {
+        let pf = Pitchfork::new(0, 100.0, 1_000_000, 150.0, 1_000_000, 50.0, "#F7B93E");
+        let ladder = [0.25, 0.5, 0.75, 1.0]; // simulates most rows deleted
+        let chips = add_level_quick_chips(&pf, &ladder);
+        assert_eq!(chips, vec![1.25, 1.5, 1.75]);
+        assert!(chips.iter().all(|c| ALL_PITCHFORK_LEVELS.contains(c)));
+        assert!(!chips.contains(&0.0), "0.0 is fib retracement's own endpoint ratio, not a member of this type's catalogue");
+    }
+
+    /// Fibonacci Time Zones' own quick-add chips come from its bar-count
+    /// sequence, never from `retracement`'s price ratios, despite living in
+    /// the same module.
+    #[test]
+    fn fib_time_zones_quick_add_chips_come_from_its_own_bar_count_catalogue() {
+        let tz = FibTimeZones::new(0, 100.0, "#F7B93E");
+        let ladder = [1.0, 2.0, 3.0, 5.0, 8.0]; // simulates most rows deleted
+        let chips = add_level_quick_chips(&tz, &ladder);
+        assert_eq!(chips, vec![13.0, 21.0, 34.0]);
+        assert!(chips.iter().all(|c| ALL_TIME_ZONES.contains(c)));
+        assert!(!chips.contains(&1.618), "1.618 is a price ratio, not a bar-count offset this type owns");
+    }
+
+    /// A primitive with no level ladder at all offers no quick-add chips —
+    /// same "no fabricated list" branch as `no_ladder_primitive_offers_no_sets`
+    /// above, falling out of `max_by_key` on the empty default preset slice.
+    #[test]
+    fn no_ladder_primitive_offers_no_quick_add_chips() {
+        let trend_line = TrendLine::new(0, 100.0, 1_000, 200.0, "#2962ff");
+        assert!(trend_line.level_set_presets().is_empty());
+        assert!(add_level_quick_chips(&trend_line, &[]).is_empty());
     }
 }
 

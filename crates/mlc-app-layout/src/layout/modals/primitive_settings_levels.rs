@@ -32,7 +32,7 @@
 //! field.
 
 use crate::layout::render_frame::{PrimitiveSettingsResult, SliderTrackInfo};
-use crate::layout::modals::primitive_settings_intent::{is_fill_palette_mode, is_line_palette_mode};
+use crate::layout::modals::primitive_settings_intent::{add_level_quick_chips, is_fill_palette_mode, is_line_palette_mode};
 use crate::layout::modals::primitive_settings_palettes::PALETTES;
 use crate::layout::modals::primitive_settings_property::{bucket_by_group, declared_properties, draw_property_row, properties_in};
 use crate::layout::modals::primitive_settings_vid::{
@@ -64,12 +64,6 @@ const ADD_ROW_H: f64 = 34.0;
 /// 2026-08-08 review) — shown under the add-level input only while it has
 /// focus, instead of sitting permanently in the row.
 const ADD_CHIP_ROW_H: f64 = 22.0;
-/// The quick-add values offered under the add-level input while it has
-/// focus (item 10, 2026-08-08 review). Module-level so both the anchor
-/// computation (`draw_add_row`, which needs the menu's own height to decide
-/// whether it fits below the input) and the paint pass
-/// (`draw_add_chip_dropdown`) read the identical list.
-const ADD_CHIP_VALUES: [&str; 3] = ["1.272", "1.618", "2.618"];
 const BLOCK_GAP: f64 = 10.0;
 /// Mirrors `primitive_settings_vid::GROUP_HEADER_H` — the Levels/Base
 /// group's own default (`group: None`) run stays headerless, exactly as
@@ -355,7 +349,7 @@ pub fn draw(
     );
     *row_y += BLOCK_GAP;
 
-    draw_add_row(ctx, toolbar_theme, widget_theme, state, result, x0, *row_y, footer_top);
+    draw_add_row(ctx, toolbar_theme, widget_theme, state, result, x0, *row_y, footer_top, prim);
     *row_y += ADD_ROW_H;
 }
 
@@ -1213,6 +1207,7 @@ fn draw_add_row(
     x0: f64,
     y: f64,
     footer_top: f64,
+    prim: &dyn Primitive,
 ) {
     let lang = current_language();
     ctx.set_font("13px sans-serif");
@@ -1256,7 +1251,8 @@ fn draw_add_row(
     // Quick-add values (item 10, 2026-08-08 review): a dropdown under the
     // input, shown only while it has focus — not a permanent row fixture.
     // Typing a value by hand stays possible either way; this only offers a
-    // shortcut for the common ones. This pass only computes WHERE it goes
+    // shortcut for the ones `prim`'s own catalogue still has to add (see
+    // `add_chip_values` below). This pass only computes WHERE it goes
     // (flipping it upward when there is no room below, before the footer)
     // and stores the anchor on `result`; the actual paint + registration
     // happens in the OUTER pass (`primitive_settings::
@@ -1264,12 +1260,27 @@ fn draw_add_row(
     // below), after `scrollable.end()` closes THIS function's own scroll
     // clip — drawing it in here, inside the clip, is what let it slide
     // under the footer and get clipped (item 2 follow-up, 2026-08-08).
+    // No anchor at all once the ladder already covers `prim`'s whole
+    // catalogue (`add_chip_values` empty) — a dropdown with nothing in it
+    // has no reason to open.
     if is_editing {
-        let menu_h = ADD_CHIP_ROW_H * ADD_CHIP_VALUES.len() as f64 + 6.0;
-        let space_below = footer_top - field_rect.bottom();
-        let open_upward = space_below < menu_h + 2.0;
-        result.add_chip_dropdown_anchor = Some((field_rect, open_upward));
+        let chip_count = add_chip_values(prim, state).len();
+        if chip_count > 0 {
+            let menu_h = ADD_CHIP_ROW_H * chip_count as f64 + 6.0;
+            let space_below = footer_top - field_rect.bottom();
+            let open_upward = space_below < menu_h + 2.0;
+            result.add_chip_dropdown_anchor = Some((field_rect, open_upward));
+        }
     }
+}
+
+/// [`add_level_quick_chips`] fed with THIS file's own live composition read
+/// (`composition`, above — every row currently shown in the ladder, dimmed
+/// or not) — the one place both `draw_add_row` (anchor/height) and
+/// `draw_add_chip_dropdown` (paint) get the chip list from, so the two can
+/// never disagree about what is about to be shown.
+fn add_chip_values(prim: &dyn Primitive, state: &PrimitiveSettingsState) -> Vec<f64> {
+    add_level_quick_chips(prim, &composition(prim, state))
 }
 
 /// Paint + register the add-level quick-value dropdown from the anchor
@@ -1279,7 +1290,12 @@ fn draw_add_row(
 /// `body_items_end` is captured — so this menu is never clipped by the
 /// ladder's viewport and never culled against it at registration time
 /// (item 2 follow-up, 2026-08-08; mirrors `template_dropdown_menu`'s own
-/// outside-the-clip treatment in that same function).
+/// outside-the-clip treatment in that same function). `prim`/`state` feed
+/// `add_chip_values` the identical live composition `draw_add_row` sized the
+/// anchor for — recomputed here rather than threaded through `result`
+/// because both callers already have `prim`/`state` in scope and the list is
+/// cheap (`ADD_CHIP_LIMIT` entries at most).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_add_chip_dropdown(
     ctx: &mut dyn RenderContext,
     toolbar_theme: &ToolbarTheme,
@@ -1287,9 +1303,15 @@ pub(crate) fn draw_add_chip_dropdown(
     field_rect: WidgetRect,
     x1: f64,
     open_upward: bool,
+    prim: &dyn Primitive,
+    state: &PrimitiveSettingsState,
 ) {
+    let chips = add_chip_values(prim, state);
+    if chips.is_empty() {
+        return;
+    }
     let menu_w = field_rect.width.max(70.0).min((x1 - field_rect.x).max(70.0));
-    let total_h = ADD_CHIP_ROW_H * ADD_CHIP_VALUES.len() as f64 + 6.0;
+    let total_h = ADD_CHIP_ROW_H * chips.len() as f64 + 6.0;
     let menu_y = if open_upward { field_rect.y - 2.0 - total_h } else { field_rect.bottom() + 2.0 };
 
     ctx.set_fill_color(&toolbar_theme.dropdown_bg);
@@ -1299,14 +1321,21 @@ pub(crate) fn draw_add_chip_dropdown(
     ctx.stroke_rounded_rect(field_rect.x, menu_y, menu_w, total_h, SETTINGS_BUTTON_RADIUS);
 
     let mut row_y = menu_y + 3.0;
-    for v in ADD_CHIP_VALUES {
+    for v in chips {
         let row_rect = WidgetRect::new(field_rect.x, row_y, menu_w, ADD_CHIP_ROW_H);
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(&toolbar_theme.item_text);
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(v, row_rect.center_x(), row_rect.center_y());
-        result.content_items.push((format!("levels_add_chip:{v}"), row_rect));
+        // Displayed via the primitive's own notation (e.g. a Gann fan shows
+        // "2x1", not "2.000" — `level_value_label`'s own doc) so a chip
+        // reads exactly like the row it becomes once added; the CLICK id
+        // still carries the raw value (`vkey`, 3-decimal), same as every
+        // other `level_v{key}_*` id in this file, so `parse_levels_click`'s
+        // bare `f64` parse keeps working unchanged.
+        let label = prim.level_value_label(v);
+        ctx.fill_text(&label, row_rect.center_x(), row_rect.center_y());
+        result.content_items.push((format!("levels_add_chip:{}", vkey(v)), row_rect));
         row_y += ADD_CHIP_ROW_H;
     }
 }
