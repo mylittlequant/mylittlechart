@@ -10,7 +10,7 @@ use super::super::{
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
     RenderContext, crisp,
     render_primitive_text,
-    config::{ConfigProperty, PropertyValue},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -208,9 +208,29 @@ impl Primitive for Path {
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
+        // Shape archetype (W3) — same skeleton `rectangle.rs`'s own
+        // `style_properties` doc explains in full: Outline is the
+        // universal bespoke base-stroke row (nothing to declare) and
+        // TextOnShape's "Show" row has no independent backing field
+        // (stays out). There is no Fill group here at all — unlike
+        // `Polyline`, this type's `closed` never gates a fill (`render`
+        // has no fill path for a closed `Path`), so declaring `fill`/
+        // `fill_opacity` would be a stub with no rendering behind it, not
+        // a real backing field — same bar the hard limits set. `closed`/
+        // `smooth` are this type's own quirks with no dedicated group in
+        // the lab's `shape_tabs()` (it only modelled rectangle/parallel
+        // channel), so both stay in the default ungrouped Line run.
+        let default_text = super::super::PrimitiveText::default();
         vec![
             ConfigProperty::closed(self.closed).with_order(15),
             ConfigProperty::smooth(self.smooth).with_order(20),
+            // `PropertyGroup::TextOnShape` — font size + horizontal
+            // position write into `data.text`, already read by `render`
+            // above to place the caption.
+            ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
+                .with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::TextOnShape),
+            ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
+                .with_category(PropertyCategory::AppearanceLine).with_order(23).in_group(PropertyGroup::TextOnShape),
         ]
     }
 
@@ -218,6 +238,18 @@ impl Primitive for Path {
         match id {
             "closed" => { if let Some(v) = value.as_bool() { self.closed = v; return true; } }
             "smooth" => { if let Some(v) = value.as_bool() { self.smooth = v; return true; } }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.data.text.get_or_insert_with(super::super::PrimitiveText::default).font_size = v.clamp(8.0, 32.0);
+                    return true;
+                }
+            }
+            "text_h_align" => {
+                if let PropertyValue::String(v) = value {
+                    self.data.text.get_or_insert_with(super::super::PrimitiveText::default).h_align = super::super::TextAlign::from_str(v);
+                    return true;
+                }
+            }
             _ => {}
         }
         false

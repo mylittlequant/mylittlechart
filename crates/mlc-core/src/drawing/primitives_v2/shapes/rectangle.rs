@@ -10,7 +10,7 @@ use super::super::{
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
     RenderContext, crisp,
     render_primitive_text,
-    config::{ConfigProperty, PropertyValue, PropertyCategory},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
     AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
@@ -212,9 +212,50 @@ impl Primitive for Rectangle {
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
+        // Shape archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`):
+        // rectangle is the lab's own reference type for `shape_tabs()`
+        // (`mlc-ui-lab`'s `spec::types()` calls it with `extra: Vec::new()`
+        // — no per-type additions beyond the archetype's own groups).
+        //
+        // Outline (colour/width/line style) needs no declaration here: it
+        // is the universal bespoke base-stroke row every primitive without
+        // a level ladder already gets (`primitive_settings_vid`'s own doc),
+        // so the lab's `line_group(Some(Outline))` — which has no OTHER
+        // rows for this type — is already fully covered.
+        //
+        // Fill likewise needs no `.in_group()`: the lab's own
+        // `fill_group(Some(Fill), true)` title is byte-identical to
+        // `PropertyCategory::AppearanceFill`'s existing default header, so
+        // `group: None` already renders it correctly — there is no
+        // `PropertyGroup::Fill` variant for exactly this reason (see
+        // `PropertyGroup`'s own doc).
+        let default_text = super::super::PrimitiveText::default();
         vec![
             ConfigProperty::fill(self.fill).with_category(PropertyCategory::AppearanceFill).with_order(20),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_category(PropertyCategory::AppearanceFill).with_order(21),
+            // `PropertyGroup::TextOnShape` — the lab's own on-shape caption
+            // group, living on THIS (subject) tab, not a separate Labels
+            // tab (`shape_tabs()` declares only "shape"+"placement" —
+            // see `PropertyGroup::TextOnShape`'s own doc). Two of its three
+            // rows have a real field behind them, already read by `render`
+            // above to place the caption: `data.text.font_size` and
+            // `data.text.h_align`. `ConfigProperty::{label_font_size,
+            // h_align}` are pre-built, previously-unused-anywhere helpers
+            // whose wire format (`"start"/"center"/"end"`) round-trips
+            // through `TextAlign::{as_str,from_str}` with zero adapter code
+            // — exactly the shape this field needs. The third row, "Show",
+            // has no field of its own: the only thing gating this text
+            // today is `content.is_empty()` (edited on the Labels tab's
+            // bespoke content block, outside this file), and a standalone
+            // on/off would need a NEW rendering condition, not just a new
+            // control — same "no toggle with nothing behind it" call wave 1
+            // made for Elliott's `ShowDegree`. `PropertyGroup::Extend` is
+            // also not declared: a rectangle is a bounded area, not a ray —
+            // there is no left/right-extend concept to expose.
+            ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
+                .with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::TextOnShape),
+            ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
+                .with_category(PropertyCategory::AppearanceLine).with_order(23).in_group(PropertyGroup::TextOnShape),
         ]
     }
 
@@ -222,6 +263,18 @@ impl Primitive for Rectangle {
         match id {
             "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
             "fill_opacity" => { if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; } }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.data.text.get_or_insert_with(super::super::PrimitiveText::default).font_size = v.clamp(8.0, 32.0);
+                    return true;
+                }
+            }
+            "text_h_align" => {
+                if let PropertyValue::String(v) = value {
+                    self.data.text.get_or_insert_with(super::super::PrimitiveText::default).h_align = super::super::TextAlign::from_str(v);
+                    return true;
+                }
+            }
             _ => {}
         }
         false

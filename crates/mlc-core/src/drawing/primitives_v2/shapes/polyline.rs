@@ -11,7 +11,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text,
     AREA_FILL_OPACITY, default_area_fill_opacity,
-    config::{ConfigProperty, PropertyValue, PropertyCategory},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -203,10 +203,30 @@ impl Primitive for Polyline {
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
+        // Shape archetype (W3) — same skeleton `rectangle.rs`'s own
+        // `style_properties` doc explains in full: Outline is the
+        // universal bespoke base-stroke row (nothing to declare), Fill's
+        // default title already matches the lab's, and TextOnShape's
+        // "Show" row has no independent backing field (stays out) while
+        // Extend has no concept here either. `closed` is this type's own
+        // quirk (turns an open point list into a loop, precondition for
+        // `fill` to paint anything) — the lab's `shape_tabs()` has no
+        // dedicated group for it (it only modelled rectangle/parallel
+        // channel, not polyline), so it stays in the default ungrouped
+        // Line run, same call wave 1 made for Elliott Triangle's own
+        // `show_trendlines`.
+        let default_text = super::super::PrimitiveText::default();
         vec![
             ConfigProperty::closed(self.closed).with_order(19),
             ConfigProperty::fill(self.fill).with_category(PropertyCategory::AppearanceFill).with_order(20),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_category(PropertyCategory::AppearanceFill).with_order(21),
+            // `PropertyGroup::TextOnShape` — font size + horizontal
+            // position write into `data.text`, already read by `render`
+            // above to place the caption.
+            ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
+                .with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::TextOnShape),
+            ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
+                .with_category(PropertyCategory::AppearanceLine).with_order(23).in_group(PropertyGroup::TextOnShape),
         ]
     }
 
@@ -215,6 +235,18 @@ impl Primitive for Polyline {
             "closed" => { if let Some(v) = value.as_bool() { self.closed = v; return true; } }
             "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
             "fill_opacity" => { if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; } }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.data.text.get_or_insert_with(super::super::PrimitiveText::default).font_size = v.clamp(8.0, 32.0);
+                    return true;
+                }
+            }
+            "text_h_align" => {
+                if let PropertyValue::String(v) = value {
+                    self.data.text.get_or_insert_with(super::super::PrimitiveText::default).h_align = super::super::TextAlign::from_str(v);
+                    return true;
+                }
+            }
             _ => {}
         }
         false

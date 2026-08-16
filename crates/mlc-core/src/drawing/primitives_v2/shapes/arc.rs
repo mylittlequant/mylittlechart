@@ -10,6 +10,7 @@ use super::super::{
     HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
     RenderContext,
     render_primitive_text,
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -232,6 +233,48 @@ impl Primitive for Arc {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+
+    fn style_properties(&self) -> Vec<ConfigProperty> {
+        // Shape archetype (W3) — same skeleton `rectangle.rs`'s own
+        // `style_properties` doc explains in full: Outline is the
+        // universal bespoke base-stroke row (nothing to declare) and
+        // TextOnShape's "Show" row has no independent backing field
+        // (stays out). There is no Fill group here at all: an arc is an
+        // open stroke, not a bounded area — painting the pie-wedge it
+        // sweeps would need a new render path this type has never had,
+        // not just a new control, so `fill`/`fill_opacity` are left out
+        // rather than declared with nothing behind them. `Extend` has no
+        // concept on a bounded sweep either.
+        let default_text = super::super::PrimitiveText::default();
+        vec![
+            // `PropertyGroup::TextOnShape` — font size + horizontal
+            // position write into `data.text`, already read by `render`
+            // above to place the caption.
+            ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
+                .with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::TextOnShape),
+            ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
+                .with_category(PropertyCategory::AppearanceLine).with_order(23).in_group(PropertyGroup::TextOnShape),
+        ]
+    }
+
+    fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        match id {
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.data.text.get_or_insert_with(super::super::PrimitiveText::default).font_size = v.clamp(8.0, 32.0);
+                    return true;
+                }
+            }
+            "text_h_align" => {
+                if let PropertyValue::String(v) = value {
+                    self.data.text.get_or_insert_with(super::super::PrimitiveText::default).h_align = super::super::TextAlign::from_str(v);
+                    return true;
+                }
+            }
+            _ => {}
+        }
+        false
+    }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
