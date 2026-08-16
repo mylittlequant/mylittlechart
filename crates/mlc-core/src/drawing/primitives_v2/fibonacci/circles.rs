@@ -376,12 +376,20 @@ impl Primitive for FibCircles {
     fn level_set_presets(&self) -> &'static [LevelSetPreset] { LEVEL_SET_PRESETS }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
-        use super::super::config::ConfigProperty;
+        use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
+        // `PropertyGroup::LevelLabels` (W2) — the approved ladder
+        // archetype's own `LevelLabelsGroupTitle`, matching
+        // `FibRetracement::style_properties()`'s own choice for the same
+        // show/percent/position quartet.
         vec![
-            ConfigProperty::show_labels(self.show_labels).with_order(10),
-            ConfigProperty::levels(self.show_percentages).with_order(11),
-            ConfigProperty::show_as_percent(self.show_as_percent).with_order(12),
-            ConfigProperty::label_position(&self.label_position).with_order(13),
+            ConfigProperty::show_labels(self.show_labels)
+                .with_category(PropertyCategory::LabelsText).with_order(10).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::levels(self.show_percentages)
+                .with_category(PropertyCategory::LabelsText).with_order(11).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::show_as_percent(self.show_as_percent)
+                .with_category(PropertyCategory::LabelsText).with_order(12).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::label_position(&self.label_position)
+                .with_category(PropertyCategory::LabelsText).with_order(13).in_group(PropertyGroup::LevelLabels),
         ]
     }
 

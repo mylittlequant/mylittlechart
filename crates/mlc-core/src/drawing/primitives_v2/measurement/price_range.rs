@@ -7,7 +7,7 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle,
     render_primitive_text, TextAlign,
-    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory},
+    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 use super::super::types::{Segment, hit_test_strokes};
 use super::draw_stat_plate;
@@ -153,21 +153,27 @@ impl Primitive for PriceRange {
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
+        // `PropertyGroup::Values` (W2) — the approved measurement
+        // archetype's own `ValuesGroupTitle` (the "show ___" checklist),
+        // matching `PriceDateRange::style_properties()`'s own choice.
         let mut props = vec![
             ConfigProperty::show_price_diff(self.show_pips)
                 .with_category(PropertyCategory::AppearanceLine)
-                .with_order(10),
+                .with_order(10).in_group(PropertyGroup::Values),
             ConfigProperty::show_as_percent(self.show_percentage)
                 .with_category(PropertyCategory::AppearanceLine)
-                .with_order(11),
+                .with_order(11).in_group(PropertyGroup::Values),
+            // `PropertyGroup::TextGroup` (W2) — the approved design's own
+            // measurement "labels" tab text group (`SettingsKey::Text`),
+            // matching `PriceDateRange::style_properties()`'s own choice.
             ConfigProperty::label_font_size(self.label_style.font_size)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(13),
+                .with_order(13).in_group(PropertyGroup::TextGroup),
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(14),
+                .with_order(14).in_group(PropertyGroup::TextGroup),
         ];
-        props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
+        props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::TextGroup));
         props
     }
 

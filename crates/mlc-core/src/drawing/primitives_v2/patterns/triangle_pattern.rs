@@ -7,7 +7,7 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
     render_primitive_text, draw_label_plate,
-    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory},
+    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
     AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
@@ -217,12 +217,19 @@ impl Primitive for TrianglePattern {
             })
                 .with_category(PropertyCategory::AppearanceLine)
                 .with_order(12),
+            // `PropertyGroup::PointLabels` (W2) — the approved pattern
+            // archetype's own `PointLabelsGroupTitle`, matching
+            // `XabcdPattern::style_properties()`'s own choice for the same
+            // font/colour pair.
             ConfigProperty::label_font_size(self.label_style.font_size)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(13),
+                .with_order(13).in_group(PropertyGroup::PointLabels),
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(14),
+                .with_order(14).in_group(PropertyGroup::PointLabels),
+            // `fill`/`fill_opacity` stay as-is (own quirk, ungrouped): this
+            // paints the whole triangle body, a concept `XabcdPattern` (no
+            // closed area) has no equivalent for.
             ConfigProperty::fill(self.fill)
                 .with_category(PropertyCategory::AppearanceFill)
                 .with_order(20),
@@ -230,7 +237,7 @@ impl Primitive for TrianglePattern {
                 .with_category(PropertyCategory::AppearanceFill)
                 .with_order(21),
         ];
-        props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
+        props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::PointLabels));
         props
     }
 

@@ -442,17 +442,37 @@ impl Primitive for FibChannel {
     fn level_set_presets(&self) -> &'static [LevelSetPreset] { LEVEL_SET_PRESETS }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
-        use super::super::config::{ConfigProperty, PropertyCategory};
+        use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
         let mut props = vec![
-            ConfigProperty::show_prices(self.show_prices).with_order(10),
-            ConfigProperty::levels(self.show_percentages).with_order(11),
-            ConfigProperty::show_as_percent(self.show_as_percent).with_order(12),
-            ConfigProperty::label_position(&self.label_position).with_order(13),
-            ConfigProperty::extend_lines(self.extend).with_order(20),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41),
+            // `PropertyGroup::LevelLabels` (W2) — the approved ladder
+            // archetype's own `LevelLabelsGroupTitle`, matching
+            // `FibRetracement::style_properties()`'s own choice for the
+            // same show/percent/position quartet.
+            ConfigProperty::show_prices(self.show_prices)
+                .with_category(PropertyCategory::LabelsText).with_order(10).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::levels(self.show_percentages)
+                .with_category(PropertyCategory::LabelsText).with_order(11).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::show_as_percent(self.show_as_percent)
+                .with_category(PropertyCategory::LabelsText).with_order(12).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::label_position(&self.label_position)
+                .with_category(PropertyCategory::LabelsText).with_order(13).in_group(PropertyGroup::LevelLabels),
+            // `PropertyGroup::General` (W2) — the approved ladder
+            // archetype's own base group; matches `FibRetracement`'s own
+            // `extend_left`/`extend_right` (this channel has a single
+            // `extend` flag instead of a left/right pair). `ConfigProperty::
+            // extend` (id `"extend"`), not `extend_lines` (id
+            // `"extend_lines"`) — the previous declaration here used the
+            // `extend_lines` id, which `apply_style_property` below has
+            // never matched (the same bug `Pitchfork::style_properties()`'s
+            // own doc records as already fixed once for the pitchfork
+            // family; `fan.rs` carries the identical bug, fixed alongside
+            // this one).
+            ConfigProperty::extend(self.extend)
+                .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41).in_group(PropertyGroup::LevelLabels),
         ];
-        props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
+        props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 50, PropertyGroup::LevelLabels));
         props
     }
 

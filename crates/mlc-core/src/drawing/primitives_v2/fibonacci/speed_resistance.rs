@@ -409,17 +409,28 @@ impl Primitive for FibSpeedResistance {
     fn level_set_presets(&self) -> &'static [LevelSetPreset] { LEVEL_SET_PRESETS }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
-        use super::super::config::{ConfigProperty, PropertyCategory};
+        use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
         let mut props = vec![
-            ConfigProperty::show_labels(self.show_labels).with_order(10),
-            ConfigProperty::levels(self.show_percentages).with_order(11),
-            ConfigProperty::show_as_percent(self.show_as_percent).with_order(12),
-            ConfigProperty::label_position(&self.label_position).with_order(13),
+            // `PropertyGroup::LevelLabels` (W2) — the approved ladder
+            // archetype's own `LevelLabelsGroupTitle`, matching
+            // `FibRetracement::style_properties()`'s own choice for the
+            // same show/percent/position quartet.
+            ConfigProperty::show_labels(self.show_labels)
+                .with_category(PropertyCategory::LabelsText).with_order(10).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::levels(self.show_percentages)
+                .with_category(PropertyCategory::LabelsText).with_order(11).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::show_as_percent(self.show_as_percent)
+                .with_category(PropertyCategory::LabelsText).with_order(12).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::label_position(&self.label_position)
+                .with_category(PropertyCategory::LabelsText).with_order(13).in_group(PropertyGroup::LevelLabels),
+            // Ungrouped (W2): this primitive's own quirk (which end the
+            // fan measures from), no row in the approved ladder archetype's
+            // General group for it.
             ConfigProperty::reverse(self.reverse).with_order(20),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41).in_group(PropertyGroup::LevelLabels),
         ];
-        props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
+        props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 50, PropertyGroup::LevelLabels));
         props
     }
 

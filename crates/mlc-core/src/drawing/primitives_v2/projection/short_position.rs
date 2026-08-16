@@ -8,7 +8,7 @@ use super::super::{
     HIT_TOLERANCE, point_to_line_distance,
     RenderContext, crisp, LineStyle,
     render_primitive_text, fmt_price,
-    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory},
+    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -417,35 +417,53 @@ impl Primitive for ShortPosition {
         let reward_per_unit = (self.entry_price - self.take_profit).abs();
 
         let mut props = vec![
+            // `PropertyGroup::Display` (W2) — the approved position
+            // archetype's own `DisplayGroupTitle` group, matching
+            // `LongPosition::style_properties()`'s own choice.
             ConfigProperty::show_pnl(self.show_pnl)
                 .with_category(PropertyCategory::AppearanceLine)
-                .with_order(10),
+                .with_order(10).in_group(PropertyGroup::Display),
+            // `PropertyGroup::Volume` (W2) — `ToolbarMenuKey::HeaderVolume`,
+            // the approved design's own quantity/account/risk group.
             ConfigProperty::quantity(self.quantity)
                 .with_category(PropertyCategory::AppearanceLine)
-                .with_order(11),
+                .with_order(11).in_group(PropertyGroup::Volume),
+            // `PropertyGroup::Zones` (W2) — the approved design's own
+            // `ZonesGroupTitle`. The opacity slider below carries the same
+            // group tag from a different category — see `LongPosition`'s
+            // own comment on why a `PropertyGroup` can legitimately span
+            // two category blocks.
             ConfigProperty::stop_zone_color(&self.stop_color)
                 .with_category(PropertyCategory::AppearanceLine)
-                .with_order(12),
+                .with_order(12).in_group(PropertyGroup::Zones),
             ConfigProperty::target_zone_color(&self.target_color)
                 .with_category(PropertyCategory::AppearanceLine)
-                .with_order(13),
+                .with_order(13).in_group(PropertyGroup::Zones),
             ConfigProperty::fill_opacity(self.zone_opacity * 100.0)
                 .with_category(PropertyCategory::AppearanceFill)
-                .with_order(14),
+                .with_order(14).in_group(PropertyGroup::Zones),
+            // `PropertyGroup::PositionLabels` (W2) — the approved design's
+            // own "labels" tab group, reusing the tab's own title
+            // (`ConfigKey::Labels`).
             ConfigProperty::label_font_size(self.label_style.font_size)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(15),
+                .with_order(15).in_group(PropertyGroup::PositionLabels),
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(16),
+                .with_order(16).in_group(PropertyGroup::PositionLabels),
+            // Ungrouped (W2): this primitive's own quirk (gates the live-
+            // price text label), no row in the approved design's Display
+            // group for it.
             ConfigProperty::show_live_label(self.show_live_label)
                 .with_category(PropertyCategory::AppearanceLine)
                 .with_order(17),
-            ConfigProperty::position_risk_stat(&fmt_price(risk_per_unit)).with_order(90),
-            ConfigProperty::position_target_stat(&fmt_price(reward_per_unit)).with_order(91),
-            ConfigProperty::position_risk_reward_stat(&format!("{:.2}", self.risk_reward())).with_order(92),
+            // `PropertyGroup::Result` (W2) — the approved design's own
+            // `ResultGroupTitle` (singular "Result"/"Результат").
+            ConfigProperty::position_risk_stat(&fmt_price(risk_per_unit)).with_order(90).in_group(PropertyGroup::Result),
+            ConfigProperty::position_target_stat(&fmt_price(reward_per_unit)).with_order(91).in_group(PropertyGroup::Result),
+            ConfigProperty::position_risk_reward_stat(&format!("{:.2}", self.risk_reward())).with_order(92).in_group(PropertyGroup::Result),
         ];
-        props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
+        props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::PositionLabels));
         props
     }
 

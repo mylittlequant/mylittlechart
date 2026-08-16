@@ -671,13 +671,29 @@ impl Primitive for ModifiedSchiff {
     }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
-        use super::super::config::ConfigProperty;
+        use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
         vec![
-            ConfigProperty::show_labels(self.show_labels).with_order(10),
+            // `PropertyGroup::General` (W2) — the approved ladder
+            // archetype's own base group, matching `Pitchfork::
+            // level_properties()`'s own choice to move `extend`/
+            // `show_labels` off the default Appearance run onto the Levels
+            // tab. This type has no `level_mode` (Pitchfork-only), so
+            // General holds only these two. `ConfigProperty::extend`
+            // (id `"extend"`), not `extend_lines` (id `"extend_lines"`) —
+            // the previous declaration here used the `extend_lines` id,
+            // which `apply_style_property` below has never matched (the
+            // exact bug `Pitchfork::style_properties()`'s own doc records
+            // as already fixed once for the representative); every sibling
+            // pitchfork (`schiff`/`inside_pitchfork`) already used `extend`.
+            ConfigProperty::extend(self.extend)
+                .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
+            ConfigProperty::show_labels(self.show_labels)
+                .with_category(PropertyCategory::LevelsBase).with_order(1).in_group(PropertyGroup::General),
+            // Ungrouped (W2), matching Pitchfork's own choice: no row in the
+            // approved ladder archetype's Levels/Labels tabs for these.
             ConfigProperty::levels(self.show_percentages).with_order(11),
             ConfigProperty::show_as_percent(self.show_as_percent).with_order(12),
             ConfigProperty::label_position(&self.label_position).with_order(13),
-            ConfigProperty::extend_lines(self.extend).with_order(14),
         ]
     }
 

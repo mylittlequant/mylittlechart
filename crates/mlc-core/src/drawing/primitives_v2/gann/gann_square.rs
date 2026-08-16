@@ -535,13 +535,19 @@ impl Primitive for GannSquare {
     }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
-        use super::super::config::{ConfigProperty, PropertyCategory};
+        use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
+        // `show_labels` stays ungrouped (W2), matching `gann_fan`'s own
+        // choice: this type declares nothing under `LevelsBase`, so it
+        // renders in the Subject tab's default run. `PropertyGroup::
+        // LevelLabels` (W2) — the approved ladder archetype's own
+        // `LevelLabelsGroupTitle` — matches `gann_fan`'s grouping for the
+        // font/colour pair and the label-style block below it.
         let mut props = vec![
             ConfigProperty::show_labels(self.show_labels).with_order(10),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40).in_group(PropertyGroup::LevelLabels),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41).in_group(PropertyGroup::LevelLabels),
         ];
-        props.extend(self.label_style.style_properties(&self.data.color.stroke, 50));
+        props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 50, PropertyGroup::LevelLabels));
         props
     }
 
