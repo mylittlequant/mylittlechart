@@ -131,10 +131,16 @@ impl Primitive for AnchoredText {
     }
 
     /// Text archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`,
-    /// fifth wave): `text_tabs()` — Content/Font/Plate groups apply. Layout
-    /// (align/word-wrap/width) has no backing field on this type and the
-    /// design's align row is a pills control (W4) either way, so it stays
-    /// undeclared.
+    /// fifth wave): `text_tabs()` — Content/Font/Layout/Plate groups apply.
+    ///
+    /// Layout (W4): `render` reaches `data.text.h_align` through BOTH of
+    /// its own branches — `render_text_with_background` positions the
+    /// background rect off it (`bg_x`'s own match) before delegating to
+    /// `render_primitive_text`, which sets the canvas alignment off the
+    /// SAME field — so the align choice moves the glyphs (and, when
+    /// `background` is on, the plate around them) relative to the anchor,
+    /// a real effect. Word-wrap/width-fits-content/max-width still have no
+    /// backing field.
     ///
     /// Plate: `background` is the design's own "Background" toggle — a real
     /// field `render`'s own `if self.background` branch already reads to
@@ -145,11 +151,13 @@ impl Primitive for AnchoredText {
     /// rows stay out rather than get a control over nothing.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
+        let default_text = PrimitiveText::default();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or("");
         let font_size = text_data.map(|t| t.font_size).unwrap_or(14.0);
         let bold = text_data.map(|t| t.bold).unwrap_or(false);
         let italic = text_data.map(|t| t.italic).unwrap_or(false);
         let color = text_data.and_then(|t| t.color.as_deref()).unwrap_or(&self.data.color.stroke);
+        let h_align = text_data.map(|t| t.h_align).unwrap_or(default_text.h_align);
 
         Some(vec![
             ConfigProperty::content(content)
@@ -167,9 +175,12 @@ impl Primitive for AnchoredText {
             ConfigProperty::text_color(color)
                 .with_category(PropertyCategory::LabelsText)
                 .with_order(4).in_group(PropertyGroup::Font),
+            ConfigProperty::text_align_pills(h_align.as_str())
+                .with_category(PropertyCategory::LabelsText)
+                .with_order(5).in_group(PropertyGroup::Layout),
             ConfigProperty::show_background(self.background)
                 .with_category(PropertyCategory::LabelsText)
-                .with_order(5).in_group(PropertyGroup::Plate),
+                .with_order(6).in_group(PropertyGroup::Plate),
         ])
     }
 
@@ -212,6 +223,12 @@ impl Primitive for AnchoredText {
                     "text_color" => {
                         if let Some(c) = value.as_color() {
                             text_data.color = Some(c.to_string());
+                            return true;
+                        }
+                    }
+                    "text_h_align" => {
+                        if let Some(s) = value.as_string() {
+                            text_data.h_align = super::super::TextAlign::from_str(s);
                             return true;
                         }
                     }

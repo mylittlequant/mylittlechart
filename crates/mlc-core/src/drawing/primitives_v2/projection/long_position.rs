@@ -8,7 +8,7 @@ use super::super::{
     HIT_TOLERANCE, point_to_line_distance,
     RenderContext, crisp, LineStyle,
     render_primitive_text, fmt_price,
-    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
+    config::{LabelStyle, PositionDisplayUnit, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -29,6 +29,12 @@ pub struct LongPosition {
     #[serde(default = "default_target_color")] pub target_color: String,
     #[serde(default = "default_zone_opacity")] pub zone_opacity: f64,
     #[serde(default)] pub label_style: LabelStyle,
+    /// The unit every dollar/percent RESULT this primitive shows displays
+    /// in — see [`PositionDisplayUnit`]'s own doc. `Currency` (the
+    /// default) reproduces exactly what every one of those figures showed
+    /// before this field existed.
+    #[serde(default)]
+    pub display_unit: PositionDisplayUnit,
 }
 fn default_true() -> bool { true }
 fn default_stop_color() -> String { "#F23645".to_string() }
@@ -47,12 +53,6 @@ const LIVE_ZONE_EXTRA_ALPHA: f64 = 0.15;
 /// How many median bar intervals the box extends by default when
 /// `end_ts_ms` is unset (legacy data) or degenerate.
 const DEFAULT_BOX_BARS: i64 = 40;
-
-/// Format a signed price delta with an explicit `+`/`-` — `fmt_price` alone
-/// has no sign, and a P&L or distance-from-entry reads wrong without one.
-fn signed_price(v: f64) -> String {
-    if v >= 0.0 { format!("+{}", fmt_price(v)) } else { format!("-{}", fmt_price(-v)) }
-}
 
 /// Nudge a degenerate second click (landed exactly on entry) away from
 /// entry by a small fraction of price, so the box a two-click diagonal
@@ -73,12 +73,54 @@ impl LongPosition {
             quantity: 1.0, show_pnl: true, show_live_label: true,
             stop_color: default_stop_color(), target_color: default_target_color(), zone_opacity: default_zone_opacity(),
             label_style: LabelStyle::default(),
+            display_unit: PositionDisplayUnit::default(),
         }
     }
     pub fn risk_reward(&self) -> f64 {
         let risk = (self.entry_price - self.stop_loss).abs();
         let reward = (self.take_profit - self.entry_price).abs();
         if risk > 0.0 { reward / risk } else { 0.0 }
+    }
+
+    /// One RESULT figure — the Risk/Target amounts and the live P&L
+    /// distance — formatted in `display_unit`'s chosen unit. This is the
+    /// ONE production point every dollar/percent number this primitive
+    /// draws goes through — the Stop/Target/Live on-chart labels and the
+    /// read-only Result stat block can never disagree.
+    ///
+    /// `price_delta` is always a PLAIN, non-negative price distance from
+    /// entry (never pre-multiplied by `quantity` or carrying a sign) —
+    /// this method applies quantity scaling itself, only under `Currency`
+    /// and only when `scale_by_quantity` is set (a percentage price move
+    /// does not depend on position size, so `Percent` ignores it
+    /// entirely). `scale_by_quantity` reproduces exactly which of the two
+    /// pre-existing call shapes each caller used before this field
+    /// existed: the on-chart labels always scaled by quantity, the
+    /// read-only stat block never did — so `Currency` (the default)
+    /// changes nothing about either.
+    fn format_result(&self, price_delta: f64, scale_by_quantity: bool) -> String {
+        match self.display_unit {
+            PositionDisplayUnit::Currency => {
+                let amount = if scale_by_quantity { price_delta * self.quantity } else { price_delta };
+                fmt_price(amount)
+            }
+            PositionDisplayUnit::Percent => {
+                let pct = if self.entry_price != 0.0 { price_delta / self.entry_price * 100.0 } else { 0.0 };
+                format!("{pct:.2}%")
+            }
+        }
+    }
+
+    /// Signed variant of [`Self::format_result`] — an explicit `+`/`-`
+    /// prefix ahead of the SAME unit-aware figure, for the live-price
+    /// label's own gain/loss distance (which can be negative, unlike the
+    /// always-positive Risk/Target amounts).
+    fn signed_result(&self, price_delta: f64, scale_by_quantity: bool) -> String {
+        if price_delta >= 0.0 {
+            format!("+{}", self.format_result(price_delta, scale_by_quantity))
+        } else {
+            format!("-{}", self.format_result(-price_delta, scale_by_quantity))
+        }
     }
 
     /// Resolve the box's right edge in ms. `end_ts_ms <= ts_ms` covers both
@@ -293,13 +335,13 @@ impl Primitive for LongPosition {
 
         let mut stop_text = format!("Stop {}", fmt_price(self.stop_loss));
         if self.show_pnl {
-            stop_text.push_str(&format!("  -{}", fmt_price(risk_per_unit * self.quantity)));
+            stop_text.push_str(&format!("  -{}", self.format_result(risk_per_unit, true)));
         }
         draw_line_label(ctx, x1 + 8.0, stop_y, &stop_text, &self.label_style, &self.stop_color);
 
         let mut target_text = format!("Target {}  R:R {:.2}", fmt_price(self.take_profit), self.risk_reward());
         if self.show_pnl {
-            target_text.push_str(&format!("  +{}", fmt_price(reward_per_unit * self.quantity)));
+            target_text.push_str(&format!("  +{}", self.format_result(reward_per_unit, true)));
         }
         draw_line_label(ctx, x1 + 8.0, target_y, &target_text, &self.label_style, &self.target_color);
 
@@ -354,9 +396,15 @@ impl Primitive for LongPosition {
                 if self.show_live_label {
                     let signed_distance = current_price - self.entry_price;
                     let pct = if self.entry_price != 0.0 { signed_distance / self.entry_price * 100.0 } else { 0.0 };
-                    let mut live_text = format!("Live {}  {} ({:+.2}%)", fmt_price(current_price), signed_price(signed_distance), pct);
+                    // The trailing `(pct%)` is a separate, always-on feature
+                    // (predates `display_unit`) — under `Percent` it reads
+                    // alongside a main figure that is ALSO now a percentage,
+                    // which looks redundant but is honest: every $/% figure
+                    // on this primitive routes through the same
+                    // `signed_result`, no second, unit-blind place left.
+                    let mut live_text = format!("Live {}  {} ({:+.2}%)", fmt_price(current_price), self.signed_result(signed_distance, false), pct);
                     if self.show_pnl {
-                        live_text.push_str(&format!("  {}", signed_price(signed_distance * self.quantity)));
+                        live_text.push_str(&format!("  {}", self.signed_result(signed_distance, true)));
                     }
 
                     // Clear of the entry label when the live price sits close
@@ -413,6 +461,14 @@ impl Primitive for LongPosition {
         let reward_per_unit = (self.take_profit - self.entry_price).abs();
 
         let mut props = vec![
+            // `PropertyGroup::Display` (W4) — the approved position
+            // archetype's own `DisplayGroupTitle` group's own pills row,
+            // right before `show_pnl` (order 10) to match the design's own
+            // reading order (pills → show_pnl → show_volume). No `Ticks`
+            // option — see `PositionDisplayUnit`'s own doc for why.
+            ConfigProperty::position_display_unit_pills(self.display_unit.as_str())
+                .with_category(PropertyCategory::AppearanceLine)
+                .with_order(9).in_group(PropertyGroup::Display),
             // `PropertyGroup::Display` (W2) — the approved position
             // archetype's own `DisplayGroupTitle` group.
             ConfigProperty::show_pnl(self.show_pnl)
@@ -465,8 +521,8 @@ impl Primitive for LongPosition {
             // `ResultGroupTitle` (singular "Result"/"Результат"), distinct
             // wording from the pre-existing default `AppearanceStats`
             // header (`ConfigKey::GroupResults`, plural).
-            ConfigProperty::position_risk_stat(&fmt_price(risk_per_unit)).with_order(90).in_group(PropertyGroup::Result),
-            ConfigProperty::position_target_stat(&fmt_price(reward_per_unit)).with_order(91).in_group(PropertyGroup::Result),
+            ConfigProperty::position_risk_stat(&self.format_result(risk_per_unit, false)).with_order(90).in_group(PropertyGroup::Result),
+            ConfigProperty::position_target_stat(&self.format_result(reward_per_unit, false)).with_order(91).in_group(PropertyGroup::Result),
             ConfigProperty::position_risk_reward_stat(&format!("{:.2}", self.risk_reward())).with_order(92).in_group(PropertyGroup::Result),
         ];
         props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::PositionLabels));
@@ -475,6 +531,9 @@ impl Primitive for LongPosition {
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
+            "display_unit" => {
+                if let Some(s) = value.as_string() { self.display_unit = PositionDisplayUnit::from_str(s); return true; }
+            }
             "show_pnl" => {
                 if let Some(v) = value.as_bool() { self.show_pnl = v; return true; }
             }
@@ -555,5 +614,59 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod display_unit_result_tests {
+    use super::*;
+
+    fn sample() -> LongPosition {
+        // entry 100, stop 90 (risk 10/unit), target 130 (reward 30/unit), qty 2.
+        let mut pos = LongPosition::new(0, 100.0, 90.0, 130.0, 3_600_000, "#4CAF50");
+        pos.quantity = 2.0;
+        pos
+    }
+
+    /// `Currency` (the default) reproduces exactly what `format_result`'s
+    /// two pre-existing call shapes produced before `display_unit` existed
+    /// — quantity-scaled for the on-chart figures, per-unit for the
+    /// read-only stat block.
+    #[test]
+    fn currency_default_matches_todays_two_call_shapes() {
+        let pos = sample();
+        assert_eq!(pos.display_unit, PositionDisplayUnit::Currency, "default is Currency");
+        assert_eq!(pos.format_result(10.0, true), fmt_price(10.0 * 2.0), "on-chart figure: quantity-scaled");
+        assert_eq!(pos.format_result(10.0, false), fmt_price(10.0), "stat block figure: per-unit, unscaled");
+    }
+
+    /// `Percent` produces a genuinely different string from `Currency` for
+    /// the same price delta, and ignores `quantity` entirely (a percentage
+    /// price move does not depend on position size).
+    #[test]
+    fn percent_differs_from_currency_and_ignores_quantity() {
+        let mut pos = sample();
+        let currency = pos.format_result(10.0, true);
+
+        pos.display_unit = PositionDisplayUnit::Percent;
+        let percent_scaled = pos.format_result(10.0, true);
+        let percent_unscaled = pos.format_result(10.0, false);
+
+        assert_ne!(currency, percent_scaled, "Percent reads differently from Currency");
+        assert_eq!(percent_scaled, percent_unscaled, "Percent ignores scale_by_quantity");
+        assert_eq!(percent_scaled, "10.00%", "10 price units off a 100 entry is 10%");
+    }
+
+    /// The signed variant prefixes `+`/`-` around the SAME unit-aware
+    /// figure, for both units.
+    #[test]
+    fn signed_result_prefixes_the_same_unit_aware_figure() {
+        let mut pos = sample();
+        assert_eq!(pos.signed_result(10.0, false), format!("+{}", pos.format_result(10.0, false)));
+        assert_eq!(pos.signed_result(-10.0, false), format!("-{}", pos.format_result(10.0, false)));
+
+        pos.display_unit = PositionDisplayUnit::Percent;
+        assert_eq!(pos.signed_result(10.0, false), "+10.00%");
+        assert_eq!(pos.signed_result(-10.0, false), "-10.00%");
     }
 }

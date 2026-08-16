@@ -296,6 +296,223 @@ mod wave_degree_tests {
 }
 
 // =============================================================================
+// Wave Notation Style
+// =============================================================================
+
+/// A wave structure's own label NUMERAL FAMILY, independent of
+/// [`WaveDegree`] — the design's own `wave_tabs()` Notation row (owner ask
+/// 2026-08-16: "the analyst cannot choose arabic where the degree dictates
+/// roman"). `FollowDegree` (the default) is a REAL variant, not a stand-in
+/// for one of the other three: it defers entirely to the structure's own
+/// `WaveDegree::impulse_labels()` table, so a drawing saved before this
+/// field existed loads and renders byte-for-byte unchanged. The other
+/// three replace that table with ONE FIXED family — see
+/// [`Self::positional_table`] — regardless of degree.
+///
+/// Elliott-Impulse ONLY (owner correction 2026-08-17): the four
+/// letter-labelled types (correction A-B-C, triangle A-E, double/triple
+/// combo W-X-Y-Z) do NOT carry this field — see
+/// `ElliottImpulse::notation_style`'s own field doc for why offering
+/// "arabic" there would be a correctness defect, not a layout one.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum NotationStyle {
+    #[default]
+    FollowDegree,
+    Arabic,
+    Roman,
+    Circled,
+}
+
+impl NotationStyle {
+    /// Wire value for [`PropertyValue::String`] round-trips — the same
+    /// convention `WaveDegree::as_str`/`from_str` already use.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            NotationStyle::FollowDegree => "follow_degree",
+            NotationStyle::Arabic => "arabic",
+            NotationStyle::Roman => "roman",
+            NotationStyle::Circled => "circled",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "arabic" => NotationStyle::Arabic,
+            "roman" => NotationStyle::Roman,
+            "circled" => NotationStyle::Circled,
+            _ => NotationStyle::FollowDegree,
+        }
+    }
+
+    /// The five wave-count labels this family draws (1st wave, 2nd wave,
+    /// ...) — the exact same glyphs the design's own pills row shows
+    /// literally (`1 2 3 4 5` / `I II III IV V` / `① ② ③ ④ ⑤`), and the
+    /// same numbers `ElliottImpulse`'s own five waves are always counted
+    /// with. `None` for `FollowDegree`, which has no fixed table of its
+    /// own — `ElliottImpulse::wave_labels` matches the variant first and
+    /// only reaches this for the other three, so a `FollowDegree` impulse
+    /// keeps reading its own `WaveDegree` table exactly as before this
+    /// field existed.
+    pub fn positional_table(&self) -> Option<[&'static str; 5]> {
+        match self {
+            NotationStyle::FollowDegree => None,
+            NotationStyle::Arabic => Some(["1", "2", "3", "4", "5"]),
+            NotationStyle::Roman => Some(["I", "II", "III", "IV", "V"]),
+            NotationStyle::Circled => Some(["①", "②", "③", "④", "⑤"]),
+        }
+    }
+
+    /// Which fixed family a `WaveDegree`'s own DRAWN table currently
+    /// belongs to — resolves `FollowDegree`'s EFFECTIVE notation for the
+    /// pills row's own highlighted segment (owner correction 2026-08-17: a
+    /// freshly placed structure defaults to `FollowDegree` and previously
+    /// lit no pill at all, though the chart is visibly showing one of the
+    /// three families right now). Never used to change what
+    /// `wave_labels()` computes — declaration-time display only.
+    ///
+    /// A degree's own table wraps the FAMILY in decoration — brackets and
+    /// case — that is not part of the family itself: `Intermediate`'s `(1)`
+    /// is still arabic, `Minute`'s `i` is still (lowercase) roman,
+    /// `Supermillennium`'s `(((I)))` is still roman. `undecorated` strips
+    /// surrounding `()`/`[]` and whitespace and folds case before
+    /// comparing against ARABIC/ROMAN/CIRCLED (sliced to `labels.len()`),
+    /// so the comparison is against the family, not its dressing — every
+    /// one of `WaveDegree::impulse_labels()`'s 15 tables resolves to
+    /// exactly one of the three (verified by
+    /// `elliott_impulse`'s own `notation_style_label_tests`).
+    ///
+    /// `None` only for a table this normalization still can't place —
+    /// today that never happens for `impulse_labels()`, the only caller
+    /// (letter-labelled tables — corrective/triangle/combo — are never
+    /// passed here; see `ElliottImpulse::notation_style`'s own field doc
+    /// for why the row lives on that type alone).
+    pub fn family_of(labels: &[&str]) -> Option<Self> {
+        const ARABIC: [&str; 5] = ["1", "2", "3", "4", "5"];
+        const ROMAN: [&str; 5] = ["I", "II", "III", "IV", "V"];
+        const CIRCLED: [&str; 5] = ["①", "②", "③", "④", "⑤"];
+
+        // Strip the decoration a WaveDegree table wraps its own family in
+        // (surrounding parens/brackets, whitespace) and fold case — leaves
+        // the family itself (`I`, `1`, `①`) bare for comparison.
+        fn undecorated(label: &str) -> String {
+            label
+                .chars()
+                .filter(|c| !matches!(c, '(' | ')' | '[' | ']') && !c.is_whitespace())
+                .flat_map(char::to_uppercase)
+                .collect()
+        }
+
+        let n = labels.len().min(5);
+        let stripped: Vec<String> = labels[..n].iter().map(|l| undecorated(l)).collect();
+        let matches_family = |family: &[&str; 5]| stripped.iter().map(String::as_str).eq(family[..n].iter().copied());
+
+        if matches_family(&ARABIC) {
+            Some(NotationStyle::Arabic)
+        } else if matches_family(&ROMAN) {
+            Some(NotationStyle::Roman)
+        } else if matches_family(&CIRCLED) {
+            Some(NotationStyle::Circled)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod notation_style_tests {
+    use super::*;
+
+    #[test]
+    fn follow_degree_is_the_default_and_has_no_positional_table() {
+        assert_eq!(NotationStyle::default(), NotationStyle::FollowDegree);
+        assert_eq!(NotationStyle::FollowDegree.positional_table(), None);
+    }
+
+    #[test]
+    fn wire_round_trip_for_every_variant() {
+        for style in [NotationStyle::FollowDegree, NotationStyle::Arabic, NotationStyle::Roman, NotationStyle::Circled] {
+            assert_eq!(NotationStyle::from_str(style.as_str()), style);
+        }
+    }
+
+    #[test]
+    fn family_of_matches_through_decoration() {
+        assert_eq!(NotationStyle::family_of(&["1", "2", "3", "4", "5"]), Some(NotationStyle::Arabic), "bare arabic");
+        assert_eq!(NotationStyle::family_of(&["(1)", "(2)", "(3)", "(4)", "(5)"]), Some(NotationStyle::Arabic), "parenthesized arabic — Intermediate's own table");
+        assert_eq!(NotationStyle::family_of(&["I", "II", "III", "IV", "V"]), Some(NotationStyle::Roman), "bare roman — GrandSupercycle/Cycle's own table");
+        assert_eq!(NotationStyle::family_of(&["i", "ii", "iii", "iv", "v"]), Some(NotationStyle::Roman), "lowercase roman — Minute/Micro's own table");
+        assert_eq!(NotationStyle::family_of(&["(((I)))", "(((II)))", "(((III)))", "(((IV)))", "(((V)))"]), Some(NotationStyle::Roman), "triple-parenthesized roman — Supermillennium's own table");
+        assert_eq!(NotationStyle::family_of(&["①", "②", "③"]), Some(NotationStyle::Circled), "a shorter table matches the family's own prefix");
+        assert_eq!(NotationStyle::family_of(&["A", "B", "C"]), None, "letters never equal a digit family, decorated or not");
+    }
+
+    /// Owner correction 2026-08-17: after normalization, every one of
+    /// `WaveDegree::impulse_labels()`'s 15 degree tables resolves to
+    /// exactly one of the three fixed families — none are left dressed
+    /// too heavily to place. Named per-degree checks for a representative
+    /// few (the plain, the heavily bracketed, the lowercase, the circled)
+    /// plus the exhaustive sweep so a future 16th degree with an
+    /// unrecognized dressing fails loudly here instead of silently
+    /// reading as "no pill lit".
+    #[test]
+    fn every_impulse_degree_resolves_to_a_family() {
+        assert_eq!(NotationStyle::family_of(&WaveDegree::Minor.impulse_labels()), Some(NotationStyle::Arabic));
+        assert_eq!(NotationStyle::family_of(&WaveDegree::Intermediate.impulse_labels()), Some(NotationStyle::Arabic));
+        assert_eq!(NotationStyle::family_of(&WaveDegree::Cycle.impulse_labels()), Some(NotationStyle::Roman));
+        assert_eq!(NotationStyle::family_of(&WaveDegree::GrandSupercycle.impulse_labels()), Some(NotationStyle::Roman));
+        assert_eq!(NotationStyle::family_of(&WaveDegree::Minute.impulse_labels()), Some(NotationStyle::Roman), "lowercase roman is still roman");
+        assert_eq!(NotationStyle::family_of(&WaveDegree::Supermillennium.impulse_labels()), Some(NotationStyle::Roman), "triple-parenthesized is still roman");
+        assert_eq!(NotationStyle::family_of(&WaveDegree::Primary.impulse_labels()), Some(NotationStyle::Circled));
+
+        for degree in WaveDegree::all() {
+            let resolved = NotationStyle::family_of(&degree.impulse_labels());
+            assert!(resolved.is_some(), "{degree:?}'s own impulse table {:?} resolved to None", degree.impulse_labels());
+        }
+    }
+}
+
+// =============================================================================
+// Position Display Unit
+// =============================================================================
+
+/// The analyst's chosen unit for every dollar/percent RESULT a position
+/// primitive shows (owner-facing gap: `show_pnl` already gates whether a
+/// figure is computed, nothing said in WHICH unit). `Currency` (the
+/// default) reproduces exactly what every one of those figures showed
+/// before this field existed — plain [`super::fmt_price`] amounts,
+/// unchanged.
+///
+/// No `Ticks` variant: [`super::RenderContext`] carries chart geometry
+/// only (bar/price coordinate conversion) — no instrument metadata, so no
+/// tick size is available to a primitive at render time. Fabricating one
+/// would be a made-up number wearing a real unit's name, not an
+/// implementation of it — the design's third pill option is left out
+/// rather than faked (see `long_position.rs`'s own `style_properties()`
+/// doc for the report).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum PositionDisplayUnit {
+    #[default]
+    Currency,
+    Percent,
+}
+
+impl PositionDisplayUnit {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PositionDisplayUnit::Currency => "currency",
+            PositionDisplayUnit::Percent => "percent",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "percent" => PositionDisplayUnit::Percent,
+            _ => PositionDisplayUnit::Currency,
+        }
+    }
+}
+
+// =============================================================================
 // Label Style Configuration
 // =============================================================================
 
@@ -1872,6 +2089,24 @@ impl ConfigProperty {
         Self::boolean("show_pnl", ConfigKey::ShowPnl.get(current_language()), value)
     }
 
+    /// Create the position archetype's own display-unit PILLS row
+    /// (`position_tabs()`'s own `DisplayGroupTitle` group, W4) — two real
+    /// options (`PositionDisplayUnit::{Currency,Percent}`); the design's
+    /// third option ("ticks") has no backing field — see
+    /// [`PositionDisplayUnit`]'s own doc for why — and is not offered here.
+    pub fn position_display_unit_pills(value: &str) -> Self {
+        let lang = current_language();
+        Self::pills(
+            "display_unit",
+            ConceptKey::DisplayGroupTitle.get(lang),
+            value,
+            vec![
+                SelectOption::new("currency", ConceptKey::Currency.get(lang)),
+                SelectOption::new("percent", ConceptKey::PercentUnit.get(lang)),
+            ],
+        )
+    }
+
     /// Create "Show Live Label" boolean property with i18n (long/short
     /// position — gates the live-price text label; the live shading layer
     /// and marker line always render regardless of this setting).
@@ -1955,6 +2190,32 @@ impl ConfigProperty {
     /// Create "Wave Degree" select property with i18n
     pub fn wave_degree(value: &str, options: Vec<SelectOption>) -> Self {
         Self::select("degree", ConfigKey::WaveDegree.get(current_language()), value, options)
+    }
+
+    /// Create the wave archetype's own notation PILLS row (`wave_tabs()`'s
+    /// own Notation group, W4) — three fixed numeral families
+    /// (`NotationStyle::{Arabic,Roman,Circled}`), left as bare literals per
+    /// the approved design's own "notation samples" convention (never
+    /// translated — see `mlc-ui-lab`'s `spec.rs` module doc). `ElliottImpulse`
+    /// only (owner correction 2026-08-17) — its labels are numbers, the one
+    /// Elliott type where these three families are the real choice; see its
+    /// own `notation_style` field doc. `value` is
+    /// `declared_notation_style().as_str()` (that method's own doc): a
+    /// `FollowDegree` value matches none of the three options, which the
+    /// generic Pills renderer already handles as "no segment highlighted"
+    /// — there is no fourth pill for it, matching the design's own
+    /// three-pill row exactly.
+    pub fn notation_style_pills(value: &str) -> Self {
+        Self::pills(
+            "notation_style",
+            ConceptKey::Notation.get(current_language()),
+            value,
+            vec![
+                SelectOption::new("arabic", "1 2 3 4 5"),
+                SelectOption::new("roman", "I II III IV V"),
+                SelectOption::new("circled", "① ② ③ ④ ⑤"),
+            ],
+        )
     }
 
     /// Create "Inverted" boolean property with i18n
@@ -2108,6 +2369,29 @@ impl ConfigProperty {
                 SelectOption::new("start", ConfigKey::AlignTop.get(lang)),
                 SelectOption::new("center", ConfigKey::AlignCenter.get(lang)),
                 SelectOption::new("end", ConfigKey::AlignBottom.get(lang)),
+            ],
+        )
+    }
+
+    /// Create the text archetype's own horizontal-align PILLS row
+    /// (`text_tabs()`'s own Layout group, W4) — same wire id/value/options
+    /// shape as [`Self::h_align`] (`text_h_align`, `PropertyValue::String`,
+    /// `start`/`center`/`end`), so a click reaches the exact same
+    /// `apply_text_property` "text_h_align" arm every text-archetype type
+    /// declaring this row already carries; only the on-screen control
+    /// differs (adjacent segments instead of a dropdown) and the labels are
+    /// the design's own SHORT abbreviations (`AlignLeftShort`/`AlignCenter`/
+    /// `AlignRightShort`) rather than `h_align`'s full words.
+    pub fn text_align_pills(value: &str) -> Self {
+        let lang = current_language();
+        Self::pills(
+            "text_h_align",
+            ConfigKey::HorizontalAlign.get(lang),
+            value,
+            vec![
+                SelectOption::new("start", ConceptKey::AlignLeftShort.get(lang)),
+                SelectOption::new("center", ConfigKey::AlignCenter.get(lang)),
+                SelectOption::new("end", ConceptKey::AlignRightShort.get(lang)),
             ],
         )
     }

@@ -67,6 +67,47 @@ impl Callout {
             "Callout"
         }
     }
+
+    /// Where the label draws along the bubble's own horizontal span, for a
+    /// given [`TextAlign`](super::super::TextAlign) choice — the single
+    /// place this computation happens; `render` calls this rather than
+    /// repeating the match, so a test on this function IS a test on what
+    /// `render` draws. `start` sits near the bubble's own left edge, `end`
+    /// near its right edge (both inset by `PADDING` so the glyphs never
+    /// touch the outline), `center` at the bubble's own horizontal middle
+    /// — matching `center_x` (`self.price2`'s own screen x) exactly, byte
+    /// for byte, for the default alignment.
+    fn aligned_label_x(h_align: super::super::TextAlign, center_x: f64, half_w: f64) -> f64 {
+        const PADDING: f64 = 6.0;
+        match h_align {
+            super::super::TextAlign::Start => center_x - half_w + PADDING,
+            super::super::TextAlign::Center => center_x,
+            super::super::TextAlign::End => center_x + half_w - PADDING,
+        }
+    }
+}
+
+#[cfg(test)]
+mod aligned_label_x_tests {
+    use super::*;
+    use super::super::super::TextAlign;
+
+    /// The three alignment choices move the label to three genuinely
+    /// different x positions on the same bubble — not a declaration that
+    /// happens to sit unread, an actual different number `render` would
+    /// pass to `fill_text`.
+    #[test]
+    fn each_align_choice_produces_a_different_x() {
+        let center_x = 100.0;
+        let half_w = 40.0;
+        let start = Callout::aligned_label_x(TextAlign::Start, center_x, half_w);
+        let center = Callout::aligned_label_x(TextAlign::Center, center_x, half_w);
+        let end = Callout::aligned_label_x(TextAlign::End, center_x, half_w);
+
+        assert!(start < center, "start sits left of center: {start} vs {center}");
+        assert!(center < end, "end sits right of center: {center} vs {end}");
+        assert_eq!(center, center_x, "center reproduces today's byte-for-byte anchor");
+    }
 }
 
 impl Primitive for Callout {
@@ -173,31 +214,42 @@ impl Primitive for Callout {
         let text_color = text_data.and_then(|t| t.color.as_deref()).unwrap_or_else(|| contrasting_text_color(fill_base));
         if !label.is_empty() {
             let font_size = text_data.map(|t| t.font_size).unwrap_or(12.0);
+            let default_text = super::super::PrimitiveText::default();
+            let h_align = text_data.map(|t| t.h_align).unwrap_or(default_text.h_align);
             ctx.set_fill_color(text_color);
             ctx.set_font(&format!("{}px sans-serif", font_size as i32));
-            ctx.set_text_align(crate::render::TextAlign::Center);
-            ctx.fill_text(label, x2, y2 + font_size / 3.0);
+            ctx.set_text_align(match h_align {
+                super::super::TextAlign::Start => crate::render::TextAlign::Left,
+                super::super::TextAlign::Center => crate::render::TextAlign::Center,
+                super::super::TextAlign::End => crate::render::TextAlign::Right,
+            });
+            let label_x = Self::aligned_label_x(h_align, x2, half_w);
+            ctx.fill_text(label, label_x, y2 + font_size / 3.0);
         }
 
     }
 
     /// Text archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`,
     /// fifth wave): `text_tabs()` (`mlc-ui-lab`'s `spec.rs`) is THIS type's
-    /// own reference concept ("callout") — Content/Font/Plate groups apply.
-    /// `bubble_width`/`bubble_height` are Callout's own quirk (the bubble's
-    /// fixed on-screen size, unlike Note's two-point box) with no home in
-    /// the design's groups, kept in the default run.
+    /// own reference concept ("callout") — Content/Font/Layout/Plate groups
+    /// apply. `bubble_width`/`bubble_height` are Callout's own quirk (the
+    /// bubble's fixed on-screen size, unlike Note's two-point box) with no
+    /// home in the design's groups, kept in the default run.
     ///
-    /// Layout (align/word-wrap/width) is not declared: the design's align
-    /// row is a pills control (W4) and word-wrap/width-fits-content/max-
-    /// width have no backing field on this type — the bubble always centres
-    /// its text and never wraps.
+    /// Layout (W4): `render`'s own `aligned_label_x` moves the label to a
+    /// different x along the bubble depending on `data.text.h_align` (see
+    /// that method's own doc and its behavioural test) — a real, visible
+    /// effect, so the align row is declared. Word-wrap/width-fits-content/
+    /// max-width still have no backing field — the bubble never wraps its
+    /// text.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
+        let default_text = super::super::PrimitiveText::default();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or(&self.text);
         let font_size = text_data.map(|t| t.font_size).unwrap_or(12.0);
         let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
         let color = text_data.and_then(|t| t.color.as_deref()).unwrap_or_else(|| contrasting_text_color(fill_base));
+        let h_align = text_data.map(|t| t.h_align).unwrap_or(default_text.h_align);
 
         Some(vec![
             ConfigProperty::content(content)
@@ -215,6 +267,9 @@ impl Primitive for Callout {
             ConfigProperty::bubble_height(self.bubble_height)
                 .with_category(PropertyCategory::LabelsText)
                 .with_order(4),
+            ConfigProperty::text_align_pills(h_align.as_str())
+                .with_category(PropertyCategory::LabelsText)
+                .with_order(5).in_group(PropertyGroup::Layout),
         ])
     }
 
@@ -251,6 +306,13 @@ impl Primitive for Callout {
             "bubble_height" => {
                 if let Some(v) = value.as_number() {
                     self.bubble_height = v;
+                    return true;
+                }
+            }
+            "text_h_align" => {
+                if let Some(s) = value.as_string() {
+                    let text_data = self.data.text.get_or_insert_with(|| PrimitiveText::new(""));
+                    text_data.h_align = super::super::TextAlign::from_str(s);
                     return true;
                 }
             }

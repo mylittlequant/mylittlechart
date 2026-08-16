@@ -191,8 +191,17 @@ impl Primitive for PriceNote {
     /// fifth wave): `text_tabs()` — Content/Font/Plate groups apply.
     /// `show_price` is this type's own quirk (prefixing the label with the
     /// anchor's price) with no home in the design's groups, kept in the
-    /// default run. Layout/Border/Rounding/Padding/Shadow have no backing
-    /// field — this chip is a fixed-radius rectangle, never user-adjustable.
+    /// default run. Border/Rounding/Padding/Shadow have no backing field —
+    /// this chip is a fixed-radius rectangle, never user-adjustable.
+    ///
+    /// Layout (W4, left out): `render` hardcodes `Center` and always
+    /// measures the chip's own width off the label text itself
+    /// (`label_width = text_width + padding_h * 2.0`) — the box is sized
+    /// TO the content, not the other way round, so there is no slack left
+    /// for start/end alignment to move the glyphs to; wiring a Start/End
+    /// choice would shift the text by a couple of padding pixels at most,
+    /// not a genuine origin change. Declaring the row would be a control
+    /// over a value render effectively ignores.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or("");

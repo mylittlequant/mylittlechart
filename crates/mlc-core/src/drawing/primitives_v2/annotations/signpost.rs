@@ -193,6 +193,13 @@ impl Primitive for Signpost {
     /// fields for at all (no backing field either way). `direction` stays
     /// in the default run instead of forcing a mismatch onto a group titled
     /// for a control this type doesn't have.
+    ///
+    /// Layout (W4, left out): `render` hardcodes `Center` and picks
+    /// `(text_x, text_y)` from `self.direction` (right/left/up/down), not
+    /// from a rectangular box with a left/center/right side — there is no
+    /// "start of the box" for an arrow tip to mean. Wiring a Start/End
+    /// choice would need new per-direction geometry, not the small change
+    /// the box-shaped siblings (`note.rs`/`comment.rs`/`callout.rs`) got.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or(&self.text);

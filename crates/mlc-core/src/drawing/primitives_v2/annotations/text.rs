@@ -130,7 +130,7 @@ impl Primitive for Text {
     /// "callout") declares Content/Font/Layout/Plate groups on the "text"
     /// subject tab. This is the plainest member of the archetype — a bare
     /// label with no plate/background at all (`render` above draws nothing
-    /// but the glyphs) — so only Content and Font apply.
+    /// but the glyphs) — so only Content, Font and Layout apply.
     ///
     /// Content: the free-text body, already a real property.
     /// Font: size/colour are real fields; `bold`/`italic` are this type's own
@@ -139,18 +139,28 @@ impl Primitive for Text {
     /// same "differently-shaped but same-titled" placement `PropertyGroup::Plate`
     /// already documents for Callout's fill pair.
     ///
-    /// Layout (align/word-wrap/width) and Plate (border/background) are not
-    /// declared at all: the design's align control is the same pills kind,
-    /// word-wrap/width-fits-content/max-width have no backing field on this
-    /// type, and `render` never paints a background plate behind this text —
-    /// there is no fill/background field to gate a Plate group with.
+    /// Layout (W4): `render`'s single call to `render_primitive_text`
+    /// (above) reads `data.text.h_align` internally
+    /// (`render_primitive_text_rotated`'s own canvas `set_text_align` call)
+    /// — the SAME anchor `(x, y)` draws at a different position relative to
+    /// the click point depending on the choice (start = glyphs extend right
+    /// of the anchor, center = centred on it, end = glyphs extend left of
+    /// it), a real, visible effect. Word-wrap/width-fits-content/max-width
+    /// still have no backing field, so only the align row of the design's
+    /// Layout group is declared.
+    ///
+    /// Plate (border/background) is not declared at all: `render` never
+    /// paints a background plate behind this text — there is no
+    /// fill/background field to gate a Plate group with.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
+        let default_text = PrimitiveText::default();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or("");
         let font_size = text_data.map(|t| t.font_size).unwrap_or(14.0);
         let bold = text_data.map(|t| t.bold).unwrap_or(false);
         let italic = text_data.map(|t| t.italic).unwrap_or(false);
         let color = text_data.and_then(|t| t.color.as_deref()).unwrap_or(&self.data.color.stroke);
+        let h_align = text_data.map(|t| t.h_align).unwrap_or(default_text.h_align);
 
         Some(vec![
             ConfigProperty::content(content)
@@ -168,6 +178,9 @@ impl Primitive for Text {
             ConfigProperty::text_color(color)
                 .with_category(PropertyCategory::LabelsText)
                 .with_order(4).in_group(PropertyGroup::Font),
+            ConfigProperty::text_align_pills(h_align.as_str())
+                .with_category(PropertyCategory::LabelsText)
+                .with_order(5).in_group(PropertyGroup::Layout),
         ])
     }
 
@@ -201,6 +214,12 @@ impl Primitive for Text {
             "text_color" => {
                 if let Some(c) = value.as_color() {
                     text_data.color = Some(c.to_string());
+                    return true;
+                }
+            }
+            "text_h_align" => {
+                if let Some(s) = value.as_string() {
+                    text_data.h_align = super::super::TextAlign::from_str(s);
                     return true;
                 }
             }

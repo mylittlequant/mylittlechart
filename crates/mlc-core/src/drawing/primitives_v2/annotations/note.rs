@@ -149,29 +149,48 @@ impl Primitive for Note {
         let text_color = text_data.and_then(|t| t.color.as_deref()).unwrap_or_else(|| contrasting_text_color(fill_base));
         if !content.is_empty() {
             let font_size = text_data.map(|t| t.font_size).unwrap_or(12.0);
+            let default_text = super::super::PrimitiveText::default();
+            let h_align = text_data.map(|t| t.h_align).unwrap_or(default_text.h_align);
             ctx.set_fill_color(text_color);
             ctx.set_font(&format!("{}px sans-serif", font_size as i32));
-            ctx.set_text_align(crate::render::TextAlign::Center);
-            let center_x = min_x + width / 2.0;
+            ctx.set_text_align(match h_align {
+                super::super::TextAlign::Start => crate::render::TextAlign::Left,
+                super::super::TextAlign::Center => crate::render::TextAlign::Center,
+                super::super::TextAlign::End => crate::render::TextAlign::Right,
+            });
+            let text_x = match h_align {
+                super::super::TextAlign::Start => min_x + 6.0,
+                super::super::TextAlign::Center => min_x + width / 2.0,
+                super::super::TextAlign::End => min_x + width - 6.0,
+            };
             let center_y = min_y + height / 2.0 + font_size / 3.0;
-            ctx.fill_text(content, center_x, center_y);
+            ctx.fill_text(content, text_x, center_y);
         }
     }
 
     /// Text archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`,
-    /// fifth wave): `text_tabs()` — Content/Font/Plate groups apply.
+    /// fifth wave): `text_tabs()` — Content/Font/Layout/Plate groups apply.
     /// `expanded` is this type's own quirk (its sticky-note collapse state)
     /// with no home in the design's groups, so it stays in the default run.
-    /// Layout has no backing field here either (no align/word-wrap/width on
-    /// this box) and Border/BorderColor/Rounding/Padding/Shadow have no
-    /// field to back them — this box paints sharp corners at a fixed radius
-    /// only for its folded-corner mark, never user-set.
+    ///
+    /// Layout (W4): `render` now reads `data.text.h_align` to pick BOTH the
+    /// caption's own x position along the box (start/center/end of its own
+    /// width) and the canvas alignment it draws with — a two-line change in
+    /// how the text origin is computed, the same shape rectangle.rs's own
+    /// on-shape caption already uses. Default (Center) reproduces the fixed
+    /// centred draw this box always used, byte for byte.
+    ///
+    /// Border/BorderColor/Rounding/Padding/Shadow have no field to back
+    /// them — this box paints sharp corners at a fixed radius only for its
+    /// folded-corner mark, never user-set.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
+        let default_text = super::super::PrimitiveText::default();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or(&self.content);
         let font_size = text_data.map(|t| t.font_size).unwrap_or(12.0);
         let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
         let color = text_data.and_then(|t| t.color.as_deref()).unwrap_or_else(|| contrasting_text_color(fill_base));
+        let h_align = text_data.map(|t| t.h_align).unwrap_or(default_text.h_align);
 
         Some(vec![
             ConfigProperty::comment(content)
@@ -186,6 +205,9 @@ impl Primitive for Note {
             ConfigProperty::expanded(self.expanded)
                 .with_category(PropertyCategory::LabelsText)
                 .with_order(3),
+            ConfigProperty::text_align_pills(h_align.as_str())
+                .with_category(PropertyCategory::LabelsText)
+                .with_order(4).in_group(PropertyGroup::Layout),
         ])
     }
 
@@ -216,6 +238,13 @@ impl Primitive for Note {
             "expanded" => {
                 if let Some(v) = value.as_bool() {
                     self.expanded = v;
+                    return true;
+                }
+            }
+            "text_h_align" => {
+                if let Some(s) = value.as_string() {
+                    let text_data = self.data.text.get_or_insert_with(|| PrimitiveText::new(""));
+                    text_data.h_align = super::super::TextAlign::from_str(s);
                     return true;
                 }
             }

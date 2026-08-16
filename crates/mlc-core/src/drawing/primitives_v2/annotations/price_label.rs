@@ -175,6 +175,14 @@ impl Primitive for PriceLabel {
     /// Content row the archetype's Content group wants — the "no free-text
     /// field" reasoning that used to keep this type out of that group no
     /// longer holds.
+    ///
+    /// Layout (W4, left out): `render` hardcodes `Center` and sizes the
+    /// chip's own box off `text_width` measured from the SAME string it
+    /// then draws (`label_width = text_width + padding_h * 2.0`, centred
+    /// on the anchor `x`) — same reasoning as `price_note.rs`'s own doc:
+    /// the box tracks the content, so start/end alignment has no real
+    /// slack to move the glyphs into and would not be a genuine origin
+    /// change.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
         let font_size = text_data.map(|t| t.font_size).unwrap_or(12.0);

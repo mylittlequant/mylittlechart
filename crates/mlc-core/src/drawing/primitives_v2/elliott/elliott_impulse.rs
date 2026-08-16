@@ -7,7 +7,7 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
     render_primitive_text, draw_label_plate, hit_test_label_plates, wave_label_offset, stroke_leg_segments,
-    config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, SelectOption},
+    config::{WaveDegree, NotationStyle, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, SelectOption},
 };
 use super::count::{WaveLink, WaveSlot, slot_span, segment_is_subdivided, visible_leg_segments};
 use super::{guard, ratio, projection, wave_hit};
@@ -38,6 +38,29 @@ pub struct ElliottImpulse {
     pub show_labels: bool,
     #[serde(default)]
     pub degree: WaveDegree,
+    /// The numeral family this structure's own wave-count labels draw in —
+    /// see [`NotationStyle`]'s own doc. `FollowDegree` (the default) reads
+    /// `degree`'s own table exactly as this primitive always has; the other
+    /// three variants override it with one fixed family regardless of
+    /// `degree`.
+    ///
+    /// Elliott-Impulse ONLY (owner correction 2026-08-17) — do NOT add this
+    /// field to `ElliottCorrection`/`ElliottTriangle`/`ElliottDoubleCombo`/
+    /// `ElliottTripleCombo`. This isn't a layout gap those four happen to
+    /// share with impulse; it's a notation-correctness line. An impulse's
+    /// five waves ARE numbers — arabic/roman/circled is a real, faithful
+    /// choice of how to WRITE that number. A correction's A-B-C, a
+    /// triangle's A-E, a combo's W-X-Y-Z are not numbers spelled a
+    /// different way — they are the Elliott vocabulary for what those
+    /// structures ARE. Offering "arabic" there and mapping by ordinal
+    /// position (an earlier draft of this feature did exactly that) turns
+    /// a zigzag's own A-B-C into "1-2-3", which reads as a THREE-WAVE
+    /// segment of a motive impulse — the wrong notation for a correction,
+    /// not a stylistic one. The four letter-labelled types keep drawing
+    /// straight from `degree.{corrective,triangle,combo}_labels()`, with
+    /// no notation field and no pills row.
+    #[serde(default)]
+    pub notation_style: NotationStyle,
     #[serde(default)]
     pub label_style: LabelStyle,
     #[serde(default = "default_true")]
@@ -187,6 +210,7 @@ impl ElliottImpulse {
             points,
             show_labels: true,
             degree: WaveDegree::Intermediate,
+            notation_style: NotationStyle::default(),
             label_style: LabelStyle::default(),
             show_lines: true,
             link: None,
@@ -208,9 +232,39 @@ impl ElliottImpulse {
         }
     }
 
+    /// This structure's own five wave-count labels, in `notation_style`'s
+    /// chosen family — `FollowDegree` (the default) reads `degree`'s own
+    /// table exactly as before this field existed; the other three
+    /// variants override it with one fixed family, independent of degree
+    /// (see [`NotationStyle::positional_table`]'s own doc). The ONE place
+    /// degree/notation is resolved for this type — `rendered_wave_labels`
+    /// (below) is the ONE place the truncation mark composes on top of it.
     pub fn wave_labels(&self) -> [&'static str; 6] {
-        let impulse = self.degree.impulse_labels();
+        let impulse = self.notation_style.positional_table().unwrap_or_else(|| self.degree.impulse_labels());
         ["", impulse[0], impulse[1], impulse[2], impulse[3], impulse[4]]
+    }
+
+    /// The notation the Notation pills row DECLARES as current — never
+    /// used by `wave_labels()` (owner correction 2026-08-17: resolves
+    /// `FollowDegree`'s effective family for DISPLAY only). An explicit
+    /// choice (`Arabic`/`Roman`/`Circled`) passes straight through.
+    /// `FollowDegree` resolves to whichever fixed family `degree`'s own
+    /// table currently belongs to, decoration stripped
+    /// ([`NotationStyle::family_of`]) — e.g. a `Primary`-degree impulse
+    /// (circled table) declares `Circled`, a `Cycle`-degree impulse (bare
+    /// roman) declares `Roman`, so a freshly placed structure — every
+    /// structure, since `FollowDegree` is the default — lights the pill
+    /// matching what is actually drawn instead of showing no selection.
+    /// Every one of `WaveDegree`'s 15 degrees resolves this way (verified
+    /// exhaustively by `config::notation_style_tests
+    /// ::every_impulse_degree_resolves_to_a_family`); the stored-value
+    /// fallback exists only for a table `family_of` genuinely can't place,
+    /// which does not happen for `impulse_labels()` today.
+    fn declared_notation_style(&self) -> NotationStyle {
+        match self.notation_style {
+            NotationStyle::FollowDegree => NotationStyle::family_of(&self.degree.impulse_labels()).unwrap_or(self.notation_style),
+            other => other,
+        }
     }
 
     /// The labels actually drawn and hit-tested — [`wave_labels`](Self::wave_labels)'s
@@ -544,10 +598,16 @@ impl Primitive for ElliottImpulse {
             // `wave_tabs()` "Degree" group, pulled out of the default Line
             // run into its own header.
             ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(18).in_group(PropertyGroup::Degree),
+            // `PropertyGroup::Notation` (W4) — the approved design's own
+            // `wave_tabs()` "Notation" group, right after Degree, matching
+            // the design's own reading order (Line → Degree → Notation →
+            // fill for this type — the correction/pattern-type step
+            // `elliott_correction.rs` has is not part of this type).
+            ConfigProperty::notation_style_pills(self.declared_notation_style().as_str()).with_category(PropertyCategory::AppearanceLine).with_order(19).in_group(PropertyGroup::Notation),
             // `PropertyGroup::WaveLabels` (W2) — the approved design's own
             // `WaveLabelsGroupTitle`.
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(19).in_group(PropertyGroup::WaveLabels),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(20).in_group(PropertyGroup::WaveLabels),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(20).in_group(PropertyGroup::WaveLabels),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(21).in_group(PropertyGroup::WaveLabels),
         ];
         props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::WaveLabels));
         props
@@ -564,6 +624,7 @@ impl Primitive for ElliottImpulse {
             "show_projections" => { if let Some(v) = value.as_bool() { self.show_projections = v; return true; } }
             "truncated_fifth" => { if let Some(v) = value.as_bool() { self.truncated_fifth = v; return true; } }
             "degree" => { if let Some(s) = value.as_string() { if let Some(d) = WaveDegree::from_str(s) { self.degree = d; return true; } } }
+            "notation_style" => { if let Some(s) = value.as_string() { self.notation_style = NotationStyle::from_str(s); return true; } }
             "label_font_size" => { if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; } }
             "label_color" => { if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; } }
             _ => {}
@@ -784,5 +845,94 @@ mod truncated_fifth_label_tests {
         // collides — sanity check that this geometry exercises the rule
         // rather than vacuously comparing two empty vectors.
         assert!(!indices_off.is_empty(), "sanity: this geometry does produce a collision to compare");
+    }
+}
+
+#[cfg(test)]
+mod notation_style_label_tests {
+    use super::*;
+
+    fn sample_points() -> [(i64, f64); 6] {
+        [(0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0)]
+    }
+
+    /// `FollowDegree` (the default) reproduces `WaveDegree::impulse_labels`
+    /// byte for byte, for two different degrees whose own tables differ
+    /// (Primary is circled numbers, Minor is plain arabic) — the default
+    /// choice never changes what a drawing saved before this field existed
+    /// renders.
+    #[test]
+    fn follow_degree_default_matches_degree_table_for_two_degrees() {
+        for degree in [WaveDegree::Primary, WaveDegree::Minor] {
+            let mut impulse = ElliottImpulse::new(sample_points(), "#2196F3");
+            impulse.degree = degree;
+            assert_eq!(impulse.notation_style, NotationStyle::FollowDegree, "default is FollowDegree");
+            let expected = degree.impulse_labels();
+            assert_eq!(
+                impulse.wave_labels(),
+                ["", expected[0], expected[1], expected[2], expected[3], expected[4]],
+                "FollowDegree reproduces {degree:?}'s own table exactly"
+            );
+        }
+    }
+
+    /// Owner correction 2026-08-17: a `FollowDegree` structure (the
+    /// default, so EVERY freshly placed impulse) must declare the pill
+    /// matching what its own degree actually draws, not "nothing lit" —
+    /// checked for a roman-table degree (Cycle) and an arabic-table degree
+    /// (Minor), while `wave_labels()` itself is untouched in both cases
+    /// (the resolution is declaration-only, never a second place that
+    /// computes labels).
+    #[test]
+    fn follow_degree_declares_the_pill_its_own_degree_table_actually_draws() {
+        let mut impulse = ElliottImpulse::new(sample_points(), "#2196F3");
+        impulse.degree = WaveDegree::Cycle;
+        assert_eq!(impulse.declared_notation_style(), NotationStyle::Roman, "Cycle's own table is bare roman numerals");
+        assert_eq!(impulse.wave_labels(), ["", "I", "II", "III", "IV", "V"], "wave_labels still reads FollowDegree's own table, unchanged");
+
+        impulse.degree = WaveDegree::Minor;
+        assert_eq!(impulse.declared_notation_style(), NotationStyle::Arabic, "Minor's own table is bare arabic digits");
+        assert_eq!(impulse.wave_labels(), ["", "1", "2", "3", "4", "5"], "wave_labels still reads FollowDegree's own table, unchanged");
+    }
+
+    /// Each explicit notation choice produces the SAME fixed label set
+    /// regardless of degree — the whole point (owner: "cannot choose arabic
+    /// where the degree dictates roman") — checked for two degrees whose
+    /// own `impulse_labels()` differ from both each other and from every
+    /// fixed family (Cycle is bare roman, Intermediate is parenthesized
+    /// arabic).
+    #[test]
+    fn explicit_notation_overrides_degree_for_two_degrees() {
+        for degree in [WaveDegree::Cycle, WaveDegree::Intermediate] {
+            let mut impulse = ElliottImpulse::new(sample_points(), "#2196F3");
+            impulse.degree = degree;
+
+            impulse.notation_style = NotationStyle::Arabic;
+            assert_eq!(impulse.wave_labels(), ["", "1", "2", "3", "4", "5"], "Arabic ignores {degree:?}");
+
+            impulse.notation_style = NotationStyle::Roman;
+            assert_eq!(impulse.wave_labels(), ["", "I", "II", "III", "IV", "V"], "Roman ignores {degree:?}");
+
+            impulse.notation_style = NotationStyle::Circled;
+            assert_eq!(impulse.wave_labels(), ["", "①", "②", "③", "④", "⑤"], "Circled ignores {degree:?}");
+        }
+    }
+
+    /// The truncated-fifth mark (`bed7fd21`) still composes on top of
+    /// whichever notation is active — appended to wave 5's own label
+    /// exactly as it does for the degree-driven default.
+    #[test]
+    fn truncation_mark_composes_with_every_notation() {
+        let mut impulse = ElliottImpulse::new(sample_points(), "#2196F3");
+        impulse.truncated_fifth = true;
+        for style in [NotationStyle::FollowDegree, NotationStyle::Arabic, NotationStyle::Roman, NotationStyle::Circled] {
+            impulse.notation_style = style;
+            let unmarked = impulse.wave_labels();
+            let rendered = impulse.point_labels().expect("an ElliottImpulse always returns Some point_labels");
+            for i in 0..5 {
+                assert_eq!(rendered[i], unmarked[i], "point {i} untouched by the flag for {style:?}");
+            }
+            assert_eq!(rendered[5], format!("{}{}", unmarked[5], TRUNCATED_FIFTH_MARK), "wave 5 gains the mark for {style:?}");
+        }
     }
 }

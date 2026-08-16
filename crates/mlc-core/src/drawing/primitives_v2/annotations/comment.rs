@@ -199,11 +199,22 @@ impl Primitive for Comment {
         let text_color = text_data.and_then(|t| t.color.as_deref()).unwrap_or_else(|| contrasting_text_color(fill_base));
         if !label.is_empty() {
             let font_size = text_data.map(|t| t.font_size.min(height * 0.5)).unwrap_or((height * 0.4).min(12.0)).max(8.0);
+            let default_text = super::super::PrimitiveText::default();
+            let h_align = text_data.map(|t| t.h_align).unwrap_or(default_text.h_align);
             ctx.set_fill_color(text_color);
             ctx.set_font(&format!("{}px sans-serif", font_size as i32));
-            ctx.set_text_align(crate::render::TextAlign::Center);
+            ctx.set_text_align(match h_align {
+                super::super::TextAlign::Start => crate::render::TextAlign::Left,
+                super::super::TextAlign::Center => crate::render::TextAlign::Center,
+                super::super::TextAlign::End => crate::render::TextAlign::Right,
+            });
             ctx.set_text_baseline(crate::render::TextBaseline::Middle);
-            ctx.fill_text(label, center_x, center_y);
+            let label_x = match h_align {
+                super::super::TextAlign::Start => min_x + 6.0,
+                super::super::TextAlign::Center => center_x,
+                super::super::TextAlign::End => max_x - 6.0,
+            };
+            ctx.fill_text(label, label_x, center_y);
         } else {
             ctx.set_stroke_color(text_color);
             ctx.set_stroke_width(1.0);
@@ -233,18 +244,25 @@ impl Primitive for Comment {
     }
 
     /// Text archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`,
-    /// fifth wave): `text_tabs()` — Content/Font/Plate groups apply.
+    /// fifth wave): `text_tabs()` — Content/Font/Layout/Plate groups apply.
     /// `author`/`timestamp` used to be a genuine dead pair (declared,
     /// constructed, read by nothing) — closed in the 2026-08-16 defect
     /// pass: `render` now draws them (see `meta_line`'s own doc), gated by
     /// `show_meta` — declared here, in Content, next to the body text it
     /// draws alongside.
+    ///
+    /// Layout (W4): `render`'s own label branch now picks the caption's x
+    /// (and the matching canvas alignment) off `data.text.h_align` the same
+    /// way `note.rs`/`callout.rs` do — the placeholder-dots branch (drawn
+    /// only when `label` is empty) is untouched, it has no text to align.
     fn text_properties(&self) -> Option<Vec<ConfigProperty>> {
         let text_data = self.data.text.as_ref();
+        let default_text = super::super::PrimitiveText::default();
         let content = text_data.map(|t| t.content.as_str()).unwrap_or(&self.text);
         let font_size = text_data.map(|t| t.font_size).unwrap_or(12.0);
         let fill_base = self.data.color.fill.as_deref().unwrap_or(&self.data.color.stroke);
         let color = text_data.and_then(|t| t.color.as_deref()).unwrap_or_else(|| contrasting_text_color(fill_base));
+        let h_align = text_data.map(|t| t.h_align).unwrap_or(default_text.h_align);
 
         Some(vec![
             ConfigProperty::comment(content)
@@ -259,6 +277,9 @@ impl Primitive for Comment {
             ConfigProperty::text_color(color)
                 .with_category(PropertyCategory::LabelsText)
                 .with_order(3).in_group(PropertyGroup::Font),
+            ConfigProperty::text_align_pills(h_align.as_str())
+                .with_category(PropertyCategory::LabelsText)
+                .with_order(4).in_group(PropertyGroup::Layout),
         ])
     }
 
@@ -289,6 +310,13 @@ impl Primitive for Comment {
                 if let Some(c) = value.as_color() {
                     let text_data = self.data.text.get_or_insert_with(|| PrimitiveText::new(""));
                     text_data.color = Some(c.to_string());
+                    return true;
+                }
+            }
+            "text_h_align" => {
+                if let Some(s) = value.as_string() {
+                    let text_data = self.data.text.get_or_insert_with(|| PrimitiveText::new(""));
+                    text_data.h_align = super::super::TextAlign::from_str(s);
                     return true;
                 }
             }
