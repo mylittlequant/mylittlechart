@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{SettingsKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -13,7 +14,7 @@ use super::super::{
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
-    config::{ConfigProperty, PropertyValue, PropertyCategory},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
     AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
@@ -220,9 +221,63 @@ impl Primitive for RegressionTrend {
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
+        // Regression archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`):
+        // `regression_tabs()` (`mlc-ui-lab`'s `spec.rs`) declares four
+        // groups on the "sigma" subject tab — Calculation, Sigmas, Baseline,
+        // Metrics — plus an Extend group. This primitive's own
+        // `archetype()` override already points at `Archetype::Regression`
+        // (see above); this is the first pass that gives it the design's
+        // own named groups instead of one anonymous run.
+        //
+        // `PropertyGroup::Calculation` (source dropdown / period mode /
+        // bar-count) is not declared: this primitive draws a fixed offset
+        // from `std_dev_mult` (see `channel_offset` above), never an actual
+        // least-squares fit against a price series — there is no source
+        // bar, no sampled window, nothing a "Close/Open/High/Low" or
+        // "bars"/"points" toggle could drive. No backing field exists and
+        // none can be added inside this trait method either: `style_properties(&self)`
+        // is never handed `bars`, so a real fit is a compute-layer change,
+        // not a declarative one.
+        //
+        // `PropertyGroup::Sigmas` — the lab's own ratio-style table (one row
+        // per ±1σ/±2σ/±3σ band: multiplier, colour swatch, per-band fill
+        // checkbox) needs a property kind this crate has none of yet (W4).
+        // This primitive only ever tracks ONE band width (`std_dev_mult`)
+        // and one shared fill toggle, not three independent bands, so
+        // there is no honest per-row mapping even once W4 lands — what
+        // DOES have a real single-band equivalent is the group's own
+        // trailing "Fill Opacity" slider and this primitive's existing
+        // `fill` master toggle, both re-homed into this group below rather
+        // than left in the default run.
+        //
+        // `PropertyGroup::Baseline` — the lab's "Show"/colour/width trio for
+        // the dashed centre line. `show_center` is a real, already-rendered
+        // field (`render`'s own `if self.show_center` branch draws the
+        // dashed line; `hit_test` gates the same way) — declared below.
+        // Colour and width are NOT declared: this primitive has no
+        // baseline-specific stroke of its own, the centre line reuses
+        // `data.color.stroke`/`data.width` — the SAME pair the two sigma
+        // band lines draw with — so there is no independent field a
+        // baseline-only colour/width control could write into without
+        // silently also repainting the bands.
+        //
+        // `PropertyGroup::Extend` stays out for the same dead-field reason
+        // as every other channel type in this module: `extend_right` exists
+        // on this struct but neither `render` nor `hit_test` nor `geometry`
+        // ever reads it.
+        //
+        // The Metrics group (`ShowSlope`/`ShowRSquared` toggles + the
+        // Slope/R² stat rows) is left out ENTIRELY: the two stat rows need
+        // a computed-stat block, a property kind that does not exist (W4),
+        // and even with that kind built there is nothing to compute from —
+        // this primitive has no linear-regression fit at all (see the
+        // Calculation note above), so the two toggles that would gate that
+        // computed display have no backing field or compute path either.
         vec![
-            ConfigProperty::fill(self.fill).with_category(PropertyCategory::AppearanceFill).with_order(20),
-            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_category(PropertyCategory::AppearanceFill).with_order(21),
+            ConfigProperty::fill(self.fill).with_category(PropertyCategory::AppearanceFill).with_order(20).in_group(PropertyGroup::Sigmas),
+            ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_category(PropertyCategory::AppearanceFill).with_order(21).in_group(PropertyGroup::Sigmas),
+            ConfigProperty::boolean("show_center", SettingsKey::Show.get(current_language()), self.show_center)
+                .with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::Baseline),
         ]
     }
 
@@ -230,6 +285,7 @@ impl Primitive for RegressionTrend {
         match id {
             "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
             "fill_opacity" => { if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; } }
+            "show_center" => { if let Some(v) = value.as_bool() { self.show_center = v; return true; } }
             _ => {}
         }
         false

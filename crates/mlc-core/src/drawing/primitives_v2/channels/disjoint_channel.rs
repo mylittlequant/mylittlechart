@@ -12,7 +12,7 @@ use super::super::{
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
-    config::{ConfigProperty, PropertyValue, PropertyCategory},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
     AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
@@ -246,9 +246,30 @@ impl Primitive for DisjointChannel {
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
+        // Channel archetype (W3) — same skeleton `parallel_channel.rs`'s own
+        // `style_properties` doc explains in full: Outline needs no
+        // declaration (universal bespoke base stroke) and Fill's default
+        // `AppearanceFill` header already matches the lab's title.
+        //
+        // `PropertyGroup::MiddleLine` is not this type's to declare at all —
+        // the lab gives that group to Parallel Channel only (see
+        // `PropertyGroup::MiddleLine`'s own doc); a disjoint (non-parallel)
+        // channel has no single trend line a "middle" would even average.
+        //
+        // `PropertyGroup::Extend` stays out for the same dead-field reason
+        // as `parallel_channel.rs`: `extend_right` exists on this struct but
+        // neither `render` nor `hit_test` nor `geometry` ever reads it.
+        let default_text = super::super::PrimitiveText::default();
         vec![
             ConfigProperty::fill(self.fill).with_category(PropertyCategory::AppearanceFill).with_order(20),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_category(PropertyCategory::AppearanceFill).with_order(21),
+            // `PropertyGroup::TextOnShape` — font size + horizontal
+            // position write into `data.text`, already read by `render`
+            // above (`render_primitive_text_rotated`) to place the caption.
+            ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
+                .with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::TextOnShape),
+            ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
+                .with_category(PropertyCategory::AppearanceLine).with_order(23).in_group(PropertyGroup::TextOnShape),
         ]
     }
 
@@ -256,6 +277,18 @@ impl Primitive for DisjointChannel {
         match id {
             "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
             "fill_opacity" => { if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; } }
+            "label_font_size" => {
+                if let Some(v) = value.as_number() {
+                    self.data.text.get_or_insert_with(super::super::PrimitiveText::default).font_size = v.clamp(8.0, 32.0);
+                    return true;
+                }
+            }
+            "text_h_align" => {
+                if let PropertyValue::String(v) = value {
+                    self.data.text.get_or_insert_with(super::super::PrimitiveText::default).h_align = super::super::TextAlign::from_str(v);
+                    return true;
+                }
+            }
             _ => {}
         }
         false
