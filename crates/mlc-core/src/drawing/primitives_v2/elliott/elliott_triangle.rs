@@ -7,7 +7,7 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
     render_primitive_text, draw_label_plate, hit_test_label_plates, wave_label_offset, stroke_leg_segments,
-    config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, SelectOption},
+    config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, SelectOption},
 };
 use super::count::{WaveLink, WaveSlot, slot_span, segment_is_subdivided, visible_leg_segments};
 use super::{guard, ratio, wave_hit};
@@ -439,6 +439,18 @@ impl Primitive for ElliottTriangle {
         let rib_width_default = self.ratio_rib_width.unwrap_or_else(|| ratio::default_rib_width(self.data.width));
 
         let mut props = vec![
+            // `show_labels`/`show_lines`/`show_trendlines`/`show_ratios`/
+            // the ratio-rib trio stay ungrouped (W2), same as
+            // `ElliottImpulse::style_properties`'s own comment: the approved
+            // wave archetype's own Line group (`line_group(None)`) is just
+            // colour/width/style — the bespoke base-stroke row this
+            // primitive already falls back to (no `LevelsBase` ladder) — so
+            // these toggles keep rendering in that same default run.
+            // `show_trendlines` is this type's own quirk (the A-C-E/B-D
+            // trendlines a triangle draws that no other wave shape has) —
+            // the approved design's `wave_tabs()` has no dedicated group for
+            // it, so it stays in the default Line run rather than being
+            // invented a home that does not exist in the lab.
             ConfigProperty::show_labels(self.show_labels).with_category(PropertyCategory::AppearanceLine).with_order(10),
             ConfigProperty::show_lines(self.show_lines).with_category(PropertyCategory::AppearanceLine).with_order(11),
             ConfigProperty::show_trendlines(self.show_trendlines).with_category(PropertyCategory::AppearanceLine).with_order(12),
@@ -448,11 +460,16 @@ impl Primitive for ElliottTriangle {
             ConfigProperty::ratio_rib_color(&rib_color_default).with_category(PropertyCategory::AppearanceLine).with_order(14),
             ConfigProperty::ratio_rib_width(rib_width_default).with_category(PropertyCategory::AppearanceLine).with_order(15),
             ConfigProperty::ratio_rib_style(self.ratio_rib_style.as_str()).with_category(PropertyCategory::AppearanceLine).with_order(16),
-            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(17),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(18),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(19),
+            // `PropertyGroup::Degree` (W2) — the approved design's own
+            // `wave_tabs()` "Degree" group, pulled out of the default Line
+            // run into its own header, same as `ElliottImpulse`.
+            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(17).in_group(PropertyGroup::Degree),
+            // `PropertyGroup::WaveLabels` (W2) — the approved design's own
+            // `WaveLabelsGroupTitle`.
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(18).in_group(PropertyGroup::WaveLabels),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(19).in_group(PropertyGroup::WaveLabels),
         ];
-        props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
+        props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::WaveLabels));
         props
     }
 

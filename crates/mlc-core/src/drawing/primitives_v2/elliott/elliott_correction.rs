@@ -7,7 +7,7 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
     render_primitive_text, draw_label_plate, hit_test_label_plates, wave_label_offset, stroke_leg_segments,
-    config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, SelectOption},
+    config::{WaveDegree, LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, SelectOption},
 };
 use super::count::{WaveLink, WaveSlot, slot_span, segment_is_subdivided, visible_leg_segments};
 use super::{guard, ratio, projection, wave_hit};
@@ -451,12 +451,13 @@ impl Primitive for ElliottCorrection {
         let rib_width_default = self.ratio_rib_width.unwrap_or_else(|| ratio::default_rib_width(self.data.width));
 
         let mut props = vec![
-            // The pattern's own subtype — changes what shape it draws, so
-            // it lives on Appearance next to the other shape-defining
-            // controls, same placement as `patterns/triangle_pattern.rs`'s
-            // own `triangle_type`. Real field, zero `ConfigProperty` until
-            // this pass (2026-08-09 modal-surface-inventory audit).
-            ConfigProperty::correction_type(self.correction_type.as_str()).with_category(PropertyCategory::AppearanceLine).with_order(9),
+            // `show_labels`/`show_lines`/`show_ratios`/the ratio-rib trio/
+            // `show_projections` stay ungrouped (W2), same as
+            // `ElliottImpulse::style_properties`'s own comment: the approved
+            // wave archetype's own Line group (`line_group(None)`) is just
+            // colour/width/style — the bespoke base-stroke row this
+            // primitive already falls back to (no `LevelsBase` ladder) — so
+            // these five toggles keep rendering in that same default run.
             ConfigProperty::show_labels(self.show_labels).with_category(PropertyCategory::AppearanceLine).with_order(10),
             ConfigProperty::show_lines(self.show_lines).with_category(PropertyCategory::AppearanceLine).with_order(11),
             ConfigProperty::show_ratios(self.show_ratios).with_category(PropertyCategory::AppearanceLine).with_order(12),
@@ -469,11 +470,28 @@ impl Primitive for ElliottCorrection {
             // the ratio-rib block it shares its own style with (see
             // `elliott::projection`'s module doc).
             ConfigProperty::show_projections(self.show_projections).with_category(PropertyCategory::AppearanceLine).with_order(16),
-            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(17),
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(18),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(19),
+            // `PropertyGroup::Degree` (W2) — the approved design's own
+            // `wave_tabs()` "Degree" group, pulled out of the default Line
+            // run into its own header, same as `ElliottImpulse`.
+            ConfigProperty::wave_degree(self.degree.as_str(), degree_options).with_category(PropertyCategory::AppearanceLine).with_order(17).in_group(PropertyGroup::Degree),
+            // `PropertyGroup::CorrectionType` (W2) — the approved design's
+            // own `wave_tabs()` "Correction Type" group, hinted "correction
+            // only" there because THIS is the one Elliott type that actually
+            // carries the field: changes what shape this primitive draws,
+            // same shape-defining role as `patterns/triangle_pattern.rs`'s
+            // own `triangle_type` (real field, zero `ConfigProperty` until
+            // the 2026-08-09 modal-surface-inventory audit). Moved from
+            // order 9 (ahead of even the Line-group toggles) to order 18,
+            // right after Degree, to match the design's own reading order
+            // (`line_group` → Degree → Notation → Correction Type → fill) —
+            // the field itself is unchanged.
+            ConfigProperty::correction_type(self.correction_type.as_str()).with_category(PropertyCategory::AppearanceLine).with_order(18).in_group(PropertyGroup::CorrectionType),
+            // `PropertyGroup::WaveLabels` (W2) — the approved design's own
+            // `WaveLabelsGroupTitle`.
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(19).in_group(PropertyGroup::WaveLabels),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(20).in_group(PropertyGroup::WaveLabels),
         ];
-        props.extend(self.label_style.style_properties(&self.data.color.stroke, 30));
+        props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::WaveLabels));
         props
     }
 
