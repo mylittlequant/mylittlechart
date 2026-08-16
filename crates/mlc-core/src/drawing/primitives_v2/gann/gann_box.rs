@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{ConfigKey, StyleKey};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -13,7 +14,7 @@ use super::super::{
     HIT_TOLERANCE,
     RenderContext, crisp,
     render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
-    config::{FibLevelConfig, LabelStyle},
+    config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
 use super::super::types::{Segment, hit_test_strokes};
 
@@ -31,6 +32,28 @@ pub const ALL_GANN_BOX_LEVELS: &[f64] = &[
 
 /// Main levels visible by default (quarters + center)
 pub const MAIN_GANN_BOX_VISIBLE: &[f64] = &[0.25, 0.5, 0.75];
+
+/// Gann Box's own three level-set presets, built strictly from
+/// [`ALL_GANN_BOX_LEVELS`] — this type's own grid-fraction catalogue.
+///
+/// - `standard` = [`MAIN_GANN_BOX_VISIBLE`] — the exact three fractions
+///   [`default_gann_box_configs`] marks visible out of the box (1/4, 1/2,
+///   3/4), so a freshly drawn box already reads as "standard".
+/// - `key_only` = the center (0.5) alone. The two edges (0.0/1.0) are
+///   excluded here on purpose: `grid_level_visible` (below) never draws a
+///   GATED grid line for them — the box's own outline already draws that
+///   boundary unconditionally — so a level_configs entry at 0.0 or 1.0
+///   would add nothing visible. The center is the smallest MEANINGFUL grid
+///   division the box can carry beyond its own always-drawn outline.
+/// - `all` = every fraction [`ALL_GANN_BOX_LEVELS`] declares (7). No
+///   `extended` tier: the 4 fractions beyond `standard` (0.0, 0.333, 0.667,
+///   1.0) have no further named grouping in this catalogue — carving one
+///   out would be inventing a boundary the catalogue itself never drew.
+pub const LEVEL_SET_PRESETS: &[LevelSetPreset] = &[
+    LevelSetPreset { id: "standard", name: |lang| StyleKey::Standard.get(lang), values: MAIN_GANN_BOX_VISIBLE },
+    LevelSetPreset { id: "key_only", name: |lang| ConfigKey::LevelSetKeyOnly.get(lang), values: &[0.5] },
+    LevelSetPreset { id: "all", name: |lang| ConfigKey::LevelSetAll.get(lang), values: ALL_GANN_BOX_LEVELS },
+];
 
 /// Get label for a Gann Box fraction level (0.0..=1.0 of the box) — the
 /// same percentage formatting `render()` draws next to each grid line.
@@ -557,6 +580,10 @@ impl Primitive for GannBox {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool {
         self.level_configs = configs;
         true
+    }
+
+    fn level_set_presets(&self) -> &'static [LevelSetPreset] {
+        LEVEL_SET_PRESETS
     }
 
     fn level_value_label(&self, level: f64) -> String {

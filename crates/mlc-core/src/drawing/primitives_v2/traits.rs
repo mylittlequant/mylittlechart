@@ -178,14 +178,16 @@ pub enum StyleReference {
     Template(String),
     /// A built-in system template id — names one row of
     /// [`crate::templates::PrimitiveTemplate::system_templates`] for this
-    /// primitive's type: `"standard"`/`"extended"`/`"key_only"`/`"all"` for
-    /// a type whose [`Primitive::level_set_presets`] is non-empty (the same
-    /// four ids `fibonacci::retracement::LEVEL_SET_PRESETS`/
-    /// `level_set_id_for_composition` name), or just `"standard"` for any
-    /// other type — including a level-having type with no such preset
-    /// catalogue (Gann, pitchfork, Fibonacci Time Zones). Never `"custom"`,
-    /// which is a derived display state with no fixed definition of its
-    /// own, not a real system row.
+    /// primitive's type: one of `"standard"`/`"extended"`/`"key_only"`/
+    /// `"all"` for a type whose [`Primitive::level_set_presets`] is
+    /// non-empty (each family names its OWN subset of these generic ids —
+    /// e.g. `fibonacci::retracement::LEVEL_SET_PRESETS` ships all four,
+    /// `gann::gann_fan::LEVEL_SET_PRESETS` ships three, no family invents a
+    /// fifth), or just `"standard"` for a primitive with no level ladder at
+    /// all (`Primitive::level_configs` returns `None`) — the only case left
+    /// where `level_set_presets()` is still the trait's empty default.
+    /// Never `"custom"`, which is a derived display state with no fixed
+    /// definition of its own, not a real system row.
     ///
     /// Serialized as `"LevelSet"` (`#[serde(rename)]` below) — the wire
     /// name is historical, from when this variant could only ever name one
@@ -758,21 +760,28 @@ pub trait Primitive: Send + Sync {
 
     /// The level-set presets this primitive TYPE offers — see
     /// [`super::config::LevelSetPreset`]'s own doc. Default: none, which is
-    /// the honest answer for a type whose ladder has no fixed catalogue of
-    /// named ratios behind it (Gann, pitchfork, Fibonacci Time Zones, or
-    /// any primitive with no ladder at all) — and it is what makes
+    /// the honest answer for a primitive with no level ladder at all
+    /// (`level_configs()` returns `None`) — and it is what makes
     /// [`crate::templates::PrimitiveTemplate::system_templates`] give such
     /// a type exactly ONE `"standard"` row, built from its own factory
-    /// seed, same as a type with no ladder at all.
+    /// seed.
     ///
-    /// Override only where the type genuinely owns a fixed catalogue —
-    /// today, only the Fibonacci family
-    /// (`fibonacci::retracement::LEVEL_SET_PRESETS`, shared by every type
-    /// that seeds its ladder from `retracement::default_level_configs`/
-    /// `default_level_configs_filled`). Do NOT invent a catalogue for a
-    /// type that never had one: it would narrow that type's own ladder
-    /// toward Fibonacci ratios it never carried — the defect this method
-    /// exists to close.
+    /// Override wherever the type genuinely owns a fixed catalogue of its
+    /// OWN — every ladder-having primitive in this crate does today: the
+    /// Fibonacci family (`fibonacci::retracement::LEVEL_SET_PRESETS`,
+    /// shared by every type that seeds its ladder from `retracement::
+    /// default_level_configs`/`default_level_configs_filled`), the Gann
+    /// family (`gann::gann_fan`/`gann_box`/`gann_square`, each with its own
+    /// angle- or fraction-based catalogue — `gann_square_fixed` shares
+    /// `gann_square`'s), the pitchfork family (`pitchforks::pitchfork::
+    /// LEVEL_SET_PRESETS`, shared by `schiff`/`modified_schiff`/
+    /// `inside_pitchfork`), and `fibonacci::time_zones::LEVEL_SET_PRESETS`
+    /// (built from the Fibonacci SEQUENCE used as bar-count offsets, its
+    /// own catalogue, not `retracement`'s price ratios). Do NOT invent a
+    /// value list, and do NOT borrow another family's: build a preset
+    /// exclusively from the OVERRIDING type's own declared catalogue — the
+    /// defect this method exists to close was narrowing a type's ladder
+    /// toward ratios it never carried.
     fn level_set_presets(&self) -> &'static [super::config::LevelSetPreset] {
         &[]
     }

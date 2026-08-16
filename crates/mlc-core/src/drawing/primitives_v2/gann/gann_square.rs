@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{ConfigKey, StyleKey};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -13,7 +14,7 @@ use super::super::{
     HIT_TOLERANCE,
     RenderContext, crisp,
     render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
-    config::{FibLevelConfig, LabelStyle},
+    config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
 use super::super::types::{Segment, hit_test_strokes};
 use super::gann_box::{gann_fraction_label, parse_gann_fraction_label};
@@ -31,6 +32,31 @@ pub const ALL_GANN_SQUARE_LEVELS: &[f64] = &[
 
 /// Main levels visible by default
 pub const MAIN_GANN_SQUARE_VISIBLE: &[f64] = &[0.333, 0.667, 1.0];
+
+/// The Gann Square family's own three level-set presets, built strictly
+/// from [`ALL_GANN_SQUARE_LEVELS`] — this catalogue is shared by both
+/// [`super::GannSquare`] and [`super::GannSquareFixed`] (the fixed variant
+/// imports it directly, see `gann_square_fixed.rs`), so both types' rings
+/// carry identical named presets.
+///
+/// - `standard` = [`MAIN_GANN_SQUARE_VISIBLE`] — the exact three rings
+///   [`default_gann_square_configs`] marks visible out of the box (1/3,
+///   2/3, the outer edge), so a freshly drawn square already reads as
+///   "standard".
+/// - `key_only` = the middle ring (0.5) alone — the square's own defining
+///   concentric division, the smallest meaningful ladder beyond the
+///   outer edge [`ring_level_visible`] already excludes from the gated
+///   ring loop (the outer square is drawn unconditionally, exactly like
+///   `gann_box`'s own always-drawn outline — see that type's own
+///   `LEVEL_SET_PRESETS` doc for the identical reasoning).
+/// - `all` = every ring [`ALL_GANN_SQUARE_LEVELS`] declares (6). No
+///   `extended` tier: the 3 rings beyond `standard` have no further named
+///   grouping in this catalogue to carve an in-between tier out of.
+pub const LEVEL_SET_PRESETS: &[LevelSetPreset] = &[
+    LevelSetPreset { id: "standard", name: |lang| StyleKey::Standard.get(lang), values: MAIN_GANN_SQUARE_VISIBLE },
+    LevelSetPreset { id: "key_only", name: |lang| ConfigKey::LevelSetKeyOnly.get(lang), values: &[0.5] },
+    LevelSetPreset { id: "all", name: |lang| ConfigKey::LevelSetAll.get(lang), values: ALL_GANN_SQUARE_LEVELS },
+];
 
 /// Create default level configs for Gann Square
 pub fn default_gann_square_configs() -> Vec<FibLevelConfig> {
@@ -516,6 +542,10 @@ impl Primitive for GannSquare {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool {
         self.level_configs = configs;
         true
+    }
+
+    fn level_set_presets(&self) -> &'static [LevelSetPreset] {
+        LEVEL_SET_PRESETS
     }
 
     fn level_value_label(&self, level: f64) -> String {

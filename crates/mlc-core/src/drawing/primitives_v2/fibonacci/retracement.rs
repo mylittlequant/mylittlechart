@@ -71,7 +71,9 @@ const LEVEL_SET_MATCH_EPS: f64 = 1e-9;
 /// offsets (1, 2, 3, 5, 8, ...), not these price ratios, so it does not
 /// return this slice from its own `level_set_presets` — see that method's
 /// doc on the `Primitive` trait for why narrowing a foreign ladder to these
-/// values was the defect, not a feature.
+/// values was the defect, not a feature. It owns its own catalogue-derived
+/// slice instead (`time_zones::LEVEL_SET_PRESETS`), same as Gann and the
+/// pitchfork family.
 pub const LEVEL_SET_PRESETS: &[LevelSetPreset] = &[
     LevelSetPreset { id: "standard", name: |lang| StyleKey::Standard.get(lang), values: MAIN_LEVELS },
     LevelSetPreset { id: "extended", name: |lang| StyleKey::Extended.get(lang), values: EXTENDED_LEVELS },
@@ -83,9 +85,10 @@ pub const LEVEL_SET_PRESETS: &[LevelSetPreset] = &[
 /// exactly matches: same value set, order-independent, no partial credit.
 /// `None` means the composition matches none of them — a "custom"
 /// composition, which has no fixed definition of its own to name it with,
-/// OR `presets` is empty (a type with no preset catalogue at all, e.g. Gann
-/// or Fibonacci Time Zones) — either way there is nothing to name the
-/// composition with.
+/// OR `presets` is empty (a primitive with no level ladder at all, e.g. a
+/// plain trend line — every ladder-having type in this crate owns a
+/// non-empty preset catalogue today) — either way there is nothing to name
+/// the composition with.
 ///
 /// Takes `presets` rather than reaching for [`LEVEL_SET_PRESETS`] directly
 /// so the SAME function serves every primitive type: a caller with a

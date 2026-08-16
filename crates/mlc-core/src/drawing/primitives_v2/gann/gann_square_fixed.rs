@@ -13,12 +13,14 @@ use super::super::{
     HIT_TOLERANCE,
     RenderContext, crisp,
     render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
-    config::{FibLevelConfig, LabelStyle},
+    config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
 use super::super::types::{Segment, hit_test_strokes};
 
-// Use same levels — and the same ring-visibility filter — as GannSquare
-use super::gann_square::{ALL_GANN_SQUARE_LEVELS, MAIN_GANN_SQUARE_VISIBLE, ring_level_visible};
+// Use same levels — the same ring-visibility filter — and the same
+// level-set presets as GannSquare (see that module's own `LEVEL_SET_PRESETS`
+// doc: one catalogue, shared by both types).
+use super::gann_square::{ALL_GANN_SQUARE_LEVELS, MAIN_GANN_SQUARE_VISIBLE, ring_level_visible, LEVEL_SET_PRESETS};
 use super::gann_box::{gann_fraction_label, parse_gann_fraction_label};
 
 /// Create default level configs for Gann Square Fixed
@@ -574,6 +576,10 @@ impl Primitive for GannSquareFixed {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool {
         self.level_configs = configs;
         true
+    }
+
+    fn level_set_presets(&self) -> &'static [LevelSetPreset] {
+        LEVEL_SET_PRESETS
     }
 
     fn level_value_label(&self, level: f64) -> String {

@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64, bar_interval_seconds};
+use crate::i18n::{ConfigKey, StyleKey};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -13,7 +14,7 @@ use super::super::{
     HIT_TOLERANCE,
     RenderContext, crisp,
     render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
-    config::{FibLevelConfig, LabelStyle},
+    config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
 
 pub const MAIN_TIME_ZONES: &[f64] = &[1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 21.0, 34.0, 55.0, 89.0, 144.0, 233.0];
@@ -21,6 +22,31 @@ pub const MAIN_TIME_ZONES: &[f64] = &[1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 21.0, 34.0,
 pub const ALL_TIME_ZONES: &[f64] = &[
     1.0, 2.0, 3.0, 5.0, 8.0, 13.0, 21.0, 34.0, 55.0, 89.0, 144.0, 233.0,
     377.0, 610.0, 987.0, 1597.0, 2584.0, 4181.0,
+];
+
+/// Fibonacci Time Zones' own three level-set presets, built strictly from
+/// this type's own bar-count catalogue — [`ALL_TIME_ZONES`] — never the
+/// price-ratio values `fibonacci::retracement::LEVEL_SET_PRESETS` carries
+/// (see `Primitive::level_set_presets`'s own doc: this type shares the
+/// `fibonacci` module but its "levels" are Fibonacci-SEQUENCE bar offsets,
+/// a different catalogue entirely).
+///
+/// - `standard` = [`MAIN_TIME_ZONES`] — the exact twelve offsets
+///   [`default_time_zone_configs`] marks visible out of the box (1
+///   through 233), so a freshly drawn tool already reads as "standard".
+/// - `key_only` = the first zone (bar offset 1) alone. Bar 0 — the anchor
+///   point itself — is not a `level_configs` entry at all: `render` draws
+///   its vertical line unconditionally, before the zone loop even starts.
+///   Offset 1 is therefore the smallest MEANINGFUL zone this tool can add
+///   beyond that always-drawn origin line.
+/// - `all` = every offset [`ALL_TIME_ZONES`] declares (18). No `extended`
+///   tier: both lists are one Fibonacci sequence, `standard` a prefix of
+///   `all` — there is no further named breakpoint in the sequence to carve
+///   a third tier out of.
+pub const LEVEL_SET_PRESETS: &[LevelSetPreset] = &[
+    LevelSetPreset { id: "standard", name: |lang| StyleKey::Standard.get(lang), values: MAIN_TIME_ZONES },
+    LevelSetPreset { id: "key_only", name: |lang| ConfigKey::LevelSetKeyOnly.get(lang), values: &[1.0] },
+    LevelSetPreset { id: "all", name: |lang| ConfigKey::LevelSetAll.get(lang), values: ALL_TIME_ZONES },
 ];
 
 pub fn default_time_zone_configs() -> Vec<FibLevelConfig> {
@@ -348,6 +374,7 @@ impl Primitive for FibTimeZones {
 
     fn level_configs(&self) -> Option<Vec<FibLevelConfig>> { Some(self.level_configs.clone()) }
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool { self.level_configs = configs; true }
+    fn level_set_presets(&self) -> &'static [LevelSetPreset] { LEVEL_SET_PRESETS }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {
         use super::super::config::{ConfigProperty, PropertyCategory};

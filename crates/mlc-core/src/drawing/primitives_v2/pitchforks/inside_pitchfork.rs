@@ -18,11 +18,11 @@ use super::super::{
     HIT_TOLERANCE, point_to_line_distance,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
-    config::FibLevelConfig,
+    config::{FibLevelConfig, LevelSetPreset},
 };
 use super::super::types::point_to_ray_distance;
 
-use super::pitchfork::default_level_configs;
+use super::pitchfork::{default_level_configs, LEVEL_SET_PRESETS};
 
 /// Deserialize level configs with backward compatibility for old `levels: Vec<f64>` format
 fn deserialize_level_configs<'de, D>(deserializer: D) -> Result<Vec<FibLevelConfig>, D::Error>
@@ -690,6 +690,10 @@ impl Primitive for InsidePitchfork {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool {
         self.level_configs = configs;
         true
+    }
+
+    fn level_set_presets(&self) -> &'static [LevelSetPreset] {
+        LEVEL_SET_PRESETS
     }
 
     fn style_properties(&self) -> Vec<super::super::config::ConfigProperty> {

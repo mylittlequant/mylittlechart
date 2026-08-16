@@ -5,6 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{ConfigKey, StyleKey};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -13,7 +14,7 @@ use super::super::{
     HIT_TOLERANCE, point_to_line_distance,
     RenderContext, crisp,
     render_primitive_text, draw_label_plate, level_ramp_color, level_rank, stagger_t,
-    config::{FibLevelConfig, LabelStyle},
+    config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
 use super::super::types::point_to_ray_distance;
 
@@ -34,6 +35,29 @@ pub const ALL_GANN_ANGLES: &[f64] = &[
 
 /// Main angles visible by default
 pub const MAIN_GANN_VISIBLE: &[f64] = &[2.0, 1.0, 0.5];
+
+/// Gann Fan's own three level-set presets, built strictly from
+/// [`ALL_GANN_ANGLES`] — this type's own angle catalogue, never a foreign
+/// family's ratio list (see `Primitive::level_set_presets`'s own doc on the
+/// defect narrowing toward one would reintroduce).
+///
+/// - `standard` = [`MAIN_GANN_VISIBLE`] — the exact three angles
+///   [`default_gann_fan_configs`] marks visible out of the box (2x1, 1x1,
+///   1x2), so a freshly drawn fan already reads as "standard".
+/// - `key_only` = the 1x1 angle alone. Every other angle in this catalogue
+///   is expressed AS a ratio against 1x1 (the 45° line) — it is the one
+///   angle a Gann fan cannot be drawn without still reading as "a Gann
+///   fan", the smallest meaningful ladder this tool has.
+/// - `all` = every angle [`ALL_GANN_ANGLES`] declares (9). No `extended`
+///   tier: `ALL_GANN_ANGLES` already IS the traditional full Gann angle set
+///   (1x8 through 8x1) — there is no further named tier between
+///   `standard`'s 3 and `all`'s 9 to carve out of this catalogue, so a
+///   fourth preset here would be invented, not read off it.
+pub const LEVEL_SET_PRESETS: &[LevelSetPreset] = &[
+    LevelSetPreset { id: "standard", name: |lang| StyleKey::Standard.get(lang), values: MAIN_GANN_VISIBLE },
+    LevelSetPreset { id: "key_only", name: |lang| ConfigKey::LevelSetKeyOnly.get(lang), values: &[1.0] },
+    LevelSetPreset { id: "all", name: |lang| ConfigKey::LevelSetAll.get(lang), values: ALL_GANN_ANGLES },
+];
 
 /// Get label for Gann angle ratio
 pub fn gann_angle_label(ratio: f64) -> String {
@@ -559,6 +583,10 @@ impl Primitive for GannFan {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool {
         self.level_configs = configs;
         true
+    }
+
+    fn level_set_presets(&self) -> &'static [LevelSetPreset] {
+        LEVEL_SET_PRESETS
     }
 
     fn level_value_label(&self, level: f64) -> String {

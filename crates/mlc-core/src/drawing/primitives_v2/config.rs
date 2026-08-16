@@ -831,13 +831,21 @@ impl FibLevelConfig {
 ///
 /// A primitive declares its OWN list via `Primitive::level_set_presets`
 /// (default: empty). Only a type that actually owns a fixed catalogue of
-/// named ratios returns a non-empty slice — today, the Fibonacci family
-/// (`fibonacci::retracement::LEVEL_SET_PRESETS`). A type with a level ladder
-/// but no such catalogue (Gann, pitchfork, Fibonacci Time Zones — whose
-/// "levels" are bar-count offsets, not price ratios) must return the
-/// default empty slice: offering these four presets to a type that never
-/// had them is exactly the defect this type exists to close (see that
-/// trait method's own doc).
+/// named values returns a non-empty slice, and that slice must be built
+/// STRICTLY from the type's own catalogue — never borrowed from another
+/// family. Every ladder-having primitive in this crate now owns such a
+/// catalogue: the Fibonacci family shares `fibonacci::retracement::
+/// LEVEL_SET_PRESETS` (price ratios), the Gann family (`gann_fan`/
+/// `gann_box`/`gann_square`+`gann_square_fixed`) each own an angle- or
+/// fraction-based catalogue, the pitchfork family shares `pitchforks::
+/// pitchfork::LEVEL_SET_PRESETS` (quarter + Fibonacci ratio levels), and
+/// `fibonacci::time_zones::LEVEL_SET_PRESETS` is built from the Fibonacci
+/// SEQUENCE used as bar-count offsets, not price ratios — narrowing a Gann
+/// fan's angles (or any other family's ladder) to a FOREIGN family's value
+/// list is exactly the defect this type exists to close (see that trait
+/// method's own doc). The default empty slice is now the honest answer
+/// only for a primitive with no level ladder at all
+/// (`Primitive::level_configs` returns `None`).
 #[derive(Clone, Copy)]
 pub struct LevelSetPreset {
     /// Preset id, e.g. `"standard"` — the id `StyleReference::System`

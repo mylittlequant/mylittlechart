@@ -1024,9 +1024,12 @@ impl DrawingManager {
     /// redefine "what a preset means" and drift apart. A composition
     /// matching none of `prim`'s presets is "custom" — there is no id to
     /// name it with, so this falls through to `None`, same as a primitive
-    /// whose type offers no presets at all (Gann, pitchfork, Fibonacci Time
-    /// Zones — `level_set_presets()` empty, so `level_set_id_for_composition`
-    /// has nothing to match against and always returns `None` for them).
+    /// whose type offers no presets at all — today, always a primitive with
+    /// no level ladder at all (`level_set_presets()` empty, so
+    /// `level_set_id_for_composition` has nothing to match against and
+    /// always returns `None`); every ladder-having type (Fibonacci, Gann,
+    /// pitchfork, Fibonacci Time Zones) now owns its own non-empty preset
+    /// catalogue.
     ///
     /// A primitive with no level ladder has nothing else nameable to stamp
     /// either — unchanged by

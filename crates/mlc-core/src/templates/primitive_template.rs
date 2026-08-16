@@ -322,23 +322,25 @@ impl PrimitiveTemplate {
     /// growing a second, possibly-diverging copy of it here.
     ///
     /// A type whose [`Primitive::level_set_presets`] is non-empty gets one
-    /// row per preset — for the Fibonacci family that is the four canonical
-    /// rows `"standard"`/`"extended"`/`"key_only"`/`"all"` — each narrowed/
-    /// extended from `prim`'s own seeded ladder to that preset's value list
-    /// (see [`narrow_to_target`]). Ids, names and values all come straight
-    /// off `prim.level_set_presets()` — never a hardcoded list here, and
-    /// never assumed just because `prim` happens to have a ladder at all:
-    /// a level-having type with no preset catalogue of its own (Gann,
-    /// pitchfork, Fibonacci Time Zones — see that trait method's own doc)
-    /// falls to the branch below exactly like a type with no ladder at
-    /// all, which is what closes the defect where every level-having type
-    /// used to be offered the Fibonacci ratios regardless of whether it
-    /// actually had any.
+    /// row per preset — up to the four canonical ids `"standard"`/
+    /// `"extended"`/`"key_only"`/`"all"` (a family ships fewer than four
+    /// only when its own catalogue genuinely has no wider tier than
+    /// `standard` to name `"extended"` after — see e.g. `gann::gann_fan::
+    /// LEVEL_SET_PRESETS`'s own doc) — each narrowed/extended from `prim`'s
+    /// own seeded ladder to that preset's value list (see
+    /// [`narrow_to_target`]; a preset whose OWN value list is legitimately
+    /// empty, e.g. a pitchfork's `"key_only"`, still narrows — to nothing —
+    /// rather than being treated as "do not narrow", see [`system_template`]'s
+    /// own `target: Option<&[f64]>` parameter). Ids, names and values all
+    /// come straight off `prim.level_set_presets()` — never a hardcoded list
+    /// here, and never assumed just because `prim` happens to have a ladder
+    /// at all: a primitive with NO ladder (`level_configs()` returns `None`)
+    /// falls to the branch below, the only case left where this is empty.
     ///
-    /// Any type with no presets — with or without a ladder — gets exactly
-    /// one row, `"standard"`, that IS the type's factory look (its own
-    /// seeded ladder if it has one, untouched; flat style fields + typed
-    /// style/text properties otherwise; nothing to narrow either way).
+    /// A type with no presets — always a type with no ladder at all, see
+    /// above — gets exactly one row, `"standard"`, that IS the type's
+    /// factory look (flat style fields + typed style/text properties;
+    /// nothing to narrow, there being no ladder to narrow).
     ///
     /// Every row also merges
     /// [`crate::drawing::primitives_v2::config::level_set_label_defaults`]
@@ -350,11 +352,11 @@ impl PrimitiveTemplate {
         let lang = current_language();
         let presets = prim.level_set_presets();
         if presets.is_empty() {
-            vec![Self::system_template(prim, "standard", StyleKey::Standard.get(lang), &[])]
+            vec![Self::system_template(prim, "standard", StyleKey::Standard.get(lang), None)]
         } else {
             presets
                 .iter()
-                .map(|preset| Self::system_template(prim, preset.id, (preset.name)(lang), preset.values))
+                .map(|preset| Self::system_template(prim, preset.id, (preset.name)(lang), Some(preset.values)))
                 .collect()
         }
     }
@@ -370,14 +372,28 @@ impl PrimitiveTemplate {
     /// One [`Self::system_templates`] row: `prim`'s factory-seeded style and
     /// typed properties verbatim (via [`Self::from_primitive`]), `id`/`name`
     /// overwriting the generated id/name that constructor mints, `builtin`
-    /// forced `true`, the ladder narrowed to `target` when non-empty (see
+    /// forced `true`, the ladder narrowed to `target` when `Some` (see
     /// [`narrow_to_target`]), and the label defaults merged in — see
     /// [`Self::system_templates`]'s own doc for why each of these.
-    fn system_template(prim: &dyn Primitive, id: &str, name: &str, target: &[f64]) -> Self {
+    ///
+    /// `target: Option<&[f64]>`, NOT a bare slice: `None` means "this type
+    /// has no preset catalogue at all — leave the factory ladder exactly as
+    /// `prim` seeded it" (the [`Self::system_templates`] no-presets branch),
+    /// while `Some(&[])` means "this preset's own value list genuinely IS
+    /// empty — narrow the ladder to nothing" (a real, meaningful state for a
+    /// family whose smallest preset is "no extra levels beyond whatever is
+    /// unconditionally drawn regardless of the ladder", e.g. a pitchfork's
+    /// `"key_only"`, which narrows to the fork's own always-drawn median and
+    /// nothing else — see `pitchforks::pitchfork::LEVEL_SET_PRESETS`'s own
+    /// doc). Collapsing these two into one `target.is_empty()` check would
+    /// silently turn that second case back into the first — narrowing would
+    /// never fire when a preset's own catalogue subset is empty, which is
+    /// exactly the state such a preset needs to produce.
+    fn system_template(prim: &dyn Primitive, id: &str, name: &str, target: Option<&[f64]>) -> Self {
         let mut tmpl = Self::from_primitive(prim, name);
         tmpl.id = id.to_string();
         tmpl.builtin = true;
-        if !target.is_empty() {
+        if let Some(target) = target {
             tmpl.level_configs = narrow_to_target(&tmpl.level_configs, target);
         }
         // "All levels" ships with NO painting of any kind (owner direction,
@@ -730,9 +746,46 @@ mod tests {
         level_set_id_for_composition, ALL_LEVELS, EXTENDED_LEVELS, KEY_ONLY_LEVELS, LEVEL_SET_PRESETS,
         MAIN_LEVELS,
     };
-    use crate::drawing::primitives_v2::gann::GannFan;
+    use crate::drawing::primitives_v2::fibonacci::FibTimeZones;
+    use crate::drawing::primitives_v2::fibonacci::time_zones::ALL_TIME_ZONES;
+    use crate::drawing::primitives_v2::gann::{GannFan, GannBox, GannSquare, GannSquareFixed};
     use crate::drawing::primitives_v2::gann::gann_fan::ALL_GANN_ANGLES;
+    use crate::drawing::primitives_v2::gann::gann_box::ALL_GANN_BOX_LEVELS;
+    use crate::drawing::primitives_v2::gann::gann_square::ALL_GANN_SQUARE_LEVELS;
+    use crate::drawing::primitives_v2::pitchforks::Pitchfork;
+    use crate::drawing::primitives_v2::pitchforks::pitchfork::ALL_PITCHFORK_LEVELS;
     use crate::drawing::primitives_v2::lines::TrendLine;
+
+    /// Every value `values` names is a member of `catalogue` — the subset
+    /// check every preset in every family must pass (owner rule: "a preset
+    /// is a SUBSET of that type's own declared level catalogue, never a
+    /// value borrowed from another tool"). Float compare uses the same
+    /// tolerance `level_set_id_for_composition` itself uses.
+    fn assert_subset(values: &[f64], catalogue: &[f64], label: &str) {
+        for v in values {
+            assert!(
+                catalogue.iter().any(|c| (*c - *v).abs() < 1e-9),
+                "{label}: value {v} is not a member of its own catalogue {catalogue:?}"
+            );
+        }
+    }
+
+    /// A freshly constructed `prim`'s VISIBLE composition — the exact read
+    /// `mlc-backend`'s `DrawingManager::initial_style_reference` performs
+    /// (only visible levels count, same as a freshly created drawing) —
+    /// resolves to `"standard"` via [`level_set_id_for_composition`]. If a
+    /// family's `standard` preset ever stops matching its own constructor
+    /// seed, this is the test that catches it — the stamp, not the
+    /// matcher, is what needs fixing when it fails.
+    fn assert_stamps_standard(prim: &dyn Primitive, label: &str) {
+        let levels = prim.level_configs().unwrap_or_else(|| panic!("{label}: no level ladder"));
+        let composition: Vec<f64> = levels.iter().filter(|c| c.visible).map(|c| c.level).collect();
+        assert_eq!(
+            level_set_id_for_composition(prim.level_set_presets(), &composition),
+            Some("standard"),
+            "{label}: fresh composition {composition:?} does not stamp `standard`"
+        );
+    }
 
     /// A fib retracement's system rows are the four Fibonacci presets,
     /// unchanged by the move off `system_templates`' own hardcoded id/value
@@ -773,25 +826,32 @@ mod tests {
         assert_eq!(all, ALL_LEVELS);
     }
 
-    /// A Gann fan has its own level ladder (`level_configs()` is `Some`) but
-    /// no Fibonacci preset catalogue of its own — `level_set_presets()`
-    /// stays the trait default (empty). It must get exactly one system
-    /// row, and that row's ladder must be Gann's OWN factory angles, never
-    /// narrowed toward the Fibonacci ratios it never had — the defect this
-    /// closes.
+    /// Guard against collateral damage from this W5 pass: every one of the
+    /// ten Fibonacci types that shares `retracement::default_level_configs`
+    /// still returns EXACTLY `LEVEL_SET_PRESETS` — same ids, same values —
+    /// none of them silently picked up a per-type override while the
+    /// sibling families (Gann/pitchfork/time zones) were being wired.
     #[test]
-    fn gann_fan_system_templates_has_one_row_with_own_ladder_not_narrowed_to_fib() {
-        let gann = GannFan::new(0, 100.0, 1_000, 200.0, "#00ff00");
-        assert!(gann.level_set_presets().is_empty());
-
-        let rows = PrimitiveTemplate::system_templates(&gann);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].id, "standard");
-
-        let levels: Vec<f64> = rows[0].level_configs.iter().map(|c| c.level).collect();
-        assert_eq!(levels, ALL_GANN_ANGLES);
-        // Never the fib ladder this type never owned.
-        assert_ne!(levels, MAIN_LEVELS);
+    fn fib_family_all_ten_types_share_the_same_level_set_presets() {
+        use crate::drawing::primitives_v2::fibonacci::{
+            retracement, fan, arcs, wedge, circles, channel, spiral, trend_extension, trend_time,
+            speed_resistance,
+        };
+        let points = [(0i64, 100.0), (1_000_000, 200.0), (2_000_000, 150.0)];
+        let metas = [
+            retracement::metadata(), fan::metadata(), arcs::metadata(), wedge::metadata(),
+            circles::metadata(), channel::metadata(), spiral::metadata(), trend_extension::metadata(),
+            trend_time::metadata(), speed_resistance::metadata(),
+        ];
+        for meta in metas {
+            let prim = (meta.factory)(&points, "#F7B93E");
+            let presets = prim.level_set_presets();
+            assert_eq!(presets.len(), LEVEL_SET_PRESETS.len(), "{}", meta.type_id);
+            for (p, expected) in presets.iter().zip(LEVEL_SET_PRESETS.iter()) {
+                assert_eq!(p.id, expected.id, "{}", meta.type_id);
+                assert_eq!(p.values, expected.values, "{}", meta.type_id);
+            }
+        }
     }
 
     /// A primitive with no level ladder at all — unaffected by this fix,
@@ -811,15 +871,167 @@ mod tests {
     /// `level_set_id_for_composition` names a fib composition against the
     /// Fibonacci family's own preset table, and returns `None` for the
     /// identical values matched against a type that offers no presets at
-    /// all (e.g. a Gann fan) — there is nothing to match against, so
-    /// nothing is named.
+    /// all — a plain trend line, which has no level ladder to begin with —
+    /// there is nothing to match against, so nothing is named.
     #[test]
     fn level_set_id_for_composition_none_without_presets() {
         let composition = MAIN_LEVELS.to_vec();
 
         assert_eq!(level_set_id_for_composition(LEVEL_SET_PRESETS, &composition), Some("standard"));
 
+        let trend_line = TrendLine::new(0, 100.0, 1_000, 200.0, "#2962ff");
+        assert_eq!(level_set_id_for_composition(trend_line.level_set_presets(), &composition), None);
+    }
+
+    // =========================================================================
+    // Gann family — each type owns its own angle/fraction catalogue.
+    // =========================================================================
+
+    #[test]
+    fn gann_fan_presets_are_subsets_of_own_catalogue() {
         let gann = GannFan::new(0, 100.0, 1_000, 200.0, "#00ff00");
-        assert_eq!(level_set_id_for_composition(gann.level_set_presets(), &composition), None);
+        for preset in gann.level_set_presets() {
+            assert_subset(preset.values, ALL_GANN_ANGLES, preset.id);
+        }
+    }
+
+    #[test]
+    fn gann_fan_fresh_instance_matches_standard_preset() {
+        let gann = GannFan::new(0, 100.0, 1_000, 200.0, "#00ff00");
+        assert_stamps_standard(&gann, "gann_fan");
+    }
+
+    #[test]
+    fn gann_box_presets_are_subsets_of_own_catalogue() {
+        let b = GannBox::new(0, 100.0, 1_000, 50.0, "#00ff00");
+        for preset in b.level_set_presets() {
+            assert_subset(preset.values, ALL_GANN_BOX_LEVELS, preset.id);
+        }
+    }
+
+    #[test]
+    fn gann_box_fresh_instance_matches_standard_preset() {
+        let b = GannBox::new(0, 100.0, 1_000, 50.0, "#00ff00");
+        assert_stamps_standard(&b, "gann_box");
+    }
+
+    /// `GannSquare` and `GannSquareFixed` share one catalogue AND one
+    /// preset table (`gann_square::LEVEL_SET_PRESETS`) — assert the subset
+    /// property once against the shared catalogue, then assert the fixed
+    /// variant did not diverge from the resizable one.
+    #[test]
+    fn gann_square_family_presets_are_subsets_of_own_catalogue() {
+        let sq = GannSquare::new(0, 100.0, 1_000, 50.0, "#00ff00");
+        let fixed = GannSquareFixed::new(0, 100.0, "#00ff00");
+        for preset in sq.level_set_presets() {
+            assert_subset(preset.values, ALL_GANN_SQUARE_LEVELS, preset.id);
+        }
+        assert_eq!(fixed.level_set_presets().len(), sq.level_set_presets().len());
+        for (p, expected) in fixed.level_set_presets().iter().zip(sq.level_set_presets().iter()) {
+            assert_eq!(p.id, expected.id);
+            assert_eq!(p.values, expected.values);
+        }
+    }
+
+    #[test]
+    fn gann_square_fresh_instance_matches_standard_preset() {
+        let sq = GannSquare::new(0, 100.0, 1_000, 50.0, "#00ff00");
+        assert_stamps_standard(&sq, "gann_square");
+    }
+
+    #[test]
+    fn gann_square_fixed_fresh_instance_matches_standard_preset() {
+        let fixed = GannSquareFixed::new(0, 100.0, "#00ff00");
+        assert_stamps_standard(&fixed, "gann_square_fixed");
+    }
+
+    // =========================================================================
+    // Pitchfork family — one shared catalogue and preset table
+    // (`pitchfork::LEVEL_SET_PRESETS`), reused verbatim by all four variants.
+    // =========================================================================
+
+    #[test]
+    fn pitchfork_presets_are_subsets_of_own_catalogue() {
+        let pf = Pitchfork::new(0, 100.0, 1_000_000, 150.0, 1_000_000, 50.0, "#F7B93E");
+        for preset in pf.level_set_presets() {
+            assert_subset(preset.values, ALL_PITCHFORK_LEVELS, preset.id);
+        }
+    }
+
+    #[test]
+    fn pitchfork_family_shares_the_same_level_set_presets() {
+        use crate::drawing::primitives_v2::pitchforks::{pitchfork, schiff, modified_schiff, inside_pitchfork};
+        let points = [(0i64, 100.0), (1_000_000, 150.0), (1_000_000, 50.0)];
+        let metas = [
+            pitchfork::metadata(), schiff::metadata(), modified_schiff::metadata(), inside_pitchfork::metadata(),
+        ];
+        for meta in metas {
+            let prim = (meta.factory)(&points, "#F7B93E");
+            let presets = prim.level_set_presets();
+            assert_eq!(presets.len(), pitchfork::LEVEL_SET_PRESETS.len(), "{}", meta.type_id);
+            for (p, expected) in presets.iter().zip(pitchfork::LEVEL_SET_PRESETS.iter()) {
+                assert_eq!(p.id, expected.id, "{}", meta.type_id);
+                assert_eq!(p.values, expected.values, "{}", meta.type_id);
+            }
+        }
+    }
+
+    #[test]
+    fn pitchfork_family_fresh_instances_match_standard_preset() {
+        use crate::drawing::primitives_v2::pitchforks::{pitchfork, schiff, modified_schiff, inside_pitchfork};
+        let points = [(0i64, 100.0), (1_000_000, 150.0), (1_000_000, 50.0)];
+        let metas = [
+            pitchfork::metadata(), schiff::metadata(), modified_schiff::metadata(), inside_pitchfork::metadata(),
+        ];
+        for meta in metas {
+            let prim = (meta.factory)(&points, "#F7B93E");
+            assert_stamps_standard(prim.as_ref(), meta.type_id);
+        }
+    }
+
+    /// `key_only`'s own value list is deliberately empty (see
+    /// `pitchfork::LEVEL_SET_PRESETS`'s own doc: the median is always drawn
+    /// regardless of the ladder, so the smallest meaningful addition is
+    /// none). Assert the system-template row it produces actually narrows
+    /// to zero levels rather than silently keeping the factory ladder — the
+    /// exact ambiguity `PrimitiveTemplate::system_template`'s
+    /// `target: Option<&[f64]>` exists to resolve.
+    #[test]
+    fn pitchfork_key_only_preset_narrows_to_the_empty_ladder() {
+        let pf = Pitchfork::new(0, 100.0, 1_000_000, 150.0, 1_000_000, 50.0, "#F7B93E");
+        let rows = PrimitiveTemplate::system_templates(&pf);
+        let key_only = rows.iter().find(|t| t.id == "key_only").expect("key_only row must exist");
+        assert!(key_only.level_configs.is_empty());
+    }
+
+    // =========================================================================
+    // Fibonacci Time Zones — its own bar-count catalogue (the Fibonacci
+    // SEQUENCE used as bar offsets), never `retracement`'s price ratios.
+    // =========================================================================
+
+    #[test]
+    fn fib_time_zones_presets_are_subsets_of_own_catalogue() {
+        let tz = FibTimeZones::new(0, 100.0, "#F7B93E");
+        for preset in tz.level_set_presets() {
+            assert_subset(preset.values, ALL_TIME_ZONES, preset.id);
+        }
+    }
+
+    #[test]
+    fn fib_time_zones_fresh_instance_matches_standard_preset() {
+        let tz = FibTimeZones::new(0, 100.0, "#F7B93E");
+        assert_stamps_standard(&tz, "fib_time_zones");
+    }
+
+    /// Guard against the exact defect this pass closes: a Fibonacci Time
+    /// Zones preset must never equal `retracement`'s price-ratio values —
+    /// it lives in the same module but its catalogue is a different thing
+    /// entirely.
+    #[test]
+    fn fib_time_zones_presets_never_equal_retracement_price_ratios() {
+        let tz = FibTimeZones::new(0, 100.0, "#F7B93E");
+        for preset in tz.level_set_presets() {
+            assert_ne!(preset.values, MAIN_LEVELS, "time zones must not borrow retracement's ratios");
+        }
     }
 }

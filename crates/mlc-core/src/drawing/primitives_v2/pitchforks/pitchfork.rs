@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
-use crate::i18n::{ConfigKey, current_language};
+use crate::i18n::{ConfigKey, StyleKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -15,7 +15,7 @@ use super::super::{
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
     level_ramp_color, level_rank,
-    config::{FibLevelConfig, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
+    config::{FibLevelConfig, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, LevelSetPreset},
 };
 use super::super::types::point_to_ray_distance;
 
@@ -103,6 +103,42 @@ pub const MAIN_VISIBLE: &[f64] = &[0.5, 1.0];
 /// Backward compatibility alias
 pub const DEFAULT_PITCHFORK_LEVELS: &[f64] = &[-1.0, -0.5, 0.0, 0.5, 1.0];
 pub const MAIN_PITCHFORK_LEVELS: &[f64] = DEFAULT_PITCHFORK_LEVELS;
+
+/// The pitchfork family's own four level-set presets, built strictly from
+/// this family's own catalogue — [`ALL_PITCHFORK_LEVELS`] and its two named
+/// halves [`BASE_LEVELS`]/[`FIBONACCI_LEVELS`] (never a value this family
+/// did not already declare). Shared by every pitchfork variant that seeds
+/// its ladder from [`default_level_configs`] — `schiff`/`modified_schiff`/
+/// `inside_pitchfork` each import this exact slice, alongside the
+/// constructor function itself.
+///
+/// - `standard` = [`MAIN_VISIBLE`] — the two levels [`default_level_configs`]
+///   marks visible out of the box (0.5, 1.0), so a freshly drawn pitchfork
+///   already reads as "standard".
+/// - `key_only` = the EMPTY set. The median (level 0) is not a
+///   `level_configs` entry at all — every pitchfork variant draws it
+///   unconditionally regardless of what the ladder holds (e.g.
+///   `Pitchfork::render`'s own "always present" median stroke, before the
+///   `effective_levels()` loop) — so the smallest MEANINGFUL ladder this
+///   tool can carry beyond that built-in median is none at all: no extra
+///   tines, just the fork's own three anchors and its median. Narrowing to
+///   an empty target is a real, distinct operation from "no presets at
+///   all" — see [`crate::templates::PrimitiveTemplate::system_template`]'s
+///   own `target: Option<&[f64]>` doc for why the two cannot share one
+///   `is_empty()` check.
+/// - `extended` = [`BASE_LEVELS`] — every standard quarter level this
+///   family declares (12: the same "quarters" flavour as `standard`,
+///   0.25 through 4.0), with no Fibonacci ratio mixed in — the wider tier
+///   of the SAME kind of level as `standard`, distinct from `all`, which
+///   also folds in [`FIBONACCI_LEVELS`].
+/// - `all` = [`ALL_PITCHFORK_LEVELS`] — every entry the catalogue has (24,
+///   exactly `BASE_LEVELS` ∪ `FIBONACCI_LEVELS`).
+pub const LEVEL_SET_PRESETS: &[LevelSetPreset] = &[
+    LevelSetPreset { id: "standard", name: |lang| StyleKey::Standard.get(lang), values: MAIN_VISIBLE },
+    LevelSetPreset { id: "key_only", name: |lang| ConfigKey::LevelSetKeyOnly.get(lang), values: &[] },
+    LevelSetPreset { id: "extended", name: |lang| StyleKey::Extended.get(lang), values: BASE_LEVELS },
+    LevelSetPreset { id: "all", name: |lang| ConfigKey::LevelSetAll.get(lang), values: ALL_PITCHFORK_LEVELS },
+];
 
 /// Create default level configs for pitchfork (24 levels, only main visible).
 /// Shared by `schiff`/`modified_schiff`/`inside_pitchfork` (they all import
@@ -942,6 +978,10 @@ impl Primitive for Pitchfork {
     fn set_level_configs(&mut self, configs: Vec<FibLevelConfig>) -> bool {
         self.level_configs = configs;
         true
+    }
+
+    fn level_set_presets(&self) -> &'static [LevelSetPreset] {
+        LEVEL_SET_PRESETS
     }
 
     fn to_json(&self) -> String {
