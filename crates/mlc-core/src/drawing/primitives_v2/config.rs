@@ -837,6 +837,23 @@ pub enum PropertyType {
     Pills {
         options: Vec<SelectOption>,
     },
+    /// Glyph picker (W4) — a closed catalogue of drawable icons, shown as a
+    /// grid of clickable cells rather than a text option list (that shape
+    /// stays `Select`/`Pills`, both of which carry [`SelectOption`], text
+    /// only). Wire shape mirrors `Pills`: a `PropertyValue::String` naming
+    /// one `PickerOption::id`, applied through the exact same
+    /// `apply_{style,text,level}_property` path — only the option SHAPE
+    /// (a glyph, not a label) and the rendered control (a wrapping grid,
+    /// not a row of segments) differ. The primitive hands over its OWN
+    /// catalogue's entries (e.g. `EmojiType::all()`, `SignType::all()`) —
+    /// this type never invents or narrows a catalogue of its own; see
+    /// [`ConfigProperty::picker`]'s own doc. `mlc-app-layout`'s
+    /// `primitive_settings_property::draw_property_row`'s `Picker` arm
+    /// draws it; `primitive_settings_intent::icon_picker_grid` is the pure
+    /// cells/columns decision.
+    Picker {
+        options: Vec<PickerOption>,
+    },
     /// Line style selector
     LineStyle,
     /// Text input
@@ -885,6 +902,27 @@ impl SelectOption {
             Self::new("center", LabelPositionKey::Center.get(lang)),
             Self::new("bottom", LabelPositionKey::Bottom.get(lang)),
         ]
+    }
+}
+
+/// One entry in a `Picker` property's own catalogue — the glyph-picker
+/// counterpart of [`SelectOption`]: same `id`/`label` shape, plus the
+/// drawable SVG the grid paints in place of text. Built directly from the
+/// owning catalogue type's own `id()`/`label()`/`svg()` (e.g.
+/// `EmojiType::all().iter().map(|t| PickerOption::new(t.id(), t.label(), t.svg()))`,
+/// see each declaring `style_properties()` for the exact call) — this
+/// struct never carries a catalogue of its own, only ferries one type's
+/// entries into the shape [`PropertyType::Picker`] needs.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct PickerOption {
+    pub id: String,
+    pub label: String,
+    pub svg: String,
+}
+
+impl PickerOption {
+    pub fn new(id: &str, label: &str, svg: &str) -> Self {
+        Self { id: id.to_string(), label: label.to_string(), svg: svg.to_string() }
     }
 }
 
@@ -1361,15 +1399,16 @@ pub enum PropertyCategory {
 /// declared a `PropertyCategory::Placement*` property into (verified against
 /// the whole crate) and structurally never will — the points table and
 /// timeframe chips are not `ConfigProperty`-shaped, so there is no row that
-/// could ever carry one of these as a `group`; and four groups whose ENTIRE
+/// could ever carry one of these as a `group`; and three groups whose ENTIRE
 /// row list in the design is a composite, non-scalar row this crate has no
 /// `ConfigProperty`/`PropertyType` shape for at all — `LadderPalettesGroupTitle`
-/// (`Row::Ramps`, no fields), `TargetRatiosGroupTitle`/`ColumnsGroupTitle`
+/// (`Row::Ramps`, no fields) and `TargetRatiosGroupTitle`/`ColumnsGroupTitle`
 /// (Table archetype's own column list)/`CustomLabelsGroupTitle` (each 100%
-/// `Row::Table`) and the icon picker's own group (100% `Row::Icons`) — adding
-/// a variant for a group no possible property could ever be tagged with
-/// would be inventing vocabulary with no path to use, not giving an existing
-/// row an address.
+/// `Row::Table`) — adding a variant for a group no possible property could
+/// ever be tagged with would be inventing vocabulary with no path to use, not
+/// giving an existing row an address. The icon picker's own group (`Row::Icons`)
+/// USED to be in that list — `PropertyType::Picker` (W4) gave it a real
+/// `ConfigProperty` shape, so it now has a variant of its own, [`Self::IconGlyph`].
 ///
 /// A variant no primitive declares into today draws nothing at all (see
 /// `group_runs`'s own doc) — most variants below are exactly that today;
@@ -1531,6 +1570,12 @@ pub enum PropertyGroup {
     FillClosedOutline,
 
     // ---- Icon (flag) ------------------------------------------------------------
+    /// `icon_tabs()`'s own glyph-picker group (`Row::Icons` — the design
+    /// reuses `SettingsKey::CompareInfoSymbol`, "Symbol"/"Символ", as its
+    /// header rather than minting a dedicated key; see [`ConfigProperty::picker`]'s
+    /// own doc). W4 — the first group here backed by `PropertyType::Picker`
+    /// instead of a bespoke, non-`ConfigProperty` row.
+    IconGlyph,
     /// `icon_tabs()`'s own colour/size/outline group (`ConceptKey::Rendering`).
     Rendering,
     /// `icon_tabs()`'s own show/text/size/side group for the label next to
@@ -1600,6 +1645,7 @@ impl PropertyGroup {
             PropertyGroup::PointShape => UserSettingsKey::ControlPointShapeLabel.get(lang),
             PropertyGroup::FillClosedOutline => ConceptKey::FillClosedOutline.get(lang),
 
+            PropertyGroup::IconGlyph => SettingsKey::CompareInfoSymbol.get(lang),
             PropertyGroup::Rendering => ConceptKey::Rendering.get(lang),
             PropertyGroup::LabelNextToIcon => ConceptKey::LabelNextToIcon.get(lang),
         }
@@ -1764,6 +1810,25 @@ impl ConfigProperty {
             id: id.to_string(),
             name: name.to_string(),
             prop_type: PropertyType::Pills { options },
+            value: PropertyValue::String(value.to_string()),
+            category: PropertyCategory::AppearanceLine,
+            order: 0,
+            readonly: false,
+            tooltip: None,
+            group: None,
+        }
+    }
+
+    /// Create a glyph-picker property (W4) — mirrors [`Self::pills`] byte-
+    /// for-byte apart from `prop_type`/option shape: same id, same
+    /// `PropertyValue::String` wire value (one option's own `id`), same
+    /// generic `apply_{style,text,level}_property` reach. See
+    /// [`PropertyType::Picker`]'s own doc for why the option shape differs.
+    pub fn picker(id: &str, name: &str, value: &str, options: Vec<PickerOption>) -> Self {
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            prop_type: PropertyType::Picker { options },
             value: PropertyValue::String(value.to_string()),
             category: PropertyCategory::AppearanceLine,
             order: 0,

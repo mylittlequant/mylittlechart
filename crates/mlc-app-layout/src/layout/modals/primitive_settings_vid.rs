@@ -57,7 +57,7 @@ use crate::layout::render_frame::{PrimitiveSettingsResult, ValueDropdownAnchor, 
 use crate::ui::modal_settings::PrimitiveSettingsState;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{WidgetTheme, SETTINGS_BUTTON_RADIUS};
-use mlc_core::drawing::primitives_v2::config::{PropertyCategory, PropertyGroup, PropertyType};
+use mlc_core::drawing::primitives_v2::config::{ConfigProperty, PropertyCategory, PropertyGroup, PropertyType};
 use mlc_core::drawing::primitives_v2::elliott::guard;
 use mlc_core::drawing::primitives_v2::{Archetype, Primitive};
 use mlc_core::drawing::LineStyle;
@@ -65,6 +65,7 @@ use mlc_core::i18n::{current_language, ConceptKey, ConfigKey, SettingsKey, Style
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 
+use super::primitive_settings_intent::{icon_picker_grid, ICON_PICKER_CELL_GAP, ICON_PICKER_CELL_H};
 use super::primitive_settings_property::{
     declared_properties, draw_property_row, effective_header, group_runs, properties_in, DeclaredProperty,
 };
@@ -195,14 +196,17 @@ impl GroupHeights {
 /// `PropertyGroup` gets its own `GROUP_HEADER_H` run, unconditionally
 /// headered, `GROUP_GAP`-separated from its neighbours. Shared by
 /// `group_heights`/`query_heights` (via their own filtered `line_props`)
-/// and mirrored row-for-row by `draw`'s own LINE section.
-fn line_group_height(line_props: &[&DeclaredProperty], has_levels: bool, draw_base_stroke: bool) -> f64 {
+/// and mirrored row-for-row by `draw`'s own LINE section. `control_w` feeds
+/// [`property_row_height`] — see that function's own doc for why a `Picker`
+/// row's own height depends on it while every other row's does not.
+fn line_group_height(line_props: &[&DeclaredProperty], has_levels: bool, draw_base_stroke: bool, control_w: f64) -> f64 {
     let mut h = 0.0;
     let mut any = false;
     for (group, rows) in group_runs(line_props) {
         let is_default = group.is_none();
         let base_h = if is_default && !has_levels && draw_base_stroke { BASE_STROKE_H } else { 0.0 };
-        let inner = base_h + rows.len() as f64 * ROW_H;
+        let rows_h: f64 = rows.iter().map(|(p, _)| property_row_height(p, control_w)).sum();
+        let inner = base_h + rows_h;
         if inner <= 0.0 {
             continue;
         }
@@ -214,6 +218,32 @@ fn line_group_height(line_props: &[&DeclaredProperty], has_levels: bool, draw_ba
         any = true;
     }
     h
+}
+
+/// Height (px) one declared property's own row needs — `ROW_H` for every
+/// `PropertyType` except `Picker`, whose grid grows DOWNWARD instead of
+/// staying one row tall (W4): `icon_picker_grid(...).rows() *
+/// (ICON_PICKER_CELL_H + ICON_PICKER_CELL_GAP)`, computed from the SAME
+/// `control_w` [`primitive_settings_property::draw_property_row`]'s own
+/// `Picker` arm measures its grid against at draw time, via the SAME
+/// `icon_picker_grid` call — the number reserved here for the modal's own
+/// scroll extent and the number of rows actually painted can never
+/// disagree, on any resize width (see `render_primitive_settings_modal`'s
+/// own doc for how a call at content-height time — before the shell exists
+/// — gets the EXACT width the shell will draw with this frame).
+///
+/// A `field_id` is not available here (this runs before any row has a
+/// resolved id) — harmless: [`icon_picker_grid`]'s own `field_id` argument
+/// only shapes each cell's `click_id`, never `columns`/`rows()`, so an
+/// empty placeholder id produces the identical geometry a real one would.
+fn property_row_height(prop: &ConfigProperty, control_w: f64) -> f64 {
+    match &prop.prop_type {
+        PropertyType::Picker { options } => {
+            let grid = icon_picker_grid("", options, "", control_w);
+            grid.rows() as f64 * (ICON_PICKER_CELL_H + ICON_PICKER_CELL_GAP)
+        }
+        _ => ROW_H,
+    }
 }
 
 /// Height for a category whose own default run is UNCONDITIONALLY headered
@@ -238,12 +268,12 @@ fn headered_group_height(props: &[&DeclaredProperty]) -> f64 {
     h
 }
 
-fn group_heights(prim: &dyn Primitive) -> GroupHeights {
+fn group_heights(prim: &dyn Primitive, control_w: f64) -> GroupHeights {
     let has_levels = prim.level_configs().is_some();
     let all = declared_properties(prim);
 
     let line_props = properties_in(&all, PropertyCategory::AppearanceLine);
-    let line = line_group_height(&line_props, has_levels, true);
+    let line = line_group_height(&line_props, has_levels, true, control_w);
 
     let fill_props = properties_in(&all, PropertyCategory::AppearanceFill);
     let fill = headered_group_height(&fill_props);
@@ -401,38 +431,29 @@ fn draw_violation_row(ctx: &mut dyn RenderContext, x0: f64, x1: f64, y: f64, tex
     ctx.restore();
 }
 
-/// Whether this primitive has anything at all for the Appearance tab: the
-/// bespoke base-stroke row (present whenever it has no level ladder — a
-/// level-having primitive owns the same three fields on the Levels tab
-/// instead), or a declared `AppearanceLine`/`AppearanceFill` property. The
-/// single predicate `crate::layout::modals::primitive_settings::
-/// available_tabs` calls to decide whether this tab exists for a given
-/// primitive — kept next to `content_height`/`draw` so the three can never
-/// drift apart.
-pub fn has_content(prim: &dyn Primitive) -> bool {
-    group_heights(prim).total() > 0.0
-}
-
 /// Static — does not shrink when the search field filters rows out (a
 /// filtered row just stops advancing `row_y` during the draw pass instead;
 /// the scroll range may read slightly larger than what's visible while a
-/// query is active).
-pub fn content_height(prim: &dyn Primitive) -> f64 {
-    group_heights(prim).total()
+/// query is active). `control_w` is the exact `x1 - x0` this tab's own
+/// `draw` will use THIS frame — see [`property_row_height`]'s own doc for
+/// why a `Picker` row needs it and how the caller (`primitive_settings::
+/// render_primitive_settings_modal`) gets it before the shell exists.
+pub fn content_height(prim: &dyn Primitive, control_w: f64) -> f64 {
+    group_heights(prim, control_w).total()
 }
 
 /// Query-aware body height for the cross-tab settings-search result view
 /// (item 8, 2026-08-08 follow-up). Unlike `content_height` (static, sized
 /// for everything this tab could ever show), this shrinks to exactly what
 /// `draw` will paint for a live `query`.
-pub fn content_height_for_query(prim: &dyn Primitive, state: &PrimitiveSettingsState) -> f64 {
+pub fn content_height_for_query(prim: &dyn Primitive, state: &PrimitiveSettingsState, control_w: f64) -> f64 {
     let query = super::primitive_settings::search_query(state);
-    query_heights(prim, &query).total()
+    query_heights(prim, &query, control_w).total()
 }
 
-fn query_heights(prim: &dyn Primitive, query: &str) -> GroupHeights {
+fn query_heights(prim: &dyn Primitive, query: &str, control_w: f64) -> GroupHeights {
     if query.is_empty() {
-        return group_heights(prim);
+        return group_heights(prim, control_w);
     }
     let lang = current_language();
     let matches = super::primitive_settings::search_matches;
@@ -445,7 +466,7 @@ fn query_heights(prim: &dyn Primitive, query: &str) -> GroupHeights {
         .into_iter()
         .filter(|(p, _)| matches(query, &[effective_header(p, group_line), p.name.as_str()]))
         .collect();
-    let line = line_group_height(&line_props, has_levels, base_stroke_matches);
+    let line = line_group_height(&line_props, has_levels, base_stroke_matches, control_w);
 
     let group_fill = ConfigKey::Fill.get(lang);
     let fill_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::AppearanceFill)
@@ -605,9 +626,12 @@ fn draw_line_run(
     if will_draw_base {
         draw_base_stroke_rows(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, row_y, prim);
     }
+    // `property_row_height`, not the flat `ROW_H` — a `Picker` row's own
+    // grid grows downward, so this loop's own step must match
+    // `line_group_height`'s row-for-row (see that function's own doc).
     for (prop, kind) in rows {
         draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
-        *row_y += ROW_H;
+        *row_y += property_row_height(prop, x1 - x0);
     }
     *row_y += GROUP_PAD_BOTTOM;
     *any_drawn = true;

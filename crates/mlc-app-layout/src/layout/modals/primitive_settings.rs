@@ -121,9 +121,11 @@ const SUBJECT_VID_LADDER_GAP: f64 = 10.0;
 /// unchanged. Shared by `content_height`, [`draw_subject`],
 /// [`subject_content_height_for_query`] and `draw_search_results` so none
 /// of the four can drift apart on which primitives merge and where the gap
-/// goes.
-fn subject_content_height(prim: &dyn Primitive, state: &PrimitiveSettingsState) -> f64 {
-    let vid_h = primitive_settings_vid::content_height(prim);
+/// goes. `control_w` is forwarded to `primitive_settings_vid::content_height`
+/// verbatim — see that function's own doc for why it needs it and how the
+/// caller gets it.
+fn subject_content_height(prim: &dyn Primitive, state: &PrimitiveSettingsState, control_w: f64) -> f64 {
+    let vid_h = primitive_settings_vid::content_height(prim, control_w);
     match prim.archetype() {
         Archetype::Ladder => {
             let gap = if vid_h > 0.0 { SUBJECT_VID_LADDER_GAP } else { 0.0 };
@@ -143,8 +145,8 @@ fn subject_content_height(prim: &dyn Primitive, state: &PrimitiveSettingsState) 
 /// function's own doc for the merge rule; this only swaps each half for its
 /// own query-aware height (`primitive_settings_vid::content_height_for_query`/
 /// `primitive_settings_levels::search_content_height`).
-fn subject_content_height_for_query(prim: &dyn Primitive, state: &PrimitiveSettingsState) -> f64 {
-    let vid_h = primitive_settings_vid::content_height_for_query(prim, state);
+fn subject_content_height_for_query(prim: &dyn Primitive, state: &PrimitiveSettingsState, control_w: f64) -> f64 {
+    let vid_h = primitive_settings_vid::content_height_for_query(prim, state, control_w);
     match prim.archetype() {
         Archetype::Ladder => {
             let gap = if vid_h > 0.0 { SUBJECT_VID_LADDER_GAP } else { 0.0 };
@@ -343,10 +345,13 @@ pub(crate) fn search_matches(query: &str, texts: &[&str]) -> bool {
 
 /// Query-aware body height for one tab, used by both [`search_results_height`]
 /// and [`draw_search_results`] so the two can never disagree about which
-/// tabs contribute or how much space they need.
-fn tab_query_height(tab: PrimitiveSettingsTab, prim: &dyn Primitive, state: &PrimitiveSettingsState) -> f64 {
+/// tabs contribute or how much space they need. `control_w` only matters to
+/// `Subject` (forwarded into `subject_content_height_for_query`) — every
+/// other tab ignores it, same as `primitive_settings_vid::content_height`'s
+/// own callers do for a primitive with no `Picker` row.
+fn tab_query_height(tab: PrimitiveSettingsTab, prim: &dyn Primitive, state: &PrimitiveSettingsState, control_w: f64) -> f64 {
     match tab {
-        PrimitiveSettingsTab::Subject => subject_content_height_for_query(prim, state),
+        PrimitiveSettingsTab::Subject => subject_content_height_for_query(prim, state, control_w),
         PrimitiveSettingsTab::Labels => primitive_settings_labels::content_height_for_query(prim, state),
         PrimitiveSettingsTab::Cells => primitive_settings_cells::content_height_for_query(prim, state),
         PrimitiveSettingsTab::Placement => primitive_settings_placement::content_height_for_query(prim, state),
@@ -359,11 +364,11 @@ fn tab_query_height(tab: PrimitiveSettingsTab, prim: &dyn Primitive, state: &Pri
 /// [`SEARCH_TAB_HEADER_H`] and one [`SEARCH_TAB_GAP`] for every tab that
 /// DOES contribute — mirrors `draw_search_results`'s own bookkeeping so the
 /// scroll container is sized to exactly what that function paints.
-fn search_results_height(prim: &dyn Primitive, state: &PrimitiveSettingsState) -> f64 {
+fn search_results_height(prim: &dyn Primitive, state: &PrimitiveSettingsState, control_w: f64) -> f64 {
     let mut h = 0.0;
     let mut any = false;
     for tab in available_tabs(prim) {
-        let tab_h = tab_query_height(tab, prim, state);
+        let tab_h = tab_query_height(tab, prim, state, control_w);
         if tab_h > 0.0 {
             if any { h += SEARCH_TAB_GAP; }
             h += SEARCH_TAB_HEADER_H + tab_h;
@@ -403,7 +408,7 @@ fn draw_search_results(
 ) {
     let mut any = false;
     for tab in available_tabs(prim) {
-        if tab_query_height(tab, prim, state) <= 0.0 {
+        if tab_query_height(tab, prim, state, x1 - x0) <= 0.0 {
             continue;
         }
         if any { *row_y += SEARCH_TAB_GAP; }
@@ -528,27 +533,6 @@ pub fn render_primitive_settings_modal(
     // `search_results_height` below.
     let query = search_query(state);
 
-    // True height the active tab's rows need — padding excluded (the shell's
-    // `content_height` is body-only, see `ModalShellSpec::content_height`
-    // doc). NOT clamped: the shell's own `max_content_height` below is the
-    // ceiling; this is the real number, so `ScrollableContainer` can report
-    // the true overflow instead of silently discarding it.
-    let content_height = if query.is_empty() {
-        match resolved_tab {
-            PrimitiveSettingsTab::Subject => subject_content_height(prim, state),
-            PrimitiveSettingsTab::Labels => primitive_settings_labels::content_height(prim),
-            PrimitiveSettingsTab::Cells => primitive_settings_cells::content_height(prim),
-            PrimitiveSettingsTab::Placement => primitive_settings_placement::content_height(prim),
-        }
-    } else {
-        search_results_height(prim, state)
-    };
-
-    // Ceiling on the body. A short tab still sizes the frame to its
-    // content; a long one (the ladder with many levels, or Вид with every
-    // group expanded) stops growing here and scrolls the rest.
-    let max_content_height = (screen_h - 250.0).clamp(200.0, 460.0);
-
     // The shell lays the tab strip out; this modal only needs to know how wide
     // the strip will be, so it asks the same code rather than measuring twice.
     let tabs_row_width = labelled_tabs_width(ctx, &tab_items);
@@ -562,9 +546,54 @@ pub fn render_primitive_settings_modal(
     // opens, before any manual resize (item 9, 2026-08-08 review): raised
     // to give the reflowed rows (item 9's other half, see the tab bodies'
     // own `x1`-derived control columns) room to actually show it.
+    //
+    // Computed BEFORE `content_height` below (moved up from where it used
+    // to sit, right before `ModalShellSpec::new`) because `content_height`
+    // now needs to know the row width a `Picker` property's own grid will
+    // draw INTO this frame — see `control_w`'s own doc a few lines down.
+    // This computation itself never depended on `content_height` (title/tab
+    // strip/floor only), so the reorder changes nothing about what
+    // `modal_width` resolves to.
     let min_header_width = title_width + title_close_gap + close_btn_size + modal_padding * 2.0;
     let min_content_width = label_width + 150.0 + modal_padding * 2.0;
     let modal_width = min_header_width.max(tabs_row_width).max(min_content_width).max(560.0);
+
+    // The EXACT `x1 - x0` a `Picker` row's own grid will measure itself
+    // against later this frame — `ModalShellSpec::frame_width` (`mlc-app-
+    // layout`'s `ui::widgets::modal`) resolves the shell's real width to
+    // `state.size` (floored at `state.min_size().0`) when the user has
+    // resized, `modal_width` otherwise. Reproduces `content_right -
+    // content_left` computed further down from `shell.content`/`shell.frame`
+    // — ONE `modal_padding` (`content_left`'s own inset from `modal_x`;
+    // `content_right` backs off the scrollbar only, no second inset — see
+    // those two locals' own comments). Computing it here — before
+    // `begin_modal_shell` exists to report it — is what lets `content_height`
+    // (which has to be known BEFORE the shell can be built) reserve exactly
+    // the row count `draw_property_row`'s own `Picker` arm will actually
+    // paint, on any resize width, not just the untouched default.
+    let frame_w = state.size.map(|(w, _)| w.max(state.min_size().0)).unwrap_or(modal_width);
+    let control_w = (frame_w - modal_padding - SCROLLBAR_WIDTH - CONTENT_SCROLLBAR_GAP).max(0.0);
+
+    // True height the active tab's rows need — padding excluded (the shell's
+    // `content_height` is body-only, see `ModalShellSpec::content_height`
+    // doc). NOT clamped: the shell's own `max_content_height` below is the
+    // ceiling; this is the real number, so `ScrollableContainer` can report
+    // the true overflow instead of silently discarding it.
+    let content_height = if query.is_empty() {
+        match resolved_tab {
+            PrimitiveSettingsTab::Subject => subject_content_height(prim, state, control_w),
+            PrimitiveSettingsTab::Labels => primitive_settings_labels::content_height(prim),
+            PrimitiveSettingsTab::Cells => primitive_settings_cells::content_height(prim),
+            PrimitiveSettingsTab::Placement => primitive_settings_placement::content_height(prim),
+        }
+    } else {
+        search_results_height(prim, state, control_w)
+    };
+
+    // Ceiling on the body. A short tab still sizes the frame to its
+    // content; a long one (the ladder with many levels, or Вид with every
+    // group expanded) stops growing here and scrolls the rest.
+    let max_content_height = (screen_h - 250.0).clamp(200.0, 460.0);
 
     let modal_theme = ModalTheme::from_toolbar(
         &frame_theme.toolbar_bg,

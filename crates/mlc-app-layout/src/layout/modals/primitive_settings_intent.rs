@@ -45,7 +45,7 @@
 //! `snapshot_primitive_settings_to_user_manager` — real only on the
 //! `mlc-app` side, meaningless in a lab with no data plane).
 
-use mlc_core::drawing::primitives_v2::config::{FibLevelConfig, SelectOption};
+use mlc_core::drawing::primitives_v2::config::{FibLevelConfig, PickerOption, SelectOption};
 use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
 use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::drawing::{LineStyle, TimeframeVisibilityConfig};
@@ -717,6 +717,105 @@ pub fn pills_segments(field_id: &str, options: &[SelectOption], current: &str) -
         .collect()
 }
 
+// =============================================================================
+// Icon picker (W4, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`)
+// =============================================================================
+//
+// A `PropertyType::Picker` row's own three questions — same as Pills' own
+// "which cells, which is active, what does a click on cell N mean" — plus a
+// fourth Pills never had to answer, "how many columns fit this row's own
+// width" (34 entries, unlike Pills' handful, cannot show one-per-segment) —
+// read as one pure function over `(field_id, options, current, control_w)`,
+// not logic trapped inside `primitive_settings_property::draw_property_row`'s
+// `Picker` arm. Same discipline `pills_segments`/`pills_fits` above follow.
+
+/// One glyph cell's own square footprint (px) — small enough that 34 entries
+/// still fit several to a row inside the modal's guaranteed floor width
+/// (`PrimitiveSettingsState`'s own resize floor, 360px total frame width —
+/// see [`icon_picker_columns`]'s own doc), large enough to read as a
+/// recognizable shape once drawn via `draw_svg_icon`.
+pub const ICON_PICKER_CELL_W: f64 = 32.0;
+pub const ICON_PICKER_CELL_H: f64 = 32.0;
+/// Gap (px) between two adjacent cells, on both axes — the same role
+/// [`PILLS_SEGMENT_GAP`] plays for a Pills row.
+pub const ICON_PICKER_CELL_GAP: f64 = 6.0;
+
+/// How many [`ICON_PICKER_CELL_W`]-wide cells (plus one
+/// [`ICON_PICKER_CELL_GAP`] between each pair) fit side by side in
+/// `control_w`, floored, never fewer than one — a picker with only a
+/// handful of pixels to work with still shows a single column rather than
+/// reporting zero and erasing every cell's own row.
+pub fn icon_picker_columns(control_w: f64) -> usize {
+    if control_w <= 0.0 {
+        return 1;
+    }
+    let per_cell = ICON_PICKER_CELL_W + ICON_PICKER_CELL_GAP;
+    (((control_w + ICON_PICKER_CELL_GAP) / per_cell).floor() as usize).max(1)
+}
+
+/// One icon picker row's own cell, in declared order.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IconPickerCell {
+    /// The cell's own drawable glyph — `PickerOption::svg`, unchanged.
+    pub svg: String,
+    /// Whether this cell is the row's own CURRENTLY active option.
+    pub active: bool,
+    /// `{field_id}::opt:{id}` — IDENTICAL in shape to a `Pills`/`Select`
+    /// row's own option click id (see [`pills_segments`]'s own doc) — a
+    /// click on ANY cell therefore reaches the exact same
+    /// `apply_{style,text,level}_property` path those rows already do,
+    /// zero new dispatch code.
+    pub click_id: String,
+}
+
+/// `options` (a `Picker` row's own declared catalogue), read as the row's
+/// own grid: every entry as an [`IconPickerCell`], paired with whether it is
+/// the CURRENTLY active option (`opt.id == current`) and the click id a tap
+/// on it registers under, plus `columns` — [`icon_picker_columns`] applied
+/// to `control_w`, the SAME number the caller (`draw_property_row`'s
+/// `Picker` arm, and — for the row's own reserved height — `mlc-app-layout`'s
+/// `primitive_settings_vid::property_row_height`) both derive from the
+/// identical width, so the grid this returns and the height reserved for it
+/// can never disagree. `field_id` is the row's own already-prefixed id
+/// (`style_prop:{id}`/`text_prop:{id}`/`level_prop:{id}`, from
+/// `primitive_settings_property::field_id`).
+pub fn icon_picker_grid(field_id: &str, options: &[PickerOption], current: &str, control_w: f64) -> IconPickerGrid {
+    let cells = options
+        .iter()
+        .map(|opt| IconPickerCell {
+            svg: opt.svg.clone(),
+            active: opt.id == current,
+            click_id: format!("{field_id}::opt:{}", opt.id),
+        })
+        .collect();
+    IconPickerGrid { cells, columns: icon_picker_columns(control_w) }
+}
+
+/// [`icon_picker_grid`]'s own return shape.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IconPickerGrid {
+    pub cells: Vec<IconPickerCell>,
+    pub columns: usize,
+}
+
+impl IconPickerGrid {
+    /// How many rows this grid needs to show every cell, `columns`-wide —
+    /// zero for an empty catalogue (nothing to show, not even a first empty
+    /// row), otherwise `ceil(cells.len() / columns)`. Read by both
+    /// `draw_property_row`'s `Picker` arm (where to place cell N) and
+    /// `primitive_settings_vid::property_row_height` (how tall the row's
+    /// own reserved space is) — the SAME number in both places is what lets
+    /// the grid "grow downward" without ever overflowing the space the
+    /// modal's own scroll container reserved for it.
+    pub fn rows(&self) -> usize {
+        if self.cells.is_empty() {
+            return 0;
+        }
+        let columns = self.columns.max(1);
+        (self.cells.len() + columns - 1) / columns
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1011,6 +1110,83 @@ mod tests {
     #[test]
     fn pills_fits_zero_options_never_fits() {
         assert!(!pills_fits(0, 1000.0));
+    }
+
+    // =========================================================================
+    // Icon picker — `icon_picker_grid`/`icon_picker_columns` (W4).
+    // =========================================================================
+
+    /// `icon_picker_grid` marks exactly the option matching `current` as
+    /// active and encodes every click id as `{field_id}::opt:{id}` — the
+    /// same suffix shape a `Pills`/`Select` row's own option already uses.
+    #[test]
+    fn icon_picker_grid_marks_the_current_value_active_and_encodes_opt_click_ids() {
+        let options = vec![
+            PickerOption::new("target", "Target", "<svg/>"),
+            PickerOption::new("flag", "Flag", "<svg/>"),
+            PickerOption::new("star", "Star", "<svg/>"),
+        ];
+        let grid = icon_picker_grid("style_prop:icon_glyph", &options, "flag", 200.0);
+        assert_eq!(grid.cells.len(), 3);
+        assert!(!grid.cells[0].active);
+        assert!(grid.cells[1].active);
+        assert!(!grid.cells[2].active);
+        assert_eq!(grid.cells[0].click_id, "style_prop:icon_glyph::opt:target");
+        assert_eq!(grid.cells[1].click_id, "style_prop:icon_glyph::opt:flag");
+        assert_eq!(grid.cells[2].click_id, "style_prop:icon_glyph::opt:star");
+    }
+
+    /// A `current` value that names none of the options marks nothing
+    /// active — never a fabricated first-cell default.
+    #[test]
+    fn icon_picker_grid_current_not_among_options_marks_none_active() {
+        let options = vec![PickerOption::new("a", "A", "<svg/>"), PickerOption::new("b", "B", "<svg/>")];
+        let grid = icon_picker_grid("text_prop:x", &options, "z", 200.0);
+        assert!(grid.cells.iter().all(|c| !c.active));
+    }
+
+    /// Column count at two widths — genuinely responsive, not a fixed
+    /// number: a 200px row fits more cells per row than a 100px one.
+    #[test]
+    fn icon_picker_columns_grows_with_width() {
+        assert_eq!(icon_picker_columns(100.0), 2);
+        assert_eq!(icon_picker_columns(200.0), 5);
+    }
+
+    /// The boundary itself: two 32px cells with one 6px gap need exactly
+    /// `2 * 32.0 + 6.0 = 70.0`px — two columns at 70, one below it.
+    #[test]
+    fn icon_picker_columns_exact_boundary() {
+        assert_eq!(icon_picker_columns(70.0), 2);
+        assert_eq!(icon_picker_columns(69.0), 1);
+    }
+
+    /// Never fewer than one column, even with no width to work with — a
+    /// picker with zero or negative space still shows a single column
+    /// rather than reporting zero and erasing every cell's own row.
+    #[test]
+    fn icon_picker_columns_floors_at_one() {
+        assert_eq!(icon_picker_columns(0.0), 1);
+        assert_eq!(icon_picker_columns(-10.0), 1);
+    }
+
+    /// `IconPickerGrid::rows` — 34 entries at 6 columns need 6 rows (five
+    /// full rows of 6 plus a final row of 4), matching Emoji's own
+    /// catalogue size.
+    #[test]
+    fn icon_picker_grid_rows_matches_ceil_division() {
+        let options: Vec<PickerOption> =
+            (0..34).map(|i| PickerOption::new(&i.to_string(), &i.to_string(), "<svg/>")).collect();
+        let grid = icon_picker_grid("style_prop:icon_glyph", &options, "0", 226.0); // -> 6 columns
+        assert_eq!(grid.columns, 6);
+        assert_eq!(grid.rows(), 6);
+    }
+
+    /// Zero options never needs a row — not even one empty row reserved.
+    #[test]
+    fn icon_picker_grid_rows_zero_for_empty_catalogue() {
+        let grid = icon_picker_grid("style_prop:icon_glyph", &[], "x", 200.0);
+        assert_eq!(grid.rows(), 0);
     }
 }
 

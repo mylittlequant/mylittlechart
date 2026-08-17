@@ -10,11 +10,14 @@
 //! declared properties by category, sorts each bucket by `order`, and
 //! renders every row from its own `PropertyType` — colour swatch, slider,
 //! checkbox, cycle button, segmented pills (or the same cycle button when
-//! the row's own options do not fit — see the `Pills` arm), single-line
-//! input — via the helpers already used for the base `PrimitiveData` fields
-//! (`primitive_settings_vid::{draw_label, draw_bool_row, draw_slider_row,
-//! draw_split_value_control, draw_toggle_segment, line_style_display_name}`).
-//! A category nobody declared into collects zero properties, so the caller's
+//! the row's own options do not fit — see the `Pills` arm), a wrapping grid
+//! of glyph cells (the `Picker` arm, W4 — the ONE `PropertyType` here that is
+//! not one row tall; see `primitive_settings_vid::property_row_height`),
+//! single-line input — via the helpers already used for the base
+//! `PrimitiveData` fields (`primitive_settings_vid::{draw_label,
+//! draw_bool_row, draw_slider_row, draw_split_value_control,
+//! draw_toggle_segment, line_style_display_name}`). A category nobody
+//! declared into collects zero properties, so the caller's
 //! `if !rows.is_empty()` naturally draws nothing for it — no header, no gap,
 //! no reserved height.
 //!
@@ -29,7 +32,7 @@ use mlc_core::drawing::primitives_v2::config::{ConfigProperty, PropertyCategory,
 use mlc_core::drawing::primitives_v2::{Primitive, PropertyKind};
 use mlc_core::drawing::LineStyle;
 use mlc_core::i18n::current_language;
-use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
+use mlc_core::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 
 use crate::ui::modal_settings::PrimitiveSettingsState;
@@ -37,7 +40,10 @@ use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType, WidgetTheme};
 use crate::layout::render_frame::PrimitiveSettingsResult;
 
-use super::primitive_settings_intent::{pills_fits, pills_segments, PILLS_SEGMENT_GAP};
+use super::primitive_settings_intent::{
+    icon_picker_grid, pills_fits, pills_segments, ICON_PICKER_CELL_GAP, ICON_PICKER_CELL_H, ICON_PICKER_CELL_W,
+    PILLS_SEGMENT_GAP,
+};
 use super::primitive_settings_vid::{
     draw_bool_row, draw_label, draw_slider_row, draw_split_value_control, draw_toggle_segment,
     line_style_display_name, SplitValueKind, ROW_H,
@@ -282,6 +288,46 @@ pub(crate) fn draw_property_row(
                     ctx, toolbar_theme, state, result, rect, &fid, &display,
                     SplitValueKind::Select { options: opts, current },
                 );
+            }
+        }
+        // A `Picker` row draws its own catalogue as a grid of glyph cells
+        // spanning the FULL row width (`x0..x1`, not offset by `label_col`
+        // — there is no per-row caption, the group header above it already
+        // names the row, same as the ladder's own palette cards). Wraps to
+        // as many columns as `icon_picker_grid` fits `x1 - x0` and grows
+        // downward — the caller (`primitive_settings_vid`'s `draw_line_run`)
+        // advances `row_y` by [`super::primitive_settings_vid::property_row_height`]
+        // rather than the flat `ROW_H` every other `PropertyType` needs,
+        // computed from the SAME `icon_picker_grid` so the space reserved
+        // for this row and what is actually painted here can never
+        // disagree (see that function's own doc).
+        PropertyType::Picker { options } => {
+            let current = prop.value.as_string().unwrap_or("").to_string();
+            let control_w = (x1 - x0).max(0.0);
+            let grid = icon_picker_grid(&fid, options, &current, control_w);
+            let columns = grid.columns.max(1);
+            let cell_step_x = ICON_PICKER_CELL_W + ICON_PICKER_CELL_GAP;
+            let cell_step_y = ICON_PICKER_CELL_H + ICON_PICKER_CELL_GAP;
+            for (i, cell) in grid.cells.iter().enumerate() {
+                let col = i % columns;
+                let row = i / columns;
+                let rect = WidgetRect::new(
+                    x0 + col as f64 * cell_step_x,
+                    y + row as f64 * cell_step_y,
+                    ICON_PICKER_CELL_W,
+                    ICON_PICKER_CELL_H,
+                );
+                ctx.set_fill_color(if cell.active { &toolbar_theme.item_bg_active } else { &toolbar_theme.background });
+                ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 4.0);
+                ctx.set_stroke_color(&toolbar_theme.separator);
+                ctx.set_stroke_width(1.0);
+                ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, 4.0);
+                let tint = if cell.active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text_muted };
+                let glyph = 16.0;
+                let gx = rect.x + (rect.width - glyph) / 2.0;
+                let gy = rect.y + (rect.height - glyph) / 2.0;
+                draw_svg_icon(ctx, &cell.svg, gx, gy, glyph, glyph, tint);
+                result.content_items.push((cell.click_id.clone(), rect));
             }
         }
         PropertyType::Text { .. } => {

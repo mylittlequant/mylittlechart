@@ -4,17 +4,101 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{SettingsKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, PrimitiveText,
     RenderContext, crisp,
     render_primitive_text, TextAlign,
     AREA_FILL_OPACITY, default_area_fill_opacity,
-    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
+    config::{ConfigProperty, PickerOption, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Default)]
 pub enum SignType { #[default] Circle, Square, Diamond, Triangle, Star, Cross, Check, X }
+
+impl SignType {
+    /// Every shape, in `render`'s own match order — the icon picker's own
+    /// catalogue (W4). `Sign` itself never draws every shape in one place
+    /// beyond that match, so this is the closed 8-entry list a picker binds
+    /// to.
+    pub fn all() -> &'static [SignType] {
+        &[
+            SignType::Circle,
+            SignType::Square,
+            SignType::Diamond,
+            SignType::Triangle,
+            SignType::Star,
+            SignType::Cross,
+            SignType::Check,
+            SignType::X,
+        ]
+    }
+
+    /// Wire id — `sign_type`'s own serialized value used by
+    /// [`Self::from_id`] and by the picker's own click id.
+    pub fn id(&self) -> &'static str {
+        match self {
+            SignType::Circle => "circle",
+            SignType::Square => "square",
+            SignType::Diamond => "diamond",
+            SignType::Triangle => "triangle",
+            SignType::Star => "star",
+            SignType::Cross => "cross",
+            SignType::Check => "check",
+            SignType::X => "x",
+        }
+    }
+
+    /// Parse [`Self::id`] back into a variant — the picker's own apply path.
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "circle" => Some(SignType::Circle),
+            "square" => Some(SignType::Square),
+            "diamond" => Some(SignType::Diamond),
+            "triangle" => Some(SignType::Triangle),
+            "star" => Some(SignType::Star),
+            "cross" => Some(SignType::Cross),
+            "check" => Some(SignType::Check),
+            "x" => Some(SignType::X),
+            _ => None,
+        }
+    }
+
+    /// Display label for the picker's own cell. Plain English, same
+    /// convention `EmojiType::label` already ships (see that method's own
+    /// doc for why this is not run through i18n: reused as-is, no new keys
+    /// minted for this wave).
+    pub fn label(&self) -> &'static str {
+        match self {
+            SignType::Circle => "Circle",
+            SignType::Square => "Square",
+            SignType::Diamond => "Diamond",
+            SignType::Triangle => "Triangle",
+            SignType::Star => "Star",
+            SignType::Cross => "Cross",
+            SignType::Check => "Check",
+            SignType::X => "X",
+        }
+    }
+
+    /// SVG glyph for the picker's own cell — the same outline `render`
+    /// draws on the chart for this shape (same stroke-vs-fill treatment:
+    /// Circle/Square/Diamond/Triangle/Star are filled, Cross/Check/X are
+    /// stroked lines), never a second, differently-shaped icon set.
+    pub fn svg(&self) -> &'static str {
+        match self {
+            SignType::Circle => r#"<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="9"/></svg>"#,
+            SignType::Square => r#"<svg viewBox="0 0 24 24" fill="currentColor"><rect x="3" y="3" width="18" height="18"/></svg>"#,
+            SignType::Diamond => r#"<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="12,2 22,12 12,22 2,12"/></svg>"#,
+            SignType::Triangle => r#"<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="12,2 22,22 2,22"/></svg>"#,
+            SignType::Star => r#"<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="12,2 15,9 22,9 17,14 19,22 12,17 5,22 7,14 2,9 9,9"/></svg>"#,
+            SignType::Cross => r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="4" y1="12" x2="20" y2="12"/><line x1="12" y1="4" x2="12" y2="20"/></svg>"#,
+            SignType::Check => r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="4,12 9,17 20,6"/></svg>"#,
+            SignType::X => r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>"#,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Sign {
@@ -244,10 +328,10 @@ impl Primitive for Sign {
     /// instead — `icon_tabs()` (`mlc-ui-lab`'s `spec.rs`) declares a glyph
     /// picker, a Rendering group and a LabelNextToIcon group.
     ///
-    /// The glyph picker (`Row::Icons`) stays out — needs a property kind
-    /// this crate has none of yet (W4). Unlike `Flag` (no chosen-glyph field
-    /// at all) THIS type already carries the field a future picker would
-    /// bind to: `sign_type: SignType`, an 8-variant catalogue.
+    /// The glyph picker (`Row::Icons`) is declared now (W4): `PropertyType::Picker`
+    /// binds to `sign_type: SignType`, the 8-entry catalogue this type
+    /// already carried (unlike `Flag`, which has no chosen-glyph field at
+    /// all and is left out).
     ///
     /// Rendering needs no declaration: colour is the universal base-stroke
     /// row every primitive without a level ladder already gets; `size` has
@@ -265,6 +349,9 @@ impl Primitive for Sign {
     /// surface `supports_text: true` opens, not a per-type property.
     fn style_properties(&self) -> Vec<ConfigProperty> {
         let default_text = PrimitiveText::default();
+        let lang = current_language();
+        let picker_options: Vec<PickerOption> =
+            SignType::all().iter().map(|t| PickerOption::new(t.id(), t.label(), t.svg())).collect();
         vec![
             ConfigProperty::fill(self.fill)
                 .with_category(PropertyCategory::AppearanceFill)
@@ -272,6 +359,8 @@ impl Primitive for Sign {
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0)
                 .with_category(PropertyCategory::AppearanceFill)
                 .with_order(1),
+            ConfigProperty::picker("icon_glyph", SettingsKey::CompareInfoSymbol.get(lang), self.sign_type.id(), picker_options)
+                .with_category(PropertyCategory::AppearanceLine).with_order(10).in_group(PropertyGroup::IconGlyph),
             ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
                 .with_category(PropertyCategory::AppearanceLine).with_order(20).in_group(PropertyGroup::LabelNextToIcon),
             ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
@@ -286,6 +375,14 @@ impl Primitive for Sign {
                 if let Some(v) = value.as_number() {
                     self.fill_opacity = (v / 100.0).clamp(0.05, 1.0);
                     return true;
+                }
+            }
+            "icon_glyph" => {
+                if let Some(v) = value.as_string() {
+                    if let Some(t) = SignType::from_id(v) {
+                        self.sign_type = t;
+                        return true;
+                    }
                 }
             }
             "label_font_size" => {
@@ -317,5 +414,55 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod icon_glyph_picker_tests {
+    use super::*;
+
+    /// `style_properties()` declares exactly `SignType::all()`'s own 8
+    /// entries under the `icon_glyph` id — never a narrowed or foreign
+    /// catalogue.
+    #[test]
+    fn declares_a_picker_with_every_sign_type() {
+        let sign = Sign::new(0, 0.0, 120_000, 0.0, "#E91E63");
+        let props = sign.style_properties();
+        let picker = props.iter().find(|p| p.id == "icon_glyph").expect("declares an icon_glyph property");
+        match &picker.prop_type {
+            crate::drawing::primitives_v2::config::PropertyType::Picker { options } => {
+                assert_eq!(options.len(), SignType::all().len());
+                for (opt, t) in options.iter().zip(SignType::all()) {
+                    assert_eq!(opt.id, t.id());
+                    assert_eq!(opt.label, t.label());
+                    assert_eq!(opt.svg, t.svg());
+                }
+            }
+            other => panic!("icon_glyph must be a Picker property, got {other:?}"),
+        }
+    }
+
+    /// Round trip through the SAME apply path a click on the modal's grid
+    /// reaches (`apply_style_property`, not a direct field write) — every
+    /// catalogue entry's own id lands that exact variant in `sign_type`.
+    #[test]
+    fn applying_icon_glyph_by_id_sets_sign_type_for_every_entry() {
+        for t in SignType::all() {
+            let mut sign = Sign::new(0, 0.0, 120_000, 0.0, "#E91E63");
+            let applied = sign.apply_style_property("icon_glyph", &PropertyValue::String(t.id().to_string()));
+            assert!(applied, "apply_style_property must recognize icon_glyph for {t:?}");
+            assert_eq!(sign.sign_type, *t);
+        }
+    }
+
+    /// An unknown id is rejected rather than silently clearing the field —
+    /// `from_id` returning `None` must not report success.
+    #[test]
+    fn applying_an_unknown_icon_glyph_id_is_rejected() {
+        let mut sign = Sign::new(0, 0.0, 120_000, 0.0, "#E91E63");
+        let before = sign.sign_type;
+        let applied = sign.apply_style_property("icon_glyph", &PropertyValue::String("not_a_real_shape".to_string()));
+        assert!(!applied);
+        assert_eq!(sign.sign_type, before);
     }
 }

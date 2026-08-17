@@ -7,13 +7,14 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{SettingsKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, ControlPointCursor, PrimitiveColor,
     PrimitiveText,
     RenderContext, CONTROL_POINT_RADIUS,
     render_primitive_text, TextAlign,
-    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
+    config::{ConfigProperty, PickerOption, PropertyValue, PropertyCategory, PropertyGroup},
 };
 
 /// Available emoji/icon types
@@ -1211,13 +1212,11 @@ impl Primitive for Emoji {
     /// declares a glyph picker, a Rendering group (colour/size/outline) and
     /// a LabelNextToIcon group on the "icon" subject tab.
     ///
-    /// The glyph picker (`Row::Icons`) stays OUT — it needs a property kind
-    /// this crate has none of yet (W4; see `PropertyGroup`'s own doc for why
-    /// no variant exists for it either). Unlike `Flag`/`Image`, THIS type
-    /// already carries the exact field a future picker would bind to:
-    /// `emoji_type: EmojiType`, a 34-variant catalogue that already has
-    /// `id()`/`label()`/`svg()`/`from_id()` — W4's picker can enumerate
-    /// `EmojiType::all()` directly, no new catalogue needed.
+    /// The glyph picker (`Row::Icons`) is declared now (W4): this type
+    /// already carried the exact field it binds to — `emoji_type:
+    /// EmojiType`, a 34-variant catalogue with its own `id()`/`label()`/
+    /// `svg()`/`from_id()` — `EmojiType::all()` IS the picker's own option
+    /// list, never a second one.
     ///
     /// Rendering's colour needs no declaration — the bespoke base-stroke row
     /// (`primitive_settings_vid`'s own doc) already writes `data.color.stroke`,
@@ -1239,7 +1238,12 @@ impl Primitive for Emoji {
     /// it, not add one.
     fn style_properties(&self) -> Vec<ConfigProperty> {
         let default_text = PrimitiveText::default();
+        let lang = current_language();
+        let picker_options: Vec<PickerOption> =
+            EmojiType::all().iter().map(|t| PickerOption::new(t.id(), t.label(), t.svg())).collect();
         vec![
+            ConfigProperty::picker("icon_glyph", SettingsKey::CompareInfoSymbol.get(lang), self.emoji_type.id(), picker_options)
+                .with_category(PropertyCategory::AppearanceLine).with_order(10).in_group(PropertyGroup::IconGlyph),
             ConfigProperty::label_font_size(self.data.text.as_ref().map(|t| t.font_size).unwrap_or(default_text.font_size))
                 .with_category(PropertyCategory::AppearanceLine).with_order(20).in_group(PropertyGroup::LabelNextToIcon),
             ConfigProperty::h_align(self.data.text.as_ref().map(|t| t.h_align.as_str()).unwrap_or(default_text.h_align.as_str()))
@@ -1249,6 +1253,14 @@ impl Primitive for Emoji {
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
+            "icon_glyph" => {
+                if let Some(v) = value.as_string() {
+                    if let Some(t) = EmojiType::from_id(v) {
+                        self.emoji_type = t;
+                        return true;
+                    }
+                }
+            }
             "label_font_size" => {
                 if let Some(v) = value.as_number() {
                     self.data.text.get_or_insert_with(PrimitiveText::default).font_size = v.clamp(8.0, 32.0);
@@ -1398,4 +1410,54 @@ fn create_emoji_primitive(emoji_type: EmojiType, points: &[(i64, f64)], color: &
 /// Get all emoji metadata for registration
 pub fn all_emoji_metadata() -> Vec<PrimitiveMetadata> {
     EmojiType::all().iter().map(|t| emoji_metadata(t.clone())).collect()
+}
+
+#[cfg(test)]
+mod icon_glyph_picker_tests {
+    use super::*;
+
+    /// `style_properties()` declares exactly `EmojiType::all()`'s own 34
+    /// entries under the `icon_glyph` id — never a narrowed or foreign
+    /// catalogue.
+    #[test]
+    fn declares_a_picker_with_every_emoji_type() {
+        let emoji = Emoji::new(0, 100.0, "#FFC107");
+        let props = emoji.style_properties();
+        let picker = props.iter().find(|p| p.id == "icon_glyph").expect("declares an icon_glyph property");
+        match &picker.prop_type {
+            crate::drawing::primitives_v2::config::PropertyType::Picker { options } => {
+                assert_eq!(options.len(), EmojiType::all().len());
+                for (opt, t) in options.iter().zip(EmojiType::all()) {
+                    assert_eq!(opt.id, t.id());
+                    assert_eq!(opt.label, t.label());
+                    assert_eq!(opt.svg, t.svg());
+                }
+            }
+            other => panic!("icon_glyph must be a Picker property, got {other:?}"),
+        }
+    }
+
+    /// Round trip through the SAME apply path a click on the modal's grid
+    /// reaches (`apply_style_property`, not a direct field write) — every
+    /// catalogue entry's own id lands that exact variant in `emoji_type`.
+    #[test]
+    fn applying_icon_glyph_by_id_sets_emoji_type_for_every_entry() {
+        for t in EmojiType::all() {
+            let mut emoji = Emoji::new(0, 100.0, "#FFC107");
+            let applied = emoji.apply_style_property("icon_glyph", &PropertyValue::String(t.id().to_string()));
+            assert!(applied, "apply_style_property must recognize icon_glyph for {t:?}");
+            assert_eq!(emoji.emoji_type, *t);
+        }
+    }
+
+    /// An unknown id is rejected rather than silently clearing the field —
+    /// `from_id` returning `None` must not report success.
+    #[test]
+    fn applying_an_unknown_icon_glyph_id_is_rejected() {
+        let mut emoji = Emoji::new(0, 100.0, "#FFC107");
+        let before = emoji.emoji_type.clone();
+        let applied = emoji.apply_style_property("icon_glyph", &PropertyValue::String("not_a_real_glyph".to_string()));
+        assert!(!applied);
+        assert_eq!(emoji.emoji_type, before);
+    }
 }
