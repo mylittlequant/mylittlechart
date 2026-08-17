@@ -1630,6 +1630,32 @@ impl ChartApp {
                     }
                 }
             }
+        } else if let Some((fid, row, col)) = mlc_core::drawing::primitives_v2::config::parse_table_cell_id(&field) {
+            // A `Table` cell's own text commit — see the click-start handler
+            // in `handle_prim_settings_item` for the full id-shape doc. This
+            // is the ONE `EditableText` cell shape that needs a commit phase
+            // at all (`EditableCheck`/`EditableSwatch` apply immediately on
+            // click, no text field ever opens for them) — always a plain
+            // string, unlike the generic `style_prop:`/`level_prop:`
+            // branches below which assume a number.
+            use mlc_core::drawing::primitives_v2::config::PropertyValue;
+            let (kind, base_id) = if let Some(id) = fid.strip_prefix("style_prop:") {
+                (mlc_core::drawing::primitives_v2::PropertyKind::Style, id)
+            } else if let Some(id) = fid.strip_prefix("text_prop:") {
+                (mlc_core::drawing::primitives_v2::PropertyKind::Text, id)
+            } else if let Some(id) = fid.strip_prefix("level_prop:") {
+                (mlc_core::drawing::primitives_v2::PropertyKind::Level, id)
+            } else {
+                eprintln!("[ChartApp] prim_settings table cell '{}' commit has no recognised family prefix", field);
+                return;
+            };
+            if let (Some(prim_id), Some(bid)) = (self.panel_app.primitive_settings_state.primitive_id, active_bid_prim) {
+                let compound_id = format!("{base_id}::cell:{row}:{col}");
+                self.core.drawings_mut().apply_property(bid, prim_id, kind, &compound_id, &PropertyValue::String(text.clone()));
+            }
+            self.sync_drawing_back_to_group();
+            self.autosave_snapshot();
+            eprintln!("[ChartApp] prim_settings table cell '{}' auto-committed: {}", field, text);
         } else if let Some(prop_id) = field.strip_prefix("text_prop:") {
             use mlc_core::drawing::primitives_v2::config::{PropertyValue, PropertyType};
             if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
@@ -1887,6 +1913,82 @@ impl ChartApp {
             }
 
             eprintln!("[ChartApp] prim_settings dropdown option unhandled field: {}", fid);
+            return;
+        }
+
+        // ── Table cell clicks: {fid}::cell:{row}:{col} ──────────────────────────
+        // Mirrors the `::opt:` block above — see `mlc_app_layout`'s
+        // `primitive_settings_intent::table_grid` for the id shape and why
+        // inertness is a cell VARIANT, never a flag: only `EditableText`/
+        // `EditableSwatch`/`EditableCheck` cells ever register this id (the
+        // renderer never pushes a click id for the other four), so this
+        // block only ever runs for a cell genuinely backed by a real field.
+        // Reached BEFORE the generic `style_prop:`/`text_prop:`/`level_prop:`
+        // blocks below on purpose: those look up a declared property by an
+        // EXACT id match, which a compound `{base}::cell:{row}:{col}` id
+        // never satisfies.
+        if let Some((fid, row, col)) = mlc_core::drawing::primitives_v2::config::parse_table_cell_id(item_id) {
+            use mlc_core::drawing::primitives_v2::config::TableCell;
+            use mlc_core::drawing::primitives_v2::PropertyKind;
+
+            self.panel_app.primitive_settings_state.open_value_dropdown = None;
+
+            let (kind, base_id) = if let Some(id) = fid.strip_prefix("style_prop:") {
+                (PropertyKind::Style, id)
+            } else if let Some(id) = fid.strip_prefix("text_prop:") {
+                (PropertyKind::Text, id)
+            } else if let Some(id) = fid.strip_prefix("level_prop:") {
+                (PropertyKind::Level, id)
+            } else {
+                eprintln!("[ChartApp] prim_settings table cell '{}' has no recognised family prefix", item_id);
+                return;
+            };
+
+            let cell = active_bid_prim.and_then(|bid| {
+                let guard = self.core.drawings();
+                guard.primitives(bid).iter().find(|p| p.data().id == prim_id).and_then(|p| {
+                    let props = match kind {
+                        PropertyKind::Style => p.style_properties(),
+                        PropertyKind::Text => p.text_properties().unwrap_or_default(),
+                        PropertyKind::Level => p.level_properties(),
+                    };
+                    props.into_iter().find(|prop| prop.id == base_id).and_then(|prop| {
+                        if let PropertyType::Table { rows, .. } = prop.prop_type {
+                            rows.get(row).and_then(|r| r.get(col)).cloned()
+                        } else {
+                            None
+                        }
+                    })
+                })
+            });
+
+            match cell {
+                Some(TableCell::EditableText(current)) => {
+                    self.start_prim_field_editing(item_id, &current, true);
+                    eprintln!("[ChartApp] prim_settings table cell '{}' text editing started", item_id);
+                }
+                Some(TableCell::EditableCheck(checked)) => {
+                    if let Some(bid) = active_bid_prim {
+                        let compound_id = format!("{base_id}::cell:{row}:{col}");
+                        self.core.drawings_mut().apply_property(bid, prim_id, kind, &compound_id, &PropertyValue::Boolean(!checked));
+                    }
+                    self.sync_drawing_back_to_group();
+                    self.autosave_snapshot();
+                    eprintln!("[ChartApp] prim_settings table cell '{}' toggled", item_id);
+                }
+                Some(TableCell::EditableSwatch(current_color)) => {
+                    let widget_id_str = format!("prim_settings:item:{}", item_id);
+                    let rect = self.input_coordinator.borrow_mut().widget_rect(&uzor::input::WidgetId::from(widget_id_str));
+                    let (ax, ay, aw, ah) = rect.map(|r| (r.x, r.y, r.width, r.height)).unwrap_or((0.0, 0.0, 0.0, 0.0));
+                    self.panel_app.primitive_settings_state.open_color_picker_smart(
+                        item_id, ax, ay, aw, ah, screen_w, screen_h, Some(&current_color),
+                    );
+                    eprintln!("[ChartApp] prim_settings table cell '{}' color picker opened", item_id);
+                }
+                _ => {
+                    eprintln!("[ChartApp] prim_settings table cell '{}' inert or not found", item_id);
+                }
+            }
             return;
         }
 

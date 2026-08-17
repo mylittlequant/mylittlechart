@@ -81,6 +81,12 @@ pub struct ElliottTripleCombo {
     /// lowers it.
     #[serde(default)]
     pub realized_points: Option<usize>,
+    /// Per-wave custom label OVERRIDE — see `ElliottImpulse::custom_wave_labels`'s
+    /// own doc (`super::elliott_impulse`) for the full rationale. `None`
+    /// (every slot, the default) changes nothing; applied LAST in
+    /// [`Self::rendered_wave_labels`], below.
+    #[serde(default)]
+    pub custom_wave_labels: Vec<Option<String>>,
     /// The extra violations that depend on this triple combo's own
     /// siblings — see [`super::super::Primitive::context_violations`]'s own
     /// doc (the combination-grammar rules — `x_is_corrective`,
@@ -141,6 +147,7 @@ impl ElliottTripleCombo {
             ratio_rib_style: ratio_rib_defaults.style,
             show_projections: ewa_cfg.show_projections,
             realized_points: None,
+            custom_wave_labels: Vec::new(),
             context_violations: Vec::new(),
             subdivided_slots: Vec::new(),
             label_collisions: Vec::new(),
@@ -150,6 +157,15 @@ impl ElliottTripleCombo {
     pub fn wave_labels(&self) -> [&'static str; 9] {
         let combo = self.degree.combo_labels();
         [combo[0], "", "", combo[1], combo[2], "", combo[3], combo[4], ""]
+    }
+
+    /// The labels actually drawn and hit-tested — see
+    /// `ElliottCorrection::rendered_wave_labels`'s own doc for the full
+    /// rationale.
+    fn rendered_wave_labels(&self) -> [String; 9] {
+        let mut labels = self.wave_labels().map(|s| s.to_string());
+        super::labels::apply_overrides(&mut labels, &self.custom_wave_labels);
+        labels
     }
 
     /// How many of [`points`](Self::points) are real right now — see
@@ -213,7 +229,7 @@ impl Primitive for ElliottTripleCombo {
         self.grow_realized(self.points.len());
     }
     fn point_labels(&self) -> Option<Vec<String>> {
-        Some(self.wave_labels().iter().map(|s| s.to_string()).collect())
+        Some(self.rendered_wave_labels().to_vec())
     }
     fn translate(&mut self, td: i64, pd: f64) { for p in &mut self.points { p.0 += td; p.1 += pd; } }
     fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
@@ -250,8 +266,10 @@ impl Primitive for ElliottTripleCombo {
         }
         // A wave label's own plate is clickable too (owner ask 2026-08-13),
         // gated on `show_labels` exactly like the render side.
+        let hit_labels = self.rendered_wave_labels();
+        let hit_label_refs: [&str; 9] = std::array::from_fn(|i| hit_labels[i].as_str());
         if self.show_labels
-            && hit_test_label_plates(sx, sy, &screen, &self.wave_labels(), self.realized_len(), &self.label_style, &self.label_collisions)
+            && hit_test_label_plates(sx, sy, &screen, &hit_label_refs, self.realized_len(), &self.label_style, &self.label_collisions)
         {
             return HitTestResult::Body;
         }
@@ -268,10 +286,11 @@ impl Primitive for ElliottTripleCombo {
             let b = timestamp_ms_to_bar_f64(bars, *ts);
             (vp.bar_to_x_f64(b), vp.price_to_y(*p, ps.price_min, ps.price_max))
         }).collect();
-        let labels = self.wave_labels();
+        let labels = self.rendered_wave_labels();
+        let label_refs: [&str; 9] = std::array::from_fn(|i| labels[i].as_str());
         wave_hit::wave_slot_at(
             sx, sy, self.type_id(), &screen, self.realized_len(), self.wave_slots(),
-            &labels, &self.label_style, &self.label_collisions, self.show_labels, self.show_ratios, &ratio::TRIPLE_COMBO_RATIO_RIBS,
+            &label_refs, &self.label_style, &self.label_collisions, self.show_labels, self.show_ratios, &ratio::TRIPLE_COMBO_RATIO_RIBS,
         )
     }
     fn terminal_control_point(&self, _bars: &[Bar], _viewport: &Viewport, _price_scale: &PriceScale) -> Option<ControlPointType> {
@@ -348,7 +367,7 @@ impl Primitive for ElliottTripleCombo {
         }
 
         if self.show_labels {
-            let labels = self.wave_labels();
+            let labels = self.rendered_wave_labels();
             let label_color = self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke);
             ctx.set_fill_color(label_color);
             ctx.set_font(&self.label_style.font_string());
@@ -357,7 +376,7 @@ impl Primitive for ElliottTripleCombo {
 
             for (i, (x, y)) in screen.iter().enumerate() {
                 if i >= realized || i >= labels.len() || labels[i].is_empty() { continue; }
-                let label = labels[i];
+                let label = &labels[i];
                 let collides = self.label_collisions.contains(&i);
                 let (dx, dy) = wave_label_offset(&screen, i, &self.label_style, collides);
                 let is_violating = violations.iter().any(|v| slot_span(self.type_id(), v.wave).map(|(_, e)| e) == Some(i));
@@ -452,12 +471,18 @@ impl Primitive for ElliottTripleCombo {
             // `WaveLabelsGroupTitle`.
             ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(18).in_group(PropertyGroup::WaveLabels),
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(19).in_group(PropertyGroup::WaveLabels),
+            // `PropertyGroup::CustomWaveLabels` (W4) — see
+            // `ElliottImpulse::style_properties`'s own comment.
+            super::labels::wave_label_override_property(&self.rendered_wave_labels()),
         ];
         props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::WaveLabels));
         props
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if let Some(applied) = super::labels::apply_wave_label_override(id, value, &mut self.custom_wave_labels, self.points.len()) {
+            return applied;
+        }
         match id {
             "show_labels" => { if let Some(v) = value.as_bool() { self.show_labels = v; return true; } }
             "show_lines" => { if let Some(v) = value.as_bool() { self.show_lines = v; return true; } }
@@ -510,5 +535,47 @@ mod subdivision_overlay_tests {
             vec![(0, 1), (1, 2), (2, 3), (5, 6), (6, 7), (7, 8)],
             "both of component Y's own legs (3, 4) and (4, 5) are replaced by its child"
         );
+    }
+}
+
+#[cfg(test)]
+mod custom_wave_labels_tests {
+    use super::*;
+
+    fn sample() -> ElliottTripleCombo {
+        let points: Vec<(i64, f64)> = vec![
+            (0, 100.0), (1_000, 90.0), (2_000, 95.0), (3_000, 85.0), (4_000, 92.0), (5_000, 80.0),
+            (6_000, 88.0), (7_000, 75.0), (8_000, 83.0),
+        ];
+        ElliottTripleCombo::new(points, "#673AB7")
+    }
+
+    /// A click on the Label column of the custom-labels table lands in
+    /// `custom_wave_labels` through the exact same `apply_style_property`
+    /// path any other declared property reaches, and is what
+    /// `rendered_wave_labels` reads back — every other index untouched.
+    #[test]
+    fn custom_wave_label_cell_click_round_trips_through_apply_style_property() {
+        let mut combo = sample();
+        let applied = combo.apply_style_property("custom_wave_labels::cell:6:1", &PropertyValue::String("XX'".to_string()));
+        assert!(applied, "a well-formed cell id must be recognised");
+        assert_eq!(combo.rendered_wave_labels()[6], "XX'");
+        for i in [0, 1, 2, 3, 4, 5, 7, 8] {
+            assert_eq!(
+                combo.rendered_wave_labels()[i], combo.wave_labels()[i],
+                "point {i} has no override, so it still reads the computed label"
+            );
+        }
+    }
+
+    /// The Wave# column (col 0) is inert — never registers a real write,
+    /// same discipline `ElliottImpulse`'s own test proves.
+    #[test]
+    fn wave_number_column_is_rejected() {
+        let mut combo = sample();
+        let before = combo.custom_wave_labels.clone();
+        let applied = combo.apply_style_property("custom_wave_labels::cell:0:0", &PropertyValue::String("hacked".to_string()));
+        assert!(!applied, "the inert Wave# column must never report as applied");
+        assert_eq!(combo.custom_wave_labels, before);
     }
 }

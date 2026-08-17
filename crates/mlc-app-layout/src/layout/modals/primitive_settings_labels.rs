@@ -39,7 +39,7 @@ use uzor::types::Rect as WidgetRect;
 use super::primitive_settings_property::{
     declared_properties, draw_property_row, effective_header, group_runs, properties_in, DeclaredProperty,
 };
-use super::primitive_settings_vid::{draw_group_header, draw_label, draw_toggle_segment, ROW_H};
+use super::primitive_settings_vid::{draw_group_header, draw_label, draw_toggle_segment, property_row_height, ROW_H};
 
 const GROUP_PAD_BOTTOM: f64 = 8.0;
 const ALIGN_H: f64 = 72.0;
@@ -70,8 +70,13 @@ fn has_named_group(props: &[&DeclaredProperty]) -> bool {
 /// default (`group: None`) run keeps this tab's own pre-existing
 /// convention — no header — every named `PropertyGroup` gets its own
 /// `GROUP_HEADER_H` run, `GROUP_GAP`-separated from its neighbours. Mirrors
-/// `draw`'s own shape.
-fn labels_group_height(props: &[&DeclaredProperty]) -> f64 {
+/// `draw`'s own shape. `control_w` feeds [`property_row_height`] — see that
+/// function's own doc for why a `Table`/`Stat`/`Picker` row's own height
+/// depends on it while every other row's does not (W4: this tab's own
+/// `CustomWaveLabels` group is the first `LabelsText` user of a multi-row
+/// kind — every row here used to be exactly one `ROW_H` tall, so this was
+/// never wired before).
+fn labels_group_height(props: &[&DeclaredProperty], control_w: f64) -> f64 {
     let mut h = 0.0;
     let mut any = false;
     for (group, rows) in group_runs(props) {
@@ -82,7 +87,8 @@ fn labels_group_height(props: &[&DeclaredProperty]) -> f64 {
             h += GROUP_GAP;
         }
         let header_h = if group.is_none() { 0.0 } else { GROUP_HEADER_H };
-        h += header_h + rows.len() as f64 * ROW_H;
+        let rows_h: f64 = rows.iter().map(|(p, _)| property_row_height(p, control_w)).sum();
+        h += header_h + rows_h;
         any = true;
     }
     h
@@ -107,11 +113,16 @@ pub fn has_content(prim: &dyn Primitive) -> bool {
 /// Static — does not shrink when the search field filters rows out, same
 /// tradeoff every other tab body's own `content_height` makes (a filtered
 /// row just stops advancing `row_y` during the draw pass instead).
-pub fn content_height(prim: &dyn Primitive) -> f64 {
+/// `control_w` is the exact `x1 - x0` this tab's own `draw` will measure a
+/// `Table`/`Picker` row's own grid against later this frame — see
+/// `primitive_settings.rs`'s own call site for how it gets that number
+/// before the shell exists, same discipline
+/// `primitive_settings_vid::content_height`'s own doc already documents.
+pub fn content_height(prim: &dyn Primitive, control_w: f64) -> f64 {
     let all = declared_properties(prim);
     let labels_props = properties_in(&all, PropertyCategory::LabelsText);
     let has_custom_text = prim.text_properties().is_some();
-    let props_h = labels_group_height(&labels_props);
+    let props_h = labels_group_height(&labels_props, control_w);
     let text_block_h = if has_custom_text { 0.0 } else { TEXT_BLOCK_H };
     // The extra gap before the bespoke text block only exists once this
     // primitive actually uses a named group — see `has_named_group`'s own
@@ -126,14 +137,14 @@ pub fn content_height(prim: &dyn Primitive) -> f64 {
 /// (item 8, 2026-08-08 follow-up). Unlike `content_height` (static, sized
 /// for everything this tab could ever show), this shrinks to exactly what
 /// `draw` will paint for a live `query`.
-pub fn content_height_for_query(prim: &dyn Primitive, state: &PrimitiveSettingsState) -> f64 {
+pub fn content_height_for_query(prim: &dyn Primitive, state: &PrimitiveSettingsState, control_w: f64) -> f64 {
     let query = super::primitive_settings::search_query(state);
-    query_height(prim, &query)
+    query_height(prim, &query, control_w)
 }
 
-fn query_height(prim: &dyn Primitive, query: &str) -> f64 {
+fn query_height(prim: &dyn Primitive, query: &str, control_w: f64) -> f64 {
     if query.is_empty() {
-        return content_height(prim);
+        return content_height(prim, control_w);
     }
     let lang = current_language();
     let matches = super::primitive_settings::search_matches;
@@ -147,7 +158,7 @@ fn query_height(prim: &dyn Primitive, query: &str) -> f64 {
     let has_custom_text = prim.text_properties().is_some();
     let text_block_matches = !has_custom_text
         && matches(query, &[labels_header, ConfigKey::Content.get(lang), ConfigKey::TextStyleLabel.get(lang), ConfigKey::PositionLabel.get(lang)]);
-    let props_h = labels_group_height(&labels_props);
+    let props_h = labels_group_height(&labels_props, control_w);
     let text_block_h = if text_block_matches { TEXT_BLOCK_H } else { 0.0 };
     let gap = if props_h > 0.0 && text_block_h > 0.0 && has_named_group(&labels_props) { GROUP_GAP } else { 0.0 };
     let inner = props_h + gap + text_block_h;
@@ -205,7 +216,7 @@ pub fn draw(
             }
             for (prop, kind) in &rows {
                 draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
-                *row_y += ROW_H;
+                *row_y += property_row_height(prop, x1 - x0);
             }
             any_drawn = true;
         }

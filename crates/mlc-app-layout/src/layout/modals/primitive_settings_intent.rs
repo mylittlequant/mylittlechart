@@ -45,7 +45,7 @@
 //! `snapshot_primitive_settings_to_user_manager` — real only on the
 //! `mlc-app` side, meaningless in a lab with no data plane).
 
-use mlc_core::drawing::primitives_v2::config::{FibLevelConfig, PickerOption, SelectOption};
+use mlc_core::drawing::primitives_v2::config::{FibLevelConfig, PickerOption, SelectOption, TableCell};
 use mlc_core::drawing::primitives_v2::fibonacci::retracement::level_set_id_for_composition;
 use mlc_core::drawing::primitives_v2::Primitive;
 use mlc_core::drawing::{LineStyle, TimeframeVisibilityConfig};
@@ -816,6 +816,57 @@ impl IconPickerGrid {
     }
 }
 
+// =============================================================================
+// Table (W4, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`)
+// =============================================================================
+//
+// A `PropertyType::Table` row's own question is the same "which cells, which
+// are interactive, what does a click mean" every other composite kind above
+// answers as one pure function — except a `Table` cell's own interactivity
+// is read straight off its own VARIANT (`TableCell::Editable*` vs the four
+// display-only shapes), never a second flag beside it — see
+// `mlc_core::drawing::primitives_v2::config::PropertyType::Table`'s own doc.
+
+/// One [`TableCell`]'s own placement in a `Table` row's own grid — the cell
+/// itself, plus the click id a tap on it registers under, or `None` for an
+/// inert cell. Structural, not a flag: [`table_grid`] computes `click_id`
+/// ONCE, straight off which of the seven `TableCell` variants this is, so a
+/// `Text`/`Toned`/`Swatch`/`Check` cell can never accidentally carry one.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TableCellView {
+    pub cell: TableCell,
+    pub click_id: Option<String>,
+}
+
+/// `rows` (a `Table` row's own declared data), read as the row's own grid:
+/// every cell paired with the click id a tap on it registers under —
+/// `{field_id}::cell:{row}:{col}` for `EditableText`/`EditableSwatch`/
+/// `EditableCheck`, `None` for `Text`/`Toned`/`Swatch`/`Check`. `field_id`
+/// is the row's own already-prefixed id (`style_prop:{id}`/`text_prop:{id}`/
+/// `level_prop:{id}`, from `primitive_settings_property::field_id`) — the
+/// SAME string
+/// [`mlc_core::drawing::primitives_v2::config::parse_table_cell_id`] splits
+/// back apart on the apply side, so the two can never drift into two
+/// independently-typed encodings of the same click.
+pub fn table_grid(field_id: &str, rows: &[Vec<TableCell>]) -> Vec<Vec<TableCellView>> {
+    rows.iter()
+        .enumerate()
+        .map(|(r, row)| {
+            row.iter()
+                .enumerate()
+                .map(|(c, cell)| {
+                    let interactive = matches!(
+                        cell,
+                        TableCell::EditableText(_) | TableCell::EditableSwatch(_) | TableCell::EditableCheck(_)
+                    );
+                    let click_id = interactive.then(|| format!("{field_id}::cell:{r}:{c}"));
+                    TableCellView { cell: cell.clone(), click_id }
+                })
+                .collect()
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1187,6 +1238,62 @@ mod tests {
     fn icon_picker_grid_rows_zero_for_empty_catalogue() {
         let grid = icon_picker_grid("style_prop:icon_glyph", &[], "x", 200.0);
         assert_eq!(grid.rows(), 0);
+    }
+
+    // =========================================================================
+    // Table — `table_grid` (W4).
+    // =========================================================================
+
+    /// `table_grid` encodes every `EditableText` cell's own click id as
+    /// `{field_id}::cell:{row}:{col}` — the row/col address of THAT cell
+    /// within `rows`, matching a mixed grid (two rows, two columns) cell by
+    /// cell.
+    #[test]
+    fn table_grid_encodes_editable_text_cell_ids_by_row_and_column() {
+        let rows = vec![
+            vec![TableCell::Text("0".to_string()), TableCell::EditableText("first".to_string())],
+            vec![TableCell::Text("1".to_string()), TableCell::EditableText("second".to_string())],
+        ];
+        let grid = table_grid("style_prop:custom_wave_labels", &rows);
+        assert_eq!(grid.len(), 2);
+        assert_eq!(grid[0][1].click_id.as_deref(), Some("style_prop:custom_wave_labels::cell:0:1"));
+        assert_eq!(grid[1][1].click_id.as_deref(), Some("style_prop:custom_wave_labels::cell:1:1"));
+    }
+
+    /// A `Text`/`Toned`/`Swatch`/`Check` cell registers NO click id at
+    /// all — inertness is read off the cell's own variant, not a flag a
+    /// caller could forget, so every display-only shape stays `None`.
+    #[test]
+    fn table_grid_inert_cells_register_no_click_id() {
+        use mlc_core::drawing::primitives_v2::config::Tone;
+
+        let rows = vec![vec![
+            TableCell::Text("plain".to_string()),
+            TableCell::Toned("0.618".to_string(), Tone::Good),
+            TableCell::Swatch("#ff0000".to_string()),
+            TableCell::Check(true),
+        ]];
+        let grid = table_grid("style_prop:sigmas", &rows);
+        for cell in &grid[0] {
+            assert_eq!(cell.click_id, None, "an inert cell must never carry a click id");
+        }
+    }
+
+    /// `EditableSwatch`/`EditableCheck` ARE interactive — same treatment as
+    /// `EditableText`, just a different cell shape.
+    #[test]
+    fn table_grid_editable_swatch_and_check_register_click_ids() {
+        let rows = vec![vec![TableCell::EditableSwatch("#00ff00".to_string()), TableCell::EditableCheck(false)]];
+        let grid = table_grid("style_prop:sigmas", &rows);
+        assert_eq!(grid[0][0].click_id.as_deref(), Some("style_prop:sigmas::cell:0:0"));
+        assert_eq!(grid[0][1].click_id.as_deref(), Some("style_prop:sigmas::cell:0:1"));
+    }
+
+    /// An empty grid yields an empty grid — no fabricated row.
+    #[test]
+    fn table_grid_empty_rows_yields_empty_grid() {
+        let grid = table_grid("style_prop:x", &[]);
+        assert!(grid.is_empty());
     }
 }
 

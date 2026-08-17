@@ -10,6 +10,7 @@ mod ratio;
 mod projection;
 pub mod guard;
 mod wave_hit;
+mod labels;
 
 pub use elliott_impulse::ElliottImpulse;
 pub use elliott_correction::{ElliottCorrection, CorrectionType};

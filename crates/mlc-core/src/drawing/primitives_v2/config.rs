@@ -887,6 +887,42 @@ pub enum PropertyType {
     Stat {
         rows: Vec<StatRow>,
     },
+    /// A grid property (W4) — the design's own settings-row `table(...)` /
+    /// `Row::Table` (a header of column captions, N rows of typed cells)
+    /// turned into a declared property. Unlike every other composite kind
+    /// in this modal (`Pills`/`Picker`/`Stat`) this ONE is genuinely
+    /// EDITABLE: some cells display, some cells write back — see
+    /// [`TableCell`]'s own doc for how a cell decides which it is. The
+    /// declaring primitive supplies the cells ALREADY FORMATTED (a
+    /// pre-computed ratio, a hex colour, a bool) — this type never
+    /// interprets what a cell MEANS, the same discipline `Stat` already
+    /// follows for its own rows.
+    ///
+    /// A cell's own click id is `{field_id}::cell:{row}:{col}` — `row`/
+    /// `col` are DATA-row/column indices into `rows` (the header never
+    /// registers a click id) — the SAME `::`-separated shape a `Pills`/
+    /// `Picker` row's own option id already uses
+    /// ([`ConfigProperty::pills`]'s own doc), extended with a row AND a
+    /// column instead of a single option value. `mlc-app-layout`'s
+    /// `primitive_settings_intent::table_grid` is the ONE place this id is
+    /// BUILT; [`parse_table_cell_id`], below, is the ONE place it is
+    /// parsed back apart — every declaring primitive's own
+    /// `apply_{style,text,level}_property` calls that function instead of
+    /// re-splitting the id itself.
+    ///
+    /// [`ConfigProperty::table`] marks the WHOLE property `readonly` —
+    /// same reasoning as [`Self::Stat`]'s own doc: this composite shape has
+    /// nothing a template/last-used-style snapshot could usefully reapply
+    /// as ONE value, so it is excluded from that capture entirely. An
+    /// individual cell's own editability is carried by its OWN
+    /// [`TableCell`] variant, completely independent of this flag — see
+    /// `mlc-app-layout`'s `primitive_settings_property::draw_property_row`'s
+    /// own `Table` arm, checked BEFORE the generic `readonly` branch,
+    /// exactly like `Stat`'s.
+    Table {
+        head: Vec<String>,
+        rows: Vec<Vec<TableCell>>,
+    },
     /// Line style selector
     LineStyle,
     /// Text input
@@ -1030,6 +1066,56 @@ impl StatRow {
     }
 }
 
+/// One [`PropertyType::Table`] cell. Mirrors `mlc-ui-lab`'s own
+/// `concept::spec::Cell` shapes (`Text`/`Toned`/`Swatch`/`Check`) with one
+/// structural addition: an EDITABLE counterpart for each shape that can
+/// carry a real per-row/per-column field on the declaring primitive
+/// (`EditableText`/`EditableSwatch`/`EditableCheck`). Inertness is a
+/// VARIANT, never a flag beside a shared shape — `mlc-app-layout`'s
+/// `primitive_settings_intent::table_grid` (the pure cells/ids decision,
+/// see [`PropertyType::Table`]'s own doc) reads a cell's own click id
+/// straight off which of these seven it is, so a `Text`/`Toned`/`Swatch`/
+/// `Check` cell can never accidentally report one — there is no boolean a
+/// future declaration could forget to flip.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub enum TableCell {
+    /// Plain, display-only text — a row header, a segment name, or any
+    /// computed reading the declaring primitive does not back with a real
+    /// per-row field. Never registers a click id.
+    Text(String),
+    /// A computed value, coloured by its own semantic reading — the same
+    /// [`Tone`] a [`PropertyType::Stat`] row's own value uses. Never
+    /// registers a click id.
+    Toned(String, Tone),
+    /// A single-line editable string, backed by a real per-row/per-column
+    /// field. The ONLY `Text`-shaped variant that is ever clickable.
+    EditableText(String),
+    /// A colour swatch — a fixed legend colour with nothing to edit (e.g. a
+    /// hit/miss key). Never registers a click id.
+    Swatch(String),
+    /// A colour swatch backed by a real per-row/per-column field — opens
+    /// the same colour picker a `Color` row's own swatch does.
+    EditableSwatch(String),
+    /// A checkbox — display-only. Never registers a click id.
+    Check(bool),
+    /// A checkbox backed by a real per-row/per-column field — toggles
+    /// through the same boolean apply path a `Boolean` row's own checkbox
+    /// does.
+    EditableCheck(bool),
+}
+
+/// Parse a `Table` cell's own click id — `{base_id}::cell:{row}:{col}` (see
+/// [`PropertyType::Table`]'s own doc) — into `(base_id, row, col)`. The ONE
+/// place this shape is parsed apart; `mlc-app-layout`'s
+/// `primitive_settings_intent::table_grid` is the ONE place it is BUILT —
+/// same string, both directions, so the two can never drift into two
+/// independently-typed encodings of the same click.
+pub fn parse_table_cell_id(id: &str) -> Option<(&str, usize, usize)> {
+    let (base, rest) = id.split_once("::cell:")?;
+    let (row_str, col_str) = rest.split_once(':')?;
+    Some((base, row_str.parse().ok()?, col_str.parse().ok()?))
+}
+
 // =============================================================================
 // Property Values
 // =============================================================================
@@ -1053,6 +1139,13 @@ pub enum PropertyValue {
     /// all fall through their own `_ => None`) — see `PropertyType::Stat`'s
     /// own doc for why that is load-bearing, not an oversight.
     Stat(Vec<StatRow>),
+    /// Mirrors [`PropertyType::Table`] the same way `Stat` mirrors
+    /// [`PropertyType::Stat`] — carried only so `ConfigProperty` always has
+    /// SOME `value`, deliberately absent from every `as_*` accessor below.
+    /// A per-cell write never travels through this variant — see
+    /// [`PropertyType::Table`]'s own doc for the id shape a cell's own
+    /// click actually uses.
+    Table(Vec<Vec<TableCell>>),
 }
 
 /// Style / text / level property family.
@@ -1518,8 +1611,10 @@ pub enum PropertyCategory {
 /// `Row::Table`) — adding a variant for a group no possible property could
 /// ever be tagged with would be inventing vocabulary with no path to use, not
 /// giving an existing row an address. The icon picker's own group (`Row::Icons`)
-/// USED to be in that list — `PropertyType::Picker` (W4) gave it a real
-/// `ConfigProperty` shape, so it now has a variant of its own, [`Self::IconGlyph`].
+/// and the wave archetype's own custom-labels group (`CustomLabelsGroupTitle`)
+/// USED to be in that list — `PropertyType::Picker`/`PropertyType::Table`
+/// (both W4) gave them a real `ConfigProperty` shape, so they now have a
+/// variant of their own, [`Self::IconGlyph`]/[`Self::CustomWaveLabels`].
 ///
 /// A variant no primitive declares into today draws nothing at all (see
 /// `group_runs`'s own doc) — most variants below are exactly that today;
@@ -1571,6 +1666,10 @@ pub enum PropertyGroup {
     /// `wave_tabs()`'s own "labels" tab group for wave-name label styling
     /// (`ConceptKey::WaveLabelsGroupTitle`).
     WaveLabels,
+    /// `wave_tabs()`'s own "labels" tab group for the per-wave custom-label
+    /// override table (`ConceptKey::CustomLabelsGroupTitle`) — W4, the
+    /// first user of `PropertyType::Table`.
+    CustomWaveLabels,
 
     // ---- Pattern (xabcd_pattern) ------------------------------------------
     /// `pattern_tabs()`'s own harmonic-pattern subtype dropdown
@@ -1715,6 +1814,7 @@ impl PropertyGroup {
             PropertyGroup::CorrectionType => ConfigKey::CorrectionType.get(lang),
             PropertyGroup::FillBetweenWaves => ConceptKey::FillBetweenWaves.get(lang),
             PropertyGroup::WaveLabels => ConceptKey::WaveLabelsGroupTitle.get(lang),
+            PropertyGroup::CustomWaveLabels => ConceptKey::CustomLabelsGroupTitle.get(lang),
 
             PropertyGroup::Subtype => ConceptKey::Subtype.get(lang),
             PropertyGroup::PatternBody => ConceptKey::PatternBody.get(lang),
@@ -1797,6 +1897,16 @@ pub struct ConfigProperty {
 /// two can never drift into two independently-typed copies of the same
 /// literal.
 pub const POSITION_RESULT_STATS_ID: &str = "position_result_stats";
+
+/// The per-wave custom-label OVERRIDE table's own id — shared by all FIVE
+/// Elliott types' own `style_properties()` (each declares
+/// [`ConfigProperty::table`] under this id) and their own
+/// `apply_style_property` (each parses `id` with [`parse_table_cell_id`]
+/// and compares the returned base against this constant), so the two can
+/// never drift into two independently-typed copies of the same literal —
+/// same role [`POSITION_RESULT_STATS_ID`] plays for the position
+/// archetype's own stat block.
+pub const CUSTOM_WAVE_LABELS_PROPERTY_ID: &str = "custom_wave_labels";
 
 impl ConfigProperty {
     /// Create a color property
@@ -1983,6 +2093,27 @@ impl ConfigProperty {
             prop_type: PropertyType::Stat { rows: rows.clone() },
             value: PropertyValue::Stat(rows),
             category: PropertyCategory::AppearanceStats,
+            order: 0,
+            readonly: true,
+            tooltip: None,
+            group: None,
+        }
+    }
+
+    /// Create a grid property (W4) — see [`PropertyType::Table`]'s own doc
+    /// for the shape and for why it is `readonly` regardless of how many of
+    /// its own cells are individually editable (a cell's own editability is
+    /// carried by its OWN [`TableCell`] variant, not by this flag). `rows`
+    /// is pre-formatted by the caller — this never computes a cell's own
+    /// content, the same discipline [`Self::stat_block`] follows for its
+    /// own rows.
+    pub fn table(id: &str, name: &str, head: Vec<String>, rows: Vec<Vec<TableCell>>) -> Self {
+        Self {
+            id: id.to_string(),
+            name: name.to_string(),
+            prop_type: PropertyType::Table { head, rows: rows.clone() },
+            value: PropertyValue::Table(rows),
+            category: PropertyCategory::LabelsText,
             order: 0,
             readonly: true,
             tooltip: None,

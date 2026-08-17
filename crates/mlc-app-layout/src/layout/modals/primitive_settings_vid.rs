@@ -221,8 +221,8 @@ fn line_group_height(line_props: &[&DeclaredProperty], has_levels: bool, draw_ba
 }
 
 /// Height (px) one declared property's own row needs — `ROW_H` for every
-/// `PropertyType` except `Picker`/`Stat`, the two rows in this modal that
-/// are not one row tall.
+/// `PropertyType` except `Picker`/`Stat`/`Table`, the three rows in this
+/// modal that are not one row tall.
 ///
 /// `Picker`'s own grid grows DOWNWARD (W4): `icon_picker_grid(...).rows() *
 /// (ICON_PICKER_CELL_H + ICON_PICKER_CELL_GAP)`, computed from the SAME
@@ -239,17 +239,24 @@ fn line_group_height(line_props: &[&DeclaredProperty], has_levels: bool, draw_ba
 /// own per-row loop exactly — the two can never disagree because both
 /// iterate the same `rows` slice.
 ///
+/// `Table`'s own grid grows downward too (W4): a header line plus one
+/// `ROW_H` per data row, matching
+/// [`primitive_settings_property::draw_table_row`]'s own header-then-rows
+/// loop exactly — same "both iterate the same slice" guarantee `Stat`
+/// already has.
+///
 /// A `field_id` is not available here (this runs before any row has a
 /// resolved id) — harmless: [`icon_picker_grid`]'s own `field_id` argument
 /// only shapes each cell's `click_id`, never `columns`/`rows()`, so an
 /// empty placeholder id produces the identical geometry a real one would.
-fn property_row_height(prop: &ConfigProperty, control_w: f64) -> f64 {
+pub(super) fn property_row_height(prop: &ConfigProperty, control_w: f64) -> f64 {
     match &prop.prop_type {
         PropertyType::Picker { options } => {
             let grid = icon_picker_grid("", options, "", control_w);
             grid.rows() as f64 * (ICON_PICKER_CELL_H + ICON_PICKER_CELL_GAP)
         }
         PropertyType::Stat { rows } => rows.len().max(1) as f64 * ROW_H,
+        PropertyType::Table { rows, .. } => (rows.len() + 1) as f64 * ROW_H,
         _ => ROW_H,
     }
 }

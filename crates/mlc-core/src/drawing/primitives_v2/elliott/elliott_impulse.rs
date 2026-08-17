@@ -142,6 +142,19 @@ pub struct ElliottImpulse {
     /// настройкам там просто тугл — усечённая, и оно снимает ошибку").
     #[serde(default)]
     pub truncated_fifth: bool,
+    /// Per-wave custom label OVERRIDE — the design's own "Custom Labels"
+    /// table (`wave_tabs()`'s own `CustomLabelsGroupTitle`/`OverrideHint`
+    /// group, `mlc-ui-lab`'s `spec.rs`). One optional string per point
+    /// index (`points[i]` <-> `custom_wave_labels[i]`); `Some` REPLACES
+    /// whatever [`Self::wave_labels`] would have produced for that index,
+    /// `None` (every slot, the default — `#[serde(default)]` so a drawing
+    /// saved before this field existed loads with an empty `Vec`, which
+    /// reads the same as "every slot `None`") changes nothing. Composes
+    /// through the SAME single production point the notation style and the
+    /// truncation mark already go through — [`Self::rendered_wave_labels`],
+    /// below, applies it LAST, so an explicit override wins over both.
+    #[serde(default)]
+    pub custom_wave_labels: Vec<Option<String>>,
     /// How many of `points` are REAL — i.e. correspond to an actually-drawn
     /// pivot — as opposed to padding introduced when a `follows`-linked
     /// chain is promoted into a coarser structure before every one of its
@@ -225,6 +238,7 @@ impl ElliottImpulse {
             // impulse starts with the rule active, the same posture a
             // pre-existing drawing loads into.
             truncated_fifth: false,
+            custom_wave_labels: Vec::new(),
             realized_points: None,
             context_violations: Vec::new(),
             subdivided_slots: Vec::new(),
@@ -285,6 +299,7 @@ impl ElliottImpulse {
         if self.truncated_fifth {
             labels[5].push(TRUNCATED_FIFTH_MARK);
         }
+        super::labels::apply_overrides(&mut labels, &self.custom_wave_labels);
         labels
     }
 
@@ -608,12 +623,21 @@ impl Primitive for ElliottImpulse {
             // `WaveLabelsGroupTitle`.
             ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(20).in_group(PropertyGroup::WaveLabels),
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(21).in_group(PropertyGroup::WaveLabels),
+            // `PropertyGroup::CustomWaveLabels` (W4) — the approved design's
+            // own trailing "Custom Labels" table, seeded with what every
+            // wave ACTUALLY renders right now (`rendered_wave_labels`, the
+            // same production point notation/truncation already go
+            // through) so opening this row never shows a stale value.
+            super::labels::wave_label_override_property(&self.rendered_wave_labels()),
         ];
         props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::WaveLabels));
         props
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if let Some(applied) = super::labels::apply_wave_label_override(id, value, &mut self.custom_wave_labels, self.points.len()) {
+            return applied;
+        }
         match id {
             "show_labels" => { if let Some(v) = value.as_bool() { self.show_labels = v; return true; } }
             "show_lines" => { if let Some(v) = value.as_bool() { self.show_lines = v; return true; } }
@@ -934,5 +958,98 @@ mod notation_style_label_tests {
             }
             assert_eq!(rendered[5], format!("{}{}", unmarked[5], TRUNCATED_FIFTH_MARK), "wave 5 gains the mark for {style:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod custom_wave_labels_tests {
+    use super::*;
+
+    fn sample() -> ElliottImpulse {
+        ElliottImpulse::new(
+            [(0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0)],
+            "#2196F3",
+        )
+    }
+
+    /// A click on the Label column of the custom-labels table (row 2, the
+    /// `col:1` the pure decision — `table_grid`, `mlc-app-layout` — hands an
+    /// `EditableText` cell) lands in `custom_wave_labels[2]` through the
+    /// exact same `apply_style_property` path any other declared property
+    /// reaches, and the new text is what `rendered_wave_labels` reads back —
+    /// every other index untouched.
+    #[test]
+    fn custom_wave_label_cell_click_round_trips_through_apply_style_property() {
+        let mut impulse = sample();
+        let before = impulse.wave_labels()[2].to_string();
+        let applied = impulse.apply_style_property("custom_wave_labels::cell:2:1", &PropertyValue::String("Custom!".to_string()));
+        assert!(applied, "a well-formed cell id must be recognised");
+        assert_eq!(impulse.rendered_wave_labels()[2], "Custom!");
+        assert_ne!(impulse.rendered_wave_labels()[2], before, "the override actually changed what index 2 renders");
+        for i in [0, 1, 3, 4, 5] {
+            assert_eq!(
+                impulse.rendered_wave_labels()[i], impulse.wave_labels()[i],
+                "point {i} has no override, so it still reads the computed label"
+            );
+        }
+    }
+
+    /// An empty string clears a previously-set override back to the
+    /// computed default.
+    #[test]
+    fn empty_string_clears_the_override() {
+        let mut impulse = sample();
+        impulse.apply_style_property("custom_wave_labels::cell:1:1", &PropertyValue::String("X".to_string()));
+        assert_eq!(impulse.rendered_wave_labels()[1], "X");
+        impulse.apply_style_property("custom_wave_labels::cell:1:1", &PropertyValue::String(String::new()));
+        assert_eq!(
+            impulse.rendered_wave_labels()[1], impulse.wave_labels()[1],
+            "a cleared override falls back to the computed label"
+        );
+    }
+
+    /// The Wave# column (col 0) is inert by construction — the pure
+    /// `table_grid` decision (`mlc-app-layout`) never hands it a click id at
+    /// all, and even a hand-crafted id naming it is rejected here too,
+    /// defense in depth against a future caller that bypasses the renderer.
+    #[test]
+    fn wave_number_column_is_rejected() {
+        let mut impulse = sample();
+        let before = impulse.custom_wave_labels.clone();
+        let applied = impulse.apply_style_property("custom_wave_labels::cell:2:0", &PropertyValue::String("hacked".to_string()));
+        assert!(!applied, "the inert Wave# column must never report as applied");
+        assert_eq!(impulse.custom_wave_labels, before);
+    }
+
+    /// The override composes with the truncation mark by fully REPLACING
+    /// it — an explicit override on wave 5 is applied LAST in
+    /// `rendered_wave_labels`, so it wins over the mark truncation already
+    /// appended (an "override" means override, not "append after").
+    #[test]
+    fn override_replaces_the_truncation_mark_too() {
+        let mut impulse = sample();
+        impulse.truncated_fifth = true;
+        let marked = impulse.rendered_wave_labels()[5].clone();
+        assert!(marked.contains(TRUNCATED_FIFTH_MARK), "sanity: this fixture does mark wave 5");
+        impulse.apply_style_property("custom_wave_labels::cell:5:1", &PropertyValue::String("V".to_string()));
+        assert_eq!(impulse.rendered_wave_labels()[5], "V", "an explicit override wins over the truncation mark");
+    }
+
+    /// The declared property itself: one row per point, `Wave`#/`Label`
+    /// header, seeded with what `rendered_wave_labels` actually produces —
+    /// so opening the row never shows a stale value.
+    #[test]
+    fn declared_property_seeds_from_rendered_labels() {
+        use crate::drawing::primitives_v2::config::{PropertyType, TableCell, CUSTOM_WAVE_LABELS_PROPERTY_ID};
+
+        let mut impulse = sample();
+        impulse.apply_style_property("custom_wave_labels::cell:3:1", &PropertyValue::String("3ʳᵈ".to_string()));
+        let props = impulse.style_properties();
+        let table = props.iter().find(|p| p.id == CUSTOM_WAVE_LABELS_PROPERTY_ID).expect("declares the override table");
+        let PropertyType::Table { head, rows } = &table.prop_type else { panic!("must be PropertyType::Table") };
+        assert_eq!(head.len(), 2);
+        assert_eq!(rows.len(), 6, "one row per point (Start + 5 waves)");
+        assert_eq!(rows[3][1], TableCell::EditableText("3ʳᵈ".to_string()));
+        assert_eq!(rows[3][0], TableCell::Text("3".to_string()), "Wave# column is inert plain text");
     }
 }

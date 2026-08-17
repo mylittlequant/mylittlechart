@@ -352,7 +352,7 @@ pub(crate) fn search_matches(query: &str, texts: &[&str]) -> bool {
 fn tab_query_height(tab: PrimitiveSettingsTab, prim: &dyn Primitive, state: &PrimitiveSettingsState, control_w: f64) -> f64 {
     match tab {
         PrimitiveSettingsTab::Subject => subject_content_height_for_query(prim, state, control_w),
-        PrimitiveSettingsTab::Labels => primitive_settings_labels::content_height_for_query(prim, state),
+        PrimitiveSettingsTab::Labels => primitive_settings_labels::content_height_for_query(prim, state, control_w),
         PrimitiveSettingsTab::Cells => primitive_settings_cells::content_height_for_query(prim, state),
         PrimitiveSettingsTab::Placement => primitive_settings_placement::content_height_for_query(prim, state),
     }
@@ -582,7 +582,7 @@ pub fn render_primitive_settings_modal(
     let content_height = if query.is_empty() {
         match resolved_tab {
             PrimitiveSettingsTab::Subject => subject_content_height(prim, state, control_w),
-            PrimitiveSettingsTab::Labels => primitive_settings_labels::content_height(prim),
+            PrimitiveSettingsTab::Labels => primitive_settings_labels::content_height(prim, control_w),
             PrimitiveSettingsTab::Cells => primitive_settings_cells::content_height(prim),
             PrimitiveSettingsTab::Placement => primitive_settings_placement::content_height(prim),
         }

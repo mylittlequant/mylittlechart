@@ -28,7 +28,7 @@
 //! the universal base-stroke row, the raw-`TextBlock` content/style/position
 //! block) — those stay bespoke in the tab that owns them, documented there.
 
-use mlc_core::drawing::primitives_v2::config::{ConfigProperty, PropertyCategory, PropertyGroup, PropertyType, PropertyValue, StatRow, Tone};
+use mlc_core::drawing::primitives_v2::config::{ConfigProperty, PropertyCategory, PropertyGroup, PropertyType, PropertyValue, StatRow, TableCell, Tone};
 use mlc_core::drawing::primitives_v2::{Primitive, PropertyKind};
 use mlc_core::drawing::LineStyle;
 use mlc_core::i18n::current_language;
@@ -41,8 +41,8 @@ use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType, 
 use crate::layout::render_frame::PrimitiveSettingsResult;
 
 use super::primitive_settings_intent::{
-    icon_picker_grid, pills_fits, pills_segments, ICON_PICKER_CELL_GAP, ICON_PICKER_CELL_H, ICON_PICKER_CELL_W,
-    PILLS_SEGMENT_GAP,
+    icon_picker_grid, pills_fits, pills_segments, table_grid, TableCellView, ICON_PICKER_CELL_GAP, ICON_PICKER_CELL_H,
+    ICON_PICKER_CELL_W, PILLS_SEGMENT_GAP,
 };
 use super::primitive_settings_vid::{
     draw_bool_row, draw_label, draw_slider_row, draw_split_value_control, draw_toggle_segment,
@@ -203,6 +203,19 @@ pub(crate) fn draw_property_row(
 
     if let PropertyType::Stat { rows } = &prop.prop_type {
         draw_stat_block_row(ctx, toolbar_theme, x0, x1, label_col, y, rows);
+        return;
+    }
+
+    // `PropertyType::Table` (W4) is checked BEFORE the generic `readonly`
+    // branch below — same reasoning as `Stat`'s own early check: this row
+    // IS interactive (some of its own cells write back through
+    // `result.content_items`), so it must never fall into the plain
+    // caption+value row `readonly` produces. `ConfigProperty::table` marks
+    // the WHOLE property `readonly` anyway (excludes it from template
+    // capture, see that constructor's own doc) — this early return is what
+    // keeps that flag from also disabling the row's own interactivity.
+    if let PropertyType::Table { head, rows } = &prop.prop_type {
+        draw_table_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, y, &fid, head, rows);
         return;
     }
 
@@ -371,10 +384,11 @@ pub(crate) fn draw_property_row(
             }
             result.content_items.push((fid, rect));
         }
-        // `Stat` is handled by the early `if let` above and can never reach
-        // here — listed for exhaustiveness only, same treatment as the
-        // three genuinely-unused types beside it.
+        // `Stat`/`Table` are handled by their own early `if let`s above and
+        // can never reach here — listed for exhaustiveness only, same
+        // treatment as the three genuinely-unused types beside them.
         PropertyType::Stat { .. }
+        | PropertyType::Table { .. }
         | PropertyType::FibLevels
         | PropertyType::Coordinate
         | PropertyType::TimeframeVisibility => {}
@@ -444,12 +458,158 @@ fn draw_stat_block_row(
     }
 }
 
+/// A [`PropertyType::Table`] row's own shape (W4) — a header line of column
+/// captions, followed by one line per data row, each cell dispatched by its
+/// own [`TableCell`] variant via [`table_grid`]'s own pure decision. Grows
+/// downward exactly like [`draw_stat_block_row`]: `(rows.len() + 1) *
+/// ROW_H`, reserved by `primitive_settings_vid::property_row_height`'s own
+/// `Table` arm off the SAME `rows` this draws, so the two can never
+/// disagree. Columns split the row's own full width evenly (`x0..x1`, not
+/// offset by `label_col` — like `Picker`, there is no per-row caption, the
+/// group header above it already names the table).
+#[allow(clippy::too_many_arguments)]
+fn draw_table_row(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    widget_theme: &WidgetTheme,
+    state: &PrimitiveSettingsState,
+    result: &mut PrimitiveSettingsResult,
+    x0: f64,
+    x1: f64,
+    y: f64,
+    fid: &str,
+    head: &[String],
+    rows: &[Vec<TableCell>],
+) {
+    let n_cols = head.len().max(1);
+    let col_w = ((x1 - x0) / n_cols as f64).max(1.0);
+
+    ctx.set_font("10.5px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    for (c, label) in head.iter().enumerate() {
+        ctx.fill_text(label, x0 + c as f64 * col_w + 4.0, y + ROW_H / 2.0);
+    }
+
+    for (r, row) in table_grid(fid, rows).into_iter().enumerate() {
+        let row_y = y + (r + 1) as f64 * ROW_H;
+        for (c, view) in row.into_iter().enumerate() {
+            let cx = x0 + c as f64 * col_w;
+            let rect = WidgetRect::new(cx + 2.0, row_y + 2.0, (col_w - 4.0).max(0.0), ROW_H - 4.0);
+            draw_table_cell(ctx, toolbar_theme, widget_theme, state, result, rect, &view);
+        }
+    }
+}
+
+/// One [`TableCellView`]'s own drawn shape — dispatched by its own
+/// [`TableCell`] variant. Only `EditableText`/`EditableSwatch`/
+/// `EditableCheck` ever push into `result.content_items` (via
+/// `view.click_id`, computed once by [`table_grid`]) — the other four
+/// variants never do, structurally, the same discipline the `Stat` block's
+/// own arm follows.
+fn draw_table_cell(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    widget_theme: &WidgetTheme,
+    state: &PrimitiveSettingsState,
+    result: &mut PrimitiveSettingsResult,
+    rect: WidgetRect,
+    view: &TableCellView,
+) {
+    match &view.cell {
+        TableCell::Text(s) => draw_table_text(ctx, rect, s, &toolbar_theme.item_text),
+        TableCell::Toned(s, tone) => {
+            let color = match tone {
+                Tone::Good => &toolbar_theme.success,
+                Tone::Bad => &toolbar_theme.danger,
+                Tone::Neutral => &toolbar_theme.item_text,
+            };
+            draw_table_text(ctx, rect, s, color);
+        }
+        TableCell::EditableText(committed) => {
+            let is_editing = view.click_id.is_some() && state.active_field_id.as_deref() == view.click_id.as_deref();
+            let ar = &state.active_render;
+            let (display, cursor, sel_start, sel_end): (&str, usize, Option<usize>, Option<usize>) = if is_editing {
+                (ar.text.as_str(), ar.cursor, ar.selection_start, Some(ar.cursor))
+            } else {
+                (committed.as_str(), committed.len(), None, None)
+            };
+            let cfg = InputConfig::new(display)
+                .with_focused(is_editing)
+                .with_type(InputType::Text)
+                .with_font_size(11.0)
+                .with_padding(3.0)
+                .with_radius(3.0)
+                .with_cursor(cursor)
+                .with_selection(sel_start, sel_end);
+            let res = draw_input(ctx, &cfg, crate::ui::widgets::WidgetState::Normal, rect, widget_theme);
+            if is_editing {
+                draw_input_cursor(ctx, res.cursor_x, res.cursor_y, res.cursor_height, &toolbar_theme.item_text);
+                result.active_input_char_positions = res.char_x_positions;
+                result.active_input_rect = Some(rect);
+            }
+            if let Some(id) = &view.click_id {
+                result.content_items.push((id.clone(), rect));
+            }
+        }
+        TableCell::Swatch(color) | TableCell::EditableSwatch(color) => {
+            let side = rect.height.min(rect.width);
+            let swatch = WidgetRect::new(rect.x, rect.y, side, side);
+            ctx.set_fill_color(color);
+            ctx.fill_rounded_rect(swatch.x, swatch.y, swatch.width, swatch.height, 4.0);
+            ctx.set_stroke_color(&toolbar_theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(swatch.x, swatch.y, swatch.width, swatch.height, 4.0);
+            if let Some(id) = &view.click_id {
+                result.content_items.push((id.clone(), swatch));
+            }
+        }
+        TableCell::Check(checked) | TableCell::EditableCheck(checked) => {
+            let box_rect = WidgetRect::new(rect.x, rect.y + (rect.height - 16.0) / 2.0, 16.0, 16.0);
+            ctx.set_fill_color(if *checked { &toolbar_theme.item_bg_active } else { &toolbar_theme.background });
+            ctx.fill_rounded_rect(box_rect.x, box_rect.y, box_rect.width, box_rect.height, 3.0);
+            ctx.set_stroke_color(&toolbar_theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(box_rect.x, box_rect.y, box_rect.width, box_rect.height, 3.0);
+            if *checked {
+                ctx.set_stroke_color(&toolbar_theme.item_text_active);
+                ctx.set_stroke_width(2.0);
+                ctx.begin_path();
+                ctx.move_to(box_rect.x + 3.0, box_rect.y + box_rect.height * 0.55);
+                ctx.line_to(box_rect.x + box_rect.width * 0.42, box_rect.bottom() - 3.0);
+                ctx.line_to(box_rect.right() - 3.0, box_rect.y + 3.0);
+                ctx.stroke();
+            }
+            if let Some(id) = &view.click_id {
+                result.content_items.push((id.clone(), box_rect));
+            }
+        }
+    }
+}
+
+/// A plain, clipped text draw shared by [`TableCell::Text`]/`Toned` — same
+/// clip discipline [`draw_label`] uses, so a string wider than its own
+/// column is cut off rather than spilling into the next one.
+fn draw_table_text(ctx: &mut dyn RenderContext, rect: WidgetRect, text: &str, color: &str) {
+    ctx.set_font("11.5px sans-serif");
+    ctx.set_fill_color(color);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.save();
+    ctx.begin_path();
+    ctx.rect(rect.x, rect.y, rect.width, rect.height);
+    ctx.clip();
+    ctx.fill_text(text, rect.x, rect.center_y());
+    ctx.restore();
+}
+
 /// Render any [`PropertyValue`] as plain text for a `readonly` row —
 /// generic over every variant, not just the `String` shape a scalar
 /// readonly property (a hypothetical future one — every readonly declarer
-/// in this crate today is `PropertyType::Stat`, drawn by
-/// [`draw_stat_block_row`] instead) would use, so one still shows something
-/// instead of an empty row.
+/// in this crate today is `PropertyType::Stat`/`PropertyType::Table`, drawn
+/// by [`draw_stat_block_row`]/[`draw_table_row`] instead) would use, so one
+/// still shows something instead of an empty row.
 fn readonly_value_text(value: &PropertyValue) -> String {
     match value {
         PropertyValue::String(s) | PropertyValue::Color(s) | PropertyValue::LineStyle(s) => s.clone(),
@@ -457,11 +617,13 @@ fn readonly_value_text(value: &PropertyValue) -> String {
         PropertyValue::Integer(i) => i.to_string(),
         PropertyValue::Boolean(b) => b.to_string(),
         PropertyValue::Coordinate { bar, price } => format!("{bar:.1} / {price:.2}"),
-        // `Stat` never reaches here (drawn by `draw_stat_block_row` before
-        // this function could ever be called on one) — listed for
-        // exhaustiveness only, same treatment as the two genuinely-unused
-        // types beside it.
-        PropertyValue::Stat(_) | PropertyValue::FibLevels(_) | PropertyValue::TimeframeVisibility(_) => String::new(),
+        // Neither `Stat` nor `Table` ever reaches here (drawn by their own
+        // early `if let`s in `draw_property_row` before this function could
+        // ever be called on one) — listed for exhaustiveness only, same
+        // treatment as the two genuinely-unused types beside them.
+        PropertyValue::Stat(_) | PropertyValue::Table(_) | PropertyValue::FibLevels(_) | PropertyValue::TimeframeVisibility(_) => {
+            String::new()
+        }
     }
 }
 
