@@ -10,6 +10,37 @@ pub use price_date_range::PriceDateRange;
 
 use super::{RenderContext, LabelStyle};
 
+/// Absolute price distance between two levels — the ONE production point
+/// `PriceRange`/`PriceDateRange` use for both their own on-chart stat plate
+/// (`render`) and their settings-modal stat block (`style_properties`), so
+/// the two can never disagree about the number.
+pub(super) fn price_diff(price1: f64, price2: f64) -> f64 {
+    (price2 - price1).abs()
+}
+
+/// Percentage move of [`price_diff`] relative to `price1` — same shared-
+/// production-point reasoning.
+pub(super) fn percentage(price1: f64, price2: f64) -> f64 {
+    if price1 != 0.0 { (price_diff(price1, price2) / price1.abs()) * 100.0 } else { 0.0 }
+}
+
+/// Human-readable elapsed-time label (`"3.2h"`, `"45m"`, ...) — the ONE
+/// production point `DateRange`/`PriceDateRange` use for both their own
+/// on-chart stat plate and their settings-modal stat block.
+pub(super) fn duration_label(ts1: i64, ts2: i64) -> String {
+    let duration_ms = (ts2 - ts1).abs();
+    let duration_secs = duration_ms / 1000;
+    if duration_secs >= 86400 {
+        format!("{:.1}d", duration_secs as f64 / 86400.0)
+    } else if duration_secs >= 3600 {
+        format!("{:.1}h", duration_secs as f64 / 3600.0)
+    } else if duration_secs >= 60 {
+        format!("{:.0}m", duration_secs as f64 / 60.0)
+    } else {
+        format!("{duration_secs}s")
+    }
+}
+
 /// Draw a multi-line stat plate (background + border via `LabelStyle`, lines
 /// centered and stacked vertically) at `(cx, cy)`.
 ///

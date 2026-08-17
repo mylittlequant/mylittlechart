@@ -8,10 +8,10 @@ use super::super::{
     HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
     RenderContext, crisp, LineStyle,
     render_primitive_text, TextAlign,
-    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
+    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, StatRow},
 };
 use super::super::types::{Segment, hit_test_strokes};
-use super::draw_stat_plate;
+use super::{draw_stat_plate, price_diff, percentage, duration_label};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PriceDateRange {
@@ -38,6 +38,21 @@ impl PriceDateRange {
             ts1, price1, ts2, price2, show_percentage: true, show_bars: true, show_pips: true,
             label_style: default_label_style(),
         }
+    }
+
+    /// The read-only computed-stat block's own rows — the pure decision
+    /// `style_properties()` wraps into a declared property
+    /// (`ConfigProperty::stat_block`). Reads through the SAME
+    /// `super::price_diff`/`super::percentage`/`super::duration_label`
+    /// this primitive's own `render` uses for the identical on-chart stat
+    /// plate. No bar-count row — see `DateRange::result_stat_rows`'s own
+    /// doc for why (`style_properties()` has no `bars: &[Bar]` to read).
+    pub fn result_stat_rows(&self) -> Vec<StatRow> {
+        vec![
+            StatRow::price_change(&super::super::fmt_price(price_diff(self.price1, self.price2))),
+            StatRow::percent_change(&format!("{:.2}%", percentage(self.price1, self.price2))),
+            StatRow::duration(&duration_label(self.ts1, self.ts2)),
+        ]
     }
 }
 
@@ -167,23 +182,9 @@ impl Primitive for PriceDateRange {
         // Metrics: price delta (+ %), elapsed time (always shown — this tool
         // combines both dimensions), bar count (real count, not a
         // relabelled duration string).
-        let price_diff = (self.price2 - self.price1).abs();
-        let percentage = if self.price1 != 0.0 {
-            (price_diff / self.price1.abs()) * 100.0
-        } else {
-            0.0
-        };
-        let duration_ms = (self.ts2 - self.ts1).abs();
-        let duration_secs = duration_ms / 1000;
-        let duration_label = if duration_secs >= 86400 {
-            format!("{:.1}d", duration_secs as f64 / 86400.0)
-        } else if duration_secs >= 3600 {
-            format!("{:.1}h", duration_secs as f64 / 3600.0)
-        } else if duration_secs >= 60 {
-            format!("{:.0}m", duration_secs as f64 / 60.0)
-        } else {
-            format!("{}s", duration_secs)
-        };
+        let diff = price_diff(self.price1, self.price2);
+        let pct = percentage(self.price1, self.price2);
+        let duration = duration_label(self.ts1, self.ts2);
         let bar1 = timestamp_ms_to_bar_f64(ctx.bars(), self.ts1);
         let bar2 = timestamp_ms_to_bar_f64(ctx.bars(), self.ts2);
         let bar_count = (bar2 - bar1).abs().round() as i64;
@@ -191,15 +192,15 @@ impl Primitive for PriceDateRange {
         let mut lines = Vec::new();
         let mut price_parts = Vec::new();
         if self.show_pips {
-            price_parts.push(super::super::fmt_price(price_diff));
+            price_parts.push(super::super::fmt_price(diff));
         }
         if self.show_percentage {
-            price_parts.push(format!("{:.2}%", percentage));
+            price_parts.push(format!("{:.2}%", pct));
         }
         if !price_parts.is_empty() {
             lines.push(price_parts.join("  /  "));
         }
-        lines.push(duration_label);
+        lines.push(duration);
         if self.show_bars {
             lines.push(format!("{} bars", bar_count));
         }
@@ -252,6 +253,10 @@ impl Primitive for PriceDateRange {
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
                 .with_category(PropertyCategory::LabelsText)
                 .with_order(14).in_group(PropertyGroup::TextGroup),
+            // Read-only computed-stat block (W4) — see
+            // `PriceRange::style_properties()`'s own comment for why this
+            // is an ungrouped default `AppearanceStats` run.
+            ConfigProperty::stat_block("price_date_range_stats", self.result_stat_rows()).with_order(20),
         ];
         props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::TextGroup));
         props
@@ -259,6 +264,7 @@ impl Primitive for PriceDateRange {
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
+            "price_date_range_stats" => {}
             "show_pips" => {
                 if let Some(v) = value.as_bool() { self.show_pips = v; return true; }
             }
@@ -306,5 +312,55 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod stat_block_tests {
+    use super::*;
+
+    fn sample() -> PriceDateRange {
+        // price 100 -> 130 (30% move), 45 minutes apart.
+        PriceDateRange::new(0, 100.0, 45 * 60 * 1000, 130.0, "#FF9800")
+    }
+
+    /// `result_stat_rows` reads through the SAME `price_diff`/`percentage`/
+    /// `duration_label` the on-chart stat plate uses, and is untoned.
+    #[test]
+    fn rows_match_the_on_chart_figures() {
+        let pos = sample();
+        let rows = pos.result_stat_rows();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].value, super::super::super::fmt_price(price_diff(pos.price1, pos.price2)));
+        assert_eq!(rows[1].value, format!("{:.2}%", percentage(pos.price1, pos.price2)));
+        assert_eq!(rows[1].value, "30.00%");
+        assert_eq!(rows[2].value, duration_label(pos.ts1, pos.ts2));
+        assert_eq!(rows[2].value, "45m");
+        assert!(rows.iter().all(|r| r.tone.is_none()));
+    }
+
+    /// Rows stay the same regardless of `show_pips`/`show_as_percent`/
+    /// `show_bars`.
+    #[test]
+    fn rows_ignore_the_on_chart_display_toggles() {
+        let mut pos = sample();
+        pos.show_pips = false;
+        pos.show_percentage = false;
+        pos.show_bars = false;
+        assert_eq!(pos.result_stat_rows(), sample().result_stat_rows());
+    }
+
+    /// Sending the stat block's own id through the exact same apply path a
+    /// click would reach does nothing.
+    #[test]
+    fn apply_style_property_rejects_the_stat_block_id() {
+        let before = sample();
+        let mut pos = sample();
+        let applied = pos.apply_style_property("price_date_range_stats", &PropertyValue::String("hacked".to_string()));
+        assert!(!applied);
+        assert_eq!(pos.price1, before.price1);
+        assert_eq!(pos.price2, before.price2);
+        assert_eq!(pos.ts1, before.ts1);
+        assert_eq!(pos.ts2, before.ts2);
     }
 }

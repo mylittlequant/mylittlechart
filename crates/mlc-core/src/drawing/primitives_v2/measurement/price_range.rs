@@ -7,10 +7,10 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle,
     render_primitive_text, TextAlign,
-    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
+    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, StatRow},
 };
 use super::super::types::{Segment, hit_test_strokes};
-use super::draw_stat_plate;
+use super::{draw_stat_plate, price_diff, percentage};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PriceRange {
@@ -35,6 +35,22 @@ impl PriceRange {
             ts_ms, price1, price2, show_percentage: true, show_pips: true,
             label_style: default_label_style(),
         }
+    }
+
+    /// The read-only computed-stat block's own rows — the pure decision
+    /// `style_properties()` wraps into a declared property
+    /// (`ConfigProperty::stat_block`). Reads through the SAME
+    /// `super::price_diff`/`super::percentage` this primitive's own
+    /// `render` uses for the identical on-chart stat plate, so the modal
+    /// and the chart can never disagree about the number. Unconditional —
+    /// shown regardless of `show_pips`/`show_percentage` (those toggles
+    /// gate the on-chart PLATE only, matching Position's own Result block,
+    /// which likewise ignores `show_pnl`).
+    pub fn result_stat_rows(&self) -> Vec<StatRow> {
+        vec![
+            StatRow::price_change(&super::super::fmt_price(price_diff(self.price1, self.price2))),
+            StatRow::percent_change(&format!("{:.2}%", percentage(self.price1, self.price2))),
+        ]
     }
 }
 
@@ -108,22 +124,18 @@ impl Primitive for PriceRange {
 
         // Stat plate: price delta (show_pips) and/or percentage change
         // (show_percentage) — independent toggles, either can stand alone.
-        let price_diff = (self.price2 - self.price1).abs();
-        let percentage = if self.price1 != 0.0 {
-            (price_diff / self.price1.abs()) * 100.0
-        } else {
-            0.0
-        };
+        let diff = price_diff(self.price1, self.price2);
+        let pct = percentage(self.price1, self.price2);
 
         let mut parts = Vec::new();
         if self.show_pips {
-            parts.push(super::super::fmt_price(price_diff));
+            parts.push(super::super::fmt_price(diff));
         }
         if self.show_percentage {
-            parts.push(format!("{:.2}%", percentage));
+            parts.push(format!("{:.2}%", pct));
         }
         let line = if parts.is_empty() {
-            super::super::fmt_price(price_diff)
+            super::super::fmt_price(diff)
         } else {
             parts.join("  /  ")
         };
@@ -172,6 +184,13 @@ impl Primitive for PriceRange {
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
                 .with_category(PropertyCategory::LabelsText)
                 .with_order(14).in_group(PropertyGroup::TextGroup),
+            // Read-only computed-stat block (W4) — ungrouped default run of
+            // `AppearanceStats` (no design-backed `PropertyGroup` exists for
+            // the measurement archetype's own Result section; renders under
+            // the category's own default "Results"/"Результаты" header,
+            // `ConfigKey::GroupResults`, same as it would for any other
+            // primitive that declares nothing into this category's `group`).
+            ConfigProperty::stat_block("price_range_stats", self.result_stat_rows()).with_order(20),
         ];
         props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::TextGroup));
         props
@@ -179,6 +198,7 @@ impl Primitive for PriceRange {
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
+            "price_range_stats" => {}
             "show_pips" => {
                 if let Some(v) = value.as_bool() { self.show_pips = v; return true; }
             }
@@ -219,5 +239,51 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod stat_block_tests {
+    use super::*;
+
+    fn sample() -> PriceRange {
+        // price1 100, price2 130 -> diff 30, 30% move.
+        PriceRange::new(0, 100.0, 130.0, "#4CAF50")
+    }
+
+    /// `result_stat_rows` reads through the SAME `price_diff`/`percentage`
+    /// the on-chart stat plate uses, and is untoned (a ruler reports a
+    /// distance, it does not judge direction).
+    #[test]
+    fn rows_match_the_on_chart_figures() {
+        let pos = sample();
+        let rows = pos.result_stat_rows();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].value, super::super::super::fmt_price(price_diff(pos.price1, pos.price2)));
+        assert_eq!(rows[1].value, format!("{:.2}%", percentage(pos.price1, pos.price2)));
+        assert_eq!(rows[1].value, "30.00%");
+        assert!(rows.iter().all(|r| r.tone.is_none()));
+    }
+
+    /// Rows stay the same regardless of `show_pips`/`show_percentage` — the
+    /// block is unconditional, matching Position's own Result block.
+    #[test]
+    fn rows_ignore_the_on_chart_display_toggles() {
+        let mut pos = sample();
+        pos.show_pips = false;
+        pos.show_percentage = false;
+        assert_eq!(pos.result_stat_rows(), sample().result_stat_rows());
+    }
+
+    /// Sending the stat block's own id through the exact same apply path a
+    /// click would reach does nothing.
+    #[test]
+    fn apply_style_property_rejects_the_stat_block_id() {
+        let before = sample();
+        let mut pos = sample();
+        let applied = pos.apply_style_property("price_range_stats", &PropertyValue::String("hacked".to_string()));
+        assert!(!applied);
+        assert_eq!(pos.price1, before.price1);
+        assert_eq!(pos.price2, before.price2);
     }
 }

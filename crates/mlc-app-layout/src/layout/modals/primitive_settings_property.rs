@@ -28,7 +28,7 @@
 //! the universal base-stroke row, the raw-`TextBlock` content/style/position
 //! block) — those stay bespoke in the tab that owns them, documented there.
 
-use mlc_core::drawing::primitives_v2::config::{ConfigProperty, PropertyCategory, PropertyGroup, PropertyType, PropertyValue};
+use mlc_core::drawing::primitives_v2::config::{ConfigProperty, PropertyCategory, PropertyGroup, PropertyType, PropertyValue, StatRow, Tone};
 use mlc_core::drawing::primitives_v2::{Primitive, PropertyKind};
 use mlc_core::drawing::LineStyle;
 use mlc_core::i18n::current_language;
@@ -160,14 +160,22 @@ fn field_id(kind: PropertyKind, prop_id: &str) -> String {
 
 /// Draw one declared property as a single row at `y`, dispatched by its own
 /// `PropertyType`. Does not advance `y` itself — every caller advances by
-/// the same `ROW_H` every other row in these tabs uses, since every
-/// `PropertyType` this module knows how to draw renders as one row.
+/// the same `ROW_H` every other row in these tabs uses (except `Stat`, see
+/// [`crate::layout::modals::primitive_settings_vid::property_row_height`]).
 ///
-/// A `readonly` property (`ConfigProperty::readonly`, e.g. Position's
-/// computed Risk/Target/R:R — `PropertyCategory::AppearanceStats`) short-
-/// circuits every `PropertyType` arm below: it always renders as a plain
-/// caption + value row, muted text, no control, nothing pushed into
-/// `result.content_items` — there is nothing here to click or drag.
+/// `PropertyType::Stat` (W4, a computed-stat BLOCK — e.g. Position's own
+/// Risk/Target/R:R) is checked FIRST, ahead of the generic `readonly`
+/// branch below: its own arm never pushes into `result.content_items`, by
+/// construction — inertness is a property of THIS arm's own code, not of
+/// the `readonly` flag a caller happened to set. See
+/// `mlc_core::drawing::primitives_v2::config::PropertyType::Stat`'s own doc.
+///
+/// A `readonly` property that is NOT `Stat` (`ConfigProperty::readonly`,
+/// today none — every readonly declarer in this crate is `Stat`) still
+/// short-circuits every other `PropertyType` arm below: it renders as a
+/// plain caption + value row, muted text, no control, nothing pushed into
+/// `result.content_items` either — kept as a second, generic fallback for
+/// any future readonly scalar property that is not a `Stat` block.
 ///
 /// `PropertyType::FibLevels`/`Coordinate`/`TimeframeVisibility` are not
 /// produced by any `style_properties()`/`text_properties()` implementation
@@ -192,6 +200,11 @@ pub(crate) fn draw_property_row(
 ) {
     let lang = current_language();
     let fid = field_id(kind, &prop.id);
+
+    if let PropertyType::Stat { rows } = &prop.prop_type {
+        draw_stat_block_row(ctx, toolbar_theme, x0, x1, label_col, y, rows);
+        return;
+    }
 
     if prop.readonly {
         draw_readonly_row(ctx, toolbar_theme, x0, x1, label_col, y, &prop.name, &readonly_value_text(&prop.value));
@@ -358,7 +371,13 @@ pub(crate) fn draw_property_row(
             }
             result.content_items.push((fid, rect));
         }
-        PropertyType::FibLevels | PropertyType::Coordinate | PropertyType::TimeframeVisibility => {}
+        // `Stat` is handled by the early `if let` above and can never reach
+        // here — listed for exhaustiveness only, same treatment as the
+        // three genuinely-unused types beside it.
+        PropertyType::Stat { .. }
+        | PropertyType::FibLevels
+        | PropertyType::Coordinate
+        | PropertyType::TimeframeVisibility => {}
     }
 }
 
@@ -389,12 +408,48 @@ fn draw_readonly_row(
     ctx.set_text_align(TextAlign::Left);
 }
 
+/// A [`PropertyType::Stat`] block's own row shape (W4) — one line per
+/// [`StatRow`], stacked downward from `y`: the row's own label in the
+/// label column (same [`draw_label`] every other row uses), its value
+/// right-aligned against `x1`, coloured by `tone` — the theme's own
+/// `success`/`danger` fields for `Good`/`Bad` (the SAME colours a stop/
+/// target zone already uses elsewhere in this modal — no new palette),
+/// `item_text` for `Neutral`/untoned (a plain reading, not muted — this is
+/// live information, not a placeholder). Pushes nothing into
+/// `result.content_items`: there is no click id for a value that cannot be
+/// applied — see [`draw_property_row`]'s own doc.
+fn draw_stat_block_row(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    x0: f64,
+    x1: f64,
+    label_col: f64,
+    y: f64,
+    rows: &[StatRow],
+) {
+    for (i, row) in rows.iter().enumerate() {
+        let row_y = y + i as f64 * ROW_H;
+        draw_label(ctx, toolbar_theme, x0, label_col, row_y, &row.label);
+        let color = match row.tone {
+            Some(Tone::Good) => &toolbar_theme.success,
+            Some(Tone::Bad) => &toolbar_theme.danger,
+            Some(Tone::Neutral) | None => &toolbar_theme.item_text,
+        };
+        ctx.set_font("11.5px sans-serif");
+        ctx.set_fill_color(color);
+        ctx.set_text_align(TextAlign::Right);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(&row.value, x1, row_y + ROW_H / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+    }
+}
+
 /// Render any [`PropertyValue`] as plain text for a `readonly` row —
-/// generic over every variant, not just the `String` shape
-/// `ConfigProperty::text`-based readonly properties (Position's Risk/
-/// Target/R:R, today's only declarers) actually use, so a future readonly
-/// `Number`/`Boolean`/`Color` property still shows something instead of an
-/// empty row.
+/// generic over every variant, not just the `String` shape a scalar
+/// readonly property (a hypothetical future one — every readonly declarer
+/// in this crate today is `PropertyType::Stat`, drawn by
+/// [`draw_stat_block_row`] instead) would use, so one still shows something
+/// instead of an empty row.
 fn readonly_value_text(value: &PropertyValue) -> String {
     match value {
         PropertyValue::String(s) | PropertyValue::Color(s) | PropertyValue::LineStyle(s) => s.clone(),
@@ -402,7 +457,11 @@ fn readonly_value_text(value: &PropertyValue) -> String {
         PropertyValue::Integer(i) => i.to_string(),
         PropertyValue::Boolean(b) => b.to_string(),
         PropertyValue::Coordinate { bar, price } => format!("{bar:.1} / {price:.2}"),
-        PropertyValue::FibLevels(_) | PropertyValue::TimeframeVisibility(_) => String::new(),
+        // `Stat` never reaches here (drawn by `draw_stat_block_row` before
+        // this function could ever be called on one) — listed for
+        // exhaustiveness only, same treatment as the two genuinely-unused
+        // types beside it.
+        PropertyValue::Stat(_) | PropertyValue::FibLevels(_) | PropertyValue::TimeframeVisibility(_) => String::new(),
     }
 }
 

@@ -221,8 +221,10 @@ fn line_group_height(line_props: &[&DeclaredProperty], has_levels: bool, draw_ba
 }
 
 /// Height (px) one declared property's own row needs — `ROW_H` for every
-/// `PropertyType` except `Picker`, whose grid grows DOWNWARD instead of
-/// staying one row tall (W4): `icon_picker_grid(...).rows() *
+/// `PropertyType` except `Picker`/`Stat`, the two rows in this modal that
+/// are not one row tall.
+///
+/// `Picker`'s own grid grows DOWNWARD (W4): `icon_picker_grid(...).rows() *
 /// (ICON_PICKER_CELL_H + ICON_PICKER_CELL_GAP)`, computed from the SAME
 /// `control_w` [`primitive_settings_property::draw_property_row`]'s own
 /// `Picker` arm measures its grid against at draw time, via the SAME
@@ -231,6 +233,11 @@ fn line_group_height(line_props: &[&DeclaredProperty], has_levels: bool, draw_ba
 /// disagree, on any resize width (see `render_primitive_settings_modal`'s
 /// own doc for how a call at content-height time — before the shell exists
 /// — gets the EXACT width the shell will draw with this frame).
+///
+/// `Stat`'s own block grows downward too (W4): one `ROW_H` per
+/// [`StatRow`], matching [`primitive_settings_property::draw_stat_block_row`]'s
+/// own per-row loop exactly — the two can never disagree because both
+/// iterate the same `rows` slice.
 ///
 /// A `field_id` is not available here (this runs before any row has a
 /// resolved id) — harmless: [`icon_picker_grid`]'s own `field_id` argument
@@ -242,6 +249,7 @@ fn property_row_height(prop: &ConfigProperty, control_w: f64) -> f64 {
             let grid = icon_picker_grid("", options, "", control_w);
             grid.rows() as f64 * (ICON_PICKER_CELL_H + ICON_PICKER_CELL_GAP)
         }
+        PropertyType::Stat { rows } => rows.len().max(1) as f64 * ROW_H,
         _ => ROW_H,
     }
 }
@@ -251,8 +259,12 @@ fn property_row_height(prop: &ConfigProperty, control_w: f64) -> f64 {
 /// `AppearanceStats`) — every [`PropertyGroup`] run (including the default
 /// one) shares the exact same shape, `GROUP_GAP`-separated. Shared by
 /// `group_heights`/`query_heights` and mirrored by `draw`'s own FILL/RESULTS
-/// sections.
-fn headered_group_height(props: &[&DeclaredProperty]) -> f64 {
+/// sections. `control_w` feeds [`property_row_height`] — see that
+/// function's own doc for why a `Stat`/`Picker` row's own height depends on
+/// it while every other row's does not (`AppearanceStats` is where a `Stat`
+/// block actually lands, so this is not merely a signature mirror of
+/// `line_group_height`).
+fn headered_group_height(props: &[&DeclaredProperty], control_w: f64) -> f64 {
     let mut h = 0.0;
     let mut any = false;
     for (_, rows) in group_runs(props) {
@@ -262,7 +274,8 @@ fn headered_group_height(props: &[&DeclaredProperty]) -> f64 {
         if any {
             h += GROUP_GAP;
         }
-        h += GROUP_HEADER_H + rows.len() as f64 * ROW_H + GROUP_PAD_BOTTOM;
+        let rows_h: f64 = rows.iter().map(|(p, _)| property_row_height(p, control_w)).sum();
+        h += GROUP_HEADER_H + rows_h + GROUP_PAD_BOTTOM;
         any = true;
     }
     h
@@ -276,10 +289,10 @@ fn group_heights(prim: &dyn Primitive, control_w: f64) -> GroupHeights {
     let line = line_group_height(&line_props, has_levels, true, control_w);
 
     let fill_props = properties_in(&all, PropertyCategory::AppearanceFill);
-    let fill = headered_group_height(&fill_props);
+    let fill = headered_group_height(&fill_props, control_w);
 
     let stats_props = properties_in(&all, PropertyCategory::AppearanceStats);
-    let stats = headered_group_height(&stats_props);
+    let stats = headered_group_height(&stats_props, control_w);
 
     let rules = rules_group_height(primitive_violations(prim).len());
     let ewa_settings_button = ewa_engine_settings_button_height(prim);
@@ -473,14 +486,14 @@ fn query_heights(prim: &dyn Primitive, query: &str, control_w: f64) -> GroupHeig
         .into_iter()
         .filter(|(p, _)| matches(query, &[effective_header(p, group_fill), p.name.as_str()]))
         .collect();
-    let fill = headered_group_height(&fill_props);
+    let fill = headered_group_height(&fill_props, control_w);
 
     let group_results = ConfigKey::GroupResults.get(lang);
     let stats_props: Vec<&DeclaredProperty> = properties_in(&all, PropertyCategory::AppearanceStats)
         .into_iter()
         .filter(|(p, _)| matches(query, &[effective_header(p, group_results), p.name.as_str()]))
         .collect();
-    let stats = headered_group_height(&stats_props);
+    let stats = headered_group_height(&stats_props, control_w);
 
     // Rules is never query-filtered (see `draw_rules_group`'s own call site
     // doc in `draw` — a violation is a live fact, not a searchable setting
@@ -667,7 +680,10 @@ fn draw_headered_run(
     *row_y += GROUP_HEADER_H;
     for (prop, kind) in rows {
         draw_property_row(ctx, toolbar_theme, widget_theme, state, result, x0, x1, label_col, *row_y, *kind, prop);
-        *row_y += ROW_H;
+        // `property_row_height`, not the flat `ROW_H` — a `Stat`/`Picker`
+        // row's own drawn height is more than one row (see that function's
+        // own doc), and this must reserve exactly what was drawn.
+        *row_y += property_row_height(prop, x1 - x0);
     }
     *row_y += GROUP_PAD_BOTTOM;
     *any_drawn = true;

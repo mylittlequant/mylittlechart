@@ -7,10 +7,10 @@ use super::super::{
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle,
     render_primitive_text, TextAlign,
-    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
+    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, StatRow},
 };
 use super::super::types::{Segment, hit_test_strokes};
-use super::draw_stat_plate;
+use super::{draw_stat_plate, duration_label};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DateRange {
@@ -37,6 +37,19 @@ impl DateRange {
             ts1, ts2, price, show_bars: true, show_time: true,
             label_style: default_label_style(),
         }
+    }
+
+    /// The read-only computed-stat block's own rows — the pure decision
+    /// `style_properties()` wraps into a declared property
+    /// (`ConfigProperty::stat_block`). Reads through the SAME
+    /// `super::duration_label` this primitive's own `render` uses for the
+    /// identical on-chart stat plate. No bar-count row on purpose:
+    /// `style_properties()` carries no `bars: &[Bar]` (the `Primitive`
+    /// trait's own signature has none), and `render`'s own bar count is a
+    /// live-chart figure derived from `ctx.bars()` — showing a bar count
+    /// here would mean inventing a bar slice, not reading a real one.
+    pub fn result_stat_rows(&self) -> Vec<StatRow> {
+        vec![StatRow::duration(&duration_label(self.ts1, self.ts2))]
     }
 }
 
@@ -112,17 +125,7 @@ impl Primitive for DateRange {
 
         // Stat plate: elapsed time (show_time) and/or bar count (show_bars).
         // Fall back to elapsed time alone so the ruler never renders blank.
-        let duration_ms = (self.ts2 - self.ts1).abs();
-        let duration_secs = duration_ms / 1000;
-        let duration_label = if duration_secs >= 86400 {
-            format!("{:.1}d", duration_secs as f64 / 86400.0)
-        } else if duration_secs >= 3600 {
-            format!("{:.1}h", duration_secs as f64 / 3600.0)
-        } else if duration_secs >= 60 {
-            format!("{:.0}m", duration_secs as f64 / 60.0)
-        } else {
-            format!("{}s", duration_secs)
-        };
+        let duration = duration_label(self.ts1, self.ts2);
 
         let bar1 = timestamp_ms_to_bar_f64(ctx.bars(), self.ts1);
         let bar2 = timestamp_ms_to_bar_f64(ctx.bars(), self.ts2);
@@ -130,13 +133,13 @@ impl Primitive for DateRange {
 
         let mut lines = Vec::new();
         if self.show_time {
-            lines.push(duration_label.clone());
+            lines.push(duration.clone());
         }
         if self.show_bars {
             lines.push(format!("{} bars", bar_count));
         }
         if lines.is_empty() {
-            lines.push(duration_label);
+            lines.push(duration);
         }
         draw_stat_plate(ctx, min_x + w / 2.0, y - 20.0, &lines, &self.label_style, &self.data.color.stroke);
 
@@ -182,6 +185,10 @@ impl Primitive for DateRange {
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke))
                 .with_category(PropertyCategory::LabelsText)
                 .with_order(14).in_group(PropertyGroup::TextGroup),
+            // Read-only computed-stat block (W4) — see
+            // `PriceRange::style_properties()`'s own comment for why this
+            // is an ungrouped default `AppearanceStats` run.
+            ConfigProperty::stat_block("date_range_stats", self.result_stat_rows()).with_order(20),
         ];
         props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::TextGroup));
         props
@@ -189,6 +196,7 @@ impl Primitive for DateRange {
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
+            "date_range_stats" => {}
             "show_time" => {
                 if let Some(v) = value.as_bool() { self.show_time = v; return true; }
             }
@@ -229,5 +237,48 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod stat_block_tests {
+    use super::*;
+
+    fn sample() -> DateRange {
+        // 45 minutes apart.
+        DateRange::new(0, 45 * 60 * 1000, 100.0, "#2196F3")
+    }
+
+    /// `result_stat_rows` reads through the SAME `duration_label` the
+    /// on-chart stat plate uses, and is untoned.
+    #[test]
+    fn rows_match_the_on_chart_figure() {
+        let pos = sample();
+        let rows = pos.result_stat_rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].value, duration_label(pos.ts1, pos.ts2));
+        assert_eq!(rows[0].value, "45m");
+        assert!(rows[0].tone.is_none());
+    }
+
+    /// Rows stay the same regardless of `show_time`/`show_bars`.
+    #[test]
+    fn rows_ignore_the_on_chart_display_toggles() {
+        let mut pos = sample();
+        pos.show_time = false;
+        pos.show_bars = false;
+        assert_eq!(pos.result_stat_rows(), sample().result_stat_rows());
+    }
+
+    /// Sending the stat block's own id through the exact same apply path a
+    /// click would reach does nothing.
+    #[test]
+    fn apply_style_property_rejects_the_stat_block_id() {
+        let before = sample();
+        let mut pos = sample();
+        let applied = pos.apply_style_property("date_range_stats", &PropertyValue::String("hacked".to_string()));
+        assert!(!applied);
+        assert_eq!(pos.ts1, before.ts1);
+        assert_eq!(pos.ts2, before.ts2);
     }
 }

@@ -8,7 +8,7 @@ use super::super::{
     HIT_TOLERANCE, point_to_line_distance,
     RenderContext, crisp, LineStyle,
     render_primitive_text, fmt_price,
-    config::{LabelStyle, PositionDisplayUnit, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
+    config::{LabelStyle, PositionDisplayUnit, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, StatRow, POSITION_RESULT_STATS_ID},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -80,6 +80,20 @@ impl ShortPosition {
         let risk = (self.stop_loss - self.entry_price).abs();
         let reward = (self.entry_price - self.take_profit).abs();
         if risk > 0.0 { reward / risk } else { 0.0 }
+    }
+
+    /// The read-only Risk/Target/R:R stat block's own rows — see
+    /// `LongPosition::result_stat_rows`'s own doc (identical reasoning,
+    /// mirrored for the short side: signs reversed, same as `risk_reward`
+    /// above).
+    pub fn result_stat_rows(&self) -> Vec<StatRow> {
+        let risk_per_unit = (self.stop_loss - self.entry_price).abs();
+        let reward_per_unit = (self.entry_price - self.take_profit).abs();
+        vec![
+            StatRow::position_risk(&self.format_result(risk_per_unit, false)),
+            StatRow::position_target(&self.format_result(reward_per_unit, false)),
+            StatRow::position_risk_reward(&format!("{:.2}", self.risk_reward())),
+        ]
     }
 
     /// One RESULT figure — the Risk/Target amounts and the live P&L
@@ -444,15 +458,6 @@ impl Primitive for ShortPosition {
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
-        // Risk/reward, recomputed fresh every call (this method runs once
-        // per frame — see `PropertyCategory::AppearanceStats`'s own doc) so
-        // the three read-only rows below always match the live entry/stop/
-        // target points, the same numbers `render`'s own on-chart label
-        // shows via the identical formulas (signs mirrored from
-        // `LongPosition` — a short's stop sits ABOVE entry, target below).
-        let risk_per_unit = (self.stop_loss - self.entry_price).abs();
-        let reward_per_unit = (self.entry_price - self.take_profit).abs();
-
         let mut props = vec![
             // `PropertyGroup::Display` (W4) — the approved position
             // archetype's own `DisplayGroupTitle` group's own pills row,
@@ -503,10 +508,11 @@ impl Primitive for ShortPosition {
                 .with_category(PropertyCategory::AppearanceLine)
                 .with_order(17),
             // `PropertyGroup::Result` (W2) — the approved design's own
-            // `ResultGroupTitle` (singular "Result"/"Результат").
-            ConfigProperty::position_risk_stat(&self.format_result(risk_per_unit, false)).with_order(90).in_group(PropertyGroup::Result),
-            ConfigProperty::position_target_stat(&self.format_result(reward_per_unit, false)).with_order(91).in_group(PropertyGroup::Result),
-            ConfigProperty::position_risk_reward_stat(&format!("{:.2}", self.risk_reward())).with_order(92).in_group(PropertyGroup::Result),
+            // `ResultGroupTitle` (singular "Result"/"Результат"). W4: the
+            // three separate readonly rows became ONE stat BLOCK — see
+            // `Self::result_stat_rows`'s own doc.
+            ConfigProperty::stat_block(POSITION_RESULT_STATS_ID, self.result_stat_rows())
+                .with_order(90).in_group(PropertyGroup::Result),
         ];
         props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::PositionLabels));
         props
@@ -514,6 +520,10 @@ impl Primitive for ShortPosition {
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
+            // The computed Risk/Target/R:R stat block is declared
+            // `readonly` and carries no field of its own to write — see
+            // `LongPosition::apply_style_property`'s own doc.
+            POSITION_RESULT_STATS_ID => {}
             "display_unit" => {
                 if let Some(s) = value.as_string() { self.display_unit = PositionDisplayUnit::from_str(s); return true; }
             }
@@ -650,5 +660,74 @@ mod display_unit_result_tests {
         pos.display_unit = PositionDisplayUnit::Percent;
         assert_eq!(pos.signed_result(10.0, false), "+10.00%");
         assert_eq!(pos.signed_result(-10.0, false), "-10.00%");
+    }
+}
+
+#[cfg(test)]
+mod stat_block_tests {
+    use super::*;
+    use crate::drawing::primitives_v2::config::Tone;
+
+    fn sample() -> ShortPosition {
+        // entry 100, stop 110 (risk 10/unit), target 70 (reward 30/unit).
+        ShortPosition::new(0, 100.0, 110.0, 70.0, 3_600_000, "#F44336")
+    }
+
+    /// `result_stat_rows` reads through the SAME `format_result`/
+    /// `risk_reward` the on-chart Stop/Target labels use, for both display
+    /// units.
+    #[test]
+    fn rows_match_the_on_chart_figures_under_currency() {
+        let pos = sample();
+        let rows = pos.result_stat_rows();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].value, pos.format_result(10.0, false));
+        assert_eq!(rows[1].value, pos.format_result(30.0, false));
+        assert_eq!(rows[2].value, format!("{:.2}", pos.risk_reward()));
+        assert_eq!(rows[2].value, "3.00");
+    }
+
+    #[test]
+    fn rows_match_the_on_chart_figures_under_percent() {
+        let mut pos = sample();
+        pos.display_unit = PositionDisplayUnit::Percent;
+        let rows = pos.result_stat_rows();
+        assert_eq!(rows[0].value, "10.00%");
+        assert_eq!(rows[1].value, "30.00%");
+        assert_eq!(rows[2].value, "3.00", "the ratio itself is unit-independent");
+    }
+
+    /// Tone matches the approved design: risk is `Bad`, target is `Good`,
+    /// the ratio is untoned.
+    #[test]
+    fn tones_match_the_approved_design() {
+        let rows = sample().result_stat_rows();
+        assert_eq!(rows[0].tone, Some(Tone::Bad));
+        assert_eq!(rows[1].tone, Some(Tone::Good));
+        assert_eq!(rows[2].tone, None);
+    }
+
+    /// Sending the stat block's own id through the exact same apply path a
+    /// click would reach does nothing: returns `false` and leaves every
+    /// field byte-for-byte unchanged, for every `PropertyValue` shape a
+    /// caller might try.
+    #[test]
+    fn apply_style_property_rejects_the_stat_block_id() {
+        let before = sample();
+        for value in [
+            PropertyValue::String("hacked".to_string()),
+            PropertyValue::Number(999.0),
+            PropertyValue::Boolean(true),
+            PropertyValue::Color("#ff0000".to_string()),
+        ] {
+            let mut pos = sample();
+            let applied = pos.apply_style_property(POSITION_RESULT_STATS_ID, &value);
+            assert!(!applied, "stat block id must never report as applied");
+            assert_eq!(pos.entry_price, before.entry_price);
+            assert_eq!(pos.stop_loss, before.stop_loss);
+            assert_eq!(pos.take_profit, before.take_profit);
+            assert_eq!(pos.quantity, before.quantity);
+            assert_eq!(pos.display_unit, before.display_unit);
+        }
     }
 }

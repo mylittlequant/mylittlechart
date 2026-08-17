@@ -854,6 +854,39 @@ pub enum PropertyType {
     Picker {
         options: Vec<PickerOption>,
     },
+    /// Read-only computed-result BLOCK (W4) — the design's own "Result"
+    /// group (Position's Risk/Target/R:R, `mlc-ui-lab`'s `Row::Stat`/
+    /// `stat()` row constructor) collapsed into ONE declared property
+    /// carrying every row it shows, instead of one
+    /// `ConfigProperty::text(...).readonly()` per row (pre-W4). Each
+    /// [`StatRow`] is a pre-formatted label/value pair plus an optional
+    /// [`Tone`] — the value is computed and formatted entirely by the
+    /// declaring primitive, through the SAME function its own on-chart
+    /// label already calls (see each declarer's own `style_properties()`
+    /// doc); this type never computes anything itself, only carries what
+    /// it is given.
+    ///
+    /// The ONE composite kind in this modal that is DISPLAY ONLY, and its
+    /// own arm is what makes that true STRUCTURALLY rather than by
+    /// convention: `mlc-app-layout`'s
+    /// `primitive_settings_property::draw_property_row`'s `Stat` arm never
+    /// pushes into `result.content_items` — there is no click id a UI
+    /// click could ever produce for a stat row, regardless of whether the
+    /// declaring `ConfigProperty` also happens to carry `readonly: true`
+    /// (every constructor here does, for the pre-existing
+    /// `!prop.readonly` filters `PrimitiveTemplate::from_primitive` /
+    /// `DrawingManager::save_last_style_for_primitive` already apply to
+    /// every readonly row — a stat block benefits from those for free —
+    /// see [`ConfigProperty::stat_block`]'s own doc; but the render
+    /// layer's own non-interactivity does not depend on that flag).
+    /// [`PropertyValue::Stat`] mirrors this on the write side: it matches
+    /// none of `as_string`/`as_bool`/`as_number`/`as_color`, so even a
+    /// caller reaching `apply_style_property` directly (bypassing the
+    /// render layer entirely) has nothing here it could write through the
+    /// usual accessor pattern every implementation uses.
+    Stat {
+        rows: Vec<StatRow>,
+    },
     /// Line style selector
     LineStyle,
     /// Text input
@@ -926,6 +959,77 @@ impl PickerOption {
     }
 }
 
+/// A [`StatRow`]'s own semantic colouring — the approved design's own `cls`
+/// (`mlc-ui-lab`'s `concept::spec::Tone`), rebuilt here because `mlc-core`
+/// cannot depend on the lab/design crate (crate contract: types depend on
+/// nothing above them). `Neutral` is an explicit "no colour" choice, kept
+/// distinct from [`StatRow::tone`] being `None` outright — a row can
+/// declare "neutral, on purpose" without that reading as an omission; both
+/// render identically (the renderer's own `Stat` arm).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum Tone {
+    Good,
+    Bad,
+    Neutral,
+}
+
+/// One line of a [`PropertyType::Stat`] block. `label` and `value` are both
+/// already-formatted display strings — see [`PropertyType::Stat`]'s own doc
+/// for why this type never computes either. `tone` colours the value only
+/// (never the label) — see the renderer's own `Stat` arm.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct StatRow {
+    pub label: String,
+    pub value: String,
+    pub tone: Option<Tone>,
+}
+
+impl StatRow {
+    pub fn new(label: &str, value: &str, tone: Option<Tone>) -> Self {
+        Self { label: label.to_string(), value: value.to_string(), tone }
+    }
+
+    /// The measurement family's own price-change row (`ConceptKey::PriceChange`)
+    /// — shared by `PriceRange`/`PriceDateRange`. No tone: a ruler reports a
+    /// distance, it does not judge direction.
+    pub fn price_change(value: &str) -> Self {
+        Self::new(ConceptKey::PriceChange.get(current_language()), value, None)
+    }
+
+    /// The measurement family's own percentage-move row (`ConceptKey::PercentUnit`)
+    /// — shared by `PriceRange`/`PriceDateRange`.
+    pub fn percent_change(value: &str) -> Self {
+        Self::new(ConceptKey::PercentUnit.get(current_language()), value, None)
+    }
+
+    /// The measurement family's own elapsed-time row (`ConceptKey::Duration`)
+    /// — shared by `DateRange`/`PriceDateRange`.
+    pub fn duration(value: &str) -> Self {
+        Self::new(ConceptKey::Duration.get(current_language()), value, None)
+    }
+
+    /// The position archetype's own "Risk" row (`ConfigKey::PositionRiskLabel`)
+    /// — shared by `LongPosition`/`ShortPosition`. Tone `Bad`: a risk
+    /// amount is a loss if it materializes.
+    pub fn position_risk(value: &str) -> Self {
+        Self::new(ConfigKey::PositionRiskLabel.get(current_language()), value, Some(Tone::Bad))
+    }
+
+    /// The position archetype's own "Target" row (`ConfigKey::PositionTargetLabel`)
+    /// — shared by `LongPosition`/`ShortPosition`. Tone `Good`: a target
+    /// amount is a gain if it materializes.
+    pub fn position_target(value: &str) -> Self {
+        Self::new(ConfigKey::PositionTargetLabel.get(current_language()), value, Some(Tone::Good))
+    }
+
+    /// The position archetype's own "R:R" row (`ConfigKey::PositionRiskRewardLabel`)
+    /// — shared by `LongPosition`/`ShortPosition`. Untoned: a ratio is
+    /// information, not a gain or a loss.
+    pub fn position_risk_reward(value: &str) -> Self {
+        Self::new(ConfigKey::PositionRiskRewardLabel.get(current_language()), value, None)
+    }
+}
+
 // =============================================================================
 // Property Values
 // =============================================================================
@@ -942,6 +1046,13 @@ pub enum PropertyValue {
     FibLevels(Vec<FibLevelConfig>),
     Coordinate { bar: f64, price: f64 },
     TimeframeVisibility(TimeframeVisibilityConfig),
+    /// Mirrors [`PropertyType::Stat`] — carried here only so `ConfigProperty`
+    /// always has SOME `value`, same convention `FibLevels`/`Coordinate`/
+    /// `TimeframeVisibility` already follow. Deliberately absent from every
+    /// `as_*` accessor below (`as_string`/`as_bool`/`as_number`/`as_color`
+    /// all fall through their own `_ => None`) — see `PropertyType::Stat`'s
+    /// own doc for why that is load-bearing, not an oversight.
+    Stat(Vec<StatRow>),
 }
 
 /// Style / text / level property family.
@@ -1679,6 +1790,14 @@ pub struct ConfigProperty {
     pub group: Option<PropertyGroup>,
 }
 
+/// The position archetype's own Risk/Target/R:R stat-block id — shared
+/// between `LongPosition`/`ShortPosition`'s own `style_properties()` (which
+/// declares [`ConfigProperty::stat_block`] under this id) and their own
+/// `apply_style_property` explicit reject arm (see their own doc), so the
+/// two can never drift into two independently-typed copies of the same
+/// literal.
+pub const POSITION_RESULT_STATS_ID: &str = "position_result_stats";
+
 impl ConfigProperty {
     /// Create a color property
     pub fn color(id: &str, name: &str, value: &str) -> Self {
@@ -1833,6 +1952,39 @@ impl ConfigProperty {
             category: PropertyCategory::AppearanceLine,
             order: 0,
             readonly: false,
+            tooltip: None,
+            group: None,
+        }
+    }
+
+    /// Create a computed-stat BLOCK (W4) — see [`PropertyType::Stat`]'s own
+    /// doc for the shape and why it is structurally read-only regardless of
+    /// this constructor's own choices. `rows` is pre-formatted by the
+    /// caller; this never computes anything itself.
+    ///
+    /// `readonly: true` here is a SECOND, independent layer on top of the
+    /// render layer's own non-interactivity: it feeds the pre-existing
+    /// `!prop.readonly` filters `PrimitiveTemplate::from_primitive` and
+    /// `DrawingManager::save_last_style_for_primitive` already apply to
+    /// every readonly row, so a stat block is excluded from a saved
+    /// template's/last-used-style's own captured properties for free —
+    /// never the mechanism a click is blocked by (see `PropertyType::Stat`'s
+    /// own doc).
+    ///
+    /// `name` is the row's own SEARCH text (`primitive_settings.rs`'s
+    /// `search_matches`), not a caption drawn anywhere — the block draws
+    /// each row's own `StatRow::label`, never a single top-level name — so
+    /// this joins every row's label into one substring-searchable string.
+    pub fn stat_block(id: &str, rows: Vec<StatRow>) -> Self {
+        let name = rows.iter().map(|r| r.label.as_str()).collect::<Vec<_>>().join(" · ");
+        Self {
+            id: id.to_string(),
+            name,
+            prop_type: PropertyType::Stat { rows: rows.clone() },
+            value: PropertyValue::Stat(rows),
+            category: PropertyCategory::AppearanceStats,
+            order: 0,
+            readonly: true,
             tooltip: None,
             group: None,
         }
@@ -2187,33 +2339,6 @@ impl ConfigProperty {
     /// Create "Target Zone Color" color property with i18n (long/short position)
     pub fn target_zone_color(value: &str) -> Self {
         Self::color("target_color", ConfigKey::TargetZoneColor.get(current_language()), value)
-    }
-
-    /// Create the Position "Risk" read-only computed stat row (long/short
-    /// position) — its own trailing Appearance group, see
-    /// `PropertyCategory::AppearanceStats`. `value` is pre-formatted by the
-    /// caller (`fmt_price`), the same number already shown on the
-    /// primitive's own on-chart label.
-    pub fn position_risk_stat(value: &str) -> Self {
-        Self::text("stat_risk", ConfigKey::PositionRiskLabel.get(current_language()), value)
-            .with_category(PropertyCategory::AppearanceStats)
-            .readonly()
-    }
-
-    /// Create the Position "Target" read-only computed stat row — the
-    /// reward distance (entry to take-profit), matching `position_risk_stat`.
-    pub fn position_target_stat(value: &str) -> Self {
-        Self::text("stat_target", ConfigKey::PositionTargetLabel.get(current_language()), value)
-            .with_category(PropertyCategory::AppearanceStats)
-            .readonly()
-    }
-
-    /// Create the Position "R:R" read-only computed stat row — the
-    /// risk/reward ratio, matching `position_risk_stat`.
-    pub fn position_risk_reward_stat(value: &str) -> Self {
-        Self::text("stat_risk_reward", ConfigKey::PositionRiskRewardLabel.get(current_language()), value)
-            .with_category(PropertyCategory::AppearanceStats)
-            .readonly()
     }
 
     /// Create "Show Price Diff" boolean property with i18n (measurement rulers).

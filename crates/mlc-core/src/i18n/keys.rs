@@ -3005,10 +3005,18 @@ pub enum ConceptKey {
     // `Comment::render`'s own doc. Gated behind this single toggle,
     // defaulting off so no existing drawing changes.
     ShowAuthorTimestamp = 337,
+
+    // ---- Measurement's own computed-stat block (W4, 2026-08-17) — the
+    // elapsed-time row `DateRange`/`PriceDateRange` show in their own
+    // read-only Result block. `PriceChange`/`PercentUnit` (86/73) already
+    // cover the other two rows; only the bare "Duration" noun was missing
+    // (`ShowDuration` = 91 is the CHECKBOX label, "Show Duration" — reusing
+    // it for the row itself would read as a control, not a value).
+    Duration = 338,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 338;
+    pub const COUNT: usize = 339;
 
     /// Get translation for this key.
     #[inline]

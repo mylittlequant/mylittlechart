@@ -8,7 +8,7 @@ use super::super::{
     HIT_TOLERANCE, point_to_line_distance,
     RenderContext, crisp, LineStyle,
     render_primitive_text, fmt_price,
-    config::{LabelStyle, PositionDisplayUnit, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
+    config::{LabelStyle, PositionDisplayUnit, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, StatRow, POSITION_RESULT_STATS_ID},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -80,6 +80,25 @@ impl LongPosition {
         let risk = (self.entry_price - self.stop_loss).abs();
         let reward = (self.take_profit - self.entry_price).abs();
         if risk > 0.0 { reward / risk } else { 0.0 }
+    }
+
+    /// The read-only Risk/Target/R:R stat block's own rows — the pure
+    /// decision `style_properties()` wraps into a declared property
+    /// (`ConfigProperty::stat_block`). Reads through the SAME
+    /// `format_result`/`risk_reward` this primitive's own `render` uses for
+    /// the identical Stop/Target text, so the modal and the chart can never
+    /// disagree about the number. `scale_by_quantity: false` throughout —
+    /// matches the pre-W4 stat block's own call shape (see
+    /// `format_result`'s own doc): the read-only summary reads per-unit,
+    /// unlike the on-chart labels.
+    pub fn result_stat_rows(&self) -> Vec<StatRow> {
+        let risk_per_unit = (self.entry_price - self.stop_loss).abs();
+        let reward_per_unit = (self.take_profit - self.entry_price).abs();
+        vec![
+            StatRow::position_risk(&self.format_result(risk_per_unit, false)),
+            StatRow::position_target(&self.format_result(reward_per_unit, false)),
+            StatRow::position_risk_reward(&format!("{:.2}", self.risk_reward())),
+        ]
     }
 
     /// One RESULT figure — the Risk/Target amounts and the live P&L
@@ -452,14 +471,6 @@ impl Primitive for LongPosition {
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
-        // Risk/reward, recomputed fresh every call (this method runs once
-        // per frame — see `PropertyCategory::AppearanceStats`'s own doc) so
-        // the three read-only rows below always match the live entry/stop/
-        // target points, the same numbers `render`'s own on-chart label
-        // shows via the identical formulas.
-        let risk_per_unit = (self.entry_price - self.stop_loss).abs();
-        let reward_per_unit = (self.take_profit - self.entry_price).abs();
-
         let mut props = vec![
             // `PropertyGroup::Display` (W4) — the approved position
             // archetype's own `DisplayGroupTitle` group's own pills row,
@@ -520,10 +531,11 @@ impl Primitive for LongPosition {
             // `PropertyGroup::Result` (W2) — the approved design's own
             // `ResultGroupTitle` (singular "Result"/"Результат"), distinct
             // wording from the pre-existing default `AppearanceStats`
-            // header (`ConfigKey::GroupResults`, plural).
-            ConfigProperty::position_risk_stat(&self.format_result(risk_per_unit, false)).with_order(90).in_group(PropertyGroup::Result),
-            ConfigProperty::position_target_stat(&self.format_result(reward_per_unit, false)).with_order(91).in_group(PropertyGroup::Result),
-            ConfigProperty::position_risk_reward_stat(&format!("{:.2}", self.risk_reward())).with_order(92).in_group(PropertyGroup::Result),
+            // header (`ConfigKey::GroupResults`, plural). W4: the three
+            // separate readonly rows became ONE stat BLOCK — see
+            // `Self::result_stat_rows`'s own doc.
+            ConfigProperty::stat_block(POSITION_RESULT_STATS_ID, self.result_stat_rows())
+                .with_order(90).in_group(PropertyGroup::Result),
         ];
         props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::PositionLabels));
         props
@@ -531,6 +543,14 @@ impl Primitive for LongPosition {
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
+            // The computed Risk/Target/R:R stat block is declared
+            // `readonly` (`style_properties`'s own
+            // `ConfigProperty::stat_block(POSITION_RESULT_STATS_ID, ...)`
+            // call, fed by `Self::result_stat_rows`) and carries no field
+            // of its own to write — explicit rejection here, not merely
+            // the absence of a matching arm, so a future edit near this
+            // match can never accidentally start honouring the id.
+            POSITION_RESULT_STATS_ID => {}
             "display_unit" => {
                 if let Some(s) = value.as_string() { self.display_unit = PositionDisplayUnit::from_str(s); return true; }
             }
@@ -668,5 +688,85 @@ mod display_unit_result_tests {
         pos.display_unit = PositionDisplayUnit::Percent;
         assert_eq!(pos.signed_result(10.0, false), "+10.00%");
         assert_eq!(pos.signed_result(-10.0, false), "-10.00%");
+    }
+}
+
+#[cfg(test)]
+mod stat_block_tests {
+    use super::*;
+    use crate::drawing::primitives_v2::config::Tone;
+
+    fn sample() -> LongPosition {
+        // entry 100, stop 90 (risk 10/unit), target 130 (reward 30/unit).
+        LongPosition::new(0, 100.0, 90.0, 130.0, 3_600_000, "#4CAF50")
+    }
+
+    /// `result_stat_rows` reads through the SAME `format_result`/
+    /// `risk_reward` the on-chart Stop/Target labels use — the values must
+    /// match byte for byte, for both display units.
+    #[test]
+    fn rows_match_the_on_chart_figures_under_currency() {
+        let pos = sample();
+        let rows = pos.result_stat_rows();
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].value, pos.format_result(10.0, false));
+        assert_eq!(rows[1].value, pos.format_result(30.0, false));
+        assert_eq!(rows[2].value, format!("{:.2}", pos.risk_reward()));
+        assert_eq!(rows[2].value, "3.00");
+    }
+
+    #[test]
+    fn rows_match_the_on_chart_figures_under_percent() {
+        let mut pos = sample();
+        pos.display_unit = PositionDisplayUnit::Percent;
+        let rows = pos.result_stat_rows();
+        assert_eq!(rows[0].value, "10.00%");
+        assert_eq!(rows[1].value, "30.00%");
+        assert_eq!(rows[2].value, "3.00", "the ratio itself is unit-independent");
+    }
+
+    /// Tone matches the approved design (`mlc-ui-lab`'s `spec.rs`
+    /// `position_tabs()`): risk is `Bad`, target is `Good`, the ratio is
+    /// untoned.
+    #[test]
+    fn tones_match_the_approved_design() {
+        let rows = sample().result_stat_rows();
+        assert_eq!(rows[0].tone, Some(Tone::Bad));
+        assert_eq!(rows[1].tone, Some(Tone::Good));
+        assert_eq!(rows[2].tone, None);
+    }
+
+    /// The stat block is declared `readonly` and lands in the Result group.
+    #[test]
+    fn declared_property_is_readonly_and_in_result_group() {
+        let prop = ConfigProperty::stat_block(POSITION_RESULT_STATS_ID, sample().result_stat_rows())
+            .with_order(90).in_group(PropertyGroup::Result);
+        assert!(prop.readonly);
+        assert_eq!(prop.group, Some(PropertyGroup::Result));
+        assert_eq!(prop.id, POSITION_RESULT_STATS_ID);
+    }
+
+    /// Sending the stat block's own id through the exact same apply path a
+    /// click would reach — `apply_style_property` — does nothing: returns
+    /// `false` and leaves every field byte-for-byte unchanged, for every
+    /// `PropertyValue` shape a caller might try.
+    #[test]
+    fn apply_style_property_rejects_the_stat_block_id() {
+        let before = sample();
+        for value in [
+            PropertyValue::String("hacked".to_string()),
+            PropertyValue::Number(999.0),
+            PropertyValue::Boolean(true),
+            PropertyValue::Color("#ff0000".to_string()),
+        ] {
+            let mut pos = sample();
+            let applied = pos.apply_style_property(POSITION_RESULT_STATS_ID, &value);
+            assert!(!applied, "stat block id must never report as applied");
+            assert_eq!(pos.entry_price, before.entry_price);
+            assert_eq!(pos.stop_loss, before.stop_loss);
+            assert_eq!(pos.take_profit, before.take_profit);
+            assert_eq!(pos.quantity, before.quantity);
+            assert_eq!(pos.display_unit, before.display_unit);
+        }
     }
 }
