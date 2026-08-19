@@ -1034,4 +1034,59 @@ mod tests {
             assert_ne!(preset.values, MAIN_LEVELS, "time zones must not borrow retracement's ratios");
         }
     }
+    /// Every registered type must offer at least one system template, and a
+    /// type that owns no level-set catalogue of its own must offer EXACTLY
+    /// the single default row — the owner's rule, 2026-08-20: a template
+    /// menu is for a tool that really has named ladders, and everywhere
+    /// else one default is the whole menu.
+    ///
+    /// Registry-wide rather than per type on purpose: the failure this
+    /// guards against is a type added later that silently reaches the
+    /// template menu with nothing in it, or one that grows a second row
+    /// without a catalogue behind it. Both are invisible until someone
+    /// opens that one type's own modal.
+    #[test]
+    fn every_registered_type_offers_its_default_template() {
+        use crate::drawing::primitives_v2::registry::PrimitiveRegistry;
+
+        let reg = PrimitiveRegistry::global().read().unwrap();
+        let pts: Vec<(i64, f64)> = (0..9).map(|i| (1_000 + i as i64 * 1_000, 100.0 + i as f64 * 5.0)).collect();
+
+        let mut missing: Vec<String> = Vec::new();
+        let mut wrong_default: Vec<String> = Vec::new();
+        let mut with_catalogue = 0usize;
+        let mut default_only = 0usize;
+
+        let mut ids: Vec<&str> = reg.all().map(|m| m.type_id).collect();
+        ids.sort_unstable();
+
+        for id in ids {
+            let Some(prim) = reg.create(id, &pts, None) else { continue };
+            let rows = PrimitiveTemplate::system_templates(prim.as_ref());
+            if rows.is_empty() {
+                missing.push(id.to_string());
+                continue;
+            }
+            let presets = prim.level_set_presets();
+            if presets.is_empty() {
+                default_only += 1;
+                if rows.len() != 1 || rows[0].id != "standard" {
+                    wrong_default.push(format!(
+                        "{id}: no level-set catalogue, yet offers {} rows ({:?})",
+                        rows.len(),
+                        rows.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+                    ));
+                }
+            } else {
+                with_catalogue += 1;
+                assert_eq!(rows.len(), presets.len(), "{id}: one row per preset it declares");
+            }
+        }
+
+        assert!(missing.is_empty(), "types with no system template at all: {missing:?}");
+        assert!(wrong_default.is_empty(), "{}", wrong_default.join("
+"));
+        assert!(default_only > 0 && with_catalogue > 0, "fixture reached both branches: {default_only} default-only, {with_catalogue} with a catalogue");
+    }
+
 }
