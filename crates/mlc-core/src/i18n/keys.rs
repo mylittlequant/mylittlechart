@@ -3013,10 +3013,29 @@ pub enum ConceptKey {
     // (`ShowDuration` = 91 is the CHECKBOX label, "Show Duration" — reusing
     // it for the row itself would read as a control, not a value).
     Duration = 338,
+
+    // ---- Regression trend real fit (2026-08-23, "the defect" pass —
+    // `RegressionSource`/`RegressionPeriodMode` in
+    // `channels/regression_trend.rs`) — the Calculation group's own
+    // source-dropdown option labels, same seven-value vocabulary
+    // `mlc-backend-indicator-engine`'s `IndicatorParamType::source_options()`
+    // gives an indicator's own source picker (`close`/`open`/`high`/`low`/
+    // `hl2`/`hlc3`/`ohlc4`) — `mlc-core` cannot depend on that engine crate
+    // (types → engines in the crate contract), so the vocabulary is
+    // reproduced, not imported. Plus the Period dropdown's second option —
+    // `ByPoints` (155) already names the first.
+    SourceClose = 339,
+    SourceOpen = 340,
+    SourceHigh = 341,
+    SourceLow = 342,
+    SourceHl2 = 343,
+    SourceHlc3 = 344,
+    SourceOhlc4 = 345,
+    ByBarCount = 346,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 339;
+    pub const COUNT: usize = 347;
 
     /// Get translation for this key.
     #[inline]

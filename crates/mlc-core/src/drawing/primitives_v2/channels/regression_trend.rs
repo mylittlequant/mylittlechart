@@ -1,11 +1,23 @@
 //! Regression Trend primitive
 //!
-//! A linear regression channel with a center line calculated from price data
-//! and parallel lines at standard deviation distances.
+//! A linear regression channel: the centre line is a least-squares fit of
+//! `source` price against bar index, over the bars inside the span the
+//! analyst dragged (or, in [`RegressionPeriodMode::BarCount`], a fixed
+//! lookback ending at the later anchor) — see [`RegressionTrend::fit`], the
+//! ONE place this computation happens. The two sigma bands are drawn at
+//! `std_dev_mult` standard deviations of the fit's own residuals, not a
+//! fixed price offset — see [`RegressionFit::residual_std_dev`].
+//!
+//! Before this pass the "fit" was a straight segment between the two
+//! dragged points plus a made-up offset (`(price_range * 0.15).max(...)`,
+//! see git history) — never handed the bars, so nothing about it was
+//! computed from price data despite the name. `render`/`hit_test` both
+//! read [`RegressionTrend::fit`] for their geometry, so the drawn line and
+//! the hit-testable line can never disagree.
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
-use crate::i18n::{SettingsKey, current_language};
+use crate::i18n::{ConceptKey, ModalKey, SettingsKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
@@ -15,9 +27,183 @@ use super::super::{
     extend_segment_to_edges,
     RenderContext, crisp,
     render_primitive_text_rotated, calculate_line_text_params,
-    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, SelectOption},
     AREA_FILL_OPACITY, default_area_fill_opacity,
 };
+
+/// The price series [`RegressionTrend::fit`] least-squares-regresses
+/// against bar index. Same seven-value vocabulary
+/// `mlc-backend-indicator-engine`'s own
+/// `IndicatorParamType::source_options()` gives an indicator's own source
+/// picker (`managers/indicator_manager.rs`: `&["close", "open", "high",
+/// "low", "hl2", "hlc3", "ohlc4"]`) — reproduced here rather than imported:
+/// `mlc-core` sits at the bottom of the crate graph (types → engines →
+/// backend → app → shells, this repo's `CLAUDE.md` crate-contract table),
+/// and that indicator crate is one of the engines above it, so a
+/// dependency the other way does not exist. The wire strings match byte
+/// for byte, so a value round-trips identically through either vocabulary.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum RegressionSource {
+    #[default]
+    Close,
+    Open,
+    High,
+    Low,
+    Hl2,
+    Hlc3,
+    Ohlc4,
+}
+
+impl RegressionSource {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Close => "close",
+            Self::Open => "open",
+            Self::High => "high",
+            Self::Low => "low",
+            Self::Hl2 => "hl2",
+            Self::Hlc3 => "hlc3",
+            Self::Ohlc4 => "ohlc4",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "open" => Self::Open,
+            "high" => Self::High,
+            "low" => Self::Low,
+            "hl2" => Self::Hl2,
+            "hlc3" => Self::Hlc3,
+            "ohlc4" => Self::Ohlc4,
+            _ => Self::Close,
+        }
+    }
+
+    /// This source's own price for one bar — `hl2`/`hlc3`/`ohlc4` average
+    /// the same OHLC fields the identically-named indicator options do.
+    pub fn price(&self, bar: &Bar) -> f64 {
+        match self {
+            Self::Close => bar.close,
+            Self::Open => bar.open,
+            Self::High => bar.high,
+            Self::Low => bar.low,
+            Self::Hl2 => (bar.high + bar.low) / 2.0,
+            Self::Hlc3 => (bar.high + bar.low + bar.close) / 3.0,
+            Self::Ohlc4 => (bar.open + bar.high + bar.low + bar.close) / 4.0,
+        }
+    }
+
+    fn select_options() -> Vec<SelectOption> {
+        let lang = current_language();
+        vec![
+            SelectOption::new(Self::Close.as_str(), ConceptKey::SourceClose.get(lang)),
+            SelectOption::new(Self::Open.as_str(), ConceptKey::SourceOpen.get(lang)),
+            SelectOption::new(Self::High.as_str(), ConceptKey::SourceHigh.get(lang)),
+            SelectOption::new(Self::Low.as_str(), ConceptKey::SourceLow.get(lang)),
+            SelectOption::new(Self::Hl2.as_str(), ConceptKey::SourceHl2.get(lang)),
+            SelectOption::new(Self::Hlc3.as_str(), ConceptKey::SourceHlc3.get(lang)),
+            SelectOption::new(Self::Ohlc4.as_str(), ConceptKey::SourceOhlc4.get(lang)),
+        ]
+    }
+}
+
+/// How [`RegressionTrend::fit`] chooses its own bar WINDOW — the design's
+/// "Period" dropdown (`regression_tabs()`'s Calculation group,
+/// `ConceptKey::Period` / `ConceptKey::ByPoints`).
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum RegressionPeriodMode {
+    /// Fit over every bar between the two dragged anchors — dragging IS
+    /// the period control. Matches the design's own default value.
+    #[default]
+    Points,
+    /// Fit over the last `bar_count` bars ending at whichever anchor sits
+    /// later (by bar index), ignoring the earlier anchor's own position.
+    BarCount,
+}
+
+impl RegressionPeriodMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Points => "points",
+            Self::BarCount => "bar_count",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "bar_count" => Self::BarCount,
+            _ => Self::Points,
+        }
+    }
+
+    fn select_options() -> Vec<SelectOption> {
+        let lang = current_language();
+        vec![
+            SelectOption::new(Self::Points.as_str(), ConceptKey::ByPoints.get(lang)),
+            SelectOption::new(Self::BarCount.as_str(), ConceptKey::ByBarCount.get(lang)),
+        ]
+    }
+}
+
+/// The result of least-squares-regressing `source` price against bar
+/// index, over the bars `period_mode` selects — see
+/// [`RegressionTrend::fit`].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RegressionFit {
+    /// Price change per bar.
+    pub slope: f64,
+    /// Fitted price at bar index 0 — evaluate at any bar index through
+    /// [`Self::price_at`] rather than reading this directly.
+    pub intercept: f64,
+    /// Coefficient of determination, in `[0, 1]`. `0.0` when the window
+    /// holds fewer than two bars — nothing for a line to explain.
+    pub r_squared: f64,
+    /// Population standard deviation of the fit's own residuals — the
+    /// unit `std_dev_mult` scales to draw the sigma bands.
+    pub residual_std_dev: f64,
+}
+
+impl RegressionFit {
+    /// The fitted price at any bar index. Negative or beyond the fit's own
+    /// window extrapolates the SAME line — exactly what `extend_left`/
+    /// `extend_right`, and a `BarCount`-mode window narrower than the
+    /// drawn span, both need.
+    pub fn price_at(&self, bar_idx: f64) -> f64 {
+        self.intercept + self.slope * bar_idx
+    }
+}
+
+/// Ordinary least squares of `ys` against `xs`, paired by index. Fewer
+/// than two points has no line to fit: `intercept` holds the lone price
+/// (or `0.0` for an empty window), every other field `0.0`.
+fn least_squares_fit(xs: &[f64], ys: &[f64]) -> RegressionFit {
+    if xs.len() < 2 {
+        return RegressionFit { intercept: ys.first().copied().unwrap_or(0.0), ..Default::default() };
+    }
+    let n = xs.len() as f64;
+    let mean_x = xs.iter().sum::<f64>() / n;
+    let mean_y = ys.iter().sum::<f64>() / n;
+
+    let mut covariance = 0.0;
+    let mut variance_x = 0.0;
+    for (&x, &y) in xs.iter().zip(ys) {
+        covariance += (x - mean_x) * (y - mean_y);
+        variance_x += (x - mean_x).powi(2);
+    }
+    let slope = if variance_x > 0.0 { covariance / variance_x } else { 0.0 };
+    let intercept = mean_y - slope * mean_x;
+
+    let mut ss_res = 0.0;
+    let mut ss_tot = 0.0;
+    for (&x, &y) in xs.iter().zip(ys) {
+        ss_res += (y - (intercept + slope * x)).powi(2);
+        ss_tot += (y - mean_y).powi(2);
+    }
+    let r_squared = if ss_tot > 0.0 { (1.0 - ss_res / ss_tot).clamp(0.0, 1.0) } else { 1.0 };
+    let residual_std_dev = (ss_res / n).sqrt();
+
+    RegressionFit { slope, intercept, r_squared, residual_std_dev }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct RegressionTrend {
@@ -42,10 +228,28 @@ pub struct RegressionTrend {
     pub extend_left: bool,
     #[serde(default)]
     pub extend_right: bool,
+    /// The price series the fit regresses against bar index — see
+    /// [`RegressionSource`]'s own doc. Absent from every drawing saved
+    /// before this field existed; defaults to `Close`.
+    #[serde(default)]
+    pub source: RegressionSource,
+    /// How the fit's own bar window is chosen — see
+    /// [`RegressionPeriodMode`]'s own doc. Absent from every drawing saved
+    /// before this field existed; defaults to `Points`, which reproduces
+    /// exactly the span the two dragged anchors already describe.
+    #[serde(default)]
+    pub period_mode: RegressionPeriodMode,
+    /// Bar count for [`RegressionPeriodMode::BarCount`] — inert under
+    /// `Points`. Absent from every drawing saved before this field
+    /// existed; defaults to 120, matching the approved design's own demo
+    /// value.
+    #[serde(default = "default_bar_count")]
+    pub bar_count: f64,
 }
 
 fn default_true() -> bool { true }
 fn default_std_dev() -> f64 { 2.0 }
+fn default_bar_count() -> f64 { 120.0 }
 
 impl RegressionTrend {
     pub fn new(ts1: i64, price1: f64, ts2: i64, price2: f64, color: &str) -> Self {
@@ -65,12 +269,43 @@ impl RegressionTrend {
             fill_opacity: AREA_FILL_OPACITY,
             extend_left: false,
             extend_right: false,
+            source: RegressionSource::default(),
+            period_mode: RegressionPeriodMode::default(),
+            bar_count: default_bar_count(),
         }
     }
 
-    pub fn channel_offset(&self) -> f64 {
-        let price_range = (self.price2 - self.price1).abs();
-        (price_range * 0.15).max(self.price1 * 0.02) * self.std_dev_mult / 2.0
+    /// The absolute bar-index range [`Self::fit`] feeds to
+    /// [`least_squares_fit`] — see [`RegressionPeriodMode`]'s own doc for
+    /// what each mode selects. `None` when `bars` is empty.
+    fn fit_window(&self, bars: &[Bar]) -> Option<(usize, usize)> {
+        if bars.is_empty() {
+            return None;
+        }
+        let last = bars.len() - 1;
+        let bar1 = timestamp_ms_to_bar_f64(bars, self.ts1).round().clamp(0.0, last as f64) as usize;
+        let bar2 = timestamp_ms_to_bar_f64(bars, self.ts2).round().clamp(0.0, last as f64) as usize;
+        let (lo, hi) = (bar1.min(bar2), bar1.max(bar2));
+        match self.period_mode {
+            RegressionPeriodMode::Points => Some((lo, hi)),
+            RegressionPeriodMode::BarCount => {
+                let count = (self.bar_count.round().max(2.0) as usize).min(hi + 1);
+                Some((hi + 1 - count, hi))
+            }
+        }
+    }
+
+    /// Least-squares fit of `source` against bar index (the bar's own
+    /// position in `bars`), over the window [`Self::fit_window`] selects —
+    /// the ONE computation `render`, `hit_test` and (once wired, see
+    /// `style_properties`'s own doc) any reported metric all read. Bar
+    /// index rather than timestamp so [`RegressionFit::price_at`] composes
+    /// directly with [`timestamp_ms_to_bar_f64`].
+    pub fn fit(&self, bars: &[Bar]) -> RegressionFit {
+        let Some((start, end)) = self.fit_window(bars) else { return RegressionFit::default() };
+        let xs: Vec<f64> = (start..=end).map(|i| i as f64).collect();
+        let ys: Vec<f64> = (start..=end).map(|i| self.source.price(&bars[i])).collect();
+        least_squares_fit(&xs, &ys)
     }
 }
 
@@ -120,14 +355,11 @@ impl Primitive for RegressionTrend {
         let bar2 = timestamp_ms_to_bar_f64(bars, self.ts2);
         let x1 = viewport.bar_to_x_f64(bar1);
         let x2 = viewport.bar_to_x_f64(bar2);
+        // The two draggable handles and the Move handle stay exactly where
+        // the analyst dropped them — raw `price1`/`price2`, never the fit
+        // (see `control_points`'s own doc for why).
         let y1 = viewport.price_to_y(self.price1, price_scale.price_min, price_scale.price_max);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
-
-        let offset = self.channel_offset();
-        let upper_y1 = viewport.price_to_y(self.price1 + offset, price_scale.price_min, price_scale.price_max);
-        let upper_y2 = viewport.price_to_y(self.price2 + offset, price_scale.price_min, price_scale.price_max);
-        let lower_y1 = viewport.price_to_y(self.price1 - offset, price_scale.price_min, price_scale.price_max);
-        let lower_y2 = viewport.price_to_y(self.price2 - offset, price_scale.price_min, price_scale.price_max);
 
         if check_point_hit(screen_x, screen_y, x1, y1) { return HitTestResult::ControlPoint(ControlPointType::Point1); }
         if check_point_hit(screen_x, screen_y, x2, y2) { return HitTestResult::ControlPoint(ControlPointType::Point2); }
@@ -135,9 +367,22 @@ impl Primitive for RegressionTrend {
         let cx = (x1 + x2) / 2.0; let cy = (y1 + y2) / 2.0;
         if check_point_hit(screen_x, screen_y, cx, cy) { return HitTestResult::ControlPoint(ControlPointType::Move); }
 
+        // The BODY strokes — fitted centre line + sigma bands, exactly what
+        // `render` draws (see the module doc, and `fit`'s own doc).
+        let fit = self.fit(bars);
+        let center_price1 = fit.price_at(bar1);
+        let center_price2 = fit.price_at(bar2);
+        let center_y1 = viewport.price_to_y(center_price1, price_scale.price_min, price_scale.price_max);
+        let center_y2 = viewport.price_to_y(center_price2, price_scale.price_min, price_scale.price_max);
+        let offset = self.std_dev_mult * fit.residual_std_dev;
+        let upper_y1 = viewport.price_to_y(center_price1 + offset, price_scale.price_min, price_scale.price_max);
+        let upper_y2 = viewport.price_to_y(center_price2 + offset, price_scale.price_min, price_scale.price_max);
+        let lower_y1 = viewport.price_to_y(center_price1 - offset, price_scale.price_min, price_scale.price_max);
+        let lower_y2 = viewport.price_to_y(center_price2 - offset, price_scale.price_min, price_scale.price_max);
+
         // Reach exactly as far as `render` draws — all three lines share
         // `ts1`/`ts2`, so their extended x-coordinates always agree.
-        let (cx1, cy1, cx2, cy2) = extend_segment_to_edges(x1, y1, x2, y2, self.extend_left, self.extend_right, viewport.chart_width);
+        let (cx1, cy1, cx2, cy2) = extend_segment_to_edges(x1, center_y1, x2, center_y2, self.extend_left, self.extend_right, viewport.chart_width);
         let (eu_x1, eu_y1, eu_x2, eu_y2) = extend_segment_to_edges(x1, upper_y1, x2, upper_y2, self.extend_left, self.extend_right, viewport.chart_width);
         let (el_x1, el_y1, el_x2, el_y2) = extend_segment_to_edges(x1, lower_y1, x2, lower_y2, self.extend_left, self.extend_right, viewport.chart_width);
         if self.show_center && point_to_line_distance(screen_x, screen_y, cx1, cy1, cx2, cy2) < HIT_TOLERANCE { return HitTestResult::Body; }
@@ -151,6 +396,10 @@ impl Primitive for RegressionTrend {
         let bar2 = timestamp_ms_to_bar_f64(bars, self.ts2);
         let x1 = viewport.bar_to_x_f64(bar1);
         let x2 = viewport.bar_to_x_f64(bar2);
+        // Handles read the raw dragged prices, not the fit: they are what
+        // the analyst is holding, and the fit is free to disagree with
+        // them (that disagreement is the whole point of a regression
+        // channel — see the module doc).
         let y1 = viewport.price_to_y(self.price1, price_scale.price_min, price_scale.price_max);
         let y2 = viewport.price_to_y(self.price2, price_scale.price_min, price_scale.price_max);
 
@@ -163,16 +412,29 @@ impl Primitive for RegressionTrend {
 
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
-        let x1 = ctx.ts_to_x_ms(self.ts1);
-        let y1 = ctx.price_to_y(self.price1);
-        let x2 = ctx.ts_to_x_ms(self.ts2);
-        let y2 = ctx.price_to_y(self.price2);
+        let bars = ctx.bars();
+        let fit = self.fit(bars);
+        let bar1 = timestamp_ms_to_bar_f64(bars, self.ts1);
+        let bar2 = timestamp_ms_to_bar_f64(bars, self.ts2);
+        let x1 = ctx.bar_to_x(bar1);
+        let x2 = ctx.bar_to_x(bar2);
 
-        let offset = self.channel_offset();
-        let upper_y1 = ctx.price_to_y(self.price1 + offset);
-        let upper_y2 = ctx.price_to_y(self.price2 + offset);
-        let lower_y1 = ctx.price_to_y(self.price1 - offset);
-        let lower_y2 = ctx.price_to_y(self.price2 - offset);
+        // The centre line is the fit evaluated at the two anchors' own bar
+        // index — NOT the raw `price1`/`price2` the analyst dropped it at
+        // (see the module doc: this is the actual fix, and the line moves
+        // because of it).
+        let center_price1 = fit.price_at(bar1);
+        let center_price2 = fit.price_at(bar2);
+        let y1 = ctx.price_to_y(center_price1);
+        let y2 = ctx.price_to_y(center_price2);
+
+        // The bands are ± `std_dev_mult` standard deviations of the fit's
+        // own residuals, not a fixed price offset.
+        let offset = self.std_dev_mult * fit.residual_std_dev;
+        let upper_y1 = ctx.price_to_y(center_price1 + offset);
+        let upper_y2 = ctx.price_to_y(center_price2 + offset);
+        let lower_y1 = ctx.price_to_y(center_price1 - offset);
+        let lower_y2 = ctx.price_to_y(center_price2 - offset);
 
         // An extended side draws to the panel edge in that direction — off
         // by default, so an unextended primitive draws the exact same
@@ -241,58 +503,87 @@ impl Primitive for RegressionTrend {
     fn style_properties(&self) -> Vec<ConfigProperty> {
         // Regression archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`):
         // `regression_tabs()` (`mlc-ui-lab`'s `spec.rs`) declares four
-        // groups on the "sigma" subject tab — Calculation, Sigmas, Baseline,
-        // Metrics — plus an Extend group. This primitive's own
+        // groups on the "sigma" subject tab — Calculation, Sigmas,
+        // Baseline, Metrics — plus an Extend group. This primitive's own
         // `archetype()` override already points at `Archetype::Regression`
-        // (see above); this is the first pass that gives it the design's
-        // own named groups instead of one anonymous run.
+        // (see above).
         //
-        // `PropertyGroup::Calculation` (source dropdown / period mode /
-        // bar-count) is not declared: this primitive draws a fixed offset
-        // from `std_dev_mult` (see `channel_offset` above), never an actual
-        // least-squares fit against a price series — there is no source
-        // bar, no sampled window, nothing a "Close/Open/High/Low" or
-        // "bars"/"points" toggle could drive. No backing field exists and
-        // none can be added inside this trait method either: `style_properties(&self)`
-        // is never handed `bars`, so a real fit is a compute-layer change,
-        // not a declarative one.
+        // `PropertyGroup::Calculation` (source / period mode / bar count)
+        // is now declared for real: `Self::fit` least-squares-regresses
+        // `source` price against bar index over the bars `period_mode`
+        // selects (see the module doc and `fit`'s own doc) — the centre
+        // line these three properties feed IS the line `render`/`hit_test`
+        // draw, not a second computation reading them for show.
         //
-        // `PropertyGroup::Sigmas` — the lab's own ratio-style table (one row
-        // per ±1σ/±2σ/±3σ band: multiplier, colour swatch, per-band fill
-        // checkbox) needs a property kind this crate has none of yet (W4).
-        // This primitive only ever tracks ONE band width (`std_dev_mult`)
-        // and one shared fill toggle, not three independent bands, so
-        // there is no honest per-row mapping even once W4 lands — what
-        // DOES have a real single-band equivalent is the group's own
-        // trailing "Fill Opacity" slider and this primitive's existing
-        // `fill` master toggle, both re-homed into this group below rather
-        // than left in the default run.
+        // `PropertyGroup::Sigmas` — the lab's own ratio-style TABLE (one
+        // row per ±1σ/±2σ/±3σ band: multiplier, colour swatch, per-band
+        // fill checkbox — `PropertyType::Table`, landed W4) is still not
+        // declared: this primitive tracks only ONE band width
+        // (`std_dev_mult`) and one shared fill toggle, not three
+        // independent bands, so there is no honest per-row mapping — a
+        // three-band table needs three multiplier/colour/fill fields this
+        // struct does not have, which is a wider redesign than fitting the
+        // line this pass is scoped to. What DOES have a real single-band
+        // equivalent is the group's own trailing "Fill Opacity" slider and
+        // this primitive's existing `fill` master toggle, both re-homed
+        // into this group below rather than left in the default run.
         //
-        // `PropertyGroup::Baseline` — the lab's "Show"/colour/width trio for
-        // the dashed centre line. `show_center` is a real, already-rendered
-        // field (`render`'s own `if self.show_center` branch draws the
-        // dashed line; `hit_test` gates the same way) — declared below.
-        // Colour and width are NOT declared: this primitive has no
-        // baseline-specific stroke of its own, the centre line reuses
-        // `data.color.stroke`/`data.width` — the SAME pair the two sigma
-        // band lines draw with — so there is no independent field a
-        // baseline-only colour/width control could write into without
-        // silently also repainting the bands.
+        // `PropertyGroup::Baseline` — unchanged by this pass: the lab's
+        // "Show"/colour/width trio for the dashed centre line.
+        // `show_center` is a real, already-rendered field (`render`'s own
+        // `if self.show_center` branch draws the dashed line; `hit_test`
+        // gates the same way) — declared below. Colour and width are NOT
+        // declared: this primitive has no baseline-specific stroke of its
+        // own, the centre line reuses `data.color.stroke`/`data.width` —
+        // the SAME pair the two sigma band lines draw with — so there is
+        // no independent field a baseline-only colour/width control could
+        // write into without silently also repainting the bands.
         //
-        // `PropertyGroup::Extend` — `extend_left`/`extend_right` now really
-        // extend all three lines (centre + both sigma bands) to the panel
-        // edge (`render`/`hit_test` above, via `extend_segment_to_edges`),
-        // so this is a real declared toggle rather than the dead field it
-        // used to be.
+        // `PropertyGroup::Extend` — `extend_left`/`extend_right` extend
+        // all three (now fitted) lines to the panel edge
+        // (`render`/`hit_test` above, via `extend_segment_to_edges`).
         //
         // The Metrics group (`ShowSlope`/`ShowRSquared` toggles + the
-        // Slope/R² stat rows) is left out ENTIRELY: the two stat rows need
-        // a computed-stat block, a property kind that does not exist (W4),
-        // and even with that kind built there is nothing to compute from —
-        // this primitive has no linear-regression fit at all (see the
-        // Calculation note above), so the two toggles that would gate that
-        // computed display have no backing field or compute path either.
+        // Slope/R² stat rows) is STILL left out — but for a different
+        // reason than before this pass. The fit now genuinely exists
+        // (`Self::fit`) and a stat block for it would read through the
+        // SAME computation `render`/`hit_test` use, exactly the discipline
+        // `ConfigProperty::stat_block` requires elsewhere in this crate
+        // (see `long_position.rs`'s `result_stat_rows`). The blocker is
+        // plumbing, not computation: `style_properties(&self)` is never
+        // handed `bars`, and every trait method that IS handed bars —
+        // `render`, `hit_test`, `control_points` — takes `&self`, not
+        // `&mut self`, so none of them can write a result into a cache
+        // this method could then read.
+        //
+        // This codebase already solves that exact shape of problem once:
+        // Elliott's `context_violations`/`subdivided_slots`/
+        // `label_collisions` are `#[serde(skip)]` caches on the struct,
+        // filled by an OWNER sweep (`mlc-backend`'s
+        // `crate::bubble::wave_guards::refresh_wave_guards`, called with
+        // `&mut DataBubble` after every structural mutation — drag end,
+        // insertion, chain promotion, …) and read back through a plain
+        // trait getter. It has no non-Elliott counterpart: that sweep
+        // itself filters to `p.wave_degree().is_some()` and never touches
+        // `bars` at all (Elliott's violations are computed from sibling
+        // PRIMITIVES, not price data), and no other sweep in `mlc-backend`
+        // walks a bubble's primitives with both `&mut self` and `&[Bar]`
+        // in hand. What this primitive would need is a generic,
+        // owner-triggered pass — after a structural mutation AND after a
+        // bar-data update, since a regression fit (unlike an Elliott rule)
+        // changes when new bars arrive even with no drawing edited at all
+        // — that gives every primitive `(&mut self, &[Bar])` at least
+        // once. That is a real addition to `mlc-backend`, sized for its
+        // own change, not a one-off second plumbing path invented here for
+        // this primitive alone. Until it exists, the fit and the drawing
+        // stand without a reported Slope/R².
         vec![
+            ConfigProperty::select("source", ModalKey::AlertSource.get(current_language()), self.source.as_str(), RegressionSource::select_options())
+                .with_category(PropertyCategory::AppearanceLine).with_order(5).in_group(PropertyGroup::Calculation),
+            ConfigProperty::select("period_mode", ConceptKey::Period.get(current_language()), self.period_mode.as_str(), RegressionPeriodMode::select_options())
+                .with_category(PropertyCategory::AppearanceLine).with_order(6).in_group(PropertyGroup::Calculation),
+            ConfigProperty::number("bar_count", ConceptKey::BarCount.get(current_language()), self.bar_count, Some(2.0), None)
+                .with_category(PropertyCategory::AppearanceLine).with_order(7).in_group(PropertyGroup::Calculation),
             ConfigProperty::fill(self.fill).with_category(PropertyCategory::AppearanceFill).with_order(20).in_group(PropertyGroup::Sigmas),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_category(PropertyCategory::AppearanceFill).with_order(21).in_group(PropertyGroup::Sigmas),
             ConfigProperty::boolean("show_center", SettingsKey::Show.get(current_language()), self.show_center)
@@ -304,6 +595,9 @@ impl Primitive for RegressionTrend {
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
+            "source" => { if let Some(s) = value.as_string() { self.source = RegressionSource::from_str(s); return true; } }
+            "period_mode" => { if let Some(s) = value.as_string() { self.period_mode = RegressionPeriodMode::from_str(s); return true; } }
+            "bar_count" => { if let Some(v) = value.as_number() { self.bar_count = v.max(2.0); return true; } }
             "fill" => { if let Some(v) = value.as_bool() { self.fill = v; return true; } }
             "fill_opacity" => { if let Some(v) = value.as_number() { self.fill_opacity = (v / 100.0).clamp(0.0, 1.0); return true; } }
             "show_center" => { if let Some(v) = value.as_bool() { self.show_center = v; return true; } }
@@ -357,6 +651,13 @@ mod extend_tests {
     /// resolves to `Body` once `extend_left` is on, because `hit_test` now
     /// tests the SAME extended segment `render` draws
     /// (`extend_segment_to_edges`).
+    ///
+    /// `fixture()`'s bars carry a CONSTANT close (100.0 on every bar), so
+    /// the fit's slope is exactly zero and its centre line sits flat at
+    /// price 100 regardless of the anchors' own raw `price1`/`price2` —
+    /// the probe is derived from `channel.fit(&bars)`, the same source
+    /// `hit_test` reads, rather than from the raw anchor prices the
+    /// pre-fit version of this test used.
     #[test]
     fn extend_left_reaches_the_panel_edge_on_the_centre_line() {
         let (bars, viewport, price_scale) = fixture();
@@ -370,9 +671,10 @@ mod extend_tests {
         let bar1 = timestamp_ms_to_bar_f64(&bars, channel.ts1);
         let bar2 = timestamp_ms_to_bar_f64(&bars, channel.ts2);
         let x1 = viewport.bar_to_x_f64(bar1);
-        let y1 = viewport.price_to_y(channel.price1, price_scale.price_min, price_scale.price_max);
         let x2 = viewport.bar_to_x_f64(bar2);
-        let y2 = viewport.price_to_y(channel.price2, price_scale.price_min, price_scale.price_max);
+        let fit = channel.fit(&bars);
+        let y1 = viewport.price_to_y(fit.price_at(bar1), price_scale.price_min, price_scale.price_max);
+        let y2 = viewport.price_to_y(fit.price_at(bar2), price_scale.price_min, price_scale.price_max);
         let (probe_x, probe_y, _, _) = extend_segment_to_edges(x1, y1, x2, y2, true, false, viewport.chart_width);
         assert_eq!(probe_x, 0.0, "the probe sits at the panel's own left edge");
 
@@ -387,5 +689,96 @@ mod extend_tests {
             matches!(extended.hit_test(probe_x, probe_y, &bars, &viewport, &price_scale), HitTestResult::Body),
             "extend_left reaches the same point once the centre line is drawn that far",
         );
+    }
+}
+
+#[cfg(test)]
+mod fit_tests {
+    use super::*;
+
+    /// `bars.len()` bars, timestamp `= i` seconds (so `ts_ms = i * 1000`
+    /// lands exactly on bar `i` — same convention `extend_tests::fixture`
+    /// uses), open/high/low/close all equal to `closes[i]`.
+    fn bars_from(closes: &[f64]) -> Vec<Bar> {
+        closes.iter().enumerate().map(|(i, &c)| Bar::new(i as i64, c, c, c, c)).collect()
+    }
+
+    /// A `RegressionTrend` whose two anchors sit exactly on `bars`' own
+    /// first and last bar, so `RegressionPeriodMode::Points` (the default)
+    /// fits over the WHOLE slice.
+    fn span(bars: &[Bar], color: &str) -> RegressionTrend {
+        let last = (bars.len() - 1) as i64;
+        RegressionTrend::new(0, bars[0].close, last * 1000, bars[bars.len() - 1].close, color)
+    }
+
+    /// A perfectly linear series fits EXACTLY: the least-squares slope is
+    /// the series' own slope, and R² is 1 — no residual at all.
+    #[test]
+    fn perfectly_linear_series_fits_exactly() {
+        let closes: Vec<f64> = (0..6).map(|i| 3.0 + 2.0 * i as f64).collect();
+        let bars = bars_from(&closes);
+        let trend = span(&bars, "#9C27B0");
+        let fit = trend.fit(&bars);
+        assert_eq!(fit.slope, 2.0, "slope = {}", fit.slope);
+        assert!((fit.r_squared - 1.0).abs() < 1e-9, "r_squared = {}", fit.r_squared);
+        assert!(fit.residual_std_dev < 1e-9, "residual_std_dev = {}", fit.residual_std_dev);
+    }
+
+    /// A flat series — every bar the same price — has nothing for a line
+    /// to explain: the least-squares slope is exactly zero.
+    #[test]
+    fn flat_series_fits_zero_slope() {
+        let bars = bars_from(&[100.0; 6]);
+        let trend = span(&bars, "#9C27B0");
+        assert_eq!(trend.fit(&bars).slope, 0.0);
+    }
+
+    /// Hand-computed example: closes `[1, 2, 3, 5]` against bar index
+    /// `[0, 1, 2, 3]`.
+    ///
+    /// Standard OLS: `slope = (nΣxy - ΣxΣy) / (nΣx² - (Σx)²)
+    /// = (4·23 - 6·11) / (4·14 - 36) = 26 / 20 = 1.3`;
+    /// `intercept = ȳ - slope·x̄ = 2.75 - 1.3·1.5 = 0.8`.
+    /// Residuals `[1-0.8, 2-2.1, 3-3.4, 5-4.7] = [0.2, -0.1, -0.4, 0.3]`,
+    /// sum of squares `0.04 + 0.01 + 0.16 + 0.09 = 0.30`, population
+    /// variance `0.30 / 4 = 0.075`.
+    #[test]
+    fn residual_band_matches_hand_computed_values() {
+        let bars = bars_from(&[1.0, 2.0, 3.0, 5.0]);
+        let mut trend = span(&bars, "#9C27B0");
+        trend.std_dev_mult = 2.0;
+        let fit = trend.fit(&bars);
+
+        assert!((fit.slope - 1.3).abs() < 1e-9, "slope = {}", fit.slope);
+        assert!((fit.intercept - 0.8).abs() < 1e-9, "intercept = {}", fit.intercept);
+        let expected_std_dev = (0.30_f64 / 4.0).sqrt();
+        assert!(
+            (fit.residual_std_dev - expected_std_dev).abs() < 1e-9,
+            "residual_std_dev = {}, expected {}", fit.residual_std_dev, expected_std_dev,
+        );
+
+        // The band width `render`/`hit_test` actually draw: `std_dev_mult`
+        // standard deviations of the residuals.
+        let expected_band = trend.std_dev_mult * expected_std_dev;
+        assert!((trend.std_dev_mult * fit.residual_std_dev - expected_band).abs() < 1e-12);
+    }
+
+    /// The price source genuinely changes the fit: a series whose closes
+    /// are flat but whose highs climb produces two different slopes for
+    /// the exact same bars.
+    #[test]
+    fn source_selection_changes_the_fit() {
+        let bars: Vec<Bar> = (0..6).map(|i| Bar::new(i, 100.0, 100.0 + i as f64 * 5.0, 100.0, 100.0)).collect();
+        let mut trend = span(&bars, "#9C27B0");
+
+        trend.source = RegressionSource::Close;
+        let close_fit = trend.fit(&bars);
+        assert_eq!(close_fit.slope, 0.0, "flat close: slope = {}", close_fit.slope);
+
+        trend.source = RegressionSource::High;
+        let high_fit = trend.fit(&bars);
+        assert_eq!(high_fit.slope, 5.0, "climbing high: slope = {}", high_fit.slope);
+
+        assert_ne!(close_fit.slope, high_fit.slope);
     }
 }
