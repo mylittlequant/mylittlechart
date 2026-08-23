@@ -130,8 +130,14 @@ impl Primitive for Arc {
     fn hit_test(&self, screen_x: f64, screen_y: f64, bars: &[Bar], viewport: &Viewport, price_scale: &PriceScale) -> HitTestResult {
         let (cx, cy, radius, end_rad) = self.screen_geometry(bars, viewport, price_scale);
 
+        // `control_points()` below advertises the center as a `Move`
+        // handle (`ControlPoint::move_point`), not `Point1` — arc has no
+        // point distinct from the center to BE `Point1` (`points()`'s
+        // first element is the same center_ts/center_price). Reporting
+        // `Point1` here left a handle whose own advertised coordinate
+        // could never be picked up as itself.
         if check_point_hit(screen_x, screen_y, cx, cy) {
-            return HitTestResult::ControlPoint(ControlPointType::Point1);
+            return HitTestResult::ControlPoint(ControlPointType::Move);
         }
 
         // Point 2 (radius) and point 3 (sweep end) both sit ON the arc

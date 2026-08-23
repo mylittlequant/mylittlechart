@@ -446,7 +446,15 @@ mod hit_test_safety_net {
             .collect();
         let viewport = Viewport {
             view_start: 0.0,
-            bar_spacing: 8.0,
+            // NOT 8.0 — at 8px spacing consecutive control points land
+            // closer together than CONTROL_POINT_HIT_RADIUS, so a click on
+            // one legitimately resolves to its neighbour. That is a fixture
+            // defect, not a hit-test defect: it inflated this test to 164
+            // false-positive mismatches across 121 types (108 of them the
+            // same 3 lines repeated over the 36 emoji glyph ids sharing one
+            // struct). 60px spacing separates every real handle and leaves
+            // 9 genuine mismatches. Do not tidy this back down.
+            bar_spacing: 60.0,
             bar_width_ratio: 0.8,
             chart_width: 1200.0,
             chart_height: 800.0,

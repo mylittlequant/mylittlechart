@@ -276,9 +276,30 @@ pub fn metadata() -> PrimitiveMetadata {
     PrimitiveMetadata {
         type_id: "image", display_name: "Image", kind: PrimitiveKind::Annotation,
         click_behavior: ClickBehavior::SingleClick, tooltip: "Embedded image", icon: "image", default_color: "#607D8B",
+        // Same shape as `emoji::metadata()`'s factory: derive the size from
+        // a second point when the caller supplies one, falling back to the
+        // struct's own defaults otherwise. `Image::new` alone (the previous
+        // body here) ignored `points[1..]` entirely and always used the
+        // hardcoded defaults — on a click_behavior::SingleClick primitive
+        // that matches production (one click, no second point), but it also
+        // meant every non-single-click caller (round-trip/hit-test tests,
+        // which construct from the full fixture) got a size that was never
+        // derived from anything about the chart it draws on. With hourly
+        // bars, `default_radius_ms` (5 minutes) is smaller than one bar
+        // interval, and `timestamp_ms_to_bar_f64` resolves any sub-bar
+        // offset to the SAME bar index — so the horizontal radius collapsed
+        // to exactly 0px and every edge/corner handle pair landed on top of
+        // each other. Routing through `from_points` (already defined on
+        // `Image`, previously dead code — nothing called it) fixes that for
+        // any 2-point construction while leaving the real single-click path
+        // byte-identical: with no second point this resolves to
+        // `(ts1 + default_radius_ms(), p1 + default_radius_price())`, the
+        // exact deltas `Image::new` used to hardcode.
         factory: |points, color| {
-            let (ts, p) = points.first().copied().unwrap_or((0, 100.0));
-            Box::new(Image::new(ts, p, color))
+            let (ts1, p1) = points.first().copied().unwrap_or((0, 100.0));
+            let (ts2, p2) = points.get(1).copied()
+                .unwrap_or((ts1 + default_radius_ms(), p1 + default_radius_price()));
+            Box::new(Image::from_points(ts1, p1, ts2, p2, color))
         },
         supports_text: false,
         has_levels: false,

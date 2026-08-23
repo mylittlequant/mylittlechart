@@ -10,7 +10,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata,
     ControlPoint, ControlPointType, ControlPointCursor,
-    PrimitiveColor, LineStyle, HIT_TOLERANCE, draw_label_plate,
+    PrimitiveColor, LineStyle, HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS, draw_label_plate,
     RenderContext, crisp,
     render_primitive_text_rotated,
     config::{ConfigProperty, PropertyValue, LabelStyle},
@@ -95,13 +95,22 @@ impl Primitive for VerticalLine {
     fn hit_test(
         &self,
         screen_x: f64,
-        _screen_y: f64,
+        screen_y: f64,
         bars: &[Bar],
         viewport: &Viewport,
         _price_scale: &PriceScale,
     ) -> HitTestResult {
         let bar = timestamp_ms_to_bar_f64(bars, self.ts_ms);
         let line_x = viewport.bar_to_x_f64(bar);
+        let move_y = viewport.chart_height / 2.0;
+
+        // The Move handle (below in `control_points()`) sits ON the line
+        // itself, at its midpoint, so it must be tested BEFORE the body's
+        // whole-line check — otherwise the body test always wins first and
+        // the handle can never be grabbed, only the line under it.
+        if check_point_hit(screen_x, screen_y, line_x, move_y) {
+            return HitTestResult::ControlPoint(ControlPointType::Move);
+        }
 
         if (screen_x - line_x).abs() < HIT_TOLERANCE {
             return HitTestResult::Body;
@@ -206,6 +215,10 @@ impl Primitive for VerticalLine {
         }
         false
     }
+}
+
+fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
+    (sx - px).powi(2) + (sy - py).powi(2) <= CONTROL_POINT_HIT_RADIUS.powi(2)
 }
 
 // =============================================================================
