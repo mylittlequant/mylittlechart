@@ -463,3 +463,24 @@ pub fn metadata() -> PrimitiveMetadata {
         has_levels: false,
     }
 }
+
+#[cfg(test)]
+mod bar_derived_cache_default_tests {
+    //! `TrendLine` derives nothing from price data and does not override
+    //! `Primitive::refresh_bar_derived_cache` — the default no-op must
+    //! leave it byte-for-byte untouched, proving the default really is
+    //! inert rather than merely unused by every primitive that happens to
+    //! exist today.
+
+    use super::*;
+
+    #[test]
+    fn default_hook_is_a_true_no_op() {
+        let mut line = TrendLine::new(0, 100.0, 5_000, 110.0, "#2196F3");
+        let bars: Vec<Bar> = (0..6).map(|i| Bar::new(i, 100.0 + i as f64, 101.0 + i as f64, 99.0 + i as f64, 100.0 + i as f64)).collect();
+
+        let before = line.to_json();
+        line.refresh_bar_derived_cache(&bars);
+        assert_eq!(line.to_json(), before, "the default hook must not change any field of a type that overrides nothing");
+    }
+}

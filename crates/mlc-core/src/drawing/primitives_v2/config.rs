@@ -1064,6 +1064,24 @@ impl StatRow {
     pub fn position_risk_reward(value: &str) -> Self {
         Self::new(ConfigKey::PositionRiskRewardLabel.get(current_language()), value, None)
     }
+
+    /// The regression trend's own "Slope" row (`ConceptKey::Slope`) — price
+    /// change per bar, read straight from
+    /// [`crate::drawing::primitives_v2::channels::regression_trend::RegressionFit::slope`].
+    /// Untoned: a slope's sign is direction, not a gain or a loss.
+    pub fn regression_slope(value: &str) -> Self {
+        Self::new(ConceptKey::Slope.get(current_language()), value, None)
+    }
+
+    /// The regression trend's own "R²" row. A literal label, not a
+    /// [`ConceptKey`]: the approved design's own lab spec (`mlc-ui-lab`'s
+    /// `regression_tabs()`, `registry.js`) hardcodes this exact symbol in
+    /// every language row it lists rather than translating it — it names a
+    /// statistic, not a phrase. Untoned: a fit-quality score is
+    /// information, not a gain or a loss.
+    pub fn regression_r_squared(value: &str) -> Self {
+        Self::new("R²", value, None)
+    }
 }
 
 /// One [`PropertyType::Table`] cell. Mirrors `mlc-ui-lab`'s own
@@ -1897,6 +1915,14 @@ pub struct ConfigProperty {
 /// two can never drift into two independently-typed copies of the same
 /// literal.
 pub const POSITION_RESULT_STATS_ID: &str = "position_result_stats";
+
+/// The regression trend archetype's own read-only Slope/R² stat-block id —
+/// same role [`POSITION_RESULT_STATS_ID`] plays for the position archetype:
+/// shared between `RegressionTrend::style_properties()` (which declares
+/// [`ConfigProperty::stat_block`] under this id) and its own
+/// `apply_style_property` explicit reject arm, so the two can never drift
+/// into two independently-typed copies of the same literal.
+pub const REGRESSION_RESULT_STATS_ID: &str = "regression_result_stats";
 
 /// The per-wave custom-label OVERRIDE table's own id — shared by all FIVE
 /// Elliott types' own `style_properties()` (each declares

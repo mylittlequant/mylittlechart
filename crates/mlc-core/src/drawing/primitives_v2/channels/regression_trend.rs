@@ -25,9 +25,9 @@ use super::super::{
     PrimitiveColor, LineStyle,
     point_to_line_distance, HIT_TOLERANCE, CONTROL_POINT_RADIUS, CONTROL_POINT_HIT_RADIUS,
     extend_segment_to_edges,
-    RenderContext, crisp,
+    RenderContext, crisp, fmt_price,
     render_primitive_text_rotated, calculate_line_text_params,
-    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, SelectOption},
+    config::{ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, SelectOption, StatRow, REGRESSION_RESULT_STATS_ID},
     AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 
@@ -245,6 +245,22 @@ pub struct RegressionTrend {
     /// value.
     #[serde(default = "default_bar_count")]
     pub bar_count: f64,
+
+    /// The fit's own cached slope/intercept/R²/residual-std-dev — see
+    /// [`Primitive::refresh_bar_derived_cache`]'s own contract. Filled by
+    /// that hook from the SAME [`Self::fit`] `render`/`hit_test` call
+    /// directly (never a second formula); read back only by
+    /// [`Self::result_stat_rows`] — a `&self`-only reader with no `bars` of
+    /// its own. `render`/`hit_test` never read this field, so a primitive
+    /// the hook has never touched still draws exactly right.
+    ///
+    /// `#[serde(skip)]`: a stale fit surviving a reload/undo would misreport
+    /// a window that no longer matches the primitive's own current points —
+    /// a freshly deserialized primitive starts at [`RegressionFit::default`]
+    /// (matching what `fit(&[])` itself returns) until the owning bubble's
+    /// own bar-derived-cache pass runs at least once.
+    #[serde(skip)]
+    pub cached_fit: RegressionFit,
 }
 
 fn default_true() -> bool { true }
@@ -272,6 +288,7 @@ impl RegressionTrend {
             source: RegressionSource::default(),
             period_mode: RegressionPeriodMode::default(),
             bar_count: default_bar_count(),
+            cached_fit: RegressionFit::default(),
         }
     }
 
@@ -306,6 +323,24 @@ impl RegressionTrend {
         let xs: Vec<f64> = (start..=end).map(|i| i as f64).collect();
         let ys: Vec<f64> = (start..=end).map(|i| self.source.price(&bars[i])).collect();
         least_squares_fit(&xs, &ys)
+    }
+
+    /// The read-only Slope/R² stat block's own rows — the pure decision
+    /// [`Self::style_properties`] wraps into a declared property
+    /// ([`ConfigProperty::stat_block`]). Reads [`Self::cached_fit`], never
+    /// `bars` directly: `style_properties(&self)` is never handed `bars`
+    /// (see that method's own doc), and re-deriving a second formula here
+    /// from nothing would defeat the one-computation-path point of caching
+    /// [`Self::fit`]'s own result in the first place — see
+    /// [`Primitive::refresh_bar_derived_cache`]'s own contract for who
+    /// fills the cache this reads.
+    pub fn result_stat_rows(&self) -> Vec<StatRow> {
+        let slope = self.cached_fit.slope;
+        let sign = if slope >= 0.0 { "+" } else { "-" };
+        vec![
+            StatRow::regression_slope(&format!("{sign}{}", fmt_price(slope.abs()))),
+            StatRow::regression_r_squared(&format!("{:.2}", self.cached_fit.r_squared)),
+        ]
     }
 }
 
@@ -500,6 +535,15 @@ impl Primitive for RegressionTrend {
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
+    /// Recompute [`Self::cached_fit`] from `bars` through the SAME
+    /// [`Self::fit`] `render`/`hit_test` call — see
+    /// [`Primitive::refresh_bar_derived_cache`]'s own contract. `fit` is
+    /// already cheap (one pass over the fit window, never the whole bar
+    /// array), so this needs no separate short-circuit of its own.
+    fn refresh_bar_derived_cache(&mut self, bars: &[Bar]) {
+        self.cached_fit = self.fit(bars);
+    }
+
     fn style_properties(&self) -> Vec<ConfigProperty> {
         // Regression archetype (W3, `docs/mlc/plans/archetype-modals-into-the-app-2026-08-11.md`):
         // `regression_tabs()` (`mlc-ui-lab`'s `spec.rs`) declares four
@@ -543,40 +587,22 @@ impl Primitive for RegressionTrend {
         // all three (now fitted) lines to the panel edge
         // (`render`/`hit_test` above, via `extend_segment_to_edges`).
         //
-        // The Metrics group (`ShowSlope`/`ShowRSquared` toggles + the
-        // Slope/R² stat rows) is STILL left out — but for a different
-        // reason than before this pass. The fit now genuinely exists
-        // (`Self::fit`) and a stat block for it would read through the
-        // SAME computation `render`/`hit_test` use, exactly the discipline
-        // `ConfigProperty::stat_block` requires elsewhere in this crate
-        // (see `long_position.rs`'s `result_stat_rows`). The blocker is
-        // plumbing, not computation: `style_properties(&self)` is never
-        // handed `bars`, and every trait method that IS handed bars —
-        // `render`, `hit_test`, `control_points` — takes `&self`, not
-        // `&mut self`, so none of them can write a result into a cache
-        // this method could then read.
-        //
-        // This codebase already solves that exact shape of problem once:
-        // Elliott's `context_violations`/`subdivided_slots`/
-        // `label_collisions` are `#[serde(skip)]` caches on the struct,
-        // filled by an OWNER sweep (`mlc-backend`'s
-        // `crate::bubble::wave_guards::refresh_wave_guards`, called with
-        // `&mut DataBubble` after every structural mutation — drag end,
-        // insertion, chain promotion, …) and read back through a plain
-        // trait getter. It has no non-Elliott counterpart: that sweep
-        // itself filters to `p.wave_degree().is_some()` and never touches
-        // `bars` at all (Elliott's violations are computed from sibling
-        // PRIMITIVES, not price data), and no other sweep in `mlc-backend`
-        // walks a bubble's primitives with both `&mut self` and `&[Bar]`
-        // in hand. What this primitive would need is a generic,
-        // owner-triggered pass — after a structural mutation AND after a
-        // bar-data update, since a regression fit (unlike an Elliott rule)
-        // changes when new bars arrive even with no drawing edited at all
-        // — that gives every primitive `(&mut self, &[Bar])` at least
-        // once. That is a real addition to `mlc-backend`, sized for its
-        // own change, not a one-off second plumbing path invented here for
-        // this primitive alone. Until it exists, the fit and the drawing
-        // stand without a reported Slope/R².
+        // The Metrics group's own Slope/R² stat rows are wired now (the
+        // `ShowSlope`/`ShowRSquared` per-row visibility toggles the lab's
+        // spec also shows are NOT — a separate, purely-UI addition, not a
+        // computation gap): `Primitive::refresh_bar_derived_cache` closes
+        // the plumbing gap the earlier version of this comment described
+        // (`style_properties(&self)` still has no `bars` of its own — that
+        // has not changed — but `Self::cached_fit` now gets filled by that
+        // hook, from the SAME `Self::fit` `render`/`hit_test` already call,
+        // and `Self::result_stat_rows` below reads the cache rather than
+        // inventing a second formula). See `mlc-backend`'s
+        // `crate::bubble::bar_derived_cache` module for the sweep that
+        // calls the hook — same convergence points
+        // (`BubbleStore::restore_from_snapshots`, every bar-array write)
+        // Elliott's own `wave_guards::refresh_wave_guards` uses, but a
+        // genuinely separate pass: this one never reads sibling primitives,
+        // only `bars`, and Elliott's never reads `bars`, only siblings.
         vec![
             ConfigProperty::select("source", ModalKey::AlertSource.get(current_language()), self.source.as_str(), RegressionSource::select_options())
                 .with_category(PropertyCategory::AppearanceLine).with_order(5).in_group(PropertyGroup::Calculation),
@@ -590,11 +616,25 @@ impl Primitive for RegressionTrend {
                 .with_category(PropertyCategory::AppearanceLine).with_order(22).in_group(PropertyGroup::Baseline),
             ConfigProperty::extend_left(self.extend_left).with_category(PropertyCategory::AppearanceLine).with_order(23).in_group(PropertyGroup::Extend),
             ConfigProperty::extend_right(self.extend_right).with_category(PropertyCategory::AppearanceLine).with_order(24).in_group(PropertyGroup::Extend),
+            // `PropertyGroup::Metrics` (W4 follow-up) — the read-only
+            // Slope/R² stat block. See `Self::result_stat_rows`'s own doc.
+            ConfigProperty::stat_block(REGRESSION_RESULT_STATS_ID, self.result_stat_rows())
+                .with_order(30).in_group(PropertyGroup::Metrics),
         ]
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
+            // The computed Slope/R² stat block is declared `readonly`
+            // (`style_properties`'s own `ConfigProperty::stat_block(
+            // REGRESSION_RESULT_STATS_ID, ...)` call, fed by
+            // `Self::result_stat_rows`) and carries no field of its own to
+            // write — explicit rejection here, not merely the absence of a
+            // matching arm, so a future edit near this match can never
+            // accidentally start honouring the id (mirrors
+            // `LongPosition::apply_style_property`'s own
+            // `POSITION_RESULT_STATS_ID` arm).
+            REGRESSION_RESULT_STATS_ID => {}
             "source" => { if let Some(s) = value.as_string() { self.source = RegressionSource::from_str(s); return true; } }
             "period_mode" => { if let Some(s) = value.as_string() { self.period_mode = RegressionPeriodMode::from_str(s); return true; } }
             "bar_count" => { if let Some(v) = value.as_number() { self.bar_count = v.max(2.0); return true; } }
@@ -699,14 +739,17 @@ mod fit_tests {
     /// `bars.len()` bars, timestamp `= i` seconds (so `ts_ms = i * 1000`
     /// lands exactly on bar `i` — same convention `extend_tests::fixture`
     /// uses), open/high/low/close all equal to `closes[i]`.
-    fn bars_from(closes: &[f64]) -> Vec<Bar> {
+    ///
+    /// `pub(super)`: also reused by the sibling `bar_derived_cache_tests`
+    /// module below, rather than a second copy of the same fixture.
+    pub(super) fn bars_from(closes: &[f64]) -> Vec<Bar> {
         closes.iter().enumerate().map(|(i, &c)| Bar::new(i as i64, c, c, c, c)).collect()
     }
 
     /// A `RegressionTrend` whose two anchors sit exactly on `bars`' own
     /// first and last bar, so `RegressionPeriodMode::Points` (the default)
     /// fits over the WHOLE slice.
-    fn span(bars: &[Bar], color: &str) -> RegressionTrend {
+    pub(super) fn span(bars: &[Bar], color: &str) -> RegressionTrend {
         let last = (bars.len() - 1) as i64;
         RegressionTrend::new(0, bars[0].close, last * 1000, bars[bars.len() - 1].close, color)
     }
@@ -780,5 +823,95 @@ mod fit_tests {
         assert_eq!(high_fit.slope, 5.0, "climbing high: slope = {}", high_fit.slope);
 
         assert_ne!(close_fit.slope, high_fit.slope);
+    }
+}
+
+#[cfg(test)]
+mod bar_derived_cache_tests {
+    //! `Primitive::refresh_bar_derived_cache` coverage for `RegressionTrend`
+    //! — the one primitive that overrides it today. `fit_tests::bars_from`/
+    //! `span` build the fixtures; see that module's own doc for the
+    //! convention (bar `i`'s OHLC all equal `closes[i]`, anchors span the
+    //! whole slice under the default `Points` period mode).
+
+    use super::*;
+    use super::fit_tests::{bars_from, span};
+
+    /// The hook fills [`RegressionTrend::cached_fit`] from real bars
+    /// through the SAME [`RegressionTrend::fit`] `render`/`hit_test` call,
+    /// and [`RegressionTrend::result_stat_rows`] — the rows
+    /// [`ConfigProperty::stat_block`] declares — carry those exact fitted
+    /// numbers, not a second, independently-computed formula.
+    #[test]
+    fn hook_fills_cached_fit_and_the_declared_stat_rows_carry_it() {
+        let bars = bars_from(&[1.0, 2.0, 3.0, 5.0]);
+        let mut trend = span(&bars, "#9C27B0");
+
+        // Before the hook ever runs, a freshly constructed primitive reads
+        // the safe default — matching what `fit(&[])` itself returns, never
+        // a stale or partially-computed number.
+        assert_eq!(trend.cached_fit, RegressionFit::default());
+
+        trend.refresh_bar_derived_cache(&bars);
+
+        let direct_fit = trend.fit(&bars);
+        assert_eq!(trend.cached_fit, direct_fit, "cache must equal the SAME fit() render/hit_test call");
+        assert!((trend.cached_fit.slope - 1.3).abs() < 1e-9, "slope = {}", trend.cached_fit.slope);
+
+        let rows = trend.result_stat_rows();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].value, format!("+{}", fmt_price(direct_fit.slope)), "slope row");
+        assert_eq!(rows[1].value, format!("{:.2}", direct_fit.r_squared), "R\u{b2} row");
+
+        let stat_prop = trend.style_properties().into_iter().find(|p| p.id == REGRESSION_RESULT_STATS_ID)
+            .expect("stat block declared");
+        assert_eq!(stat_prop.value, PropertyValue::Stat(rows));
+        assert!(stat_prop.readonly);
+        assert_eq!(stat_prop.group, Some(PropertyGroup::Metrics));
+    }
+
+    /// A negative slope renders with the minus sign, not a doubled sign
+    /// from `fmt_price` formatting an already-negative number.
+    #[test]
+    fn negative_slope_renders_with_a_single_minus_sign() {
+        let bars = bars_from(&[10.0, 8.0, 6.0, 4.0]);
+        let mut trend = span(&bars, "#9C27B0");
+        trend.refresh_bar_derived_cache(&bars);
+        assert!(trend.cached_fit.slope < 0.0, "slope = {}", trend.cached_fit.slope);
+        let rows = trend.result_stat_rows();
+        assert_eq!(rows[0].value, format!("-{}", fmt_price(trend.cached_fit.slope.abs())));
+    }
+
+    /// `refresh_bar_derived_cache` never mutates anything an analyst set —
+    /// running it twice over a primitive with edited style leaves every
+    /// non-cache field byte-for-byte identical. `to_json()` is the right
+    /// probe for exactly this claim: `cached_fit` is `#[serde(skip)]`, so
+    /// it never appears in the serialized form at all — a regression that
+    /// had the hook touch a real field (colour, width, points, ...) would
+    /// change this string; a regression that only touched `cached_fit`
+    /// (the intended behaviour) would not.
+    #[test]
+    fn pass_never_mutates_analyst_set_style_run_twice() {
+        let bars = bars_from(&[1.0, 2.0, 3.0, 5.0, 4.0, 6.0]);
+        let mut trend = span(&bars, "#9C27B0");
+        // Edit style the way an analyst would through the settings modal.
+        trend.data.color.stroke = "#ff0000".to_string();
+        trend.data.width = 5.0;
+        trend.std_dev_mult = 3.0;
+        trend.extend_left = true;
+        trend.source = RegressionSource::High;
+        trend.period_mode = RegressionPeriodMode::BarCount;
+        trend.bar_count = 3.0;
+
+        let before = trend.to_json();
+        trend.refresh_bar_derived_cache(&bars);
+        let after_first = trend.to_json();
+        assert_eq!(before, after_first, "the pass must not change any persisted field");
+
+        let fit_after_first = trend.cached_fit;
+        trend.refresh_bar_derived_cache(&bars);
+        let after_second = trend.to_json();
+        assert_eq!(after_first, after_second, "a second run over the same bars must not drift anything either");
+        assert_eq!(trend.cached_fit, fit_after_first, "re-running over the SAME bars must be idempotent");
     }
 }

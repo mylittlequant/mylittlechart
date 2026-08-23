@@ -1175,6 +1175,53 @@ pub trait Primitive: Send + Sync {
     }
 
     // =========================================================================
+    // Bar-Derived Cache (2026-08-23 — the gap `channels::regression_trend`'s
+    // own `style_properties` doc names: a primitive that must COMPUTE
+    // something from price data has no method that hands it both `&mut
+    // self` and `bars` at once. Every method already handed `bars`
+    // (`render`, `hit_test`, `control_points`, `wave_at`, the two
+    // `*_control_point` finders) takes `&self`, and the one place a
+    // primitive DOES get `&mut self` at a meaningful edit boundary
+    // (`elliott::guard`'s own context-cache setters) is never handed
+    // `bars` — Elliott's own sweep filters to `wave_degree().is_some()`
+    // and never touches price data at all, by design (its violations come
+    // from sibling PRIMITIVES, not bars). This is the missing third
+    // combination, generic across every primitive family — not an
+    // Elliott-only concept, and not folded into the Elliott sweep despite
+    // the two ending up called from the same convergence points in
+    // `mlc-backend`.
+    // =========================================================================
+
+    /// Recompute whatever this primitive derives from price data into its
+    /// own `#[serde(skip)]` cache field(s) — nothing else.
+    ///
+    /// Contract:
+    /// - the caller may invoke this OFTEN (once per bar-array write, once
+    ///   per restore) — this method must stay cheap when nothing about the
+    ///   bars or the primitive's own fit inputs actually changed; a
+    ///   primitive whose derivation is expensive should short-circuit on
+    ///   its own (e.g. compare against the last bar count/timestamp it saw)
+    ///   rather than assume the caller throttles for it;
+    /// - must NEVER mutate anything an analyst set — points, style, level
+    ///   configs, text, any field that is NOT `#[serde(skip)]` — only this
+    ///   primitive's own derived cache field(s) may change;
+    /// - is NEVER the place a value is first computed for DRAWING —
+    ///   `render`/`hit_test`/`control_points` keep computing what they draw
+    ///   straight from `bars`, exactly as before this method existed, and
+    ///   MUST still draw correctly if this method is never called at all
+    ///   (a primitive freshly deserialized, or of a type nothing has wired
+    ///   a caller for yet, has every `#[serde(skip)]` cache at its own
+    ///   `Default`). This cache exists ONLY for a reader that has `&self`
+    ///   but no `bars` of its own — a settings-modal stat block today (see
+    ///   `channels::regression_trend::RegressionTrend::result_stat_rows`),
+    ///   a future volume-profile summary tomorrow.
+    ///
+    /// Default: no-op — the correct behaviour for every primitive that
+    /// derives nothing from price data (the overwhelming majority; only a
+    /// type with its own price-derived cache overrides this).
+    fn refresh_bar_derived_cache(&mut self, _bars: &[Bar]) {}
+
+    // =========================================================================
     // Serialization
     // =========================================================================
 

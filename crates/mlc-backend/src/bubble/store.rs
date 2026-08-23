@@ -588,6 +588,20 @@ impl BubbleStore {
             }
             super::wave_guards::clear_dangling_wave_links(&mut bubble);
             super::wave_guards::refresh_wave_guards(&mut bubble);
+            // Bars are never part of a snapshot (`DataBubbleSnapshot` has no
+            // OHLC field at all — bars are re-fetched live, never persisted;
+            // see this repo's own client-only-data doctrine), so `bubble.bars`
+            // is always empty at this exact point and every bar-derived cache
+            // resolves to its own safe default here. Still unconditional, for
+            // the same reason `wave_guards` above is: this is the one
+            // production entry point that turns a snapshot list back into
+            // live bubbles, so a type that DOES derive something meaningful
+            // from an empty/short bar slice (unlike today's regression trend)
+            // gets a defined answer immediately, with no separate step
+            // required — the real (non-empty-bars) fill happens the moment
+            // this bubble's first `replace_bars`/`set_bars` call lands, which
+            // carries the SAME call below.
+            super::bar_derived_cache::refresh_bar_derived_caches(&mut bubble);
             let bid = bubble.id;
             self.insert_bubble_raw(bubble);
             restored_ids.push(bid);
@@ -830,6 +844,30 @@ impl BubbleStore {
     // =========================================================================
 
     /// Append one bar to a bubble's OHLC series.
+    ///
+    /// Deliberately does NOT call [`super::bar_derived_cache::
+    /// refresh_bar_derived_caches`] — see that module's own doc for the
+    /// pass this feeds. Every production caller of a NEW-candle append
+    /// today reaches `DataBubble::append_bar` directly inside a
+    /// `with_bubble_mut` closure (`mlc-app`'s live-trade candle builder,
+    /// `mlc-backend`'s own fold-output handlers), bypassing this wrapper
+    /// entirely — so hooking this method alone would not even cover them.
+    /// More importantly, for the fastest derived-bar chart types
+    /// (`tick_bar`/`tick_imbalance_bar`/`volume_imbalance_bar`) a bar can
+    /// close many times per second under heavy trade volume, which is
+    /// exactly the disallowed "full sweep per tick" — a NEW candle append
+    /// is a per-bar-close event, not the per-trade-tick one (the
+    /// currently-forming bar's own price walk updates in place via
+    /// [`DataBubble::last_bar_mut`], which this function never touches
+    /// either, and neither does the cache). The cache instead refreshes on
+    /// the coarser [`Self::replace_bars`]/[`Self::set_bars`] batch installs
+    /// (REST loads, backfills, chart-type switches, symbol/timeframe
+    /// changes) and on [`Self::restore_from_snapshots`] — a stat block
+    /// reading it can lag an in-flight candle by up to one more
+    /// batch-refresh; the render path never depends on this cache at all
+    /// (see the trait method's own contract), so that lag is never a
+    /// drawing defect, only a modal number that catches up at the next
+    /// refresh.
     pub fn append_bar(&mut self, bid: BubbleId, bar: mlc_core::Bar) {
         if let Some(b) = self.bubbles.get_mut(&bid) {
             b.append_bar(bar);
@@ -851,6 +889,12 @@ impl BubbleStore {
                 );
             }
             b.replace_bars(bars);
+            // A batch bar-array install — REST load, backfill merge,
+            // reseed/refold replay, chart-type switch — is exactly the
+            // "bar data updates" trigger `refresh_bar_derived_cache`'s own
+            // contract is for; see [`Self::append_bar`]'s own doc for why
+            // the narrower per-new-candle append is deliberately NOT hooked.
+            super::bar_derived_cache::refresh_bar_derived_caches(b);
         }
     }
 
@@ -860,6 +904,10 @@ impl BubbleStore {
     pub fn clear_bars(&mut self, bid: BubbleId) {
         if let Some(b) = self.bubbles.get_mut(&bid) {
             b.clear_bars();
+            // Bars going away must clear a stale fit right along with them —
+            // an empty `bars` resolves every bar-derived cache back to its
+            // own safe default (see [`Self::replace_bars`]'s own doc).
+            super::bar_derived_cache::refresh_bar_derived_caches(b);
         }
     }
 
@@ -869,6 +917,7 @@ impl BubbleStore {
     pub fn set_bars(&mut self, bid: BubbleId, bars: Vec<mlc_core::Bar>) {
         if let Some(b) = self.bubbles.get_mut(&bid) {
             b.replace_bars(bars);
+            super::bar_derived_cache::refresh_bar_derived_caches(b);
         }
     }
 
@@ -1234,5 +1283,166 @@ mod bars_generation_tests {
             "the exact mismatch debug_assert_generation's dlog branch fires on",
         );
         crate::bubble::render::debug_assert_generation(stale); // must not panic — warn-only tripwire
+    }
+}
+
+#[cfg(test)]
+mod bar_derived_cache_tests {
+    //! Coverage for `super::bar_derived_cache::refresh_bar_derived_caches`'s
+    //! own call sites in THIS file — `restore_from_snapshots`, `replace_bars`,
+    //! `clear_bars` — using `RegressionTrend`, the one primitive that
+    //! currently overrides `Primitive::refresh_bar_derived_cache`. Mirrors
+    //! `mlc-backend`'s own `wave_link_restore_tests` module
+    //! (`drawing/manager.rs`) for the restore half: build, snapshot, restore
+    //! into a FRESH store, assert with no separate sweep call in the test
+    //! itself.
+
+    use super::*;
+    use crate::tag::TagManager;
+    use mlc_core::Bar;
+    use mlc_core::drawing::primitives_v2::channels::regression_trend::RegressionTrend;
+    use mlc_core::drawing::primitives_v2::config::{PropertyValue, REGRESSION_RESULT_STATS_ID};
+    use mlc_core::ids::SyncMemberId;
+    use mlc_core::tag::Tag;
+
+    fn bar(ts: i64, close: f64) -> Bar {
+        Bar { timestamp: ts, open: close, high: close, low: close, close, volume: 1.0, ..Default::default() }
+    }
+
+    /// Read a primitive's own declared Slope/R² stat rows — `None` if it
+    /// never declared the block at all (wrong id, or not a regression trend).
+    fn regression_stat_rows(p: &dyn mlc_core::drawing::primitives_v2::Primitive) -> Option<Vec<mlc_core::drawing::primitives_v2::config::StatRow>> {
+        p.style_properties().into_iter().find_map(|prop| {
+            if prop.id != REGRESSION_RESULT_STATS_ID { return None; }
+            match prop.value {
+                PropertyValue::Stat(rows) => Some(rows),
+                _ => None,
+            }
+        })
+    }
+
+    /// A bubble carrying one `RegressionTrend` anchored across its own
+    /// (not-yet-loaded) bar range, joined with an auto tag — the shape
+    /// `snapshot_round_trip` below needs. Pushed straight onto
+    /// `bubble.primitives`: this feature needs no `DrawingManager`, unlike
+    /// the Elliott restore tests (`wave_link_restore_tests`), which need it
+    /// for `WaveLink` bookkeeping this primitive family has none of.
+    fn build_bubble_with_regression_trend() -> (BubbleStore, TagManager, BubbleId) {
+        let mut store = BubbleStore::new();
+        let bid = store.create_bubble_auto("BTCUSDT".to_string(), Timeframe::h1());
+        let mut tags = TagManager::new();
+        let mut tag = Tag::new_auto(bid, [0.0, 0.0, 0.0, 0.0]);
+        tag.members.insert(SyncMemberId::Chart(1));
+        tags.insert(tag);
+
+        let trend = RegressionTrend::new(0, 1.0, 5_000, 6.0, "#9C27B0");
+        store.bubble_mut(bid).expect("bubble exists").primitives.push(Box::new(trend));
+
+        (store, tags, bid)
+    }
+
+    /// Snapshot `bid`, joined with its paired tag, round-tripped through
+    /// JSON — the exact bytes a preset reload reads back (mirrors
+    /// `drawing::manager::wave_link_restore_tests::snapshot_round_trip`).
+    fn snapshot_round_trip(store: &BubbleStore, tags: &TagManager, bid: BubbleId) -> Vec<mlc_core::preset::snapshots::DataBubbleSnapshot> {
+        let bubble_ref = store.bubble(bid).expect("bubble exists");
+        let view = super::super::BubbleView::new(bubble_ref);
+        let tag_ref = tags.get(bid).expect("paired tag exists");
+        let synced = tags.synced_panels_snapshot();
+        let snap = view.to_snapshot(tag_ref, &synced);
+        let json = serde_json::to_string(&vec![snap]).expect("snapshot must serialize");
+        serde_json::from_str(&json).expect("snapshot must deserialize")
+    }
+
+    /// A batch bar-array install (`replace_bars` — REST load, backfill,
+    /// chart-type switch) is the "bar data updates" trigger: the declared
+    /// stat rows go from unset to the real fitted numbers with no separate
+    /// call in the test.
+    #[test]
+    fn replace_bars_populates_the_declared_stat_rows() {
+        let (mut store, _tags, bid) = build_bubble_with_regression_trend();
+        let bars: Vec<Bar> = (0..=5).map(|i| bar(i, 1.0 + i as f64)).collect();
+
+        store.replace_bars(bid, bars.clone());
+
+        let b = store.bubble(bid).expect("bubble exists");
+        let rows = regression_stat_rows(b.primitives[0].as_ref()).expect("stat block declared");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].value, "+1.00", "slope: price climbs by 1.0/bar over this fixture");
+        assert_eq!(rows[1].value, "1.00", "R\u{b2}: a perfectly linear fixture explains all variance");
+    }
+
+    /// `clear_bars` must not leave a stale fit behind — the cache resolves
+    /// back to the safe default the moment the bars it was computed from
+    /// are gone.
+    #[test]
+    fn clear_bars_resets_the_stat_rows_to_the_safe_default() {
+        let (mut store, _tags, bid) = build_bubble_with_regression_trend();
+        let bars: Vec<Bar> = (0..=5).map(|i| bar(i, 1.0 + i as f64)).collect();
+        store.replace_bars(bid, bars);
+        store.clear_bars(bid);
+
+        let b = store.bubble(bid).expect("bubble exists");
+        let rows = regression_stat_rows(b.primitives[0].as_ref()).expect("stat block declared");
+        assert_eq!(rows[0].value, "+0.00", "slope resets to the fit(&[]) default once bars are gone");
+        assert_eq!(rows[1].value, "0.00");
+    }
+
+    /// The full production sequence with NO user gesture anywhere in it: a
+    /// preset reload (`restore_from_snapshots`, into a FRESH store — no
+    /// bars exist yet) immediately followed by the ordinary async data-plane
+    /// bar load every reload triggers next (`replace_bars` — never a click,
+    /// drag, or settings-modal open). By the time an analyst could possibly
+    /// open the settings modal, the stat block already carries the real fit.
+    #[test]
+    fn restore_then_the_first_bar_load_populates_the_stat_rows_with_no_gesture() {
+        let (store, tags, bid) = build_bubble_with_regression_trend();
+        let snaps = snapshot_round_trip(&store, &tags, bid);
+
+        let mut restored = BubbleStore::new();
+        let restored_ids = restored.restore_from_snapshots(&snaps);
+        assert_eq!(restored_ids, vec![bid]);
+
+        // Immediately after restore alone (no bars have arrived yet): the
+        // stat block is still declared, its rows read the safe default —
+        // never a panic, never a stale leftover, never "not declared at
+        // all" — matching this primitive's own bars-empty `fit(&[])`.
+        {
+            let b = restored.bubble(bid).expect("bubble restored");
+            let rows = regression_stat_rows(b.primitives[0].as_ref()).expect("stat block declared even before any bars arrive");
+            assert_eq!(rows[0].value, "+0.00");
+            assert_eq!(rows[1].value, "0.00");
+        }
+
+        // The bars arrive — the ordinary post-reload data-plane event.
+        let bars: Vec<Bar> = (0..=5).map(|i| bar(i, 1.0 + i as f64)).collect();
+        restored.replace_bars(bid, bars);
+
+        let b = restored.bubble(bid).expect("bubble restored");
+        let rows = regression_stat_rows(b.primitives[0].as_ref()).expect("stat block declared");
+        assert_eq!(rows[0].value, "+1.00", "no gesture needed — restore + the ordinary bar load alone produced this");
+        assert_eq!(rows[1].value, "1.00");
+    }
+
+    /// A type that derives nothing (the default hook) survives every one of
+    /// these choke points untouched — restore, a bar-array replace, and a
+    /// clear — proving the sweep's own unconditional walk over every
+    /// primitive costs nothing observable for the overwhelming majority of
+    /// types that never override `refresh_bar_derived_cache`.
+    #[test]
+    fn a_primitive_with_no_override_is_unaffected_by_every_bar_choke_point() {
+        use mlc_core::drawing::primitives_v2::lines::trend_line::TrendLine;
+
+        let mut store = BubbleStore::new();
+        let bid = store.create_bubble_auto("BTCUSDT".to_string(), Timeframe::h1());
+        let line = TrendLine::new(0, 100.0, 5_000, 110.0, "#2196F3");
+        let before_json = mlc_core::drawing::primitives_v2::Primitive::to_json(&line);
+        store.bubble_mut(bid).expect("bubble exists").primitives.push(Box::new(line));
+
+        store.replace_bars(bid, vec![bar(0, 100.0), bar(1000, 105.0)]);
+        store.clear_bars(bid);
+
+        let b = store.bubble(bid).expect("bubble exists");
+        assert_eq!(b.primitives[0].to_json(), before_json, "a type with no override must be byte-for-byte unaffected");
     }
 }
