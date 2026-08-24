@@ -1290,9 +1290,12 @@ mod bars_generation_tests {
 mod bar_derived_cache_tests {
     //! Coverage for `super::bar_derived_cache::refresh_bar_derived_caches`'s
     //! own call sites in THIS file — `restore_from_snapshots`, `replace_bars`,
-    //! `clear_bars` — using `RegressionTrend`, the one primitive that
-    //! currently overrides `Primitive::refresh_bar_derived_cache`. Mirrors
-    //! `mlc-backend`'s own `wave_link_restore_tests` module
+    //! `clear_bars` — using `RegressionTrend`, the first primitive that
+    //! overrode `Primitive::refresh_bar_derived_cache` (the volume-profile
+    //! family — `FixedVolumeProfile`/`AnchoredVolumeProfile` — now overrides
+    //! it too, filling their own `cached_profile`, but that pair has no
+    //! `&self`-only reader yet for a test like this one to assert against).
+    //! Mirrors `mlc-backend`'s own `wave_link_restore_tests` module
     //! (`drawing/manager.rs`) for the restore half: build, snapshot, restore
     //! into a FRESH store, assert with no separate sweep call in the test
     //! itself.

@@ -9,6 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64, bar_interval_seconds};
+use crate::chart::volume_profile::VolumeProfileData;
 use crate::i18n::{ConfigKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
@@ -32,6 +33,28 @@ pub struct AnchoredVolumeProfile {
     #[serde(default)] pub end_ts_ms: i64,
     #[serde(default = "default_rows")] pub rows: u16,
     #[serde(default = "default_true")] pub show_poc: bool,
+    /// Absent from every drawing saved before this field existed —
+    /// `#[serde(default)]` gives it `false`, matching the hardcoded
+    /// `false` `render` passed to `draw_profile` before this field
+    /// existed, so nothing already-drawn on disk changes shape on load.
+    #[serde(default)]
+    pub show_value_area: bool,
+    /// The profile computed from the current bars — see
+    /// [`Primitive::refresh_bar_derived_cache`]'s own contract. Filled by
+    /// that hook from the SAME [`super::profile_render::profile_for`] call
+    /// `render` makes directly; read by nothing yet inside this crate
+    /// today (a `&self`-only settings-modal summary is the anticipated
+    /// first reader — see the hook's own doc). `render`/`hit_test` never
+    /// read this field, so a primitive the hook has never touched still
+    /// draws exactly right.
+    ///
+    /// `#[serde(skip)]`: a stale profile surviving a reload/undo would
+    /// misreport a range that no longer matches this primitive's own
+    /// current `[anchor_ts, end_ts_ms]` — a freshly deserialized primitive
+    /// starts at `None` until the owning bubble's own bar-derived-cache
+    /// pass runs.
+    #[serde(skip)]
+    pub cached_profile: Option<VolumeProfileData>,
 }
 fn default_rows() -> u16 { 24 }
 fn default_true() -> bool { true }
@@ -41,6 +64,8 @@ impl AnchoredVolumeProfile {
         Self {
             data: PrimitiveData { type_id: "anchored_volume_profile".to_string(), display_name: "Anchored Volume Profile".to_string(), color: PrimitiveColor::new(color), width: 1.0, ..Default::default() },
             anchor_ts, end_ts_ms, rows: 24, show_poc: true,
+            show_value_area: false,
+            cached_profile: None,
         }
     }
 
@@ -166,11 +191,12 @@ impl Primitive for AnchoredVolumeProfile {
                 max_width: max_x - min_x,
                 span: (min_x, max_x),
             };
-            // Still POC-only: this keeps the legacy single-metric display
-            // even now that the range has a real far boundary. A
-            // value-area toggle here is a feature addition, out of scope
-            // for this geometry fix.
-            super::profile_render::draw_profile(ctx, &vp, &geom, self.show_poc, false);
+            // `self.show_value_area` now exists (see the field's own doc)
+            // and defaults to `false`, so this reads exactly like the old
+            // hardcoded `false` until an analyst opts in from the style
+            // panel — the sibling `FixedVolumeProfile` toggle, at last
+            // present here too.
+            super::profile_render::draw_profile(ctx, &vp, &geom, self.show_poc, self.show_value_area);
         }
 
         if let Some(ref text) = self.data.text {
@@ -194,6 +220,19 @@ impl Primitive for AnchoredVolumeProfile {
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
+    /// Recompute [`Self::cached_profile`] from `bars` through the SAME
+    /// [`super::profile_render::bars_in_window`] +
+    /// [`super::profile_render::profile_for`] calls `render` makes
+    /// directly — see [`Primitive::refresh_bar_derived_cache`]'s own
+    /// contract. Recomputing a profile is one pass over the window's own
+    /// bars (never the whole bar array), so this needs no separate
+    /// short-circuit of its own, matching `RegressionTrend`'s override.
+    fn refresh_bar_derived_cache(&mut self, bars: &[Bar]) {
+        let end_ts = self.effective_end_ts(bars);
+        let window = super::profile_render::bars_in_window(bars, self.anchor_ts, end_ts);
+        self.cached_profile = super::profile_render::profile_for(window, self.rows);
+    }
+
     fn style_properties(&self) -> Vec<ConfigProperty> {
         let lang = current_language();
         vec![
@@ -201,6 +240,8 @@ impl Primitive for AnchoredVolumeProfile {
                 .with_order(20),
             ConfigProperty::boolean("show_poc", ConfigKey::ShowPoc.get(lang), self.show_poc)
                 .with_order(21),
+            ConfigProperty::boolean("show_value_area", ConfigKey::ShowValueArea.get(lang), self.show_value_area)
+                .with_order(22),
         ]
     }
 
@@ -208,6 +249,7 @@ impl Primitive for AnchoredVolumeProfile {
         match id {
             "rows" => { if let Some(v) = value.as_number() { self.rows = v.round().clamp(5.0, 100.0) as u16; return true; } }
             "show_poc" => { if let Some(v) = value.as_bool() { self.show_poc = v; return true; } }
+            "show_value_area" => { if let Some(v) = value.as_bool() { self.show_value_area = v; return true; } }
             _ => {}
         }
         false
@@ -225,5 +267,74 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod bar_derived_cache_tests {
+    //! `Primitive::refresh_bar_derived_cache` coverage for
+    //! `AnchoredVolumeProfile` — mirrors `FixedVolumeProfile`'s own
+    //! `bar_derived_cache_tests` module (`fixed_volume_profile.rs`) and,
+    //! further up the family, `RegressionTrend`'s
+    //! (`channels/regression_trend.rs`).
+
+    use super::*;
+
+    /// Six one-second bars covering `[0, 5]` — `end_ts_ms` below is set
+    /// past `anchor_ts` explicitly, so `effective_end_ts` never falls back
+    /// to the bar-interval guess this fixture isn't testing.
+    fn bars_in_range() -> Vec<Bar> {
+        (0..=5)
+            .map(|i| Bar::with_volume(i, 100.0 + i as f64, 101.0 + i as f64, 100.0 + i as f64, 101.0 + i as f64, 10.0))
+            .collect()
+    }
+
+    /// The hook fills `cached_profile` from real bars through the SAME
+    /// `bars_in_window` + `profile_for` calls `render` makes directly —
+    /// never a second, independently-computed profile.
+    #[test]
+    fn hook_fills_cached_profile_from_the_same_render_path() {
+        let bars = bars_in_range();
+        let mut avp = AnchoredVolumeProfile::new(0, 5_000, "#9C27B0");
+
+        // Before the hook ever runs, a freshly constructed primitive has
+        // no cached profile — `render` never reads it, so this is a
+        // legitimate state, not an error.
+        assert!(avp.cached_profile.is_none());
+
+        avp.refresh_bar_derived_cache(&bars);
+
+        let end_ts = avp.effective_end_ts(&bars);
+        let window = super::super::profile_render::bars_in_window(&bars, avp.anchor_ts, end_ts);
+        let direct = super::super::profile_render::profile_for(window, avp.rows);
+        assert!(direct.is_some(), "a real window with volume must produce Some profile");
+        assert_eq!(avp.cached_profile, direct, "cache must equal the SAME profile_for() render call");
+    }
+
+    /// `refresh_bar_derived_cache` never mutates anything an analyst set —
+    /// running it twice over a primitive with edited style leaves every
+    /// non-cache field byte-for-byte identical (`cached_profile` is
+    /// `#[serde(skip)]`, so it never appears in `to_json()` at all), and
+    /// the cache itself is idempotent over the same bars.
+    #[test]
+    fn pass_never_mutates_analyst_set_style_run_twice() {
+        let bars = bars_in_range();
+        let mut avp = AnchoredVolumeProfile::new(0, 5_000, "#9C27B0");
+        avp.data.color.stroke = "#ff0000".to_string();
+        avp.data.width = 3.0;
+        avp.rows = 10;
+        avp.show_poc = false;
+        avp.show_value_area = true;
+
+        let before = avp.to_json();
+        avp.refresh_bar_derived_cache(&bars);
+        let after_first = avp.to_json();
+        assert_eq!(before, after_first, "the pass must not change any persisted field");
+
+        let profile_after_first = avp.cached_profile.clone();
+        avp.refresh_bar_derived_cache(&bars);
+        let after_second = avp.to_json();
+        assert_eq!(after_first, after_second, "a second run over the same bars must not drift anything either");
+        assert_eq!(avp.cached_profile, profile_after_first, "re-running over the SAME bars must be idempotent");
     }
 }

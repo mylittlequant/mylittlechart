@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::chart::volume_profile::VolumeProfileData;
 use crate::i18n::{ConfigKey, current_language};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
@@ -18,6 +19,21 @@ pub struct FixedVolumeProfile {
     #[serde(default = "default_rows")] pub rows: u16,
     #[serde(default = "default_true")] pub show_poc: bool,
     #[serde(default = "default_true")] pub show_value_area: bool,
+    /// The profile computed from the current bars — see
+    /// [`Primitive::refresh_bar_derived_cache`]'s own contract. Filled by
+    /// that hook from the SAME [`super::profile_render::profile_for`] call
+    /// `render` makes directly; read by nothing yet inside this crate
+    /// today (a `&self`-only settings-modal summary is the anticipated
+    /// first reader — see the hook's own doc). `render`/`hit_test` never
+    /// read this field, so a primitive the hook has never touched still
+    /// draws exactly right.
+    ///
+    /// `#[serde(skip)]`: a stale profile surviving a reload/undo would
+    /// misreport a range that no longer matches this primitive's own
+    /// current `[ts1, ts2]` — a freshly deserialized primitive starts at
+    /// `None` until the owning bubble's own bar-derived-cache pass runs.
+    #[serde(skip)]
+    pub cached_profile: Option<VolumeProfileData>,
 }
 fn default_rows() -> u16 { 24 }
 fn default_true() -> bool { true }
@@ -27,6 +43,7 @@ impl FixedVolumeProfile {
         Self {
             data: PrimitiveData { type_id: "fixed_volume_profile".to_string(), display_name: "Fixed Volume Profile".to_string(), color: PrimitiveColor::new(color), width: 1.0, ..Default::default() },
             ts1, ts2, rows: 24, show_poc: true, show_value_area: true,
+            cached_profile: None,
         }
     }
 }
@@ -165,6 +182,18 @@ impl Primitive for FixedVolumeProfile {
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
+    /// Recompute [`Self::cached_profile`] from `bars` through the SAME
+    /// [`super::profile_render::bars_in_window`] +
+    /// [`super::profile_render::profile_for`] calls `render` makes
+    /// directly — see [`Primitive::refresh_bar_derived_cache`]'s own
+    /// contract. Recomputing a profile is one pass over the window's own
+    /// bars (never the whole bar array), so this needs no separate
+    /// short-circuit of its own, matching `RegressionTrend`'s override.
+    fn refresh_bar_derived_cache(&mut self, bars: &[Bar]) {
+        let window = super::profile_render::bars_in_window(bars, self.ts1, self.ts2);
+        self.cached_profile = super::profile_render::profile_for(window, self.rows);
+    }
+
     fn style_properties(&self) -> Vec<ConfigProperty> {
         let lang = current_language();
         vec![
@@ -199,5 +228,72 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod bar_derived_cache_tests {
+    //! `Primitive::refresh_bar_derived_cache` coverage for
+    //! `FixedVolumeProfile` — mirrors `RegressionTrend`'s own
+    //! `bar_derived_cache_tests` module
+    //! (`channels/regression_trend.rs`).
+
+    use super::*;
+
+    /// Six one-second bars covering `[0, 5]` — `FixedVolumeProfile::ts1`/
+    /// `ts2` below are the same range in milliseconds, so
+    /// `profile_render::bars_in_window` includes all of them.
+    fn bars_in_range() -> Vec<Bar> {
+        (0..=5)
+            .map(|i| Bar::with_volume(i, 100.0 + i as f64, 101.0 + i as f64, 100.0 + i as f64, 101.0 + i as f64, 10.0))
+            .collect()
+    }
+
+    /// The hook fills `cached_profile` from real bars through the SAME
+    /// `bars_in_window` + `profile_for` calls `render` makes directly —
+    /// never a second, independently-computed profile.
+    #[test]
+    fn hook_fills_cached_profile_from_the_same_render_path() {
+        let bars = bars_in_range();
+        let mut fvp = FixedVolumeProfile::new(0, 5_000, "#2196F3");
+
+        // Before the hook ever runs, a freshly constructed primitive has
+        // no cached profile — `render` never reads it, so this is a
+        // legitimate state, not an error.
+        assert!(fvp.cached_profile.is_none());
+
+        fvp.refresh_bar_derived_cache(&bars);
+
+        let window = super::super::profile_render::bars_in_window(&bars, fvp.ts1, fvp.ts2);
+        let direct = super::super::profile_render::profile_for(window, fvp.rows);
+        assert!(direct.is_some(), "a real window with volume must produce Some profile");
+        assert_eq!(fvp.cached_profile, direct, "cache must equal the SAME profile_for() render call");
+    }
+
+    /// `refresh_bar_derived_cache` never mutates anything an analyst set —
+    /// running it twice over a primitive with edited style leaves every
+    /// non-cache field byte-for-byte identical (`cached_profile` is
+    /// `#[serde(skip)]`, so it never appears in `to_json()` at all), and
+    /// the cache itself is idempotent over the same bars.
+    #[test]
+    fn pass_never_mutates_analyst_set_style_run_twice() {
+        let bars = bars_in_range();
+        let mut fvp = FixedVolumeProfile::new(0, 5_000, "#2196F3");
+        fvp.data.color.stroke = "#ff0000".to_string();
+        fvp.data.width = 3.0;
+        fvp.rows = 10;
+        fvp.show_poc = false;
+        fvp.show_value_area = false;
+
+        let before = fvp.to_json();
+        fvp.refresh_bar_derived_cache(&bars);
+        let after_first = fvp.to_json();
+        assert_eq!(before, after_first, "the pass must not change any persisted field");
+
+        let profile_after_first = fvp.cached_profile.clone();
+        fvp.refresh_bar_derived_cache(&bars);
+        let after_second = fvp.to_json();
+        assert_eq!(after_first, after_second, "a second run over the same bars must not drift anything either");
+        assert_eq!(fvp.cached_profile, profile_after_first, "re-running over the SAME bars must be idempotent");
     }
 }
