@@ -349,13 +349,16 @@ impl Primitive for ElliottTripleCombo {
             ctx.set_stroke_color(guard::VIOLATION_COLOR);
             ctx.set_stroke_width(self.data.width);
             for v in &violations {
+                // A violation naming no wave (`None`) is about the whole
+                // structure, not one leg — there is no segment to recolor.
+                let Some(wave) = v.wave else { continue };
                 // A subdivided wave's own leg is not drawn above — its
                 // violation is still marked on its LABEL plate below, but
                 // there is no leg left here to recolor.
-                if self.subdivided_slots.contains(&v.wave) {
+                if self.subdivided_slots.contains(&wave) {
                     continue;
                 }
-                if let Some((a, b)) = slot_span(self.type_id(), v.wave) {
+                if let Some((a, b)) = slot_span(self.type_id(), wave) {
                     if b < realized && b < screen.len() {
                         ctx.begin_path();
                         ctx.move_to(crisp(screen[a].0, dpr), crisp(screen[a].1, dpr));
@@ -379,7 +382,10 @@ impl Primitive for ElliottTripleCombo {
                 let label = &labels[i];
                 let collides = self.label_collisions.contains(&i);
                 let (dx, dy) = wave_label_offset(&screen, i, &self.label_style, collides);
-                let is_violating = violations.iter().any(|v| slot_span(self.type_id(), v.wave).map(|(_, e)| e) == Some(i));
+                // `None` names no wave, so it can never match this label's own slot.
+                let is_violating = violations
+                    .iter()
+                    .any(|v| v.wave.is_some_and(|w| slot_span(self.type_id(), w).map(|(_, e)| e) == Some(i)));
                 let this_label_color = if is_violating { guard::VIOLATION_COLOR } else { label_color };
                 draw_label_plate(ctx, *x + dx, *y + dy, label, self.label_style.font_size, &self.label_style, this_label_color);
             }

@@ -209,16 +209,34 @@ fn family_enabled(rule_id: &str) -> bool {
 /// rather than threading theme state through.
 pub const VIOLATION_COLOR: &str = "#ff9800";
 
-/// One broken hard rule on one wave of a drawn Elliott structure.
+/// One broken hard rule on a drawn structure — Elliott's own leg-attributed
+/// shape, and (2026-08-25) the shape every non-Elliott markup engine
+/// (candle patterns, smart money, AMD, order flow) reports too, via
+/// [`Violation::whole`].
 #[derive(Clone, Copy, Debug)]
 pub struct Violation {
     /// The rule id exactly as `mylittleindicators::ewa::primitives`'s own
-    /// catalogue names it (e.g. `"wave2_not_beyond_wave1_origin"`).
+    /// catalogue names it (e.g. `"wave2_not_beyond_wave1_origin"`), or, for
+    /// a non-Elliott engine, that engine's own rule id.
     pub rule_id: &'static str,
-    /// Which wave broke the rule — the segment/label a caller marks.
-    pub wave: WaveSlot,
+    /// `Some(slot)` — the violation is attributable to ONE leg of an
+    /// Elliott structure; the render recolours exactly that segment and its
+    /// label. `None` — the violation is about the structure AS A WHOLE: the
+    /// shape every non-Elliott engine reports (no leg of its own to name),
+    /// and the shape an Elliott rule may legitimately use too, when it
+    /// judges the structure rather than one of its waves.
+    pub wave: Option<WaveSlot>,
     /// The user-facing explanation, via `mlc_core::i18n`.
     pub message: ConceptKey,
+}
+
+impl Violation {
+    /// The whole-structure counterpart of a leg-attributed violation
+    /// (`wave: None`) — the constructor every non-Elliott markup engine
+    /// uses, since it has no [`WaveSlot`] of its own to blame.
+    pub fn whole(rule_id: &'static str, message: ConceptKey) -> Self {
+        Self { rule_id, wave: None, message }
+    }
 }
 
 /// Every hard-rule violation `prim` currently exhibits, checked against its
@@ -277,7 +295,7 @@ fn impulse_violations(
             if ewa_rules::beyond_origin(origin, reference, test) {
                 out.push(Violation {
                     rule_id: "wave2_not_beyond_wave1_origin",
-                    wave: WaveSlot::Impulse2,
+                    wave: Some(WaveSlot::Impulse2),
                     message: ConceptKey::RuleWave2BeyondOrigin,
                 });
             }
@@ -299,7 +317,7 @@ fn impulse_violations(
             if ewa_rules::beyond_origin(origin, reference, test) {
                 out.push(Violation {
                     rule_id: "wave4_no_wave1_overlap",
-                    wave: WaveSlot::Impulse4,
+                    wave: Some(WaveSlot::Impulse4),
                     message: ConceptKey::RuleWave4OverlapsWave1,
                 });
             }
@@ -323,7 +341,7 @@ fn impulse_violations(
             if !ewa_rules::beyond(p0, p1, p3) {
                 out.push(Violation {
                     rule_id: "wave3_exceeds_wave1",
-                    wave: WaveSlot::Impulse3,
+                    wave: Some(WaveSlot::Impulse3),
                     message: ConceptKey::RuleWave3NotExceedingWave1,
                 });
             }
@@ -362,14 +380,14 @@ fn impulse_violations(
                 if wave5_beyond_wave3 {
                     out.push(Violation {
                         rule_id: "wave5_not_truncated",
-                        wave: WaveSlot::Impulse5,
+                        wave: Some(WaveSlot::Impulse5),
                         message: ConceptKey::RuleWave5NotTruncated,
                     });
                 }
             } else if !wave5_beyond_wave3 {
                 out.push(Violation {
                     rule_id: "wave5_beyond_wave3",
-                    wave: WaveSlot::Impulse5,
+                    wave: Some(WaveSlot::Impulse5),
                     message: ConceptKey::RuleWave5BeyondWave3,
                 });
             }
@@ -396,7 +414,7 @@ fn impulse_violations(
             if len3 <= len1 && len3 <= len5 {
                 out.push(Violation {
                     rule_id: "wave3_not_shortest",
-                    wave: WaveSlot::Impulse3,
+                    wave: Some(WaveSlot::Impulse3),
                     message: ConceptKey::RuleWave3Shortest,
                 });
             }
@@ -450,7 +468,7 @@ fn correction_violations(points: &[(i64, f64)], realized: usize, subtype: &str) 
                 _ => (!stayed_within_origin, "b_does_not_retrace_a_origin"),
             };
             if violated {
-                out.push(Violation { rule_id, wave: WaveSlot::CorrectionB, message: ConceptKey::RuleCorrectionBRule });
+                out.push(Violation { rule_id, wave: Some(WaveSlot::CorrectionB), message: ConceptKey::RuleCorrectionBRule });
             }
         }
     }
@@ -476,21 +494,21 @@ fn correction_violations(points: &[(i64, f64)], realized: usize, subtype: &str) 
                 if matches!(subtype, "flat" | "expanded" | "running") && !ewa_rules::FLAT_B_A.contains(r) {
                     out.push(Violation {
                         rule_id: "flat_requires_b_near_a_origin",
-                        wave: WaveSlot::CorrectionB,
+                        wave: Some(WaveSlot::CorrectionB),
                         message: ConceptKey::RuleFlatRequiresBNearAOrigin,
                     });
                 }
                 if subtype == "zigzag" && !ewa_rules::ZIGZAG_B_A.contains(r) {
                     out.push(Violation {
                         rule_id: "zigzag_requires_shallow_b",
-                        wave: WaveSlot::CorrectionB,
+                        wave: Some(WaveSlot::CorrectionB),
                         message: ConceptKey::RuleZigzagRequiresShallowB,
                     });
                 }
                 if subtype == "expanded" && !ewa_rules::EXPANDED_FLAT_B_A.contains(r) {
                     out.push(Violation {
                         rule_id: "expanded_flat_requires_b_beyond_a_origin",
-                        wave: WaveSlot::CorrectionB,
+                        wave: Some(WaveSlot::CorrectionB),
                         message: ConceptKey::RuleExpandedFlatRequiresBBeyondAOrigin,
                     });
                 }
@@ -510,7 +528,7 @@ fn correction_violations(points: &[(i64, f64)], realized: usize, subtype: &str) 
                 _ => (!progressed_past_a, "c_exceeds_a_end"),
             };
             if violated {
-                out.push(Violation { rule_id, wave: WaveSlot::CorrectionC, message: ConceptKey::RuleCorrectionCRule });
+                out.push(Violation { rule_id, wave: Some(WaveSlot::CorrectionC), message: ConceptKey::RuleCorrectionCRule });
             }
         }
     }
@@ -552,7 +570,7 @@ fn triangle_violations(points: &[(i64, f64)], realized: usize) -> Vec<Violation>
             if ratio >= 1.0 {
                 out.push(Violation {
                     rule_id: "contracting_boundaries",
-                    wave,
+                    wave: Some(wave),
                     message: ConceptKey::RuleTriangleNotContracting,
                 });
             }
@@ -624,7 +642,7 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
         let matches = count::kind_id_of(child)
             .is_some_and(|kind| count::child_kinds(prim, slot).iter().any(|&k| k == kind));
         if !matches {
-            out.push(Violation { rule_id: "subdivision_class", wave: slot, message: ConceptKey::RuleSubdivisionClass });
+            out.push(Violation { rule_id: "subdivision_class", wave: Some(slot), message: ConceptKey::RuleSubdivisionClass });
         }
     }
 
@@ -636,10 +654,10 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
     // parent's own pass above (`a`): the parent's own `children` list can
     // only see THAT a child is nested in a slot, never report on it by
     // name from there without duplicating this same lookup per child, so
-    // this reads more naturally as the child's own violation, matching
-    // `wave: own_first_slot` — a stand-in "the whole structure" marker,
-    // same shape `chain_continuity` (below) already uses for the same
-    // reason: there is no single INTERNAL wave this is about.
+    // this reads more naturally as the child's own violation, reported
+    // with no wave at all (`Violation::whole`) — same shape
+    // `chain_continuity` (below) uses for the same reason: there is no
+    // single INTERNAL wave this is about.
     //
     // Closes a real, previously-silent gap: higher-degree auto-adoption
     // (`count::adopted_parent_degree`) derives the new parent's own degree
@@ -653,13 +671,17 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
         if let Some(parent) = others.iter().find(|p| p.data().id == link.parent_id) {
             if let (Some(parent_degree), Some(own_degree)) = (parent.wave_degree(), prim.wave_degree()) {
                 if own_degree != parent_degree.finer() {
-                    if let Some(&own_first_slot) = prim.wave_slots().first() {
-                        out.push(Violation {
-                            rule_id: "subdivision_degree",
-                            wave: own_first_slot,
-                            message: ConceptKey::RuleSubdivisionDegree,
-                        });
-                    }
+                    // No wave: the degree a subdivision carries is a fact
+                    // about the WHOLE structure, not about any one of its
+                    // legs. Until `Violation::wave` could be `None` this
+                    // borrowed the structure's own first slot as a
+                    // stand-in, which recoloured wave 1 for a problem wave
+                    // 1 has nothing to do with — and silently dropped the
+                    // rule for any type whose `wave_slots()` is empty.
+                    out.push(Violation::whole(
+                        "subdivision_degree",
+                        ConceptKey::RuleSubdivisionDegree,
+                    ));
                 }
             }
         }
@@ -679,7 +701,7 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
                     if any_child_pivot_beyond_origin(origin, reference, child) {
                         out.push(Violation {
                             rule_id: "wave2_not_beyond_wave1_origin",
-                            wave: WaveSlot::Impulse2,
+                            wave: Some(WaveSlot::Impulse2),
                             message: ConceptKey::RuleWave2BeyondOrigin,
                         });
                     }
@@ -708,7 +730,7 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
                     {
                         out.push(Violation {
                             rule_id: "wave4_no_wave1_overlap",
-                            wave: WaveSlot::Impulse4,
+                            wave: Some(WaveSlot::Impulse4),
                             message: ConceptKey::RuleWave4OverlapsWave1,
                         });
                     }
@@ -734,7 +756,7 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
                     if ewa_rules::progresses(direction, p1, p2) && !running_subdivision(&children, WaveSlot::Impulse2) {
                         out.push(Violation {
                             rule_id: "wave2_retraces_wave1",
-                            wave: WaveSlot::Impulse2,
+                            wave: Some(WaveSlot::Impulse2),
                             message: ConceptKey::RuleWave2NotRetracingWave1,
                         });
                     }
@@ -744,7 +766,7 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
                         if ewa_rules::progresses(direction, p3, p4) && !running_subdivision(&children, WaveSlot::Impulse4) {
                             out.push(Violation {
                                 rule_id: "wave4_retraces_wave3",
-                                wave: WaveSlot::Impulse4,
+                                wave: Some(WaveSlot::Impulse4),
                                 message: ConceptKey::RuleWave4NotRetracingWave3,
                             });
                         }
@@ -774,7 +796,7 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
         for &slot in connector_slots {
             if let Some(child) = find_child(&children, slot) {
                 if !child_pattern(child).map(grammar::is_corrective).unwrap_or(true) {
-                    out.push(Violation { rule_id: "x_is_corrective", wave: slot, message: ConceptKey::RuleComboXNotCorrective });
+                    out.push(Violation { rule_id: "x_is_corrective", wave: Some(slot), message: ConceptKey::RuleComboXNotCorrective });
                 }
             }
         }
@@ -784,7 +806,7 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
         for &slot in component_slots {
             if let Some(child) = find_child(&children, slot) {
                 if !child_pattern(child).map(grammar::is_corrective).unwrap_or(true) {
-                    out.push(Violation { rule_id: wyz_rule_id, wave: slot, message: ConceptKey::RuleComboWyzNotCorrective });
+                    out.push(Violation { rule_id: wyz_rule_id, wave: Some(slot), message: ConceptKey::RuleComboWyzNotCorrective });
                 }
             }
         }
@@ -803,7 +825,7 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
             .collect();
         if zigzag_slots.len() > 1 {
             for slot in zigzag_slots {
-                out.push(Violation { rule_id: "at_most_one_zigzag", wave: slot, message: ConceptKey::RuleComboAtMostOneZigzag });
+                out.push(Violation { rule_id: "at_most_one_zigzag", wave: Some(slot), message: ConceptKey::RuleComboAtMostOneZigzag });
             }
         }
 
@@ -818,7 +840,7 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
                     if child.type_id() == "elliott_triangle" {
                         out.push(Violation {
                             rule_id: "triangle_only_final_component",
-                            wave: slot,
+                            wave: Some(slot),
                             message: ConceptKey::RuleComboTriangleOnlyFinal,
                         });
                     }
@@ -842,13 +864,14 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
                 if let Some(&own_first) = own_points.first() {
                     let tolerance = (prev_last.1 - prev_first.1).abs() * 0.001;
                     if (own_first.1 - prev_last.1).abs() > tolerance {
-                        if let Some(&first_slot) = prim.wave_slots().first() {
-                            out.push(Violation {
-                                rule_id: "chain_continuity",
-                                wave: first_slot,
-                                message: ConceptKey::RuleChainContinuityGap,
-                            });
-                        }
+                        // No wave, for the same reason `subdivision_degree`
+                        // above carries none: a gap between this structure
+                        // and its predecessor is a fact about the JOIN, not
+                        // about an internal leg.
+                        out.push(Violation::whole(
+                            "chain_continuity",
+                            ConceptKey::RuleChainContinuityGap,
+                        ));
                     }
                 }
             }
@@ -996,8 +1019,14 @@ pub fn chain_violations(chain: &[&dyn Primitive]) -> Vec<ChainViolation> {
                 _ => Vec::new(),
             };
             for v in family {
-                if let Some(member_index) = shape.slots.iter().position(|&s| s == v.wave) {
-                    out.push(ChainViolation { rule_id: v.rule_id, member_index, wave: v.wave, message: v.message });
+                // A chain-level violation is reported on a member identified
+                // by its wave; a `None`-wave violation names no leg and so
+                // cannot be attributed to any member — skip it here rather
+                // than guess (a whole-structure family rule does not exist
+                // yet, but a future one must not silently misattribute).
+                let Some(wave) = v.wave else { continue };
+                if let Some(member_index) = shape.slots.iter().position(|&s| s == wave) {
+                    out.push(ChainViolation { rule_id: v.rule_id, member_index, wave, message: v.message });
                 }
             }
         }
@@ -1101,7 +1130,7 @@ mod retracement_tests {
         let found = violations_in(&impulse, &[]);
         assert_eq!(found.len(), 1, "exactly the wave-4 retracement violation, nothing else: {found:?}");
         assert_eq!(found[0].rule_id, "wave4_retraces_wave3");
-        assert!(matches!(found[0].wave, WaveSlot::Impulse4));
+        assert!(matches!(found[0].wave, Some(WaveSlot::Impulse4)));
     }
 
     #[test]
@@ -1136,6 +1165,22 @@ mod retracement_tests {
         let impulse = ElliottImpulse::new(points, "#2196F3");
         assert!(violations(&impulse).is_empty());
         assert!(violations_in(&impulse, &[]).is_empty());
+    }
+
+    /// Behaviour-neutral proof (2026-08-25): widening `Violation::wave` from
+    /// a bare `WaveSlot` to `Option<WaveSlot>` is a type change, not a
+    /// semantics change — this fixture's own known geometry violation
+    /// (`owner_report_impulse`, same as
+    /// `owner_report_impulse_flags_wave4_retraces_wave3` above) must still
+    /// report the exact same rule id on the exact same slot, now wrapped in
+    /// `Some`.
+    #[test]
+    fn wave_field_widened_to_option_reports_the_same_rule_and_slot() {
+        let impulse = owner_report_impulse();
+        let found = violations_in(&impulse, &[]);
+        assert_eq!(found.len(), 1, "exactly the wave-4 retracement violation, nothing else: {found:?}");
+        assert_eq!(found[0].rule_id, "wave4_retraces_wave3");
+        assert_eq!(found[0].wave, Some(WaveSlot::Impulse4));
     }
 }
 
@@ -1211,7 +1256,7 @@ mod subdivision_degree_tests {
         let found = violations_in(&same_degree, &[&p]);
         assert_eq!(found.len(), 1, "exactly the degree violation, nothing else: {found:?}");
         assert_eq!(found[0].rule_id, "subdivision_degree");
-        assert_eq!(found[0].wave, WaveSlot::CorrectionA, "the child's own FIRST slot stands in for \"the whole structure\", same as chain_continuity's own marker");
+        assert_eq!(found[0].wave, None, "a subdivision's degree is a fact about the whole structure, so it names no wave and recolours no leg");
 
         // A child TWO steps finer — still wrong, not merely "finer than".
         let two_steps_finer = child_at(p.data.id, p.wave_degree().expect("impulse carries a degree").finer().finer());
@@ -1290,7 +1335,7 @@ mod wave5_truncation_tests {
         let found = violations(&impulse);
         assert_eq!(found.len(), 1, "exactly the wave-5 violation, nothing else: {found:?}");
         assert_eq!(found[0].rule_id, "wave5_beyond_wave3");
-        assert_eq!(found[0].wave, WaveSlot::Impulse5);
+        assert_eq!(found[0].wave, Some(WaveSlot::Impulse5));
     }
 
     /// `truncated_fifth == true` and the measured fifth really is short —
@@ -1315,7 +1360,7 @@ mod wave5_truncation_tests {
         let found = violations(&impulse);
         assert_eq!(found.len(), 1, "exactly the contradicted-claim violation, nothing else: {found:?}");
         assert_eq!(found[0].rule_id, "wave5_not_truncated");
-        assert_eq!(found[0].wave, WaveSlot::Impulse5);
+        assert_eq!(found[0].wave, Some(WaveSlot::Impulse5));
         assert!(!found.iter().any(|v| v.rule_id == "wave5_beyond_wave3"), "the geometry sibling must not also fire: {found:?}");
     }
 
@@ -1354,7 +1399,7 @@ mod wave5_truncation_tests {
         let found = violations(&impulse);
         assert_eq!(found.len(), 1, "exactly the wave-5 violation, nothing else: {found:?}");
         assert_eq!(found[0].rule_id, "wave5_beyond_wave3");
-        assert_eq!(found[0].wave, WaveSlot::Impulse5);
+        assert_eq!(found[0].wave, Some(WaveSlot::Impulse5));
     }
 
     /// The downward mirror of `truncated_fifth_flag_on_with_exceeding_fifth_
@@ -1371,7 +1416,7 @@ mod wave5_truncation_tests {
         let found = violations(&impulse);
         assert_eq!(found.len(), 1, "exactly the contradicted-claim violation, nothing else: {found:?}");
         assert_eq!(found[0].rule_id, "wave5_not_truncated");
-        assert_eq!(found[0].wave, WaveSlot::Impulse5);
+        assert_eq!(found[0].wave, Some(WaveSlot::Impulse5));
     }
 }
 
@@ -1424,5 +1469,57 @@ mod diagonal_overlap_tests {
             !found.iter().any(|v| v.rule_id == "wave4_no_wave1_overlap"),
             "a leading diagonal's own wave-4/wave-1 overlap is legal, this must not report: {found:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod whole_violation_tests {
+    //! [`Violation::whole`] (2026-08-25) — the shape every non-Elliott
+    //! markup engine (candle patterns, smart money, AMD, order flow)
+    //! reports, and the shape an Elliott rule may legitimately use for a
+    //! structure-level judgement. `mlc-core` cannot reach `mlc-app-layout`'s
+    //! own private `primitive_settings_vid::primitive_violations` merge
+    //! (crate boundary) — that half is covered by a dedicated test in that
+    //! crate instead (`primitive_settings_vid::whole_violation_tests`).
+    //! What IS covered here is the OTHER half of the same claim: the exact
+    //! render-side predicates every Elliott type's own `render` uses
+    //! (`elliott_impulse.rs` and its four siblings — verbatim, not a
+    //! re-implementation) never pick a `None`-wave violation to recolor a
+    //! segment or a label, because it names no [`WaveSlot`] to recolor.
+
+    use super::*;
+
+    #[test]
+    fn whole_constructs_with_no_wave() {
+        let v = Violation::whole("candle_pattern_engulfing", ConceptKey::RuleCorrectionBRule);
+        assert_eq!(v.rule_id, "candle_pattern_engulfing");
+        assert!(v.wave.is_none(), "a whole-structure violation names no leg");
+    }
+
+    #[test]
+    fn whole_violation_recolors_no_segment_and_no_label() {
+        let violations = vec![Violation::whole("candle_pattern_engulfing", ConceptKey::RuleCorrectionBRule)];
+
+        // Segment pass — the exact shape every Elliott type's own `render`
+        // uses: a `None` wave is skipped via an early `continue` before
+        // `subdivided_slots`/`slot_span` are even consulted, so no wave is
+        // ever picked to recolor.
+        let mut recolored_segments = 0;
+        for v in &violations {
+            let Some(_wave) = v.wave else { continue };
+            recolored_segments += 1;
+        }
+        assert_eq!(recolored_segments, 0, "a whole-structure violation recolors no segment");
+
+        // Label pass — the exact `is_violating` predicate every Elliott
+        // type's own render uses: `v.wave.is_some_and(...)` is trivially
+        // `false` for every point index once `v.wave` is `None`, regardless
+        // of what `slot_span` would have returned for a real wave.
+        for i in 0..6 {
+            let is_violating = violations
+                .iter()
+                .any(|v| v.wave.is_some_and(|w| count::slot_span("elliott_impulse", w).map(|(_, e)| e) == Some(i)));
+            assert!(!is_violating, "a whole-structure violation must not mark label {i}");
+        }
     }
 }

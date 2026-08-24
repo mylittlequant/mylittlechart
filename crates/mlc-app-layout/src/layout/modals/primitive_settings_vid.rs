@@ -415,16 +415,21 @@ fn draw_rules_group(
     let lang = current_language();
     draw_group_header(ctx, toolbar_theme, x0, x1, *row_y, ConceptKey::RulesGroupTitle.get(lang), None);
     *row_y += GROUP_HEADER_H;
-    // The wave label prefix comes from `prim`'s OWN degree — `None` for a
-    // primitive outside the Elliott family (never reached here, since
-    // `violations` is always empty for one) or, defensively, for an
-    // Elliott primitive somehow missing its own degree; the prefix is
-    // simply skipped rather than printing a placeholder.
+    // The wave label prefix comes from `prim`'s OWN degree AND the
+    // violation's OWN wave — `None` for either skips the prefix and prints
+    // the message alone: `degree` is `None` for a primitive outside the
+    // Elliott family (never reached here, since `violations` is always
+    // empty for one) or, defensively, for an Elliott primitive somehow
+    // missing its own degree; `violation.wave` is `None` for a
+    // whole-structure violation (`Violation::whole`, every non-Elliott
+    // engine, or an Elliott rule judging the structure rather than one of
+    // its waves) — it names no leg, so there is no wave-slot label to
+    // prefix.
     let degree = prim.wave_degree();
     for violation in &violations {
-        let text = match degree {
-            Some(d) => format!("{} — {}", violation.wave.label(d), violation.message.get(lang)),
-            None => violation.message.get(lang).to_string(),
+        let text = match (degree, violation.wave) {
+            (Some(d), Some(wave)) => format!("{} — {}", wave.label(d), violation.message.get(lang)),
+            _ => violation.message.get(lang).to_string(),
         };
         draw_violation_row(ctx, x0, x1, *row_y, &text);
         *row_y += ROW_H;
@@ -1169,5 +1174,42 @@ pub fn draw_slider_row(
             min_val: min,
             max_val: max,
         });
+    }
+}
+
+#[cfg(test)]
+mod whole_violation_tests {
+    //! `Violation::wave` widened to `Option<WaveSlot>` (2026-08-25) — a
+    //! `guard::Violation::whole(...)` (a whole-structure violation, the
+    //! shape every non-Elliott markup engine reports) must still surface
+    //! through [`primitive_violations`]'s own guard-pass + context-cache
+    //! merge, the SAME merge a leg-attributed violation goes through. The
+    //! render-side "recolors nothing" half of the same claim cannot be
+    //! proven here — `draw_rules_group` takes a live `&mut dyn
+    //! RenderContext` this module has no test double for — see
+    //! `mlc_core::drawing::primitives_v2::elliott::guard::
+    //! whole_violation_tests` for that half instead, covered directly
+    //! against the render-side predicate every Elliott type's own `render`
+    //! uses.
+
+    use super::*;
+    use mlc_core::drawing::primitives_v2::ElliottImpulse;
+
+    #[test]
+    fn whole_violation_surfaces_through_the_modal_side_merge() {
+        let mut impulse = ElliottImpulse::new(
+            [(0, 100.0), (1_000, 110.0), (2_000, 104.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0)],
+            "#2196F3",
+        );
+        // This geometry is compliant (same fixture `guard`'s own
+        // `compliant_impulse_reports_nothing` test uses) — the self-only
+        // guard pass contributes nothing, isolating the whole-structure
+        // violation as the merge's only entry.
+        impulse.context_violations = vec![guard::Violation::whole("candle_pattern_engulfing", ConceptKey::RuleCorrectionBRule)];
+
+        let found = primitive_violations(&impulse);
+        assert_eq!(found.len(), 1, "the whole-structure violation is the only entry: {found:?}");
+        assert_eq!(found[0].rule_id, "candle_pattern_engulfing");
+        assert!(found[0].wave.is_none(), "a whole-structure violation names no leg");
     }
 }

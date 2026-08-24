@@ -188,7 +188,7 @@ pub(crate) fn refresh_wave_guards(b: &mut DataBubble) {
             let chain: Vec<&dyn Primitive> = idxs.iter().map(|&i| b.primitives[i].as_ref()).collect();
             for v in chain_violations(&chain) {
                 if let Some(&idx) = idxs.get(v.member_index) {
-                    out.push((idx, Violation { rule_id: v.rule_id, wave: v.wave, message: v.message }));
+                    out.push((idx, Violation { rule_id: v.rule_id, wave: Some(v.wave), message: v.message }));
                 }
             }
         }

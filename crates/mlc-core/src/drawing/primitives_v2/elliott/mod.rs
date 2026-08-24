@@ -27,4 +27,4 @@ pub use count::{
     label_collision_indices,
     Adoption, adoptable_children, adopted_parent_degree,
 };
-pub use guard::{ChainViolation, Violation, chain_violations, violations, violations_in};
+pub use guard::{ChainViolation, Violation, VIOLATION_COLOR, chain_violations, violations, violations_in};
