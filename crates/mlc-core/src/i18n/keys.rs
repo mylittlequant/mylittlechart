@@ -3032,10 +3032,24 @@ pub enum ConceptKey {
     SourceHlc3 = 344,
     SourceOhlc4 = 345,
     ByBarCount = 346,
+
+    // ---- Harmonic pattern kind names (`pattern_kind`'s own `Select`
+    // options, `xabcd_pattern.rs`) — Scott Carney's own published names for
+    // the five classifiable shapes (`mli::ewa::harmonic`'s own doc: "Scott
+    // Carney's published ratio definitions"). Proper nouns, not phrases —
+    // every language column carries the same Latin spelling, the same
+    // treatment `NotePatternSubtypesList` (46) already gives them in its
+    // own hint sentence; the `Unclassified` option reuses `LevelSetCustom`
+    // (142, "Custom") rather than adding a sixth near-duplicate here.
+    HarmonicKindGartley = 347,
+    HarmonicKindBat = 348,
+    HarmonicKindButterfly = 349,
+    HarmonicKindCrab = 350,
+    HarmonicKindShark = 351,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 347;
+    pub const COUNT: usize = 352;
 
     /// Get translation for this key.
     #[inline]

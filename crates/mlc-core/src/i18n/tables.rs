@@ -1292,7 +1292,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 347] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 352] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1640,6 +1640,11 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 347] = [
     /* 344 SourceHlc3                        */ [ "HLC3", "HLC3", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 345 SourceOhlc4                       */ [ "OHLC4", "OHLC4", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 346 ByBarCount                        */ [ "By bar count", "По количеству баров", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 347 HarmonicKindGartley                */ [ "Gartley", "Gartley", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 348 HarmonicKindBat                    */ [ "Bat", "Bat", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 349 HarmonicKindButterfly              */ [ "Butterfly", "Butterfly", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 350 HarmonicKindCrab                   */ [ "Crab", "Crab", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 351 HarmonicKindShark                  */ [ "Shark", "Shark", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

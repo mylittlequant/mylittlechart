@@ -2,15 +2,50 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{current_language, ConceptKey};
+use mli::ewa::harmonic::{self, HarmonicLeg};
+use mli::ewa::types::EwaPatternKind;
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
     render_primitive_text, draw_label_plate,
-    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
+    config::{
+        LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup,
+        TableCell, Tone, TARGET_RATIOS_PROPERTY_ID,
+    },
+    elliott::guard,
 };
 
 fn default_true() -> bool { true }
+
+fn default_harmonic_tolerance() -> f64 { harmonic::DEFAULT_HARMONIC_TOLERANCE }
+
+/// The smallest value `harmonic_tolerance`'s own `Number` row allows — see
+/// `xabcd_pattern::MIN_HARMONIC_TOLERANCE`'s own doc for why `0.0` (not a
+/// positive epsilon) is the correct floor: `widen_band` narrows rather
+/// than widens below `0.0`, which can invert a band (`min > max`) and
+/// permanently fail every ratio on that leg; `0.0` itself is a no-op
+/// (published band, unchanged) and never fails a well-formed ratio on
+/// float imprecision, since every "exact" target is already a
+/// `±DEFAULT_HARMONIC_TOLERANCE` band, not a bit-exact equality check.
+const MIN_HARMONIC_TOLERANCE: f64 = 0.0;
+
+/// This `Number` row's own id — shared by `style_properties()` (which
+/// declares it) and `apply_style_property` (which parses it back).
+const HARMONIC_TOLERANCE_PROPERTY_ID: &str = "harmonic_tolerance";
+
+/// This primitive's own pivot names, for the six points a Three Drives
+/// target leg can ever name (`mli::ewa::harmonic::THREE_DRIVES`'s own doc:
+/// "pivots X, 1, A, 2, B, 3") — index-aligned with `points[0..=5]`.
+/// `points[6]` (the pattern's own trailing "end" point) is never a leg
+/// endpoint or reference, matching this primitive's own pre-existing ratio
+/// computation, which never read it either.
+const PIVOT_NAMES: [&str; 6] = ["X", "1", "A", "2", "B", "3"];
+
+/// Three Drives' own identity is fixed — `EwaPatternKind::ThreeDrives` —
+/// this primitive type never needs a field the way `XabcdPattern` does.
+const PATTERN_KIND: EwaPatternKind = EwaPatternKind::ThreeDrives;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ThreeDrives {
@@ -24,6 +59,12 @@ pub struct ThreeDrives {
     pub label_style: LabelStyle,
     #[serde(default = "default_true")]
     pub show_lines: bool,
+    /// Widening delta (`mli::ewa::harmonic::widen_band`) applied to every
+    /// target leg's own band before matching — defaults to the
+    /// vocabulary's own [`harmonic::DEFAULT_HARMONIC_TOLERANCE`], never a
+    /// second tolerance constant of this crate's own.
+    #[serde(default = "default_harmonic_tolerance")]
+    pub harmonic_tolerance: f64,
 }
 
 impl ThreeDrives {
@@ -41,8 +82,80 @@ impl ThreeDrives {
             show_ratios: true,
             label_style: LabelStyle::default(),
             show_lines: true,
+            harmonic_tolerance: harmonic::DEFAULT_HARMONIC_TOLERANCE,
         }
     }
+}
+
+/// `length(leg.leg) / length(leg.reference)` for this pattern's own points
+/// — the SAME per-price-difference computation used for every on-chart
+/// ratio label in `render()` and for the target-ratio table
+/// (`target_ratio_table_property`) — one function, never a second copy of
+/// the arithmetic.
+fn measured_ratio(points: &[(i64, f64); 7], leg: &HarmonicLeg) -> Option<f64> {
+    let idx = |name: &str| PIVOT_NAMES.iter().position(|&n| n == name);
+    let (l0, l1) = (idx(leg.leg.0)?, idx(leg.leg.1)?);
+    let (r0, r1) = (idx(leg.reference.0)?, idx(leg.reference.1)?);
+    let leg_len = (points[l1].1 - points[l0].1).abs();
+    let ref_len = (points[r1].1 - points[r0].1).abs();
+    (ref_len > 0.0).then(|| leg_len / ref_len)
+}
+
+/// Which of this primitive's own already-drawn segments (the solid
+/// X-1-A-2-B-3-end run) shows `leg` — every Three Drives target leg
+/// (`1A`, `A2`, `2B`, `B3`) is an adjacent pair on that run.
+fn leg_line_span(leg: (&str, &str)) -> Option<(usize, usize)> {
+    match leg {
+        ("X", "1") => Some((0, 1)),
+        ("1", "A") => Some((1, 2)),
+        ("A", "2") => Some((2, 3)),
+        ("2", "B") => Some((3, 4)),
+        ("B", "3") => Some((4, 5)),
+        _ => None,
+    }
+}
+
+/// The design's own "target ratios" table (`ConceptKey::TargetRatiosGroupTitle`,
+/// `PropertyType::Table`) — one row per [`HarmonicLeg`] in
+/// `mli::ewa::harmonic::targets_for(PATTERN_KIND)`: the leg, its
+/// (tolerance-widened) target band, and the measured ratio
+/// ([`measured_ratio`] — the SAME function `render()` uses for its own
+/// on-chart labels), toned by [`harmonic::ratio_matches`] (never a local
+/// comparison).
+fn target_ratio_table_property(points: &[(i64, f64); 7], tolerance: f64) -> Option<ConfigProperty> {
+    let table = harmonic::targets_for(PATTERN_KIND);
+    if table.is_empty() {
+        return None;
+    }
+    let lang = current_language();
+    let head = vec![
+        ConceptKey::SegmentColumnHeader.get(lang).to_string(),
+        ConceptKey::ToleranceColumnHeader.get(lang).to_string(),
+        ConceptKey::ActualColumnHeader.get(lang).to_string(),
+    ];
+    let rows: Vec<Vec<TableCell>> = table
+        .iter()
+        .map(|entry| {
+            let band = harmonic::widen_band(entry.band, tolerance);
+            let segment = TableCell::Text(format!("{}{}", entry.leg.0, entry.leg.1));
+            let target = TableCell::Text(format!("{:.3}\u{2013}{:.3}", band.min, band.max));
+            let actual = match measured_ratio(points, entry) {
+                Some(ratio) => {
+                    let widened = HarmonicLeg { band, ..*entry };
+                    let tone = if harmonic::ratio_matches(ratio, &widened) { Tone::Good } else { Tone::Bad };
+                    TableCell::Toned(format!("{ratio:.3}"), tone)
+                }
+                None => TableCell::Text("\u{2014}".to_string()),
+            };
+            vec![segment, target, actual]
+        })
+        .collect();
+    Some(
+        ConfigProperty::table(TARGET_RATIOS_PROPERTY_ID, ConceptKey::TargetRatiosGroupTitle.get(lang), head, rows)
+            .with_category(PropertyCategory::AppearanceStats)
+            .with_order(20)
+            .in_group(PropertyGroup::TargetRatios),
+    )
 }
 
 impl Primitive for ThreeDrives {
@@ -86,6 +199,19 @@ impl Primitive for ThreeDrives {
         let screen: Vec<_> = self.points.iter().map(|(ts, p)| (ctx.ts_to_x_ms(*ts), ctx.price_to_y(*p))).collect();
         let labels = ["", "D1", "R1", "D2", "R2", "D3", ""];
 
+        let target_table = harmonic::targets_for(PATTERN_KIND);
+        // Every currently out-of-band target leg (tolerance-widened,
+        // `ratio_matches` — the SAME rule `style_properties()`'s own table
+        // reads).
+        let out_of_band: Vec<HarmonicLeg> = target_table
+            .iter()
+            .filter_map(|entry| {
+                let ratio = measured_ratio(&self.points, entry)?;
+                let widened = HarmonicLeg { band: harmonic::widen_band(entry.band, self.harmonic_tolerance), ..*entry };
+                (!harmonic::ratio_matches(ratio, &widened)).then_some(*entry)
+            })
+            .collect();
+
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
         match self.data.style {
@@ -116,6 +242,24 @@ impl Primitive for ThreeDrives {
             ctx.line_to(crisp(screen[5].0, dpr), crisp(screen[5].1, dpr));
             ctx.stroke();
             ctx.set_line_dash(&[]);
+
+            // Out-of-band marking — same register the Elliott guard already
+            // uses for a broken rule (`elliott::guard::VIOLATION_COLOR`,
+            // recolouring the offending segment). Every Three Drives target
+            // leg resolves to a drawn segment (`leg_line_span`).
+            if !out_of_band.is_empty() {
+                ctx.set_stroke_color(guard::VIOLATION_COLOR);
+                ctx.set_stroke_width(self.data.width);
+                for entry in &out_of_band {
+                    if let Some((a, b)) = leg_line_span(entry.leg) {
+                        ctx.begin_path();
+                        ctx.move_to(crisp(screen[a].0, dpr), crisp(screen[a].1, dpr));
+                        ctx.line_to(crisp(screen[b].0, dpr), crisp(screen[b].1, dpr));
+                        ctx.stroke();
+                    }
+                }
+                ctx.set_stroke_color(&self.data.color.stroke);
+            }
         }
 
         // Draw labels
@@ -141,28 +285,17 @@ impl Primitive for ThreeDrives {
             ctx.set_text_align(crate::render::TextAlign::Center);
             ctx.set_text_baseline(crate::render::TextBaseline::Middle);
 
-            // Points: start=0, drive1=1, retrace1=2, drive2=3, retrace2=4, drive3=5, end=6
-            let d1 = (self.points[1].1 - self.points[0].1).abs(); // start to drive1
-            let r1 = (self.points[2].1 - self.points[1].1).abs(); // drive1 to retrace1
-            let d2 = (self.points[3].1 - self.points[2].1).abs(); // retrace1 to drive2
-            let r2 = (self.points[4].1 - self.points[3].1).abs(); // drive2 to retrace2
-            let d3 = (self.points[5].1 - self.points[4].1).abs(); // retrace2 to drive3
-
-            // R1/D1 on retrace1 leg (≈0.618)
-            if d1 > 0.0 {
-                draw_ratio_label(ctx, screen[1], screen[2], r1 / d1, ratio_font_size, &self.label_style, ratio_color);
-            }
-            // D2/R1 on drive2 leg (≈1.272)
-            if r1 > 0.0 {
-                draw_ratio_label(ctx, screen[2], screen[3], d2 / r1, ratio_font_size, &self.label_style, ratio_color);
-            }
-            // R2/D2 on retrace2 leg (≈0.618)
-            if d2 > 0.0 {
-                draw_ratio_label(ctx, screen[3], screen[4], r2 / d2, ratio_font_size, &self.label_style, ratio_color);
-            }
-            // D3/R2 on drive3 leg (≈1.272)
-            if r2 > 0.0 {
-                draw_ratio_label(ctx, screen[4], screen[5], d3 / r2, ratio_font_size, &self.label_style, ratio_color);
+            // One label per target leg (1A/X1, A2/1A, 2B/A2, B3/2B — Three
+            // Drives' own table, `mli::ewa::harmonic::targets_for`), using
+            // the SAME `measured_ratio` the target-ratio table reads,
+            // marked with `guard::VIOLATION_COLOR` when out of band.
+            for entry in target_table {
+                let Some(ratio) = measured_ratio(&self.points, entry) else { continue };
+                let is_violating = out_of_band.contains(entry);
+                let this_label_color = if is_violating { guard::VIOLATION_COLOR } else { ratio_color };
+                if let Some((a, b)) = leg_line_span(entry.leg) {
+                    draw_ratio_label(ctx, screen[a], screen[b], ratio, ratio_font_size, &self.label_style, this_label_color);
+                }
             }
         }
 
@@ -215,6 +348,18 @@ impl Primitive for ThreeDrives {
                 .with_order(14).in_group(PropertyGroup::PointLabels),
         ];
         props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::PointLabels));
+        // Tolerance — declared in `PropertyGroup::TargetRatios` beside the
+        // table it governs, written back through `apply_style_property`
+        // like every other declared property.
+        props.push(
+            ConfigProperty::number(HARMONIC_TOLERANCE_PROPERTY_ID, ConceptKey::ToleranceColumnHeader.get(current_language()), self.harmonic_tolerance, Some(MIN_HARMONIC_TOLERANCE), Some(0.2))
+                .with_category(PropertyCategory::AppearanceStats)
+                .with_order(19)
+                .in_group(PropertyGroup::TargetRatios),
+        );
+        if let Some(table) = target_ratio_table_property(&self.points, self.harmonic_tolerance) {
+            props.push(table);
+        }
         props
     }
 
@@ -228,6 +373,9 @@ impl Primitive for ThreeDrives {
             }
             "show_ratios" => {
                 if let Some(v) = value.as_bool() { self.show_ratios = v; return true; }
+            }
+            HARMONIC_TOLERANCE_PROPERTY_ID => {
+                if let Some(v) = value.as_number() { self.harmonic_tolerance = v.max(MIN_HARMONIC_TOLERANCE); return true; }
             }
             "label_font_size" => {
                 if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; }
@@ -274,5 +422,96 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod harmonic_tests {
+    use super::*;
+    use super::super::super::config::PropertyType;
+
+    /// A Three-Drives-shaped drawing, by construction: 1A/X1 = 0.7,
+    /// A2/1A = 1.4, 2B/A2 = 0.7, B3/2B = 1.4 — every leg lands inside its
+    /// own band (`mli::ewa::harmonic::THREE_DRIVES`, read via
+    /// `targets_for`, never re-typed here). `points[6]` (the "end" point)
+    /// is never read by any leg, matching this primitive's own
+    /// pre-existing ratio computation.
+    fn three_drives_points() -> [(i64, f64); 7] {
+        [
+            (0, 0.0), (1_000, 100.0), (2_000, 170.0), (3_000, 72.0),
+            (4_000, 140.6), (5_000, 44.56), (6_000, 50.0),
+        ]
+    }
+
+    #[test]
+    fn three_drives_shaped_drawing_reports_every_leg_inside() {
+        let prim = ThreeDrives::new(three_drives_points(), "#795548");
+        let table = harmonic::targets_for(PATTERN_KIND);
+        assert_eq!(table.len(), 4, "Three Drives' own table has 4 legs");
+        for entry in table {
+            let ratio = measured_ratio(&prim.points, entry).expect("nonzero reference on this fixture");
+            let widened = HarmonicLeg { band: harmonic::widen_band(entry.band, prim.harmonic_tolerance), ..*entry };
+            assert!(
+                harmonic::ratio_matches(ratio, &widened),
+                "leg {:?} measured {ratio} should be inside its own band {:?}",
+                entry.leg, widened.band
+            );
+        }
+    }
+
+    #[test]
+    fn moving_one_pivot_reports_exactly_that_leg_outside() {
+        let mut prim = ThreeDrives::new(three_drives_points(), "#795548");
+        // "3" (points[5]) is used ONLY by the B3 leg — no other leg
+        // references it — so moving it in isolation breaks exactly one
+        // leg. B3/2B goes from 1.4 to 2.0, clearly outside [1.272, 1.618].
+        prim.points[5].1 = 3.4;
+
+        let table = harmonic::targets_for(PATTERN_KIND);
+        let out_of_band: Vec<(&str, &str)> = table
+            .iter()
+            .filter(|entry| {
+                let ratio = measured_ratio(&prim.points, entry).expect("nonzero reference on this fixture");
+                let widened = HarmonicLeg { band: harmonic::widen_band(entry.band, prim.harmonic_tolerance), ..**entry };
+                !harmonic::ratio_matches(ratio, &widened)
+            })
+            .map(|entry| entry.leg)
+            .collect();
+
+        assert_eq!(out_of_band, vec![("B", "3")], "exactly the B3 leg should report outside, nothing else: {out_of_band:?}");
+    }
+
+    #[test]
+    fn table_actual_column_equals_the_measured_ratio_the_labels_use() {
+        let prim = ThreeDrives::new(three_drives_points(), "#795548");
+        let table_property = target_ratio_table_property(&prim.points, prim.harmonic_tolerance)
+            .expect("Three Drives is always classified");
+        let PropertyType::Table { rows, .. } = &table_property.prop_type else { panic!("must be PropertyType::Table") };
+
+        let target_table = harmonic::targets_for(PATTERN_KIND);
+        assert_eq!(rows.len(), target_table.len());
+        for (row, entry) in rows.iter().zip(target_table.iter()) {
+            let TableCell::Toned(actual_text, _) = &row[2] else { panic!("Actual column must be a Toned cell") };
+            let actual: f64 = actual_text.parse().expect("Actual cell must be a formatted number");
+            let expected = measured_ratio(&prim.points, entry).expect("nonzero reference on this fixture");
+            assert!((actual - expected).abs() < 1e-3, "leg {:?}: table shows {actual}, measured_ratio gives {expected}", entry.leg);
+        }
+    }
+
+    #[test]
+    fn applying_tolerance_through_apply_path_widens_the_table_bands() {
+        let mut prim = ThreeDrives::new(three_drives_points(), "#795548");
+        let applied = prim.apply_style_property(HARMONIC_TOLERANCE_PROPERTY_ID, &PropertyValue::Number(0.05));
+        assert!(applied, "apply_style_property must recognise the harmonic_tolerance id");
+        assert!((prim.harmonic_tolerance - 0.05).abs() < 1e-12);
+
+        let table_property = target_ratio_table_property(&prim.points, prim.harmonic_tolerance)
+            .expect("Three Drives is always classified");
+        let PropertyType::Table { rows, .. } = &table_property.prop_type else { panic!("must be PropertyType::Table") };
+
+        // 1A's own published band [0.618, 0.786] widened by 0.05 becomes
+        // [0.568, 0.836].
+        let TableCell::Text(band_text) = &rows[0][1] else { panic!("Tolerance column must be Text") };
+        assert_eq!(band_text, "0.568\u{2013}0.836");
     }
 }

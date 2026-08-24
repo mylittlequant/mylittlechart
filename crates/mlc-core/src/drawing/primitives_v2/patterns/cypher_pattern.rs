@@ -2,15 +2,49 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
+use crate::i18n::{current_language, ConceptKey};
+use mli::ewa::harmonic::{self, HarmonicLeg};
+use mli::ewa::types::EwaPatternKind;
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, LineStyle, CONTROL_POINT_HIT_RADIUS,
     render_primitive_text, draw_label_plate,
-    config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup},
+    config::{
+        LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup,
+        TableCell, Tone, TARGET_RATIOS_PROPERTY_ID,
+    },
+    elliott::guard,
 };
 
 fn default_true() -> bool { true }
+
+fn default_harmonic_tolerance() -> f64 { harmonic::DEFAULT_HARMONIC_TOLERANCE }
+
+/// The smallest value `harmonic_tolerance`'s own `Number` row allows — see
+/// `xabcd_pattern::MIN_HARMONIC_TOLERANCE`'s own doc for why `0.0` (not a
+/// positive epsilon) is the correct floor: `widen_band` narrows rather
+/// than widens below `0.0`, which can invert a band (`min > max`) and
+/// permanently fail every ratio on that leg; `0.0` itself is a no-op
+/// (published band, unchanged) and never fails a well-formed ratio on
+/// float imprecision, since every "exact" target is already a
+/// `±DEFAULT_HARMONIC_TOLERANCE` band, not a bit-exact equality check.
+const MIN_HARMONIC_TOLERANCE: f64 = 0.0;
+
+/// This `Number` row's own id — shared by `style_properties()` (which
+/// declares it) and `apply_style_property` (which parses it back).
+const HARMONIC_TOLERANCE_PROPERTY_ID: &str = "harmonic_tolerance";
+
+/// This primitive's own pivot names, in point-index order — see
+/// `xabcd_pattern::PIVOT_NAMES`'s own doc for why this is duplicated per
+/// file rather than shared: this primitive's own point ARRAY SIZE differs
+/// per harmonic type, so there is no one generic array type to share it
+/// through.
+const PIVOT_NAMES: [&str; 5] = ["X", "A", "B", "C", "D"];
+
+/// Cypher's own identity is fixed — `EwaPatternKind::Cypher` — this
+/// primitive type never needs a field the way `XabcdPattern` does.
+const PATTERN_KIND: EwaPatternKind = EwaPatternKind::Cypher;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CypherPattern {
@@ -24,6 +58,12 @@ pub struct CypherPattern {
     pub label_style: LabelStyle,
     #[serde(default = "default_true")]
     pub show_lines: bool,
+    /// Widening delta (`mli::ewa::harmonic::widen_band`) applied to every
+    /// target leg's own band before matching — defaults to the
+    /// vocabulary's own [`harmonic::DEFAULT_HARMONIC_TOLERANCE`], never a
+    /// second tolerance constant of this crate's own.
+    #[serde(default = "default_harmonic_tolerance")]
+    pub harmonic_tolerance: f64,
 }
 
 impl CypherPattern {
@@ -41,8 +81,84 @@ impl CypherPattern {
             show_ratios: true,
             label_style: LabelStyle::default(),
             show_lines: true,
+            harmonic_tolerance: harmonic::DEFAULT_HARMONIC_TOLERANCE,
         }
     }
+}
+
+/// `length(leg.leg) / length(leg.reference)` for this pattern's own points
+/// — the SAME per-price-difference computation used for every on-chart
+/// ratio label in `render()` and for the target-ratio table
+/// (`target_ratio_table_property`) — one function, never a second copy of
+/// the arithmetic. `None` when a named pivot cannot be resolved, or when
+/// the reference leg has zero length.
+fn measured_ratio(points: &[(i64, f64); 5], leg: &HarmonicLeg) -> Option<f64> {
+    let idx = |name: &str| PIVOT_NAMES.iter().position(|&n| n == name);
+    let (l0, l1) = (idx(leg.leg.0)?, idx(leg.leg.1)?);
+    let (r0, r1) = (idx(leg.reference.0)?, idx(leg.reference.1)?);
+    let leg_len = (points[l1].1 - points[l0].1).abs();
+    let ref_len = (points[r1].1 - points[r0].1).abs();
+    (ref_len > 0.0).then(|| leg_len / ref_len)
+}
+
+/// Which of this primitive's own already-drawn segments (the solid
+/// X-A-B-C-D run, or the dashed X-B/A-C projections) shows `leg` — every
+/// Cypher target leg (AB, AC, CD) resolves to one of these, so unlike
+/// `xabcd_pattern`'s own version of this function there is no leg here
+/// that ever falls through to `None`.
+fn leg_line_span(leg: (&str, &str)) -> Option<(usize, usize)> {
+    match leg {
+        ("X", "A") => Some((0, 1)),
+        ("A", "B") => Some((1, 2)),
+        ("B", "C") => Some((2, 3)),
+        ("C", "D") => Some((3, 4)),
+        ("X", "B") => Some((0, 2)),
+        ("A", "C") => Some((1, 3)),
+        _ => None,
+    }
+}
+
+/// The design's own "target ratios" table (`ConceptKey::TargetRatiosGroupTitle`,
+/// `PropertyType::Table`) — one row per [`HarmonicLeg`] in
+/// `mli::ewa::harmonic::targets_for(PATTERN_KIND)`: the leg, its
+/// (tolerance-widened) target band, and the measured ratio
+/// ([`measured_ratio`] — the SAME function `render()` uses for its own
+/// on-chart labels), toned by [`harmonic::ratio_matches`] (never a local
+/// comparison).
+fn target_ratio_table_property(points: &[(i64, f64); 5], tolerance: f64) -> Option<ConfigProperty> {
+    let table = harmonic::targets_for(PATTERN_KIND);
+    if table.is_empty() {
+        return None;
+    }
+    let lang = current_language();
+    let head = vec![
+        ConceptKey::SegmentColumnHeader.get(lang).to_string(),
+        ConceptKey::ToleranceColumnHeader.get(lang).to_string(),
+        ConceptKey::ActualColumnHeader.get(lang).to_string(),
+    ];
+    let rows: Vec<Vec<TableCell>> = table
+        .iter()
+        .map(|entry| {
+            let band = harmonic::widen_band(entry.band, tolerance);
+            let segment = TableCell::Text(format!("{}{}", entry.leg.0, entry.leg.1));
+            let target = TableCell::Text(format!("{:.3}\u{2013}{:.3}", band.min, band.max));
+            let actual = match measured_ratio(points, entry) {
+                Some(ratio) => {
+                    let widened = HarmonicLeg { band, ..*entry };
+                    let tone = if harmonic::ratio_matches(ratio, &widened) { Tone::Good } else { Tone::Bad };
+                    TableCell::Toned(format!("{ratio:.3}"), tone)
+                }
+                None => TableCell::Text("\u{2014}".to_string()),
+            };
+            vec![segment, target, actual]
+        })
+        .collect();
+    Some(
+        ConfigProperty::table(TARGET_RATIOS_PROPERTY_ID, ConceptKey::TargetRatiosGroupTitle.get(lang), head, rows)
+            .with_category(PropertyCategory::AppearanceStats)
+            .with_order(20)
+            .in_group(PropertyGroup::TargetRatios),
+    )
 }
 
 impl Primitive for CypherPattern {
@@ -84,7 +200,20 @@ impl Primitive for CypherPattern {
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let screen: Vec<_> = self.points.iter().map(|(ts, p)| (ctx.ts_to_x_ms(*ts), ctx.price_to_y(*p))).collect();
-        let labels = ["X", "A", "B", "C", "D"];
+        let labels = PIVOT_NAMES;
+
+        let target_table = harmonic::targets_for(PATTERN_KIND);
+        // Every currently out-of-band target leg (tolerance-widened,
+        // `ratio_matches` — the SAME rule `style_properties()`'s own table
+        // reads).
+        let out_of_band: Vec<HarmonicLeg> = target_table
+            .iter()
+            .filter_map(|entry| {
+                let ratio = measured_ratio(&self.points, entry)?;
+                let widened = HarmonicLeg { band: harmonic::widen_band(entry.band, self.harmonic_tolerance), ..*entry };
+                (!harmonic::ratio_matches(ratio, &widened)).then_some(*entry)
+            })
+            .collect();
 
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
@@ -116,6 +245,25 @@ impl Primitive for CypherPattern {
             ctx.line_to(crisp(screen[3].0, dpr), crisp(screen[3].1, dpr));
             ctx.stroke();
             ctx.set_line_dash(&[]);
+
+            // Out-of-band marking — same register the Elliott guard already
+            // uses for a broken rule (`elliott::guard::VIOLATION_COLOR`,
+            // recolouring the offending segment). Every Cypher target leg
+            // resolves to a drawn segment (`leg_line_span`), so this loop
+            // never skips one.
+            if !out_of_band.is_empty() {
+                ctx.set_stroke_color(guard::VIOLATION_COLOR);
+                ctx.set_stroke_width(self.data.width);
+                for entry in &out_of_band {
+                    if let Some((a, b)) = leg_line_span(entry.leg) {
+                        ctx.begin_path();
+                        ctx.move_to(crisp(screen[a].0, dpr), crisp(screen[a].1, dpr));
+                        ctx.line_to(crisp(screen[b].0, dpr), crisp(screen[b].1, dpr));
+                        ctx.stroke();
+                    }
+                }
+                ctx.set_stroke_color(&self.data.color.stroke);
+            }
         }
 
         // Draw labels
@@ -141,23 +289,17 @@ impl Primitive for CypherPattern {
             ctx.set_text_align(crate::render::TextAlign::Center);
             ctx.set_text_baseline(crate::render::TextBaseline::Middle);
 
-            // Points: X=0, A=1, B=2, C=3, D=4
-            let xa = (self.points[1].1 - self.points[0].1).abs();
-            let ab = (self.points[2].1 - self.points[1].1).abs();
-            let xc = (self.points[3].1 - self.points[0].1).abs();
-            let cd = (self.points[4].1 - self.points[3].1).abs();
-
-            // AB/XA on AB leg midpoint
-            if xa > 0.0 {
-                draw_ratio_label(ctx, screen[1], screen[2], ab / xa, ratio_font_size, &self.label_style, ratio_color);
-            }
-            // XC/XA on BC leg midpoint (key Cypher ratio)
-            if xa > 0.0 {
-                draw_ratio_label(ctx, screen[2], screen[3], xc / xa, ratio_font_size, &self.label_style, ratio_color);
-            }
-            // CD/XC on CD leg midpoint
-            if xc > 0.0 {
-                draw_ratio_label(ctx, screen[3], screen[4], cd / xc, ratio_font_size, &self.label_style, ratio_color);
+            // One label per target leg (AB/XA, AC/XA, CD/XC — Cypher's own
+            // table, `mli::ewa::harmonic::targets_for`), using the SAME
+            // `measured_ratio` the target-ratio table reads, marked with
+            // `guard::VIOLATION_COLOR` when out of band.
+            for entry in target_table {
+                let Some(ratio) = measured_ratio(&self.points, entry) else { continue };
+                let is_violating = out_of_band.contains(entry);
+                let this_label_color = if is_violating { guard::VIOLATION_COLOR } else { ratio_color };
+                if let Some((a, b)) = leg_line_span(entry.leg) {
+                    draw_ratio_label(ctx, screen[a], screen[b], ratio, ratio_font_size, &self.label_style, this_label_color);
+                }
             }
         }
 
@@ -210,6 +352,18 @@ impl Primitive for CypherPattern {
                 .with_order(14).in_group(PropertyGroup::PointLabels),
         ];
         props.extend(self.label_style.style_properties_grouped(&self.data.color.stroke, 30, PropertyGroup::PointLabels));
+        // Tolerance — declared in `PropertyGroup::TargetRatios` beside the
+        // table it governs, written back through `apply_style_property`
+        // like every other declared property.
+        props.push(
+            ConfigProperty::number(HARMONIC_TOLERANCE_PROPERTY_ID, ConceptKey::ToleranceColumnHeader.get(current_language()), self.harmonic_tolerance, Some(MIN_HARMONIC_TOLERANCE), Some(0.2))
+                .with_category(PropertyCategory::AppearanceStats)
+                .with_order(19)
+                .in_group(PropertyGroup::TargetRatios),
+        );
+        if let Some(table) = target_ratio_table_property(&self.points, self.harmonic_tolerance) {
+            props.push(table);
+        }
         props
     }
 
@@ -223,6 +377,9 @@ impl Primitive for CypherPattern {
             }
             "show_ratios" => {
                 if let Some(v) = value.as_bool() { self.show_ratios = v; return true; }
+            }
+            HARMONIC_TOLERANCE_PROPERTY_ID => {
+                if let Some(v) = value.as_number() { self.harmonic_tolerance = v.max(MIN_HARMONIC_TOLERANCE); return true; }
             }
             "label_font_size" => {
                 if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; }
@@ -269,5 +426,92 @@ pub fn metadata() -> PrimitiveMetadata {
         },
         supports_text: true,
         has_levels: false,
+    }
+}
+
+#[cfg(test)]
+mod harmonic_tests {
+    use super::*;
+    use super::super::super::config::PropertyType;
+
+    /// A Cypher-shaped drawing, by construction: AB/XA = 0.5 (in
+    /// [0.382, 0.618]), AC/XA = 1.34 (in [1.272, 1.414]), CD/XC = 0.786
+    /// (exact) — every leg lands inside its own Cypher target band
+    /// (`mli::ewa::harmonic::CYPHER`, read via `targets_for`, never
+    /// re-typed here).
+    fn cypher_points() -> [(i64, f64); 5] {
+        [(0, 0.0), (1_000, 100.0), (2_000, 50.0), (3_000, 234.0), (4_000, 50.076)]
+    }
+
+    #[test]
+    fn cypher_shaped_drawing_reports_every_leg_inside() {
+        let prim = CypherPattern::new(cypher_points(), "#673AB7");
+        let table = harmonic::targets_for(PATTERN_KIND);
+        assert_eq!(table.len(), 3, "Cypher's own table has 3 legs");
+        for entry in table {
+            let ratio = measured_ratio(&prim.points, entry).expect("nonzero reference on this fixture");
+            let widened = HarmonicLeg { band: harmonic::widen_band(entry.band, prim.harmonic_tolerance), ..*entry };
+            assert!(
+                harmonic::ratio_matches(ratio, &widened),
+                "leg {:?} measured {ratio} should be inside its own band {:?}",
+                entry.leg, widened.band
+            );
+        }
+    }
+
+    #[test]
+    fn moving_one_pivot_reports_exactly_that_leg_outside() {
+        let mut prim = CypherPattern::new(cypher_points(), "#673AB7");
+        // B is used ONLY by the AB leg (AC and CD's own reference is XA/XC,
+        // neither touches B) — moving it in isolation breaks exactly one
+        // leg. AB/XA goes from 0.5 to 0.70, clearly outside [0.382, 0.618].
+        prim.points[2].1 = 30.0;
+
+        let table = harmonic::targets_for(PATTERN_KIND);
+        let out_of_band: Vec<(&str, &str)> = table
+            .iter()
+            .filter(|entry| {
+                let ratio = measured_ratio(&prim.points, entry).expect("nonzero reference on this fixture");
+                let widened = HarmonicLeg { band: harmonic::widen_band(entry.band, prim.harmonic_tolerance), ..**entry };
+                !harmonic::ratio_matches(ratio, &widened)
+            })
+            .map(|entry| entry.leg)
+            .collect();
+
+        assert_eq!(out_of_band, vec![("A", "B")], "exactly the AB leg should report outside, nothing else: {out_of_band:?}");
+    }
+
+    #[test]
+    fn table_actual_column_equals_the_measured_ratio_the_labels_use() {
+        let prim = CypherPattern::new(cypher_points(), "#673AB7");
+        let table_property = target_ratio_table_property(&prim.points, prim.harmonic_tolerance)
+            .expect("Cypher is always classified");
+        let PropertyType::Table { rows, .. } = &table_property.prop_type else { panic!("must be PropertyType::Table") };
+
+        let target_table = harmonic::targets_for(PATTERN_KIND);
+        assert_eq!(rows.len(), target_table.len());
+        for (row, entry) in rows.iter().zip(target_table.iter()) {
+            let TableCell::Toned(actual_text, _) = &row[2] else { panic!("Actual column must be a Toned cell") };
+            let actual: f64 = actual_text.parse().expect("Actual cell must be a formatted number");
+            let expected = measured_ratio(&prim.points, entry).expect("nonzero reference on this fixture");
+            assert!((actual - expected).abs() < 1e-3, "leg {:?}: table shows {actual}, measured_ratio gives {expected}", entry.leg);
+        }
+    }
+
+    #[test]
+    fn applying_tolerance_through_apply_path_widens_the_table_bands() {
+        let mut prim = CypherPattern::new(cypher_points(), "#673AB7");
+        let applied = prim.apply_style_property(HARMONIC_TOLERANCE_PROPERTY_ID, &PropertyValue::Number(0.05));
+        assert!(applied, "apply_style_property must recognise the harmonic_tolerance id");
+        assert!((prim.harmonic_tolerance - 0.05).abs() < 1e-12);
+
+        let table_property = target_ratio_table_property(&prim.points, prim.harmonic_tolerance)
+            .expect("Cypher is always classified");
+        let PropertyType::Table { rows, .. } = &table_property.prop_type else { panic!("must be PropertyType::Table") };
+
+        // AB's own published band [0.382, 0.618] widened by 0.05 becomes
+        // [0.332, 0.668].
+        let TableCell::Text(band_text) = &rows[0][1] else { panic!("Tolerance column must be Text") };
+        assert_eq!(band_text, "0.332\u{2013}0.668");
     }
 }

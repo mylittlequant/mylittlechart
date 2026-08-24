@@ -1621,18 +1621,19 @@ pub enum PropertyCategory {
 /// declared a `PropertyCategory::Placement*` property into (verified against
 /// the whole crate) and structurally never will — the points table and
 /// timeframe chips are not `ConfigProperty`-shaped, so there is no row that
-/// could ever carry one of these as a `group`; and three groups whose ENTIRE
+/// could ever carry one of these as a `group`; and one group whose ENTIRE
 /// row list in the design is a composite, non-scalar row this crate has no
 /// `ConfigProperty`/`PropertyType` shape for at all — `LadderPalettesGroupTitle`
-/// (`Row::Ramps`, no fields) and `TargetRatiosGroupTitle`/`ColumnsGroupTitle`
-/// (Table archetype's own column list)/`CustomLabelsGroupTitle` (each 100%
-/// `Row::Table`) — adding a variant for a group no possible property could
+/// (`Row::Ramps`, no fields) / `ColumnsGroupTitle` (Table archetype's own
+/// column list) — adding a variant for a group no possible property could
 /// ever be tagged with would be inventing vocabulary with no path to use, not
-/// giving an existing row an address. The icon picker's own group (`Row::Icons`)
-/// and the wave archetype's own custom-labels group (`CustomLabelsGroupTitle`)
+/// giving an existing row an address. The icon picker's own group (`Row::Icons`),
+/// the wave archetype's own custom-labels group (`CustomLabelsGroupTitle`),
+/// and the harmonic pattern's own target-ratio group (`TargetRatiosGroupTitle`)
 /// USED to be in that list — `PropertyType::Picker`/`PropertyType::Table`
 /// (both W4) gave them a real `ConfigProperty` shape, so they now have a
-/// variant of their own, [`Self::IconGlyph`]/[`Self::CustomWaveLabels`].
+/// variant of their own, [`Self::IconGlyph`]/[`Self::CustomWaveLabels`]/
+/// [`Self::TargetRatios`].
 ///
 /// A variant no primitive declares into today draws nothing at all (see
 /// `group_runs`'s own doc) — most variants below are exactly that today;
@@ -1696,6 +1697,16 @@ pub enum PropertyGroup {
     /// `fill_group(Some(PatternBody))` — Pattern's own fill group
     /// (`ConceptKey::PatternBody`).
     PatternBody,
+    /// `pattern_tabs()`'s own target-ratio table
+    /// (`ConceptKey::TargetRatiosGroupTitle`) — the harmonic guard's own
+    /// `PropertyType::Table` (`mylittlechart-core`'s
+    /// `drawing::primitives_v2::patterns` harmonic wiring, wired against
+    /// `mli::ewa::harmonic::targets_for`): per leg, its target band and
+    /// its measured ratio, toned by `mli::ewa::harmonic::ratio_matches`.
+    /// USED to be in [`Self`]'s own "deliberately not here" list (see this
+    /// enum's own doc) — `PropertyType::Table` giving it a real shape is
+    /// exactly the precedent [`Self::CustomWaveLabels`] already set.
+    TargetRatios,
     /// `pattern_tabs()`'s own hit/miss scoring colours
     /// (`ConceptKey::ScoringGroupTitle`).
     Scoring,
@@ -1836,6 +1847,7 @@ impl PropertyGroup {
 
             PropertyGroup::Subtype => ConceptKey::Subtype.get(lang),
             PropertyGroup::PatternBody => ConceptKey::PatternBody.get(lang),
+            PropertyGroup::TargetRatios => ConceptKey::TargetRatiosGroupTitle.get(lang),
             PropertyGroup::Scoring => ConceptKey::ScoringGroupTitle.get(lang),
             PropertyGroup::PointLabels => ConceptKey::PointLabelsGroupTitle.get(lang),
             PropertyGroup::OnChartValues => ConceptKey::OnChartValuesGroupTitle.get(lang),
@@ -1933,6 +1945,16 @@ pub const REGRESSION_RESULT_STATS_ID: &str = "regression_result_stats";
 /// same role [`POSITION_RESULT_STATS_ID`] plays for the position
 /// archetype's own stat block.
 pub const CUSTOM_WAVE_LABELS_PROPERTY_ID: &str = "custom_wave_labels";
+
+/// The harmonic pattern's own target-ratio table id — shared by every
+/// harmonic pattern type's own `style_properties()` (`xabcd_pattern`,
+/// `cypher_pattern`, `abcd_pattern`, `three_drives`), each declaring
+/// [`ConfigProperty::table`] under this id — same role
+/// [`CUSTOM_WAVE_LABELS_PROPERTY_ID`] plays for the Elliott wave family.
+/// The table is always `readonly` (measured facts, nothing to edit), so
+/// unlike its wave counterpart no `apply_style_property` ever parses a
+/// click id back against this constant.
+pub const TARGET_RATIOS_PROPERTY_ID: &str = "target_ratios";
 
 impl ConfigProperty {
     /// Create a color property
