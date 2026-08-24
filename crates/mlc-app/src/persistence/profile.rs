@@ -94,6 +94,12 @@ impl ChartApp {
                 // same preserve-live-value pattern as `control_point_shape`/
                 // `control_point_size` above.
                 ewa_engine: existing.ui.ewa_engine.clone(),
+                // Candle-pattern engine configuration (markup-engines wave,
+                // 2026-08-25): no edit UI exists yet (see
+                // `mlc_core::state::candle_pattern_engine`'s own module
+                // doc), so this is a plain carry-forward, same
+                // preserve-live-value pattern as `ewa_engine` above.
+                candle_pattern_engine: existing.ui.candle_pattern_engine.clone(),
             },
         }
     }

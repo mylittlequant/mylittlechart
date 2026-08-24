@@ -271,6 +271,8 @@ impl PrimitiveRegistry {
         self.register_typed::<super::patterns::abcd_pattern::AbcdPattern>(super::patterns::abcd_pattern::metadata());
         self.register_typed::<super::patterns::triangle_pattern::TrianglePattern>(super::patterns::triangle_pattern::metadata());
         self.register_typed::<super::patterns::three_drives::ThreeDrives>(super::patterns::three_drives::metadata());
+        self.register_typed::<super::patterns::candle_pattern::CandlePattern>(super::patterns::candle_pattern::metadata());
+        self.register_typed::<super::patterns::candle_pattern_scan::CandlePatternScan>(super::patterns::candle_pattern_scan::metadata());
 
         // Elliott
         self.register_typed::<super::elliott::elliott_impulse::ElliottImpulse>(super::elliott::elliott_impulse::metadata());

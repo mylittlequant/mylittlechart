@@ -83,6 +83,7 @@ pub use keys::{
     PositionPointKey,
     ShellKey,
     ConceptKey,
+    CandlePatternKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.

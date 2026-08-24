@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
 use crate::state::ewa_engine::EwaEngineConfig;
+use crate::state::candle_pattern_engine::CandlePatternEngineConfig;
 
 // =============================================================================
 // Schema version
@@ -619,6 +620,16 @@ pub struct ProfileUiSettings {
     /// and drawing-construction only).
     #[serde(default)]
     pub ewa_engine: EwaEngineConfig,
+
+    /// Candle-pattern engine configuration (markup-engines wave,
+    /// 2026-08-25). Same process-wide, mutated-in-place, RAM+profile class
+    /// as `ewa_engine` above: applied to the live global via
+    /// `mlc_core::state::candle_pattern_engine::set_candle_pattern_engine_config`
+    /// at profile load (`ChartApp::apply_profile_state`). No settings-modal
+    /// UI edits this yet — see `state::candle_pattern_engine`'s own module
+    /// doc for the two fields' own readers.
+    #[serde(default)]
+    pub candle_pattern_engine: CandlePatternEngineConfig,
 }
 
 fn default_true() -> bool {
@@ -651,6 +662,7 @@ impl ProfileUiSettings {
             control_point_shape: ControlPointShape::default(),
             control_point_size: ControlPointSize::default(),
             ewa_engine: EwaEngineConfig::default(),
+            candle_pattern_engine: CandlePatternEngineConfig::default(),
         }
     }
 }

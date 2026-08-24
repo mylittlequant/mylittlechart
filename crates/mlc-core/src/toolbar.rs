@@ -779,6 +779,12 @@ fn pattern_section() -> ToolbarSectionDef {
             DropdownItemDef::action("abcd_pattern", PN::AbcdPattern.get(lang)).with_icon(ToolbarIconId::new("AbcdPattern")),
             DropdownItemDef::action("triangle_pattern", PN::TrianglePattern.get(lang)).with_icon(ToolbarIconId::new("TrianglePattern")),
             DropdownItemDef::action("three_drives", PN::ThreeDrives.get(lang)).with_icon(ToolbarIconId::new("ThreeDrives")),
+            // Candles — markup engines: candle-pattern claim + survey
+            // (`docs/mlc/plans/markup-engines-2026-08-25.md`).
+            DropdownItemDef::Separator,
+            DropdownItemDef::Header { label: MK::HeaderCandles.get(lang).to_string() },
+            DropdownItemDef::action("candle_pattern", PN::CandlePattern.get(lang)).with_icon(ToolbarIconId::new("CandlePattern")),
+            DropdownItemDef::action("candle_pattern_scan", PN::CandlePatternScan.get(lang)).with_icon(ToolbarIconId::new("CandlePatternScan")),
             // Cycles
             DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderCycles.get(lang).to_string() },

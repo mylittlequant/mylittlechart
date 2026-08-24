@@ -41,6 +41,7 @@ pub mod modal_data;
 pub mod toolbar_geometry;
 pub mod gestures;
 pub mod ewa_engine;
+pub mod candle_pattern_engine;
 
 // Unified panel taxonomy (K1 — supersedes PanelLeaf + FreeItem)
 pub use panel::{Panel, PanelId, PanelKind};
@@ -108,6 +109,11 @@ pub use gestures::{ChartGesture, GestureBindings, GestureTarget, GestureTrigger}
 // user-level settings surface for the engine itself (owner ask 2026-08-14).
 // See ewa_engine.rs's own module doc.
 pub use ewa_engine::{EwaEngineConfig, GuardFamilies, RatioRibDefaults, ewa_engine_config, set_ewa_engine_config};
+
+// Candle-pattern engine configuration — process-global, user-level settings
+// surface for the candle-pattern markup engine (markup-engines wave,
+// 2026-08-25). See candle_pattern_engine.rs's own module doc.
+pub use candle_pattern_engine::{CandlePatternEngineConfig, candle_pattern_engine_config, set_candle_pattern_engine_config};
 
 // Toolbar interaction state (pure data — no render logic)
 // Also includes chart-toolbar types (moved from panel_app — Phase X.4 back-edge removal).

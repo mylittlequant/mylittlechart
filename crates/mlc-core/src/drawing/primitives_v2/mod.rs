@@ -85,6 +85,7 @@ use serde::{Deserialize, Serialize};
 
 mod traits;
 mod types;
+mod bar_window;
 pub mod registry;
 pub mod config;
 pub mod fill_defaults;

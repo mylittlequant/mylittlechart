@@ -135,40 +135,40 @@ impl Primitive for BarsPattern {
         // touches owned values, so it is free to take `ctx` mutably.
         let projected: Vec<(i64, f64, f64, f64, f64)> = {
             let bars = ctx.bars();
-            if bars.is_empty() {
-                Vec::new()
-            } else {
-                let lo_ms = self.ts1.min(self.ts2);
-                let hi_ms = self.ts1.max(self.ts2);
-                let lo_sec = lo_ms.div_euclid(1000);
-                let hi_sec = hi_ms.div_euclid(1000);
-                let start_idx = bars.partition_point(|b| b.timestamp < lo_sec);
-                let end_idx = bars.partition_point(|b| b.timestamp <= hi_sec);
-                let shift_ms = self.ts3 - lo_ms;
-                // Mirror pivot: the source range's own opening price, so a
-                // mirrored copy flips around where the pattern started.
-                let pivot = bars.get(start_idx).map(|b| b.open).unwrap_or(0.0);
+            // The source range's own bar-index window — see
+            // `super::super::bar_window::window_indices`'s own doc; this
+            // call site is one of the two genuine duplicates that function
+            // was promoted out of (2026-08-25, markup-engines wave).
+            match super::super::bar_window::window_indices(bars, self.ts1, self.ts2) {
+                None => Vec::new(),
+                Some((start_idx, end_idx_incl)) => {
+                    let lo_ms = self.ts1.min(self.ts2);
+                    let shift_ms = self.ts3 - lo_ms;
+                    // Mirror pivot: the source range's own opening price, so a
+                    // mirrored copy flips around where the pattern started.
+                    let pivot = bars.get(start_idx).map(|b| b.open).unwrap_or(0.0);
 
-                bars[start_idx..end_idx].iter().map(|bar| {
-                    let tgt_ts_ms = bar.timestamp * 1000 + shift_ms;
-                    let (open, high, low, close) = if self.mirror {
+                    bars[start_idx..=end_idx_incl].iter().map(|bar| {
+                        let tgt_ts_ms = bar.timestamp * 1000 + shift_ms;
+                        let (open, high, low, close) = if self.mirror {
+                            (
+                                2.0 * pivot - bar.open,
+                                2.0 * pivot - bar.low,
+                                2.0 * pivot - bar.high,
+                                2.0 * pivot - bar.close,
+                            )
+                        } else {
+                            (bar.open, bar.high, bar.low, bar.close)
+                        };
                         (
-                            2.0 * pivot - bar.open,
-                            2.0 * pivot - bar.low,
-                            2.0 * pivot - bar.high,
-                            2.0 * pivot - bar.close,
+                            tgt_ts_ms,
+                            open + self.price_offset,
+                            high + self.price_offset,
+                            low + self.price_offset,
+                            close + self.price_offset,
                         )
-                    } else {
-                        (bar.open, bar.high, bar.low, bar.close)
-                    };
-                    (
-                        tgt_ts_ms,
-                        open + self.price_offset,
-                        high + self.price_offset,
-                        low + self.price_offset,
-                        close + self.price_offset,
-                    )
-                }).collect()
+                    }).collect()
+                }
             }
         };
 

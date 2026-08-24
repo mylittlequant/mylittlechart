@@ -4707,6 +4707,15 @@ impl ChartApp {
         mlc_core::state::ewa_engine::set_ewa_engine_config(profile.ui.ewa_engine.clone());
         self.panel_app.ewa_engine_settings_state.config = profile.ui.ewa_engine.clone();
 
+        // Candle-pattern engine configuration (markup-engines wave,
+        // 2026-08-25) — same process-level, read-fresh contract as the EWA
+        // engine config above. No settings-modal UI exists for this config
+        // yet, so there is no mirrored modal state to update here — see
+        // `mlc_core::state::candle_pattern_engine`'s own module doc.
+        mlc_core::state::candle_pattern_engine::set_candle_pattern_engine_config(
+            profile.ui.candle_pattern_engine.clone(),
+        );
+
         // Inline bar position/dock — prefer per-window, fall back to profile flat fields.
         let inline_bar_x = window_state
             .and_then(|ws| ws.inline_bar_x)

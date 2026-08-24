@@ -1190,6 +1190,125 @@ pub const ICON_PROJECTION: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" vi
 </svg>"##;
 
 // =============================================================================
+// Markup Engine Icons  (candle patterns, smart money, AMD, order flow)
+// =============================================================================
+//
+// One shared visual grammar, so a reader can tell the four engines apart at
+// 24px: a ZONE is a rectangle with a 0.2-0.3 fill, a LEVEL is a dashed
+// horizontal, a CLOSE past something is a solid body, a WICK past something
+// is a bare line, and every SCANNER carries the same lens. The three
+// scanners deliberately differ only in what sits under that lens.
+
+/// A three-bar group with the middle bar picked out — the shape of a
+/// claim about specific bars, which is what this primitive is.
+pub const ICON_CANDLE_PATTERN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M5 7v10"/><rect x="3" y="9" width="4" height="6"/>
+  <path d="M12 4v16"/><rect x="10" y="7" width="4" height="10" fill="currentColor"/>
+  <path d="M19 7v10"/><rect x="17" y="9" width="4" height="6"/>
+</svg>"##;
+
+/// Candles under a lens — a survey of what the bars contain, as opposed
+/// to [`ICON_CANDLE_PATTERN`]'s single named claim.
+pub const ICON_CANDLE_PATTERN_SCAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 8v8"/><rect x="2.5" y="10" width="3" height="4"/>
+  <path d="M9 6v8"/><rect x="7.5" y="8" width="3" height="4"/>
+  <circle cx="16" cy="12" r="5"/><path d="M19.5 15.5L22 18"/>
+</svg>"##;
+
+/// The opposing candle that a displacement left behind, drawn as a zone
+/// with the leg breaking away from it.
+pub const ICON_ORDER_BLOCK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="3" y="12" width="8" height="6" fill="currentColor" opacity="0.25"/>
+  <rect x="3" y="12" width="8" height="6"/>
+  <path d="M11 15l4-5 6-4"/><path d="M21 6v5"/><path d="M21 6h-5"/>
+</svg>"##;
+
+/// Two bars with an untouched band between them — the gap is the subject,
+/// so the band is what the icon fills, not the bars.
+pub const ICON_FAIR_VALUE_GAP: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M5 3v8"/><rect x="3" y="4" width="4" height="6"/>
+  <rect x="3" y="11" width="18" height="4" fill="currentColor" opacity="0.25"/>
+  <path d="M3 11h18"/><path d="M3 15h18"/>
+  <path d="M19 15v6"/><rect x="17" y="16" width="4" height="5"/>
+</svg>"##;
+
+/// A wick spiking through a level and a body closing back under it — the
+/// whole distinction between a sweep and a break of structure in one shape.
+pub const ICON_LIQUIDITY_SWEEP: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 8h18" stroke-dasharray="3 2"/>
+  <path d="M12 3v16"/><rect x="10" y="10" width="4" height="7"/>
+</svg>"##;
+
+/// A level with a body closing through it — the CLOSE is the event, so the
+/// icon shows a body past the line rather than a wick.
+pub const ICON_STRUCTURE_BREAK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 10h18" stroke-dasharray="3 2"/>
+  <path d="M9 14v7"/><rect x="7" y="15" width="4" height="5"/>
+  <path d="M17 3v10"/><rect x="15" y="4" width="4" height="8" fill="currentColor"/>
+</svg>"##;
+
+/// A range halved at its equilibrium — the upper half shaded as premium,
+/// the lower left open as discount.
+pub const ICON_DEALING_RANGE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="4" y="4" width="16" height="7" fill="currentColor" opacity="0.2"/>
+  <rect x="4" y="4" width="16" height="16"/>
+  <path d="M4 12h16"/>
+</svg>"##;
+
+/// A zone and a level under a lens — the smart-money survey, sharing
+/// [`ICON_CANDLE_PATTERN_SCAN`]'s lens so the two read as one family.
+pub const ICON_SMC_SCAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2.5" y="5" width="8" height="5" fill="currentColor" opacity="0.25"/>
+  <rect x="2.5" y="5" width="8" height="5"/>
+  <path d="M2.5 19h8" stroke-dasharray="2 2"/>
+  <circle cx="16" cy="12" r="5"/><path d="M19.5 15.5L22 18"/>
+</svg>"##;
+
+/// The three phases in order: a flat accumulation range, a spike out of it
+/// that closes back inside, and the leg away.
+pub const ICON_AMD_CYCLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="9" width="8" height="6" stroke-dasharray="2 2"/>
+  <path d="M12 9v9"/><path d="M12 18l0-4"/>
+  <path d="M12 14l4-5 6-4"/><path d="M22 5v5"/><path d="M22 5h-5"/>
+</svg>"##;
+
+/// Two columns of unequal cells facing each other across a bar's centre —
+/// the bid-versus-ask reading a footprint cell carries.
+pub const ICON_IMBALANCE_ZONE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M12 3v18"/>
+  <rect x="4" y="6" width="7" height="3"/>
+  <rect x="13" y="6" width="3" height="3"/>
+  <rect x="6" y="11" width="5" height="3"/>
+  <rect x="13" y="11" width="8" height="3" fill="currentColor" opacity="0.3"/>
+  <rect x="8" y="16" width="3" height="3"/>
+  <rect x="13" y="16" width="4" height="3"/>
+</svg>"##;
+
+/// Volume arriving into a level that does not move — arrows into a wall,
+/// which is what absorption is.
+pub const ICON_ABSORPTION_MARK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 12h18"/>
+  <path d="M7 4v6"/><path d="M4.5 7.5L7 10l2.5-2.5"/>
+  <path d="M15 4v6"/><path d="M12.5 7.5L15 10l2.5-2.5"/>
+  <path d="M5 15h14" stroke-dasharray="2 2"/>
+</svg>"##;
+
+/// Price and delta pointing opposite ways — two legs from one origin,
+/// which is the entire claim the mark makes.
+pub const ICON_DELTA_DIVERGENCE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 18l7-8 3 3 6-8"/>
+  <path d="M4 8l7 6 3-3 6 7" stroke-dasharray="3 2"/>
+</svg>"##;
+
+/// A footprint grid under the family lens — same lens as the other two
+/// scanners, different subject beneath it.
+pub const ICON_ORDER_FLOW_SCAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M6 4v16"/>
+  <rect x="2.5" y="6" width="3" height="3"/><rect x="6.5" y="6" width="3" height="3"/>
+  <rect x="2.5" y="11" width="3" height="3"/><rect x="6.5" y="11" width="3" height="3"/>
+  <circle cx="16" cy="13" r="5"/><path d="M19.5 16.5L22 19"/>
+</svg>"##;
+// =============================================================================
 // Tool Icons
 // =============================================================================
 
@@ -2511,6 +2630,21 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "anchored_vwap" | "anchoredvwap" => Some(ICON_ANCHORED_VWAP),
         "fixed_vwap" | "fixedvwap" => Some(ICON_FIXED_VWAP),
         "bars_pattern" | "barspattern" => Some(ICON_BARS_PATTERN),
+
+        // Markup engines (candle patterns, smart money, AMD, order flow)
+        "candle_pattern" | "candlepattern" => Some(ICON_CANDLE_PATTERN),
+        "candle_pattern_scan" | "candlepatternscan" => Some(ICON_CANDLE_PATTERN_SCAN),
+        "order_block" | "orderblock" => Some(ICON_ORDER_BLOCK),
+        "fair_value_gap" | "fairvaluegap" => Some(ICON_FAIR_VALUE_GAP),
+        "liquidity_sweep" | "liquiditysweep" => Some(ICON_LIQUIDITY_SWEEP),
+        "structure_break" | "structurebreak" => Some(ICON_STRUCTURE_BREAK),
+        "dealing_range" | "dealingrange" => Some(ICON_DEALING_RANGE),
+        "smc_scan" | "smcscan" => Some(ICON_SMC_SCAN),
+        "amd_cycle" | "amdcycle" => Some(ICON_AMD_CYCLE),
+        "imbalance_zone" | "imbalancezone" => Some(ICON_IMBALANCE_ZONE),
+        "absorption_mark" | "absorptionmark" => Some(ICON_ABSORPTION_MARK),
+        "delta_divergence" | "deltadivergence" => Some(ICON_DELTA_DIVERGENCE),
+        "order_flow_scan" | "orderflowscan" => Some(ICON_ORDER_FLOW_SCAN),
         "price_projection" | "priceprojection" => Some(ICON_PRICE_PROJECTION),
         "projection" => Some(ICON_PROJECTION),
 

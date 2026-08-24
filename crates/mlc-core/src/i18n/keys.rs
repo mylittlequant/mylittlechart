@@ -25,6 +25,7 @@ use super::tables::{
     TOOLBAR_MENU_KEY_TABLE,
     CITY_KEY_TABLE,
     HEAD_SHOULDERS_KEY_TABLE,
+    CANDLE_PATTERN_KEY_TABLE,
     POSITION_POINT_KEY_TABLE,
     SHELL_KEY_TABLE,
     CONCEPT_KEY_TABLE,
@@ -1669,10 +1670,26 @@ pub enum PrimitiveNameKey {
     // END, never a renumbering of the 84 that already ship (84-85).
     AnchoredVwap        = 84,
     FixedVwap           = 85,
+    // Markup engines — candle patterns, smart money, AMD, order flow.
+    // Appended at the END for the same reason the VWAP pair was: the
+    // discriminant IS the table row index, so it is frozen (86-98).
+    CandlePattern       = 86,
+    CandlePatternScan   = 87,
+    OrderBlock          = 88,
+    FairValueGap        = 89,
+    LiquiditySweep      = 90,
+    StructureBreak      = 91,
+    DealingRange        = 92,
+    SmcScan             = 93,
+    AmdCycle            = 94,
+    ImbalanceZone       = 95,
+    AbsorptionMark      = 96,
+    DeltaDivergence     = 97,
+    OrderFlowScan       = 98,
 }
 
 impl PrimitiveNameKey {
-    pub const COUNT: usize = 86;
+    pub const COUNT: usize = 99;
 
     /// Get translation for this key.
     #[inline]
@@ -1770,6 +1787,19 @@ impl PrimitiveNameKey {
             "emoji"                    => Some(Self::Sticker),
             "anchored_vwap"            => Some(Self::AnchoredVwap),
             "fixed_vwap"               => Some(Self::FixedVwap),
+            "candle_pattern"           => Some(Self::CandlePattern),
+            "candle_pattern_scan"      => Some(Self::CandlePatternScan),
+            "order_block"              => Some(Self::OrderBlock),
+            "fair_value_gap"           => Some(Self::FairValueGap),
+            "liquidity_sweep"          => Some(Self::LiquiditySweep),
+            "structure_break"          => Some(Self::StructureBreak),
+            "dealing_range"            => Some(Self::DealingRange),
+            "smc_scan"                 => Some(Self::SmcScan),
+            "amd_cycle"                => Some(Self::AmdCycle),
+            "imbalance_zone"           => Some(Self::ImbalanceZone),
+            "absorption_mark"          => Some(Self::AbsorptionMark),
+            "delta_divergence"         => Some(Self::DeltaDivergence),
+            "order_flow_scan"          => Some(Self::OrderFlowScan),
             _                          => None,
         }
     }
@@ -2179,6 +2209,11 @@ pub enum ToolbarMenuKey {
     SubWatermark       = 72,
     SubTheme           = 73,
     SubUiStyle         = 74,
+
+    // Drawing tool section headers (appended — see the block above for why
+    // a new header lands here rather than being inserted next to its
+    // siblings: discriminant == table row index, frozen).
+    HeaderCandles      = 75,
 }
 
 impl ToolbarMenuKey {
@@ -3074,6 +3109,29 @@ pub enum ConceptKey {
     // read by the same `elliott::count::kind_label` picker function.
     WaveKindLeadingDiagonal = 352,
     WaveKindEndingDiagonal = 353,
+
+    // ---- Candle pattern engine (markup-engines wave, 2026-08-25) — the
+    // `patterns::candle_pattern`/`candle_pattern_scan` primitives' own
+    // guard-rule messages, Stat-block rows, and scan-table column headers.
+    // `RuleCandlePatternWindowIncomplete`/`RuleCandlePatternNotFormed` are
+    // `elliott::guard::Violation::whole` messages, same naming convention as
+    // every other `Rule*` key above (e.g. `RuleWave2BeyondOrigin` = 281).
+    RuleCandlePatternWindowIncomplete = 354,
+    RuleCandlePatternNotFormed = 355,
+    /// `CandlePattern`'s own Stat block: catalogue bias row label.
+    PatternBiasLabel = 356,
+    PatternBiasBullish = 357,
+    PatternBiasBearish = 358,
+    PatternBiasIndecision = 359,
+    /// `CandlePattern`'s own Stat block: "do the bars currently agree with
+    /// the claim" row label — value is `YesValue`/`NoValue`.
+    PatternMatchesBarsLabel = 360,
+    YesValue = 361,
+    NoValue = 362,
+    /// `CandlePatternScan`'s own per-pattern table: hit-count column header.
+    ScanHitsColumnHeader = 363,
+    /// `CandlePatternScan`'s own Stat block: total-hit-count row label.
+    ScanTotalHitsLabel = 364,
 }
 
 impl ConceptKey {
@@ -3090,6 +3148,129 @@ impl uzor::i18n::Translate for ConceptKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&CONCEPT_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Candle Pattern Keys  (the 34-pattern catalogue's own display names)
+// =============================================================================
+
+/// Localized display names for `mli::events::candle_pattern::
+/// CandlePatternKind`'s 34 patterns.
+///
+/// The catalogue itself — which patterns exist, what identifies one on the
+/// wire, how many bars it needs, which way it leans — belongs to `mli` and
+/// is not duplicated here. What lives here is the one thing `mli` has no
+/// business owning: how each pattern's name is SPELLED for a reader. `mli`
+/// carries an English `label()` as its own canon; this table is what the
+/// chart shows, and [`CandlePatternKey::from_id`] is the single bridge
+/// between the two, keyed on `CandlePatternKind::id()` — the stable
+/// snake_case wire identifier, never on the display string.
+///
+/// En/Ru filled only, the same owner-approved scope [`ShellKey`] carries:
+/// the remaining columns stay empty and fall back to English at runtime.
+/// Deliberately NOT listed in `tables.rs`'s `every_chart_table_is_fully_
+/// translated` assertion for that reason — a partially filled row fails it
+/// by design, and claiming thirteen translations nobody wrote would be
+/// worse than falling back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CandlePatternKey {
+    Doji                    = 0,
+    GravestoneDoji          = 1,
+    DragonflyDoji           = 2,
+    LongLeggedDoji          = 3,
+    Hammer                  = 4,
+    InvertedHammer          = 5,
+    ShootingStar            = 6,
+    HangingMan              = 7,
+    Marubozu                = 8,
+    WhiteMarubozu           = 9,
+    BlackMarubozu           = 10,
+    SpinningTop             = 11,
+    BullishEngulfing        = 12,
+    BearishEngulfing        = 13,
+    BullishHarami           = 14,
+    BearishHarami           = 15,
+    PiercingPattern         = 16,
+    DarkCloudCover          = 17,
+    TweezerTop              = 18,
+    TweezerBottom           = 19,
+    MorningStar             = 20,
+    EveningStar             = 21,
+    MorningDojiStar         = 22,
+    EveningDojiStar         = 23,
+    ThreeWhiteSoldiers      = 24,
+    ThreeBlackCrows         = 25,
+    ThreeInsideUp           = 26,
+    ThreeInsideDown         = 27,
+    ThreeOutsideUp          = 28,
+    ThreeOutsideDown        = 29,
+    RisingThreeMethods      = 30,
+    FallingThreeMethods     = 31,
+    UpsideGapTwoCrows       = 32,
+    DownsideGapThreeMethods = 33,
+}
+
+impl CandlePatternKey {
+    pub const COUNT: usize = 34;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&CANDLE_PATTERN_KEY_TABLE[self as usize], lang as usize)
+    }
+
+    /// The key for `mli`'s own wire id (`CandlePatternKind::id()`).
+    ///
+    /// `None` for an unknown id rather than a placeholder key: an id this
+    /// table does not know is a catalogue that grew in `mli` without its
+    /// names following, and a caller must be able to see that rather than
+    /// render someone else's pattern name.
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "doji"                    => Some(Self::Doji),
+            "gravestone_doji"         => Some(Self::GravestoneDoji),
+            "dragonfly_doji"          => Some(Self::DragonflyDoji),
+            "long_legged_doji"        => Some(Self::LongLeggedDoji),
+            "hammer"                  => Some(Self::Hammer),
+            "inverted_hammer"         => Some(Self::InvertedHammer),
+            "shooting_star"           => Some(Self::ShootingStar),
+            "hanging_man"             => Some(Self::HangingMan),
+            "marubozu"                => Some(Self::Marubozu),
+            "white_marubozu"          => Some(Self::WhiteMarubozu),
+            "black_marubozu"          => Some(Self::BlackMarubozu),
+            "spinning_top"            => Some(Self::SpinningTop),
+            "bullish_engulfing"       => Some(Self::BullishEngulfing),
+            "bearish_engulfing"       => Some(Self::BearishEngulfing),
+            "bullish_harami"          => Some(Self::BullishHarami),
+            "bearish_harami"          => Some(Self::BearishHarami),
+            "piercing_pattern"        => Some(Self::PiercingPattern),
+            "dark_cloud_cover"        => Some(Self::DarkCloudCover),
+            "tweezer_top"             => Some(Self::TweezerTop),
+            "tweezer_bottom"          => Some(Self::TweezerBottom),
+            "morning_star"            => Some(Self::MorningStar),
+            "evening_star"            => Some(Self::EveningStar),
+            "morning_doji_star"       => Some(Self::MorningDojiStar),
+            "evening_doji_star"       => Some(Self::EveningDojiStar),
+            "three_white_soldiers"    => Some(Self::ThreeWhiteSoldiers),
+            "three_black_crows"       => Some(Self::ThreeBlackCrows),
+            "three_inside_up"         => Some(Self::ThreeInsideUp),
+            "three_inside_down"       => Some(Self::ThreeInsideDown),
+            "three_outside_up"        => Some(Self::ThreeOutsideUp),
+            "three_outside_down"      => Some(Self::ThreeOutsideDown),
+            "rising_three_methods"    => Some(Self::RisingThreeMethods),
+            "falling_three_methods"   => Some(Self::FallingThreeMethods),
+            "upside_gap_two_crows"    => Some(Self::UpsideGapTwoCrows),
+            "downside_gap_three_methods" => Some(Self::DownsideGapThreeMethods),
+            _ => None,
+        }
+    }
+}
+
+impl uzor::i18n::Translate for CandlePatternKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&CANDLE_PATTERN_KEY_TABLE[self as usize], lang_index)
     }
 }
 

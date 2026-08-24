@@ -875,7 +875,7 @@ pub(super) static SIDEBAR_KEY_TABLE: [[&str; N_LANG]; 51] = [
 //
 //  Col:  0=En (registry display_name)              1=Ru                                          2..14=""
 
-pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 86] = [
+pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 99] = [
     /* 0  TrendLine           */ [ "Trend Line",                 "Линия тренда",                           "Línea de tendencia",          "Trendlinie",                    "Ligne de tendance",              "Linha de tendência",          "趋势线",        "トレンドライン",    "추세선",          "خط الاتجاه",         "Linea di tendenza",       "Trend Çizgisi",           "Linia trendu",            "Лінія тренду",              "ट्रेंड लाइन"           ],
     /* 1  HorizontalLine      */ [ "Horizontal Line",            "Горизонтальная линия",                   "Línea horizontal",            "Horizontale Linie",             "Ligne horizontale",              "Linha horizontal",            "水平线",        "水平線",            "수평선",          "خط أفقي",            "Linea orizzontale",       "Yatay Çizgi",             "Linia pozioma",           "Горизонтальна лінія",       "क्षैतिज रेखा"          ],
     /* 2  VerticalLine        */ [ "Vertical Line",              "Вертикальная линия",                     "Línea vertical",              "Vertikale Linie",               "Ligne verticale",                "Linha vertical",              "垂直线",        "垂直線",            "수직선",          "خط عمودي",           "Linea verticale",         "Dikey Çizgi",             "Linia pionowa",           "Вертикальна лінія",         "लंबवत रेखा"            ],
@@ -962,6 +962,19 @@ pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 86] = [
     /* 83 Sticker             */ [ "Sticker",                    "Стикер",                                 "Adhesivo",                    "Sticker",                       "Autocollant",                    "Adesivo",                     "贴纸",          "ステッカー",        "스티커",          "ملصق",               "Adesivo",                 "Çıkartma",                "Naklejka",                "Стікер",                    "स्टिकर"                ],
     /* 84 AnchoredVwap        */ [ "Anchored VWAP",              "VWAP (якорь)",                           "VWAP anclado",                "Verankertes VWAP",              "VWAP ancré",                     "VWAP ancorado",               "锚定VWAP",       "アンカーVWAP",      "앵커 VWAP",       "VWAP مرتبط",         "VWAP ancorato",           "Sabitlenmiş VWAP",        "VWAP zakotwiczony",       "VWAP (якір)",                "एंकर्ड VWAP"           ],
     /* 85 FixedVwap           */ [ "Fixed VWAP",                 "VWAP (фикс.)",                           "VWAP fijo",                   "Festes VWAP",                   "VWAP fixe",                      "VWAP fixo",                   "固定VWAP",       "固定VWAP",          "고정 VWAP",       "VWAP ثابت",          "VWAP fisso",              "Sabit VWAP",              "VWAP stały",              "Фіксований VWAP",           "फिक्स्ड VWAP"          ],
+    /* 86 CandlePattern       */ [ "Candle Pattern", "Свечная модель", "Patrón de vela", "Kerzenmuster", "Motif de bougie", "Padrão de vela", "K线形态", "ローソク足パターン", "캔들 패턴", "نموذج شمعة", "Pattern candela", "Mum Formasyonu", "Formacja świecowa", "Свічкова модель", "कैंडल पैटर्न" ],
+    /* 87 CandlePatternScan   */ [ "Candle Pattern Scan", "Скан свечных моделей", "Escáner de patrones de vela", "Kerzenmuster-Scan", "Scan de motifs de bougie", "Varredura de padrões de vela", "K线形态扫描", "ローソク足パターン検出", "캔들 패턴 스캔", "مسح نماذج الشموع", "Scansione pattern candela", "Mum Formasyonu Taraması", "Skan formacji świecowych", "Скан свічкових моделей", "कैंडल पैटर्न स्कैन" ],
+    /* 88 OrderBlock          */ [ "Order Block", "Ордер-блок", "Bloque de órdenes", "Order-Block", "Bloc d'ordres", "Bloco de ordens", "订单块", "オーダーブロック", "오더 블록", "كتلة الأوامر", "Order block", "Emir Bloğu", "Blok zleceń", "Ордер-блок", "ऑर्डर ब्लॉक" ],
+    /* 89 FairValueGap        */ [ "Fair Value Gap", "Гэп справедливой цены", "Brecha de valor justo", "Fair-Value-Gap", "Écart de juste valeur", "Lacuna de valor justo", "公允价值缺口", "フェアバリューギャップ", "공정가치 갭", "فجوة القيمة العادلة", "Fair value gap", "Adil Değer Boşluğu", "Luka wartości godziwej", "Геп справедливої ціни", "फेयर वैल्यू गैप" ],
+    /* 90 LiquiditySweep      */ [ "Liquidity Sweep", "Съём ликвидности", "Barrido de liquidez", "Liquiditäts-Sweep", "Balayage de liquidité", "Varredura de liquidez", "流动性扫荡", "リクイディティスイープ", "유동성 스윕", "كنس السيولة", "Sweep di liquidità", "Likidite Süpürme", "Zgarnięcie płynności", "Зняття ліквідності", "लिक्विडिटी स्वीप" ],
+    /* 91 StructureBreak      */ [ "Structure Break", "Слом структуры", "Ruptura de estructura", "Strukturbruch", "Rupture de structure", "Quebra de estrutura", "结构突破", "ストラクチャーブレイク", "구조 붕괴", "كسر الهيكل", "Rottura di struttura", "Yapı Kırılımı", "Złamanie struktury", "Злам структури", "स्ट्रक्चर ब्रेक" ],
+    /* 92 DealingRange        */ [ "Dealing Range", "Торговый диапазон", "Rango de negociación", "Handelsspanne", "Plage de négociation", "Faixa de negociação", "交易区间", "ディーリングレンジ", "딜링 레인지", "نطاق التداول", "Range operativo", "İşlem Aralığı", "Zakres handlowy", "Торговий діапазон", "डीलिंग रेंज" ],
+    /* 93 SmcScan             */ [ "Smart Money Scan", "Скан smart money", "Escáner smart money", "Smart-Money-Scan", "Scan smart money", "Varredura smart money", "聪明钱扫描", "スマートマネー検出", "스마트 머니 스캔", "مسح الأموال الذكية", "Scansione smart money", "Smart Money Taraması", "Skan smart money", "Скан smart money", "स्मार्ट मनी स्कैन" ],
+    /* 94 AmdCycle            */ [ "AMD Cycle", "Цикл AMD", "Ciclo AMD", "AMD-Zyklus", "Cycle AMD", "Ciclo AMD", "AMD周期", "AMDサイクル", "AMD 사이클", "دورة AMD", "Ciclo AMD", "AMD Döngüsü", "Cykl AMD", "Цикл AMD", "AMD चक्र" ],
+    /* 95 ImbalanceZone       */ [ "Imbalance Zone", "Зона дисбаланса", "Zona de desequilibrio", "Ungleichgewichtszone", "Zone de déséquilibre", "Zona de desequilíbrio", "失衡区域", "インバランスゾーン", "임밸런스 존", "منطقة عدم التوازن", "Zona di squilibrio", "Dengesizlik Bölgesi", "Strefa nierównowagi", "Зона дисбалансу", "असंतुलन क्षेत्र" ],
+    /* 96 AbsorptionMark      */ [ "Absorption", "Поглощение", "Absorción", "Absorption", "Absorption", "Absorção", "吸收", "アブソープション", "흡수", "الامتصاص", "Assorbimento", "Emilim", "Absorpcja", "Поглинання", "अवशोषण" ],
+    /* 97 DeltaDivergence     */ [ "Delta Divergence", "Дивергенция дельты", "Divergencia de delta", "Delta-Divergenz", "Divergence de delta", "Divergência de delta", "Delta背离", "デルタダイバージェンス", "델타 다이버전스", "تباعد الدلتا", "Divergenza delta", "Delta Uyumsuzluğu", "Dywergencja delty", "Дивергенція дельти", "डेल्टा डाइवर्जेंस" ],
+    /* 98 OrderFlowScan       */ [ "Order Flow Scan", "Скан потока ордеров", "Escáner de flujo de órdenes", "Order-Flow-Scan", "Scan du flux d'ordres", "Varredura de fluxo de ordens", "订单流扫描", "オーダーフロー検出", "오더 플로우 스캔", "مسح تدفق الأوامر", "Scansione order flow", "Emir Akışı Taraması", "Skan przepływu zleceń", "Скан потоку ордерів", "ऑर्डर फ्लो स्कैन" ],
 ];
 
 // =============================================================================
@@ -1101,7 +1114,7 @@ pub(super) static TRADING_KEY_TABLE: [[&str; N_LANG]; 29] = [
 //
 //  Col:  0=En                          1=Ru                               2..14=""
 
-pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 75] = [
+pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 76] = [
     /* 0  Candles            */ [ "Candles",              "Свечи",                    "Velas",               "Kerzen",               "Chandeliers",           "Velas",               "蜡烛图",        "ローソク足",     "캔들",           "شموع",            "Candele",               "Mum Grafiği",           "Świece",              "Свічки",                  "कैंडल"              ],
     /* 1  HollowCandles      */ [ "Hollow Candles",       "Полые свечи",              "Velas huecas",        "Hohle Kerzen",         "Chandeliers creux",     "Velas vazias",        "空心蜡烛",      "中空ローソク足",  "속빈 캔들",      "شموع مجوفة",      "Candele vuote",         "İçi Boş Mum",           "Świece puste",        "Порожні свічки",          "खोखले कैंडल"        ],
     /* 2  HeikinAshi         */ [ "Heikin Ashi",          "Хейкин Аши",              "Heikin Ashi",         "Heikin Ashi",          "Heikin Ashi",           "Heikin Ashi",         "平均K线",       "平均足",         "헤이킨 아시",    "هيكن آشي",        "Heikin Ashi",           "Heikin Ashi",           "Heikin Ashi",         "Хейкін Асі",              "हेइकिन आशी"        ],
@@ -1177,6 +1190,7 @@ pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 75] = [
     /* 72 SubWatermark       */ [ "Watermark",            "Водяной знак",             "Marca de agua",       "Wasserzeichen",        "Filigrane",             "Marca d'água",        "水印",          "透かし",         "워터마크",       "علامة مائية",     "Filigrana",             "Filigran",              "Znak wodny",          "Водяний знак",            "वॉटरमार्क"          ],
     /* 73 SubTheme           */ [ "Theme",                "Тема",                     "Tema",                "Thema",                "Thème",                 "Tema",                "主题",          "テーマ",         "테마",           "المظهر",          "Tema",                  "Tema",                  "Motyw",               "Тема",                    "थीम"                ],
     /* 74 SubUiStyle         */ [ "UI Style",             "Стиль интерфейса",         "Estilo UI",           "UI-Stil",              "Style UI",              "Estilo UI",           "界面风格",      "UIスタイル",     "UI 스타일",      "نمط الواجهة",     "Stile UI",              "UI stili",              "Styl UI",             "Стиль інтерфейсу",        "UI शैली"            ],
+    /* 75 HeaderCandles      */ [ "Candles",              "Свечи",                    "Velas",               "Kerzen",               "Bougies",               "Velas",               "K线",           "ローソク足",     "캔들",           "الشموع",          "Candele",               "Mumlar",                "Świece",              "Свічки",                  "कैंडल्स"            ],
 ];
 
 // =============================================================================
@@ -1303,7 +1317,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 354] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 365] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1661,6 +1675,19 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 354] = [
     // 2026-08-24) — same row family as `WaveKind*` (287-294) above.
     /* 352 WaveKindLeadingDiagonal            */ [ "Leading Diagonal", "Начальная диагональ", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 353 WaveKindEndingDiagonal             */ [ "Ending Diagonal", "Конечная диагональ", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+
+    // Candle pattern engine (markup-engines wave, 2026-08-25).
+    /* 354 RuleCandlePatternWindowIncomplete  */ [ "Not enough bars before this mark to judge the claimed pattern", "Недостаточно баров перед этой меткой, чтобы проверить заявленную модель", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 355 RuleCandlePatternNotFormed         */ [ "These bars do not form the claimed pattern", "Эти бары не образуют заявленную модель", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 356 PatternBiasLabel                   */ [ "Bias", "Направленность", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 357 PatternBiasBullish                 */ [ "Bullish", "Бычий", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 358 PatternBiasBearish                 */ [ "Bearish", "Медвежий", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 359 PatternBiasIndecision              */ [ "Indecision", "Неопределённость", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 360 PatternMatchesBarsLabel            */ [ "Matches Bars", "Совпадает с барами", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 361 YesValue                           */ [ "Yes", "Да", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 362 NoValue                            */ [ "No", "Нет", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 363 ScanHitsColumnHeader               */ [ "Hits", "Срабатывания", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 364 ScanTotalHitsLabel                 */ [ "Total Hits", "Всего срабатываний", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================
@@ -1671,6 +1698,50 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 354] = [
 // `table_lookup!` silently fall back to English, hiding a missing translation.
 // This test fails the build if a key is added without filling all N_LANG
 // columns — so language coverage cannot regress unnoticed.
+// =============================================================================
+// CandlePatternKey table  (34 variants x N_LANG)
+// =============================================================================
+//
+// En/Ru filled only (col 0 = En, col 1 = Ru); cols 2..14 fall back to En at
+// runtime. See `CandlePatternKey`'s own doc for why this table is excluded
+// from `every_chart_table_is_fully_translated` below.
+pub(super) static CANDLE_PATTERN_KEY_TABLE: [[&str; N_LANG]; 34] = [
+    /*  0 Doji                    */ [ "Doji",                        "Дожи",                            "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /*  1 GravestoneDoji          */ [ "Gravestone Doji",             "Дожи «надгробие»",                "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /*  2 DragonflyDoji           */ [ "Dragonfly Doji",              "Дожи «стрекоза»",                 "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /*  3 LongLeggedDoji          */ [ "Long-Legged Doji",            "Длинноногий дожи",                "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /*  4 Hammer                  */ [ "Hammer",                      "Молот",                           "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /*  5 InvertedHammer          */ [ "Inverted Hammer",             "Перевёрнутый молот",              "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /*  6 ShootingStar            */ [ "Shooting Star",               "Падающая звезда",                 "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /*  7 HangingMan              */ [ "Hanging Man",                 "Повешенный",                      "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /*  8 Marubozu                */ [ "Marubozu",                    "Марубозу",                        "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /*  9 WhiteMarubozu           */ [ "White Marubozu",              "Белый марубозу",                  "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 10 BlackMarubozu           */ [ "Black Marubozu",              "Чёрный марубозу",                 "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 11 SpinningTop             */ [ "Spinning Top",                "Волчок",                          "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 12 BullishEngulfing        */ [ "Bullish Engulfing",           "Бычье поглощение",                "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 13 BearishEngulfing        */ [ "Bearish Engulfing",           "Медвежье поглощение",             "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 14 BullishHarami           */ [ "Bullish Harami",              "Бычья харами",                    "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 15 BearishHarami           */ [ "Bearish Harami",              "Медвежья харами",                 "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 16 PiercingPattern         */ [ "Piercing Pattern",            "Просвет в облаках",               "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 17 DarkCloudCover          */ [ "Dark Cloud Cover",            "Завеса из тёмных облаков",        "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 18 TweezerTop              */ [ "Tweezer Top",                 "Пинцет сверху",                   "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 19 TweezerBottom           */ [ "Tweezer Bottom",              "Пинцет снизу",                    "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 20 MorningStar             */ [ "Morning Star",                "Утренняя звезда",                 "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 21 EveningStar             */ [ "Evening Star",                "Вечерняя звезда",                 "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 22 MorningDojiStar         */ [ "Morning Doji Star",           "Утренняя звезда дожи",            "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 23 EveningDojiStar         */ [ "Evening Doji Star",           "Вечерняя звезда дожи",            "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 24 ThreeWhiteSoldiers      */ [ "Three White Soldiers",        "Три белых солдата",               "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 25 ThreeBlackCrows         */ [ "Three Black Crows",           "Три чёрные вороны",               "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 26 ThreeInsideUp           */ [ "Three Inside Up",             "Три внутри вверх",                "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 27 ThreeInsideDown         */ [ "Three Inside Down",           "Три внутри вниз",                 "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 28 ThreeOutsideUp          */ [ "Three Outside Up",            "Три снаружи вверх",               "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 29 ThreeOutsideDown        */ [ "Three Outside Down",          "Три снаружи вниз",                "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 30 RisingThreeMethods      */ [ "Rising Three Methods",        "Метод трёх восходящих",           "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 31 FallingThreeMethods     */ [ "Falling Three Methods",       "Метод трёх нисходящих",           "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 32 UpsideGapTwoCrows       */ [ "Upside Gap Two Crows",        "Две вороны с гэпом вверх",        "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 33 DownsideGapThreeMethods */ [ "Downside Gap Three Methods",  "Метод трёх с гэпом вниз",         "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+];
+
 #[cfg(test)]
 mod completeness {
     use super::*;
