@@ -29,6 +29,60 @@ fn default_ratio_rib_style() -> LineStyle { LineStyle::Dotted }
 /// SMALL T — a raised "t" for "truncated".
 const TRUNCATED_FIFTH_MARK: char = '\u{1D57}';
 
+/// Which motive shape this structure IS — the impulse-family counterpart of
+/// [`super::elliott_correction::CorrectionType`]: a real, drawable subtype
+/// selector on `ElliottImpulse`, the same "declared shape" role
+/// `correction_type` already carries on `ElliottCorrection`.
+///
+/// `mli::ewa::grammar` has carried `LEADING_DIAGONAL_SLOTS`/
+/// `ENDING_DIAGONAL_SLOTS` and
+/// `EwaPatternKind::{LeadingDiagonalContracting, LeadingDiagonalExpanding,
+/// EndingDiagonalContracting, EndingDiagonalExpanding}` for as long as the
+/// plain impulse rule table existed — this crate simply had no field to say
+/// a drawn wave IS one. Only the two POSITIONS a diagonal is ever legal in
+/// (leading = wave 1/A, ending = wave 5/C — `mli::ewa::grammar::
+/// allowed_in_position`) are represented, not the separate contracting/
+/// expanding split the catalogue also carries for each: `ElliottTriangle`
+/// sets the same precedent (`elliott::count::parent_pattern` maps it
+/// unconditionally onto `EwaPatternKind::ContractingTriangle`, with no
+/// symmetrical/expanding selector of its own) — contracting is the
+/// classic, common shape, expanding the catalogue's own guidelines mark
+/// `"rare"`/`"very_rare"`.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Default)]
+pub enum ImpulseKind {
+    /// A plain, five-wave motive impulse — the default, and the ONLY kind
+    /// every impulse drawn before this field existed carries
+    /// (`#[serde(default)]`), so nothing about an existing drawing changes.
+    #[default]
+    Plain,
+    /// A leading diagonal — legal only in wave 1 of an impulse or wave A of
+    /// a zigzag (`mli::ewa::grammar::allowed_in_position`); wave 4
+    /// overlapping wave 1's own territory is part of the shape, not a
+    /// violation of it (`elliott::guard::impulse_violations`).
+    LeadingDiagonal,
+    /// An ending diagonal — legal only in wave 5 of an impulse or wave C of
+    /// a corrective structure; same wave-4/wave-1 overlap allowance as
+    /// [`LeadingDiagonal`](Self::LeadingDiagonal).
+    EndingDiagonal,
+}
+
+impl ImpulseKind {
+    /// The same fixed token [`ElliottImpulse::apply_style_property`]'s own
+    /// `"impulse_kind"` id reads and writes, and the SAME token
+    /// `elliott::count::kind_id_of`/`elliott::count::parent_pattern` use
+    /// after the colon in a kind id (e.g. `"elliott_impulse:leading_diagonal"`)
+    /// — one mapping, not a second copy of it per caller, the same
+    /// discipline [`CorrectionType::as_str`](super::elliott_correction::CorrectionType::as_str)
+    /// already documents for its own family.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            ImpulseKind::Plain => "plain",
+            ImpulseKind::LeadingDiagonal => "leading_diagonal",
+            ImpulseKind::EndingDiagonal => "ending_diagonal",
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ElliottImpulse {
     pub data: PrimitiveData,
@@ -36,6 +90,15 @@ pub struct ElliottImpulse {
     pub points: [(i64, f64); 6],
     #[serde(default = "default_true")]
     pub show_labels: bool,
+    /// Which motive shape this structure IS — plain / leading diagonal /
+    /// ending diagonal (see [`ImpulseKind`]'s own doc). `Plain` (the
+    /// default, `#[serde(default)]`) is EXACTLY how every impulse drawn
+    /// before this field existed behaved — nothing about an existing
+    /// drawing changes. Sits next to [`show_labels`](Self::show_labels),
+    /// the same position [`super::elliott_correction::ElliottCorrection::correction_type`]
+    /// occupies relative to ITS OWN `show_labels`.
+    #[serde(default)]
+    pub impulse_kind: ImpulseKind,
     #[serde(default)]
     pub degree: WaveDegree,
     /// The numeral family this structure's own wave-count labels draw in —
@@ -222,6 +285,7 @@ impl ElliottImpulse {
             },
             points,
             show_labels: true,
+            impulse_kind: ImpulseKind::Plain,
             degree: WaveDegree::Intermediate,
             notation_style: NotationStyle::default(),
             label_style: LabelStyle::default(),
@@ -352,6 +416,12 @@ impl Primitive for ElliottImpulse {
         self.realized_points = Some(n.min(self.points.len()));
     }
     fn truncated_fifth(&self) -> bool { self.truncated_fifth }
+    fn impulse_kind(&self) -> Option<&'static str> {
+        match self.impulse_kind {
+            ImpulseKind::Plain => None,
+            other => Some(other.as_str()),
+        }
+    }
     fn context_violations(&self) -> &[guard::Violation] { &self.context_violations }
     fn set_context_violations(&mut self, v: Vec<guard::Violation>) { self.context_violations = v; }
     fn subdivided_slots(&self) -> &[WaveSlot] { &self.subdivided_slots }
@@ -619,10 +689,16 @@ impl Primitive for ElliottImpulse {
             // fill for this type — the correction/pattern-type step
             // `elliott_correction.rs` has is not part of this type).
             ConfigProperty::notation_style_pills(self.declared_notation_style().as_str()).with_category(PropertyCategory::AppearanceLine).with_order(19).in_group(PropertyGroup::Notation),
+            // `PropertyGroup::ImpulseKind` (the diagonal arc) — right after
+            // Notation, matching where `ElliottCorrection::style_properties`
+            // places its own `correction_type` dropdown relative to Degree:
+            // the shape-defining selector for the ONE Elliott type that
+            // carries it. See `ImpulseKind`'s own doc.
+            ConfigProperty::impulse_kind(self.impulse_kind.as_str()).with_category(PropertyCategory::AppearanceLine).with_order(20).in_group(PropertyGroup::ImpulseKind),
             // `PropertyGroup::WaveLabels` (W2) — the approved design's own
             // `WaveLabelsGroupTitle`.
-            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(20).in_group(PropertyGroup::WaveLabels),
-            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(21).in_group(PropertyGroup::WaveLabels),
+            ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(21).in_group(PropertyGroup::WaveLabels),
+            ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(22).in_group(PropertyGroup::WaveLabels),
             // `PropertyGroup::CustomWaveLabels` (W4) — the approved design's
             // own trailing "Custom Labels" table, seeded with what every
             // wave ACTUALLY renders right now (`rendered_wave_labels`, the
@@ -647,6 +723,16 @@ impl Primitive for ElliottImpulse {
             "ratio_rib_style" => { if let Some(s) = value.as_string() { self.ratio_rib_style = LineStyle::from_str(s); return true; } }
             "show_projections" => { if let Some(v) = value.as_bool() { self.show_projections = v; return true; } }
             "truncated_fifth" => { if let Some(v) = value.as_bool() { self.truncated_fifth = v; return true; } }
+            "impulse_kind" => {
+                if let Some(s) = value.as_string() {
+                    self.impulse_kind = match s {
+                        "leading_diagonal" => ImpulseKind::LeadingDiagonal,
+                        "ending_diagonal" => ImpulseKind::EndingDiagonal,
+                        _ => ImpulseKind::Plain,
+                    };
+                    return true;
+                }
+            }
             "degree" => { if let Some(s) = value.as_string() { if let Some(d) = WaveDegree::from_str(s) { self.degree = d; return true; } } }
             "notation_style" => { if let Some(s) = value.as_string() { self.notation_style = NotationStyle::from_str(s); return true; } }
             "label_font_size" => { if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; } }
@@ -1051,5 +1137,72 @@ mod custom_wave_labels_tests {
         assert_eq!(rows.len(), 6, "one row per point (Start + 5 waves)");
         assert_eq!(rows[3][1], TableCell::EditableText("3ʳᵈ".to_string()));
         assert_eq!(rows[3][0], TableCell::Text("3".to_string()), "Wave# column is inert plain text");
+    }
+}
+
+#[cfg(test)]
+mod impulse_kind_tests {
+    //! `ElliottImpulse::impulse_kind` (the diagonal arc) — the field's own
+    //! defaulting/round-trip contract, and the `apply_style_property` write
+    //! path the settings-modal dropdown reaches it through.
+
+    use super::*;
+
+    fn sample_points() -> [(i64, f64); 6] {
+        [(0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0)]
+    }
+
+    /// A freshly constructed impulse is `ImpulseKind::Plain` — nothing about
+    /// an existing drawing changes.
+    #[test]
+    fn new_impulse_defaults_to_plain() {
+        let impulse = ElliottImpulse::new(sample_points(), "#2196F3");
+        assert_eq!(impulse.impulse_kind, ImpulseKind::Plain);
+        assert_eq!(impulse.impulse_kind(), None, "a plain impulse carries no subtype token — the bare \"elliott_impulse\" kind id");
+    }
+
+    /// `impulse_kind` (leading or ending) survives a full JSON round trip —
+    /// the same wire shape every other Elliott field already gets via
+    /// `to_json`/`serde_json::from_str`.
+    #[test]
+    fn leading_and_ending_diagonal_survive_a_json_round_trip() {
+        for kind in [ImpulseKind::LeadingDiagonal, ImpulseKind::EndingDiagonal] {
+            let mut impulse = ElliottImpulse::new(sample_points(), "#2196F3");
+            impulse.impulse_kind = kind;
+            let json = impulse.to_json();
+            let restored: ElliottImpulse = serde_json::from_str(&json).expect("must deserialize");
+            assert_eq!(restored.impulse_kind, kind, "{kind:?} must survive a JSON round trip");
+        }
+    }
+
+    /// A JSON object with no `"impulse_kind"` key at all — exactly what
+    /// every impulse ever saved before this field existed carries on disk —
+    /// must still deserialize, defaulting to `ImpulseKind::Plain`.
+    #[test]
+    fn missing_field_in_saved_json_defaults_to_plain() {
+        let impulse = ElliottImpulse::new(sample_points(), "#2196F3");
+        let mut value: serde_json::Value = serde_json::from_str(&impulse.to_json()).expect("valid json");
+        value.as_object_mut().expect("primitive serializes as a JSON object").remove("impulse_kind");
+        assert!(
+            !value.to_string().contains("impulse_kind"),
+            "sanity: the key really is gone before deserializing"
+        );
+        let restored: ElliottImpulse = serde_json::from_value(value).expect("must deserialize without the field");
+        assert_eq!(restored.impulse_kind, ImpulseKind::Plain, "a pre-existing drawing loads as a plain impulse");
+    }
+
+    /// `apply_style_property("impulse_kind", ..)` — the settings-modal
+    /// dropdown's own write path, same shape
+    /// `ElliottCorrection::apply_style_property`'s own `"correction_type"`
+    /// arm already has.
+    #[test]
+    fn apply_style_property_writes_impulse_kind() {
+        let mut impulse = ElliottImpulse::new(sample_points(), "#2196F3");
+        assert!(impulse.apply_style_property("impulse_kind", &PropertyValue::String("leading_diagonal".to_string())));
+        assert_eq!(impulse.impulse_kind, ImpulseKind::LeadingDiagonal);
+        assert!(impulse.apply_style_property("impulse_kind", &PropertyValue::String("ending_diagonal".to_string())));
+        assert_eq!(impulse.impulse_kind, ImpulseKind::EndingDiagonal);
+        assert!(impulse.apply_style_property("impulse_kind", &PropertyValue::String("plain".to_string())));
+        assert_eq!(impulse.impulse_kind, ImpulseKind::Plain);
     }
 }

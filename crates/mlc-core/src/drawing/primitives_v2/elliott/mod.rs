@@ -12,7 +12,7 @@ pub mod guard;
 mod wave_hit;
 mod labels;
 
-pub use elliott_impulse::ElliottImpulse;
+pub use elliott_impulse::{ElliottImpulse, ImpulseKind};
 pub use elliott_correction::{ElliottCorrection, CorrectionType};
 pub use elliott_triangle::ElliottTriangle;
 pub use elliott_double_combo::ElliottDoubleCombo;

@@ -910,12 +910,15 @@ pub fn predecessor_kinds(next: &dyn Primitive) -> &'static [&'static str] {
 // =========================================================================
 
 /// A "kind id" is the chart-side `type_id`, optionally carrying an
-/// `ElliottCorrection` subtype after a colon (e.g. `"elliott_impulse"`,
-/// `"elliott_correction:flat"`) — the fixed spelling every function below
-/// (and [`crate::i18n::ConceptKey`]'s own `WaveKind*` rows) shares. The
+/// `ElliottCorrection` subtype OR an `ElliottImpulse` diagonal kind after a
+/// colon (e.g. `"elliott_impulse"`, `"elliott_correction:flat"`,
+/// `"elliott_impulse:leading_diagonal"`) — the fixed spelling every function
+/// below (and [`crate::i18n::ConceptKey`]'s own `WaveKind*` rows) shares. The
 /// complete candidate set [`child_kinds`] itself picks among.
-pub const CHILD_KIND_CANDIDATES: [&str; 8] = [
+pub const CHILD_KIND_CANDIDATES: [&str; 10] = [
     "elliott_impulse",
+    "elliott_impulse:leading_diagonal",
+    "elliott_impulse:ending_diagonal",
     "elliott_correction:zigzag",
     "elliott_correction:flat",
     "elliott_correction:expanded",
@@ -937,14 +940,28 @@ pub fn split_kind_id(kind_id: &str) -> (&str, Option<&str>) {
 }
 
 /// The Elliott catalogue pattern kind (`mli::ewa::types::EwaPatternKind`) a
-/// primitive's own `type_id()` names — `correction_subtype` follows
-/// [`Primitive::correction_subtype`]'s own default (`"zigzag"` when
-/// unresolved) for `"elliott_correction"`, and is ignored for every other
-/// `type_id`. `None` for a `type_id` outside the five Elliott types.
-pub fn parent_pattern(type_id: &str, correction_subtype: Option<&str>) -> Option<EwaPatternKind> {
+/// primitive's own `type_id()` names — `subtype` is
+/// [`Primitive::correction_subtype`]'s own token (default `"zigzag"` when
+/// unresolved) for `"elliott_correction"`, or [`Primitive::impulse_kind`]'s
+/// own token (`"leading_diagonal"`/`"ending_diagonal"`, absent meaning a
+/// PLAIN impulse) for `"elliott_impulse"` — the one subtype slot each of
+/// those two types actually carries, never both at once for the same
+/// primitive. Ignored for every other `type_id`. `None` for a `type_id`
+/// outside the five Elliott types.
+///
+/// `ElliottTriangle` maps unconditionally onto `ContractingTriangle` with no
+/// symmetrical/expanding selector of its own — the diagonal branch below
+/// follows that exact precedent (Contracting is the classic, common shape;
+/// see [`super::elliott_impulse::ImpulseKind`]'s own doc for why Expanding
+/// stays unrepresented rather than growing a second selector field).
+pub fn parent_pattern(type_id: &str, subtype: Option<&str>) -> Option<EwaPatternKind> {
     Some(match type_id {
-        "elliott_impulse" => EwaPatternKind::Impulse,
-        "elliott_correction" => match correction_subtype.unwrap_or("zigzag") {
+        "elliott_impulse" => match subtype {
+            Some("leading_diagonal") => EwaPatternKind::LeadingDiagonalContracting,
+            Some("ending_diagonal") => EwaPatternKind::EndingDiagonalContracting,
+            _ => EwaPatternKind::Impulse,
+        },
+        "elliott_correction" => match subtype.unwrap_or("zigzag") {
             "flat" => EwaPatternKind::RegularFlat,
             "expanded" => EwaPatternKind::ExpandedFlat,
             "running" => EwaPatternKind::RunningFlat,
@@ -973,6 +990,8 @@ pub fn kind_label(kind_id: &str) -> Option<crate::i18n::ConceptKey> {
     use crate::i18n::ConceptKey;
     Some(match kind_id {
         "elliott_impulse" => ConceptKey::WaveKindImpulse,
+        "elliott_impulse:leading_diagonal" => ConceptKey::WaveKindLeadingDiagonal,
+        "elliott_impulse:ending_diagonal" => ConceptKey::WaveKindEndingDiagonal,
         "elliott_correction:zigzag" => ConceptKey::WaveKindZigzag,
         "elliott_correction:flat" => ConceptKey::WaveKindRegularFlat,
         "elliott_correction:expanded" => ConceptKey::WaveKindExpandedFlat,
@@ -986,11 +1005,12 @@ pub fn kind_label(kind_id: &str) -> Option<crate::i18n::ConceptKey> {
 
 /// This primitive's own "kind id" (see [`CHILD_KIND_CANDIDATES`]'s own doc
 /// for the `type_id[:subtype]` convention) — [`Primitive::type_id`] plus
-/// [`Primitive::correction_subtype`] when it carries one, formatted the
-/// SAME way every [`CHILD_KIND_CANDIDATES`] entry already is. `None` for a
-/// primitive outside the five Elliott types ([`Primitive::wave_degree`] is
-/// `None`) — there is no "kind" in this vocabulary for a primitive that
-/// never enters it.
+/// [`Primitive::correction_subtype`] OR [`Primitive::impulse_kind`], whichever
+/// one this primitive actually carries (never both — one is `ElliottCorrection`-
+/// only, the other `ElliottImpulse`-only), formatted the SAME way every
+/// [`CHILD_KIND_CANDIDATES`] entry already is. `None` for a primitive outside
+/// the five Elliott types ([`Primitive::wave_degree`] is `None`) — there is
+/// no "kind" in this vocabulary for a primitive that never enters it.
 ///
 /// Was a private `elliott::guard::child_kind_id` — moved here (owner report
 /// 2026-08-14, this module's own "Conversion" section below) so
@@ -1000,7 +1020,7 @@ pub fn kind_label(kind_id: &str) -> Option<crate::i18n::ConceptKey> {
 /// format string.
 pub fn kind_id_of(prim: &dyn Primitive) -> Option<String> {
     prim.wave_degree()?;
-    Some(match prim.correction_subtype() {
+    Some(match prim.correction_subtype().or_else(|| prim.impulse_kind()) {
         Some(subtype) => format!("{}:{}", prim.type_id(), subtype),
         None => prim.type_id().to_string(),
     })
@@ -1072,19 +1092,26 @@ pub fn slot_position(type_id: &str, slot: WaveSlot) -> Option<EwaWavePosition> {
 /// permits a triangle at `Wave4`/`B`/`X`/`Y`/`Z`, never `Wave2`, regardless
 /// of `matches_class`).
 ///
-/// Hand-verified (see this crate's own `count.rs` change report): a motive
-/// slot (impulse wave 1, 3 or 5) returns exactly `["elliott_impulse"]`;
+/// Hand-verified (see this crate's own `count.rs` change report, and
+/// `tests::child_kinds_offers_diagonals_exactly_where_mli_grammar_allows`,
+/// which re-derives the same answer straight from `mli::ewa::grammar` rather
+/// than trusting this list by eye): impulse wave 3 returns exactly
+/// `["elliott_impulse"]`; impulse wave 1 additionally offers
+/// `"elliott_impulse:leading_diagonal"` and impulse wave 5 additionally
+/// offers `"elliott_impulse:ending_diagonal"` — the only two positions
+/// `mli::ewa::grammar::allowed_in_position` ever legalizes a diagonal at;
 /// impulse wave 2 returns the six corrective candidates MINUS the triangle
 /// (zigzag/regular flat/expanded flat/running flat/double combo/triple
-/// combo); impulse wave 4 returns all seven corrective candidates,
-/// triangle included.
+/// combo); impulse wave 4 returns all seven corrective candidates, triangle
+/// included — a diagonal is motive-class, never corrective, so it never
+/// appears in either.
 ///
 /// Empty when `parent` is not an Elliott primitive ([`parent_pattern`]
 /// returns `None`), when `slot` does not exist on `parent`'s own type
 /// ([`slot_position`] returns `None`), or when the grammar allows nothing
 /// at that position.
 pub fn child_kinds(parent: &dyn Primitive, slot: WaveSlot) -> Vec<&'static str> {
-    let Some(pattern) = parent_pattern(parent.type_id(), parent.correction_subtype()) else {
+    let Some(pattern) = parent_pattern(parent.type_id(), parent.correction_subtype().or_else(|| parent.impulse_kind())) else {
         return Vec::new();
     };
     let Some(position) = slot_position(parent.type_id(), slot) else {
@@ -1834,7 +1861,10 @@ pub fn slot_at_ordinal(type_id: &str, ordinal: usize) -> Option<WaveSlot> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drawing::primitives_v2::elliott::{ElliottImpulse, ElliottCorrection, ElliottDoubleCombo, ElliottTriangle};
+    use crate::drawing::primitives_v2::elliott::{
+        ElliottImpulse, ElliottCorrection, ElliottDoubleCombo, ElliottTriangle, ElliottTripleCombo,
+        CorrectionType,
+    };
 
     #[test]
     fn child_seed_impulse_wave3_spans_correct_points() {
@@ -1902,15 +1932,134 @@ mod tests {
         );
     }
 
+    /// Wave 3 is motive but never carries a diagonal (`mli::ewa::grammar::
+    /// allowed_in_position` only legalizes a diagonal at wave 1 or wave 5);
+    /// wave 1 additionally offers the leading diagonal, wave 5 the ending
+    /// diagonal — see `child_kinds_offers_diagonals_exactly_where_mli_
+    /// grammar_allows`, below, for the same fact re-derived independently
+    /// straight from `mli::ewa::grammar`, across every Elliott slot.
     #[test]
-    fn child_kinds_motive_slots_offer_only_impulse() {
+    fn child_kinds_motive_slots_offer_impulse_and_diagonal_where_legal() {
         let points: [(i64, f64); 6] = [
             (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0),
         ];
         let impulse = ElliottImpulse::new(points, "#2196F3");
-        assert_eq!(child_kinds(&impulse, WaveSlot::Impulse1), vec!["elliott_impulse"]);
-        assert_eq!(child_kinds(&impulse, WaveSlot::Impulse3), vec!["elliott_impulse"]);
-        assert_eq!(child_kinds(&impulse, WaveSlot::Impulse5), vec!["elliott_impulse"]);
+        assert_eq!(
+            child_kinds(&impulse, WaveSlot::Impulse1),
+            vec!["elliott_impulse", "elliott_impulse:leading_diagonal"],
+            "wave 1 is the ONLY impulse slot a leading diagonal is ever legal in"
+        );
+        assert_eq!(child_kinds(&impulse, WaveSlot::Impulse3), vec!["elliott_impulse"], "wave 3 never carries a diagonal");
+        assert_eq!(
+            child_kinds(&impulse, WaveSlot::Impulse5),
+            vec!["elliott_impulse", "elliott_impulse:ending_diagonal"],
+            "wave 5 is the ONLY impulse slot an ending diagonal is ever legal in"
+        );
+    }
+
+    /// The task's own ask: assert `child_kinds`' diagonal offer against
+    /// `mli::ewa::grammar`'s OWN answer — `grammar::slots_for` +
+    /// `grammar::matches_class` + `grammar::allowed_in_position` — computed
+    /// independently right here, never a hardcoded expected list, across
+    /// EVERY slot of every Elliott parent type (impulse; correction, once
+    /// per subtype, since a correction's own slot classes depend on which
+    /// subtype it is; triangle; both combinations).
+    #[test]
+    fn child_kinds_offers_diagonals_exactly_where_mli_grammar_allows() {
+        let points6: [(i64, f64); 6] =
+            [(0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0)];
+        let points4: [(i64, f64); 4] = [(0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0)];
+        let points7: [(i64, f64); 7] =
+            [(0, 100.0), (1_000, 101.0), (2_000, 102.0), (3_000, 103.0), (4_000, 104.0), (5_000, 105.0), (6_000, 106.0)];
+        let points9: Vec<(i64, f64)> = (0..9).map(|i| (i * 1_000, 100.0 + i as f64)).collect();
+
+        let impulse = ElliottImpulse::new(points6, "#2196F3");
+        let mut zigzag = ElliottCorrection::new(points4, "#FF5722");
+        zigzag.correction_type = CorrectionType::Zigzag;
+        let mut flat = ElliottCorrection::new(points4, "#FF5722");
+        flat.correction_type = CorrectionType::Flat;
+        let mut expanded = ElliottCorrection::new(points4, "#FF5722");
+        expanded.correction_type = CorrectionType::Expanded;
+        let mut running = ElliottCorrection::new(points4, "#FF5722");
+        running.correction_type = CorrectionType::Running;
+        let triangle = ElliottTriangle::new(points6, "#4CAF50");
+        let double_combo = ElliottDoubleCombo::new(points7, "#9C27B0");
+        let triple_combo = ElliottTripleCombo::new(points9, "#795548");
+
+        let parents: Vec<(&str, &dyn Primitive)> = vec![
+            ("elliott_impulse", &impulse),
+            ("elliott_correction:zigzag", &zigzag),
+            ("elliott_correction:flat", &flat),
+            ("elliott_correction:expanded", &expanded),
+            ("elliott_correction:running", &running),
+            ("elliott_triangle", &triangle),
+            ("elliott_double_combo", &double_combo),
+            ("elliott_triple_combo", &triple_combo),
+        ];
+
+        let mut leading_slots: Vec<(&str, WaveSlot)> = Vec::new();
+        let mut ending_slots: Vec<(&str, WaveSlot)> = Vec::new();
+
+        for &(label, parent) in &parents {
+            let slots = wave_slots_for_type(parent.type_id()).expect("known Elliott type");
+            for &slot in slots {
+                let pattern = parent_pattern(parent.type_id(), parent.correction_subtype())
+                    .expect("parent_pattern must resolve for a known Elliott type");
+                let position =
+                    slot_position(parent.type_id(), slot).expect("slot_position must resolve for a slot this type actually has");
+                let class = grammar::slots_for(pattern).iter().find(|s| s.position == position).map(|s| s.class);
+
+                let expect_leading = class
+                    .is_some_and(|c| grammar::matches_class(EwaPatternKind::LeadingDiagonalContracting, c))
+                    && grammar::allowed_in_position(EwaPatternKind::LeadingDiagonalContracting, position);
+                let expect_ending = class
+                    .is_some_and(|c| grammar::matches_class(EwaPatternKind::EndingDiagonalContracting, c))
+                    && grammar::allowed_in_position(EwaPatternKind::EndingDiagonalContracting, position);
+
+                let kinds = child_kinds(parent, slot);
+                let has_leading = kinds.contains(&"elliott_impulse:leading_diagonal");
+                let has_ending = kinds.contains(&"elliott_impulse:ending_diagonal");
+
+                assert_eq!(
+                    has_leading, expect_leading,
+                    "{label}/{slot:?}: leading-diagonal offer must match mli::ewa::grammar's own answer"
+                );
+                assert_eq!(
+                    has_ending, expect_ending,
+                    "{label}/{slot:?}: ending-diagonal offer must match mli::ewa::grammar's own answer"
+                );
+
+                if expect_leading {
+                    leading_slots.push((label, slot));
+                }
+                if expect_ending {
+                    ending_slots.push((label, slot));
+                }
+            }
+        }
+
+        // Measured, not assumed: leading diagonal is legal ONLY at wave 1 of
+        // a plain impulse and wave A of a zigzag (the ONLY Motive-class A
+        // among the four correction subtypes checked — flat/expanded/
+        // running all class their own wave A as Corrective); ending
+        // diagonal is legal at wave 5 of a plain impulse and wave C of
+        // EVERY correction subtype checked (C is Motive-class in all four).
+        // Neither diagonal is ever offered in a triangle or a combination —
+        // both are Corrective-only slot families end to end.
+        assert_eq!(
+            leading_slots,
+            vec![("elliott_impulse", WaveSlot::Impulse1), ("elliott_correction:zigzag", WaveSlot::CorrectionA)],
+        );
+        assert_eq!(
+            ending_slots,
+            vec![
+                ("elliott_impulse", WaveSlot::Impulse5),
+                ("elliott_correction:zigzag", WaveSlot::CorrectionC),
+                ("elliott_correction:flat", WaveSlot::CorrectionC),
+                ("elliott_correction:expanded", WaveSlot::CorrectionC),
+                ("elliott_correction:running", WaveSlot::CorrectionC),
+            ],
+        );
     }
 
     #[test]

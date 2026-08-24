@@ -34,7 +34,7 @@ use mlc_core::drawing::primitives_v2::icons::emoji::{Emoji, EmojiType};
 use mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry;
 use mlc_core::drawing::primitives_v2::{
     ClickBehavior, ControlPoint, ControlPointType, CorrectionType, ElliottCorrection,
-    ElliottDoubleCombo, ElliottImpulse, ElliottTriangle, ElliottTripleCombo, HitTestResult,
+    ElliottDoubleCombo, ElliottImpulse, ElliottTriangle, ElliottTripleCombo, HitTestResult, ImpulseKind,
     LineStyle, Primitive, PrimitiveData, PrimitiveExt, PrimitiveText, SyncMode, TextAlign,
 };
 use mlc_core::drawing::{alloc_primitive_id, PrimitiveSnapshot, StyleReference};
@@ -2527,6 +2527,11 @@ impl DrawingManager {
                 let mut p = ElliottImpulse::new(points_array::<6>(seed.interpolate(6)), &color);
                 p.degree = seed.degree;
                 p.link = Some(link);
+                p.impulse_kind = match subtype {
+                    Some("leading_diagonal") => ImpulseKind::LeadingDiagonal,
+                    Some("ending_diagonal") => ImpulseKind::EndingDiagonal,
+                    _ => ImpulseKind::Plain,
+                };
                 Box::new(p)
             }
             "elliott_correction" => {
@@ -3013,6 +3018,11 @@ impl DrawingManager {
                 p.degree = old_degree;
                 p.link = old_link;
                 p.follows = old_follows;
+                p.impulse_kind = match subtype {
+                    Some("leading_diagonal") => ImpulseKind::LeadingDiagonal,
+                    Some("ending_diagonal") => ImpulseKind::EndingDiagonal,
+                    _ => ImpulseKind::Plain,
+                };
                 Box::new(p)
             }
             "elliott_correction" => {
@@ -3703,6 +3713,49 @@ mod auto_adoption_gate_tests {
         assert_eq!(new_prim.wave_degree(), Some(WaveDegree::Minute.coarser()));
 
         set_ewa_engine_config(EwaEngineConfig::default());
+    }
+}
+
+#[cfg(test)]
+mod impulse_kind_conversion_tests {
+    //! Point 4 of the diagonal arc: `conversion_kinds` OFFERS the two
+    //! diagonal kinds (`elliott::count`'s own tests prove that half) —
+    //! this proves `convert_primitive_kind` itself, once a click actually
+    //! fires, keeps the structure's own points and id, the SAME contract
+    //! every other in-place Elliott conversion already gets (see that
+    //! method's own doc).
+
+    use super::*;
+    use crate::bubble::BubbleStore;
+
+    #[test]
+    fn converting_impulse_to_ending_diagonal_keeps_points_and_id() {
+        let mut bubbles = BubbleStore::new();
+        let bid = bubbles.create_bubble_auto("BTCUSDT".to_string(), mlc_core::state::Timeframe::h1());
+        let mut mgr = DrawingManager::default();
+
+        let points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 105.0), (3_000, 130.0), (4_000, 120.0), (5_000, 140.0),
+        ];
+        let prim_id = mgr.add_external(&mut bubbles, bid, Box::new(ElliottImpulse::new(points, "#2196F3")));
+
+        let (_before, _after, children) = mgr
+            .convert_primitive_kind(&mut bubbles, bid, prim_id, "elliott_impulse:ending_diagonal")
+            .expect("a plain impulse must be convertible to an ending diagonal — conversion_kinds offers it unconditionally");
+        assert!(children.is_empty(), "no subdivisions were nested, none should be reported");
+
+        let b = bubbles.bubble(bid).expect("bubble exists");
+        let converted = b.primitives.iter().find(|p| p.data().id == prim_id)
+            .expect("the converted primitive keeps its own id — replaced at its own index, never removed and re-pushed");
+        assert_eq!(converted.type_id(), "elliott_impulse", "still an ElliottImpulse structurally, only the kind field changed");
+        assert_eq!(
+            converted.points(), points.to_vec(),
+            "6 pivots -> 6 pivots, so resample_polyline's own n == points.len() short-circuit keeps every point exactly",
+        );
+        assert_eq!(
+            kind_id_of(converted.as_ref()).as_deref(), Some("elliott_impulse:ending_diagonal"),
+            "the new primitive's own impulse_kind actually reads back as the requested diagonal, not silently plain",
+        );
     }
 }
 

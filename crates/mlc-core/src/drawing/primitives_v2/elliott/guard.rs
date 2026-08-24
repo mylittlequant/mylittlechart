@@ -96,6 +96,29 @@
 //! Every new predicate call here reads `mli::ewa::rules::{beyond,
 //! progresses}` exactly as this module's own opening paragraph promises —
 //! no second copy of either comparison.
+//!
+//! Diagonals (`ElliottImpulse::impulse_kind`, leading/ending): the ONE rule
+//! that changes is `"wave4_no_wave1_overlap"` — `mylittleindicators::ewa::
+//! primitives`'s own catalogue entry for `LeadingDiagonalContracting`/
+//! `EndingDiagonalContracting` names the rule id `"wave4_overlaps_wave1"`
+//! instead, i.e. the overlap this module otherwise flags is part of the
+//! shape, not a defect in it — a diagonal's own wedge legitimately narrows
+//! wave 4 back into wave 1's own territory. `mli::ewa::rules` exports no
+//! predicate function AT ALL for `"diagonal_core"`/`"contracting_boundaries"`/
+//! `"expanding_boundaries"` (the catalogue's OTHER diagonal rule ids) —
+//! unlike the zigzag/flat ratio bands (`ZIGZAG_B_A`/`FLAT_B_A`/…), which are
+//! real exported constants this module already reads, those three are bare
+//! catalogue labels with no runnable counterpart anywhere in `mli`, so
+//! implementing a check under one of those ids here would be inventing new
+//! Elliott logic never sourced from `mli::ewa` — the one thing this module's
+//! own opening paragraph forbids. Every OTHER impulse rule
+//! ([`impulse_violations`]'s own `"wave2_not_beyond_wave1_origin"`,
+//! `"wave3_exceeds_wave1"`, `"wave5_beyond_wave3"`/`"wave5_not_truncated"`,
+//! `"wave3_not_shortest"`, and [`violations_in`]'s own
+//! `"wave2_retraces_wave1"`/`"wave4_retraces_wave3"`) keeps checking a
+//! diagonal exactly as it checks a plain impulse — `mli::ewa::grammar`'s own
+//! `LEADING_DIAGONAL_SLOTS`/`ENDING_DIAGONAL_SLOTS` class waves 2 and 4
+//! Corrective, same as `IMPULSE_SLOTS`, and gives no other reason to differ.
 
 use mli::ewa::grammar;
 use mli::ewa::rules as ewa_rules;
@@ -208,7 +231,7 @@ pub fn violations(prim: &dyn Primitive) -> Vec<Violation> {
     let realized = prim.realized_point_count();
     let points = prim.points();
     let mut out = match prim.type_id() {
-        "elliott_impulse" => impulse_violations(&points, realized, prim.truncated_fifth()),
+        "elliott_impulse" => impulse_violations(&points, realized, prim.truncated_fifth(), prim.impulse_kind()),
         "elliott_correction" => {
             correction_violations(&points, realized, prim.correction_subtype().unwrap_or("zigzag"))
         }
@@ -227,11 +250,26 @@ fn price(points: &[(i64, f64)], idx: usize) -> Option<f64> {
 // Impulse — the three hard rules (owner spec, 2026-08-13)
 // =============================================================================
 
-fn impulse_violations(points: &[(i64, f64)], realized: usize, truncated_fifth: bool) -> Vec<Violation> {
+/// `impulse_kind` is [`Primitive::impulse_kind`]'s own token — `Some("leading_diagonal")`/
+/// `Some("ending_diagonal")` for a diagonal, `None` for a plain impulse
+/// (including a chain-promoted, synthesized coarser impulse — see this
+/// function's own call site inside [`chain_violations`], further down, for
+/// why that one always passes `None`). Read ONLY to gate
+/// `"wave4_no_wave1_overlap"` — see the module doc's own "Diagonals"
+/// paragraph for why that is the ONE rule this parameter changes.
+fn impulse_violations(
+    points: &[(i64, f64)],
+    realized: usize,
+    truncated_fifth: bool,
+    impulse_kind: Option<&str>,
+) -> Vec<Violation> {
     let mut out = Vec::new();
+    let is_diagonal = matches!(impulse_kind, Some("leading_diagonal") | Some("ending_diagonal"));
 
     // wave2_not_beyond_wave1_origin — wave 2 must not retrace past wave 1's
-    // own origin (point 0).
+    // own origin (point 0). Unchanged for a diagonal — `mli::ewa::grammar`'s
+    // own `LEADING_DIAGONAL_SLOTS`/`ENDING_DIAGONAL_SLOTS` class wave 2
+    // Corrective, same as a plain impulse's own `IMPULSE_SLOTS`.
     if realized >= 3 {
         if let (Some(origin), Some(reference), Some(test)) =
             (price(points, 0), price(points, 1), price(points, 2))
@@ -249,8 +287,12 @@ fn impulse_violations(points: &[(i64, f64)], realized: usize, truncated_fifth: b
     // wave4_no_wave1_overlap — wave 4 must not enter wave 1's own price
     // territory, measured from wave 1's END (not its origin — a later wave's
     // overlap rule anchors on the leg it must not re-enter, not on the
-    // structure's own start).
-    if realized >= 5 {
+    // structure's own start). SKIPPED for a diagonal: `mylittleindicators::
+    // ewa::primitives`'s own catalogue names this rule `"wave4_overlaps_wave1"`
+    // for `LeadingDiagonalContracting`/`EndingDiagonalContracting` — the
+    // overlap is part of the shape, not a defect in it (see the module doc's
+    // own "Diagonals" paragraph).
+    if !is_diagonal && realized >= 5 {
         if let (Some(origin), Some(reference), Some(test)) =
             (price(points, 1), price(points, 3), price(points, 4))
         {
@@ -626,6 +668,7 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
     if prim.type_id() == "elliott_impulse" {
         let points = prim.points();
         let realized = prim.realized_point_count();
+        let is_diagonal = matches!(prim.impulse_kind(), Some("leading_diagonal") | Some("ending_diagonal"));
 
         // c) wave2_not_beyond_wave1_origin — DEEP, no exception: every
         // realized pivot of wave 2's own subdivision must stay on the
@@ -653,8 +696,11 @@ pub fn violations_in(prim: &dyn Primitive, others: &[&dyn Primitive]) -> Vec<Vio
         // the whole rule and is already correct for both cases; this deep
         // check only ADDS strictness for a non-triangle subdivision — it
         // never relaxes what the shallow one reports, and a triangle child
-        // adds no violation of its own here.
-        if realized >= 4 {
+        // adds no violation of its own here. SKIPPED entirely for a diagonal
+        // — same reason `impulse_violations`'s own shallow check skips it
+        // (see the module doc's own "Diagonals" paragraph): the overlap is
+        // legal, so there is nothing here to add strictness TO.
+        if !is_diagonal && realized >= 4 {
             if let (Some(origin), Some(reference)) = (price(&points, 1), price(&points, 3)) {
                 if let Some(child) = find_child(&children, WaveSlot::Impulse4) {
                     if child.type_id() != "elliott_triangle"
@@ -930,16 +976,19 @@ pub fn chain_violations(chain: &[&dyn Primitive]) -> Vec<ChainViolation> {
         if let Some(shape) = count::promote_chain_shape(chain) {
             let realized = shape.points.len();
             let family = match shape.type_id {
-                // `truncated_fifth: false` unconditionally — a promoted
-                // chain's own coarser impulse is SYNTHESIZED
-                // (`count::promote_chain_shape`), not drawn, so there is no
-                // single `ElliottImpulse::truncated_fifth` this assembled
-                // shape's own wave 5 could read from; the owner's ask
+                // `truncated_fifth: false` and `impulse_kind: None`
+                // unconditionally — a promoted chain's own coarser impulse
+                // is SYNTHESIZED (`count::promote_chain_shape`), not drawn,
+                // so there is no single `ElliottImpulse::truncated_fifth`/
+                // `ElliottImpulse::impulse_kind` this assembled shape's own
+                // wave 5/wave 4 could read from; the owner's ask
                 // (2026-08-15) was a toggle on a drawn structure, not a
-                // chain-level counterpart. `"wave5_beyond_wave3"` stays
-                // ACTIVE here, same posture a chain member that has never
-                // had the box ticked already has.
-                "elliott_impulse" => impulse_violations(&shape.points, realized, false),
+                // chain-level counterpart, and a diagonal is likewise a
+                // per-structure claim no synthesized shape carries.
+                // `"wave5_beyond_wave3"`/`"wave4_no_wave1_overlap"` both
+                // stay ACTIVE here, same posture a chain member that was
+                // never drawn as either already has.
+                "elliott_impulse" => impulse_violations(&shape.points, realized, false, None),
                 "elliott_correction" => {
                     let subtype = head.correction_subtype().unwrap_or("zigzag");
                     correction_violations(&shape.points, realized, subtype)
@@ -1323,5 +1372,57 @@ mod wave5_truncation_tests {
         assert_eq!(found.len(), 1, "exactly the contradicted-claim violation, nothing else: {found:?}");
         assert_eq!(found[0].rule_id, "wave5_not_truncated");
         assert_eq!(found[0].wave, WaveSlot::Impulse5);
+    }
+}
+
+#[cfg(test)]
+mod diagonal_overlap_tests {
+    //! `ElliottImpulse::impulse_kind` (the diagonal arc) — the ONE guard
+    //! rule that changes for a diagonal: wave 4 legally overlaps wave 1's
+    //! own territory (see the module doc's own "Diagonals" paragraph).
+
+    use super::*;
+    use crate::drawing::primitives_v2::elliott::{ElliottImpulse, ImpulseKind};
+
+    /// Wave 4 ends at 105, inside wave 1's own [100, 110] span — the
+    /// classic overlap shape: illegal for a plain impulse, legal for a
+    /// diagonal.
+    fn overlapping_wave4_impulse(kind: ImpulseKind) -> ElliottImpulse {
+        let points: [(i64, f64); 6] = [
+            (0, 100.0), (1_000, 110.0), (2_000, 104.0), (3_000, 130.0), (4_000, 105.0), (5_000, 140.0),
+        ];
+        let mut impulse = ElliottImpulse::new(points, "#2196F3");
+        impulse.impulse_kind = kind;
+        impulse
+    }
+
+    #[test]
+    fn plain_impulse_still_reports_the_overlap() {
+        let impulse = overlapping_wave4_impulse(ImpulseKind::Plain);
+        let found = violations(&impulse);
+        assert!(
+            found.iter().any(|v| v.rule_id == "wave4_no_wave1_overlap"),
+            "the SAME geometry, as a plain impulse, must still flag the overlap: {found:?}"
+        );
+    }
+
+    #[test]
+    fn ending_diagonal_reports_no_overlap_violation() {
+        let impulse = overlapping_wave4_impulse(ImpulseKind::EndingDiagonal);
+        let found = violations(&impulse);
+        assert!(
+            !found.iter().any(|v| v.rule_id == "wave4_no_wave1_overlap"),
+            "an ending diagonal's own wave-4/wave-1 overlap is legal, this must not report: {found:?}"
+        );
+    }
+
+    #[test]
+    fn leading_diagonal_reports_no_overlap_violation() {
+        let impulse = overlapping_wave4_impulse(ImpulseKind::LeadingDiagonal);
+        let found = violations(&impulse);
+        assert!(
+            !found.iter().any(|v| v.rule_id == "wave4_no_wave1_overlap"),
+            "a leading diagonal's own wave-4/wave-1 overlap is legal, this must not report: {found:?}"
+        );
     }
 }

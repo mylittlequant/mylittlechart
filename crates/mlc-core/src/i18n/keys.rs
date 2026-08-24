@@ -396,10 +396,21 @@ pub enum ConfigKey {
     // settings-modal row family as `ShowProjections` right above it, own key
     // because it labels a distinct property.
     TruncatedFifth                = 163,
+
+    // Elliott Impulse's own `ImpulseKind` select (the diagonal arc,
+    // 2026-08-24) — `mli::ewa::grammar` carried `LEADING_DIAGONAL_SLOTS`/
+    // `ENDING_DIAGONAL_SLOTS` for as long as the plain rule table existed,
+    // with no control on the chart to say a drawn wave IS one. Mirrors
+    // `CorrectionType`/`CorrectionZigzag`'s own group shape exactly, for
+    // the OTHER Elliott type that carries a real shape-defining subtype.
+    ImpulseKind                   = 164,
+    ImpulseKindPlain               = 165,
+    ImpulseKindLeadingDiagonal     = 166,
+    ImpulseKindEndingDiagonal      = 167,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 164;
+    pub const COUNT: usize = 168;
 
     /// Get translation for this key
     #[inline]
@@ -3046,10 +3057,18 @@ pub enum ConceptKey {
     HarmonicKindButterfly = 349,
     HarmonicKindCrab = 350,
     HarmonicKindShark = 351,
+
+    // ---- Elliott diagonal child-kind picker labels (the diagonal arc,
+    // 2026-08-24) — `elliott::count::CHILD_KIND_CANDIDATES`'s own two new
+    // entries (`"elliott_impulse:leading_diagonal"`/`"elliott_impulse:
+    // ending_diagonal"`), same row family as `WaveKind*` above (287-294),
+    // read by the same `elliott::count::kind_label` picker function.
+    WaveKindLeadingDiagonal = 352,
+    WaveKindEndingDiagonal = 353,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 352;
+    pub const COUNT: usize = 354;
 
     /// Get translation for this key.
     #[inline]

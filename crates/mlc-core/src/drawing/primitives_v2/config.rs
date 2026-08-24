@@ -1679,6 +1679,11 @@ pub enum PropertyGroup {
     /// `wave_tabs()`'s own correction-type dropdown group — hinted
     /// "correction only" in the design (`ConfigKey::CorrectionType`).
     CorrectionType,
+    /// The impulse-kind dropdown group (the diagonal arc) — `ElliottImpulse`
+    /// ONLY, the same "one Elliott type actually carries this field" role
+    /// [`CorrectionType`](Self::CorrectionType) has for `ElliottCorrection`
+    /// (`ConfigKey::ImpulseKind`).
+    ImpulseKind,
     /// `fill_group(Some(FillBetweenWaves))` — Wave's own fill group
     /// (`ConceptKey::FillBetweenWaves`).
     FillBetweenWaves,
@@ -1841,6 +1846,7 @@ impl PropertyGroup {
             PropertyGroup::Degree => ConceptKey::Degree.get(lang),
             PropertyGroup::Notation => ConceptKey::Notation.get(lang),
             PropertyGroup::CorrectionType => ConfigKey::CorrectionType.get(lang),
+            PropertyGroup::ImpulseKind => ConfigKey::ImpulseKind.get(lang),
             PropertyGroup::FillBetweenWaves => ConceptKey::FillBetweenWaves.get(lang),
             PropertyGroup::WaveLabels => ConceptKey::WaveLabelsGroupTitle.get(lang),
             PropertyGroup::CustomWaveLabels => ConceptKey::CustomLabelsGroupTitle.get(lang),
@@ -2622,6 +2628,28 @@ impl ConfigProperty {
                 SelectOption::new("flat", ConfigKey::CorrectionFlat.get(lang)),
                 SelectOption::new("expanded", ConfigKey::CorrectionExpanded.get(lang)),
                 SelectOption::new("running", ConfigKey::CorrectionRunning.get(lang)),
+            ],
+        )
+    }
+
+    /// Create "Impulse Kind" select property with i18n (Elliott Impulse's
+    /// own `ImpulseKind` — Plain/Leading Diagonal/Ending Diagonal). Mirrors
+    /// [`Self::correction_type`]'s own shape exactly — the SAME "declared
+    /// shape selector" role `ElliottCorrection` already carries, for the
+    /// OTHER Elliott family this crate had no control for
+    /// (`mli::ewa::grammar`'s own `LEADING_DIAGONAL_SLOTS`/
+    /// `ENDING_DIAGONAL_SLOTS` existed with nothing on the chart to say a
+    /// drawn wave IS one).
+    pub fn impulse_kind(value: &str) -> Self {
+        let lang = current_language();
+        Self::select(
+            "impulse_kind",
+            ConfigKey::ImpulseKind.get(lang),
+            value,
+            vec![
+                SelectOption::new("plain", ConfigKey::ImpulseKindPlain.get(lang)),
+                SelectOption::new("leading_diagonal", ConfigKey::ImpulseKindLeadingDiagonal.get(lang)),
+                SelectOption::new("ending_diagonal", ConfigKey::ImpulseKindEndingDiagonal.get(lang)),
             ],
         )
     }

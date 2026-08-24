@@ -972,6 +972,22 @@ pub trait Primitive: Send + Sync {
         None
     }
 
+    /// This primitive's own drawn Elliott IMPULSE kind — the diagonal-shape
+    /// counterpart of [`correction_subtype`](Self::correction_subtype), for
+    /// the OTHER Elliott family this crate's `elliott::count::kind_id_of`/
+    /// `elliott::count::parent_pattern` need a subtype token from. Same
+    /// fixed token `ElliottImpulse::apply_style_property`'s own
+    /// `"impulse_kind"` id already reads and writes (`"leading_diagonal"` /
+    /// `"ending_diagonal"`) — `None` for a PLAIN impulse (`ImpulseKind::Plain`,
+    /// the default), exactly the same "no subtype token" shape a triangle or
+    /// a combination already has, so `kind_id_of` keeps producing the bare
+    /// `"elliott_impulse"` kind id for a plain impulse, byte for byte as
+    /// before this method existed. `None` for every primitive that is not an
+    /// `ElliottImpulse` carrying a diagonal kind — Elliott or not.
+    fn impulse_kind(&self) -> Option<&'static str> {
+        None
+    }
+
     /// Whether THIS impulse has DECLARED its own fifth wave truncated — the
     /// analyst's own per-structure opt-in that a fifth failing to exceed
     /// wave 3 is the real Elliott shape (`EwaPatternKind::TruncatedImpulse`)
