@@ -870,12 +870,12 @@ pub(super) static SIDEBAR_KEY_TABLE: [[&str; N_LANG]; 51] = [
 ];
 
 // =============================================================================
-// PrimitiveNameKey table  (84 variants × N_LANG)
+// PrimitiveNameKey table  (86 variants × N_LANG)
 // =============================================================================
 //
 //  Col:  0=En (registry display_name)              1=Ru                                          2..14=""
 
-pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 84] = [
+pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 86] = [
     /* 0  TrendLine           */ [ "Trend Line",                 "Линия тренда",                           "Línea de tendencia",          "Trendlinie",                    "Ligne de tendance",              "Linha de tendência",          "趋势线",        "トレンドライン",    "추세선",          "خط الاتجاه",         "Linea di tendenza",       "Trend Çizgisi",           "Linia trendu",            "Лінія тренду",              "ट्रेंड लाइन"           ],
     /* 1  HorizontalLine      */ [ "Horizontal Line",            "Горизонтальная линия",                   "Línea horizontal",            "Horizontale Linie",             "Ligne horizontale",              "Linha horizontal",            "水平线",        "水平線",            "수평선",          "خط أفقي",            "Linea orizzontale",       "Yatay Çizgi",             "Linia pozioma",           "Горизонтальна лінія",       "क्षैतिज रेखा"          ],
     /* 2  VerticalLine        */ [ "Vertical Line",              "Вертикальная линия",                     "Línea vertical",              "Vertikale Linie",               "Ligne verticale",                "Linha vertical",              "垂直线",        "垂直線",            "수직선",          "خط عمودي",           "Linea verticale",         "Dikey Çizgi",             "Linia pionowa",           "Вертикальна лінія",         "लंबवत रेखा"            ],
@@ -960,6 +960,8 @@ pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 84] = [
     /* 81 Highlighter         */ [ "Highlighter",                "Маркер",                                 "Marcador",                    "Textmarker",                    "Marqueur",                       "Marcador",                    "荧光笔",        "マーカー",          "형광펜",          "قلم تظليل",          "Evidenziatore",           "Fosforlu Kalem",          "Zakreślacz",              "Маркер",                    "हाइलाइटर"              ],
     /* 82 Image               */ [ "Image",                      "Изображение",                            "Imagen",                      "Bild",                          "Image",                          "Imagem",                      "图片",          "画像",              "이미지",          "صورة",               "Immagine",                "Görsel",                  "Obraz",                   "Зображення",                "छवि"                   ],
     /* 83 Sticker             */ [ "Sticker",                    "Стикер",                                 "Adhesivo",                    "Sticker",                       "Autocollant",                    "Adesivo",                     "贴纸",          "ステッカー",        "스티커",          "ملصق",               "Adesivo",                 "Çıkartma",                "Naklejka",                "Стікер",                    "स्टिकर"                ],
+    /* 84 AnchoredVwap        */ [ "Anchored VWAP",              "VWAP (якорь)",                           "VWAP anclado",                "Verankertes VWAP",              "VWAP ancré",                     "VWAP ancorado",               "锚定VWAP",       "アンカーVWAP",      "앵커 VWAP",       "VWAP مرتبط",         "VWAP ancorato",           "Sabitlenmiş VWAP",        "VWAP zakotwiczony",       "VWAP (якір)",                "एंकर्ड VWAP"           ],
+    /* 85 FixedVwap           */ [ "Fixed VWAP",                 "VWAP (фикс.)",                           "VWAP fijo",                   "Festes VWAP",                   "VWAP fixe",                      "VWAP fixo",                   "固定VWAP",       "固定VWAP",          "고정 VWAP",       "VWAP ثابت",          "VWAP fisso",              "Sabit VWAP",              "VWAP stały",              "Фіксований VWAP",           "फिक्स्ड VWAP"          ],
 ];
 
 // =============================================================================

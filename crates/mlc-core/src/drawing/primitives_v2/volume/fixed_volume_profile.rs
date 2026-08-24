@@ -8,7 +8,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, render_primitive_text, TextAlign,
-    config::{ConfigProperty, PropertyValue},
+    config::{ConfigProperty, PropertyValue, PropertyGroup},
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -196,13 +196,27 @@ impl Primitive for FixedVolumeProfile {
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         let lang = current_language();
+        // No design-approved archetype names volume-profile rows at all
+        // (owner-measured — `mlc-ui-lab`'s `concept::spec` has no volume-
+        // profile/VWAP/bar-pattern concept, see this family's own W3
+        // follow-up). `show_poc`/`show_value_area` are "show ___" toggles
+        // — the SAME shape the measurement archetype's existing
+        // `PropertyGroup::Values` group already holds for `PriceRange`/
+        // `DateRange`/`PriceDateRange` (`ConceptKey::ValuesGroupTitle`'s
+        // own design even lists a "Volume Over Range" checkbox in that
+        // group), so they go there. `rows` is a numeric display-density
+        // parameter (how many histogram buckets), not a show/hide toggle
+        // and not a number-FORMAT setting (`PropertyGroup::Format` is
+        // DecimalPlaces/ThousandsSeparator/VolumeUnit in the design) —
+        // measured to have no existing group and left ungrouped, same
+        // verdict `bars_pattern.rs` already recorded for its own rows.
         vec![
             ConfigProperty::number("rows", ConfigKey::Rows.get(lang), self.rows as f64, Some(5.0), Some(100.0))
                 .with_order(20),
             ConfigProperty::boolean("show_poc", ConfigKey::ShowPoc.get(lang), self.show_poc)
-                .with_order(21),
+                .with_order(21).in_group(PropertyGroup::Values),
             ConfigProperty::boolean("show_value_area", ConfigKey::ShowValueArea.get(lang), self.show_value_area)
-                .with_order(22),
+                .with_order(22).in_group(PropertyGroup::Values),
         ]
     }
 

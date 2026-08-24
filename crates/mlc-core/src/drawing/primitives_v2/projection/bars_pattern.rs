@@ -228,6 +228,15 @@ impl Primitive for BarsPattern {
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
 
+    /// Neither row has an existing `PropertyGroup` home — re-measured
+    /// (2026-08, volume-VWAP archetype pass), same verdict the "siblings"
+    /// wave already recorded: this is a `PrimitiveKind::Trading` tool that
+    /// defaults to `Archetype::Position`, but `mirror`/`price_offset` carry
+    /// none of that archetype's own vocabulary (`Volume`/`Zones`/`Display`/
+    /// `Result`/`PositionLabels`/`WhatToWrite` — entry, stop, target,
+    /// quantity, zones, R:R) and no other declared group fits a vertical-
+    /// flip toggle or a price-shift amount either. Left ungrouped rather
+    /// than pressed into a group that doesn't mean this.
     fn style_properties(&self) -> Vec<ConfigProperty> {
         let lang = current_language();
         vec![

@@ -1,8 +1,11 @@
 //! Anchored VWAP drawing primitive.
 //!
-//! Computes a running VWAP from a user-chosen anchor bar to the last bar.
-//! Typical price = (high + low + close) / 3. Running variance yields ±1σ
-//! and ±2σ bands drawn as semi-transparent fills.
+//! Computes a running VWAP from a user-chosen anchor bar to the last bar
+//! (or an optional cap). Typical price = (high + low + close) / 3. Running
+//! variance yields ±1σ and ±2σ bands drawn as semi-transparent fills — the
+//! maths itself lives in [`super::vwap_calc::running_vwap`], the ONE place
+//! both this type and its "fixed" sibling ([`super::fixed_vwap::FixedVwap`])
+//! compute a VWAP curve, so the two can never disagree over the same span.
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
@@ -11,8 +14,9 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, render_primitive_text, TextAlign,
-    config::{ConfigProperty, PropertyValue},
+    config::{ConfigProperty, PropertyValue, PropertyGroup},
 };
+use super::vwap_calc::{running_vwap, draw_band, draw_polyline};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AnchoredVwap {
@@ -93,6 +97,19 @@ impl AnchoredVwap {
             None => last,
         }
     }
+
+    /// The absolute `[start_idx, end_idx]` bar-index window this VWAP
+    /// accumulates over — [`Self::anchor_bar_idx`] through
+    /// [`Self::end_bar_idx`], exposed (rather than re-derived) so a cross-
+    /// check against [`super::fixed_vwap::FixedVwap`] over the identical
+    /// span reads the SAME window `render`/`hit_test` resolve internally.
+    /// `None` for an empty `bars` slice — there is no window to report.
+    pub(super) fn bar_window(&self, bars: &[Bar]) -> Option<(usize, usize)> {
+        if bars.is_empty() { return None; }
+        let anchor_idx = self.anchor_bar_idx(bars);
+        let end_idx = self.end_bar_idx(bars, anchor_idx);
+        (end_idx >= anchor_idx).then_some((anchor_idx, end_idx))
+    }
 }
 
 impl Primitive for AnchoredVwap {
@@ -132,11 +149,9 @@ impl Primitive for AnchoredVwap {
         if (sx - x).abs() < 20.0 {
             return HitTestResult::ControlPoint(ControlPointType::Point1);
         }
-        if bars.is_empty() {
+        let Some((anchor_idx, end_idx)) = self.bar_window(bars) else {
             return HitTestResult::Miss;
-        }
-        let anchor_idx = self.anchor_bar_idx(bars);
-        let end_idx = self.end_bar_idx(bars, anchor_idx);
+        };
         let end_x = vp.bar_to_x_f64(end_idx as f64);
         if (sx - end_x).abs() < 20.0 {
             return HitTestResult::ControlPoint(ControlPointType::Point2);
@@ -154,19 +169,12 @@ impl Primitive for AnchoredVwap {
             return HitTestResult::Miss;
         }
 
-        let (mut cum_vp, mut cum_v, mut cum_vp2) = (0.0_f64, 0.0_f64, 0.0_f64);
-        for b in &bars[anchor_idx..=hover_idx] {
-            let typical = (b.high + b.low + b.close) / 3.0;
-            let v = b.volume.max(0.0);
-            cum_vp += v * typical;
-            cum_v += v;
-            cum_vp2 += v * typical * typical;
-        }
-        if cum_v <= 0.0 {
+        // Same shared computation `render` draws from — the cumulative sum
+        // through `hover_idx` is the curve's own last point.
+        let Some(last) = running_vwap(bars, anchor_idx, hover_idx).into_iter().last() else {
             return HitTestResult::Miss;
-        }
-        let vwap = cum_vp / cum_v;
-        let stddev = ((cum_vp2 / cum_v) - vwap * vwap).max(0.0).sqrt();
+        };
+        let (vwap, stddev) = (last.vwap, last.stddev);
 
         let y_of = |price: f64| vp.price_to_y(price, ps.price_min, ps.price_max);
         for price in [
@@ -185,9 +193,7 @@ impl Primitive for AnchoredVwap {
         let b = timestamp_ms_to_bar_f64(bars, self.anchor_ts);
         let cy = vp.price_to_y((ps.price_min + ps.price_max) / 2.0, ps.price_min, ps.price_max);
         let mut pts = vec![ControlPoint::point1(vp.bar_to_x_f64(b), cy)];
-        if !bars.is_empty() {
-            let anchor_idx = self.anchor_bar_idx(bars);
-            let end_idx = self.end_bar_idx(bars, anchor_idx);
+        if let Some((_, end_idx)) = self.bar_window(bars) {
             pts.push(ControlPoint::point2(vp.bar_to_x_f64(end_idx as f64), cy));
         }
         pts
@@ -203,49 +209,29 @@ impl Primitive for AnchoredVwap {
         let anchor_x = ctx.ts_to_x_ms(self.anchor_ts);
 
         // ── Find anchor + end bar index ──────────────────────────────────────
-        let anchor_idx = self.anchor_bar_idx(bars);
-        if anchor_idx >= bars.len() { return; }
-        let end_idx = self.end_bar_idx(bars, anchor_idx);
-        if end_idx < anchor_idx { return; }
+        let Some((anchor_idx, end_idx)) = self.bar_window(bars) else { return; };
 
         // ── Compute running VWAP + stddev ────────────────────────────────────
-        let n = end_idx - anchor_idx + 1;
+        // Shared with `FixedVwap` — see `super::vwap_calc::running_vwap`'s
+        // own doc.
+        let curve = running_vwap(bars, anchor_idx, end_idx);
+        if curve.is_empty() { return; }
+
+        let n = curve.len();
         let mut vwap_points: Vec<(f64, f64)> = Vec::with_capacity(n);
         let mut sd1_upper: Vec<(f64, f64)> = Vec::with_capacity(n);
         let mut sd1_lower: Vec<(f64, f64)> = Vec::with_capacity(n);
         let mut sd2_upper: Vec<(f64, f64)> = Vec::with_capacity(n);
         let mut sd2_lower: Vec<(f64, f64)> = Vec::with_capacity(n);
 
-        let mut cum_vol_price = 0.0_f64;
-        let mut cum_vol = 0.0_f64;
-        let mut cum_vol_price2 = 0.0_f64;
-
-        for (step, b) in bars[anchor_idx..=end_idx].iter().enumerate() {
-            let typical = (b.high + b.low + b.close) / 3.0;
-            let v = b.volume.max(0.0);
-            cum_vol_price += v * typical;
-            cum_vol += v;
-            cum_vol_price2 += v * typical * typical;
-
-            if cum_vol <= 0.0 { continue; }
-
-            let vwap = cum_vol_price / cum_vol;
-            // Running population variance: E[x²] - E[x]²
-            let variance = (cum_vol_price2 / cum_vol) - (vwap * vwap);
-            let stddev = variance.max(0.0).sqrt();
-
-            let bar_idx = (anchor_idx + step) as f64;
-            let x = ctx.bar_to_x(bar_idx);
-            let y_vwap = ctx.price_to_y(vwap);
-
-            vwap_points.push((x, y_vwap));
-            sd1_upper.push((x, ctx.price_to_y(vwap + self.sigma_1 * stddev)));
-            sd1_lower.push((x, ctx.price_to_y(vwap - self.sigma_1 * stddev)));
-            sd2_upper.push((x, ctx.price_to_y(vwap + self.sigma_2 * stddev)));
-            sd2_lower.push((x, ctx.price_to_y(vwap - self.sigma_2 * stddev)));
+        for pt in &curve {
+            let x = ctx.bar_to_x(pt.bar_idx as f64);
+            vwap_points.push((x, ctx.price_to_y(pt.vwap)));
+            sd1_upper.push((x, ctx.price_to_y(pt.vwap + self.sigma_1 * pt.stddev)));
+            sd1_lower.push((x, ctx.price_to_y(pt.vwap - self.sigma_1 * pt.stddev)));
+            sd2_upper.push((x, ctx.price_to_y(pt.vwap + self.sigma_2 * pt.stddev)));
+            sd2_lower.push((x, ctx.price_to_y(pt.vwap - self.sigma_2 * pt.stddev)));
         }
-
-        if vwap_points.is_empty() { return; }
 
         // ── Draw ±2σ band ────────────────────────────────────────────────────
         if self.show_stddev_2 && sd2_upper.len() >= 2 {
@@ -318,15 +304,24 @@ impl Primitive for AnchoredVwap {
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         let lang = current_language();
+        // `PropertyGroup::Sigmas` — no design-approved archetype names this
+        // family (owner-measured, `docs/mlc/plans/archetype-modals-into-
+        // the-app-2026-08-11.md` has no volume-profile/VWAP concept), but
+        // `Sigmas` is an EXISTING group whose own meaning — a σ-band
+        // toggle paired with its own multiplier — is exactly what these
+        // four rows are: the regression channel's own sigma-band group
+        // reused for the same subject (a ±σ band), not invented for this
+        // type. `AppearanceLine`'s default category (unset here, same as
+        // before this pass) still governs which TAB the group renders on.
         vec![
             ConfigProperty::boolean("show_stddev_1", ConfigKey::ShowStdDev1.get(lang), self.show_stddev_1)
-                .with_order(20),
+                .with_order(20).in_group(PropertyGroup::Sigmas),
             ConfigProperty::number("sigma_1", ConfigKey::SigmaMultiplier1.get(lang), self.sigma_1, Some(0.1), Some(5.0))
-                .with_order(21),
+                .with_order(21).in_group(PropertyGroup::Sigmas),
             ConfigProperty::boolean("show_stddev_2", ConfigKey::ShowStdDev2.get(lang), self.show_stddev_2)
-                .with_order(22),
+                .with_order(22).in_group(PropertyGroup::Sigmas),
             ConfigProperty::number("sigma_2", ConfigKey::SigmaMultiplier2.get(lang), self.sigma_2, Some(0.1), Some(10.0))
-                .with_order(23),
+                .with_order(23).in_group(PropertyGroup::Sigmas),
         ]
     }
 
@@ -340,43 +335,6 @@ impl Primitive for AnchoredVwap {
         }
         false
     }
-}
-
-// ─── Drawing helpers ──────────────────────────────────────────────────────────
-
-fn draw_polyline(ctx: &mut dyn RenderContext, pts: &[(f64, f64)], color: &str, width: f64) {
-    if pts.len() < 2 { return; }
-    ctx.set_stroke_color(color);
-    ctx.set_stroke_width(width);
-    ctx.set_line_dash(&[]);
-    ctx.begin_path();
-    ctx.move_to(pts[0].0, pts[0].1);
-    for &(x, y) in &pts[1..] {
-        ctx.line_to(x, y);
-    }
-    ctx.stroke();
-}
-
-fn draw_band(
-    ctx: &mut dyn RenderContext,
-    upper: &[(f64, f64)],
-    lower: &[(f64, f64)],
-    fill_color: &str,
-) {
-    if upper.is_empty() || lower.is_empty() { return; }
-    ctx.set_fill_color(fill_color);
-    ctx.set_global_alpha(1.0);
-    ctx.begin_path();
-    // Forward along upper edge.
-    ctx.move_to(upper[0].0, upper[0].1);
-    for &(x, y) in &upper[1..] {
-        ctx.line_to(x, y);
-    }
-    // Backward along lower edge (close the shape).
-    for &(x, y) in lower.iter().rev() {
-        ctx.line_to(x, y);
-    }
-    ctx.fill();
 }
 
 // ─── Registration ─────────────────────────────────────────────────────────────

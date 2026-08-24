@@ -1153,6 +1153,17 @@ pub const ICON_ANCHORED_VWAP: &str = r##"<svg xmlns="http://www.w3.org/2000/svg"
   <path d="M4 17h16" stroke-dasharray="2 2" opacity="0.7"/>
 </svg>"##;
 
+/// Fixed VWAP: same VWAP line + dashed ±1/±2σ bands as
+/// [`ICON_ANCHORED_VWAP`], but bounded by TWO vertical boundaries (left +
+/// right) instead of one anchor point — the `ICON_FIXED_VOLUME_PROFILE` /
+/// `ICON_ANCHORED_VOLUME_PROFILE` distinction, reapplied to VWAP.
+pub const ICON_FIXED_VWAP: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4 3v18"/><path d="M20 3v18"/>
+  <path d="M4 12h16"/>
+  <path d="M4 7h16" stroke-dasharray="2 2" opacity="0.7"/>
+  <path d="M4 17h16" stroke-dasharray="2 2" opacity="0.7"/>
+</svg>"##;
+
 // =============================================================================
 // Projection Icons
 // =============================================================================
@@ -2498,6 +2509,7 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "fixed_volume_profile" | "fixedvolumeprofile" => Some(ICON_FIXED_VOLUME_PROFILE),
         "anchored_volume_profile" | "anchoredvolumeprofile" => Some(ICON_ANCHORED_VOLUME_PROFILE),
         "anchored_vwap" | "anchoredvwap" => Some(ICON_ANCHORED_VWAP),
+        "fixed_vwap" | "fixedvwap" => Some(ICON_FIXED_VWAP),
         "bars_pattern" | "barspattern" => Some(ICON_BARS_PATTERN),
         "price_projection" | "priceprojection" => Some(ICON_PRICE_PROJECTION),
         "projection" => Some(ICON_PROJECTION),

@@ -226,7 +226,7 @@ pub use primitives_v2::projection::{
     PriceProjection, Projection,
 };
 pub use primitives_v2::volume::{
-    FixedVolumeProfile, AnchoredVolumeProfile,
+    FixedVolumeProfile, AnchoredVolumeProfile, AnchoredVwap, FixedVwap,
 };
 pub use primitives_v2::measurement::{
     PriceRange, DateRange, PriceDateRange,

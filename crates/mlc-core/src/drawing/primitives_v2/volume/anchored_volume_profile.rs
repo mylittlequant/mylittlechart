@@ -15,7 +15,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, render_primitive_text, TextAlign,
-    config::{ConfigProperty, PropertyValue},
+    config::{ConfigProperty, PropertyValue, PropertyGroup},
 };
 
 /// Bar span used to place the end anchor when a legacy save has none (see
@@ -235,13 +235,16 @@ impl Primitive for AnchoredVolumeProfile {
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         let lang = current_language();
+        // `show_poc`/`show_value_area` → `PropertyGroup::Values`, `rows` →
+        // no existing home — same measured verdict as the fixed sibling;
+        // see `FixedVolumeProfile::style_properties`'s own comment for why.
         vec![
             ConfigProperty::number("rows", ConfigKey::Rows.get(lang), self.rows as f64, Some(5.0), Some(100.0))
                 .with_order(20),
             ConfigProperty::boolean("show_poc", ConfigKey::ShowPoc.get(lang), self.show_poc)
-                .with_order(21),
+                .with_order(21).in_group(PropertyGroup::Values),
             ConfigProperty::boolean("show_value_area", ConfigKey::ShowValueArea.get(lang), self.show_value_area)
-                .with_order(22),
+                .with_order(22).in_group(PropertyGroup::Values),
         ]
     }
 

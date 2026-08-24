@@ -34,18 +34,34 @@ pub(super) struct ProfileGeometry {
     pub span: (f64, f64),
 }
 
-/// The bars inside a closed `[from_ms, to_ms]` window, in the order given.
+/// The inclusive bar-INDEX range covering every bar inside a closed
+/// `[from_ms, to_ms]` window, in whichever order the two timestamps arrive
+/// — `None` when the window holds no bar.
 ///
-/// `Bar::timestamp` is SECONDS — the primitives carry milliseconds, and mixing
-/// the two is how an anchor lands on bar zero.
-pub(super) fn bars_in_window(bars: &[Bar], from_ms: i64, to_ms: i64) -> &[Bar] {
+/// `Bar::timestamp` is SECONDS — the primitives carry milliseconds, and
+/// mixing the two is how an anchor lands on bar zero.
+///
+/// The core of [`bars_in_window`], factored out so a caller that needs the
+/// bar INDICES themselves (not just the bars) — `vwap_calc::running_vwap`,
+/// which places each point on the x-axis by its own absolute index — does
+/// not re-derive the same ms→sec, partition-point logic a second time.
+pub(super) fn window_indices(bars: &[Bar], from_ms: i64, to_ms: i64) -> Option<(usize, usize)> {
     let (lo_ms, hi_ms) = if from_ms <= to_ms { (from_ms, to_ms) } else { (to_ms, from_ms) };
     let lo = lo_ms / 1000;
     let hi = hi_ms / 1000;
     let start = bars.partition_point(|b| b.timestamp < lo);
     let end = bars.partition_point(|b| b.timestamp <= hi);
-    if start >= end { return &[]; }
-    &bars[start..end]
+    if start >= end { return None; }
+    Some((start, end - 1))
+}
+
+/// The bars inside a closed `[from_ms, to_ms]` window, in the order given.
+/// See [`window_indices`] for the range this slices.
+pub(super) fn bars_in_window(bars: &[Bar], from_ms: i64, to_ms: i64) -> &[Bar] {
+    match window_indices(bars, from_ms, to_ms) {
+        Some((start, end)) => &bars[start..=end],
+        None => &[],
+    }
 }
 
 /// The low/high span the bars of `window` cover, for hit-testing the band a

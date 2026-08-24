@@ -1662,10 +1662,17 @@ pub enum PrimitiveNameKey {
     // Icons (82-83)
     Image               = 82,
     Sticker             = 83,
+    // Volume (VWAP) — appended after the initial 0-83 set rather than
+    // inserted next to `FixedVolumeProfile`/`AnchoredVolumeProfile`
+    // (75-76): variant order is FROZEN (discriminant == table row index),
+    // so a genuinely new pair of primitives gets new discriminants at the
+    // END, never a renumbering of the 84 that already ship (84-85).
+    AnchoredVwap        = 84,
+    FixedVwap           = 85,
 }
 
 impl PrimitiveNameKey {
-    pub const COUNT: usize = 84;
+    pub const COUNT: usize = 86;
 
     /// Get translation for this key.
     #[inline]
@@ -1761,6 +1768,8 @@ impl PrimitiveNameKey {
             "highlighter"              => Some(Self::Highlighter),
             "image"                    => Some(Self::Image),
             "emoji"                    => Some(Self::Sticker),
+            "anchored_vwap"            => Some(Self::AnchoredVwap),
+            "fixed_vwap"               => Some(Self::FixedVwap),
             _                          => None,
         }
     }
