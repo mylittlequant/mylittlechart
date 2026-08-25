@@ -24,8 +24,7 @@ pub fn left_toolbar() -> PanelToolbarDef {
         line_section(),
         fib_section(),
         pattern_section(),
-        smart_money_section(),
-        order_flow_section(),
+        price_action_section(),
         brush_section(),
         annotation_section(),
         icon_section(),
@@ -804,10 +803,25 @@ fn pattern_section() -> ToolbarSectionDef {
 // `dropdown.rs` has no scrolling). Smart money markup engines: order block /
 // FVG / liquidity sweep / structure break claims
 // (`docs/mlc/plans/markup-engines-2026-08-25.md`).
-fn smart_money_section() -> ToolbarSectionDef {
+/// One rail group for every graphical markup system that is NOT Elliott.
+///
+/// Smart money and order flow started as two rail buttons and that was
+/// wrong (owner, 2026-08-25): they are subsections of one family, not two
+/// families. Elliott + harmonic patterns + candle models + cycles stay in
+/// `pattern_section` above; everything that reads structure or flow out of
+/// the data rather than out of a shape the analyst drew lives here, each
+/// system under its own header. A new system adds a header to this flyout,
+/// never a new rail button.
+///
+/// "Price action" is the umbrella traders already use for exactly this
+/// bucket. The name is the group's, not any one tool's — no primitive here
+/// is called that, and none should be (see the plan's own closing section
+/// on why price action is not an engine of its own).
+fn price_action_section() -> ToolbarSectionDef {
     let lang = current_language();
     ToolbarSectionDef::new(vec![
-        ToolbarItemDef::quick_select("smart_money_tools", vec![
+        ToolbarItemDef::quick_select("price_action_tools", vec![
+            // Smart Money
             DropdownItemDef::Header { label: MK::HeaderSmartMoney.get(lang).to_string() },
             DropdownItemDef::action("order_block", PN::OrderBlock.get(lang)).with_icon(ToolbarIconId::new("OrderBlock")),
             DropdownItemDef::action("fair_value_gap", PN::FairValueGap.get(lang)).with_icon(ToolbarIconId::new("FairValueGap")),
@@ -816,25 +830,15 @@ fn smart_money_section() -> ToolbarSectionDef {
             DropdownItemDef::action("dealing_range", PN::DealingRange.get(lang)).with_icon(ToolbarIconId::new("DealingRange")),
             DropdownItemDef::action("amd_cycle", PN::AmdCycle.get(lang)).with_icon(ToolbarIconId::new("AmdCycle")),
             DropdownItemDef::action("smc_scan", PN::SmcScan.get(lang)).with_icon(ToolbarIconId::new("SmcScan")),
-        ]).with_icon(ToolbarIconId::new("OrderBlock"))
-          .with_tooltip(t_toolbar(TK::SmartMoneyTool)),
-    ])
-}
-
-// Split out of `pattern_section()` 2026-08-25 — see `smart_money_section()`.
-// Order flow markup engines: imbalance zone / absorption / delta divergence
-// claims (`docs/mlc/plans/markup-engines-2026-08-25.md`).
-fn order_flow_section() -> ToolbarSectionDef {
-    let lang = current_language();
-    ToolbarSectionDef::new(vec![
-        ToolbarItemDef::quick_select("order_flow_tools", vec![
+            // Order Flow
+            DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderOrderFlow.get(lang).to_string() },
             DropdownItemDef::action("imbalance_zone", PN::ImbalanceZone.get(lang)).with_icon(ToolbarIconId::new("ImbalanceZone")),
             DropdownItemDef::action("absorption_mark", PN::AbsorptionMark.get(lang)).with_icon(ToolbarIconId::new("AbsorptionMark")),
             DropdownItemDef::action("delta_divergence", PN::DeltaDivergence.get(lang)).with_icon(ToolbarIconId::new("DeltaDivergence")),
             DropdownItemDef::action("order_flow_scan", PN::OrderFlowScan.get(lang)).with_icon(ToolbarIconId::new("OrderFlowScan")),
-        ]).with_icon(ToolbarIconId::new("ImbalanceZone"))
-          .with_tooltip(t_toolbar(TK::OrderFlowTool)),
+        ]).with_icon(ToolbarIconId::new("OrderBlock"))
+          .with_tooltip(t_toolbar(TK::PriceActionTool)),
     ])
 }
 
