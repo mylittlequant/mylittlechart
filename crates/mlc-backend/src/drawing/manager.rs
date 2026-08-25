@@ -585,9 +585,22 @@ impl DrawingManager {
         // OWN registered `PrimitiveMetadata` — the same source every other
         // primitive name in this codebase comes from — never a second name
         // table hand-written here.
+        //
+        // Family-agnostic since S2/S3 (`docs/mlc/plans/markup-engine-parity-
+        // 2026-08-25.md`): a primitive outside Elliott falls through to its
+        // OWN family's grammar (`markup::chain::successor_kinds`), so
+        // selecting a liquidity sweep offers Structure Break and nothing
+        // else. Elliott is tried first and wins where it answers — its
+        // table is degree-aware and this one is not, so the fallback must
+        // never shadow it.
         let successor_kind_items: Vec<(String, String)> = {
             let registry = PrimitiveRegistry::global().read().unwrap();
-            successor_kinds(prim.as_ref())
+            let mut kinds: &[&str] = successor_kinds(prim.as_ref());
+            let markup_kinds = mlc_core::drawing::primitives_v2::markup::successor_kinds(prim.type_id());
+            if kinds.is_empty() {
+                kinds = markup_kinds;
+            }
+            kinds
                 .iter()
                 .filter_map(|&kind_id| registry.get(kind_id).map(|meta| (kind_id.to_string(), meta.display_name.to_string())))
                 .collect()
@@ -2660,6 +2673,47 @@ impl DrawingManager {
     ///
     /// Goes through the SAME `add_external` path every other
     /// externally-constructed primitive uses, same as `create_wave_child`.
+    /// Arm the drawing tool for `type_id` as the next claim after
+    /// `prev_id`, or refuse.
+    ///
+    /// The non-Elliott half of the succession picker. It ARMS a tool rather
+    /// than creating a primitive, and that is the whole difference between
+    /// the two families' write paths: an Elliott successor has seeded
+    /// geometry (`successor_seed` hands it the pivot the previous structure
+    /// ended on), while a smart-money claim is an assertion about ONE bar
+    /// that only the analyst can point at. There is nothing to seed, so the
+    /// picker's job ends at "this is what may come next, go place it" — and
+    /// the edge itself needs no help, because
+    /// `bubble::markup_guards` derives it from the grammar the moment the
+    /// claim lands.
+    ///
+    /// Fail-closed, and re-checked HERE rather than trusted from the picker
+    /// that offered it: the same discipline `create_wave_successor` applies
+    /// to `successor_kinds`. A stale or forged action id naming a type the
+    /// grammar does not allow after `prev_id` arms nothing and returns
+    /// `false`.
+    pub(crate) fn arm_markup_successor(
+        &mut self,
+        bubbles: &BubbleStore,
+        bid: BubbleId,
+        prev_id: u64,
+        type_id: &str,
+    ) -> bool {
+        let allowed = bubbles
+            .bubble(bid)
+            .and_then(|b| Self::find_index_by_id(b, prev_id).map(|idx| b.primitives[idx].type_id()))
+            .is_some_and(|prev_type| {
+                mlc_core::drawing::primitives_v2::markup::successor_kinds(prev_type)
+                    .iter()
+                    .any(|&kind_id| kind_id == type_id)
+            });
+        if !allowed {
+            return false;
+        }
+        self.set_tool(bid, Some(type_id));
+        true
+    }
+
     pub(crate) fn create_wave_successor(
         &mut self,
         bubbles: &mut BubbleStore,
@@ -3865,4 +3919,62 @@ pub struct PrimitiveListItem {
     pub visible: bool,
     pub locked: bool,
     pub selected: bool,
+}
+
+#[cfg(test)]
+mod markup_successor_tests {
+    //! The non-Elliott half of the succession picker
+    //! (`docs/mlc/plans/markup-engine-parity-2026-08-25.md` S4): what may
+    //! come next in a family's own narrative, and the fail-closed re-check
+    //! that stands behind the offer.
+
+    use super::*;
+    use crate::bubble::BubbleStore;
+
+    fn bubble_with(type_id: &str) -> (DrawingManager, BubbleStore, BubbleId, u64) {
+        let mgr = DrawingManager::default();
+        let mut bubbles = BubbleStore::new();
+        let bid = bubbles.create_bubble("BTCUSDT".to_string(), mlc_core::Timeframe::m1());
+        let b = bubbles.bubble_mut(bid).expect("just-created bubble");
+        let registry = PrimitiveRegistry::global().read().unwrap();
+        let prim = registry
+            .create(type_id, &[(1_000_000, 100.0)], Some("#3ba3ff"))
+            .unwrap_or_else(|| panic!("registry has no {type_id}"));
+        let id = prim.data().id;
+        b.primitives.push(prim);
+        drop(registry);
+        (mgr, bubbles, bid, id)
+    }
+
+    #[test]
+    fn the_shift_is_what_may_follow_a_sweep() {
+        let (mut mgr, bubbles, bid, id) = bubble_with("liquidity_sweep");
+        assert!(mgr.arm_markup_successor(&bubbles, bid, id, "structure_break"));
+        assert_eq!(mgr.current_tool(bid), Some("structure_break"));
+    }
+
+    /// The offer is re-checked here, not trusted: a type the grammar does
+    /// not allow after this claim arms nothing at all.
+    #[test]
+    fn a_type_the_grammar_refuses_arms_nothing() {
+        let (mut mgr, bubbles, bid, id) = bubble_with("liquidity_sweep");
+        assert!(!mgr.arm_markup_successor(&bubbles, bid, id, "order_block"));
+        assert_eq!(mgr.current_tool(bid), None, "a refused offer must leave the tool untouched");
+    }
+
+    /// Elliott keeps its own write path — this one must decline so the
+    /// caller falls through to `create_wave_successor`.
+    #[test]
+    fn an_elliott_selection_falls_through_to_elliotts_own_path() {
+        let (mut mgr, bubbles, bid, id) = bubble_with("elliott_impulse");
+        assert!(!mgr.arm_markup_successor(&bubbles, bid, id, "elliott_correction"));
+        assert_eq!(mgr.current_tool(bid), None);
+    }
+
+    #[test]
+    fn an_id_naming_nothing_arms_nothing() {
+        let (mut mgr, bubbles, bid, _) = bubble_with("liquidity_sweep");
+        assert!(!mgr.arm_markup_successor(&bubbles, bid, 999_999, "structure_break"));
+        assert_eq!(mgr.current_tool(bid), None);
+    }
 }

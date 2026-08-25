@@ -677,6 +677,14 @@ impl<'a> DrawingsMut<'a> {
     /// `DrawingManager::create_wave_successor` for the degree/anchor/type
     /// rules; `None` mirrors `elliott::count::successor_seed`'s own `None`
     /// cases, plus a `type_id` outside `elliott::count::successor_kinds(prev)`.
+    /// Arm the drawing tool for the next claim after `prev_id` in its own
+    /// family's narrative — see `DrawingManager::arm_markup_successor` for
+    /// why this family arms a tool where Elliott creates a primitive.
+    /// `false` when the grammar does not allow `type_id` after `prev_id`.
+    pub fn arm_markup_successor(&mut self, bid: BubbleId, prev_id: u64, type_id: &str) -> bool {
+        self.mgr.arm_markup_successor(&self.bubbles, bid, prev_id, type_id)
+    }
+
     pub fn create_wave_successor(&mut self, bid: BubbleId, prev_id: u64, type_id: &str) -> Option<u64> {
         self.mgr.create_wave_successor(&mut self.bubbles, bid, prev_id, type_id)
     }

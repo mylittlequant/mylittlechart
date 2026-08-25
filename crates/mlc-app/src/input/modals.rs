@@ -414,7 +414,29 @@ impl ChartApp {
                 // E2's next opening regardless of which wave control the
                 // user acted on last.
                 let type_id = action.strip_prefix("inline:wave_next_option:").unwrap_or_default();
-                self.create_wave_successor_and_record(active_bid_inline, prim_id, type_id);
+                // Non-Elliott families ARM the tool instead of creating the
+                // claim — a smart-money claim is an assertion about one bar
+                // only the analyst can point at, so there is nothing to
+                // seed (`DrawingManager::arm_markup_successor`'s own doc).
+                // Tried first and only ever true for a type that family's
+                // grammar actually allows after `prim_id`, so Elliott's own
+                // path is untouched by this branch.
+                let armed = active_bid_inline
+                    .map(|bid| self.core.drawings_mut().arm_markup_successor(bid, prim_id, type_id))
+                    .unwrap_or(false);
+                if armed {
+                    // The canvas-click path is gated on the UI's OWN armed
+                    // tool, not the backend's (`on_canvas_click` is only
+                    // reached when `toolbar_state.active_tool_id` is set),
+                    // so arming has to land in both or the picker offers a
+                    // tool no click can use. One-shot on purpose: the rail's
+                    // own quick-select memory is left alone, and completing
+                    // the placement clears this the same way any other tool
+                    // is cleared.
+                    self.panel_app.toolbar_state.active_tool_id = Some(type_id.to_string());
+                } else {
+                    self.create_wave_successor_and_record(active_bid_inline, prim_id, type_id);
+                }
                 self.panel_app.toolbar_state.pending_wave_slot = None;
                 self.panel_app.toolbar_state.open_inline_wave_next_dropdown = false;
                 self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
@@ -2487,8 +2509,22 @@ impl ChartApp {
                         }
                     }
                     _ if action.starts_with("wave_menu:successor:") => {
+                        // Same two-family split the inline picker takes —
+                        // see the `inline:wave_next_option:` arm. This menu
+                        // opens on a wave's TERMINAL POINT, a target only
+                        // Elliott geometry has, so the markup branch is
+                        // unreachable today; it is written anyway so the two
+                        // surfaces can never drift into disagreeing about
+                        // what selecting a successor means.
                         let type_id = action.strip_prefix("wave_menu:successor:").unwrap_or_default();
-                        self.create_wave_successor_and_record(active_bid_ctx, prim_id, type_id);
+                        let armed = active_bid_ctx
+                            .map(|bid| self.core.drawings_mut().arm_markup_successor(bid, prim_id, type_id))
+                            .unwrap_or(false);
+                        if armed {
+                            self.panel_app.toolbar_state.active_tool_id = Some(type_id.to_string());
+                        } else {
+                            self.create_wave_successor_and_record(active_bid_ctx, prim_id, type_id);
+                        }
                     }
                     _ if action.starts_with("wave_menu:predecessor:") => {
                         let type_id = action.strip_prefix("wave_menu:predecessor:").unwrap_or_default();
