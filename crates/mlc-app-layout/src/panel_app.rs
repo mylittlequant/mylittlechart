@@ -1446,7 +1446,7 @@ fn chart_toolbar_render_dropdown(
     ctx: &mut dyn ChartRenderContext,
     dropdown_id: &str,
     toolbar_config: &ToolbarConfig,
-    _layout: &ChartPanelLayout,
+    layout: &ChartPanelLayout,
     drawing_result: &ToolbarRenderResult,
     control_result: &ToolbarRenderResult,
     theme: &DropdownTheme,
@@ -1475,9 +1475,9 @@ fn chart_toolbar_render_dropdown(
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
         //    skip the button-rect lookup and use the custom position directly.
-        let origin = if let Some(pos) = tb.open_dropdown_position {
+        let (mut origin, is_left_toolbar) = if let Some(pos) = tb.open_dropdown_position {
             // Custom position: caller provides exact (x, y) for the dropdown top-left.
-            pos
+            (pos, false)
         } else {
             let button_rect = drawing_result.item_rects.iter()
                 .chain(control_result.item_rects.iter())
@@ -1486,13 +1486,14 @@ fn chart_toolbar_render_dropdown(
 
             // Determine position: right of button for vertical toolbar, below for horizontal
             let is_left_toolbar = drawing_result.item_rects.iter().any(|(id, _)| id == dropdown_id);
-            if is_left_toolbar {
+            let origin = if is_left_toolbar {
                 // Vertical toolbar: dropdown opens to the right of the button
                 (button_rect.right() + 2.0, button_rect.y)
             } else {
                 // Horizontal toolbar: dropdown opens below the button
                 (button_rect.x, button_rect.bottom() + 2.0)
-            }
+            };
+            (origin, is_left_toolbar)
         };
 
         // 2. Find the dropdown items from toolbar definitions.
@@ -1988,11 +1989,31 @@ fn chart_toolbar_render_dropdown(
         // the full-window main toolbar this is a no-op, on the embedded
         // trading-header instance it stops button-aligned menus escaping
         // past the window edge (owner defect 2026-07-26).
-        if _layout.top_toolbar_rect.width > 0.0 {
+        if layout.top_toolbar_rect.width > 0.0 {
             config.clamp_x = Some((
-                _layout.top_toolbar_rect.x,
-                _layout.top_toolbar_rect.x + _layout.top_toolbar_rect.width,
+                layout.top_toolbar_rect.x,
+                layout.top_toolbar_rect.x + layout.top_toolbar_rect.width,
             ));
+        }
+
+        // Vertical fit guard for the left-rail flyout (defect fix
+        // 2026-08-25): a quick_select group opening near the bottom of the
+        // rail (e.g. pattern/smart-money/order-flow tools) would otherwise
+        // draw its lower rows past the window edge — `dropdown.rs` has no
+        // scrolling and no max-height, so anything below the bottom is
+        // simply unreachable. Shift the origin up so the flyout's bottom
+        // stays inside the panel, clamped so the top never rises above the
+        // panel's top edge (content taller than the whole panel pins to the
+        // top instead of overflowing both ends).
+        if is_left_toolbar {
+            let content_height = config.calculate_height();
+            let panel_top = layout.full_rect.y;
+            let panel_bottom = layout.full_rect.y + layout.full_rect.height;
+            let overflow = (origin.1 + content_height) - panel_bottom;
+            if overflow > 0.0 {
+                origin.1 -= overflow;
+            }
+            origin.1 = origin.1.max(panel_top);
         }
 
         let result = draw_dropdown(

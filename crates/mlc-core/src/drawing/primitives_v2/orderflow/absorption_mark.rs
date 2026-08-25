@@ -178,34 +178,26 @@ impl Primitive for AbsorptionMark {
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
         let bars = ctx.bars();
+        let anchor_span = super::super::anchor_mark::bar_span_at(bars, self.anchor_ts);
         let judge_claims = orderflow_engine_config().judge_claims;
         // Missing data recolours whatever `judge_claims` says — see
         // `context_violations`'s own doc for why that rule is not a claim.
         let violated = !self.cached_footprint_present
             || judge_claims && self.cached_snapshot.is_none();
         let stroke = if violated { guard::VIOLATION_COLOR.to_string() } else { self.data.color.stroke.clone() };
-        let chart_height = ctx.chart_height();
         let anchor_x = ctx.ts_to_x_ms(self.anchor_ts);
 
         let Some(idx) = self.anchor_bar_idx(bars) else {
-            ctx.set_stroke_color(&stroke);
-            ctx.set_stroke_width(self.data.width);
-            ctx.set_line_dash(&[]);
-            ctx.begin_path();
-            ctx.move_to(crisp(anchor_x, dpr), 0.0);
-            ctx.line_to(crisp(anchor_x, dpr), chart_height);
-            ctx.stroke();
+            super::super::anchor_mark::draw_unresolved_anchor(
+                ctx, anchor_x, anchor_span, &stroke, self.data.width,
+            );
             return;
         };
 
         if self.cached_snapshot.is_none() {
-            ctx.set_stroke_color(&stroke);
-            ctx.set_stroke_width(self.data.width);
-            ctx.set_line_dash(&[]);
-            ctx.begin_path();
-            ctx.move_to(crisp(anchor_x, dpr), 0.0);
-            ctx.line_to(crisp(anchor_x, dpr), chart_height);
-            ctx.stroke();
+            super::super::anchor_mark::draw_unresolved_anchor(
+                ctx, anchor_x, anchor_span, &stroke, self.data.width,
+            );
             return;
         }
 

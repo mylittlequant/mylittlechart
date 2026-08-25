@@ -923,6 +923,17 @@ impl DrawingManager {
             Self::adopt_higher_degree(b, id);
         }
 
+        // A freshly placed primitive has never seen the bars. Its render
+        // does not care (it recomputes from `ctx.bars()` every frame), but
+        // `style_properties()` has no bars of its own and reads only the
+        // `#[serde(skip)]` cache — without this the settings modal opens on
+        // an all-zero Hits column over a chart visibly carrying hits
+        // (measured on the live stand, 2026-08-25). See
+        // `Self::refresh_bar_derived` for the whole contract; this is the
+        // INTERACTIVE creation path, which is not one of the
+        // `refresh_wave_guards` sites and so refreshed neither cache.
+        crate::bubble::bar_derived_cache::refresh_bar_derived_caches(b);
+
         id
     }
 
@@ -1430,14 +1441,21 @@ impl DrawingManager {
     ) -> bool {
         let Some(b) = bubbles.bubble_mut(bid) else { return false };
         let Some(prim) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) else { return false };
-        match kind {
+        let applied = match kind {
             PropertyKind::Style => {
                 prim.apply_style_property(prop_id, value);
                 true
             }
             PropertyKind::Text => prim.apply_text_property(prop_id, value),
             PropertyKind::Level => prim.apply_level_property(prop_id, value),
-        }
+        };
+        // A property can change WHAT the primitive derives from the bars —
+        // the claimed candle-pattern kind, an order block's zone mode, the
+        // set of structures a survey looks for. See this module's own
+        // `refresh_bar_derived` for why that cache cannot wait for the next
+        // bar-array install.
+        crate::bubble::bar_derived_cache::refresh_bar_derived_caches(b);
+        applied
     }
 
     pub(crate) fn set_points(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, prim_id: u64, points: &[(i64, f64)]) {
@@ -1445,6 +1463,9 @@ impl DrawingManager {
         if let Some(prim) = b.primitives.iter_mut().find(|p| p.data().id == prim_id) {
             prim.set_points(points);
         }
+        // Moving a claim re-aims it at different bars — see
+        // `Self::refresh_bar_derived`.
+        crate::bubble::bar_derived_cache::refresh_bar_derived_caches(b);
     }
 
     pub(crate) fn set_data(&mut self, bubbles: &mut BubbleStore, bid: BubbleId, prim_id: u64, data: &PrimitiveData) {
@@ -1853,6 +1874,8 @@ impl DrawingManager {
             // sees (this method's own doc), so it refreshes the cache
             // exactly like every other mutating path in this module does.
             self.refresh_wave_guards(bubbles, bid);
+            self.refresh_bar_derived(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
         }
         removed
     }
@@ -2131,6 +2154,7 @@ impl DrawingManager {
             s.drag_start = None;
         }
         self.refresh_wave_guards(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
     }
 
     // =========================================================================
@@ -2179,6 +2203,26 @@ impl DrawingManager {
     pub(crate) fn refresh_wave_guards(&self, bubbles: &mut BubbleStore, bid: BubbleId) {
         let Some(b) = bubbles.bubble_mut(bid) else { return };
         crate::bubble::wave_guards::refresh_wave_guards(b);
+    }
+
+    /// Recompute every primitive's own bars-derived `#[serde(skip)]` cache
+    /// in `bid`'s bubble — the sibling of [`Self::refresh_wave_guards`],
+    /// called from the same mutation points for the same reason.
+    ///
+    /// `BubbleStore`'s own sweep fires only on a batch bar-array install
+    /// (`replace_bars`/`set_bars`/`clear_bars`/restore). That covers "the
+    /// bars changed under a primitive" and nothing else, so a primitive
+    /// ADDED or EDITED after the bars loaded kept an empty cache until the
+    /// next symbol or timeframe switch. `render` never noticed — it
+    /// recomputes from `ctx.bars()` every frame — but `style_properties()`
+    /// has no bars of its own and reads only the cache, so the settings
+    /// modal reported `Total Hits 0` and an all-zero Hits column over a
+    /// chart visibly carrying dozens of hits (measured on the live binary,
+    /// 2026-08-25). The pass costs one detector run per primitive, which
+    /// is exactly what one frame of `render` already pays.
+    pub(crate) fn refresh_bar_derived(&self, bubbles: &mut BubbleStore, bid: BubbleId) {
+        let Some(b) = bubbles.bubble_mut(bid) else { return };
+        crate::bubble::bar_derived_cache::refresh_bar_derived_caches(b);
     }
 
     /// Clear any [`WaveLink`]/`follows` reference in `bid`'s own bubble that
@@ -2459,6 +2503,7 @@ impl DrawingManager {
         // primitives, not thousands, and correctness after a reload is not
         // negotiable for a cache the render reads every frame.
         self.refresh_wave_guards(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
         id
     }
 
@@ -2569,6 +2614,7 @@ impl DrawingManager {
 
         let new_id = self.add_external(bubbles, bid, child);
         self.refresh_wave_guards(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
         Some(new_id)
     }
 
@@ -2651,6 +2697,7 @@ impl DrawingManager {
 
         let new_id = self.add_external(bubbles, bid, successor);
         self.refresh_wave_guards(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
         Some(new_id)
     }
 
@@ -2748,6 +2795,7 @@ impl DrawingManager {
             Self::restitch_wave_joints(b, next_id);
         }
         self.refresh_wave_guards(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
 
         let snapshot = self.get_snapshot(bubbles, bid, new_id)?;
         Some((new_id, snapshot))
@@ -2772,6 +2820,7 @@ impl DrawingManager {
             p.set_wave_link(link);
         }
         self.refresh_wave_guards(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
     }
 
     /// Every `(child_id, slot)` pair currently [`WaveLink`]-ed under
@@ -2810,6 +2859,7 @@ impl DrawingManager {
             p.set_wave_follows(follows);
         }
         self.refresh_wave_guards(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
     }
 
     /// Collapse the `follows`-linked same-degree chain `prim_id` belongs to
@@ -2900,6 +2950,7 @@ impl DrawingManager {
         }
 
         self.refresh_wave_guards(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
         Some((parent_id, members))
     }
 
@@ -3093,6 +3144,7 @@ impl DrawingManager {
 
         Self::restitch_wave_joints(b, prim_id);
         self.refresh_wave_guards(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
 
         Some((before, after, children))
     }
@@ -3137,6 +3189,7 @@ impl DrawingManager {
             b.primitives.push(prim);
         }
         self.refresh_wave_guards(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
         Some(id)
     }
 
@@ -3184,6 +3237,7 @@ impl DrawingManager {
         // carrying its own `link`/`follows`, so what the guard sees changed
         // the moment it landed in the collection.
         self.refresh_wave_guards(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
         Some(id)
     }
 
@@ -3205,6 +3259,8 @@ impl DrawingManager {
         // parent or a predecessor — can differ from what the cache holds.
         if replaced {
             self.refresh_wave_guards(bubbles, bid);
+            self.refresh_bar_derived(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
         }
         replaced
     }
@@ -3278,6 +3334,7 @@ impl DrawingManager {
         // possibly refilled from snapshots, so every cached context
         // violation in it describes primitives that are gone.
         self.refresh_wave_guards(bubbles, bid);
+        self.refresh_bar_derived(bubbles, bid);
 
         SwapSymbolResult { old_primitives, restored }
     }

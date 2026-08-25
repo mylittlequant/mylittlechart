@@ -37,7 +37,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, render_primitive_text, TextAlign,
-    config::{ConfigProperty, PropertyValue, StatRow, TableCell, parse_table_cell_id},
+    config::{ConfigProperty, PropertyCategory, PropertyValue, StatRow, TableCell, parse_table_cell_id},
     elliott::guard::Violation,
 };
 use super::orderflow_judge::{
@@ -348,7 +348,22 @@ impl Primitive for OrderFlowScan {
         let (min_x, max_x) = (x1.min(x2), x1.max(x2));
         let chart_height = ctx.chart_height();
 
-        ctx.set_stroke_color(&self.data.color.stroke);
+        // A survey over a series that carries no per-price bid/ask has
+        // nothing to report, and drawing its two boundaries in the ordinary
+        // colour leaves that state indistinguishable from "surveyed the
+        // range, found nothing". The rule already fires in
+        // `context_violations`, but that is only legible with the settings
+        // modal open — measured on the live binary over a BTCUSDT 4H candle
+        // chart, 2026-08-25: two plain boundaries, no cue at all. Not gated
+        // on `judge_claims`, for the reason `context_violations` documents.
+        let missing = !self.cached_footprint_present;
+        let boundary = if missing {
+            super::super::elliott::guard::VIOLATION_COLOR
+        } else {
+            self.data.color.stroke.as_str()
+        };
+
+        ctx.set_stroke_color(boundary);
         ctx.set_stroke_width(self.data.width);
         ctx.set_line_dash(&[4.0 * dpr, 4.0 * dpr]);
         for x in [min_x, max_x] {
@@ -358,6 +373,23 @@ impl Primitive for OrderFlowScan {
             ctx.stroke();
         }
         ctx.set_line_dash(&[]);
+
+        if missing {
+            // The rule's own message, once, between the boundaries. Nothing
+            // else is drawn: `cached_hits` cannot hold anything meaningful
+            // when no sweep ever handed this survey footprint data.
+            let lang = current_language();
+            ctx.set_fill_color(boundary);
+            ctx.set_font("11px sans-serif");
+            ctx.set_text_align(crate::render::TextAlign::Center);
+            ctx.set_text_baseline(crate::render::TextBaseline::Top);
+            ctx.fill_text(
+                ConceptKey::RuleOrderFlowDataMissing.get(lang),
+                (min_x + max_x) / 2.0,
+                8.0 * dpr,
+            );
+            return;
+        }
 
         let hits = &self.cached_hits;
 
@@ -511,12 +543,22 @@ impl Primitive for OrderFlowScan {
         ];
         let bars_surveyed = self.cached_window.map(|(s, e)| e - s + 1).unwrap_or(0);
         vec![
+            // The structure table is this survey's PRIMARY control, not a
+            // label setting. `ConfigProperty::table`'s own default category
+            // is `LabelsText`, which files it under the Labels tab: measured
+            // on the live binary, the first tab then carried nothing but
+            // colour/width/style while the list of what to scan for was a
+            // tab away. `AppearanceStats` puts it in its own headed group on
+            // the main tab, ahead of the computed results below it (the
+            // category decides placement only — the renderer checks
+            // `PropertyType::Table` before the `readonly` flag this
+            // constructor already sets, so the checkboxes stay editable).
             ConfigProperty::table(
                 ORDER_FLOW_SCAN_TABLE_ID,
                 ConceptKey::OrderFlowScanStructuresLabel.get(lang),
                 head,
                 self.structure_table_rows(),
-            ).with_order(10),
+            ).with_category(PropertyCategory::AppearanceStats).with_order(10),
             ConfigProperty::stat_block(
                 ORDER_FLOW_SCAN_STATS_ID,
                 vec![

@@ -226,23 +226,21 @@ impl Primitive for DeltaDivergence {
     /// doc for why `render` cannot recompute this fresh.
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
+        // Read only the claimed bar's own high/low out of the borrow, so the
+        // unresolved mark can bracket that bar instead of ruling the chart.
+        let anchor_span = super::super::anchor_mark::bar_span_at(ctx.bars(), self.anchor_ts);
         let judge_claims = orderflow_engine_config().judge_claims;
         // Missing data recolours whatever `judge_claims` says — see
         // `context_violations`'s own doc for why that rule is not a claim.
         let violated = !self.cached_footprint_present
             || judge_claims && !violations_for(&self.claimed_kind, self.cached_hit.as_ref()).is_empty();
         let stroke = if violated { guard::VIOLATION_COLOR.to_string() } else { self.data.color.stroke.clone() };
-        let chart_height = ctx.chart_height();
         let anchor_x = ctx.ts_to_x_ms(self.anchor_ts);
 
         let (Some(hit), Some(from_ts)) = (&self.cached_hit, self.cached_from_ts) else {
-            ctx.set_stroke_color(&stroke);
-            ctx.set_stroke_width(self.data.width);
-            ctx.set_line_dash(&[]);
-            ctx.begin_path();
-            ctx.move_to(crisp(anchor_x, dpr), 0.0);
-            ctx.line_to(crisp(anchor_x, dpr), chart_height);
-            ctx.stroke();
+            super::super::anchor_mark::draw_unresolved_anchor(
+                ctx, anchor_x, anchor_span, &stroke, self.data.width,
+            );
             return;
         };
 

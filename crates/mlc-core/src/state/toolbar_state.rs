@@ -731,6 +731,8 @@ impl Default for ChartToolbarState {
                 m.insert("line_tools".to_string(), ("trend_line".to_string(), "trend_line".to_string()));
                 m.insert("fib_tools".to_string(), ("fib_retracement".to_string(), "fib_retracement".to_string()));
                 m.insert("pattern_tools".to_string(), ("xabcd_pattern".to_string(), "xabcd_pattern".to_string()));
+                m.insert("smart_money_tools".to_string(), ("order_block".to_string(), "order_block".to_string()));
+                m.insert("order_flow_tools".to_string(), ("imbalance_zone".to_string(), "imbalance_zone".to_string()));
                 m.insert("brush_tools".to_string(), ("brush".to_string(), "brush".to_string()));
                 m.insert("annotation_tools".to_string(), ("text".to_string(), "text".to_string()));
                 m.insert("projection_tools".to_string(), ("long_position".to_string(), "long_position".to_string()));
@@ -879,6 +881,7 @@ impl ChartToolbarState {
             // Double-click opens dropdown — handled in handle_toolbar_click_with_chart.
             "magnet" => None,
             "cursor_tools" | "line_tools" | "fib_tools" | "pattern_tools"
+            | "smart_money_tools" | "order_flow_tools"
             | "brush_tools" | "annotation_tools" | "projection_tools"
             | "delete_tools" => {
                 // Toggle: if this dropdown is already open, close it on re-click.
@@ -992,6 +995,7 @@ impl ChartToolbarState {
 
             // === Quick-select drawing tool dropdowns ===
             "cursor_tools" | "line_tools" | "fib_tools" | "pattern_tools"
+            | "smart_money_tools" | "order_flow_tools"
             | "brush_tools" | "annotation_tools" | "projection_tools"
             | "delete_tools" => {
                 // Toggle: if this dropdown is already open, close it on re-click.
@@ -1108,6 +1112,7 @@ impl ChartToolbarState {
 
             // === Drawing tool dropdowns — select and apply tool ===
             "cursor_tools" | "line_tools" | "fib_tools" | "pattern_tools"
+            | "smart_money_tools" | "order_flow_tools"
             | "brush_tools" | "annotation_tools" | "projection_tools" => {
                 eprintln!("[ChartToolbar] tool selected: {} -> {}", dropdown_id, item_id);
                 self.select_tool(dropdown_id, item_id, item_id);

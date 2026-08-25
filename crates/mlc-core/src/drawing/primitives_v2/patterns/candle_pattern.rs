@@ -306,16 +306,35 @@ impl Primitive for CandlePattern {
 
         let chart_height = ctx.chart_height();
         let anchor_x = ctx.ts_to_x_ms(self.anchor_ts);
+        // Half a bar of spacing on each side. Twelve of the 34 kinds are
+        // single-bar (Doji, Hammer, Marubozu, Spinning Top, ...), and
+        // without this their bracket degenerates to `x1 == x2`: a lone
+        // tick with the pattern's name under it, anchored to nothing the
+        // eye can connect it back to. Derived from `bar_to_x` itself
+        // because `RenderContext` exposes no bar width of its own.
+        let half_bar = ((ctx.bar_to_x(1.0) - ctx.bar_to_x(0.0)) / 2.0).abs();
 
         let (x1, x2, bracket_y) = match window {
             Some((start, end)) => {
-                let x1 = ctx.bar_to_x(start as f64);
-                let x2 = ctx.bar_to_x(end as f64);
+                let x1 = ctx.bar_to_x(start as f64) - half_bar;
+                let x2 = ctx.bar_to_x(end as f64) + half_bar;
                 let low = bars[start..=end].iter().fold(f64::INFINITY, |acc, b| acc.min(b.low));
                 let y = if low.is_finite() { ctx.price_to_y(low) + 14.0 * dpr } else { chart_height / 2.0 };
                 (x1, x2, y)
             }
-            None => (anchor_x, anchor_x, chart_height / 2.0),
+            // The claimed window is not fully loaded (the claim sits too
+            // close to the start of the series). Bracket the anchor bar
+            // itself while that bar is still on screen — only a claim
+            // anchored outside the series entirely falls back to the
+            // chart's middle, and a label there describes no price at all.
+            None => match super::super::anchor_mark::bar_span_at(bars, self.anchor_ts) {
+                Some((_, low)) => (
+                    anchor_x - half_bar,
+                    anchor_x + half_bar,
+                    ctx.price_to_y(low) + 14.0 * dpr,
+                ),
+                None => (anchor_x, anchor_x, chart_height / 2.0),
+            },
         };
         let (min_x, max_x) = (x1.min(x2), x1.max(x2));
 

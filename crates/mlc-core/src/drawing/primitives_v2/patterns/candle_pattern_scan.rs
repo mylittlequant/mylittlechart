@@ -19,7 +19,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, render_primitive_text, TextAlign,
-    config::{ConfigProperty, PropertyValue, StatRow, TableCell, parse_table_cell_id},
+    config::{ConfigProperty, PropertyCategory, PropertyValue, StatRow, TableCell, parse_table_cell_id},
 };
 use super::candle_pattern::{sorted_kinds, pattern_display_name};
 
@@ -351,12 +351,22 @@ impl Primitive for CandlePatternScan {
         ];
         let bars_surveyed = self.cached_window.map(|(s, e)| e - s + 1).unwrap_or(0);
         vec![
+            // The structure table is this survey's PRIMARY control, not a
+            // label setting. `ConfigProperty::table`'s own default category
+            // is `LabelsText`, which files it under the Labels tab: measured
+            // on the live binary, the first tab then carried nothing but
+            // colour/width/style while the list of what to scan for was a
+            // tab away. `AppearanceStats` puts it in its own headed group on
+            // the main tab, ahead of the computed results below it (the
+            // category decides placement only — the renderer checks
+            // `PropertyType::Table` before the `readonly` flag this
+            // constructor already sets, so the checkboxes stay editable).
             ConfigProperty::table(
                 CANDLE_PATTERN_SCAN_TABLE_ID,
                 ConceptKey::PatternDropdownLabel.get(lang),
                 head,
                 self.kind_table_rows(),
-            ).with_order(10),
+            ).with_category(PropertyCategory::AppearanceStats).with_order(10),
             ConfigProperty::stat_block(
                 CANDLE_PATTERN_SCAN_STATS_ID,
                 vec![

@@ -181,6 +181,7 @@ impl Primitive for LiquiditySweep {
         let dpr = ctx.dpr();
         let bars = ctx.bars();
         let detected = self.detect(bars);
+        let anchor_span = super::super::anchor_mark::bar_span_at(bars, self.anchor_ts);
         let judge_claims = smc_engine_config().judge_claims;
         let violated = judge_claims && detected.is_none();
         let stroke = if violated { guard::VIOLATION_COLOR.to_string() } else { self.data.color.stroke.clone() };
@@ -188,13 +189,9 @@ impl Primitive for LiquiditySweep {
         let anchor_x = ctx.ts_to_x_ms(self.anchor_ts);
 
         let Some(sweep) = detected else {
-            ctx.set_stroke_color(&stroke);
-            ctx.set_stroke_width(self.data.width);
-            ctx.set_line_dash(&[]);
-            ctx.begin_path();
-            ctx.move_to(crisp(anchor_x, dpr), 0.0);
-            ctx.line_to(crisp(anchor_x, dpr), chart_height);
-            ctx.stroke();
+            super::super::anchor_mark::draw_unresolved_anchor(
+                ctx, anchor_x, anchor_span, &stroke, self.data.width,
+            );
             return;
         };
 

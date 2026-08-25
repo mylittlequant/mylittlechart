@@ -262,20 +262,19 @@ impl Primitive for DealingRange {
         let violated = judge_claims && self.source == "from_structure" && bounds.is_none();
         let stroke = if violated { guard::VIOLATION_COLOR.to_string() } else { self.data.color.stroke.clone() };
 
+        let spans = [
+            super::super::anchor_mark::bar_span_at(bars, self.ts1),
+            super::super::anchor_mark::bar_span_at(bars, self.ts2),
+        ];
+
         let Some((low, high)) = bounds else {
             // Nothing resolved (`"from_structure"` with no confirmed pair):
-            // draw just the two anchor ticks, still recolored when judging
-            // is on — same "still draws, still recolors" shape every claim
-            // in this family uses.
-            let chart_height = ctx.chart_height();
-            ctx.set_stroke_color(&stroke);
-            ctx.set_stroke_width(self.data.width);
-            ctx.set_line_dash(&[]);
-            for x in [x1, x2] {
-                ctx.begin_path();
-                ctx.move_to(crisp(x, dpr), 0.0);
-                ctx.line_to(crisp(x, dpr), chart_height);
-                ctx.stroke();
+            // one bar-anchored mark per drawn point, still recolored when
+            // judging is on — same shape every claim in this family uses.
+            for (x, span) in [x1, x2].into_iter().zip(spans) {
+                super::super::anchor_mark::draw_unresolved_anchor(
+                    ctx, x, span, &stroke, self.data.width,
+                );
             }
             return;
         };

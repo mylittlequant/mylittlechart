@@ -574,55 +574,57 @@ pub enum ToolbarTooltipKey {
     LineTool          = 7,
     FibTool           = 8,
     PatternTool       = 9,
-    BrushTool         = 10,
-    AnnotationTool    = 11,
-    IconTool          = 12,
-    ProjectionTool    = 13,
-    Lock              = 14,
-    Eye               = 15,
-    DeleteTool        = 16,
+    SmartMoneyTool    = 10,
+    OrderFlowTool     = 11,
+    BrushTool         = 12,
+    AnnotationTool    = 13,
+    IconTool          = 14,
+    ProjectionTool    = 15,
+    Lock              = 16,
+    Eye               = 17,
+    DeleteTool        = 18,
 
     // Actions (top toolbar)
-    Undo              = 17,
-    Redo              = 18,
-    MagnetMode        = 19,
-    StayInDrawingMode = 20,
-    Snapshot          = 21,
-    Bookmark          = 22,
-    MeasureTool       = 23,
-    Indicators        = 24,
-    Settings          = 25,
-    Compare           = 26,
-    SymbolSelector    = 27,
-    TimeframeSelector = 28,
-    ChartType         = 29,
-    Layout            = 30,
-    Presets           = 31,
-    Screenshot        = 32,
-    Expand            = 33,
-    MainMenu          = 34,
+    Undo              = 19,
+    Redo              = 20,
+    MagnetMode        = 21,
+    StayInDrawingMode = 22,
+    Snapshot          = 23,
+    Bookmark          = 24,
+    MeasureTool       = 25,
+    Indicators        = 26,
+    Settings          = 27,
+    Compare           = 28,
+    SymbolSelector    = 29,
+    TimeframeSelector = 30,
+    ChartType         = 31,
+    Layout            = 32,
+    Presets           = 33,
+    Screenshot        = 34,
+    Expand            = 35,
+    MainMenu          = 36,
 
     // Right toolbar (sidebar panels)
-    Watchlist         = 35,
-    Alerts            = 36,
-    ObjectTree        = 37,
-    Templates         = 38,
-    Signals           = 39,
+    Watchlist         = 37,
+    Alerts            = 38,
+    ObjectTree        = 39,
+    Templates         = 40,
+    Signals           = 41,
     /// Merged Connectors + Performance panel (2026-07-18). Replaces the two
     /// former separate keys `Connectors`/`Performance` — the standalone
-    /// `Connectors` key is gone (row 40 reused).
-    Monitoring        = 40,
-    Agents            = 41,
+    /// `Connectors` key is gone (its old row was reused).
+    Monitoring        = 42,
+    Agents            = 43,
 
     // General
-    Search            = 42,
-    FullScreen        = 43,
-    SplitView         = 44,
-    ServerTime        = 45,
+    Search            = 44,
+    FullScreen        = 45,
+    SplitView         = 46,
+    ServerTime        = 47,
 }
 
 impl ToolbarTooltipKey {
-    pub const COUNT: usize = 46;
+    pub const COUNT: usize = 48;
 
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {

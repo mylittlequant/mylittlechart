@@ -24,6 +24,8 @@ pub fn left_toolbar() -> PanelToolbarDef {
         line_section(),
         fib_section(),
         pattern_section(),
+        smart_money_section(),
+        order_flow_section(),
         brush_section(),
         annotation_section(),
         icon_section(),
@@ -785,27 +787,6 @@ fn pattern_section() -> ToolbarSectionDef {
             DropdownItemDef::Header { label: MK::HeaderCandles.get(lang).to_string() },
             DropdownItemDef::action("candle_pattern", PN::CandlePattern.get(lang)).with_icon(ToolbarIconId::new("CandlePattern")),
             DropdownItemDef::action("candle_pattern_scan", PN::CandlePatternScan.get(lang)).with_icon(ToolbarIconId::new("CandlePatternScan")),
-            // Smart money — markup engines: order block / FVG / liquidity
-            // sweep / structure break claims
-            // (`docs/mlc/plans/markup-engines-2026-08-25.md`).
-            DropdownItemDef::Separator,
-            DropdownItemDef::Header { label: MK::HeaderSmartMoney.get(lang).to_string() },
-            DropdownItemDef::action("order_block", PN::OrderBlock.get(lang)).with_icon(ToolbarIconId::new("OrderBlock")),
-            DropdownItemDef::action("fair_value_gap", PN::FairValueGap.get(lang)).with_icon(ToolbarIconId::new("FairValueGap")),
-            DropdownItemDef::action("liquidity_sweep", PN::LiquiditySweep.get(lang)).with_icon(ToolbarIconId::new("LiquiditySweep")),
-            DropdownItemDef::action("structure_break", PN::StructureBreak.get(lang)).with_icon(ToolbarIconId::new("StructureBreak")),
-            DropdownItemDef::action("dealing_range", PN::DealingRange.get(lang)).with_icon(ToolbarIconId::new("DealingRange")),
-            DropdownItemDef::action("amd_cycle", PN::AmdCycle.get(lang)).with_icon(ToolbarIconId::new("AmdCycle")),
-            DropdownItemDef::action("smc_scan", PN::SmcScan.get(lang)).with_icon(ToolbarIconId::new("SmcScan")),
-            // Order flow — markup engines: imbalance zone / absorption /
-            // delta divergence claims + survey
-            // (`docs/mlc/plans/markup-engines-2026-08-25.md`).
-            DropdownItemDef::Separator,
-            DropdownItemDef::Header { label: MK::HeaderOrderFlow.get(lang).to_string() },
-            DropdownItemDef::action("imbalance_zone", PN::ImbalanceZone.get(lang)).with_icon(ToolbarIconId::new("ImbalanceZone")),
-            DropdownItemDef::action("absorption_mark", PN::AbsorptionMark.get(lang)).with_icon(ToolbarIconId::new("AbsorptionMark")),
-            DropdownItemDef::action("delta_divergence", PN::DeltaDivergence.get(lang)).with_icon(ToolbarIconId::new("DeltaDivergence")),
-            DropdownItemDef::action("order_flow_scan", PN::OrderFlowScan.get(lang)).with_icon(ToolbarIconId::new("OrderFlowScan")),
             // Cycles
             DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderCycles.get(lang).to_string() },
@@ -814,6 +795,46 @@ fn pattern_section() -> ToolbarSectionDef {
             DropdownItemDef::action("sine_wave", PN::SineWave.get(lang)).with_icon(ToolbarIconId::new("SineWave")),
         ]).with_icon(ToolbarIconId::new("ElliottImpulse"))
           .with_tooltip(t_toolbar(TK::PatternTool)),
+    ])
+}
+
+// Split out of `pattern_section()` 2026-08-25 (measured defect: the single
+// 27-action flyout drew ~1100px tall on a 958x944 stand — everything from
+// "AMD Cycle" down was past the window edge and unreachable, and
+// `dropdown.rs` has no scrolling). Smart money markup engines: order block /
+// FVG / liquidity sweep / structure break claims
+// (`docs/mlc/plans/markup-engines-2026-08-25.md`).
+fn smart_money_section() -> ToolbarSectionDef {
+    let lang = current_language();
+    ToolbarSectionDef::new(vec![
+        ToolbarItemDef::quick_select("smart_money_tools", vec![
+            DropdownItemDef::Header { label: MK::HeaderSmartMoney.get(lang).to_string() },
+            DropdownItemDef::action("order_block", PN::OrderBlock.get(lang)).with_icon(ToolbarIconId::new("OrderBlock")),
+            DropdownItemDef::action("fair_value_gap", PN::FairValueGap.get(lang)).with_icon(ToolbarIconId::new("FairValueGap")),
+            DropdownItemDef::action("liquidity_sweep", PN::LiquiditySweep.get(lang)).with_icon(ToolbarIconId::new("LiquiditySweep")),
+            DropdownItemDef::action("structure_break", PN::StructureBreak.get(lang)).with_icon(ToolbarIconId::new("StructureBreak")),
+            DropdownItemDef::action("dealing_range", PN::DealingRange.get(lang)).with_icon(ToolbarIconId::new("DealingRange")),
+            DropdownItemDef::action("amd_cycle", PN::AmdCycle.get(lang)).with_icon(ToolbarIconId::new("AmdCycle")),
+            DropdownItemDef::action("smc_scan", PN::SmcScan.get(lang)).with_icon(ToolbarIconId::new("SmcScan")),
+        ]).with_icon(ToolbarIconId::new("OrderBlock"))
+          .with_tooltip(t_toolbar(TK::SmartMoneyTool)),
+    ])
+}
+
+// Split out of `pattern_section()` 2026-08-25 — see `smart_money_section()`.
+// Order flow markup engines: imbalance zone / absorption / delta divergence
+// claims (`docs/mlc/plans/markup-engines-2026-08-25.md`).
+fn order_flow_section() -> ToolbarSectionDef {
+    let lang = current_language();
+    ToolbarSectionDef::new(vec![
+        ToolbarItemDef::quick_select("order_flow_tools", vec![
+            DropdownItemDef::Header { label: MK::HeaderOrderFlow.get(lang).to_string() },
+            DropdownItemDef::action("imbalance_zone", PN::ImbalanceZone.get(lang)).with_icon(ToolbarIconId::new("ImbalanceZone")),
+            DropdownItemDef::action("absorption_mark", PN::AbsorptionMark.get(lang)).with_icon(ToolbarIconId::new("AbsorptionMark")),
+            DropdownItemDef::action("delta_divergence", PN::DeltaDivergence.get(lang)).with_icon(ToolbarIconId::new("DeltaDivergence")),
+            DropdownItemDef::action("order_flow_scan", PN::OrderFlowScan.get(lang)).with_icon(ToolbarIconId::new("OrderFlowScan")),
+        ]).with_icon(ToolbarIconId::new("ImbalanceZone"))
+          .with_tooltip(t_toolbar(TK::OrderFlowTool)),
     ])
 }
 
