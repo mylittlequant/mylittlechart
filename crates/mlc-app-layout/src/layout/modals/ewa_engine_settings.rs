@@ -110,6 +110,24 @@ pub fn render_ewa_engine_settings_modal(
         placement: crate::ui::widgets::ModalPlacement::At(Some(
             state.position.unwrap_or(((screen_w - MODAL_W) / 2.0, (screen_h - content_height()) / 2.0)),
         )),
+        // Above the modal that opened it, not beside it. Both entrances to
+        // an engine-settings modal are inside ANOTHER modal (a primitive's
+        // own Subject tab, the wave-gesture popup), so this is by
+        // definition a modal stacked over a modal — the case
+        // `ZLayer::ModalOverlay` exists for, and the one
+        // `template_name_modal` already documents.
+        //
+        // On the default `ZLayer::Modal` it was unreachable, and the
+        // mechanism is worth writing down because nothing about it is
+        // visible on screen: `hit_test_at_filtered` sorts layers by
+        // z-order with a STABLE sort, so two modals at the same z keep
+        // registration order — the one underneath is scanned FIRST, and
+        // being modal it raises the barrier that skips every non-chrome
+        // layer after it. The modal drawn on top therefore received no
+        // clicks at all: rows inside the lower modal's rect went to the
+        // lower modal, everything else fell through to the backdrop and
+        // closed the very modal that was clicked.
+        layer: crate::ui::z_order::ZLayer::ModalOverlay,
         ..ModalShellSpec::new("ewa_engine_settings", t_concept(ConceptKey::EwaEngineSettingsTitle), MODAL_W, content_height())
             .with_footer(ModalFooter::Editor { template: None })
     };

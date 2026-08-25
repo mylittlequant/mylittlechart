@@ -100,6 +100,13 @@ pub struct OrderFlowEngineConfig {
     #[serde(default = "default_chain_window_bars")]
     pub chain_window_bars: usize,
 
+
+    /// Which cross-primitive rule classes this engine currently reports —
+    /// see [`crate::state::markup_engine::MarkupGuardFamilies`], including
+    /// why the detector class is `judge_claims` above rather than a third
+    /// field here.
+    #[serde(default)]
+    pub guard_families: crate::state::markup_engine::MarkupGuardFamilies,
 }
 
 fn default_true() -> bool {
@@ -135,6 +142,7 @@ impl Default for OrderFlowEngineConfig {
             min_single_print_run: default_min_single_print_run(),
             claim_snap_bars: default_claim_snap_bars(),
             chain_window_bars: default_chain_window_bars(),
+            guard_families: crate::state::markup_engine::MarkupGuardFamilies::default(),
         }
     }
 }

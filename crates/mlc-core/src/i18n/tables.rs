@@ -1320,7 +1320,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 436] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 449] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1768,6 +1768,19 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 436] = [
     /* 433 RuleSmcChainDirection               */ [ "This break runs the same way as the sweep before it — the setup expects a reversal", "Этот слом идёт туда же, куда и съём перед ним — схема ждёт разворота", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 434 RuleChochAfterSameDirectionBreak    */ [ "The previous break already went this way — this is a BOS, not a CHoCH", "Предыдущий слом уже шёл в эту сторону — это BOS, а не CHoCH", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 435 RuleOrderBlockOutsideItsBreak       */ [ "This block originated a different break than the one it continues", "Этот блок породил другой слом, не тот, за которым стоит", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 436 MarkupEngineSettingsTitle          */ [ "Price Action Engine", "Движок Price Action", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 437 MarkupEngineSettingsMenuLabel      */ [ "Price Action settings", "Настройки Price Action", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 438 MarkupFamilySmartMoney             */ [ "Smart Money", "Smart Money", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 439 MarkupFamilyOrderFlow              */ [ "Order Flow", "Order Flow", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 440 MarkupFamilyCandles                */ [ "Candles", "Свечи", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 441 MarkupDetectionGroupTitle          */ [ "Detection", "Детекция", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 442 MarkupJudgeClaimsLabel             */ [ "Judge claims against the bars", "Судить заявки по барам", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 443 MarkupSnapBarsLabel                */ [ "Snap radius", "Радиус привязки", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 444 MarkupChainWindowLabel             */ [ "Chain window", "Окно цепочки", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 445 MarkupMinSinglePrintRunLabel       */ [ "Min single-print run", "Мин. серия single print", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 446 MarkupGuardFamiliesGroupTitle      */ [ "Rule guard", "Проверки", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 447 MarkupGuardNeighbourLabel          */ [ "Neighbour rules", "Правила соседей", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 448 MarkupGuardChainLabel              */ [ "Chain rules", "Правила цепочки", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

@@ -527,6 +527,23 @@ pub struct UserSettingsResult {
 // EWA Engine Settings Modal
 // =============================================================================
 
+/// Result of Price Action Engine Settings modal rendering with hit zones —
+/// see `crate::layout::modals::markup_engine_settings` for the renderer and
+/// why one modal serves three engines. Same shape as
+/// [`EwaEngineSettingsResult`] below, and deliberately so: the two modals
+/// are siblings and their plumbing should read as one.
+#[derive(Clone, Debug, Default)]
+pub struct MarkupEngineSettingsResult {
+    /// Modal bounding rect.
+    pub modal_rect: WidgetRect,
+    /// Header rect (for dragging).
+    pub header_rect: WidgetRect,
+    /// Close button rect.
+    pub close_btn_rect: WidgetRect,
+    /// Content item rects for hit testing: (item_id, rect).
+    pub content_items: Vec<(String, WidgetRect)>,
+}
+
 /// Result of EWA Engine Settings modal rendering with hit zones — see
 /// `crate::layout::modals::ewa_engine_settings` for the renderer and
 /// `mlc_core::state::ewa_engine` for the config it edits. Deliberately
@@ -587,6 +604,8 @@ pub struct ChartModalRenderResult {
     pub user_settings: Option<UserSettingsResult>,
     /// EWA Engine Settings modal result (if open).
     pub ewa_engine_settings: Option<EwaEngineSettingsResult>,
+    /// Price Action Engine Settings modal result (if open).
+    pub markup_engine_settings: Option<MarkupEngineSettingsResult>,
 }
 
 // =============================================================================

@@ -92,6 +92,10 @@ pub struct ChartPanelApp {
     pub user_settings_state: mlc_app_layout::ui::modal_settings::UserSettingsState,
     /// EWA Engine Settings modal state (owner ask 2026-08-14).
     pub ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState,
+    /// Price Action Engine Settings modal state — the non-Elliott sibling
+    /// of the field above, one modal for the three markup engines
+    /// (`docs/mlc/plans/markup-engine-parity-2026-08-25.md` S6).
+    pub markup_engine_settings_state: mlc_app_layout::ui::modal_settings::MarkupEngineSettingsState,
     /// Clock popup state (timezone selector + 24h toggle).
     pub clock_popup_state: mlc_app_layout::ui::ClockPopupState,
 
@@ -147,6 +151,7 @@ impl ChartPanelApp {
             compare_settings_state: CompareSettingsState::new(),
             user_settings_state: mlc_app_layout::ui::modal_settings::UserSettingsState::default(),
             ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState::default(),
+            markup_engine_settings_state: mlc_app_layout::ui::modal_settings::MarkupEngineSettingsState::default(),
             clock_popup_state: mlc_app_layout::ui::ClockPopupState::default(),
             panel_color_picker: mlc_app_layout::ui::color_picker_state::ColorPickerState::new(),
             panel_color_picker_leaf: None,
@@ -860,6 +865,20 @@ impl ChartPanelApp {
                 frame_theme,
                 toolbar_theme,
                 current_time_ms,
+                input_coordinator,
+            ));
+        }
+
+        // Price Action Engine Settings modal
+        if self.markup_engine_settings_state.is_open {
+            use mlc_app_layout::layout::modals::markup_engine_settings::render_markup_engine_settings_modal;
+            result.markup_engine_settings = Some(render_markup_engine_settings_modal(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                &self.markup_engine_settings_state,
+                frame_theme,
+                toolbar_theme,
                 input_coordinator,
             ));
         }

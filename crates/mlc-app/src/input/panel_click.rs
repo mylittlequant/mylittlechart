@@ -4992,6 +4992,91 @@ impl ChartApp {
         }
 
         // === EWA Engine Settings modal clicks ===
+        // === Price Action Engine Settings modal clicks ===
+        //
+        // Same apply-as-you-click contract as the EWA block below, three
+        // configs instead of one: which one an edit lands in is the family
+        // segment the modal is currently showing, never the widget id — so
+        // a row id like `markup:guard_chain` means the same thing on every
+        // family and the id space stays flat.
+        if let Some(action) = widget_id.strip_prefix("markup_engine_settings:") {
+            use mlc_app_layout::ui::modal_settings::MarkupSettingsFamily;
+            match action {
+                "close" | "ok" => {
+                    self.panel_app.markup_engine_settings_state.close();
+                }
+                "modal_bg" | "header" => {}
+                rest if rest.starts_with("markup:family:") => {
+                    let key = &rest["markup:family:".len()..];
+                    match MarkupSettingsFamily::from_id(key) {
+                        Some(f) => self.panel_app.markup_engine_settings_state.family = f,
+                        None => eprintln!("[ChartApp] markup_engine_settings unknown family: {}", key),
+                    }
+                }
+                "markup:judge_claims" => {
+                    self.apply_markup_engine_edit(
+                        |c| c.judge_claims = !c.judge_claims,
+                        |c| c.judge_claims = !c.judge_claims,
+                        |c| c.judge_claims = !c.judge_claims,
+                    );
+                }
+                "markup:guard_neighbour" => {
+                    self.apply_markup_engine_edit(
+                        |c| c.guard_families.neighbour = !c.guard_families.neighbour,
+                        |c| c.guard_families.neighbour = !c.guard_families.neighbour,
+                        |c| c.guard_families.neighbour = !c.guard_families.neighbour,
+                    );
+                }
+                "markup:guard_chain" => {
+                    self.apply_markup_engine_edit(
+                        |c| c.guard_families.chain = !c.guard_families.chain,
+                        |c| c.guard_families.chain = !c.guard_families.chain,
+                        |c| c.guard_families.chain = !c.guard_families.chain,
+                    );
+                }
+                rest if rest.starts_with("markup:snap_bars:") => {
+                    let Ok(n) = rest["markup:snap_bars:".len()..].parse::<usize>() else {
+                        eprintln!("[ChartApp] markup_engine_settings bad snap_bars: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(
+                        move |c| c.claim_snap_bars = n,
+                        move |c| c.claim_snap_bars = n,
+                        move |c| c.claim_snap_bars = n,
+                    );
+                }
+                rest if rest.starts_with("markup:chain_window:") => {
+                    let Ok(n) = rest["markup:chain_window:".len()..].parse::<usize>() else {
+                        eprintln!("[ChartApp] markup_engine_settings bad chain_window: {}", rest);
+                        return;
+                    };
+                    // Candles have no chain window at all — the row is not
+                    // drawn for that family, so the no-op closure here is
+                    // unreachable rather than a silent swallow.
+                    self.apply_markup_engine_edit(
+                        move |c| c.chain_window_bars = n,
+                        move |c| c.chain_window_bars = n,
+                        move |_| {},
+                    );
+                }
+                rest if rest.starts_with("markup:single_print_run:") => {
+                    let Ok(n) = rest["markup:single_print_run:".len()..].parse::<usize>() else {
+                        eprintln!("[ChartApp] markup_engine_settings bad single_print_run: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(
+                        move |_| {},
+                        move |c| c.min_single_print_run = n,
+                        move |_| {},
+                    );
+                }
+                _ => {
+                    eprintln!("[ChartApp] markup_engine_settings unhandled: {}", action);
+                }
+            }
+            return;
+        }
+
         // Every edit here applies as it is made and writes through to the
         // process-global `EwaEngineConfig` (`Self::apply_ewa_engine_config_edit`)
         // — same class of setting as `control_point_shape`/`control_point_size`
@@ -7477,6 +7562,68 @@ impl ChartApp {
     /// [`Self::set_control_point_shape`]/[`Self::set_control_point_size`]
     /// above, generalized to one closure since this config has more than
     /// two independently-clicked fields.
+    /// Apply one edit to whichever of the three markup engine configs the
+    /// Price Action modal is currently showing, push it into that family's
+    /// live global, mirror it back into the modal's own copy and autosave —
+    /// the twin of [`Self::apply_ewa_engine_config_edit`], one write path
+    /// for three configs.
+    ///
+    /// Three closures rather than one generic edit because the three config
+    /// types are unrelated structs that merely happen to share field NAMES;
+    /// a trait to unify them would exist for this one call site and would
+    /// have to grow a method per field. A field only one family has (order
+    /// flow's single-print run) passes a no-op for the other two, and the
+    /// modal does not draw that row for them, so the no-op is unreachable
+    /// rather than a swallowed edit.
+    fn apply_markup_engine_edit(
+        &mut self,
+        smc: impl FnOnce(&mut mlc_core::state::smc_engine::SmcEngineConfig),
+        orderflow: impl FnOnce(&mut mlc_core::state::orderflow_engine::OrderFlowEngineConfig),
+        candle: impl FnOnce(&mut mlc_core::state::candle_pattern_engine::CandlePatternEngineConfig),
+    ) {
+        use mlc_app_layout::ui::modal_settings::MarkupSettingsFamily;
+        match self.panel_app.markup_engine_settings_state.family {
+            MarkupSettingsFamily::SmartMoney => {
+                let cfg = {
+                    let mut user_mut = self.core.user_mut();
+                    let ui = &mut user_mut.profile_mut().ui;
+                    smc(&mut ui.smc_engine);
+                    ui.smc_engine.clone()
+                };
+                mlc_core::state::smc_engine::set_smc_engine_config(cfg.clone());
+                self.panel_app.markup_engine_settings_state.smc = cfg;
+            }
+            MarkupSettingsFamily::OrderFlow => {
+                let cfg = {
+                    let mut user_mut = self.core.user_mut();
+                    let ui = &mut user_mut.profile_mut().ui;
+                    orderflow(&mut ui.orderflow_engine);
+                    ui.orderflow_engine.clone()
+                };
+                mlc_core::state::orderflow_engine::set_orderflow_engine_config(cfg.clone());
+                self.panel_app.markup_engine_settings_state.orderflow = cfg;
+            }
+            MarkupSettingsFamily::CandlePattern => {
+                let cfg = {
+                    let mut user_mut = self.core.user_mut();
+                    let ui = &mut user_mut.profile_mut().ui;
+                    candle(&mut ui.candle_pattern_engine);
+                    ui.candle_pattern_engine.clone()
+                };
+                mlc_core::state::candle_pattern_engine::set_candle_pattern_engine_config(cfg.clone());
+                self.panel_app.markup_engine_settings_state.candle = cfg;
+            }
+        }
+        // An engine setting changes what every claim on every chart
+        // resolves to, so the derived caches behind the Rules/Stat blocks
+        // have to be rebuilt store-wide — see
+        // `DrawingManager::refresh_all_derived` for what goes wrong without
+        // it (the render recomputes fresh and the cached verdict does not).
+        self.core.drawings_mut().refresh_all_derived();
+        self.autosave_snapshot();
+        eprintln!("[ChartApp] markup engine config updated");
+    }
+
     fn apply_ewa_engine_config_edit(&mut self, edit: impl FnOnce(&mut mlc_core::state::ewa_engine::EwaEngineConfig)) {
         let cfg = {
             let mut user_mut = self.core.user_mut();
@@ -7486,6 +7633,11 @@ impl ChartApp {
         };
         mlc_core::state::ewa_engine::set_ewa_engine_config(cfg.clone());
         self.panel_app.ewa_engine_settings_state.config = cfg;
+        // Same store-wide refresh the markup engines need, and for the same
+        // reason: `guard_families` here silences whole rule classes, and the
+        // cached violation lists behind every Rules group would otherwise
+        // keep reporting what the engine no longer judges.
+        self.core.drawings_mut().refresh_all_derived();
         self.autosave_snapshot();
         eprintln!("[ChartApp] ewa_engine config updated");
     }

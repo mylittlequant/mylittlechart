@@ -162,6 +162,11 @@ impl ChartApp {
             // window's own EWA Engine Settings modal in sync even when a
             // DIFFERENT window is the one that changed it.
             self.panel_app.ewa_engine_settings_state.config = profile.ui.ewa_engine.clone();
+            // The three markup engines, same mirror class and same reason:
+            // another window's edit must show here too.
+            self.panel_app.markup_engine_settings_state.smc = profile.ui.smc_engine.clone();
+            self.panel_app.markup_engine_settings_state.orderflow = profile.ui.orderflow_engine.clone();
+            self.panel_app.markup_engine_settings_state.candle = profile.ui.candle_pattern_engine.clone();
             // The DATA & CACHE sliders keep their committed value while the
             // user is dragging one, so the handle does not snap back on
             // every frame mid-drag.

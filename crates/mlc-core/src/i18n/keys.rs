@@ -3310,10 +3310,28 @@ pub enum ConceptKey {
     RuleSmcChainDirection = 433,
     RuleChochAfterSameDirectionBreak = 434,
     RuleOrderBlockOutsideItsBreak = 435,
+    /// The Price Action engine-settings modal — one surface for the three
+    /// non-Elliott engines, with a family segment at the top. See
+    /// `mlc_app_layout::layout::modals::markup_engine_settings` for why one
+    /// modal rather than three.
+    MarkupEngineSettingsTitle = 436,
+    MarkupEngineSettingsMenuLabel = 437,
+    MarkupFamilySmartMoney = 438,
+    MarkupFamilyOrderFlow = 439,
+    MarkupFamilyCandles = 440,
+    /// That modal's own rows.
+    MarkupDetectionGroupTitle = 441,
+    MarkupJudgeClaimsLabel = 442,
+    MarkupSnapBarsLabel = 443,
+    MarkupChainWindowLabel = 444,
+    MarkupMinSinglePrintRunLabel = 445,
+    MarkupGuardFamiliesGroupTitle = 446,
+    MarkupGuardNeighbourLabel = 447,
+    MarkupGuardChainLabel = 448,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 436;
+    pub const COUNT: usize = 449;
 
     /// Get translation for this key.
     #[inline]

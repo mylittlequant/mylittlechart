@@ -2059,6 +2059,12 @@ impl ChartApp {
                             true
                         } else { false }
                     }
+                    "markup_engine_settings" => {
+                        if let Some(ref ms) = self.frame_result.as_ref().and_then(|r| r.markup_engine_settings.as_ref()) {
+                            self.panel_app.markup_engine_settings_state.start_drag(x, y, ms.header_rect.x, ms.header_rect.y);
+                            true
+                        } else { false }
+                    }
                     "tags_tabs" => {
                         if let Some(ref tt) = self.frame_result.as_ref().and_then(|r| r.tags_tabs.as_ref()) {
                             self.panel_app.tags_tabs_state.start_drag(x, y, tt.header_rect.x, tt.header_rect.y);
@@ -3850,6 +3856,10 @@ impl ChartApp {
             self.panel_app.ewa_engine_settings_state.update_drag(x, y);
             return;
         }
+        if self.panel_app.markup_engine_settings_state.is_dragging {
+            self.panel_app.markup_engine_settings_state.update_drag(x, y);
+            return;
+        }
         // Profile manager text select drag move.
         if self.panel_app.user_settings_state.profile_mgr_text_select_dragging.is_some() {
             let field_id = self.panel_app.user_settings_state.profile_mgr_text_select_dragging.clone().unwrap_or_default();
@@ -4722,6 +4732,11 @@ impl ChartApp {
         if self.panel_app.ewa_engine_settings_state.is_dragging {
             self.panel_app.ewa_engine_settings_state.end_drag();
             eprintln!("[ChartApp] ewa_engine_settings modal drag ended");
+            return;
+        }
+        if self.panel_app.markup_engine_settings_state.is_dragging {
+            self.panel_app.markup_engine_settings_state.end_drag();
+            eprintln!("[ChartApp] markup_engine_settings modal drag ended");
             return;
         }
         // Profile manager text select drag end.

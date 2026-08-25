@@ -2294,6 +2294,10 @@ impl ChartApp {
                     self.panel_app.ewa_engine_settings_state.close();
                     eprintln!("[ChartApp] close_topmost_modal_layer: ewa_engine_settings closed");
                 }
+                "markup_engine_settings" => {
+                    self.panel_app.markup_engine_settings_state.close();
+                    eprintln!("[ChartApp] close_topmost_modal_layer: markup_engine_settings closed");
+                }
                 "profile_manager" => {
                     // In skeleton mode (vault unlock required), profile manager cannot be dismissed.
                     if !self.panel_app.user_settings_state.needs_vault_unlock {
@@ -2345,6 +2349,7 @@ impl ChartApp {
         self.panel_app.chart_settings_state.close();
         self.panel_app.indicator_settings_state.close();
         self.panel_app.ewa_engine_settings_state.close();
+        self.panel_app.markup_engine_settings_state.close();
         // Close top-level modals that are managed outside of modal_state.
         self.panel_app.close_tags_tabs();
         if self.panel_app.chart_browser.is_open {

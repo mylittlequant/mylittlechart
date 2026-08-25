@@ -2259,6 +2259,27 @@ impl DrawingManager {
     /// chart visibly carrying dozens of hits (measured on the live binary,
     /// 2026-08-25). The pass costs one detector run per primitive, which
     /// is exactly what one frame of `render` already pays.
+    /// Re-run every derived pass over EVERY bubble — the refresh an
+    /// ENGINE-level setting needs.
+    ///
+    /// A gesture refreshes the bubble it touched; an engine config change
+    /// touches no bubble and changes what every claim on every chart
+    /// resolves to. Without this the render recomputes fresh (a claim stops
+    /// being tinted the moment judging is switched off) while the cached
+    /// violation list behind the settings modal's own Rules group keeps
+    /// reporting the old verdict — the pixels and the words disagreeing
+    /// about the same claim, which is the exact defect this codebase
+    /// already fixed once for the Stat blocks.
+    pub(crate) fn refresh_all_derived(&self, bubbles: &mut BubbleStore) {
+        // Collected first: the iterator borrows the store, and both passes
+        // below need it mutably.
+        let ids: Vec<BubbleId> = bubbles.bubble_ids().collect();
+        for bid in ids {
+            self.refresh_bar_derived(bubbles, bid);
+            self.refresh_wave_guards(bubbles, bid);
+        }
+    }
+
     pub(crate) fn refresh_bar_derived(&self, bubbles: &mut BubbleStore, bid: BubbleId) {
         let Some(b) = bubbles.bubble_mut(bid) else { return };
         crate::bubble::bar_derived_cache::refresh_bar_derived_caches(b);

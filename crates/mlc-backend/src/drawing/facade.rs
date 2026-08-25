@@ -790,6 +790,14 @@ impl<'a> DrawingsMut<'a> {
     /// without an explicit call here the cache stays at its
     /// freshly-deserialized default (empty) until the next live edit
     /// happens to touch the bubble (2026-08-14 report).
+    /// Re-run every derived pass over every bubble — see
+    /// `DrawingManager::refresh_all_derived` for why an engine-level
+    /// setting needs a store-wide refresh where a gesture needs only its
+    /// own bubble.
+    pub fn refresh_all_derived(&mut self) {
+        self.mgr.refresh_all_derived(&mut self.bubbles)
+    }
+
     pub fn refresh_wave_guards(&mut self, bid: BubbleId) {
         self.mgr.refresh_wave_guards(&mut self.bubbles, bid)
     }

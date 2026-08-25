@@ -1805,6 +1805,21 @@ impl ChartApp {
             return;
         }
 
+        // The same button on a markup claim, carrying the family it belongs
+        // to so the modal opens on the right engine's rows rather than on
+        // whatever was showing last.
+        if let Some(key) = item_id.strip_prefix("open_markup_engine_settings:") {
+            use mlc_app_layout::ui::modal_settings::MarkupSettingsFamily;
+            match MarkupSettingsFamily::from_id(key) {
+                Some(family) => {
+                    self.panel_app.markup_engine_settings_state.open_on(family);
+                    eprintln!("[ChartApp] Opened Price Action engine settings ({key}) from primitive settings modal");
+                }
+                None => eprintln!("[ChartApp] open_markup_engine_settings unknown family: {key}"),
+            }
+            return;
+        }
+
         let active_bid_prim = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
 
         // Close template dropdown on any non-dropdown click. Every row in

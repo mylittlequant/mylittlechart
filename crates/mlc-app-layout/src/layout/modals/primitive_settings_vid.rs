@@ -349,13 +349,36 @@ fn rules_group_height(count: usize) -> f64 {
 // unconditional (not gated on there being anything wrong to report).
 // =============================================================================
 
-/// Height of the trailing "EWA settings" button — one plain row, present
-/// only for a `Archetype::Wave` primitive. Shared by `group_heights`/
-/// `query_heights` (never query-filtered — an action, not a searchable
-/// setting label, same treatment [`rules_group_height`] gets) and mirrored
-/// by [`draw_ewa_engine_settings_button`].
-fn ewa_engine_settings_button_height(prim: &dyn Primitive) -> f64 {
+/// The engine this primitive's own trailing settings button opens, if it
+/// belongs to an engine at all.
+///
+/// Elliott answers by ARCHETYPE (every Wave primitive shares one engine);
+/// the other three answer by `type_id`, because a markup claim's archetype
+/// says what it looks like, not which vocabulary it comes from. One button
+/// serving both is deliberate: it is the same affordance in the same place,
+/// and duplicating the row would give a primitive that belongs to one
+/// engine two buttons the day a type belongs to both.
+fn engine_settings_button(prim: &dyn Primitive) -> Option<(String, &'static str)> {
     if prim.archetype() == Archetype::Wave {
+        return Some((
+            "open_ewa_engine_settings".to_string(),
+            ConceptKey::EwaEngineSettingsMenuLabel.get(current_language()),
+        ));
+    }
+    let family = crate::ui::modal_settings::MarkupSettingsFamily::from_type_id(prim.type_id())?;
+    Some((
+        format!("open_markup_engine_settings:{}", family.id()),
+        ConceptKey::MarkupEngineSettingsMenuLabel.get(current_language()),
+    ))
+}
+
+/// Height of the trailing engine-settings button — one plain row, present
+/// for every primitive [`engine_settings_button`] answers for. Shared by
+/// `group_heights`/`query_heights` (never query-filtered — an action, not a
+/// searchable setting label, same treatment [`rules_group_height`] gets)
+/// and mirrored by [`draw_engine_settings_button`].
+fn ewa_engine_settings_button_height(prim: &dyn Primitive) -> f64 {
+    if engine_settings_button(prim).is_some() {
         ROW_H
     } else {
         0.0
@@ -377,16 +400,13 @@ fn draw_ewa_engine_settings_button(
     any_drawn: &mut bool,
     prim: &dyn Primitive,
 ) {
-    if prim.archetype() != Archetype::Wave {
-        return;
-    }
+    let Some((item_id, label)) = engine_settings_button(prim) else { return };
     if *any_drawn {
         *row_y += GROUP_GAP;
     }
     let rect = WidgetRect::new(x0, *row_y + 1.0, (x1 - x0).max(20.0), ROW_H - 2.0);
-    let label = ConceptKey::EwaEngineSettingsMenuLabel.get(current_language());
     draw_toggle_segment(ctx, toolbar_theme, rect, label, false);
-    result.content_items.push(("open_ewa_engine_settings".to_string(), rect));
+    result.content_items.push((item_id, rect));
     *row_y += ROW_H;
     *any_drawn = true;
 }

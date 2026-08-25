@@ -70,6 +70,18 @@ pub struct CandlePatternEngineConfig {
     #[serde(default = "default_claim_snap_bars")]
     pub claim_snap_bars: usize,
 
+    /// Which cross-primitive rule classes this engine currently reports —
+    /// see [`crate::state::markup_engine::MarkupGuardFamilies`], including
+    /// why the detector class is `judge_claims` above rather than a third
+    /// field here.
+    ///
+    /// The chain switch is inert for this family and stays for symmetry:
+    /// a candle pattern is a self-contained reading of one to three bars
+    /// with no succession of its own, so `markup::chain::successor_kinds`
+    /// gives it no successors and no chain rule can reach it.
+    #[serde(default)]
+    pub guard_families: crate::state::markup_engine::MarkupGuardFamilies,
+
 }
 
 fn default_true() -> bool {
@@ -90,6 +102,7 @@ impl Default for CandlePatternEngineConfig {
             default_enabled_kinds: default_enabled_kinds(),
             judge_claims: true,
             claim_snap_bars: default_claim_snap_bars(),
+            guard_families: crate::state::markup_engine::MarkupGuardFamilies::default(),
         }
     }
 }

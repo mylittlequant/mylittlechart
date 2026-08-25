@@ -11,6 +11,9 @@ use crate::ui::widgets::ResizeEdge;
 use mlc_core::drawing::primitives_v2::config::TimeframeVisibilityConfig;
 use mlc_core::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
 use mlc_core::state::ewa_engine::EwaEngineConfig;
+use mlc_core::state::smc_engine::SmcEngineConfig;
+use mlc_core::state::orderflow_engine::OrderFlowEngineConfig;
+use mlc_core::state::candle_pattern_engine::CandlePatternEngineConfig;
 use uzor::app_context::TextInputState;
 use mlc_alert_delivery::NotificationSettings;
 
@@ -3657,6 +3660,130 @@ impl_resizable_modal!(
 );
 
 // =============================================================================
+// =============================================================================
+// MarkupEngineSettingsState — the "Price Action Engine" modal, the
+// non-Elliott sibling of `EwaEngineSettingsState` below.
+//
+// ONE modal for three engines, with a family segment at the top, rather
+// than three near-identical files. The three configs differ in their rows,
+// not in their shape, and the plan this comes from
+// (`docs/mlc/plans/markup-engine-parity-2026-08-25.md`) says in its own §4
+// that the parity being built is parity of MACHINERY, not of ceremony. The
+// entrance sets `family` from the subject that opened it, so opening from
+// an order block lands on Smart Money — the same place three separate
+// modals would have landed, without three copies of the shell, the drag
+// handling, the result plumbing and the click routing.
+//
+// Same apply-on-change, no-diff shape as the EWA modal: every edit writes
+// through to the live global and the profile, and the footer's close is
+// just a close.
+// =============================================================================
+
+/// State for the "Price Action Engine" modal — three engine configs and
+/// which family's rows are currently showing.
+#[derive(Clone, Debug, Default)]
+pub struct MarkupEngineSettingsState {
+    /// Whether the modal is currently open.
+    pub is_open: bool,
+    /// Modal position (`None` = centered on screen).
+    pub position: Option<(f64, f64)>,
+    /// Whether the modal is being dragged by its header.
+    pub is_dragging: bool,
+    /// Offset from mouse to modal top-left when drag started.
+    pub drag_offset: Option<(f64, f64)>,
+    /// ID of the item currently hovered (for hover highlight).
+    pub hovered_item_id: Option<String>,
+    /// Which family's rows are showing — set by whichever claim opened the
+    /// modal, then switchable by the segment at the top.
+    pub family: MarkupSettingsFamily,
+    /// Live copies of the three engine configs; see this section's own doc
+    /// for why there is no separate pending copy.
+    pub smc: SmcEngineConfig,
+    pub orderflow: OrderFlowEngineConfig,
+    pub candle: CandlePatternEngineConfig,
+}
+
+/// Which family's rows the modal is showing. Mirrors
+/// `mlc_core::drawing::primitives_v2::markup::MarkupFamily` but is a UI
+/// concern of its own — it survives the modal being open while nothing is
+/// selected, which a family read off a selection cannot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum MarkupSettingsFamily {
+    #[default]
+    SmartMoney,
+    OrderFlow,
+    CandlePattern,
+}
+
+impl MarkupSettingsFamily {
+    /// The wire token this family registers its own segment under.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::SmartMoney => "smart_money",
+            Self::OrderFlow => "order_flow",
+            Self::CandlePattern => "candles",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "smart_money" => Some(Self::SmartMoney),
+            "order_flow" => Some(Self::OrderFlow),
+            "candles" => Some(Self::CandlePattern),
+            _ => None,
+        }
+    }
+
+    /// Which family a primitive's own `type_id` belongs to — the entrance's
+    /// own lookup, so opening the modal from an order block lands on Smart
+    /// Money rather than on whatever was showing last.
+    pub fn from_type_id(type_id: &str) -> Option<Self> {
+        match type_id {
+            "order_block" | "fair_value_gap" | "liquidity_sweep" | "structure_break" | "dealing_range"
+            | "amd_cycle" | "smc_scan" => Some(Self::SmartMoney),
+            "imbalance_zone" | "absorption_mark" | "delta_divergence" | "order_flow_scan" => {
+                Some(Self::OrderFlow)
+            }
+            "candle_pattern" | "candle_pattern_scan" => Some(Self::CandlePattern),
+            _ => None,
+        }
+    }
+}
+
+impl MarkupEngineSettingsState {
+    /// Open the modal on `family`'s own rows.
+    pub fn open_on(&mut self, family: MarkupSettingsFamily) {
+        self.family = family;
+        self.is_open = true;
+    }
+
+    /// Close the modal and reset drag state.
+    pub fn close(&mut self) {
+        self.is_open = false;
+        self.is_dragging = false;
+        self.drag_offset = None;
+    }
+
+    /// Start dragging from the modal header.
+    pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {
+        self.is_dragging = true;
+        self.drag_offset = Some((mouse_x - modal_x, mouse_y - modal_y));
+    }
+
+    /// Update modal position while dragging.
+    pub fn update_drag(&mut self, mouse_x: f64, mouse_y: f64) {
+        if let Some((ox, oy)) = self.drag_offset {
+            self.position = Some((mouse_x - ox, mouse_y - oy));
+        }
+    }
+
+    /// Finish dragging.
+    pub fn end_drag(&mut self) {
+        self.is_dragging = false;
+        self.drag_offset = None;
+    }
+}
+
 // EwaEngineSettingsState — the "EWA Engine Settings" modal (owner ask
 // 2026-08-14: "для настройки ЕВА движка можно сделать отдельную настройку,
 // ну вот прям модалку ЕВА движка, в которую можно попасть из каждого ЕВА

@@ -32,6 +32,7 @@ use mlc_core::drawing::primitives_v2::markup::{
     chain, ChainFact, MarkupFamily, MarkupFollows, MarkupLink,
 };
 use mlc_core::i18n::ConceptKey;
+use mlc_core::state::markup_engine::guard_families_for;
 
 use super::data_bubble::DataBubble;
 
@@ -222,6 +223,13 @@ fn refresh_markup_chains(b: &mut DataBubble) {
         }
         prior_breaks.reverse();
 
+        // Silenced per family, not per rule: the whole chain class is one
+        // switch (`MarkupGuardFamilies::chain`), read fresh here rather than
+        // threaded through `chain_violations` so the rules stay pure
+        // functions of the facts.
+        if !guard_families_for(own.family).chain {
+            continue;
+        }
         let violations =
             chain::chain_violations(&own.type_id, &own.fact, &prev.type_id, &prev.fact, &prior_breaks);
         if !violations.is_empty() {
@@ -262,7 +270,7 @@ pub(crate) fn refresh_markup_guards(b: &mut DataBubble) {
             j != i
                 && matches!(other, Some((f, t, ts)) if f == family && t == type_id && ts == anchor_ts)
         });
-        if duplicated {
+        if duplicated && guard_families_for(*family).neighbour {
             updates.push((
                 i,
                 vec![Violation::whole(
@@ -606,6 +614,57 @@ mod tests {
             ],
         );
         assert!(follows_of(&b, 1).is_none());
+    }
+
+    // ---------------------------------------------------------------
+    // Rule-family gating (S6)
+    // ---------------------------------------------------------------
+
+    /// Both gating tests mutate PROCESS-GLOBAL engine config, so they run
+    /// under one mutex and restore what they found — the discipline
+    /// `elliott::guard`'s own `guard_families` tests already keep.
+    static ENGINE_CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_smc_guard_families<T>(edit: impl FnOnce(&mut mlc_core::state::markup_engine::MarkupGuardFamilies), body: impl FnOnce() -> T) -> T {
+        let _guard = ENGINE_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let original = mlc_core::state::smc_engine::smc_engine_config();
+        let mut cfg = original.clone();
+        edit(&mut cfg.guard_families);
+        mlc_core::state::smc_engine::set_smc_engine_config(cfg);
+        let out = body();
+        mlc_core::state::smc_engine::set_smc_engine_config(original);
+        out
+    }
+
+    #[test]
+    fn silencing_the_neighbour_class_stops_the_duplicate_rule() {
+        with_smc_guard_families(|f| f.neighbour = false, || {
+            let mut b = bubble_with(vec![("order_block", 1_000), ("order_block", 1_000)]);
+            refresh_markup_guards(&mut b);
+            assert!(!rule_ids(&b, 0).contains(&"overlapping_claim"));
+        });
+        // And the switch is the only reason it went quiet.
+        let mut b = bubble_with(vec![("order_block", 1_000), ("order_block", 1_000)]);
+        refresh_markup_guards(&mut b);
+        assert!(rule_ids(&b, 0).contains(&"overlapping_claim"));
+    }
+
+    /// Silencing the chain class must leave the EDGE alone — the link is
+    /// collection state a claim reports in its own Stat block, not a
+    /// verdict, and a switch that turns off verdicts has no business
+    /// hiding what a claim continues.
+    #[test]
+    fn silencing_the_chain_class_keeps_the_edge_and_drops_only_the_verdicts() {
+        with_smc_guard_families(|f| f.chain = false, || {
+            let b = contained_bubble(
+                flat_bars(40),
+                vec![
+                    ("liquidity_sweep", vec![(ts_ms(5), 100.0)]),
+                    ("structure_break", vec![(ts_ms(9), 100.0)]),
+                ],
+            );
+            assert!(follows_of(&b, 1).is_some(), "the edge is not a verdict");
+        });
     }
 
     #[test]

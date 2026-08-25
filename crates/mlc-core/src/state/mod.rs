@@ -44,6 +44,7 @@ pub mod ewa_engine;
 pub mod candle_pattern_engine;
 pub mod smc_engine;
 pub mod orderflow_engine;
+pub mod markup_engine;
 
 // Unified panel taxonomy (K1 — supersedes PanelLeaf + FreeItem)
 pub use panel::{Panel, PanelId, PanelKind};
