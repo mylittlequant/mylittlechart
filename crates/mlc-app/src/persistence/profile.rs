@@ -43,6 +43,12 @@ impl ChartApp {
                 // (chart_out_events.rs), not via this snapshot builder —
                 // preserve whatever is already on the live profile.
                 granularity_favorites: existing.domain.granularity_favorites.clone(),
+                // Cloud connectivity — managed by the sync layer, not by this
+                // snapshot builder; preserve whatever is on the live profile.
+                linked_account: existing.domain.linked_account.clone(),
+                cloud_enabled: existing.domain.cloud_enabled,
+                sync_level: existing.domain.sync_level.clone(),
+                sync_state: existing.domain.sync_state.clone(),
             },
             ui: mlc_core::user_profile::profile::ProfileUiSettings {
                 active_preset_id: self.panel_app.active_preset_id.clone(),

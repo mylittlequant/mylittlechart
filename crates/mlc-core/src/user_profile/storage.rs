@@ -426,6 +426,8 @@ pub fn create_profile(name: &str, avatar: &str) -> Result<ProfileMeta, String> {
         avatar: avatar.to_string(),
         created_at: now,
         dir_name,
+        cloud_enabled: false,
+        sync_level: "local".to_string(),
     };
 
     // Append to existing index (or create one if it doesn't exist yet).

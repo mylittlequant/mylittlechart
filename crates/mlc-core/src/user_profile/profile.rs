@@ -418,6 +418,29 @@ pub struct ProfileDomainSettings {
     /// these to resolve the same value the desktop UI offered.
     #[serde(default)]
     pub granularity_favorites: GranularityFavorites,
+
+    // -------------------------------------------------------------------------
+    // Cloud connectivity (restored from the pre-oss-strip profile shape)
+    // -------------------------------------------------------------------------
+
+    /// Optional linked account info. `None` = anonymous local user.
+    /// Domain: a headless sync consumer needs the identity to authenticate.
+    #[serde(default)]
+    pub linked_account: Option<LinkedAccount>,
+
+    /// Whether cloud connectivity (sync) is enabled for this profile.
+    #[serde(default)]
+    pub cloud_enabled: bool,
+
+    /// Sync level label: `"local"`, `"connected"`, `"cloud"`.
+    /// Source of truth — index.json derives from this on every load.
+    #[serde(default)]
+    pub sync_level: String,
+
+    /// Incremental sync state — persisted so subsequent syncs only request
+    /// items changed since the last successful sync.
+    #[serde(default)]
+    pub sync_state: SyncState,
 }
 
 impl ProfileDomainSettings {
@@ -435,6 +458,10 @@ impl ProfileDomainSettings {
             profile_id: String::new(),
             data_load: DataLoadSettings::default(),
             granularity_favorites: GranularityFavorites::default(),
+            linked_account: None,
+            cloud_enabled: false,
+            sync_level: "local".to_string(),
+            sync_state: SyncState::default(),
         }
     }
 }
@@ -698,6 +725,109 @@ impl Default for ProfileUiSettings {
 }
 
 // =============================================================================
+// LinkedAccount — optional cloud identity
+// =============================================================================
+
+/// Optional linked account for user identification.
+///
+/// Restored from the pre-oss-strip profile shape (`c2beead1^`). Users can
+/// link a Telegram, GitHub, or Discord account via the server device-code /
+/// web-callback flows; `None` means a purely local anonymous profile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkedAccount {
+    /// Authentication provider: `"local"`, `"telegram"`, `"github"`, `"discord"`.
+    pub provider: String,
+
+    /// Non-sequential public identifier returned by the server.
+    #[serde(default)]
+    pub public_id: String,
+
+    /// Display name chosen by user or fetched from provider.
+    #[serde(default)]
+    pub display_name: String,
+
+    /// When the account was linked (unix timestamp seconds).
+    #[serde(default)]
+    pub linked_at: u64,
+}
+
+// =============================================================================
+// SyncState — incremental cloud sync cursor
+// =============================================================================
+
+/// Minimal state required to perform incremental cloud sync.
+///
+/// Restored from the pre-oss-strip profile shape (`c2beead1^`). Stored inside
+/// [`ProfileDomainSettings`] so it is automatically persisted to and loaded
+/// from `profile.json` via the existing save/load infrastructure.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncState {
+    /// Unix timestamp (milliseconds) of the last successful sync.
+    /// `0` means the client has never completed a sync.
+    #[serde(default)]
+    pub last_sync_timestamp: i64,
+
+    /// Whether the user has opted into cloud sync.
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Whether the encrypted vault blob is included in cloud sync.
+    #[serde(default = "default_true")]
+    pub sync_vault: bool,
+
+    /// Whether chart presets are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub sync_presets: bool,
+
+    /// Whether indicator templates are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub sync_templates: bool,
+
+    /// Whether watchlists are included in cloud sync.
+    #[serde(default = "default_true")]
+    pub sync_watchlists: bool,
+
+    /// Whether the active theme is included in cloud sync.
+    #[serde(default = "default_true")]
+    pub sync_theme: bool,
+
+    /// Whether the recovery key (encrypted master key) is included in sync.
+    #[serde(default = "default_true")]
+    pub sync_recovery_key: bool,
+
+    /// Set of sync item keys (`"category:sync_id"`) that have been
+    /// successfully pushed to the server at least once.
+    ///
+    /// Used for tombstone detection: if an item disappears from local storage
+    /// but is present in this set, a tombstone (`deleted: true`) is pushed on
+    /// the next sync cycle so the server marks the item as deleted.
+    #[serde(default)]
+    pub synced_items: std::collections::HashSet<String>,
+
+    /// SHA-256 checksums of sync items as they were after the last successful
+    /// push or pull. Key: `sync_id`.
+    #[serde(default)]
+    pub last_synced_checksums: std::collections::HashMap<String, String>,
+}
+
+impl Default for SyncState {
+    fn default() -> Self {
+        Self {
+            last_sync_timestamp: 0,
+            enabled: false,
+            sync_vault: true,
+            sync_presets: true,
+            sync_templates: true,
+            sync_watchlists: true,
+            sync_theme: true,
+            sync_recovery_key: true,
+            synced_items: std::collections::HashSet::new(),
+            last_synced_checksums: std::collections::HashMap::new(),
+        }
+    }
+}
+
+// =============================================================================
 // UserProfile
 // =============================================================================
 
@@ -857,6 +987,14 @@ pub struct ProfileMeta {
     pub created_at: i64,
     /// Relative subdirectory name under `profiles/` (e.g. "default" or a UUID).
     pub dir_name: String,
+    /// Whether cloud connectivity (sync) is enabled for this profile.
+    /// Old index.json files without this field default to false (local-only).
+    #[serde(default)]
+    pub cloud_enabled: bool,
+    /// Sync level label for display: "local", "connected", "cloud".
+    /// Old index.json files without this field derive it from cloud_enabled.
+    #[serde(default)]
+    pub sync_level: String,
 }
 
 /// The profile index file — lists all profiles and which is active.

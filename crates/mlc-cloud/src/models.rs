@@ -1,0 +1,217 @@
+//! Wire-format models for the MLC server API (`/api/sync/*`, `/api/auth/*`).
+//!
+//! These mirror the server-side shapes in
+//! `mylittlechart-server/crates/server/src/routes/sync.rs`,
+//! `.../routes/device_auth.rs` and `.../models/types.rs`, and the pre-strip
+//! client models recovered from `mylittlechart-private-stash/updater`
+//! (source commit `deedb7f`). The server is private; these DTOs carry no
+//! secrets and are safe to keep in the OSS tree.
+
+use serde::{Deserialize, Serialize};
+
+// =============================================================================
+// Sync items
+// =============================================================================
+
+/// Tier that governs how an item is transported to the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncTier {
+    /// Plaintext structured data — no client-side encryption.
+    CloudSync,
+    /// Already-encrypted binary blob — pushed as-is, no re-encryption.
+    ZtBlob,
+    /// Device-local only — never sent to the server.
+    DeviceLocal,
+}
+
+/// Lightweight metadata for a single sync item — used in change-detection
+/// lists to avoid transferring full content on every tick.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncItemMeta {
+    pub sync_id: String,
+    pub category: String,
+    pub name: String,
+    pub checksum: String,
+    pub modified_at: i64,
+    #[serde(default)]
+    pub deleted: bool,
+}
+
+/// A sync item with its full serialized content.
+///
+/// `content` is an opaque blob from the server's point of view (plaintext
+/// JSON for [`SyncTier::CloudSync`], base64 ciphertext for
+/// [`SyncTier::ZtBlob`]). `checksum` must be `SHA-256(content)` as 64
+/// lowercase hex chars — the server verifies it before writing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncItem {
+    pub sync_id: String,
+    pub category: String,
+    pub name: String,
+    pub content: String,
+    pub checksum: String,
+    pub modified_at: i64,
+    #[serde(default)]
+    pub deleted: bool,
+}
+
+// =============================================================================
+// /api/sync/* request/response shapes
+// =============================================================================
+
+/// Request body for `POST /api/sync/push` (max 50 items per request).
+#[derive(Debug, Clone, Serialize)]
+pub struct PushRequest {
+    pub items: Vec<SyncItem>,
+}
+
+/// Response body from `POST /api/sync/push`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PushResponse {
+    #[serde(alias = "synced")]
+    pub accepted: usize,
+    #[serde(default)]
+    pub rejected: Vec<serde_json::Value>,
+}
+
+/// Response body from `GET /api/sync/changes?since=T`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ChangesResponse {
+    pub items: Vec<SyncItemMeta>,
+    pub server_timestamp: i64,
+}
+
+/// Response body from `GET /api/sync/pull` (full snapshot).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PullResponse {
+    pub items: Vec<SyncItem>,
+}
+
+/// Response body from `GET /api/sync/status`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyncStatusResponse {
+    pub has_cloud_data: bool,
+    pub item_count: i64,
+    pub last_modified: Option<i64>,
+    pub quota_used_bytes: Option<i64>,
+    #[serde(default)]
+    pub quota_limit_bytes: Option<i64>,
+}
+
+/// Response body from `DELETE /api/sync/all`
+/// (requires the `X-Confirm-Delete: yes` header).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeleteAllResponse {
+    pub deleted: u64,
+}
+
+/// Response body from `GET /api/sync/e2e-params`.
+///
+/// The server returns `{ "enabled": false }` when the user has not set up
+/// vault recovery; the remaining fields are absent in that case.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct E2EParamsResponse {
+    pub enabled: bool,
+    #[serde(default)]
+    pub salt: Option<String>,
+    #[serde(default)]
+    pub iterations: Option<i32>,
+    #[serde(default)]
+    pub encrypted_master_key: Option<String>,
+}
+
+/// Vault parameters for an account with E2E recovery set up.
+#[derive(Debug, Clone)]
+pub struct VaultParams {
+    /// Hex-encoded 16-byte random salt used for PBKDF2 key derivation.
+    pub salt: String,
+    /// Number of PBKDF2 iterations.
+    pub iterations: i32,
+    /// AES-256-GCM blob: master key encrypted with the user's recovery key
+    /// (base64). The server stores it opaquely and never inspects it.
+    pub encrypted_master_key: Option<String>,
+}
+
+/// Request body for `POST /api/sync/e2e-setup`.
+///
+/// `salt` must be exactly 32 lowercase hex chars (16 bytes);
+/// `iterations` must be >= 100 000.
+#[derive(Debug, Clone, Serialize)]
+pub struct E2ESetupRequest {
+    pub salt: String,
+    pub iterations: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub encrypted_master_key: Option<String>,
+}
+
+// =============================================================================
+// /api/auth/* shapes (device-code login)
+// =============================================================================
+
+/// Request body for `POST /api/auth/device-code`.
+#[derive(Debug, Clone, Serialize)]
+pub struct DeviceCodeRequest {
+    pub device_id: String,
+}
+
+/// Response body from `POST /api/auth/device-code`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DeviceCodeResponse {
+    pub code: String,
+    pub expires_in: u64,
+}
+
+/// Outcome of `GET /api/auth/poll?code=…`.
+///
+/// `pending` returns HTTP 202, `expired` HTTP 410, `confirmed` HTTP 200 —
+/// the transport maps all three onto this enum (status code + body).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "status", rename_all = "lowercase")]
+pub enum DeviceAuthPoll {
+    Pending,
+    Expired,
+    Confirmed {
+        token: String,
+        display_name: String,
+        provider: String,
+        user_id: i64,
+        public_id: String,
+    },
+}
+
+/// A single linked OAuth provider in a user's profile.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderInfo {
+    pub provider: String,
+    pub display_name: String,
+}
+
+/// Response body from `GET /api/auth/me`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeResponse {
+    pub user_id: i64,
+    /// Non-sequential public identifier — safe to expose in APIs.
+    pub public_id: String,
+    pub display_name: String,
+    /// Primary provider (kept for backwards compatibility).
+    pub provider: String,
+    /// All providers linked to this account.
+    pub providers: Vec<ProviderInfo>,
+}
+
+/// Locally persisted auth token (wasm: localStorage; native: config dir).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StoredToken {
+    pub token: String,
+    pub provider: String,
+    pub display_name: String,
+    pub saved_at: u64,
+    /// User ID returned by the server. Defaults to 0 for tokens saved before
+    /// this field was added.
+    #[serde(default)]
+    pub user_id: i64,
+    /// Non-sequential public identifier (present for tokens issued after the
+    /// server started returning it from the poll endpoint).
+    #[serde(default)]
+    pub public_id: Option<String>,
+}

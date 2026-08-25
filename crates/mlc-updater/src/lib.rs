@@ -716,12 +716,11 @@ async fn updater_loop(
                                                 avatar,
                                                 created_at: now_secs,
                                                 dir_name,
-                                                // DEFERRED (phase 2): oss-strip 2/N (d81c4dbb)
-                                                // removed `ProfileMeta.cloud_enabled` and
-                                                // `ProfileMeta.sync_level` from mlc-core.
-                                                // A restored profile used to be registered as
-                                                // `cloud_enabled: true, sync_level: "cloud"`;
-                                                // that metadata is currently not persisted.
+                                                // A profile restored from the cloud is
+                                                // cloud-enabled by definition (pre-strip
+                                                // behaviour; fields restored in mlc-core).
+                                                cloud_enabled: true,
+                                                sync_level: "cloud".to_string(),
                                             });
                                         }
                                         if let Err(e) =
