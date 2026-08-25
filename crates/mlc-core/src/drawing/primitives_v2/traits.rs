@@ -1297,6 +1297,47 @@ pub trait Primitive: Send + Sync {
     /// the order-flow family (the overwhelming majority).
     fn refresh_footprint_derived_cache(&mut self, _footprint: &[crate::types::FootprintBar]) {}
 
+    /// The footprint counterpart of [`Self::snap_to_detected`] — same
+    /// contract, same one-shot timing, for a claim whose detector reads the
+    /// per-price book rather than OHLC.
+    ///
+    /// Called from the same creation path, immediately after the OHLC one,
+    /// and only when the bubble actually carries footprint. A claim that
+    /// reads bars overrides the OHLC hook; a claim that reads footprint
+    /// overrides this one; no claim needs both, because no detector in
+    /// these families reads both.
+    ///
+    /// Default: no-op.
+    fn snap_to_detected_footprint(&mut self, _footprint: &[crate::types::FootprintBar]) {}
+
+    /// Which markup family this primitive belongs to, or `None` for a
+    /// drawing that is not a markup claim at all (a trend line, a
+    /// Fibonacci grid, an icon).
+    ///
+    /// Read by the collection-wide pass that applies a family's own
+    /// cross-primitive rules — the rules a claim cannot check alone because
+    /// they are about its NEIGHBOURS. Elliott answers `None` here and keeps
+    /// its own pass; see [`crate::drawing::primitives_v2::markup::MarkupFamily`].
+    fn markup_family(&self) -> Option<crate::drawing::primitives_v2::markup::MarkupFamily> {
+        None
+    }
+
+    /// Append cross-primitive violations onto whatever this primitive's own
+    /// [`Self::context_violations`] already reports.
+    ///
+    /// Append, not replace, and the ordering contract is the caller's:
+    /// every call site runs the family's own bars/footprint cache refresh
+    /// FIRST (which rebuilds the self-derived violations wholesale) and this
+    /// pass immediately after. A markup claim's `context_violations` is one
+    /// list holding both kinds, because the settings modal's Rules group and
+    /// the render's own recolour both want all of them and neither cares
+    /// where a rule got its evidence.
+    ///
+    /// Default: no-op — correct for every primitive with no cache to append
+    /// to, Elliott included (it owns the whole list through
+    /// [`Self::set_context_violations`] instead).
+    fn push_context_violations(&mut self, _violations: Vec<super::elliott::guard::Violation>) {}
+
     // =========================================================================
     // Serialization
     // =========================================================================

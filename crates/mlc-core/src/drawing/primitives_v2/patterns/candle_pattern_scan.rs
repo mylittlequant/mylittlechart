@@ -363,6 +363,14 @@ impl Primitive for CandlePatternScan {
     /// through the SAME [`Self::resolved_window`]/[`Self::resolved_scan`]
     /// calls `render` makes directly — see
     /// [`Primitive::refresh_bar_derived_cache`]'s own contract.
+    /// A survey makes no claim of its own (see this module's own doc), so
+    /// it has nothing a neighbour could contradict — it declares its
+    /// family for grouping but keeps the default no-op
+    /// `push_context_violations`.
+    fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
+        Some(super::super::markup::MarkupFamily::CandlePattern)
+    }
+
     fn refresh_bar_derived_cache(&mut self, bars: &[Bar]) {
         self.cached_window = self.resolved_window(bars);
         self.cached_hits = self.resolved_scan(bars);

@@ -602,6 +602,7 @@ impl BubbleStore {
             // this bubble's first `replace_bars`/`set_bars` call lands, which
             // carries the SAME call below.
             super::bar_derived_cache::refresh_bar_derived_caches(&mut bubble);
+            super::markup_guards::refresh_markup_guards(&mut bubble);
             // Footprint counterpart of the same sweep — a documented no-op
             // here today (`DataBubbleSnapshot` carries no footprint field
             // either, same client-only-data doctrine as bars), kept for the
@@ -902,6 +903,7 @@ impl BubbleStore {
             // contract is for; see [`Self::append_bar`]'s own doc for why
             // the narrower per-new-candle append is deliberately NOT hooked.
             super::bar_derived_cache::refresh_bar_derived_caches(b);
+            super::markup_guards::refresh_markup_guards(b);
         }
     }
 
@@ -915,6 +917,7 @@ impl BubbleStore {
             // an empty `bars` resolves every bar-derived cache back to its
             // own safe default (see [`Self::replace_bars`]'s own doc).
             super::bar_derived_cache::refresh_bar_derived_caches(b);
+            super::markup_guards::refresh_markup_guards(b);
         }
     }
 
@@ -925,6 +928,7 @@ impl BubbleStore {
         if let Some(b) = self.bubbles.get_mut(&bid) {
             b.replace_bars(bars);
             super::bar_derived_cache::refresh_bar_derived_caches(b);
+            super::markup_guards::refresh_markup_guards(b);
         }
     }
 

@@ -290,7 +290,13 @@ impl Primitive for AmdCycle {
         let y = ctx.price_to_y(cycle.manipulation.level);
         draw_level(ctx, x1, x2, y, &stroke, true);
         if self.show_labels {
-            label_at(ctx, x2, y + 12.0 * dpr, ConceptKey::ManipulationLabel.get(lang), &stroke);
+            // Anchored to the RIGHT of the sweep bar, not centred on it: the
+            // sweep that manipulates an accumulation range sits at that
+            // range's own edge by definition, so a centred label lands on
+            // top of the "Accumulation" one drawn just above the box
+            // (observed on the live stand). Left-aligning past the sweep bar
+            // keeps the three phase labels apart however tight the cycle is.
+            label_right_of(ctx, x2 + 6.0 * dpr, y, ConceptKey::ManipulationLabel.get(lang), &stroke);
         }
 
         // Distribution: the leg's own diagonal.
@@ -365,6 +371,17 @@ impl Primitive for AmdCycle {
         self.anchor_ts = placed;
     }
 
+    fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
+        Some(super::super::markup::MarkupFamily::SmartMoney)
+    }
+
+    /// Append-only, by [`Primitive::push_context_violations`]'s own
+    /// contract: the cross-primitive pass runs right after this claim's
+    /// own cache refresh has rebuilt the self-derived list.
+    fn push_context_violations(&mut self, violations: Vec<Violation>) {
+        self.cached_violations.extend(violations);
+    }
+
     fn context_violations(&self) -> &[Violation] { &self.cached_violations }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
@@ -391,6 +408,17 @@ fn accumulation_bounds(bars: &[Bar], span: &std::ops::Range<usize>) -> (Option<f
     let lo = slice.iter().fold(f64::INFINITY, |m, b| m.min(b.low));
     let hi = slice.iter().fold(f64::NEG_INFINITY, |m, b| m.max(b.high));
     (Some(lo), Some(hi))
+}
+
+/// A phase label anchored by its own LEFT edge and vertically centred on
+/// `y` — for a label that has to sit beside a level rather than above or
+/// below it. See the manipulation phase's own call for why.
+fn label_right_of(ctx: &mut dyn RenderContext, x: f64, y: f64, text: &str, color: &str) {
+    ctx.set_fill_color(color);
+    ctx.set_font("10px sans-serif");
+    ctx.set_text_align(crate::render::TextAlign::Left);
+    ctx.set_text_baseline(crate::render::TextBaseline::Middle);
+    ctx.fill_text(text, x, y);
 }
 
 fn label_at(ctx: &mut dyn RenderContext, x: f64, y: f64, text: &str, color: &str) {

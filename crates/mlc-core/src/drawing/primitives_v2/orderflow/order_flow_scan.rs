@@ -586,6 +586,14 @@ impl Primitive for OrderFlowScan {
     /// leaves the tool drawing an empty shape while answering a different
     /// question than the one it was asked — the exact degradation Appendix B
     /// of `docs/mlc/plans/markup-engines-2026-08-25.md` forbids.
+    /// A survey makes no claim of its own (see this module's own doc), so
+    /// it has nothing a neighbour could contradict — it declares its
+    /// family for grouping but keeps the default no-op
+    /// `push_context_violations`.
+    fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
+        Some(super::super::markup::MarkupFamily::OrderFlow)
+    }
+
     fn context_violations(&self) -> &[Violation] {
         if !self.cached_footprint_present {
             &super::orderflow_judge::MISSING_VIOLATION

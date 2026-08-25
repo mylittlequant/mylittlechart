@@ -320,6 +320,17 @@ impl Primitive for StructureBreak {
         self.anchor_ts = placed;
     }
 
+    fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
+        Some(super::super::markup::MarkupFamily::SmartMoney)
+    }
+
+    /// Append-only, by [`Primitive::push_context_violations`]'s own
+    /// contract: the cross-primitive pass runs right after this claim's
+    /// own cache refresh has rebuilt the self-derived list.
+    fn push_context_violations(&mut self, violations: Vec<Violation>) {
+        self.cached_violations.extend(violations);
+    }
+
     fn context_violations(&self) -> &[Violation] { &self.cached_violations }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {

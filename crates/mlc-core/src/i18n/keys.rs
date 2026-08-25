@@ -3292,10 +3292,13 @@ pub enum ConceptKey {
     ScanCoverageAllBars = 426,
     /// `SmcScan`'s own switch for leaving already-filled gaps out.
     SmcScanHideFilledGapsLabel = 427,
+    /// The shared markup layer's own first cross-primitive rule: two claims
+    /// of the same kind anchored on the same bar.
+    RuleOverlappingClaim = 428,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 428;
+    pub const COUNT: usize = 429;
 
     /// Get translation for this key.
     #[inline]

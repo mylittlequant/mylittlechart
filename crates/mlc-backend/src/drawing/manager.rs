@@ -930,6 +930,15 @@ impl DrawingManager {
         if let Some(prim) = b.primitives.iter_mut().find(|p| p.data().id == id) {
             prim.snap_to_detected(&b.bars);
         }
+        // Same nudge for a claim whose detector reads the per-price book —
+        // only when this bubble actually carries footprint, for the reason
+        // `refresh_footprint_derived_caches` gives: an empty slice is
+        // ambiguous with "subscribed, no bucket yet".
+        if let Some(footprint) = b.footprint_bars.as_ref() {
+            if let Some(prim) = b.primitives.iter_mut().find(|p| p.data().id == id) {
+                prim.snap_to_detected_footprint(footprint);
+            }
+        }
 
         // A freshly placed primitive has never seen the bars. Its render
         // does not care (it recomputes from `ctx.bars()` every frame), but
@@ -941,6 +950,7 @@ impl DrawingManager {
         // INTERACTIVE creation path, which is not one of the
         // `refresh_wave_guards` sites and so refreshed neither cache.
         crate::bubble::bar_derived_cache::refresh_bar_derived_caches(b);
+        crate::bubble::markup_guards::refresh_markup_guards(b);
 
         id
     }
@@ -2231,6 +2241,10 @@ impl DrawingManager {
     pub(crate) fn refresh_bar_derived(&self, bubbles: &mut BubbleStore, bid: BubbleId) {
         let Some(b) = bubbles.bubble_mut(bid) else { return };
         crate::bubble::bar_derived_cache::refresh_bar_derived_caches(b);
+        // Immediately after, never separately — see
+        // `markup_guards`'s own ordering contract: that pass APPENDS onto the
+        // list this one just rebuilt.
+        crate::bubble::markup_guards::refresh_markup_guards(b);
     }
 
     /// Clear any [`WaveLink`]/`follows` reference in `bid`'s own bubble that

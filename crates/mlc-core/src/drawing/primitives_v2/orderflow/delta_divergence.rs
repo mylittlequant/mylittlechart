@@ -319,6 +319,28 @@ impl Primitive for DeltaDivergence {
         self.last_seen_claimed_kind = Some(self.claimed_kind.clone());
     }
 
+    /// Snap this claim onto the footprint bucket its own detector names,
+    /// within `claim_snap_bars` — see [`Primitive::snap_to_detected`] for
+    /// the contract.
+    fn snap_to_detected_footprint(&mut self, footprint: &[crate::types::FootprintBar]) {
+        let radius = orderflow_engine_config().claim_snap_bars;
+        if radius == 0 || self.resolve(footprint).is_some() {
+            return;
+        }
+        let Some(idx) = super::orderflow_judge::find_footprint_bar_for_ts(footprint, self.anchor_ts) else { return };
+        let placed = self.anchor_ts;
+        for step in 1..=radius {
+            for candidate in [idx.checked_sub(step), idx.checked_add(step).filter(|i| *i < footprint.len())] {
+                let Some(candidate) = candidate else { continue };
+                self.anchor_ts = footprint[candidate].open_time;
+                if self.resolve(footprint).is_some() {
+                    return;
+                }
+            }
+        }
+        self.anchor_ts = placed;
+    }
+
     /// Gated on `OrderFlowEngineConfig::judge_claims` first — see
     /// `imbalance_zone::ImbalanceZone::context_violations`'s own doc for the
     /// identical rationale.
@@ -330,6 +352,17 @@ impl Primitive for DeltaDivergence {
     /// leaves the tool drawing an empty shape while answering a different
     /// question than the one it was asked — the exact degradation Appendix B
     /// of `docs/mlc/plans/markup-engines-2026-08-25.md` forbids.
+    fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
+        Some(super::super::markup::MarkupFamily::OrderFlow)
+    }
+
+    /// Append-only, by [`Primitive::push_context_violations`]'s own
+    /// contract: the cross-primitive pass runs right after this claim's
+    /// own cache refresh has rebuilt the self-derived list.
+    fn push_context_violations(&mut self, violations: Vec<Violation>) {
+        self.cached_violations.extend(violations);
+    }
+
     fn context_violations(&self) -> &[Violation] {
         if !self.cached_footprint_present {
             return &super::orderflow_judge::MISSING_VIOLATION;

@@ -86,6 +86,7 @@ use serde::{Deserialize, Serialize};
 mod traits;
 mod types;
 mod anchor_mark;
+pub mod markup;
 mod bar_window;
 
 /// How close, in device pixels, two consecutive markers of the same kind
