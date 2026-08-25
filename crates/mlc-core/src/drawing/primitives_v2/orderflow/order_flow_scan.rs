@@ -120,8 +120,35 @@ impl OrderFlowStructure {
     }
 }
 
-fn default_all_structure_ids() -> Vec<String> {
-    OrderFlowStructure::ALL.iter().map(|s| s.id().to_string()).collect()
+/// What a freshly placed survey looks for: the EVENTS, not the per-level
+/// flags.
+///
+/// The five structures split cleanly in two. An absorption, a stacked
+/// imbalance run and a delta divergence are events — something happened at
+/// a moment, and a survey listing them is a list of findings. A single
+/// print and an unfinished level are per-LEVEL flags that the footprint
+/// carries on almost every bar; listing them is a redescription of the
+/// profile, not a finding, and at their density they bury the events drawn
+/// beside them.
+///
+/// Measured on BTCUSDT 5s over 66 footprint bars: 399 single-print runs
+/// (already collapsed from 13,916 flagged levels — see
+/// [`crate::state::orderflow_engine::OrderFlowEngineConfig::min_single_print_run`])
+/// and 131 unfinished levels, against 10 delta divergences, 3 absorptions
+/// and 0 imbalance runs. Both flags stay in the table, one checkbox away,
+/// and nothing about how they are drawn or counted changes when they are
+/// on.
+fn default_structure_ids() -> Vec<String> {
+    OrderFlowStructure::ALL
+        .iter()
+        .filter(|s| {
+            !matches!(
+                s,
+                OrderFlowStructure::SinglePrint | OrderFlowStructure::UnfinishedBusiness
+            )
+        })
+        .map(|s| s.id().to_string())
+        .collect()
 }
 
 /// One delta-divergence hit as this survey caches it — augmented with both
@@ -175,7 +202,7 @@ pub struct OrderFlowScan {
     /// [`OrderFlowStructure::id`] wire ids — serialized as ids, never as an
     /// enum/index, so a saved scan survives a catalogue that grows (same
     /// convention `SmcScan::enabled_structures` uses). Default: all five.
-    #[serde(default = "default_all_structure_ids")]
+    #[serde(default = "default_structure_ids")]
     pub enabled_structures: Vec<String>,
 
     /// This scan's own resolved `[start, end]` FOOTPRINT-bar-index window —
@@ -212,7 +239,7 @@ impl OrderFlowScan {
             },
             ts1,
             ts2,
-            enabled_structures: default_all_structure_ids(),
+            enabled_structures: default_structure_ids(),
             cached_window: None,
             cached_hits: OrderFlowScanHits::default(),
             cached_footprint_present: false,
@@ -243,8 +270,9 @@ impl OrderFlowScan {
             hits.absorption = (start..=end).filter_map(|i| resolve_absorption(&footprint[i])).collect();
         }
         if self.enabled(OrderFlowStructure::SinglePrint) || self.enabled(OrderFlowStructure::UnfinishedBusiness) {
+            let min_run = orderflow_engine_config().min_single_print_run;
             for i in start..=end {
-                let (sp, uf) = resolve_level_flags(&footprint[i]);
+                let (sp, uf) = resolve_level_flags(&footprint[i], min_run);
                 if self.enabled(OrderFlowStructure::SinglePrint) {
                     hits.single_print.extend(sp);
                 }

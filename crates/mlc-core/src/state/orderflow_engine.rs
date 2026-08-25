@@ -62,6 +62,20 @@ pub struct OrderFlowEngineConfig {
     /// that module defines no swing rule of its own — see its own doc).
     #[serde(default = "default_delta_divergence_swing_n")]
     pub delta_divergence_swing_n: usize,
+
+    /// How many CONSECUTIVE one-sided price levels a single-print run must
+    /// span before `order_flow_scan` reports it. Default 3.
+    ///
+    /// `FootprintLevel::is_single_print` is a per-LEVEL flag, and on a fine
+    /// price grid most levels carry it — measured on BTCUSDT 1m over 65
+    /// footprint bars: 13,916 flagged levels, ~214 per bar. Reported one by
+    /// one that is not a survey finding, it is the texture of the footprint,
+    /// and it buried every other structure the survey drew. What traders
+    /// actually read is a RUN of adjacent one-sided levels — a gap in the
+    /// profile — so the survey collapses each run to one hit and drops runs
+    /// shorter than this. 1 restores the old per-level behaviour.
+    #[serde(default = "default_min_single_print_run")]
+    pub min_single_print_run: usize,
 }
 
 fn default_true() -> bool {
@@ -76,12 +90,17 @@ fn default_delta_divergence_swing_n() -> usize {
     2
 }
 
+fn default_min_single_print_run() -> usize {
+    3
+}
+
 impl Default for OrderFlowEngineConfig {
     fn default() -> Self {
         Self {
             judge_claims: true,
             judge_lookback_bars: default_judge_lookback_bars(),
             delta_divergence_swing_n: default_delta_divergence_swing_n(),
+            min_single_print_run: default_min_single_print_run(),
         }
     }
 }

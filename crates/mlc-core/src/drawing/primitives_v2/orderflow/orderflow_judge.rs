@@ -142,20 +142,48 @@ pub struct LevelHit {
     pub price: f64,
 }
 
-/// Every level on `bar` flagged `is_single_print`, and every level flagged
-/// `is_unfinished` — read verbatim, nothing recomputed (see this module's
-/// own doc).
-pub fn resolve_level_flags(bar: &FootprintBar) -> (Vec<LevelHit>, Vec<LevelHit>) {
+/// `bar`'s single-print RUNS and its `is_unfinished` levels — both read
+/// off the flags the footprint engine already set, nothing recomputed (see
+/// this module's own doc).
+///
+/// Single prints collapse: a maximal group of ADJACENT levels all carrying
+/// `is_single_print` becomes ONE hit, placed at the run's own middle level,
+/// and a run shorter than `min_single_print_run` is dropped entirely. See
+/// [`crate::state::orderflow_engine::OrderFlowEngineConfig::min_single_print_run`]
+/// for the measurement that forced this. `is_unfinished` is NOT collapsed —
+/// it flags a bar's own unfinished extreme, one or two levels per bar, and
+/// each one is its own reading.
+///
+/// Adjacency is positional: `FootprintBar::levels` is one contiguous price
+/// ladder, so neighbouring entries are neighbouring prices.
+pub fn resolve_level_flags(bar: &FootprintBar, min_single_print_run: usize) -> (Vec<LevelHit>, Vec<LevelHit>) {
+    let ts = bar.ts_ms();
+    let min_run = min_single_print_run.max(1);
+
     let mut single_print = Vec::new();
-    let mut unfinished = Vec::new();
-    for level in &bar.levels {
-        if level.is_single_print {
-            single_print.push(LevelHit { bar_ts: bar.ts_ms(), price: level.price });
-        }
-        if level.is_unfinished {
-            unfinished.push(LevelHit { bar_ts: bar.ts_ms(), price: level.price });
+    let mut run_start: Option<usize> = None;
+    for i in 0..=bar.levels.len() {
+        let flagged = bar.levels.get(i).is_some_and(|l| l.is_single_print);
+        match (flagged, run_start) {
+            (true, None) => run_start = Some(i),
+            (false, Some(start)) => {
+                if i - start >= min_run {
+                    let mid = start + (i - start) / 2;
+                    single_print.push(LevelHit { bar_ts: ts, price: bar.levels[mid].price });
+                }
+                run_start = None;
+            }
+            _ => {}
         }
     }
+
+    let unfinished = bar
+        .levels
+        .iter()
+        .filter(|l| l.is_unfinished)
+        .map(|l| LevelHit { bar_ts: ts, price: l.price })
+        .collect();
+
     (single_print, unfinished)
 }
 
@@ -264,6 +292,48 @@ mod tests {
         assert_eq!(run.low, 100.0);
         assert_eq!(run.high, 101.0);
         assert_eq!(run.bar_ts, 1_000);
+    }
+
+    #[test]
+    fn single_prints_collapse_to_one_hit_per_run() {
+        // Two runs: levels 1..=3 (three long) and level 6 (one long).
+        let mut bar = bar_with_levels(
+            1_000,
+            &[(99.0, 1.0, 1.0), (100.0, 1.0, 1.0), (101.0, 1.0, 1.0), (102.0, 1.0, 1.0),
+              (103.0, 1.0, 1.0), (104.0, 1.0, 1.0), (105.0, 1.0, 1.0)],
+        );
+        for i in [1usize, 2, 3, 6] {
+            bar.levels[i].is_single_print = true;
+        }
+
+        let (sp, _) = resolve_level_flags(&bar, 3);
+        assert_eq!(sp.len(), 1, "the three-level run counts once, the lone level is below the minimum");
+        assert_eq!(sp[0].price, 101.0, "the run reports at its own middle level");
+    }
+
+    #[test]
+    fn a_min_run_of_one_reports_every_flagged_level_separately() {
+        let mut bar = bar_with_levels(
+            1_000,
+            &[(99.0, 1.0, 1.0), (100.0, 1.0, 1.0), (101.0, 1.0, 1.0)],
+        );
+        bar.levels[0].is_single_print = true;
+        bar.levels[2].is_single_print = true;
+
+        let (sp, _) = resolve_level_flags(&bar, 1);
+        assert_eq!(sp.len(), 2, "two runs of one level each");
+    }
+
+    #[test]
+    fn unfinished_business_is_never_collapsed() {
+        // Adjacent unfinished levels stay separate readings — only single
+        // prints collapse.
+        let mut bar = bar_with_levels(1_000, &[(99.0, 1.0, 1.0), (100.0, 1.0, 1.0)]);
+        bar.levels[0].is_unfinished = true;
+        bar.levels[1].is_unfinished = true;
+
+        let (_, uf) = resolve_level_flags(&bar, 3);
+        assert_eq!(uf.len(), 2);
     }
 
     #[test]
