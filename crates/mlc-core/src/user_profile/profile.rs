@@ -995,7 +995,18 @@ fn default_derived_trade_target() -> u32 {
 /// Callers that need the base early take this default and let a loaded
 /// profile override it afterwards.
 pub fn default_archive_proxy_base() -> String {
-    "http://127.0.0.1:17800".to_string()
+    // wasm (public web deploy): the browser has no local CORS daemon — route
+    // through the same-origin host-allowlisted nginx proxy. On a local dev
+    // harness without that location this 404s, which the archive fetcher
+    // already tolerates as "backfill unavailable".
+    #[cfg(target_arch = "wasm32")]
+    {
+        "/archive-proxy".to_string()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        "http://127.0.0.1:17800".to_string()
+    }
 }
 
 // =============================================================================
