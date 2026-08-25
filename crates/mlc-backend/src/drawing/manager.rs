@@ -596,9 +596,16 @@ impl DrawingManager {
         let successor_kind_items: Vec<(String, String)> = {
             let registry = PrimitiveRegistry::global().read().unwrap();
             let mut kinds: &[&str] = successor_kinds(prim.as_ref());
-            let markup_kinds = mlc_core::drawing::primitives_v2::markup::successor_kinds(prim.type_id());
+            // The markup table carries a time direction per edge
+            // (`markup::chain::Reach`) that Elliott's does not; the picker
+            // only needs the type ids, so it takes the first half of each
+            // pair.
+            let markup_kinds: Vec<&str> = mlc_core::drawing::primitives_v2::markup::successor_kinds(prim.type_id())
+                .iter()
+                .map(|&(kind_id, _)| kind_id)
+                .collect();
             if kinds.is_empty() {
-                kinds = markup_kinds;
+                kinds = &markup_kinds;
             }
             kinds
                 .iter()
@@ -2259,6 +2266,72 @@ impl DrawingManager {
     /// chart visibly carrying dozens of hits (measured on the live binary,
     /// 2026-08-25). The pass costs one detector run per primitive, which
     /// is exactly what one frame of `render` already pays.
+    /// Draw every smart-money setup the engine can assemble from `bid`'s
+    /// own bars, and report how many claims were created.
+    ///
+    /// The payoff of deriving edges instead of declaring them: this creates
+    /// primitives and nothing else. It sets no link and no `follows` — the
+    /// maintaining pass below finds them, because a proposal is built to
+    /// the same grammar and the same window that pass derives by
+    /// (`markup::propose`'s own module doc). If the two ever disagreed, the
+    /// engine would be drawing chains it then refuses to recognise, which
+    /// is why the proposal tests assert legality under `chain::may_follow`
+    /// rather than against a fixture.
+    ///
+    /// A claim of the same kind already sitting on a proposed bar is left
+    /// alone and not duplicated: the analyst's own reading wins over the
+    /// engine's, and a second identical claim is exactly what
+    /// `overlapping_claim` exists to complain about.
+    pub(crate) fn create_proposed_chains(&mut self, bubbles: &mut BubbleStore, bid: BubbleId) -> usize {
+        use mlc_core::drawing::primitives_v2::markup;
+
+        let Some(b) = bubbles.bubble_mut(bid) else { return 0 };
+        let proposals = markup::propose_smc_chains(&b.bars, &mlc_core::state::smc_engine::smc_engine_config());
+        if proposals.is_empty() {
+            return 0;
+        }
+
+        let symbol = b.address.symbol.clone();
+        let mut created = 0usize;
+        {
+            let registry = PrimitiveRegistry::global().read().unwrap();
+            for proposal in &proposals {
+                for link in &proposal.links {
+                    let Some(bar) = b.bars.get(link.bar) else { continue };
+                    let ts_ms = bar.timestamp * 1000;
+                    let occupied = b.primitives.iter().any(|p| {
+                        p.type_id() == link.type_id
+                            && p.points().first().is_some_and(|(ts, _)| *ts == ts_ms)
+                    });
+                    if occupied {
+                        continue;
+                    }
+                    let Some(mut prim) = registry.create(link.type_id, &[(ts_ms, bar.close)], None) else {
+                        continue;
+                    };
+                    if let Some(variant) = link.variant {
+                        // The detector's own verdict, stamped as the CLAIM —
+                        // an engine that proposes a break without saying
+                        // which kind it is has proposed half a claim.
+                        prim.apply_style_property(
+                            "break_kind",
+                            &mlc_core::drawing::primitives_v2::config::PropertyValue::String(variant.to_string()),
+                        );
+                    }
+                    prim.data_mut().id = alloc_primitive_id();
+                    prim.data_mut().symbol = symbol.clone();
+                    b.primitives.push(prim);
+                    created += 1;
+                }
+            }
+        }
+
+        if created > 0 {
+            self.refresh_bar_derived(bubbles, bid);
+        }
+        created
+    }
+
     /// Re-run every derived pass over EVERY bubble — the refresh an
     /// ENGINE-level setting needs.
     ///
@@ -2734,7 +2807,7 @@ impl DrawingManager {
             .is_some_and(|prev_type| {
                 mlc_core::drawing::primitives_v2::markup::successor_kinds(prev_type)
                     .iter()
-                    .any(|&kind_id| kind_id == type_id)
+                    .any(|&(kind_id, _)| kind_id == type_id)
             });
         if !allowed {
             return false;

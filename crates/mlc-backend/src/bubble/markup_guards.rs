@@ -174,14 +174,36 @@ fn refresh_markup_chains(b: &mut DataBubble) {
                     .enumerate()
                     .filter(|(j, _)| *j != i)
                     .filter_map(|(_, other)| other.as_ref())
-                    .filter(|prev| {
-                        chain::may_follow(&prev.type_id, &own.type_id)
-                            && prev.fact.bar < own.fact.bar
-                            && own.fact.bar - prev.fact.bar <= window
+                    .filter_map(|prev| {
+                        // Which SIDE of the predecessor this claim sits on
+                        // is part of the grammar, not an assumption — see
+                        // `chain::Reach`. Most of the narrative runs
+                        // forward; an origin sits behind the break it
+                        // originated, and a single "earlier wins" rule
+                        // could never link that pair at all.
+                        let distance = match chain::may_follow(&prev.type_id, &own.type_id)? {
+                            chain::Reach::Forward => own.fact.bar.checked_sub(prev.fact.bar)?,
+                            chain::Reach::Backward => prev.fact.bar.checked_sub(own.fact.bar)?,
+                        };
+                        if distance == 0 || distance > window {
+                            return None;
+                        }
+                        // An origin does not CONTINUE the break its own
+                        // impulse caused — that break continues IT, and the
+                        // backward edge above is how. Without this the
+                        // block, sitting between the sweep and its own
+                        // break, would be picked as that break's nearest
+                        // predecessor and the setup would read backwards.
+                        if own.type_id == "structure_break"
+                            && prev.fact.origin_event_bar == Some(own.fact.bar)
+                        {
+                            return None;
+                        }
+                        Some((distance, prev.id, prev))
                     })
                     // Nearest first; the lower id breaks a tie.
-                    .max_by_key(|prev| (prev.fact.bar, std::cmp::Reverse(prev.id)))
-                    .map(|prev| MarkupFollows::new(prev.id, &prev.type_id))
+                    .min_by_key(|(distance, id, _)| (*distance, *id))
+                    .map(|(.., prev)| MarkupFollows::new(prev.id, &prev.type_id))
             })
             .flatten();
         if resolved.as_ref() != b.primitives[i].markup_follows() {
@@ -311,8 +333,13 @@ mod tests {
         b.primitives[i].context_violations().iter().map(|v| v.rule_id).collect()
     }
 
+    /// Takes [`ENGINE_CONFIG_LOCK`] without changing anything: the gating
+    /// tests below flip PROCESS-GLOBAL switches, and a test that asserts a
+    /// rule DOES report has to be sure it is not reading the moment one of
+    /// them has it switched off.
     #[test]
     fn two_claims_of_the_same_kind_on_one_bar_are_both_flagged() {
+        let _guard = ENGINE_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let mut b = bubble_with(vec![("order_block", 1_000), ("order_block", 1_000)]);
         refresh_markup_guards(&mut b);
         assert!(rule_ids(&b, 0).contains(&"overlapping_claim"));
@@ -601,6 +628,37 @@ mod tests {
         assert!(follows_of(&b, 1).is_none(), "a stale edge survived the drag");
     }
 
+    /// The edge that runs against the clock. An order block is the last
+    /// opposing candle BEFORE the impulse that broke structure, so the
+    /// claim that follows a break in the story precedes it on the chart —
+    /// `chain::Reach::Backward`. Under a single "the predecessor is
+    /// earlier" rule this pair could never link at all, which is the whole
+    /// point of the method.
+    #[test]
+    fn an_origin_continues_the_break_ahead_of_it() {
+        let b = contained_bubble(
+            flat_bars(40),
+            vec![
+                ("structure_break", vec![(ts_ms(20), 100.0)]),
+                ("order_block", vec![(ts_ms(15), 100.0)]),
+            ],
+        );
+        assert_eq!(follows_of(&b, 1), Some(b.primitives[0].data().id), "the origin sits behind its break");
+    }
+
+    /// And not to a break too far behind it to be the one it originated.
+    #[test]
+    fn an_origin_out_of_reach_of_any_break_continues_nothing() {
+        let b = contained_bubble(
+            flat_bars(80),
+            vec![
+                ("structure_break", vec![(ts_ms(70), 100.0)]),
+                ("order_block", vec![(ts_ms(5), 100.0)]),
+            ],
+        );
+        assert!(follows_of(&b, 1).is_none());
+    }
+
     /// A pattern is a self-contained reading of its own bars — the plan
     /// says so, and `successor_kinds` gives the family no successors, so no
     /// window setting can make one appear.
@@ -643,10 +701,13 @@ mod tests {
             refresh_markup_guards(&mut b);
             assert!(!rule_ids(&b, 0).contains(&"overlapping_claim"));
         });
-        // And the switch is the only reason it went quiet.
-        let mut b = bubble_with(vec![("order_block", 1_000), ("order_block", 1_000)]);
-        refresh_markup_guards(&mut b);
-        assert!(rule_ids(&b, 0).contains(&"overlapping_claim"));
+        // And the switch is the only reason it went quiet — checked under
+        // the same lock, so no other test can flip it back mid-assertion.
+        with_smc_guard_families(|_| {}, || {
+            let mut b = bubble_with(vec![("order_block", 1_000), ("order_block", 1_000)]);
+            refresh_markup_guards(&mut b);
+            assert!(rule_ids(&b, 0).contains(&"overlapping_claim"));
+        });
     }
 
     /// Silencing the chain class must leave the EDGE alone — the link is

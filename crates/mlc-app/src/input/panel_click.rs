@@ -5013,6 +5013,19 @@ impl ChartApp {
                         None => eprintln!("[ChartApp] markup_engine_settings unknown family: {}", key),
                     }
                 }
+                "markup:propose" => {
+                    // The engine drawing what it found. Creates primitives
+                    // and nothing else — the maintaining pass links them,
+                    // because a proposal is built to the same grammar that
+                    // pass derives edges by (`markup::propose`'s own doc).
+                    let bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
+                    let created = bid.map(|bid| self.core.drawings_mut().create_proposed_chains(bid)).unwrap_or(0);
+                    if created > 0 {
+                        self.sync_drawing_back_to_group();
+                        self.autosave_snapshot();
+                    }
+                    eprintln!("[ChartApp] markup_engine_settings: proposed {created} claims");
+                }
                 "markup:judge_claims" => {
                     self.apply_markup_engine_edit(
                         |c| c.judge_claims = !c.judge_claims,

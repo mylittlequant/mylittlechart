@@ -24,12 +24,14 @@
 pub mod adopt;
 pub mod chain;
 pub mod link;
+pub mod propose;
 
 pub use chain::{
-    follows_stat_row, may_follow, successor_kinds, with_follows_row, ChainFact, MarkupBias,
-    MarkupFollows,
+    follows_stat_row, may_follow, predecessor_kinds, successor_kinds, with_follows_row, ChainFact,
+    MarkupBias, MarkupFollows, Reach,
 };
 pub use link::{link_stat_row, slot_name_key, slots, with_link_row, MarkupLink, SlotId};
+pub use propose::{propose_smc_chains, ProposedChain, ProposedClaim};
 
 /// Which markup family a primitive belongs to, for a pass that must apply
 /// one family's own cross-primitive rules and leave every other drawing

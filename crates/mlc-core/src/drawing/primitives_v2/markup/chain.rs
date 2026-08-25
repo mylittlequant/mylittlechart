@@ -105,37 +105,94 @@ pub mod kinds {
     pub const CHOCH: &str = "choch";
 }
 
-/// What may follow `type_id` in its own family's narrative — the
-/// `successor_kinds` analogue for the non-Elliott families.
+/// Where in TIME a successor sits relative to what it continues.
+///
+/// Narrative order and bar order are not the same thing, and assuming they
+/// were is a mistake this engine made and had to correct. Most of the
+/// narrative runs forward: a sweep takes a pool, and the shift that
+/// confirms it comes AFTER. The origin does not. An order block is the last
+/// opposing candle BEFORE the impulse that broke structure, so the claim
+/// that follows a break in the story precedes it on the chart, always.
+///
+/// A single "the predecessor is earlier" rule can therefore never link an
+/// origin to the break it originated — the pairing the whole method is
+/// about.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reach {
+    /// The successor's own bar is LATER than what it continues.
+    Forward,
+    /// The successor's own bar is EARLIER — an origin, which is where the
+    /// impulse began.
+    Backward,
+}
+
+/// What may follow `type_id` in its own family's narrative, and on which
+/// side of it in time — the `successor_kinds` analogue for the non-Elliott
+/// families.
 ///
 /// Empty for anything that opens nothing and continues nothing, which is
 /// how a survey, a container and every drawing outside these families all
 /// answer.
-pub fn successor_kinds(type_id: &str) -> &'static [&'static str] {
+pub fn successor_kinds(type_id: &str) -> &'static [(&'static str, Reach)] {
     match type_id {
         // Smart money, in narrative order. A sweep predicts a shift; a
-        // shift has an origin; an origin is either raided again or carried
-        // further by the next break.
-        "liquidity_sweep" => &["structure_break"],
-        "structure_break" => &["order_block", "fair_value_gap"],
-        "order_block" | "fair_value_gap" => &["liquidity_sweep", "structure_break"],
+        // shift has an origin BEHIND it; an origin is either raided again
+        // or carried further by the NEXT break.
+        "liquidity_sweep" => &[("structure_break", Reach::Forward)],
+        "structure_break" => &[("order_block", Reach::Backward), ("fair_value_gap", Reach::Backward)],
+        "order_block" | "fair_value_gap" => {
+            &[("liquidity_sweep", Reach::Forward), ("structure_break", Reach::Forward)]
+        }
         // The cycle's own manipulation phase IS a sweep — the coarser claim
         // opens the finer narrative rather than sitting inside it.
-        "amd_cycle" => &["liquidity_sweep"],
+        "amd_cycle" => &[("liquidity_sweep", Reach::Forward)],
 
         // Order flow's exhaustion narrative, one scale down and two links
         // shorter: an imbalance is absorbed, and the effort/result split
-        // shows up as a delta divergence after it.
-        "imbalance_zone" => &["absorption_mark"],
-        "absorption_mark" => &["delta_divergence"],
+        // shows up as a delta divergence after it. All forward — an
+        // order-flow event has no origin behind it.
+        "imbalance_zone" => &[("absorption_mark", Reach::Forward)],
+        "absorption_mark" => &[("delta_divergence", Reach::Forward)],
 
         _ => &[],
     }
 }
 
-/// Whether `next_type` may follow `prev_type`.
-pub fn may_follow(prev_type: &str, next_type: &str) -> bool {
-    successor_kinds(prev_type).contains(&next_type)
+/// Whether `next_type` may follow `prev_type`, and on which side of it in
+/// time. `None` when the grammar does not allow the pair at all.
+pub fn may_follow(prev_type: &str, next_type: &str) -> Option<Reach> {
+    successor_kinds(prev_type).iter().find(|(t, _)| *t == next_type).map(|(_, r)| *r)
+}
+
+/// Every type that may PRECEDE `type_id`, with the side of it in time the
+/// predecessor sits on — [`successor_kinds`] read backwards, which is the
+/// direction the maintaining pass actually resolves in.
+///
+/// Written out rather than derived by scanning the forward table, because
+/// the forward table is the one a picker reads ("what may I draw next")
+/// and this one is the one a pass reads ("what does this continue"); a
+/// derivation would make the two look like one table with a helper and
+/// hide that they answer different questions.
+pub fn predecessor_kinds(type_id: &str) -> &'static [(&'static str, Reach)] {
+    match type_id {
+        // A shift continues the sweep BEFORE it, or the origin before that.
+        "structure_break" => &[
+            ("liquidity_sweep", Reach::Forward),
+            ("order_block", Reach::Forward),
+            ("fair_value_gap", Reach::Forward),
+        ],
+        // An origin continues the break AHEAD of it — see [`Reach`].
+        "order_block" | "fair_value_gap" => &[("structure_break", Reach::Backward)],
+        // A raid continues the origin before it, or the cycle it belongs to.
+        "liquidity_sweep" => &[
+            ("order_block", Reach::Forward),
+            ("fair_value_gap", Reach::Forward),
+            ("amd_cycle", Reach::Forward),
+        ],
+        "absorption_mark" => &[("imbalance_zone", Reach::Forward)],
+        "delta_divergence" => &[("absorption_mark", Reach::Forward)],
+        _ => &[],
+    }
 }
 
 // =========================================================================
@@ -283,11 +340,33 @@ mod tests {
 
     #[test]
     fn the_grammar_is_the_setup_read_forwards() {
-        assert!(may_follow("liquidity_sweep", "structure_break"));
-        assert!(may_follow("structure_break", "order_block"));
-        assert!(may_follow("order_block", "liquidity_sweep"));
-        assert!(!may_follow("liquidity_sweep", "order_block"), "the shift is not optional");
-        assert!(!may_follow("order_block", "order_block"));
+        assert_eq!(may_follow("liquidity_sweep", "structure_break"), Some(Reach::Forward));
+        assert_eq!(may_follow("order_block", "liquidity_sweep"), Some(Reach::Forward));
+        assert_eq!(may_follow("liquidity_sweep", "order_block"), None, "the shift is not optional");
+        assert_eq!(may_follow("order_block", "order_block"), None);
+    }
+
+    /// The one edge that runs against the clock — see [`Reach`] for why the
+    /// method requires it.
+    #[test]
+    fn an_origin_sits_behind_the_break_it_originated() {
+        assert_eq!(may_follow("structure_break", "order_block"), Some(Reach::Backward));
+        assert_eq!(may_follow("structure_break", "fair_value_gap"), Some(Reach::Backward));
+    }
+
+    /// The two tables answer different questions and must still agree about
+    /// which pairs exist and which way each one reaches.
+    #[test]
+    fn the_forward_and_backward_tables_describe_the_same_edges() {
+        for prev in ["liquidity_sweep", "structure_break", "order_block", "fair_value_gap", "amd_cycle", "imbalance_zone", "absorption_mark"] {
+            for &(next, reach) in successor_kinds(prev) {
+                let back = predecessor_kinds(next);
+                assert!(
+                    back.iter().any(|&(t, r)| t == prev && r == reach),
+                    "{prev} -> {next} ({reach:?}) is missing from predecessor_kinds({next})",
+                );
+            }
+        }
     }
 
     #[test]

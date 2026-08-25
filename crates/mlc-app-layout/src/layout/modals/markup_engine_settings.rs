@@ -110,6 +110,20 @@ fn guard_rows(family: MarkupSettingsFamily) -> usize {
     }
 }
 
+/// How many ACTION rows the shown family has — a row that DOES something
+/// rather than setting something.
+///
+/// Smart money alone, because it is the only family with a narrative to
+/// assemble: `markup::propose` walks sweeps into shifts into origins, and
+/// order flow's three-event chain and the candle family's absent one have
+/// nothing to propose that the survey does not already paint.
+fn action_rows(family: MarkupSettingsFamily) -> usize {
+    match family {
+        MarkupSettingsFamily::SmartMoney => 1,
+        _ => 0,
+    }
+}
+
 fn family_body_height(family: MarkupSettingsFamily) -> f64 {
     let mut h = 0.0;
     h += ROW_H + GROUP_GAP; // family segment
@@ -117,6 +131,9 @@ fn family_body_height(family: MarkupSettingsFamily) -> f64 {
     h += GROUP_HEADER_H + ROW_H * d + ROW_GAP * (d - 1.0) + GROUP_GAP;
     let g = guard_rows(family) as f64;
     h += GROUP_HEADER_H + ROW_H * g + ROW_GAP * (g - 1.0);
+    if action_rows(family) > 0 {
+        h += GROUP_GAP + ROW_H;
+    }
     h
 }
 
@@ -260,6 +277,27 @@ pub fn render_markup_engine_settings_modal(
         row_y += ROW_H + ROW_GAP;
         if guard_rows(family) > 1 {
             draw_checkbox_row(ctx, toolbar_theme, coord, layer_id, &mut result, x0, x1, row_y, t_concept(ConceptKey::MarkupGuardChainLabel), families.chain, "markup:guard_chain");
+            row_y += ROW_H;
+        }
+
+        // ── The engine acting, rather than being configured ─────────────
+        //
+        // An action lives here rather than on a tool of its own because it
+        // IS this engine speaking: it reads this family's own detectors
+        // through this family's own chain window, and every setting above
+        // changes what it proposes. A separate button somewhere else would
+        // be the same code with the settings that govern it out of sight.
+        if action_rows(family) > 0 {
+            row_y += GROUP_GAP;
+            let rect = WidgetRect::new(x0, row_y + 1.0, (x1 - x0).max(20.0), ROW_H - 2.0);
+            draw_toggle_segment(ctx, toolbar_theme, rect, t_concept(ConceptKey::MarkupProposeSetupsLabel), false);
+            result.content_items.push(("markup:propose".to_string(), rect));
+            coord.register_on_layer(
+                "markup_engine_settings:markup:propose",
+                rect,
+                uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
+                layer_id,
+            );
         }
     });
 
@@ -383,12 +421,32 @@ mod tests {
 
     /// The shell must not resize when the family changes — see
     /// [`content_height`]'s own doc for what that cost on the stand.
+    /// The shell must not resize when the family changes — see
+    /// [`content_height`]'s own doc for what that cost on the stand.
     #[test]
     fn the_shell_is_the_same_height_for_every_family() {
-        let of = family_body_height(MarkupSettingsFamily::OrderFlow);
-        assert!(of > family_body_height(MarkupSettingsFamily::SmartMoney));
-        assert!(of > family_body_height(MarkupSettingsFamily::CandlePattern));
-        assert_eq!(content_height(), of, "the tallest family sets the shell");
+        let tallest = [
+            MarkupSettingsFamily::SmartMoney,
+            MarkupSettingsFamily::OrderFlow,
+            MarkupSettingsFamily::CandlePattern,
+        ]
+        .into_iter()
+        .map(family_body_height)
+        .fold(0.0_f64, f64::max);
+        assert_eq!(content_height(), tallest, "the tallest family sets the shell");
+        assert!(
+            family_body_height(MarkupSettingsFamily::CandlePattern)
+                < family_body_height(MarkupSettingsFamily::SmartMoney),
+            "candles are the thinnest family and must not set the shell",
+        );
+    }
+
+    /// Only the family with a narrative to assemble offers to draw one.
+    #[test]
+    fn only_smart_money_offers_an_action() {
+        assert_eq!(action_rows(MarkupSettingsFamily::SmartMoney), 1);
+        assert_eq!(action_rows(MarkupSettingsFamily::OrderFlow), 0);
+        assert_eq!(action_rows(MarkupSettingsFamily::CandlePattern), 0);
     }
 
     /// Zero is not "zero bars", it is off — every reader of these options

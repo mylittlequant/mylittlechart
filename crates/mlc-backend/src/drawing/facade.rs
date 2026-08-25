@@ -790,6 +790,13 @@ impl<'a> DrawingsMut<'a> {
     /// without an explicit call here the cache stays at its
     /// freshly-deserialized default (empty) until the next live edit
     /// happens to touch the bubble (2026-08-14 report).
+    /// Draw every smart-money setup the engine assembles from this
+    /// bubble's own bars; returns how many claims were created. See
+    /// `DrawingManager::create_proposed_chains`.
+    pub fn create_proposed_chains(&mut self, bid: BubbleId) -> usize {
+        self.mgr.create_proposed_chains(&mut self.bubbles, bid)
+    }
+
     /// Re-run every derived pass over every bubble — see
     /// `DrawingManager::refresh_all_derived` for why an engine-level
     /// setting needs a store-wide refresh where a gesture needs only its

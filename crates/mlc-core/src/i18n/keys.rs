@@ -3328,10 +3328,13 @@ pub enum ConceptKey {
     MarkupGuardFamiliesGroupTitle = 446,
     MarkupGuardNeighbourLabel = 447,
     MarkupGuardChainLabel = 448,
+    /// The Price Action modal's own ACTION row — the engine assembling the
+    /// setups it found and drawing them (`markup::propose`).
+    MarkupProposeSetupsLabel = 449,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 449;
+    pub const COUNT: usize = 450;
 
     /// Get translation for this key.
     #[inline]
