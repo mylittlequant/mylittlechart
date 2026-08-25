@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
 use crate::state::ewa_engine::EwaEngineConfig;
 use crate::state::candle_pattern_engine::CandlePatternEngineConfig;
+use crate::state::smc_engine::SmcEngineConfig;
 
 // =============================================================================
 // Schema version
@@ -630,6 +631,16 @@ pub struct ProfileUiSettings {
     /// doc for the two fields' own readers.
     #[serde(default)]
     pub candle_pattern_engine: CandlePatternEngineConfig,
+
+    /// Smart-money engine configuration (markup-engines wave, 2026-08-25).
+    /// Same process-wide, mutated-in-place, RAM+profile class as
+    /// `candle_pattern_engine` above: applied to the live global via
+    /// `mlc_core::state::smc_engine::set_smc_engine_config` at profile load
+    /// (`ChartApp::apply_profile_state`). No settings-modal UI edits this
+    /// yet — see `state::smc_engine`'s own module doc for every field's own
+    /// reader.
+    #[serde(default)]
+    pub smc_engine: SmcEngineConfig,
 }
 
 fn default_true() -> bool {
@@ -663,6 +674,7 @@ impl ProfileUiSettings {
             control_point_size: ControlPointSize::default(),
             ewa_engine: EwaEngineConfig::default(),
             candle_pattern_engine: CandlePatternEngineConfig::default(),
+            smc_engine: SmcEngineConfig::default(),
         }
     }
 }

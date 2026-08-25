@@ -4716,6 +4716,13 @@ impl ChartApp {
             profile.ui.candle_pattern_engine.clone(),
         );
 
+        // Smart-money engine configuration (markup-engines wave,
+        // 2026-08-25) — same process-level, read-fresh contract as the
+        // candle-pattern engine config above. No settings-modal UI exists
+        // for this config yet — see `mlc_core::state::smc_engine`'s own
+        // module doc.
+        mlc_core::state::smc_engine::set_smc_engine_config(profile.ui.smc_engine.clone());
+
         // Inline bar position/dock — prefer per-window, fall back to profile flat fields.
         let inline_bar_x = window_state
             .and_then(|ws| ws.inline_bar_x)

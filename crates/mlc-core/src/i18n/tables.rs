@@ -1114,7 +1114,7 @@ pub(super) static TRADING_KEY_TABLE: [[&str; N_LANG]; 29] = [
 //
 //  Col:  0=En                          1=Ru                               2..14=""
 
-pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 76] = [
+pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 77] = [
     /* 0  Candles            */ [ "Candles",              "Свечи",                    "Velas",               "Kerzen",               "Chandeliers",           "Velas",               "蜡烛图",        "ローソク足",     "캔들",           "شموع",            "Candele",               "Mum Grafiği",           "Świece",              "Свічки",                  "कैंडल"              ],
     /* 1  HollowCandles      */ [ "Hollow Candles",       "Полые свечи",              "Velas huecas",        "Hohle Kerzen",         "Chandeliers creux",     "Velas vazias",        "空心蜡烛",      "中空ローソク足",  "속빈 캔들",      "شموع مجوفة",      "Candele vuote",         "İçi Boş Mum",           "Świece puste",        "Порожні свічки",          "खोखले कैंडल"        ],
     /* 2  HeikinAshi         */ [ "Heikin Ashi",          "Хейкин Аши",              "Heikin Ashi",         "Heikin Ashi",          "Heikin Ashi",           "Heikin Ashi",         "平均K线",       "平均足",         "헤이킨 아시",    "هيكن آشي",        "Heikin Ashi",           "Heikin Ashi",           "Heikin Ashi",         "Хейкін Асі",              "हेइकिन आशी"        ],
@@ -1191,6 +1191,7 @@ pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 76] = [
     /* 73 SubTheme           */ [ "Theme",                "Тема",                     "Tema",                "Thema",                "Thème",                 "Tema",                "主题",          "テーマ",         "테마",           "المظهر",          "Tema",                  "Tema",                  "Motyw",               "Тема",                    "थीम"                ],
     /* 74 SubUiStyle         */ [ "UI Style",             "Стиль интерфейса",         "Estilo UI",           "UI-Stil",              "Style UI",              "Estilo UI",           "界面风格",      "UIスタイル",     "UI 스타일",      "نمط الواجهة",     "Stile UI",              "UI stili",              "Styl UI",             "Стиль інтерфейсу",        "UI शैली"            ],
     /* 75 HeaderCandles      */ [ "Candles",              "Свечи",                    "Velas",               "Kerzen",               "Bougies",               "Velas",               "K线",           "ローソク足",     "캔들",           "الشموع",          "Candele",               "Mumlar",                "Świece",              "Свічки",                  "कैंडल्स"            ],
+    /* 76 HeaderSmartMoney   */ [ "Smart Money",          "Smart money",              "Smart money",         "Smart Money",          "Smart money",           "Smart money",         "聪明钱",        "スマートマネー", "스마트 머니",    "الأموال الذكية",  "Smart money",           "Smart Money",           "Smart money",         "Smart money",             "स्मार्ट मनी"        ],
 ];
 
 // =============================================================================
@@ -1317,7 +1318,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 365] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 388] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1688,6 +1689,31 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 365] = [
     /* 362 NoValue                            */ [ "No", "Нет", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 363 ScanHitsColumnHeader               */ [ "Hits", "Срабатывания", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 364 ScanTotalHitsLabel                 */ [ "Total Hits", "Всего срабатываний", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+
+    // Smart money (markup-engines wave, 2026-08-25).
+    /* 365 RuleOrderBlockNoStructureBreak     */ [ "No structure break behind this candle — not an order block", "Нет слома структуры за этой свечой — это не ордер-блок", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 366 RuleFvgNotFormed                   */ [ "These three bars do not form a fair value gap", "Эти три бара не образуют гэп справедливой цены", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 367 RuleLiquiditySweepNotFormed        */ [ "No confirmed swing swept at this bar", "На этом баре не снята ликвидность подтверждённого свинга", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 368 RuleStructureBreakNotFormed        */ [ "No structure break at this bar", "На этом баре нет слома структуры", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 369 RuleStructureBreakKindMismatch     */ [ "The bars show the other kind of structure break", "Бары показывают слом структуры другого типа", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 370 SmcDirectionLabel                  */ [ "Direction", "Направление", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 371 SmcZoneLabel                       */ [ "Zone", "Зона", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 372 OrderBlockBreakFollowsLabel        */ [ "Structure Break Bar", "Бар слома структуры", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 373 BreakerBarLabel                    */ [ "Breaker Bar", "Бар брейкера", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 374 ZoneMitigatedLabel                 */ [ "Mitigated At", "Митигирован на", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 375 ZoneFilledLabel                    */ [ "Filled At", "Закрыт на", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 376 SweptLevelLabel                    */ [ "Swept Level", "Снятый уровень", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 377 RecoveryBarsLabel                  */ [ "Bars to Recovery", "Баров до возврата", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 378 StructureBreakLevelLabel           */ [ "Level", "Уровень", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 379 StructureBreakSwingLabel           */ [ "Broken Swing Bar", "Бар сломанного свинга", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 380 TrendAtBarLabel                    */ [ "Trend", "Тренд", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 381 TrendValueUp                       */ [ "Up", "Восходящий", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 382 TrendValueDown                     */ [ "Down", "Нисходящий", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 383 TrendValueUnresolved               */ [ "Unresolved", "Не определён", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 384 StructureBreakKindLabel            */ [ "Claimed Kind", "Заявленный тип", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 385 StructureBreakKindBos              */ [ "BOS", "BOS", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 386 StructureBreakKindChoch            */ [ "CHoCH", "CHoCH", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 387 NoneValue                          */ [ "—", "—", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

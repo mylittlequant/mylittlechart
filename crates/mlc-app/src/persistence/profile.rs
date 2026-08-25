@@ -100,6 +100,10 @@ impl ChartApp {
                 // doc), so this is a plain carry-forward, same
                 // preserve-live-value pattern as `ewa_engine` above.
                 candle_pattern_engine: existing.ui.candle_pattern_engine.clone(),
+                // Smart-money engine configuration (markup-engines wave,
+                // 2026-08-25): same preserve-live-value pattern as
+                // `candle_pattern_engine` above — no edit UI exists yet.
+                smc_engine: existing.ui.smc_engine.clone(),
             },
         }
     }

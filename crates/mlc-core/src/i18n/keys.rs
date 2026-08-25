@@ -2214,10 +2214,13 @@ pub enum ToolbarMenuKey {
     // a new header lands here rather than being inserted next to its
     // siblings: discriminant == table row index, frozen).
     HeaderCandles      = 75,
+    // Smart-money group header (markup-engines wave, 2026-08-25) — same
+    // append-only reason as `HeaderCandles` above.
+    HeaderSmartMoney   = 76,
 }
 
 impl ToolbarMenuKey {
-    pub const COUNT: usize = 75;
+    pub const COUNT: usize = 77;
 
     /// Get translation for this key.
     #[inline]
@@ -3132,6 +3135,61 @@ pub enum ConceptKey {
     ScanHitsColumnHeader = 363,
     /// `CandlePatternScan`'s own Stat block: total-hit-count row label.
     ScanTotalHitsLabel = 364,
+
+    // ---- Smart money (markup-engines wave, 2026-08-25) — the
+    // `drawing::primitives_v2::smc::{order_block, fair_value_gap,
+    // liquidity_sweep, structure_break}` primitives' own guard-rule
+    // messages, Stat-block rows, and Pills-row labels. Rule keys follow the
+    // same `elliott::guard::Violation::whole` naming convention as
+    // `RuleCandlePattern*` above.
+    RuleOrderBlockNoStructureBreak = 365,
+    RuleFvgNotFormed = 366,
+    RuleLiquiditySweepNotFormed = 367,
+    RuleStructureBreakNotFormed = 368,
+    RuleStructureBreakKindMismatch = 369,
+    /// Shared Stat-block row label: direction (Up/Down), value drawn from
+    /// `PatternBiasBullish`/`PatternBiasBearish` above — `order_block`/
+    /// `fair_value_gap` both use this.
+    SmcDirectionLabel = 370,
+    /// Shared Stat-block row label: zone bounds (`"{low} - {high}"`) —
+    /// `order_block`/`fair_value_gap` both use this.
+    SmcZoneLabel = 371,
+    /// `OrderBlock`'s own Stat block: the structure-break bar index.
+    OrderBlockBreakFollowsLabel = 372,
+    /// `OrderBlock`'s own Stat block: the breaker-transition bar index, or
+    /// `NoneValue` when the block has not flipped.
+    BreakerBarLabel = 373,
+    /// `FairValueGap`'s own Stat block: mitigation bar index, or
+    /// `NoneValue`.
+    ZoneMitigatedLabel = 374,
+    /// `FairValueGap`'s own Stat block: fill bar index, or `NoneValue`.
+    ZoneFilledLabel = 375,
+    /// `LiquiditySweep`'s own Stat block: the swept swing's own price.
+    SweptLevelLabel = 376,
+    /// `LiquiditySweep`'s own Stat block: bars between the wick and the
+    /// close that recovered back inside the level.
+    RecoveryBarsLabel = 377,
+    /// `StructureBreak`'s own Stat block: the broken level's own price.
+    StructureBreakLevelLabel = 378,
+    /// `StructureBreak`'s own Stat block: the broken swing's own bar index.
+    StructureBreakSwingLabel = 379,
+    /// `StructureBreak`'s own Stat block: prevailing trend at the break bar.
+    TrendAtBarLabel = 380,
+    TrendValueUp = 381,
+    TrendValueDown = 382,
+    /// Appendix A: "anything else is unresolved and must be reported as
+    /// unresolved, not defaulted to a direction" — the value this trend
+    /// Stat row prints instead of guessing.
+    TrendValueUnresolved = 383,
+    /// `StructureBreak`'s own Pills row label — which kind (BOS/CHoCH) the
+    /// analyst claims this break is.
+    StructureBreakKindLabel = 384,
+    StructureBreakKindBos = 385,
+    StructureBreakKindChoch = 386,
+    /// Generic "nothing resolved yet" Stat value — `OrderBlock`'s own
+    /// breaker bar, `FairValueGap`'s own mitigated/filled bars, before any
+    /// of the three has happened.
+    NoneValue = 387,
 }
 
 impl ConceptKey {

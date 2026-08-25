@@ -274,6 +274,12 @@ impl PrimitiveRegistry {
         self.register_typed::<super::patterns::candle_pattern::CandlePattern>(super::patterns::candle_pattern::metadata());
         self.register_typed::<super::patterns::candle_pattern_scan::CandlePatternScan>(super::patterns::candle_pattern_scan::metadata());
 
+        // Smart money (markup-engines wave, 2026-08-25)
+        self.register_typed::<super::smc::order_block::OrderBlock>(super::smc::order_block::metadata());
+        self.register_typed::<super::smc::fair_value_gap::FairValueGap>(super::smc::fair_value_gap::metadata());
+        self.register_typed::<super::smc::liquidity_sweep::LiquiditySweep>(super::smc::liquidity_sweep::metadata());
+        self.register_typed::<super::smc::structure_break::StructureBreak>(super::smc::structure_break::metadata());
+
         // Elliott
         self.register_typed::<super::elliott::elliott_impulse::ElliottImpulse>(super::elliott::elliott_impulse::metadata());
         self.register_typed::<super::elliott::elliott_correction::ElliottCorrection>(super::elliott::elliott_correction::metadata());

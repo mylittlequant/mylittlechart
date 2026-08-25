@@ -42,6 +42,7 @@ pub mod toolbar_geometry;
 pub mod gestures;
 pub mod ewa_engine;
 pub mod candle_pattern_engine;
+pub mod smc_engine;
 
 // Unified panel taxonomy (K1 — supersedes PanelLeaf + FreeItem)
 pub use panel::{Panel, PanelId, PanelKind};
@@ -114,6 +115,11 @@ pub use ewa_engine::{EwaEngineConfig, GuardFamilies, RatioRibDefaults, ewa_engin
 // surface for the candle-pattern markup engine (markup-engines wave,
 // 2026-08-25). See candle_pattern_engine.rs's own module doc.
 pub use candle_pattern_engine::{CandlePatternEngineConfig, candle_pattern_engine_config, set_candle_pattern_engine_config};
+
+// Smart-money engine configuration — process-global, user-level settings
+// surface for the smart-money markup engine (markup-engines wave,
+// 2026-08-25). See smc_engine.rs's own module doc.
+pub use smc_engine::{OrderBlockZoneMode, SmcEngineConfig, smc_engine_config, set_smc_engine_config};
 
 // Toolbar interaction state (pure data — no render logic)
 // Also includes chart-toolbar types (moved from panel_app — Phase X.4 back-edge removal).

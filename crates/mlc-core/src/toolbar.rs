@@ -785,6 +785,15 @@ fn pattern_section() -> ToolbarSectionDef {
             DropdownItemDef::Header { label: MK::HeaderCandles.get(lang).to_string() },
             DropdownItemDef::action("candle_pattern", PN::CandlePattern.get(lang)).with_icon(ToolbarIconId::new("CandlePattern")),
             DropdownItemDef::action("candle_pattern_scan", PN::CandlePatternScan.get(lang)).with_icon(ToolbarIconId::new("CandlePatternScan")),
+            // Smart money — markup engines: order block / FVG / liquidity
+            // sweep / structure break claims
+            // (`docs/mlc/plans/markup-engines-2026-08-25.md`).
+            DropdownItemDef::Separator,
+            DropdownItemDef::Header { label: MK::HeaderSmartMoney.get(lang).to_string() },
+            DropdownItemDef::action("order_block", PN::OrderBlock.get(lang)).with_icon(ToolbarIconId::new("OrderBlock")),
+            DropdownItemDef::action("fair_value_gap", PN::FairValueGap.get(lang)).with_icon(ToolbarIconId::new("FairValueGap")),
+            DropdownItemDef::action("liquidity_sweep", PN::LiquiditySweep.get(lang)).with_icon(ToolbarIconId::new("LiquiditySweep")),
+            DropdownItemDef::action("structure_break", PN::StructureBreak.get(lang)).with_icon(ToolbarIconId::new("StructureBreak")),
             // Cycles
             DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderCycles.get(lang).to_string() },
