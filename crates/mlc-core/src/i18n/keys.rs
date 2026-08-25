@@ -3295,10 +3295,17 @@ pub enum ConceptKey {
     /// The shared markup layer's own first cross-primitive rule: two claims
     /// of the same kind anchored on the same bar.
     RuleOverlappingClaim = 428,
+    /// The shared markup layer's own containment row: which parent claim
+    /// this one sits inside, and in which of that parent's slots.
+    MarkupInsideLabel = 429,
+    /// `DealingRange`'s own two halves, named for a linked child's own
+    /// containment row. The midpoint reuses `DealingRangeEquilibriumLabel`.
+    DealingRangePremiumLabel = 430,
+    DealingRangeDiscountLabel = 431,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 429;
+    pub const COUNT: usize = 432;
 
     /// Get translation for this key.
     #[inline]

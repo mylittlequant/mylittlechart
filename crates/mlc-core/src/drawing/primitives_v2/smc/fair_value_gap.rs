@@ -25,6 +25,7 @@ use super::super::{
     AREA_FILL_OPACITY, default_area_fill_opacity,
 };
 use super::smc_judge::judge_window;
+use super::super::markup;
 
 fn default_true() -> bool {
     true
@@ -64,6 +65,15 @@ pub struct FairValueGap {
     #[serde(default = "default_true")]
     pub show_labels: bool,
 
+    /// This claim's own containment edge — which dealing range or AMD
+    /// cycle it sits inside, and in which of that parent's slots. Persisted
+    /// (unlike the derived caches below) and maintained wholesale by
+    /// `mlc_backend::bubble::markup_guards`; see
+    /// [`markup::MarkupLink`]'s own module doc for why it is stored rather
+    /// than recomputed on every read.
+    #[serde(default)]
+    pub markup_link: Option<markup::MarkupLink>,
+
     /// This claim's own resolved gap, with every bar index already
     /// converted back to GLOBAL — see
     /// [`Primitive::refresh_bar_derived_cache`]'s own contract.
@@ -90,6 +100,7 @@ impl FairValueGap {
             fill_opacity: AREA_FILL_OPACITY,
             show_labels: true,
             cached_gap: None,
+            markup_link: None,
             cached_violations: Vec::new(),
         }
     }
@@ -210,7 +221,7 @@ impl Primitive for FairValueGap {
         let x = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.anchor_ts));
         let cy = match self.detect(bars) {
             Some(gap) => vp.price_to_y((gap.low + gap.high) / 2.0, ps.price_min, ps.price_max),
-            None => vp.price_to_y((ps.price_min + ps.price_max) / 2.0, ps.price_min, ps.price_max),
+            None => super::super::anchor_mark::anchor_control_y(bars, self.anchor_ts, vp, ps),
         };
         vec![ControlPoint::point1(x, cy)]
     }
@@ -324,6 +335,31 @@ impl Primitive for FairValueGap {
         self.anchor_ts = placed;
     }
 
+    fn markup_link(&self) -> Option<&markup::MarkupLink> {
+        self.markup_link.as_ref()
+    }
+
+    fn set_markup_link(&mut self, link: Option<markup::MarkupLink>) {
+        self.markup_link = link;
+    }
+
+    /// The middle of what this claim RESOLVED to, on its own anchor bar —
+    /// the point a candidate parent is asked to contain
+    /// ([`Primitive::markup_anchor`]).
+    ///
+    /// Falls back to the anchor bar's close when nothing resolved, so a
+    /// claim the engine rejects still reports where the analyst put it: a
+    /// claim carrying a guard violation is exactly the one whose placement
+    /// is worth framing.
+    ///
+    /// The bar's own timestamp is returned rather than `anchor_ts`, so a
+    /// claim anchored mid-bar and one anchored on the open resolve to the
+    /// same containment answer.
+    fn markup_anchor(&self, bars: &[Bar]) -> Option<(i64, f64)> {
+        let bar = bars.get(self.anchor_bar_idx(bars)?)?;
+        Some((bar.timestamp * 1000, self.cached_gap.as_ref().map(|g| (g.low + g.high) / 2.0).unwrap_or(bar.close)))
+    }
+
     fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
         Some(super::super::markup::MarkupFamily::SmartMoney)
     }
@@ -342,7 +378,7 @@ impl Primitive for FairValueGap {
             ConfigProperty::extend_right(self.extend_right).with_order(10),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_order(11),
             ConfigProperty::show_labels(self.show_labels).with_order(12),
-            ConfigProperty::stat_block(FVG_RESULT_STATS_ID, self.result_stat_rows()).with_order(20),
+            ConfigProperty::stat_block(FVG_RESULT_STATS_ID, markup::with_link_row(self.markup_link.as_ref(), self.result_stat_rows())).with_order(20),
         ]
     }
 

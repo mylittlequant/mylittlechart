@@ -28,7 +28,7 @@
 //! sixty times a second.
 
 use mlc_core::drawing::primitives_v2::elliott::guard::Violation;
-use mlc_core::drawing::primitives_v2::markup::MarkupFamily;
+use mlc_core::drawing::primitives_v2::markup::{MarkupFamily, MarkupLink};
 use mlc_core::i18n::ConceptKey;
 
 use super::data_bubble::DataBubble;
@@ -49,7 +49,69 @@ const RULE_OVERLAPPING_CLAIM: &str = "overlapping_claim";
 /// Elliott is deliberately not touched here — it answers `None` to
 /// `markup_family` and keeps [`super::wave_guards`], a working engine this
 /// pass has no business rewriting.
+/// Recompute every claim's own containment edge — which dealing range or
+/// AMD cycle it sits inside, and in which of that parent's slots.
+///
+/// The whole edge is rebuilt from geometry on every pass, which is what
+/// keeps a PERSISTED link from lying: dragging a range so it no longer
+/// covers a block clears that block's link on the same gesture, and
+/// dragging the block across equilibrium re-slots it from premium to
+/// discount. `markup::link`'s own module doc states this contract from the
+/// other side.
+///
+/// **Tightest parent wins.** A dealing range and an AMD cycle may cover the
+/// same bars, and a child carries exactly one link, so the container with
+/// the narrower timestamp span takes it — the more specific reading, and
+/// the one that changes if either is redrawn. Ties break on the lower
+/// primitive id so the answer does not depend on collection order.
+fn refresh_markup_links(b: &mut DataBubble) {
+    let bars = &b.bars;
+
+    // Every primitive that can hold something: its own index, id, type and
+    // how wide it is. Width is the tiebreak, so it is computed once here
+    // rather than per candidate child.
+    let containers: Vec<(usize, u64, String, i64)> = b
+        .primitives
+        .iter()
+        .enumerate()
+        .filter_map(|(i, p)| {
+            let (from, to) = p.markup_span(bars)?;
+            Some((i, p.data().id, p.type_id().to_string(), (to - from).abs()))
+        })
+        .collect();
+
+    let updates: Vec<(usize, Option<MarkupLink>)> = b
+        .primitives
+        .iter()
+        .enumerate()
+        .filter_map(|(i, child)| {
+            child.markup_family()?;
+            let resolved = child.markup_anchor(bars).and_then(|(ts, price)| {
+                let mut hits: Vec<(i64, u64, MarkupLink)> = containers
+                    .iter()
+                    .filter(|(j, ..)| *j != i)
+                    .filter_map(|(j, id, type_id, width)| {
+                        let slot = b.primitives[*j].slot_containing(bars, ts, price)?;
+                        Some((*width, *id, MarkupLink::new(*id, type_id, slot)))
+                    })
+                    .collect();
+                hits.sort_by_key(|(width, id, _)| (*width, *id));
+                hits.into_iter().next().map(|(.., link)| link)
+            });
+            (resolved.as_ref() != child.markup_link()).then_some((i, resolved))
+        })
+        .collect();
+
+    for (i, link) in updates {
+        b.primitives[i].set_markup_link(link);
+    }
+}
+
 pub(crate) fn refresh_markup_guards(b: &mut DataBubble) {
+    // Containment first: it is collection state the rules below may read,
+    // and rebuilding it is what keeps a persisted link honest.
+    refresh_markup_links(b);
+
     // One immutable pass to decide, one mutable pass to write — the shape
     // `wave_guards::refresh_wave_guards` uses, for the same borrow reason.
     let anchors: Vec<Option<(MarkupFamily, String, i64)>> = b
@@ -144,6 +206,171 @@ mod tests {
         let mut b = bubble_with(vec![("smc_scan", 1_000), ("smc_scan", 1_000)]);
         refresh_markup_guards(&mut b);
         assert!(rule_ids(&b, 0).is_empty());
+    }
+
+    // ---------------------------------------------------------------
+    // Containment (S2)
+    // ---------------------------------------------------------------
+
+    /// Bars at one-minute spacing from ts 1000s, each a doji at `close` so
+    /// an unresolved claim's own `markup_anchor` fallback lands exactly on
+    /// the price the test names.
+    fn bars_at(closes: &[f64]) -> Vec<mlc_core::Bar> {
+        closes
+            .iter()
+            .enumerate()
+            .map(|(i, c)| mlc_core::Bar::new(1_000 + i as i64 * 60, *c, *c, *c, *c))
+            .collect()
+    }
+
+    fn ts_ms(i: usize) -> i64 {
+        (1_000 + i as i64 * 60) * 1_000
+    }
+
+    /// A bubble carrying `bars`, with each `(type_id, points)` created
+    /// through the real registry — then run through the SAME two passes
+    /// every call site runs, in the order this module's own contract fixes.
+    fn contained_bubble(bars: Vec<mlc_core::Bar>, prims: Vec<(&str, Vec<(i64, f64)>)>) -> DataBubble {
+        let mut store = crate::bubble::BubbleStore::new();
+        let bid = store.create_bubble("BTCUSDT".to_string(), mlc_core::Timeframe::m1());
+        let mut b = store.bubble(bid).cloned().expect("just-created bubble");
+        b.bars = bars;
+        let registry = PrimitiveRegistry::global().read().unwrap();
+        for (type_id, points) in prims {
+            let prim = registry
+                .create(type_id, &points, Some("#3ba3ff"))
+                .unwrap_or_else(|| panic!("registry has no {type_id}"));
+            b.primitives.push(prim);
+        }
+        drop(registry);
+        super::super::bar_derived_cache::refresh_bar_derived_caches(&mut b);
+        refresh_markup_guards(&mut b);
+        b
+    }
+
+    fn slot_of(b: &DataBubble, i: usize) -> Option<String> {
+        b.primitives[i].markup_link().map(|l| l.slot.clone())
+    }
+
+    /// A range 100-200 over bars 0..4; the block sits on a bar closing at
+    /// 180, above the 150 equilibrium.
+    #[test]
+    fn a_claim_in_the_upper_half_reports_premium() {
+        let b = contained_bubble(
+            bars_at(&[150.0, 180.0, 120.0, 150.0, 150.0]),
+            vec![
+                ("dealing_range", vec![(ts_ms(0), 100.0), (ts_ms(4), 200.0)]),
+                ("order_block", vec![(ts_ms(1), 180.0)]),
+            ],
+        );
+        assert_eq!(slot_of(&b, 1).as_deref(), Some("premium"));
+    }
+
+    #[test]
+    fn a_claim_in_the_lower_half_reports_discount() {
+        let b = contained_bubble(
+            bars_at(&[150.0, 180.0, 120.0, 150.0, 150.0]),
+            vec![
+                ("dealing_range", vec![(ts_ms(0), 100.0), (ts_ms(4), 200.0)]),
+                ("order_block", vec![(ts_ms(2), 120.0)]),
+            ],
+        );
+        assert_eq!(slot_of(&b, 1).as_deref(), Some("discount"));
+    }
+
+    /// Exactly on the midpoint. Without its own token this would report no
+    /// slot, which reads as "not contained" — the one wrong answer, and the
+    /// reason `slots::EQUILIBRIUM` exists.
+    #[test]
+    fn a_claim_on_the_midpoint_is_still_inside_the_range() {
+        let b = contained_bubble(
+            bars_at(&[150.0, 150.0, 150.0]),
+            vec![
+                ("dealing_range", vec![(ts_ms(0), 100.0), (ts_ms(2), 200.0)]),
+                ("order_block", vec![(ts_ms(1), 150.0)]),
+            ],
+        );
+        assert_eq!(slot_of(&b, 1).as_deref(), Some("equilibrium"));
+    }
+
+    #[test]
+    fn a_claim_priced_outside_the_range_carries_no_link() {
+        let b = contained_bubble(
+            bars_at(&[150.0, 260.0, 150.0]),
+            vec![
+                ("dealing_range", vec![(ts_ms(0), 100.0), (ts_ms(2), 200.0)]),
+                ("order_block", vec![(ts_ms(1), 260.0)]),
+            ],
+        );
+        assert!(b.primitives[1].markup_link().is_none());
+    }
+
+    /// The range's own render stops at its later point, so containment
+    /// stops there too — see `DealingRange::slot_containing`'s own doc.
+    #[test]
+    fn a_claim_past_the_ranges_right_edge_carries_no_link() {
+        let b = contained_bubble(
+            bars_at(&[150.0, 150.0, 150.0, 180.0]),
+            vec![
+                ("dealing_range", vec![(ts_ms(0), 100.0), (ts_ms(1), 200.0)]),
+                ("order_block", vec![(ts_ms(3), 180.0)]),
+            ],
+        );
+        assert!(b.primitives[1].markup_link().is_none());
+    }
+
+    /// The whole reason the link may be persisted: the pass rebuilds it, so
+    /// dragging the parent off the child clears a stale edge on the same
+    /// gesture rather than leaving a link that outlived its geometry.
+    #[test]
+    fn dragging_the_parent_away_clears_the_link() {
+        let mut b = contained_bubble(
+            bars_at(&[150.0, 180.0, 150.0, 150.0, 150.0]),
+            vec![
+                ("dealing_range", vec![(ts_ms(0), 100.0), (ts_ms(4), 200.0)]),
+                ("order_block", vec![(ts_ms(1), 180.0)]),
+            ],
+        );
+        assert!(b.primitives[0].markup_link().is_none(), "the range holds, it is not held");
+        assert!(b.primitives[1].markup_link().is_some());
+
+        b.primitives[0].set_points(&[(ts_ms(2), 100.0), (ts_ms(4), 200.0)]);
+        super::super::bar_derived_cache::refresh_bar_derived_caches(&mut b);
+        refresh_markup_guards(&mut b);
+        assert!(b.primitives[1].markup_link().is_none(), "a stale edge survived the drag");
+    }
+
+    /// Re-slotting, not just clearing: the same parent, the other half.
+    #[test]
+    fn dragging_the_child_across_equilibrium_re_slots_it() {
+        let mut b = contained_bubble(
+            bars_at(&[150.0, 180.0, 120.0]),
+            vec![
+                ("dealing_range", vec![(ts_ms(0), 100.0), (ts_ms(2), 200.0)]),
+                ("order_block", vec![(ts_ms(1), 180.0)]),
+            ],
+        );
+        assert_eq!(slot_of(&b, 1).as_deref(), Some("premium"));
+
+        b.primitives[1].set_points(&[(ts_ms(2), 120.0)]);
+        super::super::bar_derived_cache::refresh_bar_derived_caches(&mut b);
+        refresh_markup_guards(&mut b);
+        assert_eq!(slot_of(&b, 1).as_deref(), Some("discount"));
+    }
+
+    /// Two ranges cover the block; the narrower one takes it.
+    #[test]
+    fn the_tighter_container_takes_the_child() {
+        let b = contained_bubble(
+            bars_at(&[150.0, 180.0, 150.0, 150.0, 150.0, 150.0, 150.0]),
+            vec![
+                ("dealing_range", vec![(ts_ms(0), 100.0), (ts_ms(6), 200.0)]),
+                ("dealing_range", vec![(ts_ms(0), 100.0), (ts_ms(2), 200.0)]),
+                ("order_block", vec![(ts_ms(1), 180.0)]),
+            ],
+        );
+        let parent = b.primitives[2].markup_link().map(|l| l.parent_id);
+        assert_eq!(parent, Some(b.primitives[1].data().id), "the wide range won");
     }
 
     #[test]

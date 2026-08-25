@@ -164,7 +164,7 @@ impl Primitive for AbsorptionMark {
         let x = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.anchor_ts));
         let cy = match self.anchor_bar_idx(bars) {
             Some(idx) => vp.price_to_y((bars[idx].high + bars[idx].low) / 2.0, ps.price_min, ps.price_max),
-            None => vp.price_to_y((ps.price_min + ps.price_max) / 2.0, ps.price_min, ps.price_max),
+            None => super::super::anchor_mark::anchor_control_y(bars, self.anchor_ts, vp, ps),
         };
         vec![ControlPoint::point1(x, cy)]
     }

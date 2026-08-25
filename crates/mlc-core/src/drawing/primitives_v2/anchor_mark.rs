@@ -18,6 +18,7 @@
 //! scale of the bar it is talking about.
 
 use crate::types::{Bar, find_bar_for_timestamp_ms};
+use crate::{PriceScale, Viewport};
 use super::{RenderContext, crisp};
 
 /// Half the vertical padding this mark adds beyond the claimed bar's own
@@ -89,4 +90,26 @@ pub(super) fn draw_unresolved_anchor(
 pub(super) fn bar_span_at(bars: &[Bar], ts_ms: i64) -> Option<(f64, f64)> {
     let idx = find_bar_for_timestamp_ms(bars, ts_ms)?;
     bars.get(idx).map(|b| (b.high, b.low))
+}
+
+/// The y a bar-anchored claim's own control point sits at when the claim
+/// resolved nothing.
+///
+/// The middle of the CLAIMED BAR, not the middle of the viewport. The
+/// viewport's own centre was the old fallback in eight of these claims, and
+/// it is wrong for the same reason the full-height rule this module
+/// replaced was wrong: an unresolved claim is the common state, and a
+/// handle parked at the centre of the visible price range detaches from the
+/// bar it belongs to and slides across the chart on every scroll and zoom,
+/// while the claim itself does not move at all. Grabbing that handle means
+/// hunting for it.
+///
+/// The viewport's centre survives only as the last resort, for an anchor
+/// naming no loaded bar — there is genuinely no bar to sit on then, the
+/// same case [`draw_unresolved_anchor`] draws its orphan placeholder for.
+pub(super) fn anchor_control_y(bars: &[Bar], ts_ms: i64, vp: &Viewport, ps: &PriceScale) -> f64 {
+    match bar_span_at(bars, ts_ms) {
+        Some((high, low)) => vp.price_to_y((high + low) / 2.0, ps.price_min, ps.price_max),
+        None => vp.price_to_y((ps.price_min + ps.price_max) / 2.0, ps.price_min, ps.price_max),
+    }
 }

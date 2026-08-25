@@ -13,6 +13,7 @@ use crate::render::{RenderContext, crisp};
 use super::config::{TimeframeVisibilityConfig, WaveDegree};
 use super::elliott::count::{WaveLink, WaveSlot};
 use super::elliott::guard::Violation;
+use super::markup;
 
 /// Category of primitive for toolbar organization
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -1319,6 +1320,80 @@ pub trait Primitive: Send + Sync {
     /// they are about its NEIGHBOURS. Elliott answers `None` here and keeps
     /// its own pass; see [`crate::drawing::primitives_v2::markup::MarkupFamily`].
     fn markup_family(&self) -> Option<crate::drawing::primitives_v2::markup::MarkupFamily> {
+        None
+    }
+
+    // -------------------------------------------------------------------
+    // Containment (S2 — see `markup::link`'s own module doc)
+    // -------------------------------------------------------------------
+
+    /// The parent markup claim this one sits inside, and which of that
+    /// parent's slots it occupies — the non-Elliott twin of
+    /// [`Self::wave_link`].
+    ///
+    /// `None` for a claim that sits inside nothing, and for every primitive
+    /// that is not a markup claim at all. Maintained wholesale by
+    /// `mlc_backend::bubble::markup_guards`, never by the primitive itself:
+    /// containment is a fact about a COLLECTION, and a primitive cannot see
+    /// its siblings.
+    fn markup_link(&self) -> Option<&markup::MarkupLink> {
+        None
+    }
+
+    /// Set (or clear) [`Self::markup_link`] — the write half the
+    /// maintaining pass needs from outside the concrete type, mirroring
+    /// [`Self::set_wave_link`]'s own reason for existing. No-op for every
+    /// primitive that cannot be contained.
+    fn set_markup_link(&mut self, _link: Option<markup::MarkupLink>) {}
+
+    /// Which of THIS primitive's own slots contains the point
+    /// `(ts_ms, price)`, if any — the inverted `slot_span`, and the whole
+    /// reason the shared layer could not simply reuse Elliott's signature
+    /// (`markup::link`'s own module doc explains the inversion).
+    ///
+    /// Answered against this primitive's own REFRESHED derived cache, so
+    /// the maintaining pass must run after
+    /// [`Self::refresh_bar_derived_cache`], exactly as the violation pass
+    /// already does. A parent whose own claim has not resolved contains
+    /// nothing and answers `None` — an unresolved dealing range has no
+    /// equilibrium to be above or below.
+    ///
+    /// `bars` is passed because a container's own regions are not all
+    /// price-shaped: a dealing range's halves are a price band, but an AMD
+    /// cycle's three phases are BAR RANGES, and resolving `ts_ms` back to a
+    /// bar index is the only way to ask which phase a child falls in.
+    ///
+    /// Default `None`: most primitives are not containers.
+    fn slot_containing(&self, _bars: &[Bar], _ts_ms: i64, _price: f64) -> Option<markup::SlotId> {
+        None
+    }
+
+    /// This primitive's own single representative point, for a containment
+    /// test against a candidate parent's [`Self::slot_containing`].
+    ///
+    /// One point rather than the full geometry on purpose: "which half of
+    /// the range is this order block in" has a definite answer only for a
+    /// zone that lies wholly on one side, and traders read the answer off
+    /// the zone's own middle. A claim reports the middle of what it
+    /// RESOLVED where it has one, falling back to its anchor bar so an
+    /// unresolved claim still reports where the analyst put it.
+    ///
+    /// Default `None` — not a markup claim, so nothing to contain.
+    fn markup_anchor(&self, _bars: &[Bar]) -> Option<(i64, f64)> {
+        None
+    }
+
+    /// The timestamp range (ms, inclusive) this primitive covers as a
+    /// container, for choosing between two parents that both contain the
+    /// same child: the TIGHTER one wins.
+    ///
+    /// Needed because a dealing range and an AMD cycle can legitimately
+    /// cover the same bars, and a child must carry exactly one link. Ties
+    /// break on the lower primitive id, so the answer is stable across
+    /// refreshes rather than depending on collection order.
+    ///
+    /// Default `None`, read by the pass as "not a container".
+    fn markup_span(&self, _bars: &[Bar]) -> Option<(i64, i64)> {
         None
     }
 

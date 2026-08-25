@@ -34,6 +34,7 @@ use super::super::{
     elliott::guard::{self, Violation},
 };
 use super::smc_judge::judge_window;
+use super::super::markup;
 use super::render_shapes::{draw_zone, draw_level, draw_leg};
 
 fn default_true() -> bool {
@@ -238,7 +239,7 @@ impl Primitive for AmdCycle {
         let x = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.anchor_ts));
         let cy = match self.detect(bars) {
             Some(cycle) => vp.price_to_y(cycle.manipulation.level, ps.price_min, ps.price_max),
-            None => vp.price_to_y((ps.price_min + ps.price_max) / 2.0, ps.price_min, ps.price_max),
+            None => super::super::anchor_mark::anchor_control_y(bars, self.anchor_ts, vp, ps),
         };
         vec![ControlPoint::point1(x, cy)]
     }
@@ -369,6 +370,50 @@ impl Primitive for AmdCycle {
             }
         }
         self.anchor_ts = placed;
+    }
+
+    /// Which of this cycle's three phases the point `(ts_ms, price)` falls
+    /// in ([`Primitive::slot_containing`]).
+    ///
+    /// Price is ignored: an AMD phase is a stretch of TIME, not a band —
+    /// the accumulation is a range of bars, the manipulation is the sweep
+    /// bar through its own recovery, the distribution is the displacement
+    /// leg. This is the second half of why the shared layer asks the parent
+    /// instead of reading a span off it (see `markup::link`'s module doc):
+    /// two containers in the same family answer the same question from
+    /// entirely different geometry.
+    ///
+    /// Tested narrowest-first. The phases abut and the manipulation's own
+    /// recovery window may reach into the distribution leg, so a bar inside
+    /// both is reported as the manipulation — the more specific claim, and
+    /// the one a trader would name.
+    fn slot_containing(&self, bars: &[Bar], ts_ms: i64, _price: f64) -> Option<markup::SlotId> {
+        let cycle = self.cached_cycle.as_ref()?;
+        let idx = find_bar_for_timestamp_ms(bars, ts_ms)?;
+        let manipulation_end = cycle.manipulation.index + cycle.manipulation.recovered_within;
+        if (cycle.manipulation.index..=manipulation_end).contains(&idx) {
+            return Some(markup::slots::MANIPULATION);
+        }
+        if (cycle.distribution.start_index..=cycle.distribution.end_index).contains(&idx) {
+            return Some(markup::slots::DISTRIBUTION);
+        }
+        if (cycle.accumulation.start..=cycle.accumulation.end).contains(&idx) {
+            return Some(markup::slots::ACCUMULATION);
+        }
+        None
+    }
+
+    /// The resolved cycle's own first-to-last bar, as timestamps — see
+    /// [`Primitive::markup_span`].
+    fn markup_span(&self, bars: &[Bar]) -> Option<(i64, i64)> {
+        let cycle = self.cached_cycle.as_ref()?;
+        let last = cycle
+            .distribution
+            .end_index
+            .max(cycle.manipulation.index + cycle.manipulation.recovered_within);
+        let from = bars.get(cycle.accumulation.start)?.timestamp * 1000;
+        let to = bars.get(last)?.timestamp * 1000;
+        Some((from, to))
     }
 
     fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {

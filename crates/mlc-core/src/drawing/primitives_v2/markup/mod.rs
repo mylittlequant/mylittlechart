@@ -21,6 +21,10 @@
 //! behaviour — churn against the plan's own rule that Elliott must not move
 //! while the other families are built.
 
+pub mod link;
+
+pub use link::{link_stat_row, slot_name_key, slots, with_link_row, MarkupLink, SlotId};
+
 /// Which markup family a primitive belongs to, for a pass that must apply
 /// one family's own cross-primitive rules and leave every other drawing
 /// alone.

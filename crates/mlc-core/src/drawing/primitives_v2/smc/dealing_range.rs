@@ -38,6 +38,7 @@ use super::super::{
     default_area_fill_opacity,
 };
 use super::smc_judge::judge_window;
+use super::super::markup;
 
 fn default_source() -> String {
     "manual".to_string()
@@ -329,6 +330,40 @@ impl Primitive for DealingRange {
             Vec::new()
         };
         self.cached_bounds = bounds;
+    }
+
+    /// Which half of this range the point `(ts_ms, price)` falls in — the
+    /// containment answer an order block or a gap claimed inside the range
+    /// reports back ([`Primitive::slot_containing`]).
+    ///
+    /// Bounded by the DRAWN box, not extended forward: the range's own
+    /// render stops at the later of its two points, and a containment
+    /// answer that outran the pixels would claim authority over bars the
+    /// analyst can see the tool does not cover. Extending a range forward
+    /// is a separate, visible decision (a toggle of its own), not something
+    /// this lookup may assume.
+    fn slot_containing(&self, _bars: &[Bar], ts_ms: i64, price: f64) -> Option<markup::SlotId> {
+        let (low, high) = self.cached_bounds?;
+        let (from, to) = (self.ts1.min(self.ts2), self.ts1.max(self.ts2));
+        if ts_ms < from || ts_ms > to || price < low || price > high {
+            return None;
+        }
+        let equilibrium = (low + high) / 2.0;
+        Some(if price > equilibrium {
+            markup::slots::PREMIUM
+        } else if price < equilibrium {
+            markup::slots::DISCOUNT
+        } else {
+            markup::slots::EQUILIBRIUM
+        })
+    }
+
+    /// The drawn box's own timestamp span — the tightness metric the
+    /// maintaining pass uses when this range and an AMD cycle both contain
+    /// the same claim.
+    fn markup_span(&self, _bars: &[Bar]) -> Option<(i64, i64)> {
+        self.cached_bounds?;
+        Some((self.ts1.min(self.ts2), self.ts1.max(self.ts2)))
     }
 
     fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
