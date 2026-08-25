@@ -90,6 +90,14 @@ pub struct OrderBlock {
     #[serde(default)]
     pub markup_link: Option<markup::MarkupLink>,
 
+    /// This claim's own succession edge — the claim it continues in its
+    /// family's own narrative. Persisted and maintained wholesale by
+    /// `mlc_backend::bubble::markup_guards`, exactly like
+    /// [`Self::markup_link`]; `markup::chain`'s own module doc explains why
+    /// this edge is derived where Elliott's is declared.
+    #[serde(default)]
+    pub markup_follows: Option<markup::MarkupFollows>,
+
     /// This claim's own resolved order block, with every bar index already
     /// converted back to GLOBAL — see
     /// [`Primitive::refresh_bar_derived_cache`]'s own contract.
@@ -120,6 +128,7 @@ impl OrderBlock {
             show_labels: true,
             cached_block: None,
             markup_link: None,
+            markup_follows: None,
             cached_violations: Vec::new(),
         }
     }
@@ -409,6 +418,27 @@ impl Primitive for OrderBlock {
         Some((bar.timestamp * 1000, self.cached_block.as_ref().map(|b| (b.low + b.high) / 2.0).unwrap_or(bar.close)))
     }
 
+    fn markup_follows(&self) -> Option<&markup::MarkupFollows> {
+        self.markup_follows.as_ref()
+    }
+
+    fn set_markup_follows(&mut self, follows: Option<markup::MarkupFollows>) {
+        self.markup_follows = follows;
+    }
+
+    /// What this claim contributes to its family's own chain rules — see
+    /// [`Primitive::chain_fact`].
+    fn chain_fact(&self, bars: &[Bar]) -> Option<markup::ChainFact> {
+        let bar = self.anchor_bar_idx(bars)?;
+        let block = self.cached_block.as_ref();
+        Some(markup::ChainFact {
+            bar,
+            bias: block.map(|b| b.direction.into()),
+            variant: None,
+            origin_event_bar: block.map(|b| b.broke_structure_at),
+        })
+    }
+
     fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
         Some(super::super::markup::MarkupFamily::SmartMoney)
     }
@@ -434,7 +464,7 @@ impl Primitive for OrderBlock {
             ConfigProperty::extend_right(self.extend_right).with_order(10),
             ConfigProperty::fill_opacity(self.fill_opacity * 100.0).with_order(11),
             ConfigProperty::show_labels(self.show_labels).with_order(12),
-            ConfigProperty::stat_block(ORDER_BLOCK_RESULT_STATS_ID, markup::with_link_row(self.markup_link.as_ref(), self.result_stat_rows())).with_order(20),
+            ConfigProperty::stat_block(ORDER_BLOCK_RESULT_STATS_ID, markup::with_link_row(self.markup_link.as_ref(), markup::with_follows_row(self.markup_follows.as_ref(), self.result_stat_rows()))).with_order(20),
         ]
     }
 

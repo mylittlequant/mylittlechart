@@ -88,6 +88,14 @@ pub struct StructureBreak {
     #[serde(default)]
     pub markup_link: Option<markup::MarkupLink>,
 
+    /// This claim's own succession edge — the claim it continues in its
+    /// family's own narrative. Persisted and maintained wholesale by
+    /// `mlc_backend::bubble::markup_guards`, exactly like
+    /// [`Self::markup_link`]; `markup::chain`'s own module doc explains why
+    /// this edge is derived where Elliott's is declared.
+    #[serde(default)]
+    pub markup_follows: Option<markup::MarkupFollows>,
+
     /// This claim's own resolved event, with every bar index already
     /// converted back to GLOBAL — see
     /// [`Primitive::refresh_bar_derived_cache`]'s own contract.
@@ -122,6 +130,7 @@ impl StructureBreak {
             cached_event: None,
             cached_trend: None,
             markup_link: None,
+            markup_follows: None,
             cached_violations: Vec::new(),
         }
     }
@@ -356,6 +365,33 @@ impl Primitive for StructureBreak {
         Some((bar.timestamp * 1000, self.cached_event.as_ref().map(|e| e.level).unwrap_or(bar.close)))
     }
 
+    fn markup_follows(&self) -> Option<&markup::MarkupFollows> {
+        self.markup_follows.as_ref()
+    }
+
+    fn set_markup_follows(&mut self, follows: Option<markup::MarkupFollows>) {
+        self.markup_follows = follows;
+    }
+
+    /// What this claim contributes to its family's own chain rules — see
+    /// [`Primitive::chain_fact`].
+    fn chain_fact(&self, bars: &[Bar]) -> Option<markup::ChainFact> {
+        let bar = self.anchor_bar_idx(bars)?;
+        // The CLAIMED kind, never the detected one: `choch_after_same_
+        // direction_break` is about what the analyst asserted, and the
+        // claim's own guard already reports a mismatch with `mli`.
+        let variant = match self.claimed_kind.as_str() {
+            "choch" => Some(markup::chain::kinds::CHOCH),
+            _ => Some(markup::chain::kinds::BOS),
+        };
+        Some(markup::ChainFact {
+            bar,
+            bias: self.cached_event.as_ref().map(|e| e.direction.into()),
+            variant,
+            origin_event_bar: None,
+        })
+    }
+
     fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
         Some(super::super::markup::MarkupFamily::SmartMoney)
     }
@@ -382,7 +418,7 @@ impl Primitive for StructureBreak {
                 ],
             ).with_order(10),
             ConfigProperty::show_labels(self.show_labels).with_order(11),
-            ConfigProperty::stat_block(STRUCTURE_BREAK_RESULT_STATS_ID, markup::with_link_row(self.markup_link.as_ref(), self.result_stat_rows())).with_order(20),
+            ConfigProperty::stat_block(STRUCTURE_BREAK_RESULT_STATS_ID, markup::with_link_row(self.markup_link.as_ref(), markup::with_follows_row(self.markup_follows.as_ref(), self.result_stat_rows()))).with_order(20),
         ]
     }
 

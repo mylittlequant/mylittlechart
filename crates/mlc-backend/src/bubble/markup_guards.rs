@@ -28,7 +28,9 @@
 //! sixty times a second.
 
 use mlc_core::drawing::primitives_v2::elliott::guard::Violation;
-use mlc_core::drawing::primitives_v2::markup::{MarkupFamily, MarkupLink};
+use mlc_core::drawing::primitives_v2::markup::{
+    chain, ChainFact, MarkupFamily, MarkupFollows, MarkupLink,
+};
 use mlc_core::i18n::ConceptKey;
 
 use super::data_bubble::DataBubble;
@@ -107,10 +109,136 @@ fn refresh_markup_links(b: &mut DataBubble) {
     }
 }
 
+/// How far back a claim of `family` may look for the claim it continues.
+///
+/// Per family, not one shared number: the smart-money narrative plays out
+/// over swings and order flow's over a handful of bars, and each engine
+/// config owns its own window for that reason. Candle patterns answer `0` —
+/// a pattern is a self-contained reading of one to three bars with no
+/// succession of its own, which the plan states and `chain::successor_kinds`
+/// enforces by giving them no successors at all.
+fn chain_window(family: MarkupFamily) -> usize {
+    match family {
+        MarkupFamily::SmartMoney => mlc_core::state::smc_engine::smc_engine_config().chain_window_bars,
+        MarkupFamily::OrderFlow => {
+            mlc_core::state::orderflow_engine::orderflow_engine_config().chain_window_bars
+        }
+        MarkupFamily::CandlePattern => 0,
+    }
+}
+
+/// One claim as the chain pass sees it.
+struct ChainSeen {
+    id: u64,
+    type_id: String,
+    family: MarkupFamily,
+    fact: ChainFact,
+}
+
+/// Recompute every claim's own succession edge, then the rules that edge
+/// makes possible.
+///
+/// Derived, not declared — `markup::chain`'s own module doc argues why, and
+/// the consequence is here: each claim links to the NEAREST earlier claim
+/// its family's grammar allows, inside that family's own chain window. Ties
+/// break on the lower primitive id so the answer does not depend on
+/// collection order.
+///
+/// Because the edge is rebuilt from the grammar every pass, a chain cannot
+/// contain a cycle by construction (every predecessor is strictly earlier
+/// in bars). The walk still carries a visited set — a persisted edge from
+/// another build reaches this code before it is overwritten, and a pass
+/// that can hang on malformed stored state is not one to ship.
+fn refresh_markup_chains(b: &mut DataBubble) {
+    let bars = &b.bars;
+
+    let seen: Vec<Option<ChainSeen>> = b
+        .primitives
+        .iter()
+        .map(|p| {
+            let family = p.markup_family()?;
+            let fact = p.chain_fact(bars)?;
+            Some(ChainSeen { id: p.data().id, type_id: p.type_id().to_string(), family, fact })
+        })
+        .collect();
+
+    // 1. The edge itself.
+    let mut edges: Vec<(usize, Option<MarkupFollows>)> = Vec::new();
+    for (i, own) in seen.iter().enumerate() {
+        let Some(own) = own else { continue };
+        let window = chain_window(own.family);
+        let resolved = (window > 0)
+            .then(|| {
+                seen.iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .filter_map(|(_, other)| other.as_ref())
+                    .filter(|prev| {
+                        chain::may_follow(&prev.type_id, &own.type_id)
+                            && prev.fact.bar < own.fact.bar
+                            && own.fact.bar - prev.fact.bar <= window
+                    })
+                    // Nearest first; the lower id breaks a tie.
+                    .max_by_key(|prev| (prev.fact.bar, std::cmp::Reverse(prev.id)))
+                    .map(|prev| MarkupFollows::new(prev.id, &prev.type_id))
+            })
+            .flatten();
+        if resolved.as_ref() != b.primitives[i].markup_follows() {
+            edges.push((i, resolved));
+        }
+    }
+    for (i, follows) in edges {
+        b.primitives[i].set_markup_follows(follows);
+    }
+
+    // 2. The rules that edge makes possible. Recomputed from the edges just
+    //    written, never from what they were before this pass.
+    let mut updates: Vec<(usize, Vec<Violation>)> = Vec::new();
+    for (i, own) in seen.iter().enumerate() {
+        let Some(own) = own else { continue };
+        let Some(follows) = b.primitives[i].markup_follows().cloned() else { continue };
+        let Some(prev) = seen.iter().flatten().find(|s| s.id == follows.prev_id) else { continue };
+
+        // Every structure break earlier in this chain, nearest last — the
+        // `choch_after_same_direction_break` rule compares two BREAKS, and
+        // in a full narrative two breaks are two links apart.
+        let mut prior_breaks: Vec<ChainFact> = Vec::new();
+        let mut cursor = Some(follows.prev_id);
+        let mut visited: std::collections::HashSet<u64> = std::collections::HashSet::new();
+        while let Some(id) = cursor {
+            if !visited.insert(id) {
+                break;
+            }
+            let Some(node) = seen.iter().flatten().find(|s| s.id == id) else { break };
+            if node.type_id == "structure_break" {
+                prior_breaks.push(node.fact);
+            }
+            cursor = b
+                .primitives
+                .iter()
+                .find(|p| p.data().id == id)
+                .and_then(|p| p.markup_follows())
+                .map(|f| f.prev_id);
+        }
+        prior_breaks.reverse();
+
+        let violations =
+            chain::chain_violations(&own.type_id, &own.fact, &prev.type_id, &prev.fact, &prior_breaks);
+        if !violations.is_empty() {
+            updates.push((i, violations));
+        }
+    }
+
+    for (i, violations) in updates {
+        b.primitives[i].push_context_violations(violations);
+    }
+}
+
 pub(crate) fn refresh_markup_guards(b: &mut DataBubble) {
     // Containment first: it is collection state the rules below may read,
     // and rebuilding it is what keeps a persisted link honest.
     refresh_markup_links(b);
+    refresh_markup_chains(b);
 
     // One immutable pass to decide, one mutable pass to write — the shape
     // `wave_guards::refresh_wave_guards` uses, for the same borrow reason.
@@ -371,6 +499,108 @@ mod tests {
         );
         let parent = b.primitives[2].markup_link().map(|l| l.parent_id);
         assert_eq!(parent, Some(b.primitives[1].data().id), "the wide range won");
+    }
+
+    // ---------------------------------------------------------------
+    // Succession (S3)
+    // ---------------------------------------------------------------
+
+    /// Forty flat bars — enough to put a predecessor outside the default
+    /// thirty-bar window. Price is irrelevant to succession, which is about
+    /// bar order and the grammar alone.
+    fn flat_bars(n: usize) -> Vec<mlc_core::Bar> {
+        (0..n).map(|i| mlc_core::Bar::new(1_000 + i as i64 * 60, 100.0, 100.0, 100.0, 100.0)).collect()
+    }
+
+    fn follows_of(b: &DataBubble, i: usize) -> Option<u64> {
+        b.primitives[i].markup_follows().map(|f| f.prev_id)
+    }
+
+    #[test]
+    fn a_break_after_a_sweep_continues_it() {
+        let b = contained_bubble(
+            flat_bars(40),
+            vec![
+                ("liquidity_sweep", vec![(ts_ms(5), 100.0)]),
+                ("structure_break", vec![(ts_ms(9), 100.0)]),
+            ],
+        );
+        assert_eq!(follows_of(&b, 1), Some(b.primitives[0].data().id));
+        assert!(follows_of(&b, 0).is_none(), "the sweep opens the chain");
+    }
+
+    /// The shift is not optional: an origin claimed straight after a sweep
+    /// skips the link that makes the sweep mean anything, so the grammar
+    /// refuses the edge rather than inventing one.
+    #[test]
+    fn the_grammar_refuses_an_edge_the_setup_does_not_have() {
+        let b = contained_bubble(
+            flat_bars(40),
+            vec![
+                ("liquidity_sweep", vec![(ts_ms(5), 100.0)]),
+                ("order_block", vec![(ts_ms(9), 100.0)]),
+            ],
+        );
+        assert!(follows_of(&b, 1).is_none());
+    }
+
+    #[test]
+    fn a_predecessor_outside_the_window_is_not_continued() {
+        let b = contained_bubble(
+            flat_bars(40),
+            vec![
+                ("liquidity_sweep", vec![(ts_ms(0), 100.0)]),
+                ("structure_break", vec![(ts_ms(35), 100.0)]),
+            ],
+        );
+        assert!(follows_of(&b, 1).is_none(), "35 bars apart is not one narrative");
+    }
+
+    #[test]
+    fn the_nearest_legal_predecessor_wins() {
+        let b = contained_bubble(
+            flat_bars(40),
+            vec![
+                ("liquidity_sweep", vec![(ts_ms(3), 100.0)]),
+                ("liquidity_sweep", vec![(ts_ms(12), 100.0)]),
+                ("structure_break", vec![(ts_ms(15), 100.0)]),
+            ],
+        );
+        assert_eq!(follows_of(&b, 2), Some(b.primitives[1].data().id));
+    }
+
+    /// The edge is rebuilt every pass, so moving a claim out of reach
+    /// clears it — the same contract containment holds to.
+    #[test]
+    fn dragging_a_claim_out_of_the_window_clears_the_edge() {
+        let mut b = contained_bubble(
+            flat_bars(40),
+            vec![
+                ("liquidity_sweep", vec![(ts_ms(2), 100.0)]),
+                ("structure_break", vec![(ts_ms(9), 100.0)]),
+            ],
+        );
+        assert!(follows_of(&b, 1).is_some());
+
+        b.primitives[1].set_points(&[(ts_ms(38), 100.0)]);
+        super::super::bar_derived_cache::refresh_bar_derived_caches(&mut b);
+        refresh_markup_guards(&mut b);
+        assert!(follows_of(&b, 1).is_none(), "a stale edge survived the drag");
+    }
+
+    /// A pattern is a self-contained reading of its own bars — the plan
+    /// says so, and `successor_kinds` gives the family no successors, so no
+    /// window setting can make one appear.
+    #[test]
+    fn candle_patterns_form_no_chains() {
+        let b = contained_bubble(
+            flat_bars(40),
+            vec![
+                ("candle_pattern", vec![(ts_ms(5), 100.0)]),
+                ("candle_pattern", vec![(ts_ms(9), 100.0)]),
+            ],
+        );
+        assert!(follows_of(&b, 1).is_none());
     }
 
     #[test]

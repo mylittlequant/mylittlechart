@@ -34,6 +34,8 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use crate::types::FootprintBar;
 use crate::i18n::{current_language, ConceptKey};
 use crate::state::orderflow_engine::orderflow_engine_config;
+use crate::find_bar_for_timestamp_ms;
+use super::super::markup;
 use mli::events::divergence::DivergenceKind;
 use mli::orderflow::DeltaDivergenceHit;
 use super::super::{
@@ -90,6 +92,14 @@ pub struct DeltaDivergence {
     #[serde(default = "default_true")]
     pub show_labels: bool,
 
+    /// This claim's own succession edge — the claim it continues in its
+    /// family's own narrative. Persisted and maintained wholesale by
+    /// `mlc_backend::bubble::markup_guards`, exactly like
+    /// [`Self::markup_link`]; `markup::chain`'s own module doc explains why
+    /// this edge is derived where Elliott's is declared.
+    #[serde(default)]
+    pub markup_follows: Option<markup::MarkupFollows>,
+
     /// This claim's own resolved hit, with both bar indices already
     /// converted back to GLOBAL footprint-bar indices — see
     /// [`Primitive::refresh_footprint_derived_cache`]'s own contract.
@@ -132,6 +142,7 @@ impl DeltaDivergence {
             cached_hit: None,
             cached_from_ts: None,
             cached_footprint_present: false,
+            markup_follows: None,
             cached_violations: Vec::new(),
             last_seen_footprint_len: None,
             last_seen_anchor_ts: None,
@@ -352,6 +363,21 @@ impl Primitive for DeltaDivergence {
     /// leaves the tool drawing an empty shape while answering a different
     /// question than the one it was asked — the exact degradation Appendix B
     /// of `docs/mlc/plans/markup-engines-2026-08-25.md` forbids.
+    fn markup_follows(&self) -> Option<&markup::MarkupFollows> {
+        self.markup_follows.as_ref()
+    }
+
+    fn set_markup_follows(&mut self, follows: Option<markup::MarkupFollows>) {
+        self.markup_follows = follows;
+    }
+
+    /// What this claim contributes to its family's own chain rules — see
+    /// [`Primitive::chain_fact`].
+    fn chain_fact(&self, bars: &[Bar]) -> Option<markup::ChainFact> {
+        let bar = find_bar_for_timestamp_ms(bars, self.anchor_ts)?;
+        Some(markup::ChainFact { bar, bias: None, variant: None, origin_event_bar: None })
+    }
+
     fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
         Some(super::super::markup::MarkupFamily::OrderFlow)
     }
@@ -386,7 +412,7 @@ impl Primitive for DeltaDivergence {
                 ],
             ).with_order(10),
             ConfigProperty::show_labels(self.show_labels).with_order(11),
-            ConfigProperty::stat_block(DELTA_DIVERGENCE_RESULT_STATS_ID, self.result_stat_rows()).with_order(20),
+            ConfigProperty::stat_block(DELTA_DIVERGENCE_RESULT_STATS_ID, markup::with_follows_row(self.markup_follows.as_ref(), self.result_stat_rows())).with_order(20),
         ]
     }
 

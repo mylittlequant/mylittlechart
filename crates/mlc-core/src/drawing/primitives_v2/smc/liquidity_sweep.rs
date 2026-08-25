@@ -69,6 +69,14 @@ pub struct LiquiditySweep {
     #[serde(default)]
     pub markup_link: Option<markup::MarkupLink>,
 
+    /// This claim's own succession edge — the claim it continues in its
+    /// family's own narrative. Persisted and maintained wholesale by
+    /// `mlc_backend::bubble::markup_guards`, exactly like
+    /// [`Self::markup_link`]; `markup::chain`'s own module doc explains why
+    /// this edge is derived where Elliott's is declared.
+    #[serde(default)]
+    pub markup_follows: Option<markup::MarkupFollows>,
+
     /// This claim's own resolved sweep, with every bar index already
     /// converted back to GLOBAL — see
     /// [`Primitive::refresh_bar_derived_cache`]'s own contract.
@@ -94,6 +102,7 @@ impl LiquiditySweep {
             show_labels: true,
             cached_sweep: None,
             markup_link: None,
+            markup_follows: None,
             cached_violations: Vec::new(),
         }
     }
@@ -315,6 +324,27 @@ impl Primitive for LiquiditySweep {
         Some((bar.timestamp * 1000, self.cached_sweep.as_ref().map(|s| s.level).unwrap_or(bar.close)))
     }
 
+    fn markup_follows(&self) -> Option<&markup::MarkupFollows> {
+        self.markup_follows.as_ref()
+    }
+
+    fn set_markup_follows(&mut self, follows: Option<markup::MarkupFollows>) {
+        self.markup_follows = follows;
+    }
+
+    /// What this claim contributes to its family's own chain rules — see
+    /// [`Primitive::chain_fact`].
+    fn chain_fact(&self, bars: &[Bar]) -> Option<markup::ChainFact> {
+        let bar = self.anchor_bar_idx(bars)?;
+        let sweep = self.cached_sweep.as_ref();
+        Some(markup::ChainFact {
+            bar,
+            bias: sweep.map(|s| s.direction.into()),
+            variant: None,
+            origin_event_bar: None,
+        })
+    }
+
     fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
         Some(super::super::markup::MarkupFamily::SmartMoney)
     }
@@ -331,7 +361,7 @@ impl Primitive for LiquiditySweep {
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::show_labels(self.show_labels).with_order(10),
-            ConfigProperty::stat_block(LIQUIDITY_SWEEP_RESULT_STATS_ID, markup::with_link_row(self.markup_link.as_ref(), self.result_stat_rows())).with_order(20),
+            ConfigProperty::stat_block(LIQUIDITY_SWEEP_RESULT_STATS_ID, markup::with_link_row(self.markup_link.as_ref(), markup::with_follows_row(self.markup_follows.as_ref(), self.result_stat_rows()))).with_order(20),
         ]
     }
 

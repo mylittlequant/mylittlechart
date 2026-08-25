@@ -160,6 +160,18 @@ pub struct SmcEngineConfig {
     #[serde(default = "default_claim_snap_bars")]
     pub claim_snap_bars: usize,
 
+    /// How many bars back a claim may look for the claim it CONTINUES —
+    /// the window `mlc_backend::bubble::markup_guards` derives
+    /// `markup_follows` inside. Default 30, `0` disables chaining.
+    ///
+    /// A window rather than an unbounded search because succession here is
+    /// derived, not declared (`markup::chain`'s own module doc): a break
+    /// three hundred bars after a sweep is not the shift that sweep
+    /// predicted, and linking them would put a chain rule's verdict on two
+    /// claims that have nothing to do with each other.
+    #[serde(default = "default_chain_window_bars")]
+    pub chain_window_bars: usize,
+
 }
 
 fn default_true() -> bool {
@@ -198,6 +210,10 @@ fn default_claim_snap_bars() -> usize {
     3
 }
 
+fn default_chain_window_bars() -> usize {
+    30
+}
+
 impl Default for SmcEngineConfig {
     fn default() -> Self {
         Self {
@@ -211,6 +227,7 @@ impl Default for SmcEngineConfig {
             judge_lookback_bars: default_judge_lookback_bars(),
             amd_max_distribution_lag: default_amd_max_distribution_lag(),
             claim_snap_bars: default_claim_snap_bars(),
+            chain_window_bars: default_chain_window_bars(),
         }
     }
 }

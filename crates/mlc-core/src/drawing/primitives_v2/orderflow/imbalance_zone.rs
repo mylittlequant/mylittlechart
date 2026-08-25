@@ -25,6 +25,8 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use crate::types::FootprintBar;
 use crate::i18n::{current_language, ConceptKey};
 use crate::state::orderflow_engine::orderflow_engine_config;
+use crate::find_bar_for_timestamp_ms;
+use super::super::markup;
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
@@ -346,6 +348,13 @@ impl Primitive for ImbalanceZone {
     /// leaves the tool drawing an empty shape while answering a different
     /// question than the one it was asked — the exact degradation Appendix B
     /// of `docs/mlc/plans/markup-engines-2026-08-25.md` forbids.
+    /// What this claim contributes to its family's own chain rules — see
+    /// [`Primitive::chain_fact`].
+    fn chain_fact(&self, bars: &[Bar]) -> Option<markup::ChainFact> {
+        let bar = find_bar_for_timestamp_ms(bars, self.anchor_ts)?;
+        Some(markup::ChainFact { bar, bias: None, variant: None, origin_event_bar: None })
+    }
+
     fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
         Some(super::super::markup::MarkupFamily::OrderFlow)
     }

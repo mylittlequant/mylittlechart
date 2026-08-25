@@ -3302,10 +3302,18 @@ pub enum ConceptKey {
     /// containment row. The midpoint reuses `DealingRangeEquilibriumLabel`.
     DealingRangePremiumLabel = 430,
     DealingRangeDiscountLabel = 431,
+    /// The shared markup layer's own succession row: which claim this one
+    /// continues in its family's own narrative.
+    MarkupFollowsLabel = 432,
+    /// `markup::chain`'s own three cross-primitive rules — see each rule
+    /// constant's doc for what the method actually claims.
+    RuleSmcChainDirection = 433,
+    RuleChochAfterSameDirectionBreak = 434,
+    RuleOrderBlockOutsideItsBreak = 435,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 432;
+    pub const COUNT: usize = 436;
 
     /// Get translation for this key.
     #[inline]

@@ -416,6 +416,20 @@ impl Primitive for AmdCycle {
         Some((from, to))
     }
 
+    /// What this claim contributes to its family's own chain rules — see
+    /// [`Primitive::chain_fact`].
+    fn chain_fact(&self, bars: &[Bar]) -> Option<markup::ChainFact> {
+        let bar = self.anchor_bar_idx(bars)?;
+        // The cycle speaks through its manipulation phase — that IS the
+        // sweep, and it is the event the narrative continues from.
+        Some(markup::ChainFact {
+            bar,
+            bias: self.cached_cycle.as_ref().map(|c| c.manipulation.direction.into()),
+            variant: None,
+            origin_event_bar: None,
+        })
+    }
+
     fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
         Some(super::super::markup::MarkupFamily::SmartMoney)
     }

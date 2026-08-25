@@ -1397,6 +1397,42 @@ pub trait Primitive: Send + Sync {
         None
     }
 
+    // -------------------------------------------------------------------
+    // Succession (S3 — see `markup::chain`'s own module doc)
+    // -------------------------------------------------------------------
+
+    /// The id of the claim THIS one continues in its family's own
+    /// narrative — succession, not containment (see
+    /// [`Self::markup_link`] for the other relation, and `markup::chain`
+    /// for why the two are kept apart).
+    ///
+    /// The non-Elliott twin of [`Self::wave_follows`], and unlike it,
+    /// DERIVED rather than declared: `mlc_backend::bubble::markup_guards`
+    /// links each claim to the nearest earlier claim its family's grammar
+    /// allows, inside the engine's own chain window. `markup::chain`'s
+    /// module doc argues why this one is derived and Elliott's is not.
+    fn markup_follows(&self) -> Option<&markup::MarkupFollows> {
+        None
+    }
+
+    /// Set (or clear) [`Self::markup_follows`] — the write half the
+    /// maintaining pass needs from outside the concrete type, mirroring
+    /// [`Self::set_markup_link`].
+    fn set_markup_follows(&mut self, _follows: Option<markup::MarkupFollows>) {}
+
+    /// What this claim contributes to its family's own chain rules — see
+    /// [`markup::ChainFact`].
+    ///
+    /// Read from this claim's own REFRESHED derived cache, so the
+    /// maintaining pass's ordering contract applies here exactly as it does
+    /// to [`Self::slot_containing`]. `None` for a claim that resolved
+    /// nothing at all, which is how a rule about two claims avoids
+    /// reporting the same ignorance an unresolved claim's own guard already
+    /// reports.
+    fn chain_fact(&self, _bars: &[Bar]) -> Option<markup::ChainFact> {
+        None
+    }
+
     /// Append cross-primitive violations onto whatever this primitive's own
     /// [`Self::context_violations`] already reports.
     ///

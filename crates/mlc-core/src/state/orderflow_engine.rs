@@ -88,6 +88,18 @@ pub struct OrderFlowEngineConfig {
     #[serde(default = "default_claim_snap_bars")]
     pub claim_snap_bars: usize,
 
+    /// How many bars back an order-flow claim may look for the claim it
+    /// CONTINUES — this family's own counterpart of
+    /// `SmcEngineConfig::chain_window_bars`.
+    ///
+    /// Ten rather than thirty: an order-flow claim is an event inside one
+    /// bar's book, and the exhaustion narrative it belongs to (imbalance ->
+    /// absorption -> divergence) plays out over a handful of bars. A window
+    /// borrowed from the swing-scale family would chain events that never
+    /// belonged to the same reading.
+    #[serde(default = "default_chain_window_bars")]
+    pub chain_window_bars: usize,
+
 }
 
 fn default_true() -> bool {
@@ -110,6 +122,10 @@ fn default_claim_snap_bars() -> usize {
     3
 }
 
+fn default_chain_window_bars() -> usize {
+    10
+}
+
 impl Default for OrderFlowEngineConfig {
     fn default() -> Self {
         Self {
@@ -118,6 +134,7 @@ impl Default for OrderFlowEngineConfig {
             delta_divergence_swing_n: default_delta_divergence_swing_n(),
             min_single_print_run: default_min_single_print_run(),
             claim_snap_bars: default_claim_snap_bars(),
+            chain_window_bars: default_chain_window_bars(),
         }
     }
 }

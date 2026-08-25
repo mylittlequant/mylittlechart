@@ -16,6 +16,7 @@ use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64, find_bar_for_tim
 use crate::types::FootprintBar;
 use crate::i18n::{current_language, ConceptKey, PrimitiveNameKey};
 use crate::state::orderflow_engine::orderflow_engine_config;
+use super::super::markup;
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
@@ -52,6 +53,14 @@ pub struct AbsorptionMark {
     #[serde(default = "default_true")]
     pub show_labels: bool,
 
+    /// This claim's own succession edge — the claim it continues in its
+    /// family's own narrative. Persisted and maintained wholesale by
+    /// `mlc_backend::bubble::markup_guards`, exactly like
+    /// [`Self::markup_link`]; `markup::chain`'s own module doc explains why
+    /// this edge is derived where Elliott's is declared.
+    #[serde(default)]
+    pub markup_follows: Option<markup::MarkupFollows>,
+
     /// This claim's own resolved snapshot — see
     /// [`Primitive::refresh_footprint_derived_cache`]'s own contract.
     #[serde(skip)]
@@ -82,6 +91,7 @@ impl AbsorptionMark {
             show_labels: true,
             cached_snapshot: None,
             cached_footprint_present: false,
+            markup_follows: None,
             cached_violations: Vec::new(),
             last_seen_footprint_len: None,
             last_seen_anchor_ts: None,
@@ -309,6 +319,24 @@ impl Primitive for AbsorptionMark {
     /// leaves the tool drawing an empty shape while answering a different
     /// question than the one it was asked — the exact degradation Appendix B
     /// of `docs/mlc/plans/markup-engines-2026-08-25.md` forbids.
+    fn markup_follows(&self) -> Option<&markup::MarkupFollows> {
+        self.markup_follows.as_ref()
+    }
+
+    fn set_markup_follows(&mut self, follows: Option<markup::MarkupFollows>) {
+        self.markup_follows = follows;
+    }
+
+    /// What this claim contributes to its family's own chain rules — see
+    /// [`Primitive::chain_fact`].
+    fn chain_fact(&self, bars: &[Bar]) -> Option<markup::ChainFact> {
+        let bar = self.anchor_bar_idx(bars)?;
+        // Order flow's claims are events inside one bar's book; none of
+        // them resolves a swing direction, so the chain rules that compare
+        // directions never apply to them and this fact carries only the bar.
+        Some(markup::ChainFact { bar, bias: None, variant: None, origin_event_bar: None })
+    }
+
     fn markup_family(&self) -> Option<super::super::markup::MarkupFamily> {
         Some(super::super::markup::MarkupFamily::OrderFlow)
     }
@@ -333,7 +361,7 @@ impl Primitive for AbsorptionMark {
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![
             ConfigProperty::show_labels(self.show_labels).with_order(12),
-            ConfigProperty::stat_block(ABSORPTION_MARK_RESULT_STATS_ID, self.result_stat_rows()).with_order(20),
+            ConfigProperty::stat_block(ABSORPTION_MARK_RESULT_STATS_ID, markup::with_follows_row(self.markup_follows.as_ref(), self.result_stat_rows())).with_order(20),
         ]
     }
 
