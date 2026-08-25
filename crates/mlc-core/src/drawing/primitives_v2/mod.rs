@@ -86,6 +86,18 @@ use serde::{Deserialize, Serialize};
 mod traits;
 mod types;
 mod bar_window;
+
+/// How close, in device pixels, two consecutive markers of the same kind
+/// may sit before a SCANNER primitive collapses them into one marker with
+/// a count badge.
+///
+/// Shared by every scanner rather than repeated per file, because it is not
+/// a private drawing detail: it is the answer to "what does a survey do
+/// when it is zoomed out far enough that its hits overlap", and two
+/// scanners answering it differently would give the same gesture two
+/// behaviours on the same chart. Below this spacing a dense survey reads as
+/// a handful of dots carrying counts, never a solid smear.
+const SCAN_MARKER_MIN_GAP_PX: f64 = 6.0;
 pub mod registry;
 pub mod config;
 pub mod fill_defaults;

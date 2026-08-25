@@ -794,6 +794,9 @@ fn pattern_section() -> ToolbarSectionDef {
             DropdownItemDef::action("fair_value_gap", PN::FairValueGap.get(lang)).with_icon(ToolbarIconId::new("FairValueGap")),
             DropdownItemDef::action("liquidity_sweep", PN::LiquiditySweep.get(lang)).with_icon(ToolbarIconId::new("LiquiditySweep")),
             DropdownItemDef::action("structure_break", PN::StructureBreak.get(lang)).with_icon(ToolbarIconId::new("StructureBreak")),
+            DropdownItemDef::action("dealing_range", PN::DealingRange.get(lang)).with_icon(ToolbarIconId::new("DealingRange")),
+            DropdownItemDef::action("amd_cycle", PN::AmdCycle.get(lang)).with_icon(ToolbarIconId::new("AmdCycle")),
+            DropdownItemDef::action("smc_scan", PN::SmcScan.get(lang)).with_icon(ToolbarIconId::new("SmcScan")),
             // Cycles
             DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderCycles.get(lang).to_string() },

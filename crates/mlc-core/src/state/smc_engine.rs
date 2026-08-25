@@ -12,22 +12,25 @@
 //! [`smc_engine_config`]/[`set_smc_engine_config`].
 //!
 //! Carries the chart's own copy of every threshold
-//! `mli::smc::config::SmcConfig` declares EXCEPT `amd_max_distribution_lag`
-//! — that field belongs to the AMD assembly (a later wave,
-//! `docs/mlc/plans/markup-engines-2026-08-25.md` system 3), and exposing a
-//! knob no primitive in THIS wave reads would be the "control over a field
-//! nothing reads" defect the plan's own rules-that-hold-across-every-wave
-//! section names. [`SmcEngineConfig::to_smc_config`] fills that one field
-//! from `mli`'s own default until the AMD wave grows a reader for it — see
-//! that method's own doc.
+//! `mli::smc::config::SmcConfig` declares, INCLUDING
+//! `amd_max_distribution_lag` — that field was left unread through the
+//! order-block/FVG/sweep/structure-break wave (it belongs to the AMD
+//! assembly, `docs/mlc/plans/markup-engines-2026-08-25.md` system 3, a
+//! later wave at the time), and [`SmcEngineConfig::to_smc_config`] filled it
+//! from `mli`'s own default rather than expose a "control over a field
+//! nothing reads" defect. The AMD wave
+//! (`drawing::primitives_v2::smc::amd_cycle`) is that later wave: the field
+//! is now real (`amd_max_distribution_lag`, below) and
+//! [`SmcEngineConfig::to_smc_config`] passes the config's own value through.
 //!
 //! Like the candle-pattern engine, this config has no settings-modal UI yet.
-//! Its fields are read by every one of the four SMC claim primitives
+//! Its fields are read by every one of the six SMC claim primitives
 //! (`drawing::primitives_v2::smc::{order_block, fair_value_gap,
-//! liquidity_sweep, structure_break}`), each through the shared
+//! liquidity_sweep, structure_break, dealing_range, amd_cycle}`) and the
+//! survey (`smc_scan`), each through the shared
 //! [`crate::drawing::primitives_v2::smc::smc_judge::judge_window`] helper —
 //! a control over a field nothing reads is a defect, and every field below
-//! already has its reader in this same change.
+//! already has its reader.
 //!
 //! `#[serde(default)]` on every field: a profile blob written before this
 //! struct existed still loads, and lands on every default described below.
@@ -135,6 +138,16 @@ pub struct SmcEngineConfig {
     /// for the candle-pattern scan's own bounded window. Default 300.
     #[serde(default = "default_judge_lookback_bars")]
     pub judge_lookback_bars: usize,
+
+    /// Mirrors `mli::smc::config::SmcConfig::amd_max_distribution_lag` — how
+    /// many bars after a manipulation sweep [`crate::drawing::primitives_v2::
+    /// smc::amd_cycle::AmdCycle`] will still accept a displacement leg as
+    /// that cycle's distribution phase. `mli`'s own default: 10. See this
+    /// module's own doc for why this field has a real reader now
+    /// (`SmcEngineConfig::to_smc_config`) rather than being filled from
+    /// `mli`'s default underneath a chart-side knob nothing read.
+    #[serde(default = "default_amd_max_distribution_lag")]
+    pub amd_max_distribution_lag: usize,
 }
 
 fn default_true() -> bool {
@@ -165,6 +178,10 @@ fn default_judge_lookback_bars() -> usize {
     300
 }
 
+fn default_amd_max_distribution_lag() -> usize {
+    10
+}
+
 impl Default for SmcEngineConfig {
     fn default() -> Self {
         Self {
@@ -176,6 +193,7 @@ impl Default for SmcEngineConfig {
             order_block_zone: OrderBlockZoneMode::default(),
             judge_claims: true,
             judge_lookback_bars: default_judge_lookback_bars(),
+            amd_max_distribution_lag: default_amd_max_distribution_lag(),
         }
     }
 }
@@ -185,10 +203,6 @@ impl SmcEngineConfig {
     /// `mli::smc::config::SmcConfig` — every SMC primitive calls this rather
     /// than building its own `mli::smc::SmcConfig` literal, so the mapping
     /// can never drift between primitives.
-    ///
-    /// `amd_max_distribution_lag` is filled from `mli`'s own default — see
-    /// this module's own doc for why that one field has no chart-side knob
-    /// yet.
     pub fn to_smc_config(&self) -> mli::smc::SmcConfig {
         mli::smc::SmcConfig {
             swing_n: self.swing_n,
@@ -197,7 +211,7 @@ impl SmcEngineConfig {
             equal_level_atr_tol: self.equal_level_atr_tol,
             sweep_recovery_bars: self.sweep_recovery_bars,
             order_block_zone: self.order_block_zone.to_mli(),
-            amd_max_distribution_lag: mli::smc::SmcConfig::default().amd_max_distribution_lag,
+            amd_max_distribution_lag: self.amd_max_distribution_lag,
         }
     }
 }
@@ -263,6 +277,20 @@ mod tests {
         assert_eq!(mapped.amd_max_distribution_lag, mli_default.amd_max_distribution_lag);
         assert!(cfg.judge_claims);
         assert_eq!(cfg.judge_lookback_bars, 300);
+    }
+
+    /// `amd_max_distribution_lag` is a real, read field — `to_smc_config`
+    /// passes the config's OWN value through rather than always filling
+    /// `mli`'s default, unlike the earlier wave (see this module's own
+    /// doc). `amd_cycle`'s own test suite confirms the value actually
+    /// changes which cycles resolve; this test only confirms the mapping
+    /// itself is not silently pinned to a constant.
+    #[test]
+    fn amd_max_distribution_lag_passes_through_unpinned() {
+        let cfg = SmcEngineConfig { amd_max_distribution_lag: 0, ..SmcEngineConfig::default() };
+        assert_eq!(cfg.to_smc_config().amd_max_distribution_lag, 0);
+        let cfg = SmcEngineConfig { amd_max_distribution_lag: 42, ..SmcEngineConfig::default() };
+        assert_eq!(cfg.to_smc_config().amd_max_distribution_lag, 42);
     }
 
     #[test]

@@ -3190,10 +3190,48 @@ pub enum ConceptKey {
     /// breaker bar, `FairValueGap`'s own mitigated/filled bars, before any
     /// of the three has happened.
     NoneValue = 387,
+
+    // ---- Dealing range / AMD cycle / SMC scan (markup-engines wave,
+    // 2026-08-25 tail) — `drawing::primitives_v2::smc::{dealing_range,
+    // amd_cycle, smc_scan}`'s own guard-rule message, Pills-row labels,
+    // Stat-block rows, and structure-survey table labels. Appended after
+    // `NoneValue` for the same append-only reason every block above states.
+    /// `DealingRange`'s own guard rule — `FromStructure` mode only; `Manual`
+    /// mode never reports it (see that primitive's own doc).
+    RuleDealingRangeNoStructure = 388,
+    /// `DealingRange`'s own Pills row: which mode supplies the range bounds.
+    DealingRangeSourceLabel = 389,
+    DealingRangeSourceManual = 390,
+    DealingRangeSourceFromStructure = 391,
+    /// `DealingRange`'s own OTE-band toggle label.
+    DealingRangeShowOteLabel = 392,
+    /// `DealingRange`'s own Stat block rows: high, low, equilibrium, size.
+    DealingRangeHighLabel = 393,
+    DealingRangeLowLabel = 394,
+    DealingRangeEquilibriumLabel = 395,
+    DealingRangeSizeLabel = 396,
+    /// `AmdCycle`'s own guard rule.
+    RuleAmdCycleNotFormed = 397,
+    /// Shared phase label — `AmdCycle`'s own on-chart phase labels AND Stat
+    /// block rows, and `SmcScan`'s own structure-table row name for the
+    /// `amd_cycle` hit kind's manipulation/accumulation/distribution
+    /// sub-shapes reuse the same three keys below rather than declaring a
+    /// second set.
+    AccumulationLabel = 398,
+    ManipulationLabel = 399,
+    DistributionLabel = 400,
+    /// `SmcScan`'s own structure-table row names for the two surveyed
+    /// structures that carry no standalone claim primitive (and therefore
+    /// no `PrimitiveNameKey` of their own): equal highs/lows and
+    /// displacement legs.
+    EqualLevelsLabel = 401,
+    DisplacementLegLabel = 402,
+    /// `SmcScan`'s own structure-table title.
+    SmcScanStructuresLabel = 403,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 354;
+    pub const COUNT: usize = 404;
 
     /// Get translation for this key.
     #[inline]

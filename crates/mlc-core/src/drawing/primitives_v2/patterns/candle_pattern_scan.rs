@@ -31,13 +31,11 @@ use super::candle_pattern::{sorted_kinds, pattern_display_name};
 const UP_COLOR: &str = "#26a69a";
 const DOWN_COLOR: &str = "#ef5350";
 
-/// How close (in device pixels) two consecutive completion markers may sit
-/// before this primitive collapses them into ONE marker with a count badge
-/// rather than drawing both — the "degrade honestly rather than overprint"
-/// choice `render`'s own doc names. Below this spacing a zoomed-out survey
-/// with many hits reads as a handful of dots with counts, never a solid
-/// smear.
-const MIN_MARKER_GAP_PX: f64 = 6.0;
+/// The scanner family's shared collapse spacing — see
+/// [`super::super::SCAN_MARKER_MIN_GAP_PX`], which every scanner reads so
+/// that "degrade honestly rather than overprint" means one behaviour on the
+/// chart rather than one per file.
+use super::super::SCAN_MARKER_MIN_GAP_PX as MIN_MARKER_GAP_PX;
 
 /// The `candle_pattern_scan_kinds` table's own id — shared between
 /// [`CandlePatternScan::style_properties`] (which declares it) and

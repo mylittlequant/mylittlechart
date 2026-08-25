@@ -1318,7 +1318,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 388] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 404] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1714,6 +1714,24 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 388] = [
     /* 385 StructureBreakKindBos              */ [ "BOS", "BOS", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 386 StructureBreakKindChoch            */ [ "CHoCH", "CHoCH", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 387 NoneValue                          */ [ "—", "—", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+
+    // Dealing range / AMD cycle / SMC scan (markup-engines wave, 2026-08-25 tail).
+    /* 388 RuleDealingRangeNoStructure         */ [ "No confirmed swing pair in this window", "В этом окне нет подтверждённой пары свингов", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 389 DealingRangeSourceLabel             */ [ "Source", "Источник", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 390 DealingRangeSourceManual            */ [ "Manual", "Вручную", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 391 DealingRangeSourceFromStructure     */ [ "From Structure", "Из структуры", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 392 DealingRangeShowOteLabel            */ [ "Show OTE Band", "Показывать зону OTE", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 393 DealingRangeHighLabel               */ [ "High", "Максимум", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 394 DealingRangeLowLabel                */ [ "Low", "Минимум", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 395 DealingRangeEquilibriumLabel        */ [ "Equilibrium", "Равновесие", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 396 DealingRangeSizeLabel               */ [ "Range Size", "Размер диапазона", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 397 RuleAmdCycleNotFormed               */ [ "No AMD cycle with a manipulation phase at this bar", "На этом баре нет цикла AMD с фазой манипуляции", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 398 AccumulationLabel                   */ [ "Accumulation", "Накопление", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 399 ManipulationLabel                   */ [ "Manipulation", "Манипуляция", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 400 DistributionLabel                   */ [ "Distribution", "Дистрибуция", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 401 EqualLevelsLabel                    */ [ "Equal Levels", "Равные уровни", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 402 DisplacementLegLabel                */ [ "Displacement Leg", "Импульсная нога", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 403 SmcScanStructuresLabel              */ [ "Structures", "Структуры", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

@@ -279,6 +279,9 @@ impl PrimitiveRegistry {
         self.register_typed::<super::smc::fair_value_gap::FairValueGap>(super::smc::fair_value_gap::metadata());
         self.register_typed::<super::smc::liquidity_sweep::LiquiditySweep>(super::smc::liquidity_sweep::metadata());
         self.register_typed::<super::smc::structure_break::StructureBreak>(super::smc::structure_break::metadata());
+        self.register_typed::<super::smc::dealing_range::DealingRange>(super::smc::dealing_range::metadata());
+        self.register_typed::<super::smc::amd_cycle::AmdCycle>(super::smc::amd_cycle::metadata());
+        self.register_typed::<super::smc::smc_scan::SmcScan>(super::smc::smc_scan::metadata());
 
         // Elliott
         self.register_typed::<super::elliott::elliott_impulse::ElliottImpulse>(super::elliott::elliott_impulse::metadata());
