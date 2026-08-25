@@ -37,7 +37,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, render_primitive_text, TextAlign,
-    config::{ConfigProperty, PropertyCategory, PropertyValue, StatRow, TableCell, parse_table_cell_id},
+    config::{ConfigProperty, SelectOption, PropertyCategory, PropertyValue, StatRow, TableCell, parse_table_cell_id},
     elliott::guard::Violation,
 };
 use super::orderflow_judge::{
@@ -65,6 +65,14 @@ pub enum OrderFlowStructure {
     SinglePrint,
     UnfinishedBusiness,
     DeltaDivergence,
+}
+
+
+/// Every survey's own default coverage — the range its two points bracket.
+/// A survey placed by dragging a range should survey that range; automatic
+/// coverage is a deliberate switch, not what a drag silently means.
+fn default_coverage() -> String {
+    "range".to_string()
 }
 
 impl OrderFlowStructure {
@@ -199,6 +207,16 @@ pub struct OrderFlowScan {
     pub data: PrimitiveData,
     #[serde(default)] pub ts1: i64,
     #[serde(default)] pub ts2: i64,
+    /// Whether this survey covers the range its own two points bracket, or
+    /// every loaded bar. `"range"` (default) or `"all_bars"`.
+    ///
+    /// `"all_bars"` is the automatic mode: the two points stay as the
+    /// primitive's own handles and still mark the series' ends on screen,
+    /// but the detectors are handed the whole loaded series and the survey
+    /// re-resolves as bars arrive, so it keeps marking new structure
+    /// without being redrawn.
+    #[serde(default = "default_coverage")]
+    pub coverage: String,
     /// [`OrderFlowStructure::id`] wire ids — serialized as ids, never as an
     /// enum/index, so a saved scan survives a catalogue that grows (same
     /// convention `SmcScan::enabled_structures` uses). Default: all five.
@@ -239,6 +257,7 @@ impl OrderFlowScan {
             },
             ts1,
             ts2,
+            coverage: default_coverage(),
             enabled_structures: default_structure_ids(),
             cached_window: None,
             cached_hits: OrderFlowScanHits::default(),
@@ -524,6 +543,19 @@ impl Primitive for OrderFlowScan {
     /// `(ts1, ts2)` range, NOR its own `enabled_structures` has changed
     /// since the last call.
     fn refresh_footprint_derived_cache(&mut self, footprint: &[FootprintBar]) {
+        // Automatic coverage: re-anchor the two markers onto the footprint's
+        // own ends before anything is resolved, so the survey covers every
+        // loaded bucket and its markers say so. Done here rather than in
+        // `resolved_scan` because this primitive's `render` has no footprint
+        // of its own to look the ends up in (see the module's own doc) —
+        // moving the anchors is what lets `render` keep drawing from `ts1`
+        // and `ts2` unchanged.
+        if self.coverage == "all_bars" {
+            if let (Some(first), Some(last)) = (footprint.first(), footprint.last()) {
+                self.ts1 = first.ts_ms();
+                self.ts2 = last.ts_ms();
+            }
+        }
         if self.cached_footprint_present
             && self.last_seen_footprint_len == Some(footprint.len())
             && self.last_seen_range == Some((self.ts1, self.ts2))
@@ -571,6 +603,16 @@ impl Primitive for OrderFlowScan {
         ];
         let bars_surveyed = self.cached_window.map(|(s, e)| e - s + 1).unwrap_or(0);
         vec![
+            // Coverage first: it decides what the table below is counting.
+            ConfigProperty::pills(
+                "coverage",
+                ConceptKey::ScanCoverageLabel.get(lang),
+                &self.coverage,
+                vec![
+                    SelectOption::new("range", ConceptKey::ScanCoverageRange.get(lang)),
+                    SelectOption::new("all_bars", ConceptKey::ScanCoverageAllBars.get(lang)),
+                ],
+            ).with_category(PropertyCategory::AppearanceStats).with_order(5),
             // The structure table is this survey's PRIMARY control, not a
             // label setting. `ConfigProperty::table`'s own default category
             // is `LabelsText`, which files it under the Labels tab: measured
@@ -598,6 +640,14 @@ impl Primitive for OrderFlowScan {
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if id == "coverage" {
+            let Some(s) = value.as_string() else { return false };
+            if s != "range" && s != "all_bars" {
+                return false;
+            }
+            self.coverage = s.to_string();
+            return true;
+        }
         if let Some((base, row, col)) = parse_table_cell_id(id) {
             if base != ORDER_FLOW_SCAN_TABLE_ID || col != 0 {
                 return false;

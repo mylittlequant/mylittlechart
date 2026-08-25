@@ -62,6 +62,14 @@ pub struct CandlePatternEngineConfig {
     /// the exact same reason.
     #[serde(default = "default_true")]
     pub judge_claims: bool,
+    /// How many bars either side of a freshly placed claim its own detector
+    /// may be searched for the exact bar the pattern completes on, before
+    /// the claim gives up and reports its violation where it was put.
+    /// Default 3, `0` disables snapping entirely. Same contract as
+    /// [`crate::state::smc_engine::SmcEngineConfig::claim_snap_bars`].
+    #[serde(default = "default_claim_snap_bars")]
+    pub claim_snap_bars: usize,
+
 }
 
 fn default_true() -> bool {
@@ -72,11 +80,16 @@ fn default_enabled_kinds() -> Vec<String> {
     CandlePatternKind::all().iter().map(|k| k.id().to_string()).collect()
 }
 
+fn default_claim_snap_bars() -> usize {
+    3
+}
+
 impl Default for CandlePatternEngineConfig {
     fn default() -> Self {
         Self {
             default_enabled_kinds: default_enabled_kinds(),
             judge_claims: true,
+            claim_snap_bars: default_claim_snap_bars(),
         }
     }
 }

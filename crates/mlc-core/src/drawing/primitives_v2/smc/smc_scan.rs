@@ -30,7 +30,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, render_primitive_text, TextAlign,
-    config::{ConfigProperty, PropertyCategory, PropertyValue, StatRow, TableCell, parse_table_cell_id},
+    config::{ConfigProperty, SelectOption, PropertyCategory, PropertyValue, StatRow, TableCell, parse_table_cell_id},
 };
 use super::smc_judge::judge_window;
 use super::render_shapes::{draw_zone, draw_level, draw_leg};
@@ -60,6 +60,18 @@ pub enum SurveyStructure {
     EqualLevels,
     DisplacementLeg,
     AmdCycle,
+}
+
+
+/// Every survey's own default coverage — the range its two points bracket.
+/// A survey placed by dragging a range should survey that range; automatic
+/// coverage is a deliberate switch, not what a drag silently means.
+fn default_true() -> bool {
+    true
+}
+
+fn default_coverage() -> String {
+    "range".to_string()
 }
 
 impl SurveyStructure {
@@ -169,6 +181,30 @@ pub struct SmcScan {
     pub data: PrimitiveData,
     #[serde(default)] pub ts1: i64,
     #[serde(default)] pub ts2: i64,
+    /// Whether this survey covers the range its own two points bracket, or
+    /// every loaded bar. `"range"` (default) or `"all_bars"`.
+    ///
+    /// `"all_bars"` is the automatic mode: the two points stay as the
+    /// primitive's own handles and still mark the series' ends on screen,
+    /// but the detectors are handed the whole loaded series and the survey
+    /// re-resolves as bars arrive, so it keeps marking new structure
+    /// without being redrawn.
+    #[serde(default = "default_coverage")]
+    pub coverage: String,
+
+    /// Whether a gap price has already traded all the way back through is
+    /// left out of the survey. Default `true`.
+    ///
+    /// A filled gap is a closed structure: the imbalance it named is gone,
+    /// and the zone only survives on screen because `render` draws every
+    /// zone rightward from where it formed. Over a whole series that is what
+    /// turns the survey into stripes — measured with automatic coverage over
+    /// 2000 bars of BTCUSDT 1D, 66 gaps, most of them long since filled,
+    /// each one banding the entire visible window. Counting and drawing both
+    /// respect this, so the table's own Hits column never disagrees with
+    /// what is on the chart.
+    #[serde(default = "default_true")]
+    pub hide_filled_gaps: bool,
     /// [`SurveyStructure::id`] wire ids — serialized as ids, never as an
     /// enum/index, so a saved scan survives a catalogue that grows (same
     /// convention `CandlePatternScan::enabled_kinds` uses). Default: all
@@ -202,6 +238,8 @@ impl SmcScan {
             },
             ts1,
             ts2,
+            coverage: default_coverage(),
+            hide_filled_gaps: default_true(),
             enabled_structures: default_all_structure_ids(),
             cached_window: None,
             cached_hits: ScanHits::default(),
@@ -209,6 +247,12 @@ impl SmcScan {
     }
 
     fn resolved_window(&self, bars: &[Bar]) -> Option<(usize, usize)> {
+        // Automatic coverage: every loaded bar, so the survey keeps
+        // marking new structure as bars arrive instead of staying inside
+        // whatever range was dragged once.
+        if self.coverage == "all_bars" {
+            return (!bars.is_empty()).then(|| (0, bars.len() - 1));
+        }
         super::super::bar_window::window_indices(bars, self.ts1, self.ts2)
     }
 
@@ -251,6 +295,7 @@ impl SmcScan {
             hits.fair_value_gaps = mli_smc::fair_value_gaps(&window, &cfg)
                 .into_iter()
                 .filter(|g| in_range(g.start_index + 1 + offset)) // middle bar, matching `FairValueGap`'s own anchor
+                .filter(|g| !(self.hide_filled_gaps && g.filled_at.is_some()))
                 .map(|g| mli_smc::FvgZone {
                     start_index: g.start_index + offset,
                     end_index: g.end_index + offset,
@@ -389,8 +434,13 @@ impl Primitive for SmcScan {
     /// matching [`Primitive::refresh_bar_derived_cache`]'s own contract.
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
-        let x1 = ctx.ts_to_x_ms(self.ts1);
-        let x2 = ctx.ts_to_x_ms(self.ts2);
+        // In automatic coverage the two markers sit on the series' own
+        // ends rather than where the range was dragged — they still mark
+        // exactly what is being surveyed.
+        let (x1, x2) = match self.resolved_window(ctx.bars()) {
+            Some((s, e)) if self.coverage == "all_bars" => (ctx.bar_to_x(s as f64), ctx.bar_to_x(e as f64)),
+            _ => (ctx.ts_to_x_ms(self.ts1), ctx.ts_to_x_ms(self.ts2)),
+        };
         let (min_x, max_x) = (x1.min(x2), x1.max(x2));
         let chart_height = ctx.chart_height();
 
@@ -552,6 +602,21 @@ impl Primitive for SmcScan {
         ];
         let bars_surveyed = self.cached_window.map(|(s, e)| e - s + 1).unwrap_or(0);
         vec![
+            // Coverage first: it decides what the table below is counting.
+            ConfigProperty::pills(
+                "coverage",
+                ConceptKey::ScanCoverageLabel.get(lang),
+                &self.coverage,
+                vec![
+                    SelectOption::new("range", ConceptKey::ScanCoverageRange.get(lang)),
+                    SelectOption::new("all_bars", ConceptKey::ScanCoverageAllBars.get(lang)),
+                ],
+            ).with_category(PropertyCategory::AppearanceStats).with_order(5),
+            ConfigProperty::boolean(
+                "hide_filled_gaps",
+                ConceptKey::SmcScanHideFilledGapsLabel.get(lang),
+                self.hide_filled_gaps,
+            ).with_category(PropertyCategory::AppearanceStats).with_order(6),
             // The structure table is this survey's PRIMARY control, not a
             // label setting. `ConfigProperty::table`'s own default category
             // is `LabelsText`, which files it under the Labels tab: measured
@@ -579,6 +644,19 @@ impl Primitive for SmcScan {
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if id == "hide_filled_gaps" {
+            let Some(v) = value.as_bool() else { return false };
+            self.hide_filled_gaps = v;
+            return true;
+        }
+        if id == "coverage" {
+            let Some(s) = value.as_string() else { return false };
+            if s != "range" && s != "all_bars" {
+                return false;
+            }
+            self.coverage = s.to_string();
+            return true;
+        }
         if let Some((base, row, col)) = parse_table_cell_id(id) {
             if base != SMC_SCAN_TABLE_ID || col != 0 {
                 return false;
@@ -711,6 +789,33 @@ mod tests {
     /// Hits equal a direct `mli` call over the same range: the SAME window
     /// this primitive's own `resolved_scan` builds (full bars, offset 0 for
     /// this fixture's own size), asserted by identity.
+    #[test]
+    fn all_bars_coverage_surveys_the_whole_series_whatever_the_points_say() {
+        let _guard = reset_engine_config();
+        set_fixture_config();
+        let bars = order_block_fixture_bars();
+        // A range deliberately bracketing two bars in the middle.
+        let mut scan = SmcScan::new(5_000, 6_000, "#3ba3ff");
+        assert_eq!(scan.resolved_window(&bars), Some((5, 6)));
+
+        scan.coverage = "all_bars".to_string();
+
+        assert_eq!(
+            scan.resolved_window(&bars),
+            Some((0, bars.len() - 1)),
+            "automatic coverage ignores the dragged range"
+        );
+    }
+
+    #[test]
+    fn all_bars_coverage_on_an_empty_series_resolves_nothing() {
+        let _guard = reset_engine_config();
+        set_fixture_config();
+        let mut scan = SmcScan::new(0, 0, "#3ba3ff");
+        scan.coverage = "all_bars".to_string();
+        assert_eq!(scan.resolved_window(&[]), None);
+    }
+
     #[test]
     fn order_block_hits_match_a_direct_mli_call_over_the_same_range() {
         let _guard = reset_engine_config();

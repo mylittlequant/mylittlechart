@@ -148,6 +148,18 @@ pub struct SmcEngineConfig {
     /// `mli`'s default underneath a chart-side knob nothing read.
     #[serde(default = "default_amd_max_distribution_lag")]
     pub amd_max_distribution_lag: usize,
+    /// How many bars either side of a freshly placed claim its own detector
+    /// may be searched for the exact bar it names, before the claim gives
+    /// up and reports its violation where it was put. Default 3, `0`
+    /// disables snapping entirely.
+    ///
+    /// See [`crate::drawing::primitives_v2::Primitive::snap_to_detected`]
+    /// for why a claim needs this at all: every detector here answers about
+    /// ONE exact bar, and hitting that bar by eye out of a screen full of
+    /// candles is guesswork.
+    #[serde(default = "default_claim_snap_bars")]
+    pub claim_snap_bars: usize,
+
 }
 
 fn default_true() -> bool {
@@ -182,6 +194,10 @@ fn default_amd_max_distribution_lag() -> usize {
     10
 }
 
+fn default_claim_snap_bars() -> usize {
+    3
+}
+
 impl Default for SmcEngineConfig {
     fn default() -> Self {
         Self {
@@ -194,6 +210,7 @@ impl Default for SmcEngineConfig {
             judge_claims: true,
             judge_lookback_bars: default_judge_lookback_bars(),
             amd_max_distribution_lag: default_amd_max_distribution_lag(),
+            claim_snap_bars: default_claim_snap_bars(),
         }
     }
 }

@@ -1237,6 +1237,33 @@ pub trait Primitive: Send + Sync {
     /// type with its own price-derived cache overrides this).
     fn refresh_bar_derived_cache(&mut self, _bars: &[Bar]) {}
 
+    /// Nudge a freshly PLACED markup claim onto the bar its own detector
+    /// actually names, when that bar is within a few bars of where the
+    /// analyst clicked.
+    ///
+    /// Called exactly once, at creation, before the caches are filled —
+    /// never on a drag, never on a reload, never per frame. A claim is an
+    /// assertion about ONE bar ("there is an order block here"), and every
+    /// detector in the markup families answers about one exact bar: a
+    /// structure break is the bar whose close cleared the swing, an order
+    /// block is the last opposing candle before the impulse. Clicking that
+    /// exact bar out of a screen full of them is guesswork — measured on the
+    /// live stand, several attempts in a row landed one bar off and reported
+    /// a violation for a structure plainly visible on the chart.
+    ///
+    /// The contract for an implementor: search outward from the placed
+    /// anchor, nearest first, and move the anchor to the first bar within
+    /// the radius where the detector resolves. Leave the anchor exactly
+    /// where it was placed when nothing resolves inside the radius — the
+    /// claim then reports its own violation, which is the honest answer.
+    /// Never widen the search to "somewhere on the chart": snapping past a
+    /// few bars stops being a nudge and starts inventing a different claim
+    /// from the one that was made.
+    ///
+    /// Default: no-op — correct for every primitive whose geometry is what
+    /// the analyst drew rather than what a detector found.
+    fn snap_to_detected(&mut self, _bars: &[Bar]) {}
+
     /// The exact counterpart of [`refresh_bar_derived_cache`](Self::refresh_bar_derived_cache)
     /// for footprint (order-flow) data — see `docs/mlc/plans/markup-engines-2026-08-25.md`,
     /// Appendix B, "The existing hook cannot carry it."

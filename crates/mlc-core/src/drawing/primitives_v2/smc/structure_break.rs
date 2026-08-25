@@ -296,6 +296,30 @@ impl Primitive for StructureBreak {
         self.cached_trend = trend;
     }
 
+    /// Snap this claim onto the bar its own detector names, within
+    /// `claim_snap_bars` — see [`Primitive::snap_to_detected`] for the
+    /// contract and why it exists. Searches outward from the placed anchor,
+    /// nearest first, and restores the original anchor when nothing inside
+    /// the radius resolves.
+    fn snap_to_detected(&mut self, bars: &[Bar]) {
+        let radius = smc_engine_config().claim_snap_bars;
+        if radius == 0 || self.resolve(bars).0.is_some() {
+            return;
+        }
+        let Some(idx) = self.anchor_bar_idx(bars) else { return };
+        let placed = self.anchor_ts;
+        for step in 1..=radius {
+            for candidate in [idx.checked_sub(step), idx.checked_add(step).filter(|i| *i < bars.len())] {
+                let Some(candidate) = candidate else { continue };
+                self.anchor_ts = bars[candidate].timestamp * 1000;
+                if self.resolve(bars).0.is_some() {
+                    return;
+                }
+            }
+        }
+        self.anchor_ts = placed;
+    }
+
     fn context_violations(&self) -> &[Violation] { &self.cached_violations }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {

@@ -923,6 +923,14 @@ impl DrawingManager {
             Self::adopt_higher_degree(b, id);
         }
 
+        // A freshly placed CLAIM gets one nudge onto the bar its own
+        // detector names, if that bar is within a few of where the analyst
+        // clicked — see `Primitive::snap_to_detected` for the contract.
+        // Creation only: never on a drag, never on a reload.
+        if let Some(prim) = b.primitives.iter_mut().find(|p| p.data().id == id) {
+            prim.snap_to_detected(&b.bars);
+        }
+
         // A freshly placed primitive has never seen the bars. Its render
         // does not care (it recomputes from `ctx.bars()` every frame), but
         // `style_properties()` has no bars of its own and reads only the

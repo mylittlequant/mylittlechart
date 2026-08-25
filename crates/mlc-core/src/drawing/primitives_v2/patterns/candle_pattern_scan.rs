@@ -19,7 +19,7 @@ use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
     RenderContext, crisp, render_primitive_text, TextAlign,
-    config::{ConfigProperty, PropertyCategory, PropertyValue, StatRow, TableCell, parse_table_cell_id},
+    config::{ConfigProperty, SelectOption, PropertyCategory, PropertyValue, StatRow, TableCell, parse_table_cell_id},
 };
 use super::candle_pattern::{sorted_kinds, pattern_display_name};
 
@@ -63,6 +63,16 @@ pub struct CandlePatternScan {
     pub data: PrimitiveData,
     #[serde(default)] pub ts1: i64,
     #[serde(default)] pub ts2: i64,
+    /// Whether this survey covers the range its own two points bracket, or
+    /// every loaded bar. `"range"` (default) or `"all_bars"`.
+    ///
+    /// `"all_bars"` is the automatic mode: the two points stay as the
+    /// primitive's own handles and still mark the series' ends on screen,
+    /// but the detectors are handed the whole loaded series and the survey
+    /// re-resolves as bars arrive, so it keeps marking new structure
+    /// without being redrawn.
+    #[serde(default = "default_coverage")]
+    pub coverage: String,
     /// `mli::events::candle_pattern::CandlePatternKind::id()` wire ids —
     /// serialized as ids (never as an enum/index) so a saved drawing
     /// survives a catalogue that grows. `#[serde(default)]` (all 34,
@@ -98,6 +108,14 @@ pub struct CandlePatternScan {
     pub cached_hits: Vec<CandlePatternHit>,
 }
 
+
+/// Every survey's own default coverage — the range its two points bracket.
+/// A survey placed by dragging a range should survey that range; automatic
+/// coverage is a deliberate switch, not what a drag silently means.
+fn default_coverage() -> String {
+    "range".to_string()
+}
+
 impl CandlePatternScan {
     pub fn new(ts1: i64, ts2: i64, color: &str) -> Self {
         Self {
@@ -110,6 +128,7 @@ impl CandlePatternScan {
             },
             ts1,
             ts2,
+            coverage: default_coverage(),
             // Read ONCE at construction — see `CandlePatternEngineConfig::
             // default_enabled_kinds`'s own doc; never retro-applied to a
             // scan that already exists.
@@ -125,6 +144,12 @@ impl CandlePatternScan {
     /// (`FixedVwap`, `FixedVolumeProfile`, `BarsPattern`) now shares. `None`
     /// when the span holds no bar.
     fn resolved_window(&self, bars: &[Bar]) -> Option<(usize, usize)> {
+        // Automatic coverage: every loaded bar, so the survey keeps
+        // marking new structure as bars arrive instead of staying inside
+        // whatever range was dragged once.
+        if self.coverage == "all_bars" {
+            return (!bars.is_empty()).then(|| (0, bars.len() - 1));
+        }
         super::super::bar_window::window_indices(bars, self.ts1, self.ts2)
     }
 
@@ -228,8 +253,13 @@ impl Primitive for CandlePatternScan {
     /// at any zoom level.
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
-        let x1 = ctx.ts_to_x_ms(self.ts1);
-        let x2 = ctx.ts_to_x_ms(self.ts2);
+        // In automatic coverage the two markers sit on the series' own
+        // ends rather than where the range was dragged — they still mark
+        // exactly what is being surveyed.
+        let (x1, x2) = match self.resolved_window(ctx.bars()) {
+            Some((s, e)) if self.coverage == "all_bars" => (ctx.bar_to_x(s as f64), ctx.bar_to_x(e as f64)),
+            _ => (ctx.ts_to_x_ms(self.ts1), ctx.ts_to_x_ms(self.ts2)),
+        };
         let (min_x, max_x) = (x1.min(x2), x1.max(x2));
         let chart_height = ctx.chart_height();
 
@@ -351,6 +381,16 @@ impl Primitive for CandlePatternScan {
         ];
         let bars_surveyed = self.cached_window.map(|(s, e)| e - s + 1).unwrap_or(0);
         vec![
+            // Coverage first: it decides what the table below is counting.
+            ConfigProperty::pills(
+                "coverage",
+                ConceptKey::ScanCoverageLabel.get(lang),
+                &self.coverage,
+                vec![
+                    SelectOption::new("range", ConceptKey::ScanCoverageRange.get(lang)),
+                    SelectOption::new("all_bars", ConceptKey::ScanCoverageAllBars.get(lang)),
+                ],
+            ).with_category(PropertyCategory::AppearanceStats).with_order(5),
             // The structure table is this survey's PRIMARY control, not a
             // label setting. `ConfigProperty::table`'s own default category
             // is `LabelsText`, which files it under the Labels tab: measured
@@ -378,6 +418,14 @@ impl Primitive for CandlePatternScan {
     }
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
+        if id == "coverage" {
+            let Some(s) = value.as_string() else { return false };
+            if s != "range" && s != "all_bars" {
+                return false;
+            }
+            self.coverage = s.to_string();
+            return true;
+        }
         if let Some((base, row, col)) = parse_table_cell_id(id) {
             if base != CANDLE_PATTERN_SCAN_TABLE_ID || col != 0 {
                 return false;

@@ -76,6 +76,18 @@ pub struct OrderFlowEngineConfig {
     /// shorter than this. 1 restores the old per-level behaviour.
     #[serde(default = "default_min_single_print_run")]
     pub min_single_print_run: usize,
+    /// How many bars either side of a freshly placed claim its own detector
+    /// may be searched for the exact bar it names, before the claim gives
+    /// up and reports its violation where it was put. Default 3, `0`
+    /// disables snapping entirely.
+    ///
+    /// See [`crate::drawing::primitives_v2::Primitive::snap_to_detected`]
+    /// for why a claim needs this at all: every detector here answers about
+    /// ONE exact bar, and hitting that bar by eye out of a screen full of
+    /// candles is guesswork.
+    #[serde(default = "default_claim_snap_bars")]
+    pub claim_snap_bars: usize,
+
 }
 
 fn default_true() -> bool {
@@ -94,6 +106,10 @@ fn default_min_single_print_run() -> usize {
     3
 }
 
+fn default_claim_snap_bars() -> usize {
+    3
+}
+
 impl Default for OrderFlowEngineConfig {
     fn default() -> Self {
         Self {
@@ -101,6 +117,7 @@ impl Default for OrderFlowEngineConfig {
             judge_lookback_bars: default_judge_lookback_bars(),
             delta_divergence_swing_n: default_delta_divergence_swing_n(),
             min_single_print_run: default_min_single_print_run(),
+            claim_snap_bars: default_claim_snap_bars(),
         }
     }
 }

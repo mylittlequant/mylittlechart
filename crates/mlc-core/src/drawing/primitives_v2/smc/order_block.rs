@@ -349,6 +349,30 @@ impl Primitive for OrderBlock {
         self.cached_block = detected;
     }
 
+    /// Snap this claim onto the bar its own detector names, within
+    /// `claim_snap_bars` — see [`Primitive::snap_to_detected`] for the
+    /// contract and why it exists. Searches outward from the placed anchor,
+    /// nearest first, and restores the original anchor when nothing inside
+    /// the radius resolves.
+    fn snap_to_detected(&mut self, bars: &[Bar]) {
+        let radius = smc_engine_config().claim_snap_bars;
+        if radius == 0 || self.detect(bars).is_some() {
+            return;
+        }
+        let Some(idx) = self.anchor_bar_idx(bars) else { return };
+        let placed = self.anchor_ts;
+        for step in 1..=radius {
+            for candidate in [idx.checked_sub(step), idx.checked_add(step).filter(|i| *i < bars.len())] {
+                let Some(candidate) = candidate else { continue };
+                self.anchor_ts = bars[candidate].timestamp * 1000;
+                if self.detect(bars).is_some() {
+                    return;
+                }
+            }
+        }
+        self.anchor_ts = placed;
+    }
+
     fn context_violations(&self) -> &[Violation] { &self.cached_violations }
 
     /// Same measured verdict `CandlePattern::style_properties` already
@@ -468,6 +492,50 @@ mod tests {
         assert_eq!(block.broke_structure_at, 12);
         assert_eq!(block.breaker_at, Some(13));
         assert!(claim.context_violations().is_empty(), "{:?}", claim.context_violations());
+    }
+
+    #[test]
+    fn a_claim_placed_one_bar_off_snaps_onto_the_real_block() {
+        let _guard = reset_engine_config();
+        set_fixture_config();
+        let bars = order_block_fixture_bars();
+        // Bar 9 is the order block; the analyst clicked bar 8.
+        let mut claim = OrderBlock::new(8_000, "#7E57C2");
+        assert!(claim.detect(&bars).is_none(), "bar 8 must not resolve on its own");
+
+        claim.snap_to_detected(&bars);
+
+        assert_eq!(claim.anchor_ts, 9_000, "the anchor moves onto the bar the detector names");
+        claim.refresh_bar_derived_cache(&bars);
+        assert!(claim.context_violations().is_empty());
+    }
+
+    #[test]
+    fn a_claim_with_nothing_near_it_stays_exactly_where_it_was_placed() {
+        let _guard = reset_engine_config();
+        set_fixture_config();
+        // No structure break anywhere, so no bar in the fixture resolves.
+        let mut bars = order_block_fixture_bars();
+        bars[12] = Bar::new(12, 30.0, 25.9, 24.0, 25.9);
+        let mut claim = OrderBlock::new(8_000, "#7E57C2");
+
+        claim.snap_to_detected(&bars);
+
+        assert_eq!(claim.anchor_ts, 8_000, "nothing inside the radius resolves — the claim keeps its own bar");
+    }
+
+    #[test]
+    fn snapping_off_leaves_the_anchor_alone() {
+        let _guard = reset_engine_config();
+        set_fixture_config();
+        use crate::state::smc_engine::{set_smc_engine_config, smc_engine_config, SmcEngineConfig};
+        set_smc_engine_config(SmcEngineConfig { claim_snap_bars: 0, ..smc_engine_config() });
+        let bars = order_block_fixture_bars();
+        let mut claim = OrderBlock::new(8_000, "#7E57C2");
+
+        claim.snap_to_detected(&bars);
+
+        assert_eq!(claim.anchor_ts, 8_000);
     }
 
     #[test]

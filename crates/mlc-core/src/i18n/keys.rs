@@ -3284,10 +3284,18 @@ pub enum ConceptKey {
     /// unfinished-business levels.
     SinglePrintLabel = 422,
     UnfinishedBusinessLabel = 423,
+    /// Every survey primitive's own coverage row: does it survey the range
+    /// its two points bracket, or every loaded bar, recomputing as bars
+    /// arrive.
+    ScanCoverageLabel = 424,
+    ScanCoverageRange = 425,
+    ScanCoverageAllBars = 426,
+    /// `SmcScan`'s own switch for leaving already-filled gaps out.
+    SmcScanHideFilledGapsLabel = 427,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 424;
+    pub const COUNT: usize = 428;
 
     /// Get translation for this key.
     #[inline]
