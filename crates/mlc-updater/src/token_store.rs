@@ -1,0 +1,57 @@
+use serde::{Serialize, Deserialize};
+use std::path::PathBuf;
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct StoredToken {
+    pub token: String,
+    pub provider: String,
+    pub display_name: String,
+    pub saved_at: u64,
+    /// User ID returned by the server. Defaults to 0 for tokens saved before this field was added.
+    #[serde(default)]
+    pub user_id: i64,
+}
+
+/// Get the path for the auth token file.
+///
+/// Lives in the shared app data dir (`mlc_core::user_profile::storage::app_data_dir`,
+/// `%APPDATA%/mylittlechart` on Windows) — oss-strip 3/N (26728b54) renamed the
+/// app dir from `zengeld` to `mylittlechart` with a one-shot migration, so this
+/// must not point at the legacy `dirs::config_dir()/zengeld` path anymore.
+fn token_path() -> Option<PathBuf> {
+    Some(mlc_core::app_data_dir().join("auth_token.json"))
+}
+
+/// Load stored auth token from disk.
+pub fn load_token() -> Option<StoredToken> {
+    let path = token_path()?;
+    let data = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&data).ok()
+}
+
+/// Save auth token to disk.
+pub fn save_token(token: &StoredToken) -> Result<(), String> {
+    let path = token_path().ok_or("No config directory found")?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create config dir: {}", e))?;
+    }
+    let json = serde_json::to_string_pretty(token).map_err(|e| format!("Serialize error: {}", e))?;
+    std::fs::write(&path, json).map_err(|e| format!("Write error: {}", e))?;
+
+    // On Unix, set permissions to owner-only
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let perms = std::fs::Permissions::from_mode(0o600);
+        let _ = std::fs::set_permissions(&path, perms);
+    }
+
+    Ok(())
+}
+
+/// Delete stored auth token.
+pub fn clear_token() {
+    if let Some(path) = token_path() {
+        let _ = std::fs::remove_file(&path);
+    }
+}

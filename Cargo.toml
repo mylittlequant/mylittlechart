@@ -2,6 +2,7 @@
 members = [
     "crates/mlc-core",
     "crates/mlc-vault",
+    "crates/mlc-updater",
     "crates/mlc-app-layout",
     "crates/mlc-app",
     "crates/mlc-app-shell-vello",
@@ -52,6 +53,10 @@ pbkdf2 = { version = "0.12", features = ["simple"] }
 hkdf = "0.12"
 hex = "0.4"
 rand = "0.8"
+# Restored with crates/mlc-updater (phase-1 restore from the pre-oss-strip
+# stash); these two entries existed pre-strip and were dropped with the crate.
+ed25519-dalek = { version = "2", features = ["std"] }
+base64 = "0.22"
 
 [workspace.package]
 version = "0.5.576"
