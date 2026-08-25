@@ -364,10 +364,15 @@ mod tests {
         let mut b = store.bubble(bid).cloned().expect("just-created bubble");
         b.bars = bars;
         let registry = PrimitiveRegistry::global().read().unwrap();
-        for (type_id, points) in prims {
-            let prim = registry
+        for (n, (type_id, points)) in prims.into_iter().enumerate() {
+            let mut prim = registry
                 .create(type_id, &points, Some("#3ba3ff"))
                 .unwrap_or_else(|| panic!("registry has no {type_id}"));
+            // Distinct ids, for the reason `markup_weld`'s own helper
+            // states: the registry leaves the id at its factory default, so
+            // without this every by-id lookup finds the first primitive and
+            // an assertion about WHICH neighbour was chosen proves nothing.
+            prim.data_mut().id = n as u64 + 1;
             b.primitives.push(prim);
         }
         drop(registry);

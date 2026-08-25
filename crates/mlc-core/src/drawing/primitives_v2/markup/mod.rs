@@ -21,6 +21,7 @@
 //! behaviour — churn against the plan's own rule that Elliott must not move
 //! while the other families are built.
 
+pub mod adopt;
 pub mod chain;
 pub mod link;
 

@@ -936,6 +936,14 @@ impl DrawingManager {
             Self::adopt_higher_degree(b, id);
         }
 
+        // Welding comes BEFORE the detector snap, and the order is load
+        // bearing — see `bubble::markup_weld`'s own "Order against the
+        // detector snap" section. A container claim placed beside the claim
+        // it is about anchors onto it; if that bar turns out not to resolve,
+        // the snap below searches outward from there and can reach back to
+        // where the analyst clicked, so a bad weld undoes itself.
+        crate::bubble::markup_weld::weld_markup_claim(b, id);
+
         // A freshly placed CLAIM gets one nudge onto the bar its own
         // detector names, if that bar is within a few of where the analyst
         // clicked — see `Primitive::snap_to_detected` for the contract.
