@@ -41,3 +41,40 @@ pub(crate) fn refresh_bar_derived_caches(b: &mut DataBubble) {
         p.refresh_bar_derived_cache(&b.bars);
     }
 }
+
+/// The footprint counterpart of [`refresh_bar_derived_caches`] — see
+/// [`Primitive::refresh_footprint_derived_cache`]'s own contract
+/// (`docs/mlc/plans/markup-engines-2026-08-25.md`, Appendix B: "a second
+/// hook ... called from the SAME sweep ... when the slot is `Some`").
+///
+/// Runs ONLY when `b.footprint_bars` is `Some` — there is nothing to call
+/// [`Primitive::refresh_footprint_derived_cache`] with when it is `None`
+/// (an empty slice would be ambiguous with "subscribed, zero buckets so far
+/// yet"; see that trait method's own doc). A type that does not override
+/// the hook pays one empty vtable call per primitive, same as
+/// [`refresh_bar_derived_caches`] costs for the OHLC hook.
+///
+/// Call sites (measured, not assumed — every production write to
+/// `DataBubble::footprint_bars` today): the three BATCH installs in
+/// `chart_type::lifecycle` (`apply_trade_fold_reseed_outputs`'s
+/// `"footprint"` arm, `splice_trade_fold_gap`, `incremental_prepend_trade_folds`)
+/// call this unconditionally after installing the new vec — the same
+/// "batch bar-array install" trigger `bar_derived_cache`'s own OHLC sweep
+/// fires on for `replace_bars`/`set_bars`. The LIVE per-trade path
+/// (`trade_fold_on_live_trade`'s `Footprint` arm) calls this only on the
+/// branch that PUSHES a new bucket (a footprint bucket boundary — once per
+/// interval, e.g. once a minute for a 1m footprint), never on the branch
+/// that upserts the CURRENTLY FORMING bucket in place (once per trade) —
+/// mirroring why `BubbleStore::append_bar` is deliberately NOT hooked to
+/// the OHLC sweep at all (see that method's own doc): the per-trade branch
+/// is the "many times a second" case the plan's own Appendix B names as the
+/// one this cost model cannot absorb, where a once-per-interval bucket
+/// boundary can. `DataBubble::clear_footprint` calls this too (a no-op
+/// today — see that method's own doc for why it currently has no
+/// production caller).
+pub(crate) fn refresh_footprint_derived_caches(b: &mut DataBubble) {
+    let Some(footprint) = b.footprint_bars.as_deref() else { return };
+    for p in b.primitives.iter_mut() {
+        p.refresh_footprint_derived_cache(footprint);
+    }
+}

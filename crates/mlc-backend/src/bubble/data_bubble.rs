@@ -601,22 +601,55 @@ impl DataBubble {
         self.bars_generation = self.bars_generation.bump(self.chart_type, self.chart_type_param.to_bits());
     }
 
+    /// Append ONE new footprint bucket (own call sites currently only in
+    /// tests — production live-tick footprint writes go through
+    /// `BackendCore::trade_fold_on_live_trade`'s own `Footprint` arm
+    /// instead, which upserts `footprint_bars` directly; see that arm's own
+    /// doc). Sweeps the footprint-derived cache the SAME way that arm's own
+    /// "new bucket" branch does — see
+    /// `bar_derived_cache::refresh_footprint_derived_caches`'s own doc for
+    /// why a NEW bucket is swept and an in-place update to the currently
+    /// forming one (which this method is not) would not be.
     pub fn append_footprint(&mut self, bar: mlc_core::types::FootprintBar) {
         self.footprint_bars.get_or_insert_with(Vec::new).push(bar);
+        super::bar_derived_cache::refresh_footprint_derived_caches(self);
     }
     pub fn last_footprint_mut(&mut self) -> Option<&mut mlc_core::types::FootprintBar> {
         self.footprint_bars.as_mut().and_then(|v| v.last_mut())
     }
-    pub fn clear_footprint(&mut self) { self.footprint_bars = None; }
+    /// Clear the footprint slot back to `None`. No production caller today
+    /// (measured — see `bar_derived_cache::refresh_footprint_derived_caches`'s
+    /// own call-site inventory); the sweep call here is still correct to
+    /// keep, not a decoration: `refresh_footprint_derived_caches` runs only
+    /// when the slot is `Some` (Appendix B's own hook contract — there is
+    /// nothing to hand a primitive's hook when there is no data), so this
+    /// call is a documented no-op for the transition FROM `Some` TO `None`
+    /// specifically. Every order-flow primitive's own cache stays at
+    /// whatever it last resolved until the NEXT `Some` sweep — the same
+    /// "lag until the next batch refresh, never a drawing defect" contract
+    /// `Primitive::refresh_bar_derived_cache`'s own doc already accepts for
+    /// the OHLC side. Should a caller ever need `clear_footprint` to reset
+    /// every primitive to "missing" data immediately, that needs a real
+    /// call site (there is none to reason about today) driving this
+    /// decision, not a speculative branch added here now.
+    pub fn clear_footprint(&mut self) {
+        self.footprint_bars = None;
+        super::bar_derived_cache::refresh_footprint_derived_caches(self);
+    }
     /// Mark the footprint slot as "subscribed, seed in flight": `Some(empty)`
     /// instead of `None`. `ChartRenderState::has_any_series_data` treats
     /// `Some(_)` as a renderable series, so the pane draws its chrome + the
     /// in-pane waiting spinner instead of the bare loading skeleton (owner
     /// report 2026-07-05 #3: switching to footprint showed a fully blank
-    /// pane for the whole seed).
+    /// pane for the whole seed). Sweeps the footprint-derived cache too:
+    /// `Some(empty)` is real data (an empty survey window), not "missing" —
+    /// every order-flow primitive correctly resolves "nothing found yet"
+    /// against it rather than staying pinned at its own construction-time
+    /// "never swept" state.
     pub fn mark_footprint_pending(&mut self) {
         if self.footprint_bars.is_none() {
             self.footprint_bars = Some(Vec::new());
+            super::bar_derived_cache::refresh_footprint_derived_caches(self);
         }
     }
 

@@ -512,6 +512,12 @@ impl BackendCore {
                         b.replace_bars(ohlc);
                     }
                     b.footprint_bars = Some(bars);
+                    // Batch footprint install — the footprint counterpart
+                    // of the OHLC sweep `BubbleStore::replace_bars`/
+                    // `set_bars` fire; see
+                    // `bar_derived_cache::refresh_footprint_derived_caches`'s
+                    // own doc for the full call-site inventory.
+                    crate::bubble::bar_derived_cache::refresh_footprint_derived_caches(b);
                 });
                 BubbleEvent::FootprintBarAppended { bid, exchange_id, symbol, account_type: account_type_label }
             }
@@ -675,6 +681,10 @@ impl BackendCore {
                 b.replace_bars(ohlc);
             }
             b.footprint_bars = Some(merged);
+            // Batch footprint install (interior gap-fill splice) — see
+            // `bar_derived_cache::refresh_footprint_derived_caches`'s own
+            // doc for the full call-site inventory.
+            crate::bubble::bar_derived_cache::refresh_footprint_derived_caches(b);
             true
         }).unwrap_or(false);
 
@@ -776,6 +786,10 @@ impl BackendCore {
                     b.replace_bars(ohlc);
                 }
                 b.footprint_bars = Some(merged);
+                // Batch footprint install (incremental history prepend) —
+                // see `bar_derived_cache::refresh_footprint_derived_caches`'s
+                // own doc for the full call-site inventory.
+                crate::bubble::bar_derived_cache::refresh_footprint_derived_caches(b);
             });
             events.push(BubbleEvent::FootprintBarAppended {
                 bid, exchange_id,
@@ -959,7 +973,19 @@ impl BackendCore {
                         let store = b.footprint_bars.get_or_insert_with(Vec::new);
                         match store.last_mut() {
                             Some(last) if last.open_time == new_bar.open_time => *last = new_bar.clone(),
-                            _ => store.push(new_bar.clone()),
+                            _ => {
+                                store.push(new_bar.clone());
+                                // A NEW bucket boundary (once per footprint
+                                // interval, e.g. once a minute for a 1m
+                                // footprint) — the sweep this branch fires
+                                // on, deliberately NOT the `*last = ...`
+                                // branch above (once per TRADE); see
+                                // `bar_derived_cache::refresh_footprint_derived_caches`'s
+                                // own doc for why the two are treated
+                                // differently, mirroring `append_bar`'s own
+                                // exclusion from the OHLC sweep.
+                                crate::bubble::bar_derived_cache::refresh_footprint_derived_caches(b);
+                            }
                         }
                         // Hybrid mode (RecentOnly venue): `mirror_ohlc == false`
                         // — the kline backdrop writer owns `bubble.bars`, same

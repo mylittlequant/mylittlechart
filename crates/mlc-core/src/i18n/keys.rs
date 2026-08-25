@@ -2217,10 +2217,13 @@ pub enum ToolbarMenuKey {
     // Smart-money group header (markup-engines wave, 2026-08-25) — same
     // append-only reason as `HeaderCandles` above.
     HeaderSmartMoney   = 76,
+    // Order-flow group header (markup-engines wave, 2026-08-25) — same
+    // append-only reason as `HeaderSmartMoney` above.
+    HeaderOrderFlow    = 77,
 }
 
 impl ToolbarMenuKey {
-    pub const COUNT: usize = 77;
+    pub const COUNT: usize = 78;
 
     /// Get translation for this key.
     #[inline]
@@ -3228,10 +3231,62 @@ pub enum ConceptKey {
     DisplacementLegLabel = 402,
     /// `SmcScan`'s own structure-table title.
     SmcScanStructuresLabel = 403,
+
+    // Order flow (markup-engines wave, 2026-08-25 tail) —
+    // `drawing::primitives_v2::orderflow::{imbalance_zone, absorption_mark,
+    // delta_divergence, order_flow_scan}`'s own guard-rule messages,
+    // Pills-row labels, Stat-block rows, and structure-survey table labels.
+    // Appended after `SmcScanStructuresLabel` for the same append-only
+    // reason every block above states.
+    /// The shared "this series carries no footprint data at all" rule every
+    /// order-flow primitive checks FIRST — see that module's own doc.
+    RuleOrderFlowDataMissing = 404,
+    /// `ImbalanceZone`'s own guard rule — the anchor bar carries no stacked
+    /// imbalance run on either side.
+    RuleImbalanceZoneNotPresent = 405,
+    /// `AbsorptionMark`'s own guard rule — the anchor bar's own
+    /// `is_absorption` flag is false.
+    RuleAbsorptionNotPresent = 406,
+    /// `DeltaDivergence`'s own guard rule — `mli::orderflow::
+    /// delta_divergences` reports no divergence at all at this bar.
+    RuleDeltaDivergenceNotFormed = 407,
+    /// `DeltaDivergence`'s own second guard rule — a divergence IS resolved
+    /// at this bar, but of the OTHER kind than claimed. Kept separate from
+    /// `RuleDeltaDivergenceNotFormed` for the same reason
+    /// `RuleStructureBreakKindMismatch` is kept separate from
+    /// `RuleStructureBreakNotFormed`.
+    RuleDeltaDivergenceKindMismatch = 408,
+    /// `ImbalanceZone`'s own Stat block row — the resolved run's own length
+    /// (level count).
+    ImbalanceZoneRunLengthLabel = 409,
+    /// `AbsorptionMark`'s own Stat block rows: bar delta, bar volume, and
+    /// the ratio between them.
+    AbsorptionDeltaLabel = 410,
+    AbsorptionVolumeLabel = 411,
+    AbsorptionRatioLabel = 412,
+    /// `DeltaDivergence`'s own Pills row: which kind is claimed.
+    DeltaDivergenceKindLabel = 413,
+    DeltaDivergenceKindRegular = 414,
+    DeltaDivergenceKindHidden = 415,
+    /// `DeltaDivergence`'s own Stat block rows: the two prices compared, the
+    /// two series (delta) values compared, and the earlier swing's own bar.
+    DeltaDivergencePriceFromLabel = 416,
+    DeltaDivergencePriceToLabel = 417,
+    DeltaDivergenceValueFromLabel = 418,
+    DeltaDivergenceValueToLabel = 419,
+    DeltaDivergenceEarlierSwingLabel = 420,
+    /// `OrderFlowScan`'s own structure-table title.
+    OrderFlowScanStructuresLabel = 421,
+    /// `OrderFlowScan`'s own structure-table row names for the two surveyed
+    /// structures that carry no standalone claim primitive of their own
+    /// (and therefore no `PrimitiveNameKey`): single-print levels and
+    /// unfinished-business levels.
+    SinglePrintLabel = 422,
+    UnfinishedBusinessLabel = 423,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 404;
+    pub const COUNT: usize = 424;
 
     /// Get translation for this key.
     #[inline]

@@ -797,6 +797,15 @@ fn pattern_section() -> ToolbarSectionDef {
             DropdownItemDef::action("dealing_range", PN::DealingRange.get(lang)).with_icon(ToolbarIconId::new("DealingRange")),
             DropdownItemDef::action("amd_cycle", PN::AmdCycle.get(lang)).with_icon(ToolbarIconId::new("AmdCycle")),
             DropdownItemDef::action("smc_scan", PN::SmcScan.get(lang)).with_icon(ToolbarIconId::new("SmcScan")),
+            // Order flow — markup engines: imbalance zone / absorption /
+            // delta divergence claims + survey
+            // (`docs/mlc/plans/markup-engines-2026-08-25.md`).
+            DropdownItemDef::Separator,
+            DropdownItemDef::Header { label: MK::HeaderOrderFlow.get(lang).to_string() },
+            DropdownItemDef::action("imbalance_zone", PN::ImbalanceZone.get(lang)).with_icon(ToolbarIconId::new("ImbalanceZone")),
+            DropdownItemDef::action("absorption_mark", PN::AbsorptionMark.get(lang)).with_icon(ToolbarIconId::new("AbsorptionMark")),
+            DropdownItemDef::action("delta_divergence", PN::DeltaDivergence.get(lang)).with_icon(ToolbarIconId::new("DeltaDivergence")),
+            DropdownItemDef::action("order_flow_scan", PN::OrderFlowScan.get(lang)).with_icon(ToolbarIconId::new("OrderFlowScan")),
             // Cycles
             DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderCycles.get(lang).to_string() },

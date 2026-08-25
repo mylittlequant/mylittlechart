@@ -283,6 +283,12 @@ impl PrimitiveRegistry {
         self.register_typed::<super::smc::amd_cycle::AmdCycle>(super::smc::amd_cycle::metadata());
         self.register_typed::<super::smc::smc_scan::SmcScan>(super::smc::smc_scan::metadata());
 
+        // Order flow (markup-engines wave, 2026-08-25)
+        self.register_typed::<super::orderflow::imbalance_zone::ImbalanceZone>(super::orderflow::imbalance_zone::metadata());
+        self.register_typed::<super::orderflow::absorption_mark::AbsorptionMark>(super::orderflow::absorption_mark::metadata());
+        self.register_typed::<super::orderflow::delta_divergence::DeltaDivergence>(super::orderflow::delta_divergence::metadata());
+        self.register_typed::<super::orderflow::order_flow_scan::OrderFlowScan>(super::orderflow::order_flow_scan::metadata());
+
         // Elliott
         self.register_typed::<super::elliott::elliott_impulse::ElliottImpulse>(super::elliott::elliott_impulse::metadata());
         self.register_typed::<super::elliott::elliott_correction::ElliottCorrection>(super::elliott::elliott_correction::metadata());

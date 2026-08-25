@@ -104,6 +104,10 @@ impl ChartApp {
                 // 2026-08-25): same preserve-live-value pattern as
                 // `candle_pattern_engine` above — no edit UI exists yet.
                 smc_engine: existing.ui.smc_engine.clone(),
+                // Order-flow engine configuration (markup-engines wave,
+                // 2026-08-25): same preserve-live-value pattern as
+                // `smc_engine` above — no edit UI exists yet.
+                orderflow_engine: existing.ui.orderflow_engine.clone(),
             },
         }
     }

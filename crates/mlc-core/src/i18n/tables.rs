@@ -1114,7 +1114,7 @@ pub(super) static TRADING_KEY_TABLE: [[&str; N_LANG]; 29] = [
 //
 //  Col:  0=En                          1=Ru                               2..14=""
 
-pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 77] = [
+pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 78] = [
     /* 0  Candles            */ [ "Candles",              "Свечи",                    "Velas",               "Kerzen",               "Chandeliers",           "Velas",               "蜡烛图",        "ローソク足",     "캔들",           "شموع",            "Candele",               "Mum Grafiği",           "Świece",              "Свічки",                  "कैंडल"              ],
     /* 1  HollowCandles      */ [ "Hollow Candles",       "Полые свечи",              "Velas huecas",        "Hohle Kerzen",         "Chandeliers creux",     "Velas vazias",        "空心蜡烛",      "中空ローソク足",  "속빈 캔들",      "شموع مجوفة",      "Candele vuote",         "İçi Boş Mum",           "Świece puste",        "Порожні свічки",          "खोखले कैंडल"        ],
     /* 2  HeikinAshi         */ [ "Heikin Ashi",          "Хейкин Аши",              "Heikin Ashi",         "Heikin Ashi",          "Heikin Ashi",           "Heikin Ashi",         "平均K线",       "平均足",         "헤이킨 아시",    "هيكن آشي",        "Heikin Ashi",           "Heikin Ashi",           "Heikin Ashi",         "Хейкін Асі",              "हेइकिन आशी"        ],
@@ -1192,6 +1192,7 @@ pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 77] = [
     /* 74 SubUiStyle         */ [ "UI Style",             "Стиль интерфейса",         "Estilo UI",           "UI-Stil",              "Style UI",              "Estilo UI",           "界面风格",      "UIスタイル",     "UI 스타일",      "نمط الواجهة",     "Stile UI",              "UI stili",              "Styl UI",             "Стиль інтерфейсу",        "UI शैली"            ],
     /* 75 HeaderCandles      */ [ "Candles",              "Свечи",                    "Velas",               "Kerzen",               "Bougies",               "Velas",               "K线",           "ローソク足",     "캔들",           "الشموع",          "Candele",               "Mumlar",                "Świece",              "Свічки",                  "कैंडल्स"            ],
     /* 76 HeaderSmartMoney   */ [ "Smart Money",          "Smart money",              "Smart money",         "Smart Money",          "Smart money",           "Smart money",         "聪明钱",        "スマートマネー", "스마트 머니",    "الأموال الذكية",  "Smart money",           "Smart Money",           "Smart money",         "Smart money",             "स्मार्ट मनी"        ],
+    /* 77 HeaderOrderFlow    */ [ "Order Flow",           "Поток ордеров",            "Flujo de órdenes",    "Order-Flow",           "Flux d'ordres",         "Fluxo de ordens",     "订单流",        "オーダーフロー", "오더 플로우",    "تدفق الأوامر",    "Order flow",            "Emir Akışı",            "Przepływ zleceń",    "Потік ордерів",           "ऑर्डर फ्लो"         ],
 ];
 
 // =============================================================================
@@ -1318,7 +1319,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 404] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 424] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1732,6 +1733,28 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 404] = [
     /* 401 EqualLevelsLabel                    */ [ "Equal Levels", "Равные уровни", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 402 DisplacementLegLabel                */ [ "Displacement Leg", "Импульсная нога", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 403 SmcScanStructuresLabel              */ [ "Structures", "Структуры", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+
+    // Order flow (markup-engines wave, 2026-08-25 tail).
+    /* 404 RuleOrderFlowDataMissing            */ [ "No order-flow data for this series", "Нет данных потока ордеров для этой серии", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 405 RuleImbalanceZoneNotPresent         */ [ "No stacked imbalance run on this bar", "На этом баре нет накопленного дисбаланса", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 406 RuleAbsorptionNotPresent            */ [ "This bar is not absorption", "Этот бар не является поглощением", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 407 RuleDeltaDivergenceNotFormed        */ [ "No delta divergence at this bar", "На этом баре нет дивергенции дельты", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 408 RuleDeltaDivergenceKindMismatch     */ [ "The bars show the other kind of delta divergence", "Бары показывают дивергенцию дельты другого типа", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 409 ImbalanceZoneRunLengthLabel         */ [ "Run Length", "Длина серии", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 410 AbsorptionDeltaLabel                */ [ "Delta", "Дельта", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 411 AbsorptionVolumeLabel               */ [ "Volume", "Объём", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 412 AbsorptionRatioLabel                */ [ "Delta / Volume", "Дельта / объём", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 413 DeltaDivergenceKindLabel            */ [ "Claimed Kind", "Заявленный тип", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 414 DeltaDivergenceKindRegular          */ [ "Regular", "Обычная", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 415 DeltaDivergenceKindHidden           */ [ "Hidden", "Скрытая", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 416 DeltaDivergencePriceFromLabel       */ [ "Price (earlier)", "Цена (раньше)", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 417 DeltaDivergencePriceToLabel         */ [ "Price (later)", "Цена (позже)", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 418 DeltaDivergenceValueFromLabel       */ [ "Delta (earlier)", "Дельта (раньше)", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 419 DeltaDivergenceValueToLabel         */ [ "Delta (later)", "Дельта (позже)", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 420 DeltaDivergenceEarlierSwingLabel    */ [ "Earlier Swing Bar", "Бар раннего свинга", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 421 OrderFlowScanStructuresLabel        */ [ "Structures", "Структуры", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 422 SinglePrintLabel                    */ [ "Single Print", "Одиночный отпечаток", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 423 UnfinishedBusinessLabel             */ [ "Unfinished Business", "Незавершённый аукцион", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

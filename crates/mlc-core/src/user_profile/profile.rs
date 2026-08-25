@@ -11,6 +11,7 @@ use crate::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
 use crate::state::ewa_engine::EwaEngineConfig;
 use crate::state::candle_pattern_engine::CandlePatternEngineConfig;
 use crate::state::smc_engine::SmcEngineConfig;
+use crate::state::orderflow_engine::OrderFlowEngineConfig;
 
 // =============================================================================
 // Schema version
@@ -641,6 +642,16 @@ pub struct ProfileUiSettings {
     /// reader.
     #[serde(default)]
     pub smc_engine: SmcEngineConfig,
+
+    /// Order-flow engine configuration (markup-engines wave, 2026-08-25).
+    /// Same process-wide, mutated-in-place, RAM+profile class as
+    /// `smc_engine` above: applied to the live global via
+    /// `mlc_core::state::orderflow_engine::set_orderflow_engine_config` at
+    /// profile load (`ChartApp::apply_profile_state`). No settings-modal UI
+    /// edits this yet — see `state::orderflow_engine`'s own module doc for
+    /// every field's own reader.
+    #[serde(default)]
+    pub orderflow_engine: OrderFlowEngineConfig,
 }
 
 fn default_true() -> bool {
@@ -675,6 +686,7 @@ impl ProfileUiSettings {
             ewa_engine: EwaEngineConfig::default(),
             candle_pattern_engine: CandlePatternEngineConfig::default(),
             smc_engine: SmcEngineConfig::default(),
+            orderflow_engine: OrderFlowEngineConfig::default(),
         }
     }
 }

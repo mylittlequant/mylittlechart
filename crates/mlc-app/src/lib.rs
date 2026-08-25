@@ -4723,6 +4723,12 @@ impl ChartApp {
         // module doc.
         mlc_core::state::smc_engine::set_smc_engine_config(profile.ui.smc_engine.clone());
 
+        // Order-flow engine configuration (markup-engines wave, 2026-08-25)
+        // — same process-level, read-fresh contract as the smart-money
+        // engine config above. No settings-modal UI exists for this config
+        // yet — see `mlc_core::state::orderflow_engine`'s own module doc.
+        mlc_core::state::orderflow_engine::set_orderflow_engine_config(profile.ui.orderflow_engine.clone());
+
         // Inline bar position/dock — prefer per-window, fall back to profile flat fields.
         let inline_bar_x = window_state
             .and_then(|ws| ws.inline_bar_x)

@@ -1237,6 +1237,39 @@ pub trait Primitive: Send + Sync {
     /// type with its own price-derived cache overrides this).
     fn refresh_bar_derived_cache(&mut self, _bars: &[Bar]) {}
 
+    /// The exact counterpart of [`refresh_bar_derived_cache`](Self::refresh_bar_derived_cache)
+    /// for footprint (order-flow) data — see `docs/mlc/plans/markup-engines-2026-08-25.md`,
+    /// Appendix B, "The existing hook cannot carry it."
+    /// `Primitive::refresh_bar_derived_cache(&mut self, bars: &[Bar])` hands
+    /// over OHLCV and nothing else; widening that signature would touch
+    /// every implementor for the benefit of four order-flow types. This is
+    /// the second, additive hook instead — a type that does not override it
+    /// cannot tell the difference.
+    ///
+    /// Same render-cache contract as
+    /// [`refresh_bar_derived_cache`](Self::refresh_bar_derived_cache):
+    /// - called from the SAME sweep in
+    ///   `mlc-backend/src/bubble/bar_derived_cache.rs`, only when the
+    ///   bubble's own `footprint_bars` slot is `Some` — there is nothing to
+    ///   call this with when it is `None` (an empty slice would be
+    ///   ambiguous with "subscribed, zero buckets so far yet");
+    /// - the caller may invoke this OFTEN — this method must stay cheap
+    ///   when nothing meaningful changed; an order-flow primitive should
+    ///   short-circuit on its own footprint length and its own anchor/range
+    ///   before redoing any resolution work;
+    /// - must NEVER mutate anything an analyst set — only this primitive's
+    ///   own derived cache field(s) may change;
+    /// - UNLIKE `refresh_bar_derived_cache`, this IS where an order-flow
+    ///   primitive's drawn geometry is first computed, not just a
+    ///   stat-block side channel: `RenderContext` has no footprint accessor
+    ///   (only `bars()`), so `render`/`hit_test`/`control_points` for this
+    ///   family read the cache this method fills rather than recomputing
+    ///   from a live footprint reference they do not have.
+    ///
+    /// Default: no-op — the correct behaviour for every primitive outside
+    /// the order-flow family (the overwhelming majority).
+    fn refresh_footprint_derived_cache(&mut self, _footprint: &[crate::types::FootprintBar]) {}
+
     // =========================================================================
     // Serialization
     // =========================================================================

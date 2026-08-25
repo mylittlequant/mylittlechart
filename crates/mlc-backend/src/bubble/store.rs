@@ -602,6 +602,13 @@ impl BubbleStore {
             // this bubble's first `replace_bars`/`set_bars` call lands, which
             // carries the SAME call below.
             super::bar_derived_cache::refresh_bar_derived_caches(&mut bubble);
+            // Footprint counterpart of the same sweep — a documented no-op
+            // here today (`DataBubbleSnapshot` carries no footprint field
+            // either, same client-only-data doctrine as bars), kept for the
+            // same "defined answer immediately, no separate step required"
+            // reason the OHLC sweep above states, should a snapshot ever
+            // grow one.
+            super::bar_derived_cache::refresh_footprint_derived_caches(&mut bubble);
             let bid = bubble.id;
             self.insert_bubble_raw(bubble);
             restored_ids.push(bid);

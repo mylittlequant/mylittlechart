@@ -620,6 +620,7 @@ pub mod arrows;
 pub mod annotations;
 pub mod patterns;
 pub mod smc;
+pub mod orderflow;
 pub mod elliott;
 pub mod cycles;
 pub mod projection;
