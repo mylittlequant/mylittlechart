@@ -5159,10 +5159,49 @@ impl ChartApp {
             match action {
                 "close" | "dimmer" => st.close(),
                 "modal_bg" => { /* absorb */ }
-                "open_page" => st.open_page_requested = true,
+                "header" => { /* drag start handled in mouse_down */ }
+                "open_page" => st.open_url_requested = Some("/dashboard".to_string()),
                 "sign_out" => st.sign_out_requested = true,
                 "retry" => {
                     st.phase = mlc_app_layout::ui::modal_settings::CloudLoginPhase::RequestCode;
+                }
+                // OAuth provider button — the authorize URL carries our device
+                // code so the server confirms this device after the OAuth dance.
+                rest if rest.starts_with("oauth:") => {
+                    let provider = &rest["oauth:".len()..];
+                    if let mlc_app_layout::ui::modal_settings::CloudLoginPhase::AwaitingConfirm { code } = &st.phase {
+                        st.open_url_requested = Some(format!(
+                            "/api/oauth/{}/authorize?device_code={}",
+                            provider, code
+                        ));
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // === Cloud News/Links/Download overlay clicks (cloud builds only) ===
+        #[cfg(feature = "cloud")]
+        if let Some(action) = widget_id.strip_prefix("cloud_overlay:") {
+            let st = &mut self.panel_app.cloud_overlay_state;
+            match action {
+                "close" | "dimmer" => st.close(),
+                "modal_bg" => { /* absorb */ }
+                "header" => { /* drag start handled in mouse_down */ }
+                rest if rest.starts_with("link:") => {
+                    let id = &rest["link:".len()..];
+                    if let Some((_, _, url)) = mlc_app_layout::layout::modals::cloud_overlay::SOCIAL_LINKS
+                        .iter()
+                        .find(|(lid, _, _)| *lid == id)
+                    {
+                        st.open_url_requested = Some(url.to_string());
+                    }
+                }
+                "download:win64" => {
+                    if let mlc_app_layout::ui::modal_settings::CloudOverlayData::Ready { download_url, .. } = &st.data {
+                        st.open_url_requested = Some(download_url.clone());
+                    }
                 }
                 _ => {}
             }

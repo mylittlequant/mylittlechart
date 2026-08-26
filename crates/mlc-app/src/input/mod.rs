@@ -2053,6 +2053,20 @@ impl ChartApp {
                             true
                         } else { false }
                     }
+                    #[cfg(feature = "cloud")]
+                    "cloud_login" => {
+                        if let Some(ref cl) = self.frame_result.as_ref().and_then(|r| r.cloud_login.as_ref()) {
+                            self.panel_app.cloud_login_state.start_drag(x, y, cl.header_rect.x, cl.header_rect.y);
+                            true
+                        } else { false }
+                    }
+                    #[cfg(feature = "cloud")]
+                    "cloud_overlay" => {
+                        if let Some(ref co) = self.frame_result.as_ref().and_then(|r| r.cloud_overlay.as_ref()) {
+                            self.panel_app.cloud_overlay_state.start_drag(x, y, co.header_rect.x, co.header_rect.y);
+                            true
+                        } else { false }
+                    }
                     "ewa_engine_settings" => {
                         if let Some(ref es) = self.frame_result.as_ref().and_then(|r| r.ewa_engine_settings.as_ref()) {
                             self.panel_app.ewa_engine_settings_state.start_drag(x, y, es.header_rect.x, es.header_rect.y);
@@ -3852,6 +3866,17 @@ impl ChartApp {
             self.panel_app.user_settings_state.update_drag(x, y);
             return;
         }
+        #[cfg(feature = "cloud")]
+        {
+            if self.panel_app.cloud_login_state.is_dragging {
+                self.panel_app.cloud_login_state.update_drag(x, y);
+                return;
+            }
+            if self.panel_app.cloud_overlay_state.is_dragging {
+                self.panel_app.cloud_overlay_state.update_drag(x, y);
+                return;
+            }
+        }
         if self.panel_app.ewa_engine_settings_state.is_dragging {
             self.panel_app.ewa_engine_settings_state.update_drag(x, y);
             return;
@@ -4728,6 +4753,17 @@ impl ChartApp {
             self.panel_app.user_settings_state.end_drag();
             eprintln!("[ChartApp] user_settings modal drag ended");
             return;
+        }
+        #[cfg(feature = "cloud")]
+        {
+            if self.panel_app.cloud_login_state.is_dragging {
+                self.panel_app.cloud_login_state.end_drag();
+                return;
+            }
+            if self.panel_app.cloud_overlay_state.is_dragging {
+                self.panel_app.cloud_overlay_state.end_drag();
+                return;
+            }
         }
         if self.panel_app.ewa_engine_settings_state.is_dragging {
             self.panel_app.ewa_engine_settings_state.end_drag();

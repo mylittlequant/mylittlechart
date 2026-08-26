@@ -3909,9 +3909,10 @@ pub struct CloudLoginState {
     pub is_open: bool,
     /// Current flow phase (owned by the shell's cloud driver).
     pub phase: CloudLoginPhase,
-    /// One-shot flag set by the "Open sign-in page" button; the shell
-    /// observes it, opens the confirm URL in a new tab, and clears it.
-    pub open_page_requested: bool,
+    /// One-shot mailbox: a URL the shell must open in a new tab (sign-in
+    /// page, OAuth provider authorize URL). Set by modal buttons, cleared
+    /// by the driver after the window.open call.
+    pub open_url_requested: Option<String>,
     /// One-shot flag set by the "Sign out" button in the account view; the
     /// shell observes it, revokes the token, and clears it.
     pub sign_out_requested: bool,
@@ -3929,7 +3930,7 @@ impl Default for CloudLoginState {
         Self {
             is_open: false,
             phase: CloudLoginPhase::RequestCode,
-            open_page_requested: false,
+            open_url_requested: None,
             sign_out_requested: false,
             position: None,
             is_dragging: false,
@@ -3944,7 +3945,7 @@ impl CloudLoginState {
     /// (SignedIn when a token exists, RequestCode otherwise).
     pub fn open(&mut self) {
         self.is_open = true;
-        self.open_page_requested = false;
+        self.open_url_requested = None;
         self.sign_out_requested = false;
         self.phase = CloudLoginPhase::RequestCode;
     }
@@ -3953,7 +3954,7 @@ impl CloudLoginState {
     /// for the driver to reset on next open.
     pub fn close(&mut self) {
         self.is_open = false;
-        self.open_page_requested = false;
+        self.open_url_requested = None;
         self.sign_out_requested = false;
         self.is_dragging = false;
         self.drag_offset = None;
@@ -3982,6 +3983,114 @@ impl CloudLoginState {
     }
 
     /// End dragging.
+    pub fn end_drag(&mut self) {
+        self.is_dragging = false;
+    }
+}
+
+// =============================================================================
+// CloudOverlayState — News / Links / Download overlays (cloud builds only)
+// =============================================================================
+
+/// Which cloud overlay is showing.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloudOverlayKind {
+    /// Release news ("what's new") — data from GET /api/updates/latest.
+    News,
+    /// Social/project links (GitHub, X, Telegram, Discord).
+    Links,
+    /// Binary download links for the desktop app.
+    Download,
+}
+
+/// Fetched content for the News/Download overlays (filled by the shell driver).
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub enum CloudOverlayData {
+    /// Nothing fetched yet — the driver should request it.
+    Empty,
+    /// Fetch in flight.
+    Loading,
+    /// Latest release manifest: version + release notes + download URL.
+    Ready { version: String, notes: String, download_url: String },
+    /// Fetch failed.
+    Error { message: String },
+}
+
+/// State for the News / Links / Download overlays (one open at a time).
+///
+/// Same mailbox contract as [`CloudLoginState`]: pure UI state + flags,
+/// effects in the shell driver.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug)]
+pub struct CloudOverlayState {
+    pub is_open: bool,
+    pub kind: CloudOverlayKind,
+    pub data: CloudOverlayData,
+    /// One-shot mailbox: URL to open in a new tab (link rows, downloads).
+    pub open_url_requested: Option<String>,
+    pub position: Option<(f64, f64)>,
+    pub is_dragging: bool,
+    pub drag_offset: Option<(f64, f64)>,
+}
+
+#[cfg(feature = "cloud")]
+impl Default for CloudOverlayState {
+    fn default() -> Self {
+        Self {
+            is_open: false,
+            kind: CloudOverlayKind::News,
+            data: CloudOverlayData::Empty,
+            open_url_requested: None,
+            position: None,
+            is_dragging: false,
+            drag_offset: None,
+        }
+    }
+}
+
+#[cfg(feature = "cloud")]
+impl CloudOverlayState {
+    pub fn open(&mut self, kind: CloudOverlayKind) {
+        self.is_open = true;
+        self.kind = kind;
+        self.open_url_requested = None;
+        self.is_dragging = false;
+        self.drag_offset = None;
+        // Keep fetched data across reopens of the same kind; refetch when
+        // switching kinds or after an error.
+        if matches!(self.data, CloudOverlayData::Error { .. }) {
+            self.data = CloudOverlayData::Empty;
+        }
+    }
+
+    pub fn close(&mut self) {
+        self.is_open = false;
+        self.open_url_requested = None;
+        self.is_dragging = false;
+        self.drag_offset = None;
+    }
+
+    pub fn toggle(&mut self, kind: CloudOverlayKind) {
+        if self.is_open && self.kind == kind {
+            self.close();
+        } else {
+            self.open(kind);
+        }
+    }
+
+    pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {
+        self.is_dragging = true;
+        self.drag_offset = Some((mouse_x - modal_x, mouse_y - modal_y));
+    }
+
+    pub fn update_drag(&mut self, mouse_x: f64, mouse_y: f64) {
+        if let Some((ox, oy)) = self.drag_offset {
+            self.position = Some((mouse_x - ox, mouse_y - oy));
+        }
+    }
+
     pub fn end_drag(&mut self) {
         self.is_dragging = false;
     }

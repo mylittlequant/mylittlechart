@@ -606,6 +606,12 @@ pub struct ChartModalRenderResult {
     pub ewa_engine_settings: Option<EwaEngineSettingsResult>,
     /// Price Action Engine Settings modal result (if open).
     pub markup_engine_settings: Option<MarkupEngineSettingsResult>,
+    /// Cloud sign-in overlay geometry (cloud builds only, if open).
+    #[cfg(feature = "cloud")]
+    pub cloud_login: Option<crate::layout::modals::cloud_login::CloudLoginResult>,
+    /// Cloud News/Links/Download overlay geometry (cloud builds only, if open).
+    #[cfg(feature = "cloud")]
+    pub cloud_overlay: Option<crate::layout::modals::cloud_overlay::CloudOverlayResult>,
 }
 
 // =============================================================================

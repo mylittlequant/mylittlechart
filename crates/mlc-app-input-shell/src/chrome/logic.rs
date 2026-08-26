@@ -19,6 +19,9 @@ const NEW_TAB_BUTTON_WIDTH: f64 = 28.0;
 /// Gold "Sign in" text button (Web flavor, cloud builds).
 #[cfg(feature = "cloud")]
 const LOGIN_BUTTON_WIDTH: f64 = 68.0;
+/// Icon-sized cloud buttons (Web flavor, cloud builds).
+#[cfg(feature = "cloud")]
+const CLOUD_ICON_BUTTON_WIDTH: f64 = 30.0;
 const TAB_LEFT_MARGIN: f64 = 4.0;
 const TAB_GAP: f64 = 1.0;
 const TAB_CLOSE_SIZE: f64 = 16.0;
@@ -42,6 +45,15 @@ struct ButtonPositions {
     /// Web flavor: left edge of the "Sign in" button (cloud builds).
     #[cfg(feature = "cloud")]
     login_left: f64,
+    /// Web flavor: Download button (cloud builds).
+    #[cfg(feature = "cloud")]
+    download_left: f64,
+    /// Web flavor: Links button (cloud builds).
+    #[cfg(feature = "cloud")]
+    links_left: f64,
+    /// Web flavor: News button (cloud builds).
+    #[cfg(feature = "cloud")]
+    news_left: f64,
 }
 
 impl ButtonPositions {
@@ -60,17 +72,29 @@ impl ButtonPositions {
             // Web: the gear is the rightmost button (mirrors render.rs).
             ChromeFlavor::Web => width - MENU_BUTTON_WIDTH,
         };
-        // Cloud builds place "Sign in" immediately left of the gear.
+        // Cloud builds: right-to-left — gear, "Sign in", Download, Links, News.
         #[cfg(feature = "cloud")]
-        let login_left = match flavor {
-            ChromeFlavor::Web => menu_left - LOGIN_BUTTON_WIDTH,
-            ChromeFlavor::Native => 0.0,
+        let (login_left, download_left, links_left, news_left) = match flavor {
+            ChromeFlavor::Web => {
+                let login = menu_left - LOGIN_BUTTON_WIDTH;
+                let dl = login - CLOUD_ICON_BUTTON_WIDTH;
+                let li = dl - CLOUD_ICON_BUTTON_WIDTH;
+                let ne = li - CLOUD_ICON_BUTTON_WIDTH;
+                (login, dl, li, ne)
+            }
+            ChromeFlavor::Native => (0.0, 0.0, 0.0, 0.0),
         };
         Self {
             close_x, maximize_x, minimize_x, close_window_left, mascot_left,
             menu_left, new_window_left,
             #[cfg(feature = "cloud")]
             login_left,
+            #[cfg(feature = "cloud")]
+            download_left,
+            #[cfg(feature = "cloud")]
+            links_left,
+            #[cfg(feature = "cloud")]
+            news_left,
         }
     }
 }
@@ -109,10 +133,15 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
                 if x >= bp.new_window_left   && x < bp.menu_left         { return ChromeHit::NewWindowButton; }
             }
             ChromeFlavor::Web => {
-                // Web: gear is rightmost; cloud builds add "Sign in" left of it.
+                // Web: gear is rightmost; cloud builds add the cloud buttons.
                 if x >= bp.menu_left { return ChromeHit::MenuButton; }
                 #[cfg(feature = "cloud")]
-                if x >= bp.login_left && x < bp.menu_left { return ChromeHit::LoginButton; }
+                {
+                    if x >= bp.login_left && x < bp.menu_left { return ChromeHit::LoginButton; }
+                    if x >= bp.download_left && x < bp.login_left { return ChromeHit::DownloadButton; }
+                    if x >= bp.links_left && x < bp.download_left { return ChromeHit::LinksButton; }
+                    if x >= bp.news_left && x < bp.links_left { return ChromeHit::NewsButton; }
+                }
             }
         }
 

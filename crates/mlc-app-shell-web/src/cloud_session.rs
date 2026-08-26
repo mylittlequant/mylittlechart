@@ -21,14 +21,12 @@ use std::rc::Rc;
 use wasm_bindgen_futures::spawn_local;
 
 use mlc_app::ChartApp;
-use mlc_app_layout::ui::modal_settings::CloudLoginPhase;
-use mlc_cloud::{BuildAttestation, CloudConfig, DeviceAuthPoll, FetchTransport, StoredToken};
+use mlc_app_layout::ui::modal_settings::{CloudLoginPhase, CloudOverlayData, CloudOverlayKind};
+use mlc_cloud::{BuildAttestation, CloudConfig, DeviceAuthPoll, FetchTransport, StoredToken, VersionManifest};
 
 const TOKEN_KEY: &str = "mlc.cloud.token.v1";
 const DEVICE_KEY: &str = "mlc.cloud.device_id.v1";
 const POLL_INTERVAL_MS: f64 = 2500.0;
-/// Where the user confirms the device code (cookie-session web flow).
-const CONFIRM_PAGE: &str = "/dashboard";
 
 /// Completed async step, written by spawn_local futures and applied to the
 /// chart state by the next `drive()` call (mailbox pattern).
@@ -36,6 +34,7 @@ enum FlowResult {
     Code(Result<String, String>),
     Poll(Result<DeviceAuthPoll, String>),
     Logout,
+    Updates(Result<VersionManifest, String>),
 }
 
 struct Inner {
@@ -165,6 +164,16 @@ impl CloudSession {
                         self.inner.borrow_mut().next_poll_ms = now_ms + POLL_INTERVAL_MS;
                     }
                 }
+                FlowResult::Updates(Ok(m)) => {
+                    chart.panel_app.cloud_overlay_state.data = CloudOverlayData::Ready {
+                        version: m.version,
+                        notes: m.release_notes,
+                        download_url: m.download_url,
+                    };
+                }
+                FlowResult::Updates(Err(e)) => {
+                    chart.panel_app.cloud_overlay_state.data = CloudOverlayData::Error { message: e };
+                }
                 FlowResult::Logout => {
                     // Local sign-out regardless of the server answer.
                     clear_token();
@@ -181,6 +190,31 @@ impl CloudSession {
                     }
                     chart.profile_dirty = true;
                     st.phase = CloudLoginPhase::RequestCode;
+                }
+            }
+        }
+
+        // ── Cloud overlay (News/Links/Download): url mailbox + data fetch ──
+        {
+            let ov = &mut chart.panel_app.cloud_overlay_state;
+            if ov.is_open {
+                if let Some(url) = ov.open_url_requested.take() {
+                    open_new_tab(&url);
+                }
+                let needs_data = matches!(ov.kind, CloudOverlayKind::News | CloudOverlayKind::Download)
+                    && matches!(ov.data, CloudOverlayData::Empty);
+                if needs_data && !self.inner.borrow().in_flight {
+                    ov.data = CloudOverlayData::Loading;
+                    let inner = self.inner.clone();
+                    let transport = self.inner.borrow().transport.snapshot();
+                    self.inner.borrow_mut().in_flight = true;
+                    spawn_local(async move {
+                        let r = transport
+                            .updates_latest("win64")
+                            .await
+                            .map_err(|e| e.to_string());
+                        inner.borrow_mut().result = Some(FlowResult::Updates(r));
+                    });
                 }
             }
         }
@@ -208,11 +242,8 @@ impl CloudSession {
         }
 
         // ── One-shot UI flags ────────────────────────────────────────────
-        if st.open_page_requested {
-            st.open_page_requested = false;
-            if let Some(w) = web_sys::window() {
-                let _ = w.open_with_url_and_target(CONFIRM_PAGE, "_blank");
-            }
+        if let Some(url) = st.open_url_requested.take() {
+            open_new_tab(&url);
         }
         if st.sign_out_requested {
             st.sign_out_requested = false;
@@ -337,4 +368,12 @@ fn read_build_attestation() -> Option<BuildAttestation> {
         timestamp,
         platform,
     })
+}
+
+/// Open a URL in a new browser tab (best-effort; popup blockers may
+/// interfere, but these calls all originate from click-driven frames).
+fn open_new_tab(url: &str) {
+    if let Some(w) = web_sys::window() {
+        let _ = w.open_with_url_and_target(url, "_blank");
+    }
 }

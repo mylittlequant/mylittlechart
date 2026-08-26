@@ -199,6 +199,28 @@ pub struct MeResponse {
     pub providers: Vec<ProviderInfo>,
 }
 
+// =============================================================================
+// /api/updates/* shapes (anonymous release manifest)
+// =============================================================================
+
+/// Response body from `GET /api/updates/latest?platform=…`.
+/// Mirrors `VersionManifest` in the server's `models/types.rs`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VersionManifest {
+    pub version: String,
+    #[serde(default)]
+    pub sha256: String,
+    pub download_url: String,
+    #[serde(default)]
+    pub release_notes: String,
+    #[serde(default)]
+    pub file_size: u64,
+    #[serde(default)]
+    pub signature: String,
+    #[serde(default)]
+    pub channel: String,
+}
+
 /// Locally persisted auth token (wasm: localStorage; native: config dir).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StoredToken {

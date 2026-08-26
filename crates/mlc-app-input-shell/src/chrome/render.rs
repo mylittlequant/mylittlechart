@@ -24,6 +24,9 @@ const NEW_TAB_BUTTON_WIDTH: f64 = 28.0;
 /// Gold "Sign in" text button (Web flavor, cloud builds).
 #[cfg(feature = "cloud")]
 const LOGIN_BUTTON_WIDTH: f64 = 68.0;
+/// Icon-sized cloud buttons (Web flavor, cloud builds).
+#[cfg(feature = "cloud")]
+const CLOUD_ICON_BUTTON_WIDTH: f64 = 30.0;
 const TAB_LEFT_MARGIN: f64 = 4.0;
 const TAB_GAP: f64 = 1.0;
 const TAB_PADDING_H: f64 = 12.0;
@@ -55,6 +58,12 @@ struct ButtonPositions {
     /// Web flavor: left edge of the "Sign in" button (cloud builds).
     #[cfg(feature = "cloud")]
     login_left: f64,
+    #[cfg(feature = "cloud")]
+    download_left: f64,
+    #[cfg(feature = "cloud")]
+    links_left: f64,
+    #[cfg(feature = "cloud")]
+    news_left: f64,
 }
 
 impl ButtonPositions {
@@ -72,11 +81,25 @@ impl ButtonPositions {
                     close_x, maximize_x, minimize_x, close_window_left, menu_left, new_window_left,
                     #[cfg(feature = "cloud")]
                     login_left: 0.0,
+                    #[cfg(feature = "cloud")]
+                    download_left: 0.0,
+                    #[cfg(feature = "cloud")]
+                    links_left: 0.0,
+                    #[cfg(feature = "cloud")]
+                    news_left: 0.0,
                 }
             }
             ChromeFlavor::Web => {
-                // Web: menu button rightmost; cloud builds add "Sign in".
+                // Web: right-to-left — gear, "Sign in", Download, Links, News.
                 let menu_left = width - MENU_BUTTON_WIDTH;
+                #[cfg(feature = "cloud")]
+                let login_left = menu_left - LOGIN_BUTTON_WIDTH;
+                #[cfg(feature = "cloud")]
+                let download_left = login_left - CLOUD_ICON_BUTTON_WIDTH;
+                #[cfg(feature = "cloud")]
+                let links_left = download_left - CLOUD_ICON_BUTTON_WIDTH;
+                #[cfg(feature = "cloud")]
+                let news_left = links_left - CLOUD_ICON_BUTTON_WIDTH;
                 Self {
                     close_x:           0.0,
                     maximize_x:        0.0,
@@ -85,7 +108,13 @@ impl ButtonPositions {
                     menu_left,
                     new_window_left:   0.0,
                     #[cfg(feature = "cloud")]
-                    login_left: menu_left - LOGIN_BUTTON_WIDTH,
+                    login_left,
+                    #[cfg(feature = "cloud")]
+                    download_left,
+                    #[cfg(feature = "cloud")]
+                    links_left,
+                    #[cfg(feature = "cloud")]
+                    news_left,
                 }
             }
         }
@@ -256,8 +285,8 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
                     } else {
                         "#f4cd63"
                     };
-                    let inset_x = 3.0;
-                    let inset_y = 5.0;
+                    let inset_x = 2.0;
+                    let inset_y = 4.0;
                     ctx.set_fill_color(gold);
                     ctx.fill_rounded_rect(
                         bp.login_left + inset_x,
@@ -271,6 +300,32 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
                     ctx.set_text_align(TextAlign::Center);
                     ctx.set_text_baseline(TextBaseline::Middle);
                     ctx.fill_text("Sign in", bp.login_left + LOGIN_BUTTON_WIDTH / 2.0, CHROME_HEIGHT / 2.0);
+                }
+
+                // Cloud icon buttons: Download / Links / News (left of Sign in).
+                #[cfg(feature = "cloud")]
+                {
+                    let icon_btns: [(f64, &str, ChromeHit); 3] = [
+                        (bp.download_left, "cloud_download", ChromeHit::DownloadButton),
+                        (bp.links_left, "globe", ChromeHit::LinksButton),
+                        (bp.news_left, "bell", ChromeHit::NewsButton),
+                    ];
+                    for (left, icon, hit) in icon_btns {
+                        if state.hovered == hit {
+                            ctx.set_fill_color(&c.button_hover);
+                            ctx.fill_rounded_rect(left + 2.0, 4.0, CLOUD_ICON_BUTTON_WIDTH - 4.0, CHROME_HEIGHT - 8.0, 6.0);
+                        }
+                        let icon_color = if state.hovered == hit {
+                            &c.icon_hover
+                        } else {
+                            &c.icon_normal
+                        };
+                        let icon_x = left + (CLOUD_ICON_BUTTON_WIDTH - 16.0) / 2.0;
+                        let icon_y = (CHROME_HEIGHT - 16.0) / 2.0;
+                        if let Some(svg) = icon_svg(icon) {
+                            draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, icon_color);
+                        }
+                    }
                 }
 
                 // Menu button (gear) — rightmost.

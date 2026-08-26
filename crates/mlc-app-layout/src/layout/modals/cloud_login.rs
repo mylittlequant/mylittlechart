@@ -1,10 +1,17 @@
 //! Cloud sign-in / account overlay (cloud builds only).
 //!
-//! Centered card over a full-screen dimmer, following the welcome-wizard
-//! overlay pattern (high-z layer absorbs all input). Pure presentation:
-//! every interactive element just registers a `cloud_login:*` widget id —
-//! the login state machine itself is driven by the shell's cloud session
-//! driver through [`CloudLoginState`]'s phase field and one-shot flags.
+//! Centered draggable card over a full-screen dimmer, following the
+//! welcome-wizard overlay pattern (high-z layer absorbs all input). Pure
+//! presentation: every interactive element registers a `cloud_login:*`
+//! widget id — the login state machine itself is driven by the shell's
+//! cloud session driver through [`CloudLoginState`]'s phase field and
+//! one-shot mailboxes.
+//!
+//! Two sign-in paths, both inside the modal:
+//! - OAuth provider buttons (GitHub / Discord / Google) — open the provider
+//!   authorize URL carrying our device code; the server confirms the code
+//!   after the OAuth dance and the poll completes on its own.
+//! - Manual fallback — show the code, user enters it on /dashboard.
 //!
 //! Visual language per the mylittlechart brandbook
 //! (`zeng3ld-landing/web/mylittlechart/README.md`): gold #F4CD63 is the only
@@ -29,10 +36,19 @@ const MODAL_W: f64 = 430.0;
 const HEADER_H: f64 = 40.0;
 const PAD: f64 = 24.0;
 
+/// OAuth providers offered in the modal (id, label).
+pub const OAUTH_PROVIDERS: &[(&str, &str)] = &[
+    ("github", "Continue with GitHub"),
+    ("discord", "Continue with Discord"),
+    ("google", "Continue with Google"),
+];
+
+/// Geometry the input side needs (header drag).
+pub struct CloudLoginResult {
+    pub header_rect: WidgetRect,
+}
+
 /// Render the cloud sign-in overlay.
-///
-/// Returns the modal rect `(x, y, w, h)` so the caller can store it for
-/// header-drag hit-testing if dragging is enabled later.
 pub fn render_cloud_login_modal(
     ctx: &mut dyn RenderContext,
     window_w: f64,
@@ -40,7 +56,7 @@ pub fn render_cloud_login_modal(
     state: &CloudLoginState,
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
-) -> (f64, f64, f64, f64) {
+) -> CloudLoginResult {
     let layer_id = ZLayer::ModalOverlay.push_named(input_coordinator, "cloud_login");
 
     // Dimmer — absorbs clicks and closes the overlay (dismissable, unlike
@@ -55,7 +71,7 @@ pub fn render_cloud_login_modal(
     ctx.fill_rect(0.0, 0.0, window_w, window_h);
 
     let modal_h: f64 = match &state.phase {
-        CloudLoginPhase::AwaitingConfirm { .. } => 340.0,
+        CloudLoginPhase::AwaitingConfirm { .. } => 470.0,
         CloudLoginPhase::SignedIn { .. } => 260.0,
         CloudLoginPhase::Success { .. } => 200.0,
         CloudLoginPhase::Error { .. } => 260.0,
@@ -83,7 +99,15 @@ pub fn render_cloud_login_modal(
         &layer_id,
     );
 
-    // ── Header ───────────────────────────────────────────────────────────
+    // ── Header (draggable) ───────────────────────────────────────────────
+    let header_rect = WidgetRect::new(modal_x, modal_y, MODAL_W, HEADER_H);
+    input_coordinator.register_on_layer(
+        "cloud_login:header",
+        header_rect,
+        Sense::DRAG,
+        &layer_id,
+    );
+
     ctx.set_font("600 13px sans-serif");
     ctx.set_fill_color(toolbar_theme.item_text.as_str());
     ctx.set_text_align(TextAlign::Left);
@@ -136,34 +160,62 @@ pub fn render_cloud_login_modal(
             ctx.set_text_align(TextAlign::Left);
             ctx.set_font("13px sans-serif");
             ctx.set_fill_color(toolbar_theme.item_text.as_str());
-            ctx.fill_text("No passwords. Confirm this device", modal_x + PAD, body_y);
-            ctx.fill_text("from any logged-in browser:", modal_x + PAD, body_y + 20.0);
+            ctx.fill_text("No passwords. Pick a provider —", modal_x + PAD, body_y);
+            ctx.fill_text("we only read your handle.", modal_x + PAD, body_y + 20.0);
 
-            // Code card — mono, gold.
-            let code_y = body_y + 36.0;
-            let code_h = 52.0;
+            // OAuth provider buttons.
+            let mut btn_y = body_y + 36.0;
+            let btn_h = 36.0;
+            for (id, label) in OAUTH_PROVIDERS {
+                draw_button(
+                    ctx,
+                    input_coordinator,
+                    &layer_id,
+                    &format!("cloud_login:oauth:{}", id),
+                    modal_x + PAD,
+                    btn_y,
+                    content_w,
+                    btn_h,
+                    label,
+                    toolbar_theme.dropdown_bg.as_str(),
+                    toolbar_theme.item_text.as_str(),
+                    true,
+                );
+                btn_y += btn_h + 10.0;
+            }
+
+            // Manual fallback: code card + open dashboard.
+            ctx.set_font("10px monospace");
+            ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
+            ctx.set_text_align(TextAlign::Center);
+            ctx.fill_text(
+                "OR CONFIRM THE CODE ON THE SITE",
+                modal_x + MODAL_W / 2.0,
+                btn_y + 10.0,
+            );
+
+            let code_y = btn_y + 20.0;
+            let code_h = 40.0;
             ctx.set_fill_color(toolbar_theme.dropdown_bg.as_str());
             ctx.fill_rounded_rect(modal_x + PAD, code_y, content_w, code_h, 8.0);
-            ctx.set_font("700 26px monospace");
+            ctx.set_font("700 22px monospace");
             ctx.set_fill_color(GOLD);
-            ctx.set_text_align(TextAlign::Center);
             ctx.fill_text(code, modal_x + MODAL_W / 2.0, code_y + code_h / 2.0);
 
-            // Open-page button (primary, gold).
-            let btn_y = code_y + code_h + 16.0;
-            let btn_h = 34.0;
+            let link_y = code_y + code_h + 10.0;
             draw_button(
                 ctx,
                 input_coordinator,
                 &layer_id,
                 "cloud_login:open_page",
                 modal_x + PAD,
-                btn_y,
+                link_y,
                 content_w,
-                btn_h,
+                30.0,
                 "Open the sign-in page →",
                 GOLD,
                 DARK_TEXT,
+                false,
             );
 
             ctx.set_font("11px sans-serif");
@@ -171,7 +223,7 @@ pub fn render_cloud_login_modal(
             ctx.fill_text(
                 "Waiting for confirmation…",
                 modal_x + MODAL_W / 2.0,
-                btn_y + btn_h + 22.0,
+                link_y + 30.0 + 18.0,
             );
         }
 
@@ -201,21 +253,19 @@ pub fn render_cloud_login_modal(
             let via = format!("via {}", provider);
             ctx.fill_text(&via, modal_x + PAD, body_y + 48.0);
 
-            // Sign out (ghost, danger on hover).
-            let btn_y = body_y + 72.0;
-            let btn_h = 32.0;
             draw_button(
                 ctx,
                 input_coordinator,
                 &layer_id,
                 "cloud_login:sign_out",
                 modal_x + PAD,
-                btn_y,
+                body_y + 72.0,
                 120.0,
-                btn_h,
+                32.0,
                 "Sign out",
                 toolbar_theme.button_bg.as_str(),
                 DANGER,
+                false,
             );
         }
 
@@ -228,29 +278,27 @@ pub fn render_cloud_login_modal(
             ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
             ctx.fill_text(message, modal_x + MODAL_W / 2.0, body_y + 32.0);
 
-            let btn_y = body_y + 56.0;
-            let btn_h = 32.0;
             draw_button(
                 ctx,
                 input_coordinator,
                 &layer_id,
                 "cloud_login:retry",
                 modal_x + PAD,
-                btn_y,
+                body_y + 56.0,
                 content_w,
-                btn_h,
+                32.0,
                 "Try again",
                 GOLD,
                 DARK_TEXT,
+                false,
             );
         }
     }
 
-    (modal_x, modal_y, MODAL_W, modal_h)
+    CloudLoginResult { header_rect }
 }
 
-/// Solid rounded button + click zone. Hover styling is driven by the
-/// coordinator via the widget id; v1 keeps a flat fill.
+/// Rounded button + click zone. `ghost` = bordered secondary style.
 #[allow(clippy::too_many_arguments)]
 fn draw_button(
     ctx: &mut dyn RenderContext,
@@ -264,10 +312,18 @@ fn draw_button(
     label: &str,
     bg: &str,
     fg: &str,
+    ghost: bool,
 ) {
     let _ = GOLD_HOVER; // reserved for hover state wiring
     ctx.set_fill_color(bg);
     ctx.fill_rounded_rect(x, y, w, h, 8.0);
+    if ghost {
+        ctx.set_stroke_color("rgba(254, 255, 238, 0.14)");
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.rect(x + 0.5, y + 0.5, w - 1.0, h - 1.0);
+        ctx.stroke();
+    }
     ctx.set_font("600 13px sans-serif");
     ctx.set_fill_color(fg);
     ctx.set_text_align(TextAlign::Center);

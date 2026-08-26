@@ -118,6 +118,12 @@ pub enum ChromeHit {
     MenuButton,
     /// Cloud sign-in button (Web flavor, server builds only).
     LoginButton,
+    /// Cloud "What's new" button (Web flavor, cloud builds).
+    NewsButton,
+    /// Cloud social/project links button (Web flavor, cloud builds).
+    LinksButton,
+    /// Cloud desktop-download button (Web flavor, cloud builds).
+    DownloadButton,
     Tab(usize),
     TabClose(usize),
     NewTabButton,

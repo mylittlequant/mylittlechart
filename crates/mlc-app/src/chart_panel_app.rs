@@ -93,6 +93,9 @@ pub struct ChartPanelApp {
     /// Cloud sign-in / account overlay state (cloud builds only).
     #[cfg(feature = "cloud")]
     pub cloud_login_state: mlc_app_layout::ui::modal_settings::CloudLoginState,
+    /// Cloud News/Links/Download overlay state (cloud builds only).
+    #[cfg(feature = "cloud")]
+    pub cloud_overlay_state: mlc_app_layout::ui::modal_settings::CloudOverlayState,
     /// EWA Engine Settings modal state (owner ask 2026-08-14).
     pub ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState,
     /// Price Action Engine Settings modal state — the non-Elliott sibling
@@ -155,6 +158,8 @@ impl ChartPanelApp {
             user_settings_state: mlc_app_layout::ui::modal_settings::UserSettingsState::default(),
             #[cfg(feature = "cloud")]
             cloud_login_state: mlc_app_layout::ui::modal_settings::CloudLoginState::default(),
+            #[cfg(feature = "cloud")]
+            cloud_overlay_state: mlc_app_layout::ui::modal_settings::CloudOverlayState::default(),
             ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState::default(),
             markup_engine_settings_state: mlc_app_layout::ui::modal_settings::MarkupEngineSettingsState::default(),
             clock_popup_state: mlc_app_layout::ui::ClockPopupState::default(),
@@ -877,14 +882,27 @@ impl ChartPanelApp {
         // Cloud sign-in / account overlay (cloud builds only).
         #[cfg(feature = "cloud")]
         if self.cloud_login_state.is_open {
-            mlc_app_layout::layout::modals::render_cloud_login_modal(
+            result.cloud_login = Some(mlc_app_layout::layout::modals::render_cloud_login_modal(
                 ctx,
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
                 &self.cloud_login_state,
                 toolbar_theme,
                 input_coordinator,
-            );
+            ));
+        }
+
+        // Cloud News/Links/Download overlay (cloud builds only).
+        #[cfg(feature = "cloud")]
+        if self.cloud_overlay_state.is_open {
+            result.cloud_overlay = Some(mlc_app_layout::layout::modals::render_cloud_overlay(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                &self.cloud_overlay_state,
+                toolbar_theme,
+                input_coordinator,
+            ));
         }
 
         // Price Action Engine Settings modal

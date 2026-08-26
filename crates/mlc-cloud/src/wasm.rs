@@ -267,4 +267,15 @@ impl FetchTransport {
         let (status, body) = self.exchange("POST", "/api/auth/logout", None, &[]).await?;
         self.decode_success(status, &body).map(|_: serde_json::Value| ())
     }
+
+    // ── /api/updates/* (anonymous) ────────────────────────────────────────
+
+    /// `GET /api/updates/latest?platform=…` — release manifest for the
+    /// News/Download overlays. Anonymous, no attestation required.
+    pub async fn updates_latest(&self, platform: &str) -> Result<VersionManifest, CloudError> {
+        let (status, body) = self
+            .exchange("GET", &format!("/api/updates/latest?platform={}", platform), None, &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
 }

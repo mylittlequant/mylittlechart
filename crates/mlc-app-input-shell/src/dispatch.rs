@@ -204,6 +204,9 @@ pub fn process_event(
                 | ChromeHit::MascotButton
                 | ChromeHit::MenuButton
                 | ChromeHit::LoginButton
+                | ChromeHit::NewsButton
+                | ChromeHit::LinksButton
+                | ChromeHit::DownloadButton
                 | ChromeHit::Tab(_)
                 | ChromeHit::TabClose(_)
                 | ChromeHit::NewTabButton
@@ -490,6 +493,27 @@ pub fn process_event(
                                 || chart.panel_app.user_settings_state.show_welcome_wizard;
                             if !skeleton_active {
                                 chart.panel_app.cloud_login_state.toggle();
+                                chart.panel_app.cloud_overlay_state.close();
+                                dirty.chart_dirty = true;
+                                platform.request_redraw();
+                            }
+                        }
+                        return;
+                    }
+                    ChromeHit::NewsButton | ChromeHit::LinksButton | ChromeHit::DownloadButton => {
+                        #[cfg(feature = "cloud")]
+                        {
+                            use mlc_app_layout::ui::modal_settings::CloudOverlayKind;
+                            let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
+                                || chart.panel_app.user_settings_state.show_welcome_wizard;
+                            if !skeleton_active {
+                                let kind = match hit {
+                                    ChromeHit::NewsButton => CloudOverlayKind::News,
+                                    ChromeHit::LinksButton => CloudOverlayKind::Links,
+                                    _ => CloudOverlayKind::Download,
+                                };
+                                chart.panel_app.cloud_overlay_state.toggle(kind);
+                                chart.panel_app.cloud_login_state.close();
                                 dirty.chart_dirty = true;
                                 platform.request_redraw();
                             }
