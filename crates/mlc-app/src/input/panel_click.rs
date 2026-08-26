@@ -5157,9 +5157,10 @@ impl ChartApp {
         if let Some(action) = widget_id.strip_prefix("cloud_login:") {
             let st = &mut self.panel_app.cloud_login_state;
             match action {
-                "close" | "dimmer" => st.close(),
+                "close" => st.close(),
                 "modal_bg" => { /* absorb */ }
                 "header" => { /* drag start handled in mouse_down */ }
+                rest if rest.starts_with("dimmer") => st.close(),
                 "open_page" => st.open_url_requested = Some("/dashboard".to_string()),
                 "sign_out" => st.sign_out_requested = true,
                 "retry" => {
@@ -5186,9 +5187,12 @@ impl ChartApp {
         if let Some(action) = widget_id.strip_prefix("cloud_overlay:") {
             let st = &mut self.panel_app.cloud_overlay_state;
             match action {
-                "close" | "dimmer" => st.close(),
+                // The footer OK is the shell's; like every editor dialog it
+                // just closes.
+                "close" | "ok" => st.close(),
                 "modal_bg" => { /* absorb */ }
                 "header" => { /* drag start handled in mouse_down */ }
+                rest if rest.starts_with("dimmer") => st.close(),
                 rest if rest.starts_with("link:") => {
                     let id = &rest["link:".len()..];
                     if let Some((_, _, url)) = mlc_app_layout::layout::modals::cloud_overlay::SOCIAL_LINKS

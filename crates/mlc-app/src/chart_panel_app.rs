@@ -887,6 +887,7 @@ impl ChartPanelApp {
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
                 &self.cloud_login_state,
+                frame_theme,
                 toolbar_theme,
                 input_coordinator,
             ));
@@ -900,6 +901,7 @@ impl ChartPanelApp {
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
                 &self.cloud_overlay_state,
+                frame_theme,
                 toolbar_theme,
                 input_coordinator,
             ));

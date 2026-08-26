@@ -1,11 +1,11 @@
 //! Cloud sign-in / account overlay (cloud builds only).
 //!
-//! Centered draggable card over a full-screen dimmer, following the
-//! welcome-wizard overlay pattern (high-z layer absorbs all input). Pure
-//! presentation: every interactive element registers a `cloud_login:*`
-//! widget id — the login state machine itself is driven by the shell's
-//! cloud session driver through [`CloudLoginState`]'s phase field and
-//! one-shot mailboxes.
+//! A standard modal shell (`ui::widgets::modal`) over a dimmed backdrop — the
+//! shell owns the frame, header, close button, drag registration and theming;
+//! this module draws only the body. Pure presentation: every interactive
+//! element registers a `cloud_login:*` widget id and the login state machine
+//! itself is driven by the shell's cloud session driver through
+//! [`CloudLoginState`]'s phase field and one-shot mailboxes.
 //!
 //! Two sign-in paths, both inside the modal:
 //! - OAuth provider buttons (GitHub / Discord / Google) — open the provider
@@ -13,28 +13,34 @@
 //!   after the OAuth dance and the poll completes on its own.
 //! - Manual fallback — show the code, user enters it on /dashboard.
 //!
-//! Visual language per the mylittlechart brandbook
-//! (`zeng3ld-landing/web/mylittlechart/README.md`): gold #F4CD63 is the only
-//! action accent, mono micro-labels, hairline borders, no icon fonts.
+//! Gold #F4CD63 stays the one action accent (brandbook,
+//! `zeng3ld-landing/web/mylittlechart/README.md`); every other colour comes
+//! from the shared modal theme, so the dialog follows the active theme like
+//! any other.
 
-use mlc_core::engine::render::RenderContext;
-use uzor::render::{TextAlign, TextBaseline};
+use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
+use uzor::input::{InputCoordinator, LayerId, Sense};
 use uzor::types::Rect as WidgetRect;
-use uzor::input::Sense;
+use uzor::WidgetId;
 
+use crate::layout::render_chart::FrameTheme;
 use crate::ui::modal_settings::{CloudLoginPhase, CloudLoginState};
 use crate::ui::toolbar_theme::ToolbarTheme;
+use crate::ui::widgets::{
+    register_dimmer_zones, render_modal_shell, ModalFooter, ModalPlacement, ModalShell,
+    ModalShellSpec, ModalTheme, SETTINGS_BUTTON_RADIUS,
+};
 use crate::ui::z_order::ZLayer;
 
+/// The brand's one action accent — the primary CTA fill.
 const GOLD: &str = "#f4cd63";
 const GOLD_HOVER: &str = "#f7d985";
-const DARK_TEXT: &str = "#0a0f1a";
-const DANGER: &str = "#c85c5c";
-const SUCCESS: &str = "#5cb85c";
+/// Text on top of the gold CTA.
+const GOLD_TEXT: &str = "#0a0f1a";
 
 const MODAL_W: f64 = 430.0;
-const HEADER_H: f64 = 40.0;
-const PAD: f64 = 24.0;
+const BTN_H: f64 = 36.0;
+const BTN_GAP: f64 = 10.0;
 
 /// OAuth providers offered in the modal (id, label).
 pub const OAUTH_PROVIDERS: &[(&str, &str)] = &[
@@ -48,291 +54,255 @@ pub struct CloudLoginResult {
     pub header_rect: WidgetRect,
 }
 
+/// Body height per phase — the shell sizes the frame from this.
+fn content_height(state: &CloudLoginState) -> f64 {
+    match &state.phase {
+        CloudLoginPhase::AwaitingConfirm { .. } => 312.0,
+        CloudLoginPhase::SignedIn { .. } => 122.0,
+        CloudLoginPhase::Success { .. } => 78.0,
+        CloudLoginPhase::Error { .. } => 110.0,
+        _ => 52.0,
+    }
+}
+
 /// Render the cloud sign-in overlay.
 pub fn render_cloud_login_modal(
     ctx: &mut dyn RenderContext,
     window_w: f64,
     window_h: f64,
     state: &CloudLoginState,
+    frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
-    input_coordinator: &mut uzor::input::InputCoordinator,
+    input_coordinator: &mut InputCoordinator,
 ) -> CloudLoginResult {
-    let layer_id = ZLayer::ModalOverlay.push_named(input_coordinator, "cloud_login");
-
-    // Dimmer — absorbs clicks and closes the overlay (dismissable, unlike
-    // the welcome wizard).
-    input_coordinator.register_on_layer(
-        "cloud_login:dimmer",
-        WidgetRect::new(0.0, 0.0, window_w, window_h),
-        Sense::CLICK,
-        &layer_id,
+    let theme = ModalTheme::from_toolbar(
+        &frame_theme.toolbar_bg,
+        &toolbar_theme.separator,
+        toolbar_theme,
     );
-    ctx.set_fill_color("rgba(2, 4, 8, 0.72)");
-    ctx.fill_rect(0.0, 0.0, window_w, window_h);
-
-    let modal_h: f64 = match &state.phase {
-        CloudLoginPhase::AwaitingConfirm { .. } => 470.0,
-        CloudLoginPhase::SignedIn { .. } => 260.0,
-        CloudLoginPhase::Success { .. } => 200.0,
-        CloudLoginPhase::Error { .. } => 260.0,
-        _ => 200.0,
-    };
-    let (modal_x, modal_y) = state.position.unwrap_or((
-        (window_w - MODAL_W) / 2.0,
-        (window_h - modal_h) / 2.0,
-    ));
-
-    // Card background + border.
-    ctx.set_fill_color(toolbar_theme.background.as_str());
-    ctx.fill_rounded_rect(modal_x, modal_y, MODAL_W, modal_h, 12.0);
-    ctx.set_stroke_color(toolbar_theme.separator.as_str());
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.rect(modal_x + 0.5, modal_y + 0.5, MODAL_W - 1.0, modal_h - 1.0);
-    ctx.stroke();
-
-    // Absorb clicks on the card itself.
-    input_coordinator.register_on_layer(
-        "cloud_login:modal_bg",
-        WidgetRect::new(modal_x, modal_y, MODAL_W, modal_h),
-        Sense::CLICK,
-        &layer_id,
-    );
-
-    // ── Header (draggable) ───────────────────────────────────────────────
-    let header_rect = WidgetRect::new(modal_x, modal_y, MODAL_W, HEADER_H);
-    input_coordinator.register_on_layer(
-        "cloud_login:header",
-        header_rect,
-        Sense::DRAG,
-        &layer_id,
-    );
-
-    ctx.set_font("600 13px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text.as_str());
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
     let title = match &state.phase {
-        CloudLoginPhase::SignedIn { .. } => "ACCOUNT",
-        _ => "SIGN IN",
+        CloudLoginPhase::SignedIn { .. } => "Account",
+        _ => "Sign in",
     };
-    ctx.fill_text(title, modal_x + PAD, modal_y + HEADER_H / 2.0);
-
-    // Close ✕
-    let close_size = 26.0;
-    let close_x = modal_x + MODAL_W - close_size - 10.0;
-    let close_y = modal_y + (HEADER_H - close_size) / 2.0;
-    input_coordinator.register_on_layer(
-        "cloud_login:close",
-        WidgetRect::new(close_x, close_y, close_size, close_size),
-        Sense::CLICK,
-        &layer_id,
+    let spec = ModalShellSpec {
+        // Sign-in must be answered (or dismissed) before anything else.
+        dim_backdrop: true,
+        // A flow with its own actions in the body has no use for an OK bar.
+        footer: ModalFooter::None,
+        placement: ModalPlacement::At(state.position),
+        layer: ZLayer::ModalOverlay,
+        ..ModalShellSpec::new("cloud_login", title, MODAL_W, content_height(state))
+    };
+    let shell = render_modal_shell(
+        ctx,
+        input_coordinator,
+        &spec,
+        &theme,
+        (window_w, window_h),
+        |ctx, coord, layer_id, shell| {
+            register_dimmer_zones(
+                coord,
+                layer_id,
+                "cloud_login",
+                shell.frame,
+                (window_w, window_h),
+            );
+            draw_body(ctx, coord, layer_id, shell, state, toolbar_theme);
+        },
     );
-    ctx.set_font("14px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_align(TextAlign::Center);
-    ctx.fill_text("×", close_x + close_size / 2.0, close_y + close_size / 2.0);
+    CloudLoginResult { header_rect: shell.header }
+}
 
-    // Hairline under header.
-    ctx.set_stroke_color(toolbar_theme.separator.as_str());
-    ctx.begin_path();
-    ctx.move_to(modal_x, modal_y + HEADER_H + 0.5);
-    ctx.line_to(modal_x + MODAL_W, modal_y + HEADER_H + 0.5);
-    ctx.stroke();
-
-    // ── Body ─────────────────────────────────────────────────────────────
-    let body_y = modal_y + HEADER_H + PAD;
-    let content_w = MODAL_W - PAD * 2.0;
+fn draw_body(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    shell: &ModalShell,
+    state: &CloudLoginState,
+    tt: &ToolbarTheme,
+) {
+    let x = shell.content.x;
+    let y = shell.content.y;
+    let w = shell.content.width;
+    let cx = x + w / 2.0;
 
     match &state.phase {
         CloudLoginPhase::RequestCode | CloudLoginPhase::CreatingCode => {
             ctx.set_font("13px sans-serif");
-            ctx.set_fill_color(toolbar_theme.item_text.as_str());
+            ctx.set_fill_color(&tt.item_text_muted);
             ctx.set_text_align(TextAlign::Center);
-            ctx.fill_text(
-                "Requesting sign-in code…",
-                modal_x + MODAL_W / 2.0,
-                body_y + 40.0,
-            );
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("Requesting sign-in code…", cx, y + 26.0);
         }
 
         CloudLoginPhase::AwaitingConfirm { code } => {
             ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
             ctx.set_font("13px sans-serif");
-            ctx.set_fill_color(toolbar_theme.item_text.as_str());
-            ctx.fill_text("No passwords. Pick a provider —", modal_x + PAD, body_y);
-            ctx.fill_text("we only read your handle.", modal_x + PAD, body_y + 20.0);
+            ctx.set_fill_color(&tt.item_text);
+            ctx.fill_text("No passwords. Pick a provider —", x, y);
+            ctx.fill_text("we only read your handle.", x, y + 20.0);
 
-            // OAuth provider buttons.
-            let mut btn_y = body_y + 36.0;
-            let btn_h = 36.0;
+            let mut btn_y = y + 42.0;
             for (id, label) in OAUTH_PROVIDERS {
                 draw_button(
                     ctx,
-                    input_coordinator,
-                    &layer_id,
+                    coord,
+                    layer_id,
                     &format!("cloud_login:oauth:{}", id),
-                    modal_x + PAD,
-                    btn_y,
-                    content_w,
-                    btn_h,
+                    WidgetRect::new(x, btn_y, w, BTN_H),
                     label,
-                    toolbar_theme.dropdown_bg.as_str(),
-                    toolbar_theme.item_text.as_str(),
-                    true,
+                    BtnStyle::Secondary,
+                    tt,
                 );
-                btn_y += btn_h + 10.0;
+                btn_y += BTN_H + BTN_GAP;
             }
 
-            // Manual fallback: code card + open dashboard.
             ctx.set_font("10px monospace");
-            ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
+            ctx.set_fill_color(&tt.item_text_muted);
             ctx.set_text_align(TextAlign::Center);
-            ctx.fill_text(
-                "OR CONFIRM THE CODE ON THE SITE",
-                modal_x + MODAL_W / 2.0,
-                btn_y + 10.0,
-            );
+            ctx.fill_text("OR CONFIRM THE CODE ON THE SITE", cx, btn_y + 4.0);
 
-            let code_y = btn_y + 20.0;
-            let code_h = 40.0;
-            ctx.set_fill_color(toolbar_theme.dropdown_bg.as_str());
-            ctx.fill_rounded_rect(modal_x + PAD, code_y, content_w, code_h, 8.0);
+            let code_y = btn_y + 16.0;
+            let code_h = 44.0;
+            ctx.set_fill_color(&tt.dropdown_bg);
+            ctx.fill_rounded_rect(x, code_y, w, code_h, SETTINGS_BUTTON_RADIUS);
+            ctx.set_stroke_color(&tt.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(x, code_y, w, code_h, SETTINGS_BUTTON_RADIUS);
             ctx.set_font("700 22px monospace");
             ctx.set_fill_color(GOLD);
-            ctx.fill_text(code, modal_x + MODAL_W / 2.0, code_y + code_h / 2.0);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(code, cx, code_y + code_h / 2.0);
 
-            let link_y = code_y + code_h + 10.0;
+            let link_y = code_y + code_h + BTN_GAP;
             draw_button(
                 ctx,
-                input_coordinator,
-                &layer_id,
+                coord,
+                layer_id,
                 "cloud_login:open_page",
-                modal_x + PAD,
-                link_y,
-                content_w,
-                30.0,
-                "Open the sign-in page →",
-                GOLD,
-                DARK_TEXT,
-                false,
+                WidgetRect::new(x, link_y, w, BTN_H),
+                "Open the sign-in page",
+                BtnStyle::Primary,
+                tt,
             );
 
             ctx.set_font("11px sans-serif");
-            ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-            ctx.fill_text(
-                "Waiting for confirmation…",
-                modal_x + MODAL_W / 2.0,
-                link_y + 30.0 + 18.0,
-            );
+            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.fill_text("Waiting for confirmation…", cx, link_y + BTN_H + 18.0);
         }
 
         CloudLoginPhase::Success { display_name } => {
-            ctx.set_font("20px sans-serif");
-            ctx.set_fill_color(SUCCESS);
             ctx.set_text_align(TextAlign::Center);
-            ctx.fill_text("✓", modal_x + MODAL_W / 2.0, body_y + 24.0);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.set_font("20px sans-serif");
+            ctx.set_fill_color(&tt.success);
+            ctx.fill_text("✓", cx, y + 20.0);
             ctx.set_font("13px sans-serif");
-            ctx.set_fill_color(toolbar_theme.item_text.as_str());
+            ctx.set_fill_color(&tt.item_text);
             let msg = format!("Signed in as {}", display_name);
-            ctx.fill_text(&msg, modal_x + MODAL_W / 2.0, body_y + 56.0);
+            ctx.fill_text(&msg, cx, y + 52.0);
         }
 
         CloudLoginPhase::SignedIn { display_name, provider } => {
             ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
             ctx.set_font("11px monospace");
-            ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-            ctx.fill_text("SIGNED IN AS", modal_x + PAD, body_y);
+            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.fill_text("SIGNED IN AS", x, y);
 
             ctx.set_font("600 16px sans-serif");
-            ctx.set_fill_color(toolbar_theme.item_text.as_str());
-            ctx.fill_text(display_name, modal_x + PAD, body_y + 26.0);
+            ctx.set_fill_color(&tt.item_text);
+            ctx.fill_text(display_name, x, y + 22.0);
 
             ctx.set_font("12px sans-serif");
-            ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
+            ctx.set_fill_color(&tt.item_text_muted);
             let via = format!("via {}", provider);
-            ctx.fill_text(&via, modal_x + PAD, body_y + 48.0);
+            ctx.fill_text(&via, x, y + 48.0);
 
             draw_button(
                 ctx,
-                input_coordinator,
-                &layer_id,
+                coord,
+                layer_id,
                 "cloud_login:sign_out",
-                modal_x + PAD,
-                body_y + 72.0,
-                120.0,
-                32.0,
+                WidgetRect::new(x, y + 78.0, 120.0, 32.0),
                 "Sign out",
-                toolbar_theme.button_bg.as_str(),
-                DANGER,
-                false,
+                BtnStyle::Danger,
+                tt,
             );
         }
 
         CloudLoginPhase::Error { message } => {
-            ctx.set_font("13px sans-serif");
-            ctx.set_fill_color(DANGER);
             ctx.set_text_align(TextAlign::Center);
-            ctx.fill_text("Sign-in failed", modal_x + MODAL_W / 2.0, body_y + 8.0);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.set_font("13px sans-serif");
+            ctx.set_fill_color(&tt.danger);
+            ctx.fill_text("Sign-in failed", cx, y + 10.0);
             ctx.set_font("12px sans-serif");
-            ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-            ctx.fill_text(message, modal_x + MODAL_W / 2.0, body_y + 32.0);
+            ctx.set_fill_color(&tt.item_text_muted);
+            // Server errors can be a whole HTML page — clip to the body width.
+            let msg = crate::ui::widgets::fit_text_to_width(ctx, message, w);
+            ctx.fill_text(&msg, cx, y + 34.0);
 
             draw_button(
                 ctx,
-                input_coordinator,
-                &layer_id,
+                coord,
+                layer_id,
                 "cloud_login:retry",
-                modal_x + PAD,
-                body_y + 56.0,
-                content_w,
-                32.0,
+                WidgetRect::new(x, y + 64.0, w, BTN_H),
                 "Try again",
-                GOLD,
-                DARK_TEXT,
-                false,
+                BtnStyle::Primary,
+                tt,
             );
         }
     }
-
-    CloudLoginResult { header_rect }
 }
 
-/// Rounded button + click zone. `ghost` = bordered secondary style.
-#[allow(clippy::too_many_arguments)]
+/// Button fills: the gold CTA follows the brandbook, the rest follow the
+/// toolbar theme so hover/active match every other modal.
+enum BtnStyle {
+    Primary,
+    Secondary,
+    Danger,
+}
+
+/// Rounded button with a hover state + click zone.
 fn draw_button(
     ctx: &mut dyn RenderContext,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
     widget_id: &str,
-    x: f64,
-    y: f64,
-    w: f64,
-    h: f64,
+    rect: WidgetRect,
     label: &str,
-    bg: &str,
-    fg: &str,
-    ghost: bool,
+    style: BtnStyle,
+    tt: &ToolbarTheme,
 ) {
-    let _ = GOLD_HOVER; // reserved for hover state wiring
+    let hovered = coord.is_hovered(&WidgetId::from(widget_id));
+    let (bg, fg) = match style {
+        BtnStyle::Primary => (
+            if hovered { GOLD_HOVER } else { GOLD },
+            GOLD_TEXT,
+        ),
+        BtnStyle::Secondary => (
+            if hovered { tt.button_bg_hover.as_str() } else { tt.dropdown_bg.as_str() },
+            tt.item_text.as_str(),
+        ),
+        BtnStyle::Danger => (
+            if hovered { tt.danger_hover_bg.as_str() } else { tt.button_bg.as_str() },
+            tt.danger.as_str(),
+        ),
+    };
     ctx.set_fill_color(bg);
-    ctx.fill_rounded_rect(x, y, w, h, 8.0);
-    if ghost {
-        ctx.set_stroke_color("rgba(254, 255, 238, 0.14)");
+    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+    if matches!(style, BtnStyle::Secondary) {
+        ctx.set_stroke_color(&tt.separator);
         ctx.set_stroke_width(1.0);
-        ctx.begin_path();
-        ctx.rect(x + 0.5, y + 0.5, w - 1.0, h - 1.0);
-        ctx.stroke();
+        ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
     }
     ctx.set_font("600 13px sans-serif");
     ctx.set_fill_color(fg);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(label, x + w / 2.0, y + h / 2.0);
-    input_coordinator.register_on_layer(
-        widget_id,
-        WidgetRect::new(x, y, w, h),
-        Sense::CLICK,
-        layer_id,
-    );
+    ctx.fill_text(label, rect.center_x(), rect.center_y());
+    coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
 }

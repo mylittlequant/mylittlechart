@@ -1088,6 +1088,45 @@ fn resize_grip_rects(frame: WidgetRect) -> Vec<(ResizeEdge, WidgetRect)> {
     ]
 }
 
+/// Click zones for the dimmed area AROUND a modal's frame, so a click outside
+/// a `dim_backdrop` modal can dismiss it. The shell paints the backdrop but
+/// deliberately registers nothing for it — a full-screen widget registered on
+/// the modal's own layer would swallow clicks meant for `modal_bg`. Four
+/// strips (top/bottom/left/right) leave the frame itself to the modal's
+/// widgets. Ids are `{ns}:dimmer:{side}`; dismissing on any of them is the
+/// caller's click handler's job.
+pub fn register_dimmer_zones(
+    coord: &mut InputCoordinator,
+    layer: &LayerId,
+    ns: &str,
+    frame: WidgetRect,
+    screen: (f64, f64),
+) {
+    let (sw, sh) = screen;
+    let zones = [
+        ("top", WidgetRect::new(0.0, 0.0, sw, frame.y.max(0.0))),
+        (
+            "bottom",
+            WidgetRect::new(0.0, frame.bottom(), sw, (sh - frame.bottom()).max(0.0)),
+        ),
+        ("left", WidgetRect::new(0.0, frame.y, frame.x.max(0.0), frame.height)),
+        (
+            "right",
+            WidgetRect::new(frame.right(), frame.y, (sw - frame.right()).max(0.0), frame.height),
+        ),
+    ];
+    for (side, rect) in zones {
+        if rect.width > 0.0 && rect.height > 0.0 {
+            coord.register_on_layer(
+                format!("{ns}:dimmer:{side}").as_str(),
+                rect,
+                Sense::CLICK,
+                layer,
+            );
+        }
+    }
+}
+
 /// Keep an edge on screen. A surface taller than the screen is pinned to the
 /// margin rather than pushed off the top by a negative clamp bound.
 fn clamp_on_screen(pos: f64, size: f64, screen: f64, margin: f64) -> f64 {
