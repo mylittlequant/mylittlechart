@@ -35,7 +35,7 @@ const CONFIRM_PAGE: &str = "/dashboard";
 enum FlowResult {
     Code(Result<String, String>),
     Poll(Result<DeviceAuthPoll, String>),
-    Logout(Result<(), String>),
+    Logout,
 }
 
 struct Inner {
@@ -165,7 +165,7 @@ impl CloudSession {
                         self.inner.borrow_mut().next_poll_ms = now_ms + POLL_INTERVAL_MS;
                     }
                 }
-                FlowResult::Logout(_) => {
+                FlowResult::Logout => {
                     // Local sign-out regardless of the server answer.
                     clear_token();
                     let mut inner = self.inner.borrow_mut();
@@ -222,11 +222,10 @@ impl CloudSession {
                 let transport = self.inner.borrow().transport.snapshot();
                 self.inner.borrow_mut().in_flight = true;
                 spawn_local(async move {
-                    let r = transport
-                        .auth_logout()
-                        .await
-                        .map_err(|e| e.to_string());
-                    inner.borrow_mut().result = Some(FlowResult::Logout(r));
+                    // The server answer is deliberately ignored — local
+                    // sign-out happens regardless.
+                    let _ = transport.auth_logout().await;
+                    inner.borrow_mut().result = Some(FlowResult::Logout);
                 });
             } else {
                 // No token — nothing to revoke, just reset the view.
