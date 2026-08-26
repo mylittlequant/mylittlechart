@@ -37,6 +37,9 @@ uuid = { version = "1", features = ["v4", "js"] }
 
 [features]
 default = []
+# Server connectivity (see mlc-app-shell-web `cloud`). Marker feature —
+# gates cloud-sync UI events/state; no optional deps at this level.
+cloud = []
 
 [lints]
 workspace = true

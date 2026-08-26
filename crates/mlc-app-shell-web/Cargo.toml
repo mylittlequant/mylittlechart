@@ -17,6 +17,7 @@ crate-type = ["cdylib", "rlib"]
 # MLC lib graph — all 12 lib crates compile to wasm32 after Phase 0-2
 mlc-app          = { path = "../mlc-app",          package = "mylittlechart-app"          }
 mlc-app-input-shell  = { path = "../mlc-app-input-shell",  package = "mylittlechart-app-input-shell"  }
+mlc-app-layout    = { path = "../mlc-app-layout",    package = "mylittlechart-app-layout"    }
 mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "mylittlechart-app-sidebar-content" }
 mlc-backend-data-bridge    = { path = "../mlc-backend-data-bridge",    package = "mylittlechart-backend-data-bridge"    }
 mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
@@ -59,8 +60,11 @@ web-sys              = { version = "0.3", features = [
     "ClipboardItem",
     "Navigator",
     "StorageManager",
+    "Storage",
+    "Crypto",
 ] }
 console_error_panic_hook = "0.1"
+serde_json = "1.0"
 # Wasm tracing subscriber — pipes every `tracing::info!/warn!/debug!/trace!`
 # call from dig3 + digdigdig3-station into the browser console. This is the
 # ONLY way to see Station internals (UniversalWsTransport heal loops, WS
@@ -81,7 +85,7 @@ web-time = "1"
 default = []
 # Server connectivity (auth + sync via /api/*). Enabled for official builds
 # (package-app.sh passes --features cloud); OSS self-builds stay local-only.
-cloud = ["dep:mlc-cloud"]
+cloud = ["dep:mlc-cloud", "mlc-core/cloud", "mlc-app-layout/cloud", "mlc-app/cloud", "mlc-app-input-shell/cloud"]
 # Uncomment when ready to wire in alternative backends:
 # render-vello-cpu    = ["dep:uzor-render-vello-cpu"]
 # render-vello-hybrid = ["dep:uzor-render-vello-hybrid"]

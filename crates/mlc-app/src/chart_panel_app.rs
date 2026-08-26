@@ -90,6 +90,9 @@ pub struct ChartPanelApp {
     pub compare_settings_state: CompareSettingsState,
     /// User settings modal state.
     pub user_settings_state: mlc_app_layout::ui::modal_settings::UserSettingsState,
+    /// Cloud sign-in / account overlay state (cloud builds only).
+    #[cfg(feature = "cloud")]
+    pub cloud_login_state: mlc_app_layout::ui::modal_settings::CloudLoginState,
     /// EWA Engine Settings modal state (owner ask 2026-08-14).
     pub ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState,
     /// Price Action Engine Settings modal state — the non-Elliott sibling
@@ -150,6 +153,8 @@ impl ChartPanelApp {
             alert_settings_state: AlertSettingsState::new(),
             compare_settings_state: CompareSettingsState::new(),
             user_settings_state: mlc_app_layout::ui::modal_settings::UserSettingsState::default(),
+            #[cfg(feature = "cloud")]
+            cloud_login_state: mlc_app_layout::ui::modal_settings::CloudLoginState::default(),
             ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState::default(),
             markup_engine_settings_state: mlc_app_layout::ui::modal_settings::MarkupEngineSettingsState::default(),
             clock_popup_state: mlc_app_layout::ui::ClockPopupState::default(),
@@ -867,6 +872,19 @@ impl ChartPanelApp {
                 current_time_ms,
                 input_coordinator,
             ));
+        }
+
+        // Cloud sign-in / account overlay (cloud builds only).
+        #[cfg(feature = "cloud")]
+        if self.cloud_login_state.is_open {
+            mlc_app_layout::layout::modals::render_cloud_login_modal(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                &self.cloud_login_state,
+                toolbar_theme,
+                input_coordinator,
+            );
         }
 
         // Price Action Engine Settings modal

@@ -17,3 +17,7 @@ uzor = "=1.5.1"
 
 [lints]
 workspace = true
+
+[features]
+default = []
+cloud = ["mlc-core/cloud"]

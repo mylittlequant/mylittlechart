@@ -17,3 +17,7 @@ web-time   = "1"
 
 [lints]
 workspace = true
+
+[features]
+default = []
+cloud = ["mlc-core/cloud", "mlc-app/cloud"]

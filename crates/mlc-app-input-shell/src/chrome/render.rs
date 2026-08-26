@@ -21,6 +21,9 @@ const MASCOT_BUTTON_WIDTH: f64 = 0.0;
 const MENU_BUTTON_WIDTH: f64 = 36.0;
 const NEW_WINDOW_BUTTON_WIDTH: f64 = 36.0;
 const NEW_TAB_BUTTON_WIDTH: f64 = 28.0;
+/// Gold "Sign in" text button (Web flavor, cloud builds).
+#[cfg(feature = "cloud")]
+const LOGIN_BUTTON_WIDTH: f64 = 68.0;
 const TAB_LEFT_MARGIN: f64 = 4.0;
 const TAB_GAP: f64 = 1.0;
 const TAB_PADDING_H: f64 = 12.0;
@@ -49,6 +52,9 @@ struct ButtonPositions {
     menu_left: f64,
     /// Only valid for Native flavor.
     new_window_left: f64,
+    /// Web flavor: left edge of the "Sign in" button (cloud builds).
+    #[cfg(feature = "cloud")]
+    login_left: f64,
 }
 
 impl ButtonPositions {
@@ -62,10 +68,14 @@ impl ButtonPositions {
                 let mascot_left       = close_window_left - MASCOT_BUTTON_WIDTH;
                 let menu_left         = mascot_left - MENU_BUTTON_WIDTH;
                 let new_window_left   = menu_left - NEW_WINDOW_BUTTON_WIDTH;
-                Self { close_x, maximize_x, minimize_x, close_window_left, menu_left, new_window_left }
+                Self {
+                    close_x, maximize_x, minimize_x, close_window_left, menu_left, new_window_left,
+                    #[cfg(feature = "cloud")]
+                    login_left: 0.0,
+                }
             }
             ChromeFlavor::Web => {
-                // Web: only menu button on the right, no window controls.
+                // Web: menu button rightmost; cloud builds add "Sign in".
                 let menu_left = width - MENU_BUTTON_WIDTH;
                 Self {
                     close_x:           0.0,
@@ -74,6 +84,8 @@ impl ButtonPositions {
                     close_window_left: 0.0,
                     menu_left,
                     new_window_left:   0.0,
+                    #[cfg(feature = "cloud")]
+                    login_left: menu_left - LOGIN_BUTTON_WIDTH,
                 }
             }
         }
@@ -234,7 +246,34 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
                 }
             }
             ChromeFlavor::Web => {
-                // Only menu button on the right.
+                // Gold "Sign in" button (cloud builds) — the single accent
+                // action in the chrome strip, per the brandbook (gold =
+                // primary CTA). Sits immediately left of the gear.
+                #[cfg(feature = "cloud")]
+                {
+                    let gold = if state.hovered == ChromeHit::LoginButton {
+                        "#f7d985"
+                    } else {
+                        "#f4cd63"
+                    };
+                    let inset_x = 3.0;
+                    let inset_y = 5.0;
+                    ctx.set_fill_color(gold);
+                    ctx.fill_rounded_rect(
+                        bp.login_left + inset_x,
+                        inset_y,
+                        LOGIN_BUTTON_WIDTH - inset_x * 2.0,
+                        CHROME_HEIGHT - inset_y * 2.0,
+                        7.0,
+                    );
+                    ctx.set_font("600 12px sans-serif");
+                    ctx.set_fill_color("#0a0f1a");
+                    ctx.set_text_align(TextAlign::Center);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    ctx.fill_text("Sign in", bp.login_left + LOGIN_BUTTON_WIDTH / 2.0, CHROME_HEIGHT / 2.0);
+                }
+
+                // Menu button (gear) — rightmost.
                 {
                     if state.hovered == ChromeHit::MenuButton {
                         ctx.set_fill_color(&c.button_hover);

@@ -116,6 +116,8 @@ pub enum ChromeHit {
     CloseWindowButton,
     MascotButton,
     MenuButton,
+    /// Cloud sign-in button (Web flavor, server builds only).
+    LoginButton,
     Tab(usize),
     TabClose(usize),
     NewTabButton,

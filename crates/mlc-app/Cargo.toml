@@ -65,3 +65,7 @@ futures-util = "0.3"
 
 [lints]
 workspace = true
+
+[features]
+default = []
+cloud = ["mlc-core/cloud", "mlc-app-layout/cloud"]

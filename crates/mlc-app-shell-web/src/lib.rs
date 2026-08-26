@@ -44,6 +44,8 @@
 mod context;
 #[cfg(target_arch = "wasm32")]
 mod persistence;
+#[cfg(all(target_arch = "wasm32", feature = "cloud"))]
+mod cloud_session;
 
 /// Counting global allocator (wasm-leak differential, 2026-07-26).
 ///
@@ -395,6 +397,9 @@ struct WebAppState {
     /// DataBridge handle so the Monitoring/Performance tab can read live
     /// counts (ws_task_count_total, connector count) same as native.
     bridge:             Arc<mlc_backend_data_bridge::DataBridge>,
+    /// Cloud session driver (sign-in overlay + sync transport). Cloud builds only.
+    #[cfg(feature = "cloud")]
+    cloud:              cloud_session::CloudSession,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -424,6 +429,8 @@ impl WebAppState {
             last_frame_time_ms: 16.0,
             last_render_ms:     None,
             bridge,
+            #[cfg(feature = "cloud")]
+            cloud: cloud_session::CloudSession::init(""),
         }
     }
 }
@@ -523,6 +530,15 @@ fn run_render_loop(
             // templates)". The apply itself belongs to ChartApp; the shell
             // only has to ask for it.
             st.chart.drain_template_actions();
+
+            // Cloud session driver: advances the sign-in overlay's
+            // device-code flow (spawn_local futures report back through the
+            // session's mailbox, applied on the next frame).
+            #[cfg(feature = "cloud")]
+            {
+                let st = &mut *st;
+                st.cloud.drive(&mut st.chart, now_ms as f64);
+            }
         }
 
         // ── Drain deferred cold-preset apply ─────────────────────────────────

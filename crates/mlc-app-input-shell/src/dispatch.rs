@@ -203,6 +203,7 @@ pub fn process_event(
                 | ChromeHit::CloseWindowButton
                 | ChromeHit::MascotButton
                 | ChromeHit::MenuButton
+                | ChromeHit::LoginButton
                 | ChromeHit::Tab(_)
                 | ChromeHit::TabClose(_)
                 | ChromeHit::NewTabButton
@@ -479,6 +480,19 @@ pub fn process_event(
                             || chart.panel_app.user_settings_state.show_welcome_wizard;
                         if !skeleton_active {
                             chart.open_user_settings();
+                        }
+                        return;
+                    }
+                    ChromeHit::LoginButton => {
+                        #[cfg(feature = "cloud")]
+                        {
+                            let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
+                                || chart.panel_app.user_settings_state.show_welcome_wizard;
+                            if !skeleton_active {
+                                chart.panel_app.cloud_login_state.toggle();
+                                dirty.chart_dirty = true;
+                                platform.request_redraw();
+                            }
                         }
                         return;
                     }

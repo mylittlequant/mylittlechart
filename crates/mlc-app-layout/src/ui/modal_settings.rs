@@ -3874,3 +3874,115 @@ impl EwaEngineSettingsState {
         self.is_dragging = false;
     }
 }
+
+// =============================================================================
+// CloudLoginState — sign-in / account overlay (cloud builds only)
+// =============================================================================
+
+/// Phase of the device-code login flow.
+///
+/// This struct is pure UI state plus a flag mailbox — the actual I/O lives in
+/// the shell's cloud session driver (`mlc-app-shell-web`, which owns the
+/// `mlc-cloud` transport). The driver rewrites `phase` as the flow advances.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub enum CloudLoginPhase {
+    /// Just opened; the shell should request a device code.
+    RequestCode,
+    /// Waiting for the code-creation request to finish.
+    CreatingCode,
+    /// Code in hand — shown to the user, polling for confirmation.
+    AwaitingConfirm { code: String },
+    /// Login succeeded this session.
+    Success { display_name: String },
+    /// Already authenticated — account view (cabinet).
+    SignedIn { display_name: String, provider: String },
+    /// Flow failed (network, expired code, attestation rejected).
+    Error { message: String },
+}
+
+/// State for the cloud sign-in / account overlay.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug)]
+pub struct CloudLoginState {
+    /// Whether the overlay is currently open.
+    pub is_open: bool,
+    /// Current flow phase (owned by the shell's cloud driver).
+    pub phase: CloudLoginPhase,
+    /// One-shot flag set by the "Open sign-in page" button; the shell
+    /// observes it, opens the confirm URL in a new tab, and clears it.
+    pub open_page_requested: bool,
+    /// One-shot flag set by the "Sign out" button in the account view; the
+    /// shell observes it, revokes the token, and clears it.
+    pub sign_out_requested: bool,
+    /// Overlay position (None = centered on screen).
+    pub position: Option<(f64, f64)>,
+    /// Whether the overlay is being dragged by its header.
+    pub is_dragging: bool,
+    /// Offset from mouse to overlay top-left (for smooth dragging).
+    pub drag_offset: Option<(f64, f64)>,
+}
+
+#[cfg(feature = "cloud")]
+impl Default for CloudLoginState {
+    fn default() -> Self {
+        Self {
+            is_open: false,
+            phase: CloudLoginPhase::RequestCode,
+            open_page_requested: false,
+            sign_out_requested: false,
+            position: None,
+            is_dragging: false,
+            drag_offset: None,
+        }
+    }
+}
+
+#[cfg(feature = "cloud")]
+impl CloudLoginState {
+    /// Open the overlay. The shell's driver decides the initial phase
+    /// (SignedIn when a token exists, RequestCode otherwise).
+    pub fn open(&mut self) {
+        self.is_open = true;
+        self.open_page_requested = false;
+        self.sign_out_requested = false;
+        self.phase = CloudLoginPhase::RequestCode;
+    }
+
+    /// Close the overlay. One-shot flags are cleared; the phase is left
+    /// for the driver to reset on next open.
+    pub fn close(&mut self) {
+        self.is_open = false;
+        self.open_page_requested = false;
+        self.sign_out_requested = false;
+        self.is_dragging = false;
+        self.drag_offset = None;
+    }
+
+    /// Toggle open/closed.
+    pub fn toggle(&mut self) {
+        if self.is_open {
+            self.close();
+        } else {
+            self.open();
+        }
+    }
+
+    /// Start dragging from the overlay header.
+    pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {
+        self.is_dragging = true;
+        self.drag_offset = Some((mouse_x - modal_x, mouse_y - modal_y));
+    }
+
+    /// Update overlay position while dragging.
+    pub fn update_drag(&mut self, mouse_x: f64, mouse_y: f64) {
+        if let Some((ox, oy)) = self.drag_offset {
+            self.position = Some((mouse_x - ox, mouse_y - oy));
+        }
+    }
+
+    /// End dragging.
+    pub fn end_drag(&mut self) {
+        self.is_dragging = false;
+    }
+}

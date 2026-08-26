@@ -5152,6 +5152,23 @@ impl ChartApp {
             return;
         }
 
+        // === Cloud sign-in / account overlay clicks (cloud builds only) ===
+        #[cfg(feature = "cloud")]
+        if let Some(action) = widget_id.strip_prefix("cloud_login:") {
+            let st = &mut self.panel_app.cloud_login_state;
+            match action {
+                "close" | "dimmer" => st.close(),
+                "modal_bg" => { /* absorb */ }
+                "open_page" => st.open_page_requested = true,
+                "sign_out" => st.sign_out_requested = true,
+                "retry" => {
+                    st.phase = mlc_app_layout::ui::modal_settings::CloudLoginPhase::RequestCode;
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // === User settings modal clicks ===
         if let Some(action) = widget_id.strip_prefix("user_settings:") {
             use mlc_app_layout::ui::modal_settings::UserSettingsTab;

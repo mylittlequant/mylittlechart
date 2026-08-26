@@ -77,6 +77,10 @@ pub use profile_manager::render_profile_manager;
 pub mod ewa_engine_settings;
 pub mod markup_engine_settings;
 pub use ewa_engine_settings::render_ewa_engine_settings_modal;
+#[cfg(feature = "cloud")]
+pub mod cloud_login;
+#[cfg(feature = "cloud")]
+pub use cloud_login::render_cloud_login_modal;
 
 pub use indicator_settings::*;
 pub use context_menu::*;

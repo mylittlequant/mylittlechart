@@ -28,6 +28,18 @@ impl FetchTransport {
         &self.config
     }
 
+    pub fn config_mut(&mut self) -> &mut CloudConfig {
+        &mut self.config
+    }
+
+    /// Cheap clone of the transport config for a single spawned request —
+    /// the driver stays `Rc`-shared while each fetch owns its snapshot.
+    pub fn snapshot(&self) -> Self {
+        Self {
+            config: self.config.clone(),
+        }
+    }
+
     /// Install (or clear) the bearer token after a completed login.
     pub fn set_token(&mut self, token: Option<String>) {
         self.config.token = token;
