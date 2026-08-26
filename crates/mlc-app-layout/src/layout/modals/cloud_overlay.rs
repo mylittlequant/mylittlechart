@@ -355,12 +355,36 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     for raw in text.lines() {
         let mut rest = raw.trim();
-        while rest.len() > width {
-            let cut = rest[..width].rfind(' ').unwrap_or(width);
+        // width counts CHARS: slicing a str at a byte offset that is not a
+        // char boundary panics and takes the whole wasm render loop down —
+        // an em-dash in a blog summary did exactly that.
+        while rest.chars().count() > width {
+            let byte_cap = rest
+                .char_indices()
+                .nth(width)
+                .map(|(i, _)| i)
+                .unwrap_or(rest.len());
+            let cut = rest[..byte_cap].rfind(' ').unwrap_or(byte_cap);
             lines.push(rest[..cut].trim().to_string());
-            rest = rest[cut..].trim();
+            rest = rest[cut..].trim_start();
         }
         lines.push(rest.to_string());
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wrap_text;
+
+    /// Byte-offset slicing panics inside a multibyte char (an em-dash in a
+    /// blog summary crashed the whole wasm render loop). Wrapping must hold
+    /// for non-ASCII text.
+    #[test]
+    fn wrap_handles_multibyte_chars() {
+        let text = "chart.example now opens straight into the wasm terminal — the marketing page moved to /home";
+        let lines = wrap_text(text, 62);
+        assert!(lines.len() >= 2);
+        assert_eq!(lines.concat().replace(' ', ""), text.replace(' ', ""));
+    }
 }
