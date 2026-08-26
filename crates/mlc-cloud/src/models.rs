@@ -229,6 +229,10 @@ pub struct BlogPost {
     pub date: String,
     pub title: String,
     pub summary: String,
+    /// Full post text; paragraphs separated by blank lines. Older feeds may
+    /// lack it — then the overlay falls back to the summary.
+    #[serde(default)]
+    pub body: String,
     pub url: String,
 }
 

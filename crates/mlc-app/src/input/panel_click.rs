@@ -5202,16 +5202,15 @@ impl ChartApp {
                         st.open_url_requested = Some(url.to_string());
                     }
                 }
-                // A post block in the News overlay — open the post's URL.
+                // A post block in the News overlay — expand it into the
+                // in-modal reading view (no new tab; the blog row below is
+                // the one that leads out).
                 rest if rest.starts_with("post:") => {
                     if let Ok(idx) = rest["post:".len()..].parse::<usize>() {
-                        if let mlc_app_layout::ui::modal_settings::CloudOverlayData::News { posts } = &st.data {
-                            if let Some(post) = posts.get(idx) {
-                                st.open_url_requested = Some(post.url.clone());
-                            }
-                        }
+                        st.selected_post = Some(idx);
                     }
                 }
+                "news_back" => st.selected_post = None,
                 "download:win64" => {
                     if let mlc_app_layout::ui::modal_settings::CloudOverlayData::Ready { download_url, .. } = &st.data {
                         st.open_url_requested = Some(download_url.clone());

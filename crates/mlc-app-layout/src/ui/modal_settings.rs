@@ -4027,6 +4027,9 @@ pub struct CloudNewsPost {
     pub date: String,
     pub title: String,
     pub summary: String,
+    /// Full text for the in-modal reading view (blank-line separated
+    /// paragraphs); falls back to the summary when the feed lacks it.
+    pub body: String,
     pub url: String,
 }
 
@@ -4042,6 +4045,9 @@ pub struct CloudOverlayState {
     pub data: CloudOverlayData,
     /// One-shot mailbox: URL to open in a new tab (link rows, downloads).
     pub open_url_requested: Option<String>,
+    /// News reading view: index of the post being read in-modal, None = the
+    /// post list. Reset whenever the overlay opens or closes.
+    pub selected_post: Option<usize>,
     pub position: Option<(f64, f64)>,
     pub is_dragging: bool,
     pub drag_offset: Option<(f64, f64)>,
@@ -4055,6 +4061,7 @@ impl Default for CloudOverlayState {
             kind: CloudOverlayKind::News,
             data: CloudOverlayData::Empty,
             open_url_requested: None,
+            selected_post: None,
             position: None,
             is_dragging: false,
             drag_offset: None,
@@ -4068,6 +4075,7 @@ impl CloudOverlayState {
         self.is_open = true;
         self.kind = kind;
         self.open_url_requested = None;
+        self.selected_post = None;
         self.is_dragging = false;
         self.drag_offset = None;
         // Keep fetched data across reopens of the same kind; refetch when
@@ -4086,6 +4094,7 @@ impl CloudOverlayState {
     pub fn close(&mut self) {
         self.is_open = false;
         self.open_url_requested = None;
+        self.selected_post = None;
         self.is_dragging = false;
         self.drag_offset = None;
     }

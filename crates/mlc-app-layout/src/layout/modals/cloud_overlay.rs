@@ -69,6 +69,16 @@ fn post_block_h(post: &CloudNewsPost) -> f64 {
     16.0 + 20.0 + summary_lines(&post.summary) * 16.0 + 14.0
 }
 
+/// Height of the News reading view: back row + date + title + wrapped body.
+fn post_detail_h(post: &CloudNewsPost) -> f64 {
+    let text = if post.body.is_empty() { &post.summary } else { &post.body };
+    let mut h = 0.0;
+    for par in text.split("\n\n") {
+        h += wrap_text(par.trim(), 62).len() as f64 * 16.0 + 10.0;
+    }
+    28.0 + 16.0 + 24.0 + h
+}
+
 /// The News overlay shows at most this many posts.
 const MAX_NEWS_POSTS: usize = 3;
 
@@ -79,12 +89,18 @@ fn content_height(state: &CloudOverlayState) -> f64 {
         CloudOverlayKind::Download => 22.0 + ROW_H + 24.0,
         CloudOverlayKind::News => match &state.data {
             CloudOverlayData::News { posts } => {
-                let blocks: f64 = posts
-                    .iter()
-                    .take(MAX_NEWS_POSTS)
-                    .map(post_block_h)
-                    .sum();
-                blocks + 8.0 + ROW_H
+                // Reading view: one post, expanded. List view: up to
+                // MAX_NEWS_POSTS blocks + the blog row.
+                if let Some(post) = state.selected_post.and_then(|i| posts.get(i)) {
+                    post_detail_h(post)
+                } else {
+                    let blocks: f64 = posts
+                        .iter()
+                        .take(MAX_NEWS_POSTS)
+                        .map(post_block_h)
+                        .sum();
+                    blocks + 8.0 + ROW_H
+                }
             }
             _ => 84.0,
         },
@@ -202,30 +218,34 @@ fn draw_body(
 
         CloudOverlayKind::News => match &state.data {
             CloudOverlayData::News { posts } => {
-                let mut py = y;
-                for (i, post) in posts.iter().take(MAX_NEWS_POSTS).enumerate() {
-                    py += draw_news_post(
+                if let Some(post) = state.selected_post.and_then(|i| posts.get(i)) {
+                    draw_news_detail(ctx, coord, layer_id, x, y, w, post, tt);
+                } else {
+                    let mut py = y;
+                    for (i, post) in posts.iter().take(MAX_NEWS_POSTS).enumerate() {
+                        py += draw_news_post(
+                            ctx,
+                            coord,
+                            layer_id,
+                            &format!("cloud_overlay:post:{}", i),
+                            x,
+                            py,
+                            w,
+                            post,
+                            tt,
+                        );
+                    }
+                    draw_link_row(
                         ctx,
                         coord,
                         layer_id,
-                        &format!("cloud_overlay:post:{}", i),
-                        x,
-                        py,
-                        w,
-                        post,
+                        "cloud_overlay:link:blog",
+                        WidgetRect::new(x, py + 8.0, row_w, ROW_H - ROW_GAP),
+                        "All news on the blog",
+                        Icon::Globe,
                         tt,
                     );
                 }
-                draw_link_row(
-                    ctx,
-                    coord,
-                    layer_id,
-                    "cloud_overlay:link:blog",
-                    WidgetRect::new(x, py + 8.0, row_w, ROW_H - ROW_GAP),
-                    "All news on the blog",
-                    Icon::Globe,
-                    tt,
-                );
             }
             CloudOverlayData::Error { message } => {
                 draw_status(ctx, tt, x, y, w, "Failed to load news", Some(message));
@@ -279,6 +299,59 @@ fn draw_news_post(
 
     coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
     h
+}
+
+/// The News reading view: one post expanded in place — back row on top,
+/// then date, title and the full body (falls back to the summary when the
+/// feed entry has no body). The modal grows to fit via `post_detail_h`.
+#[allow(clippy::too_many_arguments)]
+fn draw_news_detail(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    post: &CloudNewsPost,
+    tt: &ToolbarTheme,
+) {
+    // Back row — returns to the post list.
+    let back_id = "cloud_overlay:news_back";
+    let back_rect = WidgetRect::new(x, y, w, 28.0);
+    let hovered = coord.is_hovered(&WidgetId::from(back_id));
+    if hovered {
+        ctx.set_fill_color(&tt.item_bg_hover);
+        ctx.fill_rounded_rect(back_rect.x, back_rect.y, back_rect.width, back_rect.height, SETTINGS_BUTTON_RADIUS);
+    }
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(if hovered { &tt.item_text } else { &tt.item_text_muted });
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("← All news", x + 8.0, y + 14.0);
+    coord.register_on_layer(back_id, back_rect, Sense::CLICK | Sense::HOVER, layer_id);
+
+    let mut ly = y + 36.0;
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.set_font("10px monospace");
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.fill_text(&post.date, x, ly);
+    ly += 16.0;
+
+    ctx.set_font("600 14px sans-serif");
+    ctx.set_fill_color(GOLD);
+    ctx.fill_text(&post.title, x, ly);
+    ly += 26.0;
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    let text = if post.body.is_empty() { &post.summary } else { &post.body };
+    for par in text.split("\n\n") {
+        for line in wrap_text(par.trim(), 62) {
+            ctx.fill_text(&line, x, ly);
+            ly += 16.0;
+        }
+        ly += 10.0;
+    }
 }
 
 /// One clickable row: SVG icon + label + trailing "opens externally" glyph,

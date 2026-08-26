@@ -183,6 +183,7 @@ impl CloudSession {
                                 date: p.date,
                                 title: p.title,
                                 summary: p.summary,
+                                body: p.body,
                                 url: p.url,
                             })
                             .collect(),
