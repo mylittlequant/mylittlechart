@@ -21,8 +21,8 @@ use std::rc::Rc;
 use wasm_bindgen_futures::spawn_local;
 
 use mlc_app::ChartApp;
-use mlc_app_layout::ui::modal_settings::{CloudLoginPhase, CloudOverlayData, CloudOverlayKind};
-use mlc_cloud::{BuildAttestation, CloudConfig, DeviceAuthPoll, FetchTransport, StoredToken, VersionManifest};
+use mlc_app_layout::ui::modal_settings::{CloudLoginPhase, CloudNewsPost, CloudOverlayData, CloudOverlayKind};
+use mlc_cloud::{BuildAttestation, BlogPost, CloudConfig, DeviceAuthPoll, FetchTransport, StoredToken, VersionManifest};
 
 const TOKEN_KEY: &str = "mlc.cloud.token.v1";
 const DEVICE_KEY: &str = "mlc.cloud.device_id.v1";
@@ -35,6 +35,7 @@ enum FlowResult {
     Poll(Result<DeviceAuthPoll, String>),
     Logout,
     Updates(Result<VersionManifest, String>),
+    News(Result<Vec<BlogPost>, String>),
 }
 
 struct Inner {
@@ -174,6 +175,22 @@ impl CloudSession {
                 FlowResult::Updates(Err(e)) => {
                     chart.panel_app.cloud_overlay_state.data = CloudOverlayData::Error { message: e };
                 }
+                FlowResult::News(Ok(posts)) => {
+                    chart.panel_app.cloud_overlay_state.data = CloudOverlayData::News {
+                        posts: posts
+                            .into_iter()
+                            .map(|p| CloudNewsPost {
+                                date: p.date,
+                                title: p.title,
+                                summary: p.summary,
+                                url: p.url,
+                            })
+                            .collect(),
+                    };
+                }
+                FlowResult::News(Err(e)) => {
+                    chart.panel_app.cloud_overlay_state.data = CloudOverlayData::Error { message: e };
+                }
                 FlowResult::Logout => {
                     // Local sign-out regardless of the server answer.
                     clear_token();
@@ -205,15 +222,29 @@ impl CloudSession {
                     && matches!(ov.data, CloudOverlayData::Empty);
                 if needs_data && !self.inner.borrow().in_flight {
                     ov.data = CloudOverlayData::Loading;
+                    let kind = ov.kind;
                     let inner = self.inner.clone();
                     let transport = self.inner.borrow().transport.snapshot();
                     self.inner.borrow_mut().in_flight = true;
                     spawn_local(async move {
-                        let r = transport
-                            .updates_latest("win64")
-                            .await
-                            .map_err(|e| e.to_string());
-                        inner.borrow_mut().result = Some(FlowResult::Updates(r));
+                        // News reads the static blog feed; Download reads the
+                        // release manifest.
+                        match kind {
+                            CloudOverlayKind::News => {
+                                let r = transport
+                                    .blog_posts()
+                                    .await
+                                    .map_err(|e| e.to_string());
+                                inner.borrow_mut().result = Some(FlowResult::News(r));
+                            }
+                            _ => {
+                                let r = transport
+                                    .updates_latest("win64")
+                                    .await
+                                    .map_err(|e| e.to_string());
+                                inner.borrow_mut().result = Some(FlowResult::Updates(r));
+                            }
+                        }
                     });
                 }
             }

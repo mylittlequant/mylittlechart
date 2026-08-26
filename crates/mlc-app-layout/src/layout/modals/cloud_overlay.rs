@@ -17,7 +17,7 @@ use uzor::types::Rect as WidgetRect;
 use uzor::WidgetId;
 
 use crate::layout::render_chart::FrameTheme;
-use crate::ui::modal_settings::{CloudOverlayData, CloudOverlayKind, CloudOverlayState};
+use crate::ui::modal_settings::{CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudOverlayState};
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{
     register_dimmer_zones, render_modal_shell, ModalPlacement, ModalShell, ModalShellSpec,
@@ -58,11 +58,19 @@ fn title_for(kind: CloudOverlayKind) -> &'static str {
     }
 }
 
-/// Estimated wrapped-line count for the release notes at the body's width.
-/// ~58 chars per line at 12px over ~390px of content.
-fn news_lines(notes: &str) -> f64 {
-    (notes.len() as f64 / 58.0).ceil().max(1.0)
+/// Estimated wrapped-line count for a post summary at the body's width.
+/// ~62 chars per line at 12px over ~390px of content, capped at two lines.
+fn summary_lines(summary: &str) -> f64 {
+    (summary.len() as f64 / 62.0).ceil().clamp(1.0, 2.0)
 }
+
+/// Height of one News post block: date + title + summary + breathing room.
+fn post_block_h(post: &CloudNewsPost) -> f64 {
+    16.0 + 20.0 + summary_lines(&post.summary) * 16.0 + 14.0
+}
+
+/// The News overlay shows at most this many posts.
+const MAX_NEWS_POSTS: usize = 3;
 
 /// Body height per kind — the shell sizes the frame from this.
 fn content_height(state: &CloudOverlayState) -> f64 {
@@ -70,8 +78,13 @@ fn content_height(state: &CloudOverlayState) -> f64 {
         CloudOverlayKind::Links => SOCIAL_LINKS.len() as f64 * ROW_H + 4.0,
         CloudOverlayKind::Download => 22.0 + ROW_H + 24.0,
         CloudOverlayKind::News => match &state.data {
-            CloudOverlayData::Ready { notes, .. } => {
-                26.0 + news_lines(notes) * 18.0 + 12.0 + ROW_H
+            CloudOverlayData::News { posts } => {
+                let blocks: f64 = posts
+                    .iter()
+                    .take(MAX_NEWS_POSTS)
+                    .map(post_block_h)
+                    .sum();
+                blocks + 8.0 + ROW_H
             }
             _ => 84.0,
         },
@@ -188,26 +201,27 @@ fn draw_body(
         },
 
         CloudOverlayKind::News => match &state.data {
-            CloudOverlayData::Ready { version, notes, .. } => {
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Top);
-                ctx.set_font("700 14px sans-serif");
-                ctx.set_fill_color(GOLD);
-                let v = format!("v{}", version);
-                ctx.fill_text(&v, x, y);
-                ctx.set_font("12px sans-serif");
-                ctx.set_fill_color(&tt.item_text);
-                let mut ly = y + 26.0;
-                for line in wrap_text(notes, 58) {
-                    ctx.fill_text(&line, x, ly);
-                    ly += 18.0;
+            CloudOverlayData::News { posts } => {
+                let mut py = y;
+                for (i, post) in posts.iter().take(MAX_NEWS_POSTS).enumerate() {
+                    py += draw_news_post(
+                        ctx,
+                        coord,
+                        layer_id,
+                        &format!("cloud_overlay:post:{}", i),
+                        x,
+                        py,
+                        w,
+                        post,
+                        tt,
+                    );
                 }
                 draw_link_row(
                     ctx,
                     coord,
                     layer_id,
                     "cloud_overlay:link:blog",
-                    WidgetRect::new(x, ly + 12.0, row_w, ROW_H - ROW_GAP),
+                    WidgetRect::new(x, py + 8.0, row_w, ROW_H - ROW_GAP),
                     "All news on the blog",
                     Icon::Globe,
                     tt,
@@ -221,6 +235,50 @@ fn draw_body(
             }
         },
     }
+}
+
+/// One blog post block in the News overlay: date, title, summary — the whole
+/// block is a click zone out to the post. Returns the height consumed.
+#[allow(clippy::too_many_arguments)]
+fn draw_news_post(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    widget_id: &str,
+    x: f64,
+    y: f64,
+    w: f64,
+    post: &CloudNewsPost,
+    tt: &ToolbarTheme,
+) -> f64 {
+    let h = post_block_h(post);
+    let rect = WidgetRect::new(x, y, w, h - 6.0);
+    let hovered = coord.is_hovered(&WidgetId::from(widget_id));
+    if hovered {
+        ctx.set_fill_color(&tt.item_bg_hover);
+        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+    }
+
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.set_font("10px monospace");
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.fill_text(&post.date, x + 8.0, y + 6.0);
+
+    ctx.set_font("600 13px sans-serif");
+    ctx.set_fill_color(if hovered { GOLD } else { &tt.item_text });
+    ctx.fill_text(&post.title, x + 8.0, y + 22.0);
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&tt.item_text_muted);
+    let mut ly = y + 44.0;
+    for line in wrap_text(&post.summary, 62).into_iter().take(2) {
+        ctx.fill_text(&line, x + 8.0, ly);
+        ly += 16.0;
+    }
+
+    coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
+    h
 }
 
 /// One clickable row: SVG icon + label + trailing "opens externally" glyph,

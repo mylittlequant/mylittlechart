@@ -271,11 +271,19 @@ impl FetchTransport {
     // ── /api/updates/* (anonymous) ────────────────────────────────────────
 
     /// `GET /api/updates/latest?platform=…` — release manifest for the
-    /// News/Download overlays. Anonymous, no attestation required.
+    /// Download overlay. Anonymous, no attestation required.
     pub async fn updates_latest(&self, platform: &str) -> Result<VersionManifest, CloudError> {
         let (status, body) = self
             .exchange("GET", &format!("/api/updates/latest?platform={}", platform), None, &[])
             .await?;
         self.decode_success(status, &body)
+    }
+
+    /// `GET /blog/posts.json` — static blog feed for the News overlay.
+    /// Same-origin static file, anonymous.
+    pub async fn blog_posts(&self) -> Result<Vec<BlogPost>, CloudError> {
+        let (status, body) = self.exchange("GET", "/blog/posts.json", None, &[]).await?;
+        let feed: BlogFeed = self.decode_success(status, &body)?;
+        Ok(feed.posts)
     }
 }

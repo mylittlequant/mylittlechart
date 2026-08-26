@@ -4014,8 +4014,20 @@ pub enum CloudOverlayData {
     Loading,
     /// Latest release manifest: version + release notes + download URL.
     Ready { version: String, notes: String, download_url: String },
+    /// Blog feed for the News overlay (from /blog/posts.json).
+    News { posts: Vec<CloudNewsPost> },
     /// Fetch failed.
     Error { message: String },
+}
+
+/// One blog post as shown in the News overlay.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct CloudNewsPost {
+    pub date: String,
+    pub title: String,
+    pub summary: String,
+    pub url: String,
 }
 
 /// State for the News / Links / Download overlays (one open at a time).
@@ -4059,8 +4071,14 @@ impl CloudOverlayState {
         self.is_dragging = false;
         self.drag_offset = None;
         // Keep fetched data across reopens of the same kind; refetch when
-        // switching kinds or after an error.
-        if matches!(self.data, CloudOverlayData::Error { .. }) {
+        // switching kinds (News holds a blog feed, Download a release
+        // manifest — one cannot render the other) or after an error.
+        let kind_mismatch = matches!(
+            (&self.kind, &self.data),
+            (CloudOverlayKind::News, CloudOverlayData::Ready { .. })
+                | (CloudOverlayKind::Download, CloudOverlayData::News { .. })
+        );
+        if kind_mismatch || matches!(self.data, CloudOverlayData::Error { .. }) {
             self.data = CloudOverlayData::Empty;
         }
     }

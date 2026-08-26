@@ -221,6 +221,23 @@ pub struct VersionManifest {
     pub channel: String,
 }
 
+/// One entry in the blog feed (`GET /blog/posts.json`, static file on the
+/// same origin). Drives the News overlay in cloud builds.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlogPost {
+    pub id: String,
+    pub date: String,
+    pub title: String,
+    pub summary: String,
+    pub url: String,
+}
+
+/// The blog feed document.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BlogFeed {
+    pub posts: Vec<BlogPost>,
+}
+
 /// Locally persisted auth token (wasm: localStorage; native: config dir).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StoredToken {
