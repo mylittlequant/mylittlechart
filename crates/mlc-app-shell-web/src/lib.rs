@@ -1706,6 +1706,7 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
     {
         let st = state.borrow();
         mlc_app_input_shell::render(&mut ctx, &st.chrome, css_w as f64, false, &st.chart.input_coordinator);
+        mlc_app_input_shell::render_tab_list(&mut ctx, &st.chrome, css_w as f64);
         mlc_app_input_shell::render_tooltip(&mut ctx, &st.chrome, css_w as f64, css_h as f64);
         // Toolbar/sidebar-item tooltips (left/top/right/bottom toolbar strips,
         // agent + free-slot sidebar rows) live in the separate `toolbar_tooltip`

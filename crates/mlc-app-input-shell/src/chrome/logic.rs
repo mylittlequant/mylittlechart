@@ -25,9 +25,14 @@ const CLOUD_ICON_BUTTON_WIDTH: f64 = 30.0;
 const TAB_LEFT_MARGIN: f64 = 4.0;
 const TAB_GAP: f64 = 1.0;
 const TAB_CLOSE_SIZE: f64 = 16.0;
-/// Width of the hover-revealed rename-pencil zone inside a tab.
-const TAB_RENAME_SIZE: f64 = 16.0;
 const TAB_PADDING_H: f64 = 12.0;
+/// Width of the "⋯" overflow button shown left of "+" when tabs overflow.
+const TAB_OVERFLOW_WIDTH: f64 = 18.0;
+
+// Tab-list dropdown (opened from the "⋯" overflow button).
+const TAB_LIST_WIDTH: f64 = 200.0;
+const TAB_LIST_ITEM_HEIGHT: f64 = 26.0;
+const TAB_LIST_PADDING: f64 = 4.0;
 
 const CONTEXT_MENU_WIDTH: f64 = 160.0;
 const CONTEXT_MENU_ITEM_HEIGHT: f64 = 28.0;
@@ -125,9 +130,10 @@ pub fn tabs_right_limit(width: f64, flavor: ChromeFlavor) -> f64 {
 
 /// Compress `state.tab_widths` so the whole strip fits left of the
 /// right-side controls: the "+" button must always stay visible, so tabs
-/// give up width proportionally (floored at MIN_TAB_WIDTH) instead of
-/// sliding under the buttons. A tab being renamed inline keeps its live
-/// width as long as it fits; siblings absorb the rest.
+/// give up width proportionally down to MIN_TAB_WIDTH. Past the floor the
+/// strip stays wider than the window and scrolls instead (see
+/// `scroll_tab_strip`) — tabs never shrink below the floor and never slide
+/// under the buttons.
 pub fn fit_tab_widths(state: &mut ChromeState, width: f64) {
     let n = state.tab_widths.len();
     if n == 0 {
@@ -145,19 +151,29 @@ pub fn fit_tab_widths(state: &mut ChromeState, width: f64) {
         return;
     }
     let scale = available / natural;
-    let mut total = 0.0;
     for w in state.tab_widths.iter_mut() {
         *w = (*w * scale).max(MIN_TAB_WIDTH);
-        total += *w;
     }
-    if total > available {
-        // Even the floor doesn't fit — share equally; render clips the
-        // strip at the limit so nothing bleeds under the controls.
-        let each = (available / n as f64).max(24.0);
-        for w in state.tab_widths.iter_mut() {
-            *w = each;
-        }
+}
+
+/// How much of the strip is hidden to the right (0 when everything fits).
+pub fn max_tab_scroll(state: &ChromeState, width: f64) -> f64 {
+    let n = state.tab_widths.len();
+    if n == 0 {
+        return 0.0;
     }
+    let limit = tabs_right_limit(width, state.flavor);
+    let strip_w = limit - TAB_LEFT_MARGIN - 1.0 - NEW_TAB_BUTTON_WIDTH - 4.0;
+    let natural: f64 = state.tab_widths.iter().sum::<f64>()
+        + TAB_GAP * (n as f64 - 1.0).max(0.0);
+    (natural - strip_w).max(0.0)
+}
+
+/// Scroll the tab strip horizontally by `delta` px (wheel over the chrome).
+/// Positive delta reveals tabs hidden to the right. Clamped both ends.
+pub fn scroll_tab_strip(state: &mut ChromeState, width: f64, delta: f64) {
+    let max = max_tab_scroll(state, width);
+    state.tab_scroll = (state.tab_scroll + delta).clamp(0.0, max);
 }
 
 // ── hit_test ──────────────────────────────────────────────────────────────────
@@ -206,14 +222,37 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
             }
         }
 
-        // Tabs
-        let mut cursor = TAB_LEFT_MARGIN;
+        // Tabs — the strip scrolls horizontally (state.tab_scroll) when it
+        // overflows; zones are clamped to the visible strip so a tab clipped
+        // at either edge doesn't get phantom hits outside it.
+        let strip_limit = tabs_right_limit(width, state.flavor);
+
+        // "⋯" overflow button, immediately left of "+" (rendered on top of
+        // the clipped strip, so it wins over the tab zone beneath it).
+        let plus_left = (tab_strip_end_x(state) - state.tab_scroll)
+            .min(strip_limit - NEW_TAB_BUTTON_WIDTH);
+        if max_tab_scroll(state, width) > 0.5
+            && x >= plus_left - TAB_OVERFLOW_WIDTH && x < plus_left
+        {
+            return ChromeHit::TabOverflow;
+        }
+
+        let mut cursor = TAB_LEFT_MARGIN - state.tab_scroll;
+        // When the strip overflows, tabs end at the "⋯" button — no slivers
+        // of tab may peek (or hit-test) between "⋯"/"+" and the tab area.
+        let tab_area_right = if max_tab_scroll(state, width) > 0.5 {
+            plus_left - TAB_OVERFLOW_WIDTH
+        } else {
+            strip_limit
+        };
         for (i, tw) in state.tab_widths.iter().enumerate() {
             let tab_right = cursor + tw;
-            if x >= cursor && x < tab_right {
+            let vis_left = cursor.max(TAB_LEFT_MARGIN);
+            let vis_right = tab_right.min(tab_area_right);
+            if x >= vis_left && x < vis_right {
                 // While a tab is being renamed inline its whole body is the
-                // text field — the pencil and close × are hidden (render.rs),
-                // so they are not hit-tested either.
+                // text field — the close × is hidden (render.rs), so it is
+                // not hit-tested either.
                 if state.renaming_tab == Some(i) {
                     return ChromeHit::Tab(i);
                 }
@@ -226,13 +265,6 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
                 if tab_hovered && x >= tab_right - TAB_CLOSE_SIZE {
                     return ChromeHit::TabClose(i);
                 }
-                // The rename pencil lives at the tab's LEFT edge and is drawn
-                // only while the mouse is directly on it (render.rs gates on
-                // hovered == TabRename) — so the zone is hit-tested
-                // unconditionally, otherwise the hover could never register.
-                if x < cursor + TAB_RENAME_SIZE {
-                    return ChromeHit::TabRename(i);
-                }
                 return ChromeHit::Tab(i);
             }
             cursor = tab_right + TAB_GAP;
@@ -240,7 +272,7 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
 
         // "+" button — always pinned inside the tab strip, never pushed
         // under the right-side controls (render.rs clamps it the same way).
-        let cursor = cursor.min(tabs_right_limit(width, state.flavor) - NEW_TAB_BUTTON_WIDTH);
+        let cursor = cursor.min(strip_limit - NEW_TAB_BUTTON_WIDTH);
         let new_tab_right = cursor + NEW_TAB_BUTTON_WIDTH;
         if x >= cursor && x < new_tab_right {
             return ChromeHit::NewTabButton;
@@ -355,9 +387,11 @@ pub fn context_menu_hover(menu: &mut ChromeContextMenu, x: f64, y: f64) {
 
 // ── Tab strip helpers ─────────────────────────────────────────────────────────
 
-/// Returns the x coordinate of the left edge of the + button.
-pub fn new_tab_button_x(state: &ChromeState) -> f64 {
-    tab_strip_end_x(state)
+/// Returns the x coordinate of the left edge of the + button — after the
+/// (scrolled) tabs, pinned inside the strip when they overflow.
+pub fn new_tab_button_x(state: &ChromeState, width: f64) -> f64 {
+    let limit = tabs_right_limit(width, state.flavor);
+    (tab_strip_end_x(state) - state.tab_scroll).min(limit - NEW_TAB_BUTTON_WIDTH)
 }
 
 fn tab_strip_end_x(state: &ChromeState) -> f64 {
@@ -366,6 +400,85 @@ fn tab_strip_end_x(state: &ChromeState) -> f64 {
         cursor += tw + TAB_GAP;
     }
     cursor
+}
+
+/// Geometry of the tab-list dropdown (opened from the "⋯" overflow button):
+/// right-aligned under the "+"/"⋯" cluster, just below the chrome strip.
+pub fn tab_list_rect(state: &ChromeState, width: f64) -> (f64, f64, f64, f64) {
+    let limit = tabs_right_limit(width, state.flavor);
+    let plus_left = (tab_strip_end_x(state) - state.tab_scroll)
+        .min(limit - NEW_TAB_BUTTON_WIDTH);
+    let h = TAB_LIST_PADDING * 2.0 + state.tabs.len() as f64 * TAB_LIST_ITEM_HEIGHT;
+    let x = (plus_left + NEW_TAB_BUTTON_WIDTH - TAB_LIST_WIDTH).max(4.0);
+    (x, CHROME_HEIGHT, TAB_LIST_WIDTH, h)
+}
+
+/// Hit-test the open tab-list dropdown: Some(tab index) on a row, None
+/// outside. Coordinates are window-space (same as `hit_test`).
+pub fn tab_list_hit_test(state: &ChromeState, x: f64, y: f64, width: f64) -> Option<usize> {
+    if !state.tab_list_open {
+        return None;
+    }
+    let (mx, my, mw, mh) = tab_list_rect(state, width);
+    if x < mx || x >= mx + mw || y < my || y >= my + mh {
+        return None;
+    }
+    let idx = ((y - my - TAB_LIST_PADDING) / TAB_LIST_ITEM_HEIGHT) as usize;
+    if idx < state.tabs.len() {
+        Some(idx)
+    } else {
+        None
+    }
+}
+
+/// Update the hovered row of the open tab-list dropdown.
+pub fn tab_list_hover(state: &mut ChromeState, x: f64, y: f64, width: f64) {
+    state.tab_list_hovered = tab_list_hit_test(state, x, y, width).map(|i| i as i32).unwrap_or(-1);
+}
+
+/// Scroll the strip so tab `idx` is fully visible (used when a tab is
+/// activated from the overflow list — it may be scrolled out of view).
+pub fn scroll_tab_into_view(state: &mut ChromeState, width: f64, idx: usize) {
+    if idx >= state.tab_widths.len() {
+        return;
+    }
+    let limit = tabs_right_limit(width, state.flavor);
+    let visible_right = limit - NEW_TAB_BUTTON_WIDTH - TAB_OVERFLOW_WIDTH - 5.0;
+    let mut left = TAB_LEFT_MARGIN;
+    for w in state.tab_widths.iter().take(idx) {
+        left += w + TAB_GAP;
+    }
+    let right = left + state.tab_widths[idx];
+    let cur_left = left - state.tab_scroll;
+    let cur_right = right - state.tab_scroll;
+    if cur_right > visible_right {
+        scroll_tab_strip(state, width, cur_right - visible_right);
+    } else if cur_left < TAB_LEFT_MARGIN {
+        scroll_tab_strip(state, width, cur_left - TAB_LEFT_MARGIN);
+    }
+}
+
+/// Left edge (window x, scroll applied) of tab `idx`.
+pub fn tab_left_x(state: &ChromeState, idx: usize) -> f64 {
+    let mut cursor = TAB_LEFT_MARGIN - state.tab_scroll;
+    for w in state.tab_widths.iter().take(idx) {
+        cursor += w + TAB_GAP;
+    }
+    cursor
+}
+
+/// Insertion index for a tab dropped at cursor x (window space): the count
+/// of resting tabs whose MIDPOINT lies left of x. Range 0..=len.
+pub fn tab_drop_index(state: &ChromeState, x: f64) -> usize {
+    let mut cursor = TAB_LEFT_MARGIN - state.tab_scroll;
+    let mut idx = 0;
+    for w in &state.tab_widths {
+        if x > cursor + w / 2.0 {
+            idx += 1;
+        }
+        cursor += w + TAB_GAP;
+    }
+    idx
 }
 
 /// Pre-compute tab widths from raw pixel measurements.

@@ -100,6 +100,20 @@ pub fn process_event(
         ShellEvent::CursorMoved { x, y } => {
             state.last_mouse_pos = (x, y);
 
+            // Tab drag&drop reorder (chrome strip): armed on tab press,
+            // activates past a 4 px threshold; while active it owns the move.
+            if let Some(drag) = chrome_st.tab_drag.as_mut() {
+                drag.cur_x = x;
+                if !drag.active && (x - drag.press_x).abs() > 4.0 {
+                    drag.active = true;
+                }
+                if drag.active {
+                    dirty.chart_dirty   = true;
+                    dirty.overlay_dirty = true;
+                    return;
+                }
+            }
+
             // Text-select drags are owned by the store (it tracks the drag
             // itself via `drag_active`). A drag that started on the chrome
             // strip (inline tab rename) never arms `mouse_pressed`, so the
@@ -151,12 +165,17 @@ pub fn process_event(
             if chrome_st.context_menu.open {
                 chrome::context_menu_hover(&mut chrome_st.context_menu, x, y);
             }
+            if chrome_st.tab_list_open {
+                let (win_w, _) = platform.window_size();
+                chrome::tab_list_hover(chrome_st, x, y, win_w as f64);
+            }
 
             let (win_w, win_h) = platform.window_size();
             let hit = chrome::hit_test(x, y, win_w as f64, win_h as f64, chrome_st);
 
             let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
                 || chart.panel_app.user_settings_state.show_welcome_wizard;
+            let prev_hovered = chrome_st.hovered;
             chrome_st.hovered = if skeleton_active {
                 match hit {
                     ChromeHit::NewTabButton
@@ -165,12 +184,20 @@ pub fn process_event(
                     | ChromeHit::NewWindowButton
                     | ChromeHit::Tab(_)
                     | ChromeHit::TabClose(_)
-                    | ChromeHit::TabRename(_) => ChromeHit::None,
+                    | ChromeHit::TabRename(_)
+                    | ChromeHit::TabOverflow => ChromeHit::None,
                     other => other,
                 }
             } else {
                 hit
             };
+
+            // Hover onto the "⋯" overflow button opens the tab list (the
+            // transition check keeps a click-closed list from springing back
+            // open while the cursor is still parked on the button).
+            if chrome_st.hovered == ChromeHit::TabOverflow && prev_hovered != ChromeHit::TabOverflow {
+                chrome_st.tab_list_open = true;
+            }
 
             {
                 let time_ms = state.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;
@@ -225,6 +252,7 @@ pub fn process_event(
                 | ChromeHit::Tab(_)
                 | ChromeHit::TabClose(_)
                 | ChromeHit::TabRename(_)
+                | ChromeHit::TabOverflow
                 | ChromeHit::NewTabButton
                 | ChromeHit::NewWindowButton => {
                     platform.set_cursor_visible(true);
@@ -418,9 +446,46 @@ pub fn process_event(
             // text drag is live, so calling it twice is harmless.
             if button == MouseBtn::Left && !pressed {
                 chart.input_coordinator.borrow_mut().text_fields_mut().on_drag_end();
+
+                // Finalize a chrome tab drag&drop: apply the reorder (the
+                // drop slot counts resting tabs, so past the dragged tab the
+                // post-removal index is one less). An active drag swallows
+                // the release — it must not fall into the chart click path.
+                if let Some(drag) = chrome_st.tab_drag.take() {
+                    if drag.active {
+                        let drop_idx = chrome::tab_drop_index(chrome_st, drag.cur_x);
+                        let to = if drop_idx > drag.index { drop_idx - 1 } else { drop_idx };
+                        if to != drag.index {
+                            if let Some(tab) = chrome_st.tabs.get(drag.index) {
+                                let id = tab.id.clone();
+                                chart.move_tab(&id, to);
+                            }
+                        }
+                        dirty.chart_dirty = true;
+                        platform.request_redraw();
+                        return;
+                    }
+                }
             }
 
             if button == MouseBtn::Left && pressed {
+                // Tab-list dropdown (from the "⋯" overflow button): a press
+                // on a row activates that tab and scrolls it into view; a
+                // press anywhere else just closes the list.
+                if chrome_st.tab_list_open {
+                    let (win_w, _) = platform.window_size();
+                    let sel = chrome::tab_list_hit_test(chrome_st, x, y, win_w as f64);
+                    chrome_st.tab_list_open = false;
+                    if let Some(idx) = sel {
+                        if let Some(tab) = chrome_st.tabs.get(idx) {
+                            let tab_id = tab.id.clone();
+                            chart.load_preset(&tab_id);
+                        }
+                        chrome::scroll_tab_into_view(chrome_st, win_w as f64, idx);
+                    }
+                    return;
+                }
+
                 if chrome_st.context_menu.open {
                     if let Some(action) = chrome::context_menu_hit_test(&chrome_st.context_menu, x, y) {
                         chrome_st.context_menu.close();
@@ -483,6 +548,17 @@ pub fn process_event(
                         let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
                             || chart.panel_app.user_settings_state.show_welcome_wizard;
                         if !skeleton_active {
+                            // Arm the drag&drop reorder — it activates past a
+                            // 4 px move and applies on release (CursorMoved /
+                            // the release path above own it from there).
+                            let grab_dx = x - chrome::tab_left_x(chrome_st, idx);
+                            chrome_st.tab_drag = Some(chrome::TabDrag {
+                                index: idx,
+                                press_x: x,
+                                grab_dx,
+                                cur_x: x,
+                                active: false,
+                            });
                             // Tab double-click (same 400 ms / 5 px rule as the
                             // chart-area path below) opens the rename flow. The
                             // chart-area `last_click` logic is unreachable for
@@ -540,7 +616,7 @@ pub fn process_event(
                                 ts.open_dropdown_id = None;
                                 ts.open_dropdown_position = None;
                             } else {
-                                let btn_x = chrome::new_tab_button_x(chrome_st);
+                                let btn_x = chrome::new_tab_button_x(chrome_st, chart.width as f64);
                                 ts.open_dropdown_id = Some("new_tab_menu".to_string());
                                 ts.open_dropdown_position = Some((btn_x, 0.0));
                             }
@@ -549,6 +625,16 @@ pub fn process_event(
                                 chart.panel_app.toolbar_state.open_dropdown_id.is_some()
                             );
                         }
+                        return;
+                    }
+                    ChromeHit::TabOverflow => {
+                        // Click toggles the list (hover already opens it);
+                        // the hover-enter guard keys on the hovered
+                        // TRANSITION, so a click-close while parked on the
+                        // button stays closed.
+                        chrome_st.tab_list_open = !chrome_st.tab_list_open;
+                        dirty.chart_dirty = true;
+                        platform.request_redraw();
                         return;
                     }
                     ChromeHit::MenuButton => {
@@ -723,11 +809,21 @@ pub fn process_event(
         ShellEvent::Scroll { dx, dy } => {
             let (x, y) = state.last_mouse_pos;
             let chart_y = y - state.chrome_height;
-            if chart_y >= 0.0 {
-                chart.on_scroll(x, chart_y, dx, dy, state.modifiers.ctrl);
-                dirty.sidebar_dirty_scene = true;
-                dirty.chart_dirty         = true;
+            if chart_y < 0.0 {
+                // Wheel over the chrome strip scrolls the tab strip
+                // horizontally when tabs overflow (chevrons in render.rs
+                // signal the hidden tabs).
+                let d = if dy.abs() >= dx.abs() { dy } else { dx };
+                if d != 0.0 {
+                    let w = chart.width as f64;
+                    chrome::scroll_tab_strip(chrome_st, w, d);
+                    dirty.chart_dirty = true;
+                }
+                return;
             }
+            chart.on_scroll(x, chart_y, dx, dy, state.modifiers.ctrl);
+            dirty.sidebar_dirty_scene = true;
+            dirty.chart_dirty         = true;
         }
 
         // ─── Modifier keys ────────────────────────────────────────────────

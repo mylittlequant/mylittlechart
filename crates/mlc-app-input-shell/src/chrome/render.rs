@@ -37,8 +37,8 @@ const TAB_LEFT_MARGIN: f64 = 4.0;
 const TAB_GAP: f64 = 1.0;
 const TAB_PADDING_H: f64 = 6.0;
 const TAB_CLOSE_SIZE: f64 = 16.0;
-/// Width of the hover-revealed rename-pencil zone inside a tab.
-const TAB_RENAME_SIZE: f64 = 16.0;
+/// Width of the "⋯" overflow button shown left of "+" when tabs overflow.
+const TAB_OVERFLOW_WIDTH: f64 = 18.0;
 
 const CONTEXT_MENU_WIDTH: f64 = 160.0;
 const CONTEXT_MENU_ITEM_HEIGHT: f64 = 28.0;
@@ -164,6 +164,29 @@ pub fn update_tab_widths(
         state.tab_widths.push(w);
     }
     super::logic::fit_tab_widths(state, width);
+    // The scroll offset can outlive its content (tabs closed, window
+    // widened) — clamp it now that the widths are final.
+    let max_scroll = super::logic::max_tab_scroll(state, width);
+    if state.tab_scroll > max_scroll {
+        state.tab_scroll = max_scroll;
+    }
+    // Keep the tab being renamed in view while typing grows it — scroll the
+    // strip so its right edge never disappears under the "+" / controls.
+    if let Some(ri) = state.renaming_tab {
+        let right_edge_of_strip = super::logic::tabs_right_limit(width, state.flavor)
+            - NEW_TAB_BUTTON_WIDTH - 1.0 - 4.0;
+        let mut cursor = TAB_LEFT_MARGIN - state.tab_scroll;
+        for (i, w) in state.tab_widths.iter().enumerate() {
+            let right = cursor + w;
+            if i == ri {
+                if right > right_edge_of_strip {
+                    super::logic::scroll_tab_strip(state, width, right - right_edge_of_strip);
+                }
+                break;
+            }
+            cursor = right + TAB_GAP;
+        }
+    }
 }
 
 // ── render ────────────────────────────────────────────────────────────────────
@@ -205,11 +228,26 @@ pub fn render(
         // ── Tabs ──────────────────────────────────────────────────────────────
         // The strip ends at the left edge of the right-side controls; tabs
         // are already shrunk to fit (fit_tab_widths), the clip is the hard
-        // guarantee that nothing ever bleeds under the buttons.
+        // guarantee that nothing ever bleeds under the buttons — and when
+        // the strip overflows, that nothing peeks between the tabs and the
+        // "⋯"/"+" cluster.
         let tabs_limit = super::logic::tabs_right_limit(width, state.flavor);
+        let overflow = super::logic::max_tab_scroll(state, width) > 0.5;
+        let strip_end = {
+            let n = state.tab_widths.len();
+            let natural: f64 = state.tab_widths.iter().sum::<f64>()
+                + TAB_GAP * (n as f64 - 1.0).max(0.0);
+            TAB_LEFT_MARGIN - state.tab_scroll + natural
+        };
+        let new_tab_x = strip_end.min(tabs_limit - NEW_TAB_BUTTON_WIDTH);
+        let tab_area_right = if overflow {
+            new_tab_x - TAB_OVERFLOW_WIDTH
+        } else {
+            tabs_limit
+        };
         ctx.save();
-        ctx.clip_rect(0.0, 0.0, tabs_limit, CHROME_HEIGHT);
-        let mut cursor = TAB_LEFT_MARGIN;
+        ctx.clip_rect(0.0, 0.0, tab_area_right, CHROME_HEIGHT);
+        let mut cursor = TAB_LEFT_MARGIN - state.tab_scroll;
         for (i, tab) in state.tabs.iter().enumerate() {
             let tw        = state.tab_widths.get(i).copied().unwrap_or(80.0);
             let tab_left  = cursor;
@@ -258,7 +296,7 @@ pub fn render(
                     ..WidgetTheme::default()
                 };
                 let config = InputConfig {
-                    value: live_text,
+                    value: live_text.clone(),
                     focused: true,
                     cursor: text_cursor,
                     selection_start: selection.map(|(s, _)| s),
@@ -269,10 +307,18 @@ pub fn render(
                     chrome: false,
                     ..Default::default()
                 };
+                // The field starts exactly where the centered tab name was
+                // — entering rename must not shift the text. The rect keeps
+                // all the room to the right edge so growing text isn't
+                // clipped (the tab itself grows with the live text anyway,
+                // see update_tab_widths).
+                ctx.set_font("12px sans-serif");
+                let live_text_w = ctx.measure_text(&live_text);
+                let field_x = tab_left + (tw - live_text_w).max(0.0) / 2.0;
                 let field_rect = WidgetRect::new(
-                    tab_left + TAB_PADDING_H,
+                    field_x,
                     2.0,
-                    (tw - TAB_PADDING_H - TAB_CLOSE_SIZE).max(20.0),
+                    (tab_right - field_x - 4.0).max(20.0),
                     CHROME_HEIGHT - 4.0,
                 );
                 let result = draw_input(ctx, &config, WidgetState::Normal, field_rect, &field_theme);
@@ -295,52 +341,19 @@ pub fn render(
                 );
             } else {
             {
-                // The tab name is CENTERED. Unhovered it spans almost the
-                // whole tab; on hover it is re-centred inside the middle
-                // region so the edge zones are free for the overlay buttons
-                // (for short names the centre doesn't move — the zones are
-                // symmetric — but a wide name no longer runs under them).
-                let tab_hovered = state.hovered == ChromeHit::Tab(i)
-                    || state.hovered == ChromeHit::TabClose(i)
-                    || state.hovered == ChromeHit::TabRename(i);
-                let (region_x, region_w) = if tab_hovered {
-                    (tab_left + TAB_RENAME_SIZE, tw - TAB_RENAME_SIZE - TAB_CLOSE_SIZE)
-                } else {
-                    (tab_left, tw)
-                };
+                // The tab name is CENTERED in the full tab body and never
+                // moves: the close × paints its own rounded patch on top of
+                // it when it appears.
                 ctx.set_font("12px sans-serif");
                 let text_w = ctx.measure_text(&tab.name);
-                let text_x = region_x + (region_w - text_w).max(0.0) / 2.0;
+                let text_x = tab_left + (tw - text_w).max(0.0) / 2.0;
                 ctx.set_fill_color(&c.icon_normal);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.save();
-                ctx.clip_rect(region_x, 0.0, region_w.max(0.0), CHROME_HEIGHT);
+                ctx.clip_rect(tab_left, 0.0, tw, CHROME_HEIGHT);
                 ctx.fill_text(&tab.name, text_x, CHROME_HEIGHT / 2.0);
                 ctx.restore();
-            }
-
-            // Rename pencil at the tab's LEFT edge, drawn only while the
-            // mouse is directly on its spot (logic.rs hit-tests the zone as
-            // TabRename unconditionally so the hover can register at all).
-            // It paints over the start of the tab name where it appears.
-            // The patch is a small rounded rect that stops above the tab
-            // underline — it must not cover the active/hover strip.
-            if state.hovered == ChromeHit::TabRename(i) {
-                let icon_size = 14.0;
-                ctx.set_fill_color(&c.button_hover);
-                ctx.fill_rounded_rect(
-                    tab_left + 1.0,
-                    3.0,
-                    TAB_RENAME_SIZE + 3.0,
-                    CHROME_HEIGHT - 9.0,
-                    6.0,
-                );
-                let icon_x = tab_left + 2.0 + (TAB_RENAME_SIZE - icon_size) / 2.0;
-                let icon_y = (CHROME_HEIGHT - icon_size) / 2.0;
-                if let Some(svg) = icon_svg("pencil") {
-                    draw_svg_icon(ctx, svg, icon_x, icon_y, icon_size, icon_size, &c.icon_hover);
-                }
             }
 
             // Close × at the RIGHT edge, drawn only while the tab is hovered
@@ -381,11 +394,50 @@ pub fn render(
 
             cursor = tab_right + TAB_GAP;
         }
+
+        // ── Tab drag&drop visuals ─────────────────────────────────────────────
+        // While a drag is active the dragged tab floats with the cursor and an
+        // accent insertion line marks the drop slot between the resting tabs.
+        if let Some(drag) = state.tab_drag.filter(|d| d.active) {
+            let drop_idx = super::logic::tab_drop_index(state, drag.cur_x);
+            // Insertion line at the left edge of the drop slot.
+            let ins_x = if drop_idx >= state.tab_widths.len() {
+                strip_end
+            } else {
+                super::logic::tab_left_x(state, drop_idx) - TAB_GAP / 2.0
+            };
+            ctx.set_fill_color(&c.tab_accent);
+            ctx.fill_rect(ins_x - 1.0, 3.0, 2.0, CHROME_HEIGHT - 9.0);
+
+            if let (Some(tab), Some(tw)) = (
+                state.tabs.get(drag.index),
+                state.tab_widths.get(drag.index).copied(),
+            ) {
+                let fx = drag.cur_x - drag.grab_dx;
+                ctx.set_fill_color(&c.background);
+                ctx.fill_rect(fx, 0.0, tw, CHROME_HEIGHT);
+                draw_rect_outline(ctx, fx, 0.0, tw, CHROME_HEIGHT - 1.0, 1.0, &c.separator);
+                ctx.set_font("12px sans-serif");
+                let text_w = ctx.measure_text(&tab.name);
+                let text_x = fx + (tw - text_w).max(0.0) / 2.0;
+                ctx.set_fill_color(&c.icon_hover);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.save();
+                ctx.clip_rect(fx, 0.0, tw, CHROME_HEIGHT);
+                ctx.fill_text(&tab.name, text_x, CHROME_HEIGHT / 2.0);
+                ctx.restore();
+                if tab.active {
+                    ctx.set_fill_color(&c.tab_accent);
+                    ctx.fill_rect(fx, CHROME_HEIGHT - 3.0, tw, 2.0);
+                }
+            }
+        }
         ctx.restore();
 
         // ── New-tab (+) button ─────────────────────────────────────────────────
-        // Pinned inside the strip: never pushed under the right-side controls.
-        let new_tab_x = cursor.min(tabs_limit - NEW_TAB_BUTTON_WIDTH);
+        // Pinned inside the strip: never pushed under the right-side controls
+        // (position computed before the tab loop, shared with the clip).
 
         let div_h = CHROME_HEIGHT * 0.6;
         let div_y = (CHROME_HEIGHT - div_h) / 2.0;
@@ -415,6 +467,24 @@ pub fn render(
         ctx.move_to(plus_cx, plus_cy - arm);
         ctx.line_to(plus_cx, plus_cy + arm);
         ctx.stroke();
+
+        // ── "⋯" overflow button ──────────────────────────────────────────────
+        // Shown only when the strip overflows even at MIN_TAB_WIDTH (tabs are
+        // then scrollable with the wheel). Sits immediately left of "+",
+        // drawn over the clipped strip; hover/click opens the tab list
+        // (render_tab_list below).
+        let max_scroll = super::logic::max_tab_scroll(state, width);
+        if max_scroll > 0.5 {
+            let ov_left = new_tab_x - TAB_OVERFLOW_WIDTH;
+            let ov_hovered = state.hovered == ChromeHit::TabOverflow;
+            ctx.set_fill_color(if ov_hovered { &c.button_hover } else { &c.background });
+            ctx.fill_rounded_rect(ov_left, 3.0, TAB_OVERFLOW_WIDTH, CHROME_HEIGHT - 9.0, 6.0);
+            ctx.set_fill_color(if ov_hovered { &c.icon_hover } else { &c.icon_normal });
+            ctx.set_font("12px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("…", ov_left + TAB_OVERFLOW_WIDTH / 2.0, CHROME_HEIGHT / 2.0 - 1.0);
+        }
 
         // ── Right-side buttons (flavor-dependent) ─────────────────────────────
         match state.flavor {
@@ -742,6 +812,58 @@ pub fn render_context_menu(
         };
         ctx.set_fill_color(text_color);
         ctx.fill_text(label, menu.x + 12.0, item_y + CONTEXT_MENU_ITEM_HEIGHT / 2.0);
+    }
+}
+
+// ── render_tab_list ───────────────────────────────────────────────────────────
+
+const TAB_LIST_ITEM_HEIGHT: f64 = 26.0;
+const TAB_LIST_PADDING: f64 = 4.0;
+
+/// Render the tab-list dropdown (opened from the "⋯" overflow button).
+/// Overlay pass — call where `render_context_menu` is called so it paints
+/// above the chart. Window-space coordinates (same as the context menu).
+pub fn render_tab_list(
+    ctx: &mut dyn RenderContext,
+    state: &ChromeState,
+    width: f64,
+) {
+    if !state.tab_list_open {
+        return;
+    }
+    let (mx, my, mw, mh) = super::logic::tab_list_rect(state, width);
+    let c = &state.colors;
+
+    ctx.set_fill_color("rgba(0,0,0,0.3)");
+    ctx.fill_rect(mx + 2.0, my + 2.0, mw, mh);
+
+    ctx.set_fill_color(&c.background);
+    ctx.fill_rect(mx, my, mw, mh);
+
+    draw_rect_outline(ctx, mx, my, mw, mh, 1.0, &c.separator);
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+
+    for (i, tab) in state.tabs.iter().enumerate() {
+        let item_y = my + TAB_LIST_PADDING + i as f64 * TAB_LIST_ITEM_HEIGHT;
+
+        if state.tab_list_hovered == i as i32 {
+            ctx.set_fill_color(&c.button_hover);
+            ctx.fill_rect(mx + 1.0, item_y, mw - 2.0, TAB_LIST_ITEM_HEIGHT);
+        }
+        // Active-tab marker: the same accent the strip underline uses.
+        if tab.active {
+            ctx.set_fill_color(&c.tab_accent);
+            ctx.fill_rect(mx + 1.0, item_y + 4.0, 2.0, TAB_LIST_ITEM_HEIGHT - 8.0);
+        }
+
+        ctx.set_fill_color(if tab.active { &c.icon_hover } else { &c.icon_normal });
+        ctx.save();
+        ctx.clip_rect(mx + 8.0, item_y, mw - 16.0, TAB_LIST_ITEM_HEIGHT);
+        ctx.fill_text(&tab.name, mx + 10.0, item_y + TAB_LIST_ITEM_HEIGHT / 2.0);
+        ctx.restore();
     }
 }
 

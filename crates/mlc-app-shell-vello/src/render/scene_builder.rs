@@ -300,9 +300,10 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
         }
 
         // Render chrome context menu overlay
-        if pw.chrome_state.context_menu.open {
+        if pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open {
             let mut overlay_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
             chrome::render_context_menu(&mut overlay_ctx, &pw.chrome_state.context_menu, &pw.chrome_state.colors);
+            chrome::render_tab_list(&mut overlay_ctx, &pw.chrome_state, width as f64);
         }
 
         // Render toast notification overlays (top-right corner)
@@ -406,7 +407,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 }
 
                 // Render chrome context menu overlay (at y_offset=0, absolute coords).
-                if pw.chrome_state.context_menu.open {
+                if pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open {
                     let mut overlay_ctx = mlc_app_render_context_instanced::InstancedChartRenderContext::new(
                         width as f32,
                         height as f32,
@@ -420,6 +421,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                         &pw.chrome_state.context_menu,
                         &pw.chrome_state.colors,
                     );
+                    chrome::render_tab_list(&mut overlay_ctx, &pw.chrome_state, width as f64);
                     chart_ctx.inner_mut().draw_commands.extend_from_slice(&overlay_ctx.inner().draw_commands);
                 }
 
@@ -524,12 +526,13 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 }
                 cpu_ctx.restore();
                 // Render chrome context menu overlay.
-                if pw.chrome_state.context_menu.open {
+                if pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open {
                     chrome::render_context_menu(
                         &mut cpu_ctx,
                         &pw.chrome_state.context_menu,
                         &pw.chrome_state.colors,
                     );
+                chrome::render_tab_list(&mut cpu_ctx, &pw.chrome_state, width as f64);
                 }
                 // Render toast overlays.
                 if !active_toasts.is_empty() {
@@ -604,12 +607,13 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 }
                 skia_ctx.restore();
                 // Render chrome context menu overlay.
-                if pw.chrome_state.context_menu.open {
+                if pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open {
                     chrome::render_context_menu(
                         &mut skia_ctx,
                         &pw.chrome_state.context_menu,
                         &pw.chrome_state.colors,
                     );
+                chrome::render_tab_list(&mut skia_ctx, &pw.chrome_state, width as f64);
                 }
                 // Render toast overlays.
                 if !active_toasts.is_empty() {
@@ -674,12 +678,13 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 }
                 hybrid_ctx.translate(0.0, -chrome::CHROME_HEIGHT);
                 // Render chrome context menu overlay.
-                if pw.chrome_state.context_menu.open {
+                if pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open {
                     chrome::render_context_menu(
                         &mut hybrid_ctx,
                         &pw.chrome_state.context_menu,
                         &pw.chrome_state.colors,
                     );
+                chrome::render_tab_list(&mut hybrid_ctx, &pw.chrome_state, width as f64);
                 }
                 // Render toast overlays.
                 if !active_toasts.is_empty() {

@@ -282,6 +282,9 @@ pub enum ChartOutEvent {
     CloseTab { id: String },
     /// Open a preset as a new tab (used by + dropdown).
     OpenTab { id: String },
+    /// Move an open tab to a new position in `open_tabs` (chrome drag&drop
+    /// reorder). `to_index` is the final index after removal.
+    MoveTab { id: String, to_index: usize },
     /// Rename a preset.
     RenamePreset { id: String, new_name: String },
     /// Open the preset name input modal in "Save As" mode.

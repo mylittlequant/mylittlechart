@@ -105,6 +105,22 @@ pub struct Tab {
     pub active: bool,
 }
 
+/// Live tab drag&drop reorder state (chrome strip).
+#[derive(Debug, Clone, Copy)]
+pub struct TabDrag {
+    /// Index of the tab being dragged.
+    pub index: usize,
+    /// Window x where the press landed.
+    pub press_x: f64,
+    /// Horizontal grab offset: press_x minus the tab's left edge at press.
+    pub grab_dx: f64,
+    /// Latest cursor x.
+    pub cur_x: f64,
+    /// False until the cursor moves past the threshold — before that the
+    /// gesture is still a plain click/double-click.
+    pub active: bool,
+}
+
 /// The region of the window chrome that was hit by a pointer event.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChromeHit {
@@ -128,6 +144,9 @@ pub enum ChromeHit {
     TabClose(usize),
     /// Hover-revealed rename pencil inside a tab (left of the close ×).
     TabRename(usize),
+    /// "⋯" overflow button left of "+" — visible only when the tab strip
+    /// overflows; hover/click opens the tab-list dropdown.
+    TabOverflow,
     NewTabButton,
     NewWindowButton,
     ResizeTop,
@@ -149,6 +168,17 @@ pub struct ChromeState {
     pub tabs: Vec<Tab>,
     /// Pre-computed tab widths (updated each frame via `update_tab_widths`).
     pub tab_widths: Vec<f64>,
+    /// Horizontal scroll offset of the tab strip (px). When tabs don't fit
+    /// even at MIN_TAB_WIDTH the strip scrolls (wheel over the chrome);
+    /// the "⋯" overflow button next to "+" opens the full tab list.
+    pub tab_scroll: f64,
+    /// Whether the tab-list dropdown (from the "⋯" overflow button) is open.
+    pub tab_list_open: bool,
+    /// Hovered row in the tab-list dropdown (-1 = none).
+    pub tab_list_hovered: i32,
+    /// Live tab drag&drop reorder state (armed on tab press, activates past
+    /// a 4 px threshold, applies on release).
+    pub tab_drag: Option<TabDrag>,
     /// Right-click context menu state.
     pub context_menu: ChromeContextMenu,
     /// Index of the tab being renamed inline (double-click flow), if any.
@@ -173,6 +203,10 @@ impl ChromeState {
             tab_widths:   Vec::new(),
             context_menu: ChromeContextMenu::new(),
             renaming_tab: None,
+            tab_scroll:   0.0,
+            tab_list_open: false,
+            tab_list_hovered: -1,
+            tab_drag:     None,
             tooltip:      TooltipState::new(),
             flavor:       ChromeFlavor::default(),
         }

@@ -5043,6 +5043,15 @@ impl ChartApp {
         });
     }
 
+    /// Move an open tab to a new position in the strip (chrome drag&drop).
+    /// `to_index` is the final index after removal.
+    pub fn move_tab(&mut self, id: &str, to_index: usize) {
+        self.process_chart_out_event(mlc_core::events::ChartOutEvent::MoveTab {
+            id: id.to_string(),
+            to_index,
+        });
+    }
+
     /// Open the "new chart" flow (shows the preset-name input modal).
     pub fn new_chart(&mut self) {
         self.process_chart_out_event(mlc_core::events::ChartOutEvent::NewChart);

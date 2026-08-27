@@ -1979,6 +1979,17 @@ impl ChartApp {
                 self.persist_profile();
             }
 
+            ChartOutEvent::MoveTab { id, to_index } => {
+                // Chrome tab-strip drag&drop reorder: reposition inside
+                // `open_tabs` (the strip's source of truth) and persist.
+                if let Some(from) = self.panel_app.open_tabs.iter().position(|t| t == &id) {
+                    let tab = self.panel_app.open_tabs.remove(from);
+                    let to = to_index.min(self.panel_app.open_tabs.len());
+                    self.panel_app.open_tabs.insert(to, tab);
+                    self.persist_profile();
+                }
+            }
+
             ChartOutEvent::OpenTab { id } => {
                 eprintln!("[ChartApp] open tab: {}", id);
                 if self.panel_app.open_tabs.contains(&id) {
