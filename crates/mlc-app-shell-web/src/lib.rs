@@ -1621,6 +1621,7 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
                 theme.colors.danger.clone(),
                 theme.colors.toolbar_divider.clone(),
                 theme.colors.button_bg.clone(),
+                theme.colors.accent_hover.clone(),
             );
             let colors = &mut st.chrome.colors;
             colors.background = c.0;
@@ -1629,7 +1630,9 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
             colors.button_hover = c.3;
             colors.close_hover = c.4;
             colors.separator = c.5;
-            colors.tab_accent = c.2;
+            colors.tab_accent = c.2.clone();
+            colors.cta_bg = c.2;
+            colors.cta_bg_hover = c.7;
             colors.tooltip_bg = c.6;
             colors.tooltip_text = colors.icon_normal.clone();
         }

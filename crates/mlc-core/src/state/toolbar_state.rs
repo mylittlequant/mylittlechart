@@ -1353,6 +1353,12 @@ impl ChartToolbarState {
                     "theme_high_contrast"       => vec![ChartOutEvent::SetTheme("high_contrast")],
                     "theme_high_contrast_mono"  => vec![ChartOutEvent::SetTheme("high_contrast_mono")],
                     "theme_mascot"              => vec![ChartOutEvent::SetTheme("mascot")],
+                    // 8-token skin presets (same ids as the chart-settings
+                    // modal's theme grid; without these the dropdown entries
+                    // silently no-op).
+                    "theme_surf"                => vec![ChartOutEvent::SetTheme("surf")],
+                    "theme_vaporwave"           => vec![ChartOutEvent::SetTheme("vaporwave")],
+                    "theme_terminal"            => vec![ChartOutEvent::SetTheme("terminal")],
 
                     // UI Style
                     "style_solid"              => vec![ChartOutEvent::SetStyle("solid")],

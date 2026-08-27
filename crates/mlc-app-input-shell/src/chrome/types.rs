@@ -74,6 +74,10 @@ pub struct ChromeColors {
     pub close_hover: String,
     pub separator: String,
     pub tab_accent: String,
+    /// Primary-CTA fill ("Sign in") — the theme accent.
+    pub cta_bg: String,
+    /// CTA fill under hover — the theme accent_hover.
+    pub cta_bg_hover: String,
     pub tooltip_bg: String,
     pub tooltip_text: String,
 }
@@ -88,6 +92,8 @@ impl Default for ChromeColors {
             close_hover:  "#e81123".into(),
             separator:    "#313244".into(),
             tab_accent:   "#3b82f6".into(),
+            cta_bg:       "#3b82f6".into(),
+            cta_bg_hover: "#2563eb".into(),
             tooltip_bg:   "#323232".into(),
             tooltip_text: "#ffffff".into(),
         }

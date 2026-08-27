@@ -526,19 +526,20 @@ pub fn render(
                 }
             }
             ChromeFlavor::Web => {
-                // Gold "Sign in" button (cloud builds) — the single accent
-                // action in the chrome strip, per the brandbook (gold =
-                // primary CTA). Sits immediately left of the gear.
+                // "Sign in" button (cloud builds) — the single accent action
+                // in the chrome strip. Colors come from the active theme
+                // (accent / accent_hover), the label picks black or white by
+                // luminance so it stays readable on any skin.
                 #[cfg(feature = "cloud")]
                 {
-                    let gold = if state.hovered == ChromeHit::LoginButton {
-                        "#f7d985"
+                    let cta = if state.hovered == ChromeHit::LoginButton {
+                        &c.cta_bg_hover
                     } else {
-                        "#f4cd63"
+                        &c.cta_bg
                     };
                     let inset_x = 2.0;
                     let inset_y = 4.0;
-                    ctx.set_fill_color(gold);
+                    ctx.set_fill_color(cta);
                     ctx.fill_rounded_rect(
                         bp.login_left + inset_x,
                         inset_y,
@@ -547,13 +548,15 @@ pub fn render(
                         7.0,
                     );
                     ctx.set_font("600 12px sans-serif");
-                    ctx.set_fill_color("#0a0f1a");
+                    ctx.set_fill_color(contrasting_text_color(cta));
                     ctx.set_text_align(TextAlign::Center);
                     ctx.set_text_baseline(TextBaseline::Middle);
                     ctx.fill_text("Sign in", bp.login_left + LOGIN_BUTTON_WIDTH / 2.0, CHROME_HEIGHT / 2.0);
                 }
 
                 // Cloud icon buttons: Download / Links / News (left of Sign in).
+                // Hover lights the background patch ONLY — the icon keeps its
+                // normal color, same as every other toolbar button in the app.
                 #[cfg(feature = "cloud")]
                 {
                     let icon_btns: [(f64, &str, ChromeHit); 3] = [
@@ -566,34 +569,25 @@ pub fn render(
                             ctx.set_fill_color(&c.button_hover);
                             ctx.fill_rounded_rect(left + 2.0, 4.0, CLOUD_ICON_BUTTON_WIDTH - 4.0, CHROME_HEIGHT - 8.0, 6.0);
                         }
-                        let icon_color = if state.hovered == hit {
-                            &c.icon_hover
-                        } else {
-                            &c.icon_normal
-                        };
                         let icon_x = left + (CLOUD_ICON_BUTTON_WIDTH - 16.0) / 2.0;
                         let icon_y = (CHROME_HEIGHT - 16.0) / 2.0;
                         if let Some(svg) = icon_svg(icon) {
-                            draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, icon_color);
+                            draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, &c.icon_normal);
                         }
                     }
                 }
 
-                // Menu button (gear) — rightmost.
+                // Menu button (gear) — rightmost. Same hover rule: background
+                // patch only, the icon itself does not recolor.
                 {
                     if state.hovered == ChromeHit::MenuButton {
                         ctx.set_fill_color(&c.button_hover);
                         ctx.fill_rect(bp.menu_left, 0.0, MENU_BUTTON_WIDTH, BUTTON_HEIGHT);
                     }
-                    let icon_color = if state.hovered == ChromeHit::MenuButton {
-                        &c.icon_hover
-                    } else {
-                        &c.icon_normal
-                    };
                     let icon_x = bp.menu_left + (MENU_BUTTON_WIDTH - 18.0) / 2.0;
                     let icon_y = (CHROME_HEIGHT - 18.0) / 2.0;
                     if let Some(svg) = icon_svg("settings") {
-                        draw_svg_icon(ctx, svg, icon_x, icon_y, 18.0, 18.0, icon_color);
+                        draw_svg_icon(ctx, svg, icon_x, icon_y, 18.0, 18.0, &c.icon_normal);
                     }
                 }
             }
@@ -875,4 +869,22 @@ fn draw_rect_outline(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, h: f64
     ctx.fill_rect(x, y + h - t, w, t);
     ctx.fill_rect(x, y + t, t, h - t * 2.0);
     ctx.fill_rect(x + w - t, y + t, t, h - t * 2.0);
+}
+
+/// Pick black or white label text for readability over a `#rrggbb` fill,
+/// via relative luminance (ITU-R BT.601) — same rule as
+/// `mlc_core::drawing::primitives_v2::contrasting_text_color`, kept local
+/// because that one is crate-private. Used for the "Sign in" CTA, whose
+/// fill is the theme accent (arbitrary per skin).
+fn contrasting_text_color(bg_hex: &str) -> &'static str {
+    let hex = bg_hex.trim_start_matches('#');
+    if hex.len() < 6 {
+        return "#ffffff";
+    }
+    let parse = |s: &str| u8::from_str_radix(s, 16).unwrap_or(128) as f64;
+    let r = parse(&hex[0..2]);
+    let g = parse(&hex[2..4]);
+    let b = parse(&hex[4..6]);
+    let luminance = 0.299 * r + 0.587 * g + 0.114 * b;
+    if luminance > 150.0 { "#000000" } else { "#ffffff" }
 }

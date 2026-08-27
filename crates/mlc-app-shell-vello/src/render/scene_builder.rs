@@ -47,6 +47,8 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
         pw.chrome_state.colors.close_hover = theme.colors.danger.clone();
         pw.chrome_state.colors.separator   = theme.colors.toolbar_divider.clone();
         pw.chrome_state.colors.tab_accent  = theme.colors.accent.clone();
+        pw.chrome_state.colors.cta_bg      = theme.colors.accent.clone();
+        pw.chrome_state.colors.cta_bg_hover = theme.colors.accent_hover.clone();
         pw.chrome_state.colors.tooltip_bg  = theme.colors.button_bg.clone();
         pw.chrome_state.colors.tooltip_text = theme.colors.text_primary.clone();
         spinner_active_color = theme.colors.accent.clone();
