@@ -2372,6 +2372,7 @@ impl ChartApp {
     /// registered BlackboxPanel widget that consumes the click event.
     pub(super) fn close_transient_overlays(&mut self) {
         self.panel_app.toolbar_state.open_dropdown_id = None;
+        self.panel_app.toolbar_state.open_dropdown_position = None;
         self.panel_app.toolbar_state.hovered_dropdown_item = None;
         self.trading_header_tb.open_dropdown_id = None;
         self.trading_header_tb.hovered_dropdown_item = None;

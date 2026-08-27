@@ -807,6 +807,7 @@ impl ChartApp {
         // Close any existing context menu / dropdown first.
         self.panel_app.context_menu_state.close();
         self.panel_app.toolbar_state.open_dropdown_id = None;
+        self.panel_app.toolbar_state.open_dropdown_position = None;
         self.granularity_edit = None;
         self.granularity_drag_pending = None;
         self.granularity_drag = None;

@@ -1616,7 +1616,16 @@ fn chart_toolbar_render_dropdown(
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
         //    skip the button-rect lookup and use the custom position directly.
-        let (mut origin, is_left_toolbar) = if let Some(pos) = tb.open_dropdown_position {
+        //    The custom position is honored ONLY for the dropdowns that set
+        //    it themselves (new_tab_menu, favorites-bar "+" picker) — a stale
+        //    anchor must never relocate an ordinary button-anchored dropdown
+        //    (favorite-primitives arc defect: left-toolbar flyouts rendered
+        //    next to the favorites bar).
+        let custom_position = tb.open_dropdown_position.filter(|_| {
+            dropdown_id == "new_tab_menu"
+                || dropdown_id == mlc_core::toolbar::FAVORITES_ADD_DROPDOWN_ID
+        });
+        let (mut origin, is_left_toolbar) = if let Some(pos) = custom_position {
             // Custom position: caller provides exact (x, y) for the dropdown top-left.
             (pos, false)
         } else {

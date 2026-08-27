@@ -914,6 +914,10 @@ impl ChartToolbarState {
             | "brush_tools" | "annotation_tools" | "projection_tools"
             | "delete_tools" => {
                 // Toggle: if this dropdown is already open, close it on re-click.
+                // Custom anchor positions are one-shot (new_tab_menu,
+                // favorites-bar "+" picker) — never let a stale anchor
+                // relocate these button-anchored flyouts.
+                self.open_dropdown_position = None;
                 if self.open_dropdown_id.as_deref() == Some(item_id) {
                     self.open_dropdown_id = None;
                     None
@@ -960,6 +964,11 @@ impl ChartToolbarState {
         if self.open_dropdown_id.as_deref() != Some(item_id) && self.open_dropdown_id.is_some() {
             self.open_dropdown_id = None;
         }
+        // This handler never opens a custom-position dropdown (those are
+        // new_tab_menu via chrome and the favorites-bar "+" picker, both
+        // set their anchor explicitly at open time) — drop any stale
+        // anchor so the dropdowns opened below anchor to their button.
+        self.open_dropdown_position = None;
 
         match item_id {
             // === Magnet — icon_button with double-click dropdown ===
