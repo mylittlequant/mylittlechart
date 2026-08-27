@@ -2,7 +2,7 @@
 //! inline actions, indicator set deploy/create, canvas click (drawing tool placement),
 //! modal layer dismissal.
 
-use crate::ChartApp;
+use crate::{ChartApp, sglog};
 use mlc_core::{
     ChartInputAction,
     ChartOutputAction,
@@ -1636,6 +1636,13 @@ impl ChartApp {
             self.workspace_focus = crate::focus::WorkspaceFocus::Chart(cid);
         }
 
+        // Inline primitive text edit (inline-prim-text arc, 2026-08-26): a
+        // canvas click outside the editing box commits it — mirrors
+        // `start_oe_field_edit` committing the previous field before arming
+        // the next. A click INSIDE the box is caret placement and is left
+        // alone (`TextFieldStore::on_drag_start` handled it on mousedown).
+        self.commit_inline_prim_text_edit_unless_inside(x, y);
+
         // 1. Check scale corner buttons first.
         //
         // Walk per-leaf zones. In single-window mode the map has one entry
@@ -2836,10 +2843,17 @@ impl ChartApp {
     /// field is focused, or a blocking modal is open.
     pub(super) fn copy_selected_primitive_to_clipboard(&mut self) {
         if self.primitive_hotkeys_blocked() {
+            sglog!("[ChartApp] CopyPrimitive blocked (text field focused or blocking modal)");
             return;
         }
-        let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else { return };
-        let Some(prim_id) = self.core.drawings().selected(bid) else { return };
+        let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else {
+            sglog!("[ChartApp] CopyPrimitive: no active container");
+            return;
+        };
+        let Some(prim_id) = self.core.drawings().selected(bid) else {
+            sglog!("[ChartApp] CopyPrimitive: nothing selected");
+            return;
+        };
         let captured = {
             let guard = self.core.drawings();
             let points = guard.get_points(bid, prim_id);
@@ -2852,7 +2866,7 @@ impl ChartApp {
         };
         if let Some((points, data, snapshot)) = captured {
             self.primitive_clipboard = Some(crate::PrimitiveClipboard { snapshot, points, data, paste_count: 0 });
-            eprintln!("[ChartApp] Copied primitive #{} to clipboard", prim_id);
+            sglog!("[ChartApp] Copied primitive #{} to clipboard", prim_id);
         }
     }
 
@@ -2896,7 +2910,7 @@ impl ChartApp {
         if let Some(cmd) = self.build_create_primitive_command(bid, new_id) {
             self.push_undo_command(cmd);
         }
-        eprintln!("[ChartApp] Pasted primitive -> #{}", new_id);
+        sglog!("[ChartApp] Pasted primitive -> #{}", new_id);
         self.sync_drawing_back_to_group();
         self.autosave_snapshot();
     }
@@ -2957,6 +2971,11 @@ impl ChartApp {
     /// open (same guard as the offset path).
     pub(super) fn paste_primitive_at_cursor(&mut self) {
         if self.primitive_hotkeys_blocked() {
+            sglog!("[ChartApp] PastePrimitive blocked (text field focused or blocking modal)");
+            return;
+        }
+        if self.primitive_clipboard.is_none() {
+            sglog!("[ChartApp] PastePrimitive: clipboard empty");
             return;
         }
         let Some((target_bid, cursor_ts, cursor_price)) = self.cursor_pane_position() else {
@@ -3007,7 +3026,7 @@ impl ChartApp {
         if let Some(cmd) = self.build_create_primitive_command(target_bid, new_id) {
             self.push_undo_command(cmd);
         }
-        eprintln!("[ChartApp] Pasted primitive at cursor -> #{}", new_id);
+        sglog!("[ChartApp] Pasted primitive at cursor -> #{}", new_id);
         self.sync_drawing_back_to_group();
         self.autosave_snapshot();
     }

@@ -141,6 +141,7 @@ impl ChartApp {
     ///
     /// Covers (in order): CHART_BROWSER_SEARCH, WATCHLIST_SEARCH, WATCHLIST_GROUP_NAME,
     /// PRESET_NAME_INPUT, template name fields, settings sub-fields, search overlay,
+    /// the inline editors (PRIM_INLINE_TEXT, CHROME_TAB_RENAME),
     /// and the OrderEntry/RiskCalculator per-instance `oe_field`/`rc_field` ids.
     pub(crate) fn dispatch_text_key_late(&mut self, key: &KeyPress) -> bool {
         use crate::text_input::*;
@@ -177,6 +178,8 @@ impl ChartApp {
                 | INDICATOR_SETTINGS_FIELD
                 | CHART_SETTINGS_FIELD
                 | COMPARE_SETTINGS_FIELD
+                | PRIM_INLINE_TEXT
+                | CHROME_TAB_RENAME
                 | SYMBOL_SEARCH
                 | INDICATOR_SEARCH
                 | COMPARE_SEARCH
@@ -246,6 +249,7 @@ impl ChartApp {
             INDICATOR_SETTINGS_FIELD         => self.text_action_ind_settings_field(action),
             CHART_SETTINGS_FIELD             => self.text_action_chart_settings_field(action),
             COMPARE_SETTINGS_FIELD           => self.text_action_cmp_settings_field(action),
+            PRIM_INLINE_TEXT                 => self.text_action_prim_inline_text(action),
             PRIMITIVE_SETTINGS_TEMPLATE_NAME
             | INDICATOR_SETTINGS_TEMPLATE_NAME
             | CHART_SETTINGS_TEMPLATE_NAME
@@ -290,6 +294,20 @@ impl ChartApp {
                 }
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
+            TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
+        }
+    }
+
+    /// Enter/Escape handler for the inline on-chart primitive text editor
+    /// (`PRIM_INLINE_TEXT`, inline-prim-text arc 2026-08-26). Commit writes
+    /// through `commit_inline_prim_text_edit` (undo-recorded); Cancel is
+    /// the in-band `\x1b` char path — the native shell routes Escape to
+    /// `on_escape()` instead, which cancels the edit directly. Either way
+    /// Cancel clears state + blurs and NEVER commits.
+    fn text_action_prim_inline_text(&mut self, action: TextAction) {
+        match action {
+            TextAction::Commit(_) => self.commit_inline_prim_text_edit(),
+            TextAction::Cancel => self.cancel_inline_prim_text_edit(),
             TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
         }
     }

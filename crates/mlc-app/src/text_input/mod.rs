@@ -83,6 +83,25 @@ pub const CHART_SETTINGS_FIELD: &str = "chart_settings_field";
 /// Sub-field edit input in the Compare Settings modal (tf min/max fields).
 pub const COMPARE_SETTINGS_FIELD: &str = "cmp_settings_field";
 
+/// Inline on-chart text edit of a placed text primitive (inline-prim-text
+/// arc, owner ask 2026-08-26: double-click a Text/Note/AnchoredText/
+/// Callout/Comment/Signpost/PriceNote → edit its text in place, no modal).
+/// One edit can be active at a time, so a fixed id suffices — the edited
+/// primitive's identity lives in `ChartApp::inline_prim_text_edit`, not in
+/// the id (the `PRIMITIVE_SETTINGS_FIELD` shared-id pattern, not the
+/// per-instance `"{slot}:oe_field"` one).
+pub const PRIM_INLINE_TEXT: &str = "prim_inline_text";
+
+/// Inline chrome tab rename field (tab-rename arc, owner ask 2026-08-26:
+/// double-click a chart tab → edit its name in place inside the tab strip,
+/// no modal). One rename can be active at a time, so a fixed id suffices —
+/// the renamed tab's identity lives in `ChromeState::renaming_tab`
+/// (mlc-app-input-shell), not in the id (same shared-id pattern as
+/// `PRIM_INLINE_TEXT`). Enter/Escape are intercepted by the input-shell's
+/// own `KeyPressed` arm, so this field only needs the late-key admission
+/// below for arrows/Backspace/Delete/Home/End.
+pub const CHROME_TAB_RENAME: &str = "chrome_tab_rename";
+
 /// New profile name input (profile manager / welcome wizard / settings modal).
 pub const NEW_PROFILE_NAME: &str = "new_profile_name";
 

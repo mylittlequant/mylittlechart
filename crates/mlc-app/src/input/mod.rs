@@ -24,6 +24,7 @@ mod panel_click;
 mod sync_group;
 mod modals;
 mod settings;
+mod inline_text;
 pub(crate) mod drawing_session;
 mod trading_container_bind;
 
@@ -1038,6 +1039,17 @@ impl ChartApp {
         // already-placed primitive, so the two never compete for the same
         // click).
         if self.try_wave_gesture(x, y, GestureTrigger::DoubleClick) {
+            return;
+        }
+
+        // Inline text editing (inline-prim-text arc, owner ask 2026-08-26):
+        // a double-click on a placed text primitive (Text / Note /
+        // AnchoredText / Callout / Comment / Signpost / PriceNote — registry
+        // `supports_text`) opens an on-chart editor seeded with its current
+        // text. Runs after the Elliott gesture (wave primitives are not text
+        // primitives, the two never compete) and before the coordinator /
+        // engine double-click fallthrough below.
+        if self.try_start_inline_prim_text_edit(x, y) {
             return;
         }
 
@@ -7137,6 +7149,18 @@ impl ChartApp {
             return;
         }
 
+        // Inline on-chart primitive text edit (inline-prim-text arc,
+        // 2026-08-26): Escape cancels DIRECTLY — clear state + blur, never
+        // route through commit. Same HARD INVARIANT as the settings-modal
+        // editing arms below: Escape is the last-resort exit and must not
+        // depend on the exact commit code it exists to escape from.
+        if self.inline_prim_text_edit.is_some() {
+            self.inline_prim_text_edit = None;
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            sglog!("[ChartApp] inline text edit cancelled via Escape");
+            return;
+        }
+
         // If text editing is active in any settings modal, cancel it first before closing the modal.
         // This follows the pattern: first Escape cancels editing, second Escape closes the modal.
         //
@@ -7427,7 +7451,14 @@ impl ChartApp {
         // watchlist search/group name, preset name), Wave 2a/2b (settings fields, HexColor,
         // AgentPty, AgentChat), and Wave 3 (profile manager: NEW_PASSPHRASE, NEW_PROFILE_NAME,
         // CONFIRM_PASSPHRASE, RECOVERY_KEY, PROFILE_RENAME, ALERT_TG_TOKEN).
-        self.input_coordinator.borrow().text_fields().copy_selection()
+        let sel = self.input_coordinator.borrow().text_fields().copy_selection();
+        if let Some(ref text) = sel {
+            // Ctrl+C goes to the OS clipboard instead of the primitive
+            // clipboard when this returns Some — log it, an invisible stuck
+            // selection otherwise eats the primitive copy silently.
+            sglog!("[ChartApp] on_copy_selection consumed Ctrl+C ({} chars)", text.len());
+        }
+        sel
     }
 
     // -------------------------------------------------------------------------
