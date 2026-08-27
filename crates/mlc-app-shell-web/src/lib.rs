@@ -1641,7 +1641,7 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
         // Through the RefMut deref the borrow checker can't see chrome/chart
         // as disjoint fields — reborrow as a plain &mut first.
         let st = &mut *st;
-        mlc_app_input_shell::update_tab_widths(&mut ctx, &mut st.chrome, &st.chart.input_coordinator);
+        mlc_app_input_shell::update_tab_widths(&mut ctx, &mut st.chrome, css_w as f64, &st.chart.input_coordinator);
     }
 
     // ── Chart render ──────────────────────────────────────────────────────────

@@ -35,7 +35,7 @@ const LOGIN_BUTTON_WIDTH: f64 = 68.0;
 const CLOUD_ICON_BUTTON_WIDTH: f64 = 30.0;
 const TAB_LEFT_MARGIN: f64 = 4.0;
 const TAB_GAP: f64 = 1.0;
-const TAB_PADDING_H: f64 = 12.0;
+const TAB_PADDING_H: f64 = 6.0;
 const TAB_CLOSE_SIZE: f64 = 16.0;
 /// Width of the hover-revealed rename-pencil zone inside a tab.
 const TAB_RENAME_SIZE: f64 = 16.0;
@@ -136,12 +136,13 @@ impl ButtonPositions {
 /// Must be called once per frame before `render`.
 ///
 /// A tab being renamed inline sizes to the LIVE field text, so the tab grows
-/// as the name is typed instead of clipping it. (Siblings never move out of
-/// the way — tabs to the right may be covered while typing; a rebalancing
-/// mechanic is a separate, planned piece of work.)
+/// as the name is typed instead of clipping it. The strip then compresses
+/// (`logic::fit_tab_widths`): tabs shrink proportionally so everything —
+/// including the always-visible "+" — stays left of the right-side controls.
 pub fn update_tab_widths(
     ctx: &mut dyn RenderContext,
     state: &mut ChromeState,
+    width: f64,
     input_coord: &std::cell::RefCell<uzor::input::InputCoordinator>,
 ) {
     ctx.set_font("12px sans-serif");
@@ -162,6 +163,7 @@ pub fn update_tab_widths(
         let w = TAB_PADDING_H + text_w + TAB_CLOSE_SIZE + TAB_PADDING_H;
         state.tab_widths.push(w);
     }
+    super::logic::fit_tab_widths(state, width);
 }
 
 // ── render ────────────────────────────────────────────────────────────────────
@@ -201,6 +203,12 @@ pub fn render(
 
     if !skeleton_mode {
         // ── Tabs ──────────────────────────────────────────────────────────────
+        // The strip ends at the left edge of the right-side controls; tabs
+        // are already shrunk to fit (fit_tab_widths), the clip is the hard
+        // guarantee that nothing ever bleeds under the buttons.
+        let tabs_limit = super::logic::tabs_right_limit(width, state.flavor);
+        ctx.save();
+        ctx.clip_rect(0.0, 0.0, tabs_limit, CHROME_HEIGHT);
         let mut cursor = TAB_LEFT_MARGIN;
         for (i, tab) in state.tabs.iter().enumerate() {
             let tw        = state.tab_widths.get(i).copied().unwrap_or(80.0);
@@ -210,10 +218,9 @@ pub fn render(
             if tab.active {
                 ctx.set_fill_color(&c.tab_accent);
                 ctx.fill_rect(tab_left, CHROME_HEIGHT - 3.0, tw, 2.0);
-            } else if state.hovered == ChromeHit::Tab(i)
-                   || state.hovered == ChromeHit::TabClose(i)
-                   || state.hovered == ChromeHit::TabRename(i)
-            {
+            } else if state.hovered == ChromeHit::Tab(i) {
+                // Only the label space lights the hover underline — hovering
+                // the overlay buttons (pencil/close) is not hovering the tab.
                 ctx.set_fill_color(&c.button_hover);
                 ctx.fill_rect(tab_left, CHROME_HEIGHT - 3.0, tw, 2.0);
             }
@@ -288,26 +295,47 @@ pub fn render(
                 );
             } else {
             {
-                // The tab name is CENTERED in the tab body; the pencil (left)
-                // and close × (right) are hover-revealed overlays painted on
-                // top of it, so the label never shifts when they appear.
+                // The tab name is CENTERED. Unhovered it spans almost the
+                // whole tab; on hover it is re-centred inside the middle
+                // region so the edge zones are free for the overlay buttons
+                // (for short names the centre doesn't move — the zones are
+                // symmetric — but a wide name no longer runs under them).
+                let tab_hovered = state.hovered == ChromeHit::Tab(i)
+                    || state.hovered == ChromeHit::TabClose(i)
+                    || state.hovered == ChromeHit::TabRename(i);
+                let (region_x, region_w) = if tab_hovered {
+                    (tab_left + TAB_RENAME_SIZE, tw - TAB_RENAME_SIZE - TAB_CLOSE_SIZE)
+                } else {
+                    (tab_left, tw)
+                };
                 ctx.set_font("12px sans-serif");
                 let text_w = ctx.measure_text(&tab.name);
-                let text_x = tab_left + (tw - text_w).max(0.0) / 2.0;
+                let text_x = region_x + (region_w - text_w).max(0.0) / 2.0;
                 ctx.set_fill_color(&c.icon_normal);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.save();
+                ctx.clip_rect(region_x, 0.0, region_w.max(0.0), CHROME_HEIGHT);
                 ctx.fill_text(&tab.name, text_x, CHROME_HEIGHT / 2.0);
+                ctx.restore();
             }
 
             // Rename pencil at the tab's LEFT edge, drawn only while the
             // mouse is directly on its spot (logic.rs hit-tests the zone as
             // TabRename unconditionally so the hover can register at all).
             // It paints over the start of the tab name where it appears.
+            // The patch is a small rounded rect that stops above the tab
+            // underline — it must not cover the active/hover strip.
             if state.hovered == ChromeHit::TabRename(i) {
                 let icon_size = 14.0;
-                ctx.set_fill_color(&c.background);
-                ctx.fill_rect(tab_left, 0.0, TAB_RENAME_SIZE + 6.0, CHROME_HEIGHT);
+                ctx.set_fill_color(&c.button_hover);
+                ctx.fill_rounded_rect(
+                    tab_left + 1.0,
+                    3.0,
+                    TAB_RENAME_SIZE + 3.0,
+                    CHROME_HEIGHT - 9.0,
+                    6.0,
+                );
                 let icon_x = tab_left + 2.0 + (TAB_RENAME_SIZE - icon_size) / 2.0;
                 let icon_y = (CHROME_HEIGHT - icon_size) / 2.0;
                 if let Some(svg) = icon_svg("pencil") {
@@ -317,19 +345,32 @@ pub fn render(
 
             // Close × at the RIGHT edge, drawn only while the tab is hovered
             // at all; paints over the name beneath it like the pencil does.
+            // Same rounded patch, kept clear of the underline strip; the
+            // button-hover face only lights when the × itself is hovered.
             let tab_hovered = state.hovered == ChromeHit::Tab(i)
                 || state.hovered == ChromeHit::TabClose(i)
                 || state.hovered == ChromeHit::TabRename(i);
             if tab_hovered {
                 let close_rect_left = tab_right - TAB_CLOSE_SIZE;
                 let icon_size = 14.0;
-                let icon_color = if state.hovered == ChromeHit::TabClose(i) {
+                let close_hovered = state.hovered == ChromeHit::TabClose(i);
+                let icon_color = if close_hovered {
                     &c.close_hover
                 } else {
                     &c.icon_normal
                 };
-                ctx.set_fill_color(&c.background);
-                ctx.fill_rect(close_rect_left - 2.0, 0.0, TAB_CLOSE_SIZE + 2.0, CHROME_HEIGHT);
+                if close_hovered {
+                    ctx.set_fill_color(&c.button_hover);
+                } else {
+                    ctx.set_fill_color(&c.background);
+                }
+                ctx.fill_rounded_rect(
+                    close_rect_left - 1.0,
+                    3.0,
+                    TAB_CLOSE_SIZE + 1.0,
+                    CHROME_HEIGHT - 9.0,
+                    6.0,
+                );
                 let icon_x = close_rect_left + (TAB_CLOSE_SIZE - icon_size) / 2.0;
                 let icon_y = (CHROME_HEIGHT - icon_size) / 2.0;
                 if let Some(svg) = icon_svg("close") {
@@ -340,9 +381,11 @@ pub fn render(
 
             cursor = tab_right + TAB_GAP;
         }
+        ctx.restore();
 
         // ── New-tab (+) button ─────────────────────────────────────────────────
-        let new_tab_x = cursor;
+        // Pinned inside the strip: never pushed under the right-side controls.
+        let new_tab_x = cursor.min(tabs_limit - NEW_TAB_BUTTON_WIDTH);
 
         let div_h = CHROME_HEIGHT * 0.6;
         let div_y = (CHROME_HEIGHT - div_h) / 2.0;

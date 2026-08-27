@@ -101,6 +101,65 @@ impl ButtonPositions {
     }
 }
 
+// ── Tab strip layout ──────────────────────────────────────────────────────────
+
+/// Smallest width a tab compresses to when the strip runs out of room.
+pub const MIN_TAB_WIDTH: f64 = 48.0;
+
+/// Right edge of the tab strip: the left edge of the right-side control
+/// group (window controls on Native, cloud icons + gear on Web). The tab
+/// strip is everything between TAB_LEFT_MARGIN and this line — the buttons
+/// are static, the tabs are dynamic and shrink to fit whatever is left.
+pub fn tabs_right_limit(width: f64, flavor: ChromeFlavor) -> f64 {
+    let bp = ButtonPositions::compute(width, flavor);
+    match flavor {
+        ChromeFlavor::Native => bp.new_window_left,
+        ChromeFlavor::Web => {
+            #[cfg(feature = "cloud")]
+            { bp.news_left }
+            #[cfg(not(feature = "cloud"))]
+            { bp.menu_left }
+        }
+    }
+}
+
+/// Compress `state.tab_widths` so the whole strip fits left of the
+/// right-side controls: the "+" button must always stay visible, so tabs
+/// give up width proportionally (floored at MIN_TAB_WIDTH) instead of
+/// sliding under the buttons. A tab being renamed inline keeps its live
+/// width as long as it fits; siblings absorb the rest.
+pub fn fit_tab_widths(state: &mut ChromeState, width: f64) {
+    let n = state.tab_widths.len();
+    if n == 0 {
+        return;
+    }
+    let limit = tabs_right_limit(width, state.flavor);
+    let reserved = TAB_LEFT_MARGIN
+        + TAB_GAP * (n as f64 - 1.0).max(0.0)
+        + 1.0                    // separator before "+"
+        + NEW_TAB_BUTTON_WIDTH
+        + 4.0;                   // breathing room before the controls
+    let available = (limit - reserved).max(MIN_TAB_WIDTH);
+    let natural: f64 = state.tab_widths.iter().sum();
+    if natural <= available {
+        return;
+    }
+    let scale = available / natural;
+    let mut total = 0.0;
+    for w in state.tab_widths.iter_mut() {
+        *w = (*w * scale).max(MIN_TAB_WIDTH);
+        total += *w;
+    }
+    if total > available {
+        // Even the floor doesn't fit — share equally; render clips the
+        // strip at the limit so nothing bleeds under the controls.
+        let each = (available / n as f64).max(24.0);
+        for w in state.tab_widths.iter_mut() {
+            *w = each;
+        }
+    }
+}
+
 // ── hit_test ──────────────────────────────────────────────────────────────────
 
 pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) -> ChromeHit {
@@ -179,7 +238,9 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
             cursor = tab_right + TAB_GAP;
         }
 
-        // "+" button
+        // "+" button — always pinned inside the tab strip, never pushed
+        // under the right-side controls (render.rs clamps it the same way).
+        let cursor = cursor.min(tabs_right_limit(width, state.flavor) - NEW_TAB_BUTTON_WIDTH);
         let new_tab_right = cursor + NEW_TAB_BUTTON_WIDTH;
         if x >= cursor && x < new_tab_right {
             return ChromeHit::NewTabButton;
