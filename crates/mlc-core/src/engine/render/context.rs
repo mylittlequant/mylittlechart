@@ -170,6 +170,174 @@ pub fn render_primitive_text_rotated(
         let line_y = y + (i as f64 * line_height);
         ctx.fill_text_rotated(line, x, line_y, rotation);
     }
+
+    record_label_text_rect(ctx, text, x, y, rotation);
+}
+
+// =============================================================================
+// User-text label registry (inline label editing arc, 2026-08-27)
+// =============================================================================
+//
+// Double-click editing of ANY primitive's user text (`PrimitiveData::text`),
+// not only the text-first family: a labeled trend line's label must be
+// editable exactly where it is drawn. Rather than re-deriving each
+// primitive's label geometry a second time in a hit-test, the two text
+// helpers above RECORD the axis-aligned bbox of every user-text label they
+// paint, tagged with (bid, pane, prim_id). The render loops in
+// `mlc-app-layout::render_chart` arm the "current primitive" slot only for
+// primitives that carry a non-empty `PrimitiveData::text`, and the record
+// fires only when the rendered content EQUALS that text — so system labels
+// (Elliott wave tags, Fib level values, SMC auto-labels) never register
+// even when they ride the same primitive's render pass.
+//
+// Rects are in the pane's LOCAL coords (main chart-local / sub-pane
+// content-local), the same spaces `DrawingManager::hit_test` works in, and
+// live for exactly one frame: the app clears the list when a window's
+// primitive pass begins. Single-threaded renderers only (wasm + the native
+// shells all render on one thread), hence thread_local, not a Mutex.
+
+use std::cell::{Cell, RefCell};
+
+/// One painted user-text label's hit/anchor rectangle.
+#[derive(Clone, Copy, Debug)]
+pub struct LabelTextRect {
+    pub bid: crate::BubbleId,
+    /// None = main chart, Some(instance_id) = sub-pane (mirrors
+    /// `PrimitiveData::pane_id`).
+    pub pane: Option<u64>,
+    pub prim_id: u64,
+    /// Axis-aligned bbox (min_x, min_y, max_x, max_y), pane-local coords.
+    pub rect: (f64, f64, f64, f64),
+}
+
+thread_local! {
+    static CURRENT_BID: Cell<Option<crate::BubbleId>> = const { Cell::new(None) };
+    /// (pane, prim_id, expected content) — set by the primitive render loop.
+    static CURRENT_PRIM: RefCell<Option<(Option<u64>, u64, String)>> = const { RefCell::new(None) };
+    static LABEL_RECTS: RefCell<Vec<LabelTextRect>> = const { RefCell::new(Vec::new()) };
+}
+
+/// Arm/clear the bubble tag for the current primitive render pass. Called
+/// by the render loops from `dm.render_bid()` once per pass.
+pub fn set_label_text_bid(bid: Option<crate::BubbleId>) {
+    CURRENT_BID.with(|c| c.set(bid));
+}
+
+/// Drop every recorded rect — call when a window's primitive pass begins,
+/// before the first `prim.render`.
+pub fn clear_label_text_rects() {
+    LABEL_RECTS.with(|l| l.borrow_mut().clear());
+}
+
+/// Arm the "current primitive" slot for a primitive that carries user text
+/// (`data.text` non-empty). Pair with [`clear_current_label_text_prim`]
+/// immediately after its `render` call.
+pub fn set_current_label_text_prim(pane: Option<u64>, prim_id: u64, content: &str) {
+    CURRENT_PRIM.with(|c| *c.borrow_mut() = Some((pane, prim_id, content.to_string())));
+}
+
+/// Disarm the slot — anything rendered outside an armed primitive (previews,
+/// overlays, system passes) must not attribute its text to the last prim.
+pub fn clear_current_label_text_prim() {
+    CURRENT_PRIM.with(|c| *c.borrow_mut() = None);
+}
+
+/// Topmost-first hit over the recorded rects of one (bid, pane), in
+/// pane-local coords. `slop` grows each rect on every side.
+pub fn find_label_text_at(
+    bid: crate::BubbleId,
+    pane: Option<u64>,
+    x: f64,
+    y: f64,
+    slop: f64,
+) -> Option<LabelTextRect> {
+    LABEL_RECTS.with(|l| {
+        l.borrow()
+            .iter()
+            .rev()
+            .find(|e| {
+                e.bid == bid && e.pane == pane
+                    && x >= e.rect.0 - slop && x <= e.rect.2 + slop
+                    && y >= e.rect.1 - slop && y <= e.rect.3 + slop
+            })
+            .copied()
+    })
+}
+
+/// Fresh rect for one primitive's label (the inline editor re-reads it each
+/// frame so its plate follows the label while the chart pans mid-edit).
+pub fn label_text_rect_for(
+    bid: crate::BubbleId,
+    pane: Option<u64>,
+    prim_id: u64,
+) -> Option<(f64, f64, f64, f64)> {
+    LABEL_RECTS.with(|l| {
+        l.borrow()
+            .iter()
+            .rev()
+            .find(|e| e.bid == bid && e.pane == pane && e.prim_id == prim_id)
+            .map(|e| e.rect)
+    })
+}
+
+/// Record the just-painted text's bbox when it IS the armed primitive's
+/// user text. Runs at the tail of `render_primitive_text_rotated`, after
+/// the font is set, so `ctx.measure_text` gives true widths.
+fn record_label_text_rect(
+    ctx: &dyn RenderContext,
+    text: &PrimitiveText,
+    x: f64,
+    y: f64,
+    rotation: f64,
+) {
+    let armed = CURRENT_PRIM.with(|c| c.borrow().clone());
+    let Some((pane, prim_id, expected)) = armed else { return };
+    if text.content != expected {
+        return;
+    }
+    let bid = CURRENT_BID.with(|c| c.get());
+    let Some(bid) = bid else { return };
+
+    let line_height = text.font_size * 1.2;
+    let lines: Vec<&str> = text.content.lines().collect();
+    let (cos_r, sin_r) = (rotation.cos(), rotation.sin());
+    let mut min_x = f64::INFINITY;
+    let mut min_y = f64::INFINITY;
+    let mut max_x = f64::NEG_INFINITY;
+    let mut max_y = f64::NEG_INFINITY;
+    for (i, line) in lines.iter().enumerate() {
+        let w = ctx.measure_text(line);
+        // Mirror the align/baseline mapping of the render loop above:
+        // each line rotates around its own origin (x, line_y).
+        let lx = match text.h_align {
+            PrimitiveTextAlign::Start => 0.0,
+            PrimitiveTextAlign::Center => -w / 2.0,
+            PrimitiveTextAlign::End => -w,
+        };
+        let (ly0, ly1) = match text.v_align {
+            PrimitiveTextAlign::Start => (0.0, line_height),
+            PrimitiveTextAlign::Center => (-line_height / 2.0, line_height / 2.0),
+            PrimitiveTextAlign::End => (-line_height, 0.0),
+        };
+        let line_y = y + i as f64 * line_height;
+        for (cx, cy) in [(lx, ly0), (lx + w, ly0), (lx + w, ly1), (lx, ly1)] {
+            let rx = x + cx * cos_r - cy * sin_r;
+            let ry = line_y + cx * sin_r + cy * cos_r;
+            min_x = min_x.min(rx);
+            min_y = min_y.min(ry);
+            max_x = max_x.max(rx);
+            max_y = max_y.max(ry);
+        }
+    }
+    if !min_x.is_finite() {
+        return;
+    }
+    LABEL_RECTS.with(|l| l.borrow_mut().push(LabelTextRect {
+        bid,
+        pane,
+        prim_id,
+        rect: (min_x, min_y, max_x, max_y),
+    }));
 }
 
 /// Measure text dimensions from PrimitiveText configuration

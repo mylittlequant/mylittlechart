@@ -5387,6 +5387,10 @@ impl ChartApp {
     /// Existing call sites can continue using this method unchanged.
     pub fn render(&mut self, ctx: &mut dyn RenderContext, current_time_ms: u64, skip_toolbar_draw: bool) {
         self.prepare_frame(self.width as f64, self.height as f64);
+        // User-text label registry: one frame's rects, rebuilt by the
+        // primitive passes below (cleared here, never per window, so
+        // multi-window frames keep every window's labels).
+        mlc_core::engine::render::clear_label_text_rects();
         let output = self.render_to_scene(ctx, current_time_ms, skip_toolbar_draw);
         self.apply_render_output(output);
     }
@@ -5693,7 +5697,7 @@ impl ChartApp {
         // config, read out under a short-lived guard (a read guard held
         // across the coordinator borrow below would be fine, but there is
         // no reason to hold it past the reads).
-        let (anchor, stored, font_size, text_color) = {
+        let (anchor, label_rect, stored, font_size, text_color) = {
             let guard = self.core.drawings();
             let Some(prim) = guard.primitives(edit.bid).iter().find(|p| p.data().id == edit.prim_id) else {
                 // Primitive went away mid-edit (undo, delete hotkey) — the
@@ -5738,8 +5742,26 @@ impl ChartApp {
             let font_size = t.map(|t| t.font_size).unwrap_or(14.0);
             let text_color = t.and_then(|t| t.color.clone())
                 .unwrap_or_else(|| data.color.stroke.clone());
+            // Prefer the label's own rendered rect (this frame's registry)
+            // over the control-point anchor: for a labeled line/channel the
+            // text hangs OFF the first handle, so the plate must sit where
+            // the label is drawn, not where the line starts. The registry
+            // rect is pane-local — shift by the pane origin, same space the
+            // anchor math above produces.
+            let label_rect = mlc_core::engine::render::label_text_rect_for(
+                edit.bid, edit.pane, edit.prim_id)
+                .map(|(x0, y0, x1, y1)| {
+                    let origin = match edit.pane {
+                        None => (render_state.chart_rect.x, render_state.chart_rect.y),
+                        Some(iid) => layout.sub_panes.iter()
+                            .find(|pl| pl.instance_id == iid)
+                            .map(|pl| (pl.content.x, pl.content.y))
+                            .unwrap_or((0.0, 0.0)),
+                    };
+                    (x0 + origin.0, y0 + origin.1, x1 + origin.0, y1 + origin.1)
+                });
             match anchor {
-                Some(a) => (a, stored, font_size, text_color),
+                Some(a) => (a, label_rect, stored, font_size, text_color),
                 None => return,
             }
         };
@@ -5768,9 +5790,16 @@ impl ChartApp {
         // The stored text renders centered on the anchor with its top AT the
         // anchor (`PrimitiveText` defaults h_align Center / v_align Start —
         // see `render_primitive_text`), so the plate covers exactly that
-        // extent.
-        let box_x = anchor_x - box_w / 2.0;
-        let box_y = anchor_y - pad;
+        // extent. When the label registry has this primitive's own rect the
+        // plate centers on THAT instead — labeled lines/channels hang their
+        // text off the line, not off the first control handle.
+        let (box_x, box_y) = match label_rect {
+            Some((rx0, ry0, rx1, ry1)) => (
+                (rx0 + rx1) / 2.0 - box_w / 2.0,
+                (ry0 + ry1) / 2.0 - box_h / 2.0,
+            ),
+            None => (anchor_x - box_w / 2.0, anchor_y - pad),
+        };
 
         ctx.set_fill_color(&render_state.theme.background);
         ctx.fill_rect(box_x, box_y, box_w, box_h);

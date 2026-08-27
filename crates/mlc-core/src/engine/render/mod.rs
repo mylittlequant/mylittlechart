@@ -61,6 +61,15 @@ pub use context::{
     render_text_with_background, measure_primitive_text,
 };
 
+// Re-export the user-text label registry (inline label editing arc) —
+// the render loops arm it, the app's double-click path hit-tests it.
+pub use context::{
+    LabelTextRect,
+    set_label_text_bid, clear_label_text_rects,
+    set_current_label_text_prim, clear_current_label_text_prim,
+    find_label_text_at, label_text_rect_for,
+};
+
 // Re-export SVG rendering from uzor so that `crate::engine::render::draw_svg_icon`
 // and `crate::engine::render::draw_svg_multicolor` continue to resolve correctly
 // for all modal/panel code that imports from this path.

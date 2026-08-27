@@ -149,6 +149,12 @@ pub trait DrawingRenderView {
     fn drawing_tool_id(&self) -> Option<String>;
     fn effective_color(&self) -> String;
     fn create_preview(&self, cursor_ts_ms: i64, cursor_price: f64) -> Option<Box<dyn primitives_v2::Primitive>>;
+    /// Bubble this view renders, when the implementation is bubble-scoped
+    /// (the app's `BubbleDrawingView` is). The user-text label registry in
+    /// `engine::render::context` tags recorded label rects with it so a
+    /// double-click hit-test can match labels to their own chart. Default
+    /// `None` = unattributed (test views, headless renders).
+    fn render_bid(&self) -> Option<crate::BubbleId> { None }
 }
 
 // `SignalManager` + `TradeManager` (with `Trade`, `TradeDirection`) were

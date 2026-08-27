@@ -152,6 +152,9 @@ impl<'a> mlc_core::drawing::DrawingRenderView for BubbleDrawingView<'a> {
     fn create_preview(&self, cursor_ts_ms: i64, cursor_price: f64) -> Option<Box<dyn Primitive>> {
         BubbleDrawingView::create_preview(self, cursor_ts_ms, cursor_price)
     }
+    fn render_bid(&self) -> Option<BubbleId> {
+        Some(self.bid)
+    }
 }
 
 /// Read-only facade over `DrawingManager` + `BubbleStore`.

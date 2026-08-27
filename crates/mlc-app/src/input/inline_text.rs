@@ -49,10 +49,21 @@ impl ChartApp {
         let local_x = x - chart_rect.x;
         let local_y = y - chart_rect.y;
 
+        // Stage 0: user-text label plates — the registry the render pass
+        // fills every frame (`engine::render::find_label_text_at`). A
+        // double-click that lands on a LABEL owns the edit even when the
+        // label sits off the primitive's body (a line's text hangs above
+        // the line — the body's own hit-test never covers it). Runs BEFORE
+        // the body stages so the label wins on overlaps.
+        let mut resolved: Option<(u64, Option<u64>)> =
+            mlc_core::engine::render::find_label_text_at(bid, None, local_x, local_y, 2.0)
+                .map(|e| (e.prim_id, None));
+
         // Stage 1: main chart — the same `hit_test` call
         // `try_wave_gesture`'s own step 1 uses.
-        let mut resolved: Option<(u64, Option<u64>)> = None;
-        if local_x >= 0.0 && local_x <= chart_rect.width && local_y >= 0.0 && local_y <= chart_rect.height {
+        if resolved.is_none()
+            && local_x >= 0.0 && local_x <= chart_rect.width && local_y >= 0.0 && local_y <= chart_rect.height
+        {
             if let Some(window) = self.panel_app.panel_grid.active_container() {
                 let mut corrected_vp = window.viewport().clone();
                 corrected_vp.chart_width = chart_rect.width;
@@ -64,8 +75,25 @@ impl ChartApp {
             }
         }
 
-        // Stage 2: sub-panes — the same `hit_test_in_pane` call
-        // `try_wave_gesture`'s own step 2 uses.
+        // Stage 2: sub-panes — label plates first (same rule as stage 0),
+        // then the same `hit_test_in_pane` call `try_wave_gesture` uses.
+        if resolved.is_none() {
+            for pane_layout in extended.sub_panes.iter() {
+                let content = pane_layout.content;
+                let plx = x - content.x;
+                let ply = y - content.y;
+                if plx < 0.0 || plx > content.width || ply < 0.0 || ply > content.height {
+                    continue;
+                }
+                let instance_id = pane_layout.instance_id;
+                if let Some(entry) = mlc_core::engine::render::find_label_text_at(
+                    bid, Some(instance_id), plx, ply, 2.0,
+                ) {
+                    resolved = Some((entry.prim_id, Some(instance_id)));
+                    break;
+                }
+            }
+        }
         if resolved.is_none() {
             for pane_layout in extended.sub_panes.iter() {
                 let content = pane_layout.content;

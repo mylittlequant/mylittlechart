@@ -1855,6 +1855,10 @@ pub fn render_sub_pane_primitives(
     // Save context state
     ctx.save();
 
+    // User-text label registry: re-tag with this bubble (idempotent per
+    // pane pass — the pane passes follow the main pass within a window).
+    mlc_core::engine::render::set_label_text_bid(dm.render_bid());
+
     // Set coordinate space for this sub-pane's viewport and price range
     // Uses the same X-axis (bar) as main chart, but different Y-axis (pane's value range)
     ctx.set_coordinate_space(
@@ -1917,7 +1921,15 @@ pub fn render_sub_pane_primitives(
             }
 
             let is_selected = selected_idx == Some(data.id);
+            let label_armed = data.text.as_ref().is_some_and(|t| !t.content.is_empty());
+            if label_armed {
+                mlc_core::engine::render::set_current_label_text_prim(
+                    Some(instance_id), data.id, &data.text.as_ref().unwrap().content);
+            }
             prim.render(ctx, is_selected);
+            if label_armed {
+                mlc_core::engine::render::clear_current_label_text_prim();
+            }
 
             // Draw control points for selected primitive
             if is_selected {
@@ -2533,6 +2545,10 @@ pub fn render_main_chart_primitives(
     // Save context state
     ctx.save();
 
+    // User-text label registry (inline label editing): tag this pass with
+    // its bubble so recorded label rects attribute to the right chart.
+    mlc_core::engine::render::set_label_text_bid(dm.render_bid());
+
     // Set coordinate space for this window's viewport and price scale.
     // Use chart layout dimensions to ensure primitives align with crosshair.
     ctx.set_coordinate_space(
@@ -2638,7 +2654,19 @@ pub fn render_main_chart_primitives(
             }
 
             let is_selected = selected_idx == Some(data.id);
+            // Arm the user-text label registry while this primitive paints:
+            // its `data.text` label's bbox gets recorded for the app's
+            // double-click inline editor. Primitives without user text never
+            // arm the slot, so their system labels stay unregistered.
+            let label_armed = data.text.as_ref().is_some_and(|t| !t.content.is_empty());
+            if label_armed {
+                mlc_core::engine::render::set_current_label_text_prim(
+                    None, data.id, &data.text.as_ref().unwrap().content);
+            }
             prim.render(ctx, is_selected);
+            if label_armed {
+                mlc_core::engine::render::clear_current_label_text_prim();
+            }
 
             // Draw control points for selected primitive
             if is_selected {
