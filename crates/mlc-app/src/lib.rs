@@ -522,6 +522,28 @@ pub struct ChartApp {
     /// Inline floating bar rect from last render — used for drag hit-testing.
     pub(crate) last_inline_bar_rect: Option<LayoutRect>,
 
+    /// Favorites quick-pick bar rect from last render (favorite-primitives
+    /// arc) — used for drag hit-testing, same role as `last_inline_bar_rect`.
+    pub(crate) last_favorites_bar_rect: Option<LayoutRect>,
+
+    /// Favorites-bar item drag-out-to-remove (favorite-primitives arc):
+    /// press on a `fav:{tool_id}` item is recorded as pending `(tool_id,
+    /// press_x, press_y)` and promoted to `fav_item_drag` once the pointer
+    /// moves past the shell's 5px click threshold (same pending/promote
+    /// pattern as `granularity_drag_pending`/`granularity_drag`).
+    /// `fav_item_drag` carries `(tool_id, cursor_x, cursor_y)` — the cursor
+    /// feeds the render's floating icon via `FavoritesDragRender`.
+    pub(crate) fav_item_drag_pending: Option<(String, f64, f64)>,
+    pub(crate) fav_item_drag: Option<(String, f64, f64)>,
+
+    /// Drag-in-to-add from a left-toolbar drawing-tool group button
+    /// (favorite-primitives arc): pending `(button_id, press_x, press_y)`,
+    /// promoted to `fav_group_drag` (the button id) past 5px. While
+    /// `fav_group_drag` is `Some`, the button's click activation is
+    /// suppressed (a drag that leaves the button must not activate the tool).
+    pub(crate) fav_group_drag_pending: Option<(String, f64, f64)>,
+    pub(crate) fav_group_drag: Option<String>,
+
     /// Modal state for search overlays (indicator search, symbol search).
     modal_state: ModalState,
 
@@ -1606,6 +1628,9 @@ pub struct RenderOutput {
     pub right_toolbar_left_x: f64,
     /// Bounding rect of the floating inline config bar, if visible.
     pub last_inline_bar_rect: Option<LayoutRect>,
+    /// Bounding rect of the floating favorites quick-pick bar, if visible
+    /// (favorite-primitives arc) — used for drag hit-testing.
+    pub last_favorites_bar_rect: Option<LayoutRect>,
     /// If `Some(v)`, sets `toolbar_state.open_submenu_id = v` after render.
     pub open_submenu_update: Option<Option<String>>,
     /// Sub-pane range writebacks: `(leaf_id, pane_index, min, max)`.
@@ -3053,6 +3078,11 @@ impl ChartApp {
             last_mouse_pos: (0.0, 0.0),
             content_rect: LayoutRect::new(0.0, 0.0, 1280.0, 800.0),
             last_inline_bar_rect: None,
+            last_favorites_bar_rect: None,
+            fav_item_drag_pending: None,
+            fav_item_drag: None,
+            fav_group_drag_pending: None,
+            fav_group_drag: None,
             modal_state: ModalState::new(),
             pending_screenshot: false,
             pending_reset_cache: false,
@@ -3473,6 +3503,11 @@ impl ChartApp {
             last_mouse_pos: (0.0, 0.0),
             content_rect: LayoutRect::new(0.0, 0.0, 1280.0, 800.0),
             last_inline_bar_rect: None,
+            last_favorites_bar_rect: None,
+            fav_item_drag_pending: None,
+            fav_item_drag: None,
+            fav_group_drag_pending: None,
+            fav_group_drag: None,
             modal_state: ModalState::new(),
             pending_screenshot: false,
             pending_reset_cache: false,
@@ -4052,6 +4087,11 @@ impl ChartApp {
             last_mouse_pos: (0.0, 0.0),
             content_rect: LayoutRect::new(0.0, 0.0, 1280.0, 800.0),
             last_inline_bar_rect: None,
+            last_favorites_bar_rect: None,
+            fav_item_drag_pending: None,
+            fav_item_drag: None,
+            fav_group_drag_pending: None,
+            fav_group_drag: None,
             modal_state: ModalState::new(),
             pending_screenshot: false,
             pending_reset_cache: false,
@@ -4774,6 +4814,24 @@ impl ChartApp {
                 _ => mlc_core::InlineDockEdge::Bottom,
             };
         }
+
+        // Favorites quick-pick bar position/dock/visibility (favorite-
+        // primitives arc) — flat profile fields only (unlike the inline bar
+        // there is no per-window WindowState mirror for this bar).
+        if let Some(x) = profile.ui.favorites_bar_x {
+            self.panel_app.toolbar_state.favorites_bar.x = x;
+        }
+        if let Some(y) = profile.ui.favorites_bar_y {
+            self.panel_app.toolbar_state.favorites_bar.y = y;
+        }
+        if let Some(dock) = profile.ui.favorites_bar_dock.as_ref() {
+            self.panel_app.toolbar_state.favorites_bar.dock_edge = match dock.as_str() {
+                "Top" => mlc_core::InlineDockEdge::Top,
+                "Free" => mlc_core::InlineDockEdge::Free,
+                _ => mlc_core::InlineDockEdge::Bottom,
+            };
+        }
+        self.panel_app.toolbar_state.favorites_bar_visible = profile.ui.favorites_bar_visible;
 
         // Notification settings — load from profile into alert settings state.
         dlog!(
@@ -7359,6 +7417,9 @@ impl ChartApp {
             let timeframe_native_map = self.timeframe_native_map();
             let footprint_live_only = self.footprint_live_only();
             let granularity_favorites = self.core.user().profile().domain.granularity_favorites.clone();
+            let favorite_primitives = self.core.user().profile().ui.favorite_primitives.clone();
+            let favorites_drag_render = self.fav_item_drag.as_ref().map(|(tool_id, cx, cy)|
+                mlc_core::state::toolbar_state::FavoritesDragRender { tool_id: tool_id.clone(), cursor_x: *cx, cursor_y: *cy });
             let granularity_edit_render = self.granularity_edit_render();
             let pin_granularity_favorites = self.core.user().profile().ui.pin_granularity_favorites;
             let granularity_drag_render = self.granularity_drag_render();
@@ -7393,9 +7454,11 @@ impl ChartApp {
                 timeframe_native_map.as_ref(),
                 footprint_live_only,
                 &granularity_favorites,
+                &favorite_primitives,
                 granularity_edit_render.as_ref(),
                 pin_granularity_favorites,
                 granularity_drag_render.as_ref(),
+                favorites_drag_render.as_ref(),
                 split_symbol_compare,
                 symbol_quick_search_render.as_ref(),
                 symbol_quick_search,
@@ -7415,6 +7478,7 @@ impl ChartApp {
         // Register toolbar hit zones — always done every frame (cheap coordinate
         // registration), whether the toolbar was redrawn or cached.
         let mut out_last_inline_bar_rect: Option<LayoutRect> = None;
+        let mut out_last_favorites_bar_rect: Option<LayoutRect> = None;
         if let Some(ref toolbar_result) = out_last_toolbar_result {
             use uzor::input::Sense;
             use mlc_app_layout::ui::z_order::ZLayer;
@@ -7489,6 +7553,30 @@ impl ChartApp {
                 out_last_inline_bar_rect = Some(inline_cfg.bar_rect);
             } else {
                 out_last_inline_bar_rect = None;
+            }
+
+            // Floating favorites quick-pick bar items (favorite-primitives
+            // arc) — same registration contract as the inline bar above:
+            // background first so gap clicks are absorbed, item zones after
+            // so they win on overlap.
+            if let Some(ref fav_cfg) = toolbar_result.favorites_bar {
+                self.input_coordinator.borrow_mut().register_on_layer(
+                    "fav:__bg__",
+                    uzor::Rect::new(fav_cfg.bar_rect.x, fav_cfg.bar_rect.y, fav_cfg.bar_rect.width, fav_cfg.bar_rect.height),
+                    Sense::CLICK,
+                    &tb_layer,
+                );
+                for (id, rect) in &fav_cfg.item_rects {
+                    self.input_coordinator.borrow_mut().register_on_layer(
+                        format!("fav:{}", id),
+                        uzor::Rect::new(rect.x, rect.y, rect.width, rect.height),
+                        Sense::CLICK,
+                        &tb_layer,
+                    );
+                }
+                out_last_favorites_bar_rect = Some(fav_cfg.bar_rect);
+            } else {
+                out_last_favorites_bar_rect = None;
             }
 
             // Register chevron hit zones for each toolbar that is overflowing.
@@ -8293,6 +8381,7 @@ impl ChartApp {
             content_rect,
             right_toolbar_left_x: out_right_toolbar_left_x,
             last_inline_bar_rect: out_last_inline_bar_rect,
+            last_favorites_bar_rect: out_last_favorites_bar_rect,
             open_submenu_update: out_open_submenu_update,
             sub_pane_range_writebacks: out_sub_pane_range_writebacks,
             sub_pane_overlay_writebacks: out_sub_pane_overlay_writebacks,
@@ -8358,6 +8447,7 @@ impl ChartApp {
         self.content_rect = output.content_rect;
         self.right_toolbar_left_x = output.right_toolbar_left_x;
         self.last_inline_bar_rect = output.last_inline_bar_rect;
+        self.last_favorites_bar_rect = output.last_favorites_bar_rect;
         if let Some(submenu_update) = output.open_submenu_update {
             self.panel_app.toolbar_state.open_submenu_id = submenu_update;
         }
@@ -8570,6 +8660,9 @@ impl ChartApp {
         let timeframe_native_map = self.timeframe_native_map();
         let footprint_live_only = self.footprint_live_only();
         let granularity_favorites = self.core.user().profile().domain.granularity_favorites.clone();
+        let favorite_primitives = self.core.user().profile().ui.favorite_primitives.clone();
+        let favorites_drag_render = self.fav_item_drag.as_ref().map(|(tool_id, cx, cy)|
+            mlc_core::state::toolbar_state::FavoritesDragRender { tool_id: tool_id.clone(), cursor_x: *cx, cursor_y: *cy });
         let granularity_edit_render = self.granularity_edit_render();
         let pin_granularity_favorites = self.core.user().profile().ui.pin_granularity_favorites;
         let granularity_drag_render = self.granularity_drag_render();
@@ -8600,9 +8693,11 @@ impl ChartApp {
             timeframe_native_map.as_ref(),
             footprint_live_only,
             &granularity_favorites,
+            &favorite_primitives,
             granularity_edit_render.as_ref(),
             pin_granularity_favorites,
             granularity_drag_render.as_ref(),
+            favorites_drag_render.as_ref(),
             split_symbol_compare,
             symbol_quick_search_render.as_ref(),
             symbol_quick_search,

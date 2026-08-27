@@ -23,6 +23,12 @@ impl ChartApp {
             mlc_core::InlineDockEdge::Top => "Top",
             mlc_core::InlineDockEdge::Free => "Free",
         };
+        let fav = &self.panel_app.toolbar_state.favorites_bar;
+        let fav_dock_str = match fav.dock_edge {
+            mlc_core::InlineDockEdge::Bottom => "Bottom",
+            mlc_core::InlineDockEdge::Top => "Top",
+            mlc_core::InlineDockEdge::Free => "Free",
+        };
         mlc_core::UserProfile {
             domain: mlc_core::user_profile::profile::ProfileDomainSettings {
                 version: mlc_core::user_profile::profile::PROFILE_VERSION,
@@ -60,6 +66,17 @@ impl ChartApp {
                 inline_bar_x: Some(inline.x),
                 inline_bar_y: Some(inline.y),
                 inline_bar_dock: Some(inline_dock_str.to_string()),
+                favorites_bar_x: Some(fav.x),
+                favorites_bar_y: Some(fav.y),
+                favorites_bar_dock: Some(fav_dock_str.to_string()),
+                favorites_bar_visible: self.panel_app.toolbar_state.favorites_bar_visible,
+                // Favorite drawing tools (favorite-primitives arc): mutated
+                // in-place via `self.core.user_mut().profile_mut()` by the
+                // `ToggleFavoritePrimitive` handler (chart_out_events.rs),
+                // not via this snapshot builder — preserve whatever is
+                // already on the live profile (same pattern as
+                // `pin_granularity_favorites` below).
+                favorite_primitives: existing.ui.favorite_primitives.clone(),
                 // Preserve profile identity fields managed by the profile system
                 display_name: existing.ui.display_name.clone(),
                 avatar: existing.ui.avatar.clone(),
@@ -517,6 +534,24 @@ impl ChartApp {
                         _ => mlc_core::InlineDockEdge::Bottom,
                     };
                 }
+
+                // Restore favorites quick-pick bar position + visibility
+                // (favorite-primitives arc) — same flat-field pattern as the
+                // inline bar above.
+                if let Some(x) = profile.ui.favorites_bar_x {
+                    self.panel_app.toolbar_state.favorites_bar.x = x;
+                }
+                if let Some(y) = profile.ui.favorites_bar_y {
+                    self.panel_app.toolbar_state.favorites_bar.y = y;
+                }
+                if let Some(ref dock) = profile.ui.favorites_bar_dock {
+                    self.panel_app.toolbar_state.favorites_bar.dock_edge = match dock.as_str() {
+                        "Top" => mlc_core::InlineDockEdge::Top,
+                        "Free" => mlc_core::InlineDockEdge::Free,
+                        _ => mlc_core::InlineDockEdge::Bottom,
+                    };
+                }
+                self.panel_app.toolbar_state.favorites_bar_visible = profile.ui.favorites_bar_visible;
             }
             Err(e) => {
                 eprintln!("[UserProfile] Failed to load profile: {}", e);

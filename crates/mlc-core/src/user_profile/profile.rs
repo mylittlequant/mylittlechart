@@ -526,6 +526,32 @@ pub struct ProfileUiSettings {
     #[serde(default)]
     pub inline_bar_dock: Option<String>,
 
+    /// Horizontal offset of the floating favorites quick-pick bar
+    /// (favorite-primitives arc — same drag/dock mechanics as the inline bar).
+    #[serde(default)]
+    pub favorites_bar_x: Option<f64>,
+
+    /// Vertical offset of the floating favorites quick-pick bar.
+    #[serde(default)]
+    pub favorites_bar_y: Option<f64>,
+
+    /// Dock edge of the floating favorites quick-pick bar ("Bottom", "Top",
+    /// "Free").
+    #[serde(default)]
+    pub favorites_bar_dock: Option<String>,
+
+    /// Whether the favorites quick-pick bar is visible (toggled by the left
+    /// toolbar's `favorite_tools` star button).
+    #[serde(default)]
+    pub favorites_bar_visible: bool,
+
+    /// Favorite drawing tool ids shown on the quick-pick bar, in user order
+    /// (flyout row item ids — `"trend_line"`, `"crosshair"`, …). Mutated
+    /// in-place by `ChartOutEvent::ToggleFavoritePrimitive`, same pattern as
+    /// `pin_granularity_favorites` below.
+    #[serde(default)]
+    pub favorite_primitives: Vec<String>,
+
     /// Human-readable device name (auto-detected or user-set).
     /// e.g. "VA-PC-WIN10", "MacBook Pro" — cosmetic label in settings UI.
     #[serde(default)]
@@ -697,6 +723,11 @@ impl ProfileUiSettings {
             inline_bar_x: None,
             inline_bar_y: None,
             inline_bar_dock: None,
+            favorites_bar_x: None,
+            favorites_bar_y: None,
+            favorites_bar_dock: None,
+            favorites_bar_visible: false,
+            favorite_primitives: Vec::new(),
             device_name: String::new(),
             language: default_language(),
             windows: Vec::new(),

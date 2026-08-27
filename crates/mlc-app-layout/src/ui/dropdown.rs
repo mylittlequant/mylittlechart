@@ -744,6 +744,16 @@ where
                 let mut trailing_rects: Vec<(String, WidgetRect)> = Vec::new();
                 if !trailing_icons.is_empty() {
                     let mut icon_right = item_rect.right() - TRAILING_ICON_PAD_RIGHT;
+                    // Right edge the CURRENT icon's hit rect may extend to:
+                    // the row's right edge for the rightmost icon, the
+                    // previous icon's left edge for the rest. The hit rect
+                    // covers the FULL row height plus the visual pad/gap
+                    // around the glyph — a near-miss click in that padding
+                    // used to fall through to the menu's `__bg__` zone, which
+                    // CLOSES the dropdown (favorite-primitives picker defect:
+                    // star clicks a few px off the glyph closed the picker
+                    // instead of toggling).
+                    let mut hit_right = item_rect.right();
                     for ti in trailing_icons {
                         let icon_x = icon_right - TRAILING_ICON_SIZE;
                         let icon_y = item_rect.center_y() - TRAILING_ICON_SIZE / 2.0;
@@ -751,8 +761,9 @@ where
                         let icon_rect = WidgetRect::new(icon_x, icon_y, TRAILING_ICON_SIZE, TRAILING_ICON_SIZE);
                         draw_icon(ctx, &ti.icon, icon_rect, icon_color);
                         if !*disabled {
-                            trailing_rects.push((ti.action_id.clone(), icon_rect));
+                            trailing_rects.push((ti.action_id.clone(), WidgetRect::new(icon_x, item_rect.y, hit_right - icon_x, item_rect.height)));
                         }
+                        hit_right = icon_x;
                         icon_right = icon_x - TRAILING_ICON_GAP;
                     }
                 }

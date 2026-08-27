@@ -193,6 +193,13 @@ pub enum ChartOutEvent {
     /// "FAVORITES" header row. Pure presentation toggle — does not touch
     /// `granularity_favorites` itself.
     ToggleGranularityPin,
+    /// Flip favorite membership for a drawing tool (favorite-primitives arc)
+    /// — emitted by the star trailing icon on drawing-tool flyout rows
+    /// (`toolbar::PRIM_STAR_ACTION_PREFIX`). `tool_id` is the flyout row's
+    /// item id (`"trend_line"`, `"crosshair"`, …) — the same id
+    /// `handle_dropdown_select_with_chart`'s drawing-tool arm selects.
+    /// Mutates `ProfileUiSettings::favorite_primitives`.
+    ToggleFavoritePrimitive { tool_id: String },
     /// Move one row within a granularity FAVORITES/CUSTOM list from
     /// `from_index` to `to_index` — drag-to-reorder (owner spec 2026-07-16
     /// items 2+3). Indices are scoped to the exact rendered subset

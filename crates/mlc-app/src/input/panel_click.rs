@@ -3110,8 +3110,68 @@ impl ChartApp {
             return;
         }
 
+        // === Favorites quick-pick bar (favorite-primitives arc) ===
+        // Intercepted BEFORE the generic toolbar-prefix dispatch below —
+        // `fav:` zones are the floating bar's own, not left-toolbar items.
+        if let Some(fav_id) = widget_id.strip_prefix("fav:") {
+            // Bar background, drag grip, and empty-state placeholder clicks
+            // are absorbed so they never fall through to the canvas click
+            // handler (same role as `ilb:__bg__`'s absorber for the inline
+            // config bar). The grip is drag-only (press starts the bar drag
+            // in `on_drag_start`).
+            if fav_id == "__bg__"
+                || fav_id == mlc_core::toolbar::FAVORITES_BAR_GRIP_ITEM_ID
+                || fav_id == mlc_core::toolbar::FAVORITES_BAR_EMPTY_ITEM_ID
+            {
+                return;
+            }
+            // "+" button: toggle the flat all-drawing-tools picker dropdown,
+            // anchored next to the bar via the custom-position slot (same
+            // mechanism `new_tab_menu` uses to open at an arbitrary point).
+            if fav_id == mlc_core::toolbar::FAVORITES_BAR_ADD_ITEM_ID {
+                let tb = &mut self.panel_app.toolbar_state;
+                if tb.open_dropdown_id.as_deref() == Some(mlc_core::toolbar::FAVORITES_ADD_DROPDOWN_ID) {
+                    tb.open_dropdown_id = None;
+                    tb.open_dropdown_position = None;
+                } else if let Some(rect) = self.last_favorites_bar_rect {
+                    tb.open_dropdown_id = Some(mlc_core::toolbar::FAVORITES_ADD_DROPDOWN_ID.to_string());
+                    tb.open_dropdown_position = Some((rect.x + rect.width + 4.0, rect.y));
+                }
+                return;
+            }
+            // A release that ENDS an item drag-out inside the bar must not
+            // also select the tool — the drag (already ≥5px promoted) owns
+            // this release; `on_drag_end` cancels it right after this click.
+            if self.fav_item_drag.is_some() {
+                return;
+            }
+            // Select the drawing tool — same effect as picking it from the
+            // flyout (`handle_dropdown_select_with_chart`'s drawing-tool arm:
+            // set the active tool id + apply it to the drawing session).
+            let active_bid_fav = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
+            if let Some(bid) = active_bid_fav {
+                use mlc_core::state::drawing_session::DrawingSession;
+                let mut guard = self.core.drawings_mut();
+                let mut session = crate::input::drawing_session::DrawingSessionView::new(&mut guard, bid);
+                eprintln!("[ChartToolbar] favorite tool selected: {}", fav_id);
+                self.panel_app.toolbar_state.active_tool_id = Some(fav_id.to_string());
+                session.set_tool(Some(fav_id));
+                drop(guard);
+            }
+            return;
+        }
+
         // === Toolbar widgets ===
         if widget_id.starts_with("toolbar:") || widget_id.starts_with("dtb:") || widget_id.starts_with("csb:") || widget_id.starts_with("btb:") || widget_id.starts_with("rtb:") || widget_id.starts_with("ilb:") || widget_id.starts_with("tch:") {
+            // Suppress the release-click that terminates a promoted
+            // drag-IN from a drawing-tool group button (favorite-primitives
+            // arc): a drag that leaves the button must NOT activate its
+            // quick-select tool. The shell fires `on_click` before
+            // `on_drag_end`, so `fav_group_drag` is still `Some` here; the
+            // drag-end handler clears it (and applies the drop) right after.
+            if self.fav_group_drag.is_some() {
+                return;
+            }
             let item_id = widget_id
                 .strip_prefix("toolbar:")
                 .or_else(|| widget_id.strip_prefix("dtb:"))
@@ -3563,6 +3623,12 @@ impl ChartApp {
                     for event in events {
                         self.process_chart_out_event(event);
                     }
+                    // Favorites-bar visibility is profile-persisted UI state
+                    // (favorite-primitives arc) — mark dirty on toggle,
+                    // mirroring the inline bar's drag-end `persist_profile`.
+                    if item_id == mlc_core::toolbar::FAVORITE_TOOLS_BUTTON_ID {
+                        self.persist_profile();
+                    }
                 }
             }
             return;
@@ -3780,6 +3846,15 @@ impl ChartApp {
                             mlc_core::events::ChartOutEvent::ToggleGranularityStar { target }
                         );
                     }
+                    return;
+                }
+                // Drawing-tool favorite stars (favorite-primitives arc) —
+                // same "stay open, update in place" contract as `gran_star:`
+                // above: toggle membership, do NOT close the dropdown.
+                if let Some(tool_id) = item_id.strip_prefix(mlc_core::toolbar::PRIM_STAR_ACTION_PREFIX) {
+                    self.process_chart_out_event(
+                        mlc_core::events::ChartOutEvent::ToggleFavoritePrimitive { tool_id: tool_id.to_string() }
+                    );
                     return;
                 }
                 if let Some(target_id) = item_id.strip_prefix(mlc_core::chart_type::GRANULARITY_DELETE_ACTION_PREFIX) {

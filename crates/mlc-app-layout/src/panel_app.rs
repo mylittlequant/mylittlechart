@@ -386,9 +386,18 @@ pub fn chart_toolbar_render_toolbars(
     timeframe_native_map: Option<&std::collections::HashMap<String, bool>>,
     footprint_live_only: bool,
     granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
+    // Favorite drawing tool ids (`ProfileUiSettings::favorite_primitives`) —
+    // favorite-primitives arc. Drives the floating favorites quick-pick bar
+    // (rendered when `tb.favorites_bar_visible`) and the star trailing icons
+    // on drawing-tool flyout rows.
+    favorite_primitives: &[String],
     granularity_edit_render: Option<&mlc_core::chart_type::GranularityEditRender>,
     pin_granularity_favorites: bool,
     granularity_drag_render: Option<&mlc_core::chart_type::GranularityDragRender>,
+    // Live snapshot of an in-progress favorites-bar item drag (drag-out to
+    // remove — favorite-primitives arc), mirroring `granularity_drag_render`'s
+    // role for dropdown row reorder. `None` when no item drag is active.
+    favorites_drag_render: Option<&mlc_core::state::toolbar_state::FavoritesDragRender>,
     split_symbol_compare: bool,
     symbol_quick_search_render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
     symbol_quick_search: bool,
@@ -440,6 +449,8 @@ pub fn chart_toolbar_render_toolbars(
                     "magnet" => tb.magnet_enabled,
                     "lock" => tb.drawings_locked,
                     "eye" => !tb.drawings_visible,
+                    // Star button renders active while the favorites bar is open.
+                    mlc_core::toolbar::FAVORITE_TOOLS_BUTTON_ID => tb.favorites_bar_visible,
                     _ => tb.is_active(id),
                 }
             });
@@ -1101,6 +1112,134 @@ pub fn chart_toolbar_render_toolbars(
             None
         };
 
+        // --- Floating favorites quick-pick bar (favorite-primitives arc) ---
+        //
+        // TradingView-style: toggled by the left toolbar's `favorite_tools`
+        // star button. Layout: leading 6-dots drag grip, one icon button per
+        // favorite drawing tool (or a dimmed placeholder star when empty),
+        // trailing "+" button opening the flat all-tools picker dropdown.
+        // Reuses the exact float/drag/edge-magnet mechanics of the inline
+        // config bar above (`floating_inline_absolute_rect` +
+        // `FloatingInlineBar`). Width sizes dynamically with the number of
+        // favorites via `calculate_section_width`, same as the inline bar.
+        let favorites_bar = if tb.favorites_bar_visible {
+            let mut fav_items: Vec<TcToolbarItem> = vec![
+                // Drag grip — no registry icon (no grip/dots icon exists in
+                // `mlc_core::state::icons`); the 6 dots are drawn procedurally
+                // over this slot after the main draw pass below.
+                TcToolbarItem::icon_button(mlc_core::toolbar::FAVORITES_BAR_GRIP_ITEM_ID, IconId::new("__grip_dots__")),
+            ];
+            if favorite_primitives.is_empty() {
+                // Placeholder slot so the user sees where favorites will land
+                // (and so the empty bar still drags — the app routes press on
+                // this id to the bar's drag start).
+                fav_items.push(TcToolbarItem::icon_button(mlc_core::toolbar::FAVORITES_BAR_EMPTY_ITEM_ID, IconId::new("star")));
+            } else {
+                for tool_id in favorite_primitives {
+                    fav_items.push(
+                        TcToolbarItem::icon_button(tool_id, IconId::new(&favorite_tool_icon(tool_id)))
+                            .with_active(tb.active_tool_id.as_deref() == Some(tool_id.as_str()))
+                    );
+                }
+            }
+            fav_items.push(TcToolbarItem::icon_button(mlc_core::toolbar::FAVORITES_BAR_ADD_ITEM_ID, IconId::new("plus")));
+            let fav_section = ToolbarSection::new(fav_items);
+            let fav_tc_config = TcConfig {
+                sections: vec![fav_section],
+                orientation: TcOrientation::Horizontal,
+                item_size: 28.0,
+                icon_size: 24.0,
+                spacing: 4.0,
+                padding: 4.0,
+                separator_size: 1.0,
+                scroll_offset: 0.0, // Favorites bar never overflows (sized to fit)
+            };
+
+            // Pre-compute exact bar width from section items (single-pass, no measurement draw).
+            let sections_width: f64 = fav_tc_config.sections.iter()
+                .map(|s| calculate_section_width(&mut *ctx, s, &fav_tc_config))
+                .sum();
+            let bar_width = sections_width + fav_tc_config.padding * 2.0;
+            let bar_rect = floating_inline_absolute_rect(&tb.favorites_bar, layout, bar_width, &top_slide, &bottom_slide, sidebar_w);
+
+            // Single draw pass: draw_toolbar_with_icons draws background + items at exact width.
+            let bar_wr = WidgetRect::new(bar_rect.x, bar_rect.y, bar_width, bar_rect.height);
+            let fav_result = draw_toolbar_with_icons(
+                ctx,
+                &fav_tc_config,
+                bar_wr,
+                &theme,
+                tb.hovered_favorites_id.as_deref(),
+            );
+
+            // Border — suppress the edge that merges with the host toolbar when docked.
+            ctx.set_fill_color(&theme.separator);
+            let dock = tb.favorites_bar.dock_edge;
+            // Top border: hide when docked to top (merges with control strip)
+            if dock != InlineDockEdge::Top {
+                ctx.fill_rect(bar_rect.x, bar_rect.y, bar_width, 1.0);
+            }
+            // Bottom border: hide when docked to bottom (merges with bottom toolbar)
+            if dock != InlineDockEdge::Bottom {
+                ctx.fill_rect(bar_rect.x, bar_rect.y + bar_rect.height - 1.0, bar_width, 1.0);
+            }
+            // Side borders always
+            ctx.fill_rect(bar_rect.x, bar_rect.y, 1.0, bar_rect.height);
+            ctx.fill_rect(bar_rect.x + bar_width - 1.0, bar_rect.y, 1.0, bar_rect.height);
+
+            // Drag grip: 6 dots (2 columns x 3 rows), theme-colored like any
+            // normal icon. The grip item itself carries no registry icon.
+            if let Some((_, gr)) = fav_result.item_rects.iter()
+                .find(|(id, _)| id == mlc_core::toolbar::FAVORITES_BAR_GRIP_ITEM_ID)
+            {
+                ctx.set_fill_color(&theme.item_text);
+                const DOT_R: f64 = 1.6;
+                const DOT_GAP: f64 = 5.0;
+                let grid_w = DOT_GAP + DOT_R * 2.0;
+                let grid_h = DOT_GAP * 2.0 + DOT_R * 2.0;
+                let gx = gr.x + (gr.width - grid_w) / 2.0 + DOT_R;
+                let gy = gr.y + (gr.height - grid_h) / 2.0 + DOT_R;
+                for row in 0..3 {
+                    for col in 0..2 {
+                        ctx.begin_path();
+                        ctx.arc(gx + col as f64 * DOT_GAP, gy + row as f64 * DOT_GAP, DOT_R, 0.0, std::f64::consts::TAU);
+                        ctx.fill();
+                    }
+                }
+            }
+
+            // Item drag-out visual (favorite-primitives arc): dim the source
+            // slot (`disabled` does NOT dim in toolbar_core — disabled icons
+            // draw in plain `item_text`, so the dim is an explicit alpha
+            // overlay here) and float the tool's icon at the cursor so the
+            // drag reads as an actual pick-up.
+            if let Some(drag) = favorites_drag_render {
+                if let Some((_, sr)) = fav_result.item_rects.iter()
+                    .find(|(id, _)| id == &drag.tool_id)
+                {
+                    ctx.save();
+                    ctx.set_global_alpha(0.55);
+                    ctx.set_fill_color(&theme.background);
+                    ctx.fill_rect(sr.x, sr.y, sr.width, sr.height);
+                    ctx.restore();
+                }
+                if let Some(svg) = crate::ui::icons::icon_svg(&favorite_tool_icon(&drag.tool_id)) {
+                    draw_svg_icon(ctx, svg, drag.cursor_x - 12.0, drag.cursor_y - 12.0, 24.0, 24.0, &theme.item_text_hover);
+                }
+            }
+
+            let fav_rects: Vec<(String, ToolbarRect)> = fav_result.item_rects.into_iter()
+                .map(|(id, wr)| (id, ToolbarRect::new(wr.x, wr.y, wr.width, wr.height)))
+                .collect();
+
+            Some(InlineConfigResult {
+                item_rects: fav_rects,
+                bar_rect: LayoutRect::new(bar_rect.x, bar_rect.y, bar_width, bar_rect.height),
+            })
+        } else {
+            None
+        };
+
         let control_result = tc_result_to_render_result(control_tc_result);
         let right_result = tc_result_to_render_result(right_tc_result);
         let bottom_result = tc_result_to_render_result(bottom_tc_result);
@@ -1224,7 +1363,7 @@ pub fn chart_toolbar_render_toolbars(
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = tb.open_dropdown_id {
-            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, symbol_quick_search_render, symbol_quick_search, split_symbol_compare, quicksearch_minimal)
+            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, favorite_primitives, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, symbol_quick_search_render, symbol_quick_search, split_symbol_compare, quicksearch_minimal)
         } else {
             None
         };
@@ -1250,6 +1389,7 @@ pub fn chart_toolbar_render_toolbars(
             content_rect: layout.content_rect,
             dropdown_result,
             inline_config,
+            favorites_bar,
             inline_dropdown_result,
             // Scroll chevron rects — left/right for horizontal, up/down for vertical
             top_left_chevron: control_left_chev,
@@ -1464,6 +1604,7 @@ fn chart_toolbar_render_dropdown(
     timeframe_native_map: Option<&std::collections::HashMap<String, bool>>,
     footprint_live_only: bool,
     granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
+    favorite_primitives: &[String],
     granularity_edit_render: Option<&mlc_core::chart_type::GranularityEditRender>,
     pin_granularity_favorites: bool,
     granularity_drag_render: Option<&mlc_core::chart_type::GranularityDragRender>,
@@ -1651,6 +1792,21 @@ fn chart_toolbar_render_dropdown(
                     if is_mono_group && id.starts_with("sync_") {
                         *disabled = true;
                     }
+                }
+            }
+            // Drawing-tool flyouts (favorite-primitives arc): every action row
+            // gets a trailing favorite star — filled gold when the tool is in
+            // `favorite_primitives`, hollow otherwise. The star's hit id is
+            // `prim_star:{tool_id}` (the row's own id — the same tool id the
+            // drawing-tool arm of `handle_dropdown_select_with_chart`
+            // selects); `panel_click.rs` intercepts that prefix and keeps the
+            // dropdown open, exactly like `gran_star:`.
+            if mlc_core::toolbar::DRAWING_FLYOUT_IDS.contains(&dropdown_id)
+                || dropdown_id == mlc_core::toolbar::FAVORITES_ADD_DROPDOWN_ID
+            {
+                if let DropdownItem::Item { ref id, ref mut trailing_icons, .. } = di {
+                    let is_favorite = favorite_primitives.iter().any(|t| t == id);
+                    *trailing_icons = favorite_primitive_trailing_icon(id, is_favorite);
                 }
             }
             if dropdown_id == "timeframe_selector" {
@@ -1985,6 +2141,13 @@ fn chart_toolbar_render_dropdown(
         if dropdown_id == "chart_type_selector" {
             config.grid_columns = Some(2);
         }
+        // Favorites bar "+" picker (favorite-primitives arc): the flat
+        // all-drawing-tools list is far taller than any window as a single
+        // column (`dropdown.rs` has no scrolling and no max-height) — flow
+        // it 4 per row, same grid mechanic as the chart-type menu above.
+        if dropdown_id == mlc_core::toolbar::FAVORITES_ADD_DROPDOWN_ID {
+            config.grid_columns = Some(4);
+        }
         // Keep the menu inside the hosting toolbar's horizontal span — on
         // the full-window main toolbar this is a no-op, on the embedded
         // trading-header instance it stops button-aligned menus escaping
@@ -2006,6 +2169,21 @@ fn chart_toolbar_render_dropdown(
         // panel's top edge (content taller than the whole panel pins to the
         // top instead of overflowing both ends).
         if is_left_toolbar {
+            let content_height = config.calculate_height();
+            let panel_top = layout.full_rect.y;
+            let panel_bottom = layout.full_rect.y + layout.full_rect.height;
+            let overflow = (origin.1 + content_height) - panel_bottom;
+            if overflow > 0.0 {
+                origin.1 -= overflow;
+            }
+            origin.1 = origin.1.max(panel_top);
+        }
+
+        // Same vertical fit guard for the favorites bar's "+" picker
+        // (favorite-primitives arc) — it opens at a custom position next to
+        // the bar (`is_left_toolbar == false`), so the flyout guard above
+        // does not cover it.
+        if dropdown_id == mlc_core::toolbar::FAVORITES_ADD_DROPDOWN_ID {
             let content_height = config.calculate_height();
             let panel_top = layout.full_rect.y;
             let panel_bottom = layout.full_rect.y + layout.full_rect.height;
@@ -2537,6 +2715,41 @@ fn granularity_trailing_icons(
     icons
 }
 
+/// Trailing favorite-star for a drawing-tool flyout row (favorite-primitives
+/// arc) — mirrors [`granularity_trailing_icons`]'s star minting verbatim:
+/// filled `#FFD700` `star_filled` when the tool is already in
+/// `ProfileUiSettings::favorite_primitives`, hollow `star` otherwise. The
+/// action id is `prim_star:{tool_id}` (`mlc_core::toolbar::
+/// PRIM_STAR_ACTION_PREFIX`); the click router toggles membership WITHOUT
+/// closing the dropdown, same contract as `gran_star:`.
+fn favorite_primitive_trailing_icon(
+    tool_id: &str,
+    is_favorite: bool,
+) -> Vec<crate::ui::dropdown::TrailingIcon> {
+    use crate::ui::dropdown::TrailingIcon;
+    const STAR_FILLED_COLOR: &str = "#FFD700";
+
+    let star_action = format!("{}{}", mlc_core::toolbar::PRIM_STAR_ACTION_PREFIX, tool_id);
+    if is_favorite {
+        vec![TrailingIcon::new(star_action, IconId::new("star_filled")).with_color(STAR_FILLED_COLOR)]
+    } else {
+        vec![TrailingIcon::new(star_action, IconId::new("star"))]
+    }
+}
+
+/// Resolve the toolbar icon id for a favorite drawing tool (favorite-primitives
+/// arc): the primitive registry's own `icon` metadata when `tool_id` is a
+/// registered primitive, the id itself otherwise — cursor-mode ids
+/// (`"crosshair"`, `"hand"`) are not primitives but resolve under their own
+/// names in `mlc_core::state::icons`, same as the quick-select memory icons.
+fn favorite_tool_icon(tool_id: &str) -> String {
+    mlc_core::drawing::primitives_v2::PrimitiveRegistry::global()
+        .read()
+        .ok()
+        .and_then(|registry| registry.get(tool_id).map(|m| m.icon.to_string()))
+        .unwrap_or_else(|| tool_id.to_string())
+}
+
 /// Hit-id prefix for one `symbol_selector` fast-search result row
 /// (symbol-search-compare-inner arc, Wave 2, кусок 4). The suffix is the
 /// composite `"SYMBOL:exchange_id:account_type"` key — same shape the
@@ -2959,6 +3172,35 @@ fn chart_toolbar_find_dropdown_items(
                 DropdownItemDef::action("magnet_ohlc", "Weak Magnet (OHLC)").with_icon(ToolbarIconId::new("Magnet")),
                 DropdownItemDef::action("magnet_strong", "Strong Magnet (Body)").with_icon(ToolbarIconId::new("MagnetStrong")),
             ]);
+        }
+
+        // Special case: the favorites bar's "+" picker (favorite-primitives
+        // arc) — a FLAT list of every drawing tool, built from the
+        // `DRAWING_FLYOUT_IDS` flyout defs of the canonical left toolbar so
+        // ids/labels/icons can never drift from the flyouts themselves
+        // (headers/separators stripped, duplicate ids deduped — several tools
+        // appear in more than one flyout). Trailing favorite stars are
+        // attached in `chart_toolbar_render_dropdown`'s conversion loop.
+        if dropdown_id == mlc_core::toolbar::FAVORITES_ADD_DROPDOWN_ID {
+            let mut items = Vec::new();
+            let mut seen = std::collections::HashSet::new();
+            for section in &mlc_core::toolbar::left_toolbar().sections {
+                for item in &section.items {
+                    if let ToolbarItemDef::Dropdown { id, items: flyout_items, .. } = item {
+                        if !mlc_core::toolbar::DRAWING_FLYOUT_IDS.contains(id) {
+                            continue;
+                        }
+                        for flyout_item in flyout_items {
+                            if let DropdownItemDef::Action { id: action_id, .. } = flyout_item {
+                                if seen.insert(action_id.clone()) {
+                                    items.push(flyout_item.clone());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return Some(items);
         }
 
         // Special case: presets_menu is built dynamically from in-memory presets.

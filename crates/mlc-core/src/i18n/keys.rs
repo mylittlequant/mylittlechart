@@ -620,10 +620,13 @@ pub enum ToolbarTooltipKey {
     FullScreen        = 44,
     SplitView         = 45,
     ServerTime        = 46,
+    /// Left-toolbar star button toggling the favorites quick-pick bar
+    /// (favorite-primitives arc).
+    FavoriteTools     = 47,
 }
 
 impl ToolbarTooltipKey {
-    pub const COUNT: usize = 47;
+    pub const COUNT: usize = 48;
 
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {

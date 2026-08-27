@@ -561,6 +561,20 @@ pub struct InlineConfigResult {
     pub bar_rect: LayoutRect,
 }
 
+/// Render snapshot for an in-progress favorites-bar item drag (drag-out to
+/// remove — favorite-primitives arc): the dragged tool id plus the live
+/// cursor position in absolute coords. Built per frame by the app from its
+/// drag state, mirroring `GranularityDragRender`'s role for dropdown row
+/// reorder. The bar render dims the source slot and floats the tool's icon
+/// at the cursor while this is `Some`.
+#[derive(Clone, Debug)]
+pub struct FavoritesDragRender {
+    /// Tool id being dragged (a `favorite_primitives` entry).
+    pub tool_id: String,
+    pub cursor_x: f64,
+    pub cursor_y: f64,
+}
+
 /// Result of rendering all four local chart-panel toolbars in a single pass.
 #[derive(Clone, Debug, Default)]
 pub struct ChartToolbarRenderResult {
@@ -579,6 +593,10 @@ pub struct ChartToolbarRenderResult {
     pub dropdown_result: Option<DropdownRenderInfo>,
     /// Hit zones for the inline config toolbar (when a primitive is selected)
     pub inline_config: Option<InlineConfigResult>,
+    /// Hit zones for the floating favorites quick-pick bar (when visible —
+    /// favorite-primitives arc). Same `InlineConfigResult` shape as the
+    /// inline config bar: per-item rects plus the bar rect for drag/absorb.
+    pub favorites_bar: Option<InlineConfigResult>,
     /// Hit zones from an open inline dropdown (style or width) if any
     pub inline_dropdown_result: Option<InlineDropdownResult>,
     /// Overflow scroll chevron rects for each toolbar (left/up and right/down).
@@ -655,6 +673,15 @@ pub struct ChartToolbarState {
     pub last_magnet_click_time: Option<Instant>,
     /// Floating inline config toolbar state (position, dock edge, drag state).
     pub floating_inline_bar: FloatingInlineBar,
+    /// Floating favorites quick-pick bar state (favorite-primitives arc) —
+    /// same float/drag/edge-magnet mechanics as `floating_inline_bar`.
+    pub favorites_bar: FloatingInlineBar,
+    /// Whether the favorites quick-pick bar is visible. Toggled by the left
+    /// toolbar's `favorite_tools` star button; persisted on the profile
+    /// (`ProfileUiSettings::favorites_bar_visible`).
+    pub favorites_bar_visible: bool,
+    /// Hovered favorites quick-pick bar item id.
+    pub hovered_favorites_id: Option<String>,
     /// Hovered inline toolbar item id.
     pub hovered_inline_id: Option<String>,
     /// Whether the inline style dropdown is open.
@@ -741,6 +768,9 @@ impl Default for ChartToolbarState {
             hovered_submenu_item: None,
             last_magnet_click_time: None,
             floating_inline_bar: FloatingInlineBar::default(),
+            favorites_bar: FloatingInlineBar::default(),
+            favorites_bar_visible: false,
+            hovered_favorites_id: None,
             hovered_inline_id: None,
             open_inline_style_dropdown: false,
             open_inline_width_dropdown: false,
@@ -992,6 +1022,15 @@ impl ChartToolbarState {
                 vec![ChartOutEvent::Consumed]
             }
 
+            // === Favorites quick-pick bar toggle (favorite-primitives arc) ===
+            // Purely local UI state — visibility is profile-persisted by the
+            // app layer (mirrors the inline bar's position persistence).
+            "favorite_tools" => {
+                self.favorites_bar_visible = !self.favorites_bar_visible;
+                eprintln!("[ChartToolbar] favorites bar toggled: {}", self.favorites_bar_visible);
+                vec![ChartOutEvent::Consumed]
+            }
+
             // === Quick-select drawing tool dropdowns ===
             "cursor_tools" | "line_tools" | "fib_tools" | "pattern_tools"
             | "price_action_tools"
@@ -1115,6 +1154,17 @@ impl ChartToolbarState {
             | "brush_tools" | "annotation_tools" | "projection_tools" => {
                 eprintln!("[ChartToolbar] tool selected: {} -> {}", dropdown_id, item_id);
                 self.select_tool(dropdown_id, item_id, item_id);
+                drawing_manager.set_tool(Some(item_id));
+                vec![ChartOutEvent::Consumed]
+            }
+
+            // === Favorites bar "+" picker (favorite-primitives arc) ===
+            // Flat all-tools list; a body click selects the tool exactly like
+            // the drawing-tool arm above, just without quick-select memory
+            // (the picker is not a left-toolbar group button).
+            crate::toolbar::FAVORITES_ADD_DROPDOWN_ID => {
+                eprintln!("[ChartToolbar] favorite-add tool selected: {}", item_id);
+                self.active_tool_id = Some(item_id.to_string());
                 drawing_manager.set_tool(Some(item_id));
                 vec![ChartOutEvent::Consumed]
             }

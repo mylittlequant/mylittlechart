@@ -17,6 +17,42 @@ use crate::i18n::{
 // Re-export orientation type for callers
 pub use uzor::panel_api::ToolbarOrientation;
 
+/// Left-toolbar button id that toggles the floating favorites quick-pick bar
+/// (favorite-primitives arc — TradingView-style starred drawing tools).
+pub const FAVORITE_TOOLS_BUTTON_ID: &str = "favorite_tools";
+
+/// Hit-id prefix for the per-row favorite star trailing icon in drawing-tool
+/// flyout dropdowns (`"prim_star:{tool_id}"` — `panel_click.rs` intercepts it
+/// next to `gran_star:`, mirroring `chart_type::GRANULARITY_STAR_ACTION_PREFIX`).
+pub const PRIM_STAR_ACTION_PREFIX: &str = "prim_star:";
+
+/// Item id of the dimmed placeholder slot the favorites quick-pick bar renders
+/// when `ProfileUiSettings::favorite_primitives` is empty (absorbs clicks).
+pub const FAVORITES_BAR_EMPTY_ITEM_ID: &str = "__empty__";
+
+/// Item id of the favorites quick-pick bar's leading drag grip (6-dots,
+/// TradingView style) — press+drag moves the bar, clicks are absorbed.
+pub const FAVORITES_BAR_GRIP_ITEM_ID: &str = "__grip__";
+
+/// Item id of the favorites quick-pick bar's trailing "+" button — opens the
+/// `FAVORITES_ADD_DROPDOWN_ID` flat all-drawing-tools picker next to the bar.
+pub const FAVORITES_BAR_ADD_ITEM_ID: &str = "__add__";
+
+/// Dropdown id of the favorites bar's "+" picker: a flat list of every
+/// drawing tool (icons + names) with `prim_star:` trailing stars for
+/// add/quick-remove. Built in `chart_toolbar_find_dropdown_items` from the
+/// `DRAWING_FLYOUT_IDS` flyout defs; rows select the tool on body click.
+pub const FAVORITES_ADD_DROPDOWN_ID: &str = "favorites_bar_add";
+
+/// Dropdown ids of the left-toolbar drawing-tool flyouts — the exact set
+/// `ChartToolbarState::handle_dropdown_select_with_chart`'s drawing-tool arm
+/// selects tools from. Rows in these flyouts carry the favorite-star trailing
+/// icon.
+pub const DRAWING_FLYOUT_IDS: &[&str] = &[
+    "cursor_tools", "line_tools", "fib_tools", "pattern_tools",
+    "price_action_tools", "brush_tools", "annotation_tools", "projection_tools",
+];
+
 /// Build the chart's left-side drawing tools toolbar (vertical, 50px wide)
 pub fn left_toolbar() -> PanelToolbarDef {
     PanelToolbarDef::vertical(vec![
@@ -33,6 +69,7 @@ pub fn left_toolbar() -> PanelToolbarDef {
         lock_section(),
         visibility_section(),
         delete_section(),
+        favorites_section(),
     ]).with_size(crate::types::LEFT_TOOLBAR_WIDTH)
 }
 
@@ -1156,6 +1193,17 @@ fn delete_section() -> ToolbarSectionDef {
             DropdownItemDef::action("delete_all", MK::DeleteAll.get(lang)).with_icon(ToolbarIconId::new("Delete")),
         ]).with_icon(ToolbarIconId::new("Delete"))
           .with_tooltip(t_toolbar(TK::DeleteTool)),
+    ])
+}
+
+/// Favorite drawing tools (favorite-primitives arc) — bottom-most button of
+/// the left toolbar. Single-click toggles the floating favorites quick-pick
+/// bar (`ChartToolbarState::favorites_bar_visible`); per-tool membership is
+/// managed via the star trailing icons on the drawing flyout rows.
+fn favorites_section() -> ToolbarSectionDef {
+    ToolbarSectionDef::new(vec![
+        ToolbarItemDef::icon_button(FAVORITE_TOOLS_BUTTON_ID, ToolbarIconId::new("star"))
+            .with_tooltip(t_toolbar(TK::FavoriteTools)),
     ])
 }
 

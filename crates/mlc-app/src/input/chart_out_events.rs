@@ -841,6 +841,24 @@ impl ChartApp {
                 self.autosave_snapshot();
                 return;
             }
+            ChartOutEvent::ToggleFavoritePrimitive { tool_id } => {
+                eprintln!("[ChartApp] ToggleFavoritePrimitive: {}", tool_id);
+                let mut user_mut = self.core.user_mut();
+                let favs = &mut user_mut.profile_mut().ui.favorite_primitives;
+                if favs.iter().any(|t| t == &tool_id) {
+                    favs.retain(|t| t != &tool_id);
+                } else {
+                    favs.push(tool_id.clone());
+                }
+                drop(user_mut);
+                // Unlike the granularity-star handlers above this ALSO marks
+                // the profile dirty — the favorites vec + bar visibility are
+                // profile.json state, and nothing else guarantees a profile
+                // write after a star click.
+                self.persist_profile();
+                self.autosave_snapshot();
+                return;
+            }
             ChartOutEvent::ReorderGranularity { family, section, from_index, to_index } => {
                 use mlc_core::chart_type::{GranularityFamily, GranularitySection};
                 eprintln!(

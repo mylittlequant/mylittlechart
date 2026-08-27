@@ -447,9 +447,11 @@ impl ChartPanelApp {
         timeframe_native_map: Option<&std::collections::HashMap<String, bool>>,
         footprint_live_only: bool,
         granularity_favorites: &mlc_core::user_profile::GranularityFavorites,
+        favorite_primitives: &[String],
         granularity_edit_render: Option<&mlc_core::chart_type::GranularityEditRender>,
         pin_granularity_favorites: bool,
         granularity_drag_render: Option<&mlc_core::chart_type::GranularityDragRender>,
+        favorites_drag_render: Option<&mlc_core::state::toolbar_state::FavoritesDragRender>,
         split_symbol_compare: bool,
         symbol_quick_search_render: Option<&mlc_core::state::modal_state::SymbolQuickSearchRender>,
         symbol_quick_search: bool,
@@ -463,7 +465,7 @@ impl ChartPanelApp {
         let preset_summaries: Vec<mlc_core::PresetSummary> = presets
             .map(preset_to_summary)
             .collect();
-        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &preset_summaries, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, split_symbol_compare, symbol_quick_search_render, symbol_quick_search, active_exchange, active_account_type, suppress_chart_controls, false)
+        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &preset_summaries, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, favorite_primitives, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, favorites_drag_render, split_symbol_compare, symbol_quick_search_render, symbol_quick_search, active_exchange, active_account_type, suppress_chart_controls, false)
     }
 
     /// Render the trading container's EMBEDDED header toolbar (owner spec
@@ -523,9 +525,11 @@ impl ChartPanelApp {
             timeframe_native_map,
             false,                     // footprint_live_only
             granularity_favorites,
+            &[],                       // favorite_primitives (no drawing flyouts here)
             granularity_edit_render,
             pin_granularity_favorites,
             granularity_drag_render,
+            None,                      // favorites_drag_render (no favorites bar here)
             false,                     // split_symbol_compare
             symbol_quick_search_render,
             symbol_quick_search,
@@ -583,9 +587,11 @@ impl ChartPanelApp {
             None,                      // timeframe_native_map
             false,                     // footprint_live_only
             &neutral_favs,
+            &[],                       // favorite_primitives (no drawing flyouts here)
             None,                      // granularity_edit_render
             false,                     // pin_granularity_favorites
             None,                      // granularity_drag_render
+            None,                      // favorites_drag_render (no favorites bar here)
             false,                     // split_symbol_compare
             symbol_quick_search_render,
             symbol_quick_search,

@@ -130,6 +130,19 @@ pub fn save_persistent_state(chart: &mut ChartApp) {
         mlc_core::InlineDockEdge::Top => "Top".to_string(),
         mlc_core::InlineDockEdge::Free => "Free".to_string(),
     });
+    // Favorites quick-pick bar position + visibility (favorite-primitives
+    // arc) — same carry as the inline bar above. The `favorite_primitives`
+    // vec itself needs no explicit line: `profile` above is a clone of the
+    // live core profile, which `ToggleFavoritePrimitive` mutates in place.
+    let fav = &chart.panel_app.toolbar_state.favorites_bar;
+    profile.ui.favorites_bar_x = Some(fav.x);
+    profile.ui.favorites_bar_y = Some(fav.y);
+    profile.ui.favorites_bar_dock = Some(match fav.dock_edge {
+        mlc_core::InlineDockEdge::Bottom => "Bottom".to_string(),
+        mlc_core::InlineDockEdge::Top => "Top".to_string(),
+        mlc_core::InlineDockEdge::Free => "Free".to_string(),
+    });
+    profile.ui.favorites_bar_visible = chart.panel_app.toolbar_state.favorites_bar_visible;
     profile.domain.notification_settings =
         chart.panel_app.alert_settings_state.notification_settings.clone();
 

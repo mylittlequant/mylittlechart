@@ -2640,6 +2640,54 @@ impl ChartApp {
             }
         }
 
+        // === Floating favorites bar drag start (favorite-primitives arc) ===
+        // No name label here — drag by the bar background, the leading grip,
+        // or the empty-state placeholder slot; tool items are clickable
+        // buttons (their press is recorded as a possible drag-OUT below).
+        if !self.panel_app.toolbar_state.favorites_bar.dragging {
+            if let Some(bar_rect) = self.last_favorites_bar_rect {
+                let fav_zone = live_hover.as_deref().and_then(|h| h.strip_prefix("fav:"));
+                let on_bar_chrome = matches!(fav_zone, Some("__bg__"))
+                    || fav_zone == Some(mlc_core::toolbar::FAVORITES_BAR_GRIP_ITEM_ID)
+                    || fav_zone == Some(mlc_core::toolbar::FAVORITES_BAR_EMPTY_ITEM_ID);
+                if on_bar_chrome {
+                    self.panel_app.toolbar_state.favorites_bar.start_drag(x, y, &bar_rect);
+                    self.ui_drag_active = true;
+                    eprintln!("[ChartApp] favorites bar drag started");
+                    return false;
+                }
+            }
+        }
+
+        // === Favorites-bar item drag-OUT pending (favorite-primitives arc) ===
+        // Press on a `fav:{tool_id}` tool item: record only — promotion to an
+        // actual drag happens in `on_drag_move` past the 5px threshold so a
+        // plain click still reaches `on_click` (tool select) unchanged.
+        // Mirrors the watchlist drag-reorder pending pattern (no early
+        // return: the rest of the press flow must run normally).
+        if let Some(hover) = live_hover.as_deref() {
+            if let Some(fav_id) = hover.strip_prefix("fav:") {
+                if fav_id != "__bg__"
+                    && fav_id != mlc_core::toolbar::FAVORITES_BAR_GRIP_ITEM_ID
+                    && fav_id != mlc_core::toolbar::FAVORITES_BAR_EMPTY_ITEM_ID
+                    && fav_id != mlc_core::toolbar::FAVORITES_BAR_ADD_ITEM_ID
+                {
+                    self.fav_item_drag_pending = Some((fav_id.to_string(), x, y));
+                }
+            }
+            // === Drawing-tool group button drag-IN pending (favorites arc) ===
+            // Press on a left-toolbar drawing flyout button (`dtb:{group}`):
+            // record only. The group button's activation fires on RELEASE
+            // (click), so nothing needs undoing at press time — a promoted
+            // drag suppresses that release-click instead (see
+            // `dispatch_panel_click`'s toolbar branch).
+            if let Some(group_id) = hover.strip_prefix("dtb:") {
+                if mlc_core::toolbar::DRAWING_FLYOUT_IDS.contains(&group_id) {
+                    self.fav_group_drag_pending = Some((group_id.to_string(), x, y));
+                }
+            }
+        }
+
         // === Slider drag start — must come BEFORE the modal guard ===
         // Scrollbar handle drags are now handled via InputCoordinator registration.
         // Track clicks remain manual (need geometry from frame_result).
@@ -4005,6 +4053,57 @@ impl ChartApp {
             return;
         }
 
+        // === Floating favorites bar drag move (favorite-primitives arc) ===
+        if self.panel_app.toolbar_state.favorites_bar.dragging {
+            let panel_layout = mlc_app_layout::panel_app::ChartPanelLayout::compute(
+                &mlc_core::LayoutRect::new(0.0, 0.0, self.width as f64, self.height as f64),
+                &self.panel_app.toolbar_config,
+            );
+            let bar_width = self.last_favorites_bar_rect.map(|r| r.width).unwrap_or(40.0);
+            let sidebar_w = self.sidebar_state.right_width();
+            mlc_app_layout::panel_app::floating_inline_update_drag(
+                &mut self.panel_app.toolbar_state.favorites_bar,
+                x, y,
+                &panel_layout,
+                bar_width,
+                sidebar_w,
+            );
+            return;
+        }
+
+        // === Favorites item drag-OUT / group drag-IN (favorite-primitives
+        // arc) — promote pending presses past the shell's 5px click
+        // threshold (same value `dispatch.rs` uses to gate `on_click`), then
+        // track the cursor for the render's floating icon. ===
+        if let Some((tool_id, sx, sy)) = self.fav_item_drag_pending.take() {
+            let dist = ((x - sx).powi(2) + (y - sy).powi(2)).sqrt();
+            if dist >= 5.0 {
+                self.fav_item_drag = Some((tool_id, x, y));
+                eprintln!("[ChartApp] favorites item drag started: {}", self.fav_item_drag.as_ref().unwrap().0);
+            } else {
+                // Not yet past the threshold — keep the pending press.
+                self.fav_item_drag_pending = Some((tool_id, sx, sy));
+            }
+        }
+        if let Some((ref mut tool_id, ref mut cx, ref mut cy)) = self.fav_item_drag {
+            let _ = tool_id;
+            *cx = x;
+            *cy = y;
+            return;
+        }
+        if let Some((group_id, sx, sy)) = self.fav_group_drag_pending.take() {
+            let dist = ((x - sx).powi(2) + (y - sy).powi(2)).sqrt();
+            if dist >= 5.0 {
+                eprintln!("[ChartApp] favorites group drag started: {}", group_id);
+                self.fav_group_drag = Some(group_id);
+            } else {
+                self.fav_group_drag_pending = Some((group_id, sx, sy));
+            }
+        }
+        if self.fav_group_drag.is_some() {
+            return;
+        }
+
         // === Scrollbar drag move ===
         if self.panel_app.chart_settings_state.scroll.is_dragging {
             if let Some(ref result) = self.frame_result {
@@ -4447,6 +4546,67 @@ impl ChartApp {
         // click routing below, unchanged). ───────────────────────────────
         self.granularity_drag_pending = None;
 
+        // ── End favorites-bar item drag-out (favorite-primitives arc):
+        // release OUTSIDE the bar rect removes the tool from favorites (the
+        // same `ToggleFavoritePrimitive` path the flyout stars use); release
+        // INSIDE the bar cancels — no remove, no select (the click path is
+        // suppressed in `dispatch_panel_click` while the drag is live).
+        // Pending presses that never crossed 5px fall through to the normal
+        // click routing, unchanged (mirrors `granularity_drag_pending`). ───
+        self.fav_item_drag_pending = None;
+        self.fav_group_drag_pending = None;
+        if let Some((tool_id, cx, cy)) = self.fav_item_drag.take() {
+            let over_bar = self.last_favorites_bar_rect
+                .map(|r| r.contains(cx, cy))
+                .unwrap_or(false);
+            if !over_bar {
+                eprintln!("[ChartApp] favorites item dropped outside bar — removing: {}", tool_id);
+                self.process_chart_out_event(
+                    mlc_core::events::ChartOutEvent::ToggleFavoritePrimitive { tool_id }
+                );
+            } else {
+                eprintln!("[ChartApp] favorites item drag cancelled (dropped inside bar): {}", tool_id);
+            }
+            return;
+        }
+
+        // ── End drawing-tool group-button drag-in (favorite-primitives arc):
+        // release over the favorites bar adds the group's resolved tool;
+        // release anywhere else is a no-op (the suppressed release-click
+        // already did nothing — see `dispatch_panel_click`). ──────────────
+        if let Some(group_id) = self.fav_group_drag.take() {
+            let over_bar = self.last_favorites_bar_rect
+                .map(|r| r.contains(x, y))
+                .unwrap_or(false);
+            if over_bar && self.panel_app.toolbar_state.favorites_bar_visible {
+                // Tool resolution: the group button's quick-select remembered
+                // tool first (this is the tool the button's own first click
+                // would activate); fall back to the active tool when this
+                // group is the primed one. Neither -> no-op.
+                let tb = &self.panel_app.toolbar_state;
+                let tool_id = tb.quick_select_memory.get(&group_id).map(|(t, _)| t.clone())
+                    .or_else(|| {
+                        if tb.primed_id.as_deref() == Some(group_id.as_str()) {
+                            tb.active_tool_id.clone()
+                        } else {
+                            None
+                        }
+                    });
+                if let Some(tool_id) = tool_id {
+                    // Add-only: dropping an ALREADY-favorited tool is a no-op,
+                    // not a toggle-off (`ToggleFavoritePrimitive` flips).
+                    let already = self.core.user().profile().ui.favorite_primitives.contains(&tool_id);
+                    if !already {
+                        eprintln!("[ChartApp] dragged into favorites bar: {} -> {}", group_id, tool_id);
+                        self.process_chart_out_event(
+                            mlc_core::events::ChartOutEvent::ToggleFavoritePrimitive { tool_id }
+                        );
+                    }
+                }
+            }
+            return;
+        }
+
         // ── End granularity row drag-reorder: apply the reorder then clear
         // drag state (owner spec 2026-07-16 items 2+3) — mirrors the
         // watchlist modal's drag-reorder-end block exactly. ───────────────
@@ -4864,6 +5024,14 @@ impl ChartApp {
             return;
         }
 
+        // === Floating favorites bar drag end (favorite-primitives arc) ===
+        if self.panel_app.toolbar_state.favorites_bar.dragging {
+            self.panel_app.toolbar_state.favorites_bar.end_drag();
+            eprintln!("[ChartApp] favorites bar drag ended");
+            self.persist_profile();
+            return;
+        }
+
         // === Scrollbar drag end ===
         if self.panel_app.chart_settings_state.scroll.is_dragging {
             self.panel_app.chart_settings_state.scroll.end_drag();
@@ -5207,6 +5375,7 @@ impl ChartApp {
         self.trading_header_tb.hovered_dropdown_item = None;
         self.panel_app.toolbar_state.hovered_inline_id = None;
         self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
+        self.panel_app.toolbar_state.hovered_favorites_id = None;
         self.standalone_panels.watchlist_modal.hovered_widget = None;
         self.panel_app.clock_popup_state.hovered_item = None;
         // Reset agent/slot hover highlights each frame; re-set below if still hovering.
@@ -5247,6 +5416,12 @@ impl ChartApp {
                     self.panel_app.toolbar_state.hovered_inline_id = Some(item_id.to_string());
                     // Clear inline dropdown hover when moving back to toolbar items
                     self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
+                }
+            } else if let Some(item_id) = id_str.strip_prefix("fav:") {
+                // Favorites quick-pick bar hover (favorite-primitives arc) —
+                // background/placeholder zones carry no highlight.
+                if item_id != "__bg__" && item_id != mlc_core::toolbar::FAVORITES_BAR_EMPTY_ITEM_ID {
+                    self.panel_app.toolbar_state.hovered_favorites_id = Some(item_id.to_string());
                 }
             } else if id_str.starts_with("dropdown:") && id_str != "dropdown:__bg__" {
                 // "dropdown:{dropdown_id}:{item_id}" → store the item_id part

@@ -2104,6 +2104,11 @@ impl App<'_> {
         // (Phase C); AppState for theme + device identity (the three §2.3
         // survivor fields).
         profile.domain.connector_enabled = self.core.user().connector_enabled().clone();
+        // Favorite drawing tools (favorite-primitives arc) live on the shared
+        // core profile (mutated in-place by `ToggleFavoritePrimitive`) —
+        // carry them like `connector_enabled` above so a save never clobbers
+        // the live vec with a stale `self.profile` copy.
+        profile.ui.favorite_primitives = self.core.user().profile().ui.favorite_primitives.clone();
         profile.ui.active_theme = self.app_state.theme_preset.clone();
         profile.ui.device_name = self.app_state.device_name.clone();
         profile.domain.app_version = self.app_state.app_version.clone();
@@ -2123,6 +2128,19 @@ impl App<'_> {
                     mlc_core::InlineDockEdge::Free => "Free",
                 };
                 profile.ui.inline_bar_dock = Some(dock_str.to_string());
+                // Favorites quick-pick bar position + visibility (favorite-
+                // primitives arc) — same preferred-window carry as the
+                // inline bar above.
+                let fav = &pw.chart.panel_app.toolbar_state.favorites_bar;
+                profile.ui.favorites_bar_x = Some(fav.x);
+                profile.ui.favorites_bar_y = Some(fav.y);
+                let fav_dock_str = match fav.dock_edge {
+                    mlc_core::InlineDockEdge::Bottom => "Bottom",
+                    mlc_core::InlineDockEdge::Top => "Top",
+                    mlc_core::InlineDockEdge::Free => "Free",
+                };
+                profile.ui.favorites_bar_dock = Some(fav_dock_str.to_string());
+                profile.ui.favorites_bar_visible = pw.chart.panel_app.toolbar_state.favorites_bar_visible;
             }
         }
 
