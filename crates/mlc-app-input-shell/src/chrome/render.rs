@@ -3,8 +3,14 @@
 //! Shared by both the native (vello) shell and the web (canvas2d) shell.
 //! Platform-neutral types and geometry logic live in `chrome::types` / `chrome::logic`.
 
+use uzor::WidgetId;
+use uzor::types::Rect as WidgetRect;
 use uzor::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
+use mlc_core::engine::render::RenderContext as MlcRenderContext;
 use mlc_core::state::icons::icon_svg;
+use mlc_app_layout::ui::widgets::{
+    draw_input, draw_input_cursor, InputConfig, WidgetState, WidgetTheme,
+};
 
 use super::types::{
     CHROME_HEIGHT, ChromeColors, ChromeContextMenu, ChromeFlavor, ChromeHit, ChromeState,
@@ -31,6 +37,8 @@ const TAB_LEFT_MARGIN: f64 = 4.0;
 const TAB_GAP: f64 = 1.0;
 const TAB_PADDING_H: f64 = 12.0;
 const TAB_CLOSE_SIZE: f64 = 16.0;
+/// Width of the hover-revealed rename-pencil zone inside a tab.
+const TAB_RENAME_SIZE: f64 = 16.0;
 
 const CONTEXT_MENU_WIDTH: f64 = 160.0;
 const CONTEXT_MENU_ITEM_HEIGHT: f64 = 28.0;
@@ -126,11 +134,31 @@ impl ButtonPositions {
 /// Pre-compute tab widths using the render context for accurate text measurement.
 ///
 /// Must be called once per frame before `render`.
-pub fn update_tab_widths(ctx: &mut dyn RenderContext, state: &mut ChromeState) {
+///
+/// A tab being renamed inline sizes to the LIVE field text, so the tab grows
+/// as the name is typed instead of clipping it. (Siblings never move out of
+/// the way — tabs to the right may be covered while typing; a rebalancing
+/// mechanic is a separate, planned piece of work.)
+pub fn update_tab_widths(
+    ctx: &mut dyn RenderContext,
+    state: &mut ChromeState,
+    input_coord: &std::cell::RefCell<uzor::input::InputCoordinator>,
+) {
     ctx.set_font("12px sans-serif");
     state.tab_widths.clear();
-    for tab in &state.tabs {
-        let text_w = ctx.measure_text(&tab.name);
+    for (i, tab) in state.tabs.iter().enumerate() {
+        let live_name;
+        let text = if state.renaming_tab == Some(i) {
+            live_name = input_coord
+                .borrow()
+                .text_fields()
+                .text(&WidgetId::from(mlc_app::text_input::CHROME_TAB_RENAME))
+                .to_string();
+            live_name.as_str()
+        } else {
+            tab.name.as_str()
+        };
+        let text_w = ctx.measure_text(text);
         let w = TAB_PADDING_H + text_w + TAB_CLOSE_SIZE + TAB_PADDING_H;
         state.tab_widths.push(w);
     }
@@ -142,7 +170,20 @@ pub fn update_tab_widths(ctx: &mut dyn RenderContext, state: &mut ChromeState) {
 ///
 /// `skeleton_mode` suppresses tabs and right-side icon rendering (used while
 /// the window is being resized on native). On Web pass `false`.
-pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skeleton_mode: bool) {
+///
+/// `input_coord` is the chart's shared input coordinator: while a tab is
+/// being renamed inline (`state.renaming_tab`) the tab's live text / caret /
+/// selection are read from its `TextFieldStore` and the field's geometry is
+/// pushed back via `update_field` (the `render_inline_prim_text_editor`
+/// division of labor — render pushes geometry, the store's generic pointer
+/// handling consumes it).
+pub fn render(
+    ctx: &mut dyn MlcRenderContext,
+    state: &ChromeState,
+    width: f64,
+    skeleton_mode: bool,
+    input_coord: &std::cell::RefCell<uzor::input::InputCoordinator>,
+) {
     let c = &state.colors;
     let bp = ButtonPositions::compute(width, state.flavor);
 
@@ -171,21 +212,115 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
                 ctx.fill_rect(tab_left, CHROME_HEIGHT - 3.0, tw, 2.0);
             } else if state.hovered == ChromeHit::Tab(i)
                    || state.hovered == ChromeHit::TabClose(i)
+                   || state.hovered == ChromeHit::TabRename(i)
             {
                 ctx.set_fill_color(&c.button_hover);
                 ctx.fill_rect(tab_left, CHROME_HEIGHT - 3.0, tw, 2.0);
             }
 
+            if state.renaming_tab == Some(i) {
+                // Inline rename through the shared input widget — the same
+                // text/selection rendering as every other field in the app,
+                // with no box (chrome = false): the tab itself is the frame.
+                // Pencil and close × are hidden while editing (and hit-tested
+                // away in logic.rs).
+                let wid = WidgetId::from(mlc_app::text_input::CHROME_TAB_RENAME);
+                // The store owns the blink cadence (same `cursor_visible`
+                // the modal fields read); a coarse wall-clock read is enough
+                // for it (same trade-off as `granularity_edit_render`).
+                let now_ms = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(0);
+                let (live_text, text_cursor, selection, caret_visible) = {
+                    let coord = input_coord.borrow();
+                    let store = coord.text_fields();
+                    (
+                        store.text(&wid).to_string(),
+                        store.cursor(&wid),
+                        store.selection_range(&wid),
+                        store.cursor_visible(now_ms),
+                    )
+                };
+                // Same ink as the tab name itself — the rename is already
+                // announced by the caret and the missing ×; recoloring the
+                // text on top of that reads as a glitch.
+                let field_theme = WidgetTheme {
+                    text_normal: c.icon_normal.clone(),
+                    accent: c.tab_accent.clone(),
+                    ..WidgetTheme::default()
+                };
+                let config = InputConfig {
+                    value: live_text,
+                    focused: true,
+                    cursor: text_cursor,
+                    selection_start: selection.map(|(s, _)| s),
+                    selection_end: selection.map(|(_, e)| e),
+                    font_size: 12.0,
+                    padding: 0.0,
+                    radius: 0.0,
+                    chrome: false,
+                    ..Default::default()
+                };
+                let field_rect = WidgetRect::new(
+                    tab_left + TAB_PADDING_H,
+                    2.0,
+                    (tw - TAB_PADDING_H - TAB_CLOSE_SIZE).max(20.0),
+                    CHROME_HEIGHT - 4.0,
+                );
+                let result = draw_input(ctx, &config, WidgetState::Normal, field_rect, &field_theme);
+                if caret_visible {
+                    draw_input_cursor(
+                        ctx,
+                        result.cursor_x,
+                        result.cursor_y,
+                        result.cursor_height,
+                        &c.icon_normal,
+                    );
+                }
+                // Push fresh geometry so a click inside the tab places the
+                // caret. Store coords are chart-local (the chart's origin is
+                // just below the chrome strip), hence the negative y.
+                input_coord.borrow_mut().text_fields_mut().update_field(
+                    &wid,
+                    (tab_left, -CHROME_HEIGHT, tw, CHROME_HEIGHT),
+                    result.char_x_positions,
+                );
+            } else {
             {
-                let text_x = tab_left + TAB_PADDING_H;
+                // The tab name is CENTERED in the tab body; the pencil (left)
+                // and close × (right) are hover-revealed overlays painted on
+                // top of it, so the label never shifts when they appear.
                 ctx.set_font("12px sans-serif");
+                let text_w = ctx.measure_text(&tab.name);
+                let text_x = tab_left + (tw - text_w).max(0.0) / 2.0;
                 ctx.set_fill_color(&c.icon_normal);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.fill_text(&tab.name, text_x, CHROME_HEIGHT / 2.0);
             }
 
-            {
+            // Rename pencil at the tab's LEFT edge, drawn only while the
+            // mouse is directly on its spot (logic.rs hit-tests the zone as
+            // TabRename unconditionally so the hover can register at all).
+            // It paints over the start of the tab name where it appears.
+            if state.hovered == ChromeHit::TabRename(i) {
+                let icon_size = 14.0;
+                ctx.set_fill_color(&c.background);
+                ctx.fill_rect(tab_left, 0.0, TAB_RENAME_SIZE + 6.0, CHROME_HEIGHT);
+                let icon_x = tab_left + 2.0 + (TAB_RENAME_SIZE - icon_size) / 2.0;
+                let icon_y = (CHROME_HEIGHT - icon_size) / 2.0;
+                if let Some(svg) = icon_svg("pencil") {
+                    draw_svg_icon(ctx, svg, icon_x, icon_y, icon_size, icon_size, &c.icon_hover);
+                }
+            }
+
+            // Close × at the RIGHT edge, drawn only while the tab is hovered
+            // at all; paints over the name beneath it like the pencil does.
+            let tab_hovered = state.hovered == ChromeHit::Tab(i)
+                || state.hovered == ChromeHit::TabClose(i)
+                || state.hovered == ChromeHit::TabRename(i);
+            if tab_hovered {
                 let close_rect_left = tab_right - TAB_CLOSE_SIZE;
                 let icon_size = 14.0;
                 let icon_color = if state.hovered == ChromeHit::TabClose(i) {
@@ -193,11 +328,14 @@ pub fn render(ctx: &mut dyn RenderContext, state: &ChromeState, width: f64, skel
                 } else {
                     &c.icon_normal
                 };
+                ctx.set_fill_color(&c.background);
+                ctx.fill_rect(close_rect_left - 2.0, 0.0, TAB_CLOSE_SIZE + 2.0, CHROME_HEIGHT);
                 let icon_x = close_rect_left + (TAB_CLOSE_SIZE - icon_size) / 2.0;
                 let icon_y = (CHROME_HEIGHT - icon_size) / 2.0;
                 if let Some(svg) = icon_svg("close") {
                     draw_svg_icon(ctx, svg, icon_x, icon_y, icon_size, icon_size, icon_color);
                 }
+            }
             }
 
             cursor = tab_right + TAB_GAP;

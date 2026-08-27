@@ -9,6 +9,10 @@ pub struct InputState {
     pub drag_start_pos:          Option<(f64, f64)>,
     pub last_drag_pos:           Option<(f64, f64)>,
     pub last_click:              Option<(web_time::Instant, f64, f64)>,
+    /// Last left-press on a chrome tab (instant, tab index, x, y) — used for
+    /// tab double-click detection in the chrome press path, which returns
+    /// before the chart-area `last_click` logic is reached.
+    pub last_tab_click:          Option<(web_time::Instant, usize, f64, f64)>,
     pub modifiers:               NormalizedModifiers,
     /// Portable flag; `#[cfg(target_os = "windows")]` polling consumer stays in vello shell.
     pub drawing_capture:         bool,
@@ -31,6 +35,7 @@ impl Default for InputState {
             drag_start_pos:         None,
             last_drag_pos:          None,
             last_click:             None,
+            last_tab_click:         None,
             modifiers:              NormalizedModifiers::default(),
             drawing_capture:        false,
             last_sidebar_hover_row: None,

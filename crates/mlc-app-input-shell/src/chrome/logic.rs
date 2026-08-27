@@ -25,6 +25,8 @@ const CLOUD_ICON_BUTTON_WIDTH: f64 = 30.0;
 const TAB_LEFT_MARGIN: f64 = 4.0;
 const TAB_GAP: f64 = 1.0;
 const TAB_CLOSE_SIZE: f64 = 16.0;
+/// Width of the hover-revealed rename-pencil zone inside a tab.
+const TAB_RENAME_SIZE: f64 = 16.0;
 const TAB_PADDING_H: f64 = 12.0;
 
 const CONTEXT_MENU_WIDTH: f64 = 160.0;
@@ -150,8 +152,27 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
         for (i, tw) in state.tab_widths.iter().enumerate() {
             let tab_right = cursor + tw;
             if x >= cursor && x < tab_right {
-                if x >= tab_right - TAB_CLOSE_SIZE {
+                // While a tab is being renamed inline its whole body is the
+                // text field — the pencil and close × are hidden (render.rs),
+                // so they are not hit-tested either.
+                if state.renaming_tab == Some(i) {
+                    return ChromeHit::Tab(i);
+                }
+                // Close × is drawn only while the tab is hovered (render.rs),
+                // so its zone is hit-tested only then — an invisible button
+                // must not eat clicks. The hover always registers one frame
+                // earlier than the click, so this never misfires.
+                let tab_hovered = matches!(state.hovered,
+                    ChromeHit::Tab(h) | ChromeHit::TabClose(h) | ChromeHit::TabRename(h) if h == i);
+                if tab_hovered && x >= tab_right - TAB_CLOSE_SIZE {
                     return ChromeHit::TabClose(i);
+                }
+                // The rename pencil lives at the tab's LEFT edge and is drawn
+                // only while the mouse is directly on it (render.rs gates on
+                // hovered == TabRename) — so the zone is hit-tested
+                // unconditionally, otherwise the hover could never register.
+                if x < cursor + TAB_RENAME_SIZE {
+                    return ChromeHit::TabRename(i);
                 }
                 return ChromeHit::Tab(i);
             }

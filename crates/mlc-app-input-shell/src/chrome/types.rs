@@ -126,6 +126,8 @@ pub enum ChromeHit {
     DownloadButton,
     Tab(usize),
     TabClose(usize),
+    /// Hover-revealed rename pencil inside a tab (left of the close ×).
+    TabRename(usize),
     NewTabButton,
     NewWindowButton,
     ResizeTop,
@@ -149,6 +151,11 @@ pub struct ChromeState {
     pub tab_widths: Vec<f64>,
     /// Right-click context menu state.
     pub context_menu: ChromeContextMenu,
+    /// Index of the tab being renamed inline (double-click flow), if any.
+    /// While set, that tab renders as a text field (live text lives in the
+    /// shared `TextFieldStore` under `mlc_app::text_input::CHROME_TAB_RENAME`)
+    /// and its pencil / close × are neither drawn nor hit-tested.
+    pub renaming_tab: Option<usize>,
     /// Tooltip state for chrome button hover tooltips.
     pub tooltip: TooltipState,
     /// Which buttons to render / hit-test. Default = `Native`.
@@ -165,6 +172,7 @@ impl ChromeState {
             tabs:         Vec::new(),
             tab_widths:   Vec::new(),
             context_menu: ChromeContextMenu::new(),
+            renaming_tab: None,
             tooltip:      TooltipState::new(),
             flavor:       ChromeFlavor::default(),
         }

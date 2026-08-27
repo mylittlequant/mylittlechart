@@ -1125,6 +1125,11 @@ pub struct ChartApp {
     /// across windows (process-local, cleared on restart).
     pub(crate) primitive_clipboard: Option<PrimitiveClipboard>,
 
+    /// Active inline on-chart text edit of a placed text primitive
+    /// (double-click arc, 2026-08-26) — see [`InlinePrimTextEdit`]. RAM-only,
+    /// never persisted: an in-progress edit belongs to the live frame.
+    pub(crate) inline_prim_text_edit: Option<InlinePrimTextEdit>,
+
     /// Embedded chart in the trading container's CENTER region
     /// (chart-in-container arc, 2026-07-26): PanelId of the trading
     /// container → ChartId of its aux `ChartContainer`. The aux container
@@ -1517,6 +1522,20 @@ pub(crate) struct PrimitiveClipboard {
     pub points: Vec<(i64, f64)>,
     pub data: mlc_core::drawing::PrimitiveData,
     pub paste_count: u32,
+}
+
+/// Active inline on-chart text edit of a placed text primitive
+/// (inline-prim-text arc, owner ask 2026-08-26) — started by double-click,
+/// committed by Enter / click-away, cancelled by Escape. The editable text
+/// itself lives in the shared `TextFieldStore` under
+/// `text_input::PRIM_INLINE_TEXT`; this is only the identity of what is
+/// being edited. `pane` is `None` for the main chart, `Some(instance_id)`
+/// for a sub-pane (same convention as `DrawingManager::current_pane`).
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct InlinePrimTextEdit {
+    pub bid: mlc_core::BubbleId,
+    pub prim_id: u64,
+    pub pane: Option<u64>,
 }
 
 /// Pending granularity row drag — set on mousedown over a reorderable row,
@@ -3159,6 +3178,7 @@ impl ChartApp {
             trading_header_tb: mlc_core::state::ChartToolbarState::default(),
             last_trading_header_result: None,
             primitive_clipboard: None,
+            inline_prim_text_edit: None,
             trading_center_charts: std::collections::HashMap::new(),
             trading_center_rect: None,
             trading_center_input: DefaultChartInputHandler::new(),
@@ -3581,6 +3601,7 @@ impl ChartApp {
             trading_header_tb: mlc_core::state::ChartToolbarState::default(),
             last_trading_header_result: None,
             primitive_clipboard: None,
+            inline_prim_text_edit: None,
             trading_center_charts: std::collections::HashMap::new(),
             trading_center_rect: None,
             trading_center_input: DefaultChartInputHandler::new(),
@@ -4153,6 +4174,7 @@ impl ChartApp {
             trading_header_tb: mlc_core::state::ChartToolbarState::default(),
             last_trading_header_result: None,
             primitive_clipboard: None,
+            inline_prim_text_edit: None,
             trading_center_charts: std::collections::HashMap::new(),
             trading_center_rect: None,
             trading_center_input: DefaultChartInputHandler::new(),
@@ -5038,6 +5060,27 @@ impl ChartApp {
         self.process_chart_out_event(mlc_core::events::ChartOutEvent::OpenChartBrowser);
     }
 
+    /// Open the rename modal for the currently active preset/tab.
+    ///
+    /// Fires `OpenPresetRename`, which shows the preset-name input modal in
+    /// rename mode for the active preset. Callers targeting a non-active tab
+    /// must `load_preset` it first.
+    pub fn open_preset_rename(&mut self) {
+        self.process_chart_out_event(mlc_core::events::ChartOutEvent::OpenPresetRename);
+    }
+
+    /// Rename a preset by its id (no modal, no activation needed).
+    ///
+    /// Fires `RenamePreset`, which targets the preset id directly — the
+    /// preset does NOT have to be the active one. Used by the chrome tab
+    /// strip's inline rename (double-click a tab).
+    pub fn rename_preset(&mut self, preset_id: &str, new_name: &str) {
+        self.process_chart_out_event(mlc_core::events::ChartOutEvent::RenamePreset {
+            id: preset_id.to_string(),
+            new_name: new_name.to_string(),
+        });
+    }
+
     /// Open the chart settings modal.
     pub fn open_settings(&mut self) {
         self.process_chart_out_event(mlc_core::events::ChartOutEvent::OpenChartSettings);
@@ -5479,6 +5522,8 @@ impl ChartApp {
                         Some(overlay_symbol.as_str()),
                         &overlay_tf_name,
                     );
+                    drop(overlay_drawings_guard);
+                    self.render_inline_prim_text_editor(ctx, layout, window, &render_state);
                 }
             }
         } else {
@@ -5597,8 +5642,164 @@ impl ChartApp {
                     Some(single_overlay_symbol.as_str()),
                     &single_overlay_tf_name,
                 );
+                drop(single_drawings_guard);
+                self.render_inline_prim_text_editor(ctx, layout, window, &render_state);
             }
         }
+    }
+
+    /// Draw the inline primitive text editor (inline-prim-text arc,
+    /// 2026-08-26) for the leaf whose overlay is being painted, when the
+    /// active edit belongs to that leaf's bubble: an opaque plate over the
+    /// primitive's anchor showing the `TextFieldStore` field's LIVE text
+    /// with selection highlight + caret, pushing fresh `(rect,
+    /// char_x_positions)` geometry via `update_field` every frame so the
+    /// store's generic `on_drag_start`/`on_drag_move` can place the caret —
+    /// the `draw_oe_field_row` division of labor (render pushes geometry,
+    /// the store consumes it).
+    ///
+    /// The primitive's stored text keeps rendering underneath until commit;
+    /// the plate is sized to cover BOTH the stored and the live text, so
+    /// what the user sees is always the field's content. Anchor comes from
+    /// the primitive's own first `control_points()` handle (chart-local —
+    /// the same space `render_main_chart_primitives` draws selection
+    /// handles in — so the pane origin is added), which for every text
+    /// primitive is the point its text hangs off.
+    fn render_inline_prim_text_editor(
+        &self,
+        ctx: &mut dyn RenderContext,
+        layout: &mlc_core::ExtendedFrameLayout,
+        window: &crate::chart_container::ChartContainer,
+        render_state: &mlc_core::chart::ChartRenderState,
+    ) {
+        use uzor::render::{TextAlign, TextBaseline};
+
+        let edit = match self.inline_prim_text_edit.as_ref() {
+            Some(e) if e.bid == window.current_tag_id => e,
+            _ => return,
+        };
+        let wid = uzor::WidgetId::from(crate::text_input::PRIM_INLINE_TEXT);
+
+        // Anchor in ABSOLUTE screen coords + the primitive's current text
+        // config, read out under a short-lived guard (a read guard held
+        // across the coordinator borrow below would be fine, but there is
+        // no reason to hold it past the reads).
+        let (anchor, stored, font_size, text_color) = {
+            let guard = self.core.drawings();
+            let Some(prim) = guard.primitives(edit.bid).iter().find(|p| p.data().id == edit.prim_id) else {
+                // Primitive went away mid-edit (undo, delete hotkey) — the
+                // edit state self-clears on the next commit/cancel; nothing
+                // to draw.
+                return;
+            };
+            let anchor: Option<(f64, f64)> = match edit.pane {
+                None => {
+                    let chart = &render_state.chart_rect;
+                    let mut vp = render_state.viewport.clone();
+                    vp.chart_width = chart.width;
+                    vp.chart_height = chart.height;
+                    prim.control_points(render_state.bars, &vp, render_state.price_scale)
+                        .first()
+                        .map(|cp| (chart.x + cp.x, chart.y + cp.y))
+                }
+                Some(iid) => {
+                    match layout.sub_panes.iter().find(|pl| pl.instance_id == iid) {
+                        Some(pl) => {
+                            let content = pl.content;
+                            // Same sub-pane scale derivation
+                            // `try_wave_gesture`'s stage 2 uses.
+                            let (price_min, price_max) = window.sub_pane_y_state.get(&iid)
+                                .map(|s| (s.price_min, s.price_max))
+                                .unwrap_or((0.0, 100.0));
+                            let ps = mlc_core::PriceScale::new(price_min, price_max);
+                            let mut vp = render_state.viewport.clone();
+                            vp.chart_width = content.width;
+                            vp.chart_height = content.height;
+                            prim.control_points(render_state.bars, &vp, &ps)
+                                .first()
+                                .map(|cp| (content.x + cp.x, content.y + cp.y))
+                        }
+                        None => None,
+                    }
+                }
+            };
+            let data = prim.data();
+            let t = data.text.as_ref();
+            let stored = t.map(|t| t.content.clone()).unwrap_or_default();
+            let font_size = t.map(|t| t.font_size).unwrap_or(14.0);
+            let text_color = t.and_then(|t| t.color.clone())
+                .unwrap_or_else(|| data.color.stroke.clone());
+            match anchor {
+                Some(a) => (a, stored, font_size, text_color),
+                None => return,
+            }
+        };
+        let (anchor_x, anchor_y) = anchor;
+
+        let (live_text, cursor, selection) = {
+            let coord = self.input_coordinator.borrow();
+            let store = coord.text_fields();
+            (
+                store.text(&wid).to_string(),
+                store.cursor(&wid),
+                store.selection_range(&wid),
+            )
+        };
+
+        ctx.save();
+        let font = format!("{}px sans-serif", font_size as i32);
+        ctx.set_font(&font);
+        let line_height = font_size * 1.2;
+        let stored_lines = stored.lines().count().max(1);
+        let stored_w = stored.lines().map(|l| ctx.measure_text(l)).fold(0.0, f64::max);
+        let live_w = ctx.measure_text(&live_text);
+        let pad = 4.0;
+        let box_w = stored_w.max(live_w) + pad * 2.0;
+        let box_h = line_height * stored_lines as f64 + pad * 2.0;
+        // The stored text renders centered on the anchor with its top AT the
+        // anchor (`PrimitiveText` defaults h_align Center / v_align Start —
+        // see `render_primitive_text`), so the plate covers exactly that
+        // extent.
+        let box_x = anchor_x - box_w / 2.0;
+        let box_y = anchor_y - pad;
+
+        ctx.set_fill_color(&render_state.theme.background);
+        ctx.fill_rect(box_x, box_y, box_w, box_h);
+        ctx.set_stroke_color(&render_state.theme.text);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rect(box_x, box_y, box_w, box_h);
+
+        let text_left = box_x + pad;
+        let text_mid_y = box_y + pad + line_height / 2.0;
+        let char_count = live_text.chars().count();
+        let mut char_x_positions: Vec<f64> = Vec::with_capacity(char_count + 1);
+        for i in 0..=char_count {
+            let slice: String = live_text.chars().take(i).collect();
+            char_x_positions.push(text_left + ctx.measure_text(&slice));
+        }
+
+        if let Some((lo, hi)) = selection {
+            let sel_x0 = char_x_positions.get(lo).copied().unwrap_or(text_left);
+            let sel_x1 = char_x_positions.get(hi).copied().unwrap_or(text_left);
+            ctx.set_fill_color("rgba(41,98,255,0.35)");
+            ctx.fill_rect(sel_x0, box_y + 1.0, (sel_x1 - sel_x0).max(0.0), box_h - 2.0);
+        }
+
+        ctx.set_fill_color(&text_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(&live_text, text_left, text_mid_y);
+
+        let caret_x = char_x_positions.get(cursor).copied().unwrap_or(text_left + live_w);
+        ctx.set_fill_color(&text_color);
+        ctx.fill_rect(caret_x, box_y + pad, 1.5, line_height);
+
+        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+            &wid,
+            (box_x, box_y, box_w, box_h),
+            char_x_positions,
+        );
+        ctx.restore();
     }
 
     /// Pure-rendering pass.

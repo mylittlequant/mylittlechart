@@ -104,8 +104,8 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
             let mut chrome_ctx =
                 VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
-            chrome::update_tab_widths(&mut chrome_ctx, &mut pw.chrome_state);
-            chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64, skeleton_active);
+            chrome::update_tab_widths(&mut chrome_ctx, &mut pw.chrome_state, &pw.chart.input_coordinator);
+            chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64, skeleton_active, &pw.chart.input_coordinator);
         }
 
         // Toolbar dirty-cache
@@ -349,11 +349,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                     None,
                     None,
                 );
-                chrome::update_tab_widths(&mut chrome_ctx, &mut pw.chrome_state);
+                chrome::update_tab_widths(&mut chrome_ctx, &mut pw.chrome_state, &pw.chart.input_coordinator);
                 {
                     let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
                         || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
-                    chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64, skeleton_active);
+                    chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64, skeleton_active, &pw.chart.input_coordinator);
                 }
 
                 // Render chart + toolbar + sidebar at y_offset=CHROME_HEIGHT.
@@ -480,11 +480,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 );
                 cpu_ctx.inner_mut().begin_frame(width, height);
                 // Render chrome at y=0 (no offset).
-                chrome::update_tab_widths(&mut cpu_ctx, &mut pw.chrome_state);
+                chrome::update_tab_widths(&mut cpu_ctx, &mut pw.chrome_state, &pw.chart.input_coordinator);
                 {
                     let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
                         || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
-                    chrome::render(&mut cpu_ctx, &pw.chrome_state, width as f64, skeleton_active);
+                    chrome::render(&mut cpu_ctx, &pw.chrome_state, width as f64, skeleton_active, &pw.chart.input_coordinator);
                 }
                 // Render chart + toolbar + sidebar offset by CHROME_HEIGHT.
                 cpu_ctx.save();
@@ -561,11 +561,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 skia_ctx.set_fill_color("#131722");
                 skia_ctx.fill_rect(0.0, 0.0, width as f64, height as f64);
                 // Render chrome at y=0.
-                chrome::update_tab_widths(&mut skia_ctx, &mut pw.chrome_state);
+                chrome::update_tab_widths(&mut skia_ctx, &mut pw.chrome_state, &pw.chart.input_coordinator);
                 {
                     let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
                         || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
-                    chrome::render(&mut skia_ctx, &pw.chrome_state, width as f64, skeleton_active);
+                    chrome::render(&mut skia_ctx, &pw.chrome_state, width as f64, skeleton_active, &pw.chart.input_coordinator);
                 }
                 skia_ctx.save();
                 skia_ctx.translate(0.0, chrome::CHROME_HEIGHT);
@@ -632,11 +632,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 );
                 hybrid_ctx.inner_mut().begin_frame(width, height);
                 // Render chrome at y=0.
-                chrome::update_tab_widths(&mut hybrid_ctx, &mut pw.chrome_state);
+                chrome::update_tab_widths(&mut hybrid_ctx, &mut pw.chrome_state, &pw.chart.input_coordinator);
                 {
                     let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
                         || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
-                    chrome::render(&mut hybrid_ctx, &pw.chrome_state, width as f64, skeleton_active);
+                    chrome::render(&mut hybrid_ctx, &pw.chrome_state, width as f64, skeleton_active, &pw.chart.input_coordinator);
                 }
                 hybrid_ctx.translate(0.0, chrome::CHROME_HEIGHT);
                 pw.chart.render(&mut hybrid_ctx, frame_time, false);

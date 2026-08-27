@@ -1636,7 +1636,13 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
     }
 
     // ── Measure tab widths ────────────────────────────────────────────────────
-    mlc_app_input_shell::update_tab_widths(&mut ctx, &mut state.borrow_mut().chrome);
+    {
+        let mut st = state.borrow_mut();
+        // Through the RefMut deref the borrow checker can't see chrome/chart
+        // as disjoint fields — reborrow as a plain &mut first.
+        let st = &mut *st;
+        mlc_app_input_shell::update_tab_widths(&mut ctx, &mut st.chrome, &st.chart.input_coordinator);
+    }
 
     // ── Chart render ──────────────────────────────────────────────────────────
     // Translate by CHROME_HEIGHT so chart's local (0,0) is just below the chrome
@@ -1699,7 +1705,7 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
     // ── Chrome render ─────────────────────────────────────────────────────────
     {
         let st = state.borrow();
-        mlc_app_input_shell::render(&mut ctx, &st.chrome, css_w as f64, false);
+        mlc_app_input_shell::render(&mut ctx, &st.chrome, css_w as f64, false, &st.chart.input_coordinator);
         mlc_app_input_shell::render_tooltip(&mut ctx, &st.chrome, css_w as f64, css_h as f64);
         // Toolbar/sidebar-item tooltips (left/top/right/bottom toolbar strips,
         // agent + free-slot sidebar rows) live in the separate `toolbar_tooltip`

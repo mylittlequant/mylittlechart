@@ -100,6 +100,20 @@ pub fn process_event(
         ShellEvent::CursorMoved { x, y } => {
             state.last_mouse_pos = (x, y);
 
+            // Text-select drags are owned by the store (it tracks the drag
+            // itself via `drag_active`). A drag that started on the chrome
+            // strip (inline tab rename) never arms `mouse_pressed`, so the
+            // chart path below never forwards these moves — do it here
+            // whenever the store says a text drag is live.
+            if !state.mouse_pressed {
+                let mut coord = chart.input_coordinator.borrow_mut();
+                if coord.text_fields().drag_active() {
+                    coord.text_fields_mut().on_drag_move(x);
+                    dirty.chart_dirty = true;
+                    return;
+                }
+            }
+
             if state.mouse_pressed {
                 if let Some((last_x, last_y)) = state.last_drag_pos {
                     let dx = x - last_x;
@@ -150,7 +164,8 @@ pub fn process_event(
                     | ChromeHit::MascotButton
                     | ChromeHit::NewWindowButton
                     | ChromeHit::Tab(_)
-                    | ChromeHit::TabClose(_) => ChromeHit::None,
+                    | ChromeHit::TabClose(_)
+                    | ChromeHit::TabRename(_) => ChromeHit::None,
                     other => other,
                 }
             } else {
@@ -209,6 +224,7 @@ pub fn process_event(
                 | ChromeHit::DownloadButton
                 | ChromeHit::Tab(_)
                 | ChromeHit::TabClose(_)
+                | ChromeHit::TabRename(_)
                 | ChromeHit::NewTabButton
                 | ChromeHit::NewWindowButton => {
                     platform.set_cursor_visible(true);
@@ -395,6 +411,15 @@ pub fn process_event(
             dirty.sidebar_dirty_scene = true;
             dirty.chart_dirty         = true;
 
+            // The text-field store owns selection drags end-to-end; every
+            // left release ends one. Chrome-space releases never reach the
+            // chart path (chart_y < 0 drops them), and the chart path
+            // forwards this same call — `on_drag_end` is a no-op when no
+            // text drag is live, so calling it twice is harmless.
+            if button == MouseBtn::Left && !pressed {
+                chart.input_coordinator.borrow_mut().text_fields_mut().on_drag_end();
+            }
+
             if button == MouseBtn::Left && pressed {
                 if chrome_st.context_menu.open {
                     if let Some(action) = chrome::context_menu_hit_test(&chrome_st.context_menu, x, y) {
@@ -416,6 +441,25 @@ pub fn process_event(
 
                 let (win_w, win_h) = platform.window_size();
                 let hit = chrome::hit_test(x, y, win_w as f64, win_h as f64, chrome_st);
+
+                // Inline tab rename routing: a press INSIDE the renaming tab
+                // is caret placement in the shared text store (geometry pushed
+                // by the render hook every frame; store coords are chart-local,
+                // hence the chrome-height shift); a press anywhere else commits
+                // the edit first — mirrors the modal flows' click-away commit —
+                // and then falls through to whatever the press hit.
+                if let Some(rename_idx) = chrome_st.renaming_tab {
+                    if hit == ChromeHit::Tab(rename_idx) {
+                        // The store hit-tests its own field rects — the same
+                        // call the chart-area press path makes for every
+                        // registered text field.
+                        chart.input_coordinator.borrow_mut().text_fields_mut()
+                            .on_drag_start(x, y - state.chrome_height);
+                        return;
+                    }
+                    commit_tab_rename(chart, chrome_st);
+                }
+
                 match hit {
                     ChromeHit::Caption => {
                         platform.drag_window();
@@ -439,12 +483,41 @@ pub fn process_event(
                         let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
                             || chart.panel_app.user_settings_state.show_welcome_wizard;
                         if !skeleton_active {
-                            if let Some(tab) = chrome_st.tabs.get(idx) {
-                                let tab_id = tab.id.clone();
-                                chart.load_preset(&tab_id);
-                                dirty.chart_dirty = true;
-                                platform.request_redraw();
+                            // Tab double-click (same 400 ms / 5 px rule as the
+                            // chart-area path below) opens the rename flow. The
+                            // chart-area `last_click` logic is unreachable for
+                            // chrome hits because every chrome press returns
+                            // early, hence the dedicated `last_tab_click`.
+                            let now = web_time::Instant::now();
+                            let is_double_click = if let Some((last_time, last_idx, last_x, last_y)) = state.last_tab_click {
+                                let elapsed = now.duration_since(last_time).as_millis();
+                                let dist = ((x - last_x).powi(2) + (y - last_y).powi(2)).sqrt();
+                                last_idx == idx && elapsed < 400 && dist < 5.0
+                            } else {
+                                false
+                            };
+                            if is_double_click {
+                                state.last_tab_click = None;
+                                start_tab_rename(chart, chrome_st, idx);
+                            } else {
+                                state.last_tab_click = Some((now, idx, x, y));
+                                if let Some(tab) = chrome_st.tabs.get(idx) {
+                                    let tab_id = tab.id.clone();
+                                    chart.load_preset(&tab_id);
+                                }
                             }
+                            dirty.chart_dirty = true;
+                            platform.request_redraw();
+                        }
+                        return;
+                    }
+                    ChromeHit::TabRename(idx) => {
+                        let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
+                            || chart.panel_app.user_settings_state.show_welcome_wizard;
+                        if !skeleton_active {
+                            open_tab_rename(chart, chrome_st, idx);
+                            dirty.chart_dirty = true;
+                            platform.request_redraw();
                         }
                         return;
                     }
@@ -668,6 +741,24 @@ pub fn process_event(
             dirty.sidebar_dirty_scene = true;
             dirty.chart_dirty         = true;
 
+            // Inline tab rename owns Enter/Escape while active — commit/cancel
+            // in place, no modal. Every other key falls through to the shared
+            // text field (chars via `dispatch_text_char`, editing keys via
+            // `dispatch_text_key_late`, field id CHROME_TAB_RENAME).
+            if chrome_st.renaming_tab.is_some() {
+                match logical {
+                    LogicalKey::Enter => {
+                        commit_tab_rename(chart, chrome_st);
+                        return;
+                    }
+                    LogicalKey::Escape => {
+                        cancel_tab_rename(chart, chrome_st);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
             if state.modifiers.ctrl {
                 match physical {
                     PhysicalKey::KeyS => {
@@ -875,5 +966,75 @@ pub fn process_event(
                 chart.on_char_input(ch);
             }
         }
+    }
+}
+
+/// Activate the tab if it is not active yet, then open the preset-rename
+/// modal for it. `OpenPresetRename` targets the active preset, hence the
+/// `load_preset` first for background tabs.
+fn open_tab_rename(chart: &mut mlc_app::ChartApp, chrome_st: &chrome::ChromeState, idx: usize) {
+    if let Some(tab) = chrome_st.tabs.get(idx) {
+        let tab_id = tab.id.clone();
+        if !tab.active {
+            chart.load_preset(&tab_id);
+        }
+        chart.open_preset_rename();
+    }
+}
+
+/// Start the inline tab rename (double-click flow): seed the shared text
+/// field with the tab's current name, focus it and select-all. A rename
+/// already running on another tab commits first — one rename at a time.
+///
+/// The tab is NOT activated: `RenamePreset` targets the preset id directly
+/// (and the first click of the double-click pair already activated it).
+fn start_tab_rename(chart: &mut mlc_app::ChartApp, chrome_st: &mut chrome::ChromeState, idx: usize) {
+    commit_tab_rename(chart, chrome_st);
+    let Some(tab) = chrome_st.tabs.get(idx) else { return };
+    let seed = tab.name.clone();
+    let wid = uzor::WidgetId::from(mlc_app::text_input::CHROME_TAB_RENAME);
+    {
+        let mut coord = chart.input_coordinator.borrow_mut();
+        let store = coord.text_fields_mut();
+        store.register(wid.clone(), uzor::input::TextFieldConfig::text());
+        store.set_text(&wid, &seed);
+        store.begin_edit(&wid);
+        store.focus(wid.clone());
+        // No select-all: the caret sits at the end (set_text leaves it
+        // there); a full-selection highlight only obscures the tab.
+    }
+    chrome_st.renaming_tab = Some(idx);
+}
+
+/// Commit the active inline tab rename: fire `RenamePreset` for the tab's
+/// own preset id, then blur + unregister the shared text field and clear
+/// the rename state. An empty/whitespace name is dropped without renaming
+/// (same guard as the modal's `text_action_preset_name`).
+fn commit_tab_rename(chart: &mut mlc_app::ChartApp, chrome_st: &mut chrome::ChromeState) {
+    let Some(idx) = chrome_st.renaming_tab.take() else { return };
+    let wid = uzor::WidgetId::from(mlc_app::text_input::CHROME_TAB_RENAME);
+    let text = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+    {
+        let mut coord = chart.input_coordinator.borrow_mut();
+        coord.text_fields_mut().blur();
+        coord.text_fields_mut().unregister(&wid);
+    }
+    if !text.is_empty() {
+        if let Some(tab) = chrome_st.tabs.get(idx) {
+            let tab_id = tab.id.clone();
+            chart.rename_preset(&tab_id, &text);
+        }
+    }
+}
+
+/// Cancel the active inline tab rename WITHOUT committing — Escape's path.
+/// Clears state and blurs DIRECTLY, never routes through commit (the same
+/// hard invariant as `cancel_inline_prim_text_edit`).
+fn cancel_tab_rename(chart: &mut mlc_app::ChartApp, chrome_st: &mut chrome::ChromeState) {
+    if chrome_st.renaming_tab.take().is_some() {
+        let wid = uzor::WidgetId::from(mlc_app::text_input::CHROME_TAB_RENAME);
+        let mut coord = chart.input_coordinator.borrow_mut();
+        coord.text_fields_mut().blur();
+        coord.text_fields_mut().unregister(&wid);
     }
 }
