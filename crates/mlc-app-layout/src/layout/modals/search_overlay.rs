@@ -27,6 +27,7 @@ pub fn render_search_overlay(
     screen: ChartScreenArea,
     modal_state: &ModalState,
     indicator_items: &[IndicatorCatalogItem],
+    favorite_indicators: &[String],
     indicator_sets: &[IndicatorSet],
     hovered_item_id: Option<&str>,
     theme: &FrameTheme,
@@ -184,6 +185,7 @@ pub fn render_search_overlay(
 
             let icon = match filter {
                 IndicatorCategoryFilter::All => Icon::Grid,
+                IndicatorCategoryFilter::Favorites => Icon::Star,
                 IndicatorCategoryFilter::Trend => Icon::TrendLine,
                 IndicatorCategoryFilter::Momentum => Icon::ArrowUp,
                 IndicatorCategoryFilter::Volatility => Icon::FibChannel,
@@ -364,7 +366,16 @@ pub fn render_search_overlay(
         let q = modal_state.search_query.to_lowercase();
         let filtered_items: Vec<&IndicatorCatalogItem> = indicator_items
             .iter()
-            .filter(|item| active_filter.matches(&item.category))
+            .filter(|item| {
+                // Favorites tab filters by profile membership, not category
+                // (`IndicatorCategoryFilter::Favorites::matches` is always
+                // false — category-based matching does not apply there).
+                if active_filter == IndicatorCategoryFilter::Favorites {
+                    favorite_indicators.iter().any(|f| f == &item.type_id)
+                } else {
+                    active_filter.matches(&item.category)
+                }
+            })
             .filter(|item| {
                 q.is_empty()
                     || item.short_name.to_lowercase().contains(&q)
@@ -374,11 +385,12 @@ pub fn render_search_overlay(
             .collect();
 
         if !filtered_items.is_empty() {
-            let (rects, height) = render_indicator_search_results_scrollable_filtered(
+            let (rects, ind_star_rects, height) = render_indicator_search_results_scrollable_filtered(
                 ctx, content_x + modal_padding, results_y, results_width, results_height,
-                &filtered_items, hovered_item_id, scroll_offset, theme, toolbar_theme,
+                &filtered_items, favorite_indicators, hovered_item_id, scroll_offset, theme, toolbar_theme,
             );
             result.item_rects = rects;
+            result.ind_star_rects = ind_star_rects;
             total_content_height = height;
             result.hovered_item_id = hovered_item_id.map(|s| s.to_string());
         } else {
@@ -465,6 +477,18 @@ pub fn render_search_overlay(
     for (symbol, star_rect) in &result.star_rects {
         input_coordinator.register_on_layer(
             format!("modal_search:star:{}", symbol),
+            uzor::types::Rect::new(star_rect.x, star_rect.y, star_rect.width, star_rect.height),
+            uzor::input::Sense::CLICK,
+            &layer_id,
+        );
+    }
+
+    // Register indicator-star zones AFTER item zones — same overlap-priority
+    // reasoning as the symbol star zones above (indicator-search-favorites
+    // arc).
+    for (type_id, star_rect) in &result.ind_star_rects {
+        input_coordinator.register_on_layer(
+            format!("modal_search:indstar:{}", type_id),
             uzor::types::Rect::new(star_rect.x, star_rect.y, star_rect.width, star_rect.height),
             uzor::input::Sense::CLICK,
             &layer_id,
@@ -565,20 +589,36 @@ fn draw_header_toggle(
 }
 
 /// Render indicator search results with scroll support (filtered).
+///
+/// Returns `(item_rects, star_rects, total_height)`. The caller must register
+/// item zones first and star zones second so the trailing star takes priority
+/// over the row's own hit zone (same contract as the symbol-search renderer
+/// below). `favorite_indicators` is the profile's
+/// `ProfileUiSettings::favorite_indicators` — a row in it draws a filled gold
+/// star, a row outside it a hollow one.
 fn render_indicator_search_results_scrollable_filtered(
     ctx: &mut dyn RenderContext,
     x: f64, y: f64, width: f64, viewport_height: f64,
     items: &[&IndicatorCatalogItem],
+    favorite_indicators: &[String],
     hovered_item_id: Option<&str>,
     scroll_offset: f64,
     _theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
-) -> (Vec<(String, WidgetRect)>, f64) {
+) -> (Vec<(String, WidgetRect)>, Vec<(String, WidgetRect)>, f64) {
     use mlc_core::render::{TextAlign, TextBaseline};
+    use mlc_core::engine::render::draw_svg_icon;
     let item_height = 48.0;
+    // Trailing star (indicator-search-favorites arc) — right side, mirrors
+    // the symbol-search watchlist star's colors (filled gold / hollow muted).
+    let star_size = 16.0;
+    let star_pad_right = 8.0;
     let total_height = items.len() as f64 * item_height;
     let mut current_y = y - scroll_offset;
     let mut item_rects = Vec::new();
+    // Star rects returned separately so they can be registered AFTER items,
+    // giving them higher input priority despite the overlapping row hit zone.
+    let mut star_rects: Vec<(String, WidgetRect)> = Vec::new();
     for item in items.iter() {
         if current_y + item_height < y || current_y > y + viewport_height {
             item_rects.push((item.type_id.clone(), WidgetRect::new(x, current_y, width, item_height)));
@@ -588,6 +628,25 @@ fn render_indicator_search_results_scrollable_filtered(
         let is_hovered = hovered_item_id == Some(item.type_id.as_str());
         if is_hovered { ctx.draw_hover_rect(x, current_y, width, item_height, &toolbar_theme.item_bg_active); }
         item_rects.push((item.type_id.clone(), WidgetRect::new(x, current_y, width, item_height)));
+
+        // --- Star icon (right edge) ---
+        // The star hovers on its OWN (`"indstar:{type_id}"` keys) — it toggles
+        // a favorite, the row adds the indicator; sharing the row's highlight
+        // is what would make it read as a second way to do the same thing.
+        let star_x = x + width - star_pad_right - star_size;
+        let star_y = current_y + (item_height - star_size) / 2.0;
+        let is_favorite = favorite_indicators.iter().any(|f| f == &item.type_id);
+        let star_hovered = hovered_item_id == Some(format!("indstar:{}", item.type_id).as_str());
+        let (star_icon, star_color) = if is_favorite {
+            (crate::ui::Icon::StarFilled, toolbar_theme.warning.as_str())
+        } else if star_hovered {
+            (crate::ui::Icon::Star, toolbar_theme.item_text_hover.as_str())
+        } else {
+            (crate::ui::Icon::Star, toolbar_theme.item_text_muted.as_str())
+        };
+        draw_svg_icon(ctx, star_icon.svg(), star_x, star_y, star_size, star_size, star_color);
+        star_rects.push((item.type_id.clone(), WidgetRect::new(star_x, star_y, star_size, star_size)));
+
         ctx.set_font("bold 13px sans-serif");
         ctx.set_fill_color(if is_hovered { &toolbar_theme.item_text_hover } else { &toolbar_theme.item_text });
         ctx.set_text_align(TextAlign::Left);
@@ -609,7 +668,8 @@ fn render_indicator_search_results_scrollable_filtered(
         ctx.set_fill_color(&toolbar_theme.item_text_muted);
         ctx.set_text_align(TextAlign::Right);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(&category_text, x + width - 12.0, current_y + item_height / 2.0);
+        // Shifted left of the trailing star so the two never overlap.
+        ctx.fill_text(&category_text, star_x - 8.0, current_y + item_height / 2.0);
         ctx.set_stroke_color(&toolbar_theme.separator);
         ctx.set_stroke_width(1.0);
         ctx.begin_path();
@@ -618,7 +678,7 @@ fn render_indicator_search_results_scrollable_filtered(
         ctx.stroke();
         current_y += item_height;
     }
-    (item_rects, total_height)
+    (item_rects, star_rects, total_height)
 }
 
 /// Render symbol search results with scroll support.

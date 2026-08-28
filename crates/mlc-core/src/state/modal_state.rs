@@ -385,6 +385,10 @@ pub enum IndicatorCategoryFilter {
     /// All indicators (no filter)
     #[default]
     All,
+    /// Favorite indicators (indicator-search-favorites arc) — membership
+    /// lives on `ProfileUiSettings::favorite_indicators`; the renderer
+    /// filters against that profile list, so `matches()` never applies.
+    Favorites,
     /// Trend indicators (trend lines, moving averages for trend)
     Trend,
     /// Momentum indicators (RSI, Stochastic, etc.)
@@ -410,6 +414,7 @@ impl IndicatorCategoryFilter {
     pub fn label(&self) -> &'static str {
         match self {
             Self::All => "All",
+            Self::Favorites => "Favorites",
             Self::Trend => "Trend",
             Self::Momentum => "Momentum",
             Self::Volatility => "Volatility",
@@ -425,6 +430,7 @@ impl IndicatorCategoryFilter {
     pub fn icon_id(&self) -> &'static str {
         match self {
             Self::All => "grid",
+            Self::Favorites => "star",
             Self::Trend => "trend_line",
             Self::Momentum => "arrow_up",
             Self::Volatility => "fib_channel",
@@ -439,6 +445,7 @@ impl IndicatorCategoryFilter {
     /// Get all filters
     pub fn all() -> &'static [IndicatorCategoryFilter] {
         &[
+            Self::Favorites,
             Self::All,
             Self::Trend,
             Self::Momentum,
@@ -468,6 +475,10 @@ impl IndicatorCategoryFilter {
     pub fn matches(&self, category: &IndicatorCategory) -> bool {
         match self {
             Self::All => true,
+            // Favorites filtering happens in the search-overlay renderer
+            // against the profile's `favorite_indicators` list — category-
+            // based matching does not apply to this filter.
+            Self::Favorites => false,
             Self::Trend => matches!(category, IndicatorCategory::Trend),
             Self::Momentum => matches!(category, IndicatorCategory::Momentum),
             Self::Volatility => matches!(category, IndicatorCategory::Volatility),
@@ -562,10 +573,11 @@ mod tests {
     #[test]
     fn test_indicator_category_filter_all() {
         let filters = IndicatorCategoryFilter::all();
-        // All + 8 categories (the last, TotalOverlay, arrived with the
-        // host-rendered overlay picker and this count was left behind).
-        assert_eq!(filters.len(), 9);
-        assert_eq!(filters[0], IndicatorCategoryFilter::All);
+        // Favorites (indicator-search-favorites arc, top sidebar tab) + All +
+        // 8 categories.
+        assert_eq!(filters.len(), 10);
+        assert_eq!(filters[0], IndicatorCategoryFilter::Favorites);
+        assert_eq!(filters[1], IndicatorCategoryFilter::All);
         assert_eq!(filters[filters.len() - 1], IndicatorCategoryFilter::Other);
     }
 

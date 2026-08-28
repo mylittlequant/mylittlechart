@@ -1060,6 +1060,16 @@ impl ChartApp {
                 self.watchlists_dirty = true;
                 eprintln!("[ChartApp] star toggle queued: {}:{}", sym_part, exchange_part);
             }
+            _ if rest.starts_with("indstar:") => {
+                // Indicator-row favorite star (indicator-search-favorites arc)
+                // — same "stay open, update in place" contract as the
+                // drawing-tool favorite stars (`PRIM_STAR_ACTION_PREFIX`):
+                // toggle membership, do NOT close the modal.
+                let type_id = &rest["indstar:".len()..];
+                self.process_chart_out_event(
+                    mlc_core::events::ChartOutEvent::ToggleIndicatorStar { type_id: type_id.to_string() }
+                );
+            }
             _ if rest.starts_with("item:") => {
                 let item_id = &rest["item:".len()..];
                 eprintln!("[ChartApp] search modal item selected: {}", item_id);

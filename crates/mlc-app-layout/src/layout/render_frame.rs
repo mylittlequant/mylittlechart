@@ -221,6 +221,11 @@ pub struct ModalSearchResult {
     /// stays unchanged in that case). Registered after item rects for the
     /// same overlap-priority reason as `star_rects`.
     pub cmp_rects: Vec<(String, WidgetRect)>,
+    /// Star icon rects for indicator search results (indicator-search-
+    /// favorites arc): (type_id, rect). Stored separately so they can be
+    /// registered after item rects, giving them higher input priority on the
+    /// overlapping row hit zone — same contract as `star_rects` above.
+    pub ind_star_rects: Vec<(String, WidgetRect)>,
     /// Currently hovered item type_id
     pub hovered_item_id: Option<String>,
     /// Total content height (for scrollbar calculation)

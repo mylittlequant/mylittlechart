@@ -2109,6 +2109,10 @@ impl App<'_> {
         // carry them like `connector_enabled` above so a save never clobbers
         // the live vec with a stale `self.profile` copy.
         profile.ui.favorite_primitives = self.core.user().profile().ui.favorite_primitives.clone();
+        // Favorite indicators (indicator-search-favorites arc) — same carry
+        // as `favorite_primitives` above (mutated in-place on the shared core
+        // profile by `ToggleIndicatorStar`).
+        profile.ui.favorite_indicators = self.core.user().profile().ui.favorite_indicators.clone();
         profile.ui.active_theme = self.app_state.theme_preset.clone();
         profile.ui.device_name = self.app_state.device_name.clone();
         profile.domain.app_version = self.app_state.app_version.clone();

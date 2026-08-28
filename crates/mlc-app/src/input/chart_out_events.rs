@@ -859,6 +859,23 @@ impl ChartApp {
                 self.autosave_snapshot();
                 return;
             }
+            ChartOutEvent::ToggleIndicatorStar { type_id } => {
+                eprintln!("[ChartApp] ToggleIndicatorStar: {}", type_id);
+                let mut user_mut = self.core.user_mut();
+                let favs = &mut user_mut.profile_mut().ui.favorite_indicators;
+                if favs.iter().any(|t| t == &type_id) {
+                    favs.retain(|t| t != &type_id);
+                } else {
+                    favs.push(type_id.clone());
+                }
+                drop(user_mut);
+                // Same dirty-profile contract as `ToggleFavoritePrimitive`
+                // above — the favorites vec is profile.json state, and
+                // nothing else guarantees a profile write after a star click.
+                self.persist_profile();
+                self.autosave_snapshot();
+                return;
+            }
             ChartOutEvent::ReorderGranularity { family, section, from_index, to_index } => {
                 use mlc_core::chart_type::{GranularityFamily, GranularitySection};
                 eprintln!(

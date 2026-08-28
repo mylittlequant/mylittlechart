@@ -528,6 +528,7 @@ impl AppModalsState {
                     &self.search,
                     &[],
                     &[],
+                    &[],
                     None,
                     frame_theme,
                     toolbar_theme,

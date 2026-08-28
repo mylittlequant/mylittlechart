@@ -552,6 +552,14 @@ pub struct ProfileUiSettings {
     #[serde(default)]
     pub favorite_primitives: Vec<String>,
 
+    /// Favorite indicator catalog `type_id`s (indicator-search-favorites arc)
+    /// — the star toggle on every indicator-search row and the "Favorites"
+    /// sidebar tab in the indicator search modal. Mutated in-place by
+    /// `ChartOutEvent::ToggleIndicatorStar`, same pattern as
+    /// `favorite_primitives` above.
+    #[serde(default)]
+    pub favorite_indicators: Vec<String>,
+
     /// Human-readable device name (auto-detected or user-set).
     /// e.g. "VA-PC-WIN10", "MacBook Pro" — cosmetic label in settings UI.
     #[serde(default)]
@@ -728,6 +736,7 @@ impl ProfileUiSettings {
             favorites_bar_dock: None,
             favorites_bar_visible: false,
             favorite_primitives: Vec::new(),
+            favorite_indicators: Vec::new(),
             device_name: String::new(),
             language: default_language(),
             windows: Vec::new(),

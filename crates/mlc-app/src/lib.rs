@@ -9558,16 +9558,17 @@ impl ChartApp {
                     mlc_core::state::modal_state::OpenModal::CompareSearch => crate::text_input::COMPARE_SEARCH,
                     _ => crate::text_input::SYMBOL_SEARCH,
                 };
-                let (split_symbol_compare_search, symbol_quick_search_search) = {
+                let (split_symbol_compare_search, symbol_quick_search_search, favorite_indicators_search) = {
                     let user_guard = self.core.user();
                     let ui = &user_guard.profile().ui;
-                    (ui.split_symbol_compare, ui.symbol_quick_search)
+                    (ui.split_symbol_compare, ui.symbol_quick_search, ui.favorite_indicators.clone())
                 };
                 Some(render_search_overlay(
                     ctx,
                     screen,
                     &self.modal_state,
                     &indicator_catalog,
+                    &favorite_indicators_search,
                     indicator_sets,
                     hovered,
                     &frame_theme,

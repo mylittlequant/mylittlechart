@@ -77,6 +77,12 @@ impl ChartApp {
                 // already on the live profile (same pattern as
                 // `pin_granularity_favorites` below).
                 favorite_primitives: existing.ui.favorite_primitives.clone(),
+                // Favorite indicators (indicator-search-favorites arc):
+                // mutated in-place via `self.core.user_mut().profile_mut()`
+                // by the `ToggleIndicatorStar` handler (chart_out_events.rs),
+                // not via this snapshot builder — preserve the live vec, same
+                // pattern as `favorite_primitives` above.
+                favorite_indicators: existing.ui.favorite_indicators.clone(),
                 // Preserve profile identity fields managed by the profile system
                 display_name: existing.ui.display_name.clone(),
                 avatar: existing.ui.avatar.clone(),

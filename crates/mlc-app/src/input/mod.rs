@@ -5461,6 +5461,12 @@ impl ChartApp {
             } else if let Some(rest) = id_str.strip_prefix("ind_search:") {
                 // Indicator search sets view — "set_create" or "set:{id}"
                 self.modal_state.hovered_item_id = Some(rest.to_string());
+            } else if let Some(rest) = id_str.strip_prefix("modal_search:indstar:") {
+                // Indicator search row star (indicator-search-favorites arc) —
+                // keyed "indstar:{type_id}" so the row itself does NOT take
+                // the hover highlight (same row-vs-button split as the sets
+                // view).
+                self.modal_state.hovered_item_id = Some(format!("indstar:{}", rest));
             } else if let Some(rest) = id_str.strip_prefix("modal_search:item:") {
                 // Search overlay result items
                 self.modal_state.hovered_item_id = Some(rest.to_string());
