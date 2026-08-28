@@ -127,11 +127,36 @@ pub fn set_archive_proxy_base(base: String) {
 /// [`set_archive_proxy_base`]. `None` before the profile has been applied
 /// once (native archive fetches never read this — they always pass `None`
 /// through regardless of this value).
+///
+/// On wasm a same-origin relative base (the `"/archive-proxy"` default) is
+/// absolutized against the page origin: reqwest parses request URLs with
+/// `url::Url::parse`, which rejects relative URLs — the request died at
+/// BUILD time ("builder error", zero packets sent) until the base became
+/// absolute.
 pub fn archive_proxy_base() -> Option<String> {
     ARCHIVE_PROXY_BASE
         .read()
         .unwrap_or_else(|e| e.into_inner())
         .clone()
+        .map(|b| absolutize_proxy_base(&b))
+}
+
+/// Absolutize a same-origin relative proxy base (starts with `/`) against
+/// the page origin. Identity on native and for already-absolute bases.
+#[cfg(target_arch = "wasm32")]
+pub fn absolutize_proxy_base(base: &str) -> String {
+    if base.starts_with('/') {
+        if let Some(origin) = web_sys::window().and_then(|w| w.location().origin().ok()) {
+            return format!("{origin}{base}");
+        }
+    }
+    base.to_string()
+}
+
+/// Native builds never proxy (direct HTTPS), so the base passes through.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn absolutize_proxy_base(base: &str) -> String {
+    base.to_string()
 }
 
 // ── Raw-trade retention window (owner rule 2026-07-15) ───────────────────────

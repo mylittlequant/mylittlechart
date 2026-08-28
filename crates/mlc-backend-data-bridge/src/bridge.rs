@@ -1573,8 +1573,11 @@ impl DataBridge {
         // 2026-08-02: OKX (dialled late) picked the override up and loaded
         // its 1771-symbol catalogue; Gate and KuCoin (dialled during load)
         // silently kept the direct base and stayed at zero symbols.
+        // The getter absolutizes a same-origin relative base; the fallback
+        // (profile not applied yet) bypasses it, so absolutize here too —
+        // reqwest refuses relative URLs at request-build time.
         let base = crate::archive_proxy_base()
-            .unwrap_or_else(mlc_core::user_profile::default_archive_proxy_base);
+            .unwrap_or_else(|| crate::absolutize_proxy_base(&mlc_core::user_profile::default_archive_proxy_base()));
         let base = base.trim_end_matches('/');
         if base.is_empty() {
             return;

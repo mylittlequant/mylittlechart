@@ -55,7 +55,7 @@ wasm-bindgen-futures = "0.4"
 gloo-timers = { version = "0.3", features = ["futures"] }
 # console::log_1 for bridge dlog! macro on wasm (eprintln! goes to stderr,
 # invisible in the browser — we route through console.log instead).
-web-sys = { version = "0.3", features = ["console"] }
+web-sys = { version = "0.3", features = ["console", "Window", "Location"] }
 
 # ── wasm-only dev-deps for the bridge-daemon smoke test ──────────────────────
 # tests/wasm_bridge_smoke.rs verifies DataBridge::subscribe_trades delivers
