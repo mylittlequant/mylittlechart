@@ -1543,20 +1543,18 @@ impl DataBridge {
     /// `Access-Control-Allow-Origin`, or worse. Venues that send ACAO go
     /// DIRECT (the user's own IP rate bucket beats sharing the server's).
     ///
-    /// 2026-08-28 changes: OKX now echoes ACAO on every tested endpoint
-    /// (instruments/candles/history-candles/trades/funding/OI) and Gate.io
-    /// sends `*` on both spot and futures — both moved to direct. Added the
-    /// seven venues whose catalog fetches were seen dying in the prod
-    /// console. BingX is the hardest case: it answers 403 to ANY request
-    /// carrying an `Origin` header (verified from the prod box, US IP — so
-    /// this is a browser block, not just geo) while answering 200 without
-    /// one; a browser can never call it direct, proxy is its only path.
+    /// 2026-08-28 changes: OKX echoes ACAO on every tested endpoint and
+    /// Gate.io sends `*` on spot and futures — both direct. HTX
+    /// (`api.huobi.pro` and `api.hbdm.com`) also echoes ACAO on symbols
+    /// and klines; putting it on the proxy made Utah's hop 403 (HTX
+    /// openresty WAF) while the user's browser can call it direct. BingX
+    /// is Origin-allowlist (`bingx.com` / `open-api.bingx.com` only) — a
+    /// browser can never call it from our origin, proxy is its only path.
     const CORS_BLOCKED_REST: &'static [ExchangeId] = &[
         ExchangeId::BingX,
         ExchangeId::Bitfinex,
         ExchangeId::Coinbase,
         ExchangeId::CryptoCom,
-        ExchangeId::HTX,
         ExchangeId::Kraken,
         ExchangeId::KuCoin,
         ExchangeId::MEXC,
