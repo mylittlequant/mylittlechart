@@ -1574,6 +1574,14 @@ impl DataBridge {
         if !Self::CORS_BLOCKED_REST.contains(&exchange_id) {
             return;
         }
+        // Whole-proxy gate (2026-08-28): must-proxy and a future paid relay
+        // share this check. `Open` (today) always passes; `Entitled` without
+        // a claim leaves the venue on its direct base so the browser CORS-
+        // fails and Phase A paints the paid-proxy error instead of silently
+        // using Utah's IP.
+        if !crate::archive_proxy_allowed() {
+            return;
+        }
         // Falls back to the profile's DEFAULT rather than giving up when no
         // profile has been applied yet. The first dial can happen while the
         // workspace is still loading, and the hub reads the override map when
@@ -1608,6 +1616,26 @@ impl DataBridge {
         self.station
             .hub()
             .set_rest_base_override(exchange_id, override_url);
+    }
+
+    /// Chart-visible Phase A failure copy. Direct venues (ACAO) that geo/ban
+    /// the user's IP stay direct — we do not silently relay. Must-proxy
+    /// venues mention the proxy; if the whole-proxy paywall is on and this
+    /// session is not entitled, that is the message instead of a CORS dump.
+    fn phase_a_fail_message(exchange_id: ExchangeId, err: &impl std::fmt::Display) -> String {
+        if Self::CORS_BLOCKED_REST.contains(&exchange_id) {
+            if !crate::archive_proxy_allowed() {
+                return format!(
+                    "{:?} needs the data proxy (paid). Browser cannot call this venue direct.",
+                    exchange_id
+                );
+            }
+            return format!("{:?} klines unavailable: {} (proxy down?)", exchange_id, err);
+        }
+        format!(
+            "{:?} klines unavailable: {}. Paid relay proxy is planned for geo-blocks.",
+            exchange_id, err
+        )
     }
 
     /// Ensure a connector is initialized for the given exchange.
@@ -2238,17 +2266,13 @@ impl DataBridge {
                     // (`reconcile_view_fresh`) — so a failed REFRESH of an
                     // already-drawn chart never blanks it into an error.
                     crate::dlog!("[Bridge] Phase A error: {:?} sym={} {}", exchange_id, symbol_str, e);
-                    let hint = if Self::CORS_BLOCKED_REST.contains(&exchange_id) {
-                        " (CORS/geo-block or local proxy down?)"
-                    } else {
-                        ""
-                    };
+                    let message = Self::phase_a_fail_message(exchange_id, &e);
                     let _ = tx.send(LiveUpdate::Error {
                         exchange_id,
                         account_type,
                         symbol: symbol_str.clone(),
                         timeframe: tf_name.clone(),
-                        message: format!("{:?} klines unavailable: {}{}", exchange_id, e, hint),
+                        message,
                     });
                     finish_fetch!();
                     return;

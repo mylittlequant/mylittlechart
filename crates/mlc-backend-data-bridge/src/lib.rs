@@ -134,11 +134,67 @@ pub fn set_archive_proxy_base(base: String) {
 /// BUILD time ("builder error", zero packets sent) until the base became
 /// absolute.
 pub fn archive_proxy_base() -> Option<String> {
+    if !archive_proxy_allowed() {
+        return None;
+    }
     ARCHIVE_PROXY_BASE
         .read()
         .unwrap_or_else(|e| e.into_inner())
         .clone()
         .map(|b| absolutize_proxy_base(&b))
+}
+
+// ── Archive-proxy entitlement (must-proxy + future paid relay) ───────────────
+//
+// One gate for the WHOLE `/archive-proxy` prefix: CORS-blocked live REST
+// (must-proxy) AND archive CDNs AND a future geo-relay. Owner doctrine
+// 2026-08-28: today the gate is `Open` (must-proxy stays in the free catalog);
+// flipping to `Entitled` later locks every proxy use behind a paid claim —
+// regular registered users then lose must-proxy and relay together.
+//
+// Client-side is a routing hint (wasm stops sending). The real lock is nginx
+// `auth_request` once `MLC_PROXY_GATE=entitled` (see
+// docs/mlc/plans/archive-proxy-entitlement-2026-08-28.md).
+
+/// Who may use `/archive-proxy`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArchiveProxyGate {
+    /// Everyone, including anonymous. Current production default.
+    Open,
+    /// Only sessions marked entitled. Must-proxy and relay both require this.
+    Entitled,
+}
+
+static ARCHIVE_PROXY_GATE: std::sync::RwLock<ArchiveProxyGate> =
+    std::sync::RwLock::new(ArchiveProxyGate::Open);
+static ARCHIVE_PROXY_ENTITLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// Set the process-wide proxy gate. `Open` (default) ignores entitlement.
+pub fn set_archive_proxy_gate(gate: ArchiveProxyGate) {
+    let mut g = ARCHIVE_PROXY_GATE.write().unwrap_or_else(|e| e.into_inner());
+    *g = gate;
+}
+
+pub fn archive_proxy_gate() -> ArchiveProxyGate {
+    *ARCHIVE_PROXY_GATE.read().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Paid/session claim. Ignored while the gate is [`ArchiveProxyGate::Open`].
+pub fn set_archive_proxy_entitled(entitled: bool) {
+    ARCHIVE_PROXY_ENTITLED.store(entitled, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn archive_proxy_entitled() -> bool {
+    ARCHIVE_PROXY_ENTITLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Whether this process may send traffic through `/archive-proxy`.
+pub fn archive_proxy_allowed() -> bool {
+    match archive_proxy_gate() {
+        ArchiveProxyGate::Open => true,
+        ArchiveProxyGate::Entitled => archive_proxy_entitled(),
+    }
 }
 
 /// Absolutize a same-origin relative proxy base (starts with `/`) against

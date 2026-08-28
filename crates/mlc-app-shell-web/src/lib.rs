@@ -171,12 +171,38 @@ pub fn start() {
             .build(),
     );
     web_sys::console::log_1(&"[mlc-app-shell-web] booting".into());
+    apply_dev_proxy_gate_from_url();
 
     spawn_local(async {
         if let Err(e) = run().await {
             web_sys::console::error_1(&format!("[mlc-app-shell-web] fatal: {:?}", e).into());
         }
     });
+}
+
+/// DEV-only: `?mlc_proxy_gate=entitled` flips the whole-proxy gate to
+/// [`ArchiveProxyGate::Entitled`] with no claim, so must-proxy venues fail
+/// with the paid-proxy error. Production index.html never sets this.
+/// Must run BEFORE `DataBridge::new` — the hub reads the override map at
+/// connector construction.
+#[cfg(target_arch = "wasm32")]
+fn apply_dev_proxy_gate_from_url() {
+    let search = web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .unwrap_or_default();
+    let entitled_mode = search
+        .split(|c| c == '?' || c == '&')
+        .any(|p| p == "mlc_proxy_gate=entitled");
+    if !entitled_mode {
+        return;
+    }
+    mlc_backend_data_bridge::set_archive_proxy_gate(
+        mlc_backend_data_bridge::ArchiveProxyGate::Entitled,
+    );
+    mlc_backend_data_bridge::set_archive_proxy_entitled(false);
+    web_sys::console::warn_1(
+        &"[mlc-app-shell-web] DEV mlc_proxy_gate=entitled — proxy denied".into(),
+    );
 }
 
 // ─── Async boot sequence ───────────────────────────────────────────────────────
