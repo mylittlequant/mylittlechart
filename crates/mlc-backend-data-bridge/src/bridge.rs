@@ -1535,23 +1535,32 @@ impl DataBridge {
 
     /// Venues whose REST a browser refuses to fetch cross-origin.
     ///
-    /// Measured from the stand's own origin 2026-08-02, not assumed: OKX,
-    /// Gate.io (spot AND futures), HTX and KuCoin (spot AND futures) all fail
-    /// with `TypeError: Failed to fetch` — no response, no status, so the
-    /// failure is indistinguishable from "the venue has no such endpoint"
-    /// unless you go and look. The same URLs answer HTTP 200 from curl, and
-    /// Binance, Bybit and Bitget answer 200 in the browser too, so this is a
-    /// property of those four venues' CORS headers and nothing else.
+    /// First measured from the stand's own origin 2026-08-02; RE-MEASURED
+    /// 2026-08-28 per venue with an explicit `Origin` header (curl matrix,
+    /// docs/mlc/BACKLOG.md "Venue CORS matrix"). Membership rule (owner
+    /// doctrine 2026-08-28): a venue is on this list ONLY if its REST cannot
+    /// be read cross-origin from a browser at all — missing
+    /// `Access-Control-Allow-Origin`, or worse. Venues that send ACAO go
+    /// DIRECT (the user's own IP rate bucket beats sharing the server's).
     ///
-    /// The consequence was not confined to one feature: the projected-
-    /// liquidation fold saw 2 of its 7 candidate venues, and Gate's and
-    /// KuCoin's `get_exchange_info` never landed, which held back their
-    /// liquidation prints for want of a contract multiplier.
+    /// 2026-08-28 changes: OKX now echoes ACAO on every tested endpoint
+    /// (instruments/candles/history-candles/trades/funding/OI) and Gate.io
+    /// sends `*` on both spot and futures — both moved to direct. Added the
+    /// seven venues whose catalog fetches were seen dying in the prod
+    /// console. BingX is the hardest case: it answers 403 to ANY request
+    /// carrying an `Origin` header (verified from the prod box, US IP — so
+    /// this is a browser block, not just geo) while answering 200 without
+    /// one; a browser can never call it direct, proxy is its only path.
     const CORS_BLOCKED_REST: &'static [ExchangeId] = &[
-        ExchangeId::OKX,
-        ExchangeId::GateIO,
+        ExchangeId::BingX,
+        ExchangeId::Bitfinex,
+        ExchangeId::Coinbase,
+        ExchangeId::CryptoCom,
         ExchangeId::HTX,
+        ExchangeId::Kraken,
         ExchangeId::KuCoin,
+        ExchangeId::MEXC,
+        ExchangeId::Upbit,
     ];
 
     /// Route a CORS-blocked venue's REST through the proxy the archive
@@ -2190,17 +2199,56 @@ impl DataBridge {
                         Some(agg) => crate::kline_agg::fold_bars_into_buckets(&base_bars, agg.target_ms()),
                         None => base_bars,
                     };
+                    // TERMINAL EMPTY (error-surfacing arc, 2026-08-28): the
+                    // venue answered but returned zero bars (dig3's HTTP layer
+                    // already spent its retry budget getting here). Emitting
+                    // an empty BarsLoaded left the chart on the loading
+                    // spinner forever — nothing downstream retries an
+                    // empty-but-successful load. Surface it as a window error
+                    // instead; the next explicit refresh (symbol/TF switch,
+                    // ConnectorReady sweep) re-drives the fetch and a
+                    // successful BarsLoaded clears the error.
+                    if bars.is_empty() {
+                        crate::dlog!("[Bridge] Phase A TERMINAL-EMPTY: {:?} {} at={:?} tf={} fetch_interval={} (0 bars after retries)",
+                            exchange_id, symbol_str, account_type, tf_name, fetch_interval);
+                        let _ = tx.send(LiveUpdate::Error {
+                            exchange_id,
+                            account_type,
+                            symbol: symbol_str.clone(),
+                            timeframe: tf_name.clone(),
+                            message: format!("{:?} klines unavailable: venue returned no bars for {} {}", exchange_id, symbol_str, fetch_interval),
+                        });
+                        finish_fetch!();
+                        return;
+                    }
                     crate::dlog!("[Bridge] Phase A ok: {:?} {} at={:?} tf={} -> {} base bars -> {} folded bars", exchange_id, symbol_str, account_type, tf_name, n, bars.len());
                     bars
                 }
                 Err(e) => {
+                    // Terminal Phase A failure — dig3's `HttpClient` already
+                    // ran its internal retry budget (`request_with_retry`), so
+                    // this Err is the EXHAUSTED result, not a transient retry.
+                    // Surface it with the venue + the underlying error text so
+                    // the window renders WHAT failed instead of an eternal
+                    // spinner (a venue whose REST is unreachable: CORS block,
+                    // geo-block, dead archive proxy). The error only renders
+                    // while the window has no series data
+                    // (render_chart.rs `has_any_series_data` gate), and a later
+                    // successful `BarsLoaded` clears `data_error`
+                    // (`reconcile_view_fresh`) — so a failed REFRESH of an
+                    // already-drawn chart never blanks it into an error.
                     crate::dlog!("[Bridge] Phase A error: {:?} sym={} {}", exchange_id, symbol_str, e);
+                    let hint = if Self::CORS_BLOCKED_REST.contains(&exchange_id) {
+                        " (CORS/geo-block or local proxy down?)"
+                    } else {
+                        ""
+                    };
                     let _ = tx.send(LiveUpdate::Error {
                         exchange_id,
                         account_type,
                         symbol: symbol_str.clone(),
                         timeframe: tf_name.clone(),
-                        message: format!("get_klines failed: {}", e),
+                        message: format!("{:?} klines unavailable: {}{}", exchange_id, e, hint),
                     });
                     finish_fetch!();
                     return;
