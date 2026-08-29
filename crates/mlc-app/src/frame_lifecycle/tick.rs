@@ -48,6 +48,12 @@ impl ChartApp {
         // including the promoted live window's — a no-op. Cheap to call every tick.
         self.warmup_connectors();
 
+        // Watchlist warm-up drain (feature: "warm the watchlist", owner
+        // 2026-08-30): spend a slice of `watchlist_warmup_queue` against
+        // each venue's token bucket. Same per-tick cadence as the connector
+        // warm-up above — cheap no-op once the queue is empty.
+        self.drain_watchlist_warmup();
+
         // Load chat history for any restored chat leaves on the very first tick.
         // PTY sessions spawn-on-demand only (user must click [Start]).
         if !self.agent_autostarted {

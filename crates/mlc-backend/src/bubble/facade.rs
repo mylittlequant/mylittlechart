@@ -575,6 +575,13 @@ impl<'a> BubblesMut<'a> {
         self.store.set_exchange_for_bid(bid, exchange)
     }
 
+    /// Drain kline-forwarder keys orphaned by an instrument-identity change
+    /// this tick — see [`super::store::PendingKlineTeardown`]'s doc comment.
+    /// Called once per frame from `BackendCore::tick_writers`.
+    pub fn take_pending_kline_teardowns(&mut self) -> Vec<super::store::PendingKlineTeardown> {
+        self.store.take_pending_kline_teardowns()
+    }
+
     pub fn set_scale_mode(&mut self, bid: BubbleId, mode: ScaleMode) {
         self.store.set_scale_mode(bid, mode)
     }

@@ -394,6 +394,51 @@ pub struct ColdApplyTimings {
     pub lp_clone_us: u128,
 }
 
+/// One venue's request budget for the watchlist warm-up sweep (feature:
+/// "warm the watchlist", owner 2026-08-30). Token bucket: `tokens` grows
+/// continuously toward `capacity` at `capacity` tokens/minute and is spent
+/// one per background `request_kline` call — see
+/// `ChartApp::drain_watchlist_warmup` (`frame_lifecycle/react.rs`).
+/// Per-venue rather than one shared budget: a single BitMEX-scale ceiling
+/// (~30 req/min) would throttle every other venue's warm-up too, and a
+/// generous shared budget would let one hot venue starve BitMEX's own.
+struct WarmupBudget {
+    tokens: f64,
+    capacity: f64,
+    last_refill: web_time::Instant,
+}
+
+impl WarmupBudget {
+    /// Starts full — the sweep that just discovered this venue (a
+    /// connector coming up, or a fresh watchlist row) is exactly the kind
+    /// of burst a token bucket is meant to allow immediately.
+    fn new(requests_per_minute: u32, now: web_time::Instant) -> Self {
+        let capacity = requests_per_minute.max(1) as f64;
+        Self { tokens: capacity, capacity, last_refill: now }
+    }
+
+    /// Add back whatever accrued since the last refill, capped at capacity.
+    fn refill(&mut self, now: web_time::Instant) {
+        let elapsed_secs = now.duration_since(self.last_refill).as_secs_f64();
+        if elapsed_secs <= 0.0 {
+            return;
+        }
+        let rate_per_sec = self.capacity / 60.0;
+        self.tokens = (self.tokens + elapsed_secs * rate_per_sec).min(self.capacity);
+        self.last_refill = now;
+    }
+
+    /// Spend one token if available.
+    fn take(&mut self) -> bool {
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 pub struct ChartApp {
     /// Live feeds each bubble currently holds on behalf of its indicators
     /// (see `ensure_bubble_indicator_feeds`). RAM-only bookkeeping: the
@@ -1207,6 +1252,33 @@ pub struct ChartApp {
     pub(crate) panel_settings_open: Option<(mlc_core::state::Panel, (f64, f64))>,
     /// Last rendered panel-settings surface geometry.
     pub(crate) panel_settings_result: Option<mlc_app_layout::layout::modals::PanelSettingsPopupResult>,
+
+    /// FIFO of watchlist rows still waiting for their background warm-up
+    /// `request_kline` (feature: "warm the watchlist", owner 2026-08-30).
+    /// Populated by the `ConnectorReady` reactor (`frame_lifecycle/react.rs`)
+    /// for every row on the venue that just came up, at the active chart's
+    /// timeframe; drained under `watchlist_warmup_budget`'s per-venue token
+    /// bucket by `drain_watchlist_warmup`, called once per tick.
+    pub(crate) watchlist_warmup_queue: std::collections::VecDeque<(digdigdig3::ExchangeId, mlc_core::instrument::InstrumentAddress, mlc_core::state::Timeframe)>,
+    /// Per-venue token bucket gating `watchlist_warmup_queue`'s drain rate.
+    /// See [`WarmupBudget`].
+    pub(crate) watchlist_warmup_budget: std::collections::HashMap<digdigdig3::ExchangeId, WarmupBudget>,
+    /// Every `(instrument, timeframe)` this session has already sent a
+    /// background warm-up `request_kline` for (feature: "warm the
+    /// watchlist"). The stopping condition for the warm-up sweep — some
+    /// venues (dYdX, Gemini: REST-poll, no kline WS stream) never register
+    /// a live kline subscriber, so the bridge's own dedup (which the
+    /// per-open-chart-window kline refetch below relies on) does NOT skip a
+    /// repeat non-force `request_kline` for them; without this set a
+    /// `ConnectorReady` on such a venue re-warms every row on every fire
+    /// (owner-measured 2026-08-30: ~1.3 req/s sustained against dYdX with
+    /// nothing clicked). A key is warmed AT MOST ONCE and is only removed —
+    /// re-arming a future warm-up — when the row itself is removed from the
+    /// watchlist (`WatchlistAction::Remove` / `Toggle`-off, below). A
+    /// timeframe change does not need explicit invalidation: the key
+    /// includes the `Timeframe`, so a new active TF is simply a new,
+    /// not-yet-warmed key.
+    pub(crate) watchlist_warmed: std::collections::HashSet<(mlc_core::instrument::InstrumentAddress, mlc_core::state::Timeframe)>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -3223,6 +3295,9 @@ impl ChartApp {
             dom_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             panel_settings_open: None,
             panel_settings_result: None,
+            watchlist_warmup_queue: std::collections::VecDeque::new(),
+            watchlist_warmup_budget: std::collections::HashMap::new(),
+            watchlist_warmed: std::collections::HashSet::new(),
         };
 
         // Trading snapshots are per-panel now (`(exchange, account_type)`
@@ -3651,18 +3726,12 @@ impl ChartApp {
             dom_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             panel_settings_open: None,
             panel_settings_result: None,
+            watchlist_warmup_queue: std::collections::VecDeque::new(),
+            watchlist_warmup_budget: std::collections::HashMap::new(),
+            watchlist_warmed: std::collections::HashSet::new(),
         };
 
-        app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
-            vec![
-                mlc_core::instrument::InstrumentAddress::new("binance", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_core::instrument::InstrumentAddress::new("binance", "ETHUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_core::instrument::InstrumentAddress::new("binance", "SOLUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_core::instrument::InstrumentAddress::new("binance", "BNBUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_core::instrument::InstrumentAddress::new("bybit", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_core::instrument::InstrumentAddress::new("okx", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
-            ],
-        ));
+        app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::default_seed());
 
         // Create a single "Untitled" preset tab.
         let untitled_preset = mlc_core::preset::preset::ChartPreset::new("Untitled".to_string());
@@ -3910,11 +3979,18 @@ impl ChartApp {
                         if let Some(ref mut snap) = self.watchlist_ui.list_mut(active_list_id).order_snapshot {
                             snap.retain(|s| s.symbol != symbol);
                         }
+                        // Toggle-off removes the row — re-arm its warm-up
+                        // memory (all TFs) so a later re-add gets a fresh
+                        // background fetch instead of being treated as
+                        // already-warmed forever.
+                        self.watchlist_warmed.retain(|(addr, _tf)| *addr != address);
                     }
                 }
                 WatchlistAction::Remove { symbol, exchange, account_type } => {
                     let address = mlc_core::InstrumentAddress::new(exchange, symbol, account_type.parse().unwrap_or_default());
                     self.core.watchlists_mut().remove_symbol(active_list_id, &address);
+                    // Same re-arm as the Toggle-off path above.
+                    self.watchlist_warmed.retain(|(addr, _tf)| *addr != address);
                 }
                 WatchlistAction::ClearOrderSnapshot => {
                     self.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
@@ -4229,19 +4305,13 @@ impl ChartApp {
             dom_modal: mlc_app_layout::layout::modals::TradingContainerModalState::default(),
             panel_settings_open: None,
             panel_settings_result: None,
+            watchlist_warmup_queue: std::collections::VecDeque::new(),
+            watchlist_warmup_budget: std::collections::HashMap::new(),
+            watchlist_warmed: std::collections::HashSet::new(),
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
-        app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::new(
-            vec![
-                mlc_core::instrument::InstrumentAddress::new("binance", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_core::instrument::InstrumentAddress::new("binance", "ETHUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_core::instrument::InstrumentAddress::new("binance", "SOLUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_core::instrument::InstrumentAddress::new("binance", "BNBUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_core::instrument::InstrumentAddress::new("bybit", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
-                mlc_core::instrument::InstrumentAddress::new("okx", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
-            ],
-        ));
+        app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::default_seed());
 
         // Phase 4: use app-level ProfileManager (loaded once in main.rs) instead
         // of calling load_user_state() per-window.  Eliminates redundant disk

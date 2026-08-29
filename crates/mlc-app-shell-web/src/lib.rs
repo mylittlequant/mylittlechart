@@ -933,11 +933,18 @@ fn run_render_loop(
                 // catalogue holds for the venue, how many are derivative
                 // records, and how many carry ANY `extra` payload at all.
                 // "0 with extra" is a loader problem, not a lookup one.
+                // Every catalogued venue, not a hardcoded three: the old
+                // fixed ["gateio","okx","kucoin"] list stayed silent about
+                // every other venue, which reads as "that venue has no
+                // catalogue" and cost a wrong diagnosis on 2026-08-30.
                 let cat = {
                     let syms = st.chart.core.exchange_symbols();
-                    ["gateio", "okx", "kucoin"]
+                    let mut labels: Vec<String> = syms.exchange_labels().collect();
+                    labels.sort();
+                    labels
                         .iter()
                         .map(|label| {
+                            let label = label.as_str();
                             let (total, fut, with_extra) = syms
                                 .find_by_label(label)
                                 .and_then(|eid| syms.symbols_for(eid))

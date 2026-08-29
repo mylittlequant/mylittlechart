@@ -1550,15 +1550,33 @@ impl DataBridge {
     /// openresty WAF) while the user's browser can call it direct. BingX
     /// is Origin-allowlist (`bingx.com` / `open-api.bingx.com` only) — a
     /// browser can never call it from our origin, proxy is its only path.
+    ///
+    /// RE-MEASURED 2026-08-30 with real `fetch()` calls from the owner's
+    /// Chrome, BOTH from `https://chart.example` (prod) and from the
+    /// loopback dev stand — identical verdict on both origins, no venue
+    /// behaves differently between them. Kraken, Upbit, and CryptoCom all
+    /// answered direct with a valid CORS response (59179 / 1082 / 628
+    /// bytes respectively) and came OFF this list — proxying them was pure
+    /// added latency with no CORS benefit. The remaining seven were
+    /// confirmed genuinely CORS-blocked direct AND confirmed to return real
+    /// bars through the proxy. KuCoin/KuCoin-F stay on the list for CORS
+    /// reasons but remain broken for an UNRELATED one: the proxy egress
+    /// (Utah) gets `HTTP 200` with body
+    /// `{"msg":"Sorry! Your IP is from restricted area,..."}` — a
+    /// success-shaped response carrying a venue-side geo-ban. That needs a
+    /// non-Utah egress, not a code change; nothing downstream of this list
+    /// treats that 200 as success (Phase A parses the body, so KuCoin's
+    /// json-shaped error surfaces as a parse/field error, not a false
+    /// `BarsLoaded`), but it is worth remembering if this list is ever
+    /// consulted to decide "is a 200 trustworthy" instead of just routing.
     const CORS_BLOCKED_REST: &'static [ExchangeId] = &[
         ExchangeId::BingX,
         ExchangeId::Bitfinex,
+        ExchangeId::Bitmex,
         ExchangeId::Coinbase,
-        ExchangeId::CryptoCom,
-        ExchangeId::Kraken,
+        ExchangeId::Deribit,
         ExchangeId::KuCoin,
         ExchangeId::MEXC,
-        ExchangeId::Upbit,
     ];
 
     /// Route a CORS-blocked venue's REST through the proxy the archive
@@ -1569,6 +1587,19 @@ impl DataBridge {
         if cfg!(not(target_arch = "wasm32")) {
             return;
         }
+        // Same `CORS_BLOCKED_REST` test on DEV and prod (RE-MEASURED
+        // 2026-08-30: identical per-venue verdict from `https://
+        // chart.example` and from the loopback dev stand — no venue
+        // behaves differently between the two origins). A prior blanket
+        // "proxy everything on loopback" override lived here; it bought
+        // nothing (the DEV verdict was always identical to prod's) and cost
+        // the ability to observe prod CORS routing bugs on DEV at all — the
+        // known trap where a venue "looks fine on the dev stand and is dead
+        // on prod". The only thing that legitimately differs between DEV and
+        // prod is the proxy BASE (`http://127.0.0.1:17800` vs the
+        // same-origin `/archive-proxy`), handled correctly below by
+        // `archive_proxy_base()` / `absolutize_proxy_base` — not the routing
+        // decision.
         if !Self::CORS_BLOCKED_REST.contains(&exchange_id) {
             return;
         }
@@ -1736,24 +1767,34 @@ impl DataBridge {
 
     /// Request historical bars (klines) from an exchange.
     ///
-    /// Non-blocking — spawns an async task. On completion, sends either
-    /// `BarsLoaded` or `Error` through the update channel.
+    /// Non-blocking — the Level 1 cache read (if any) sends synchronously
+    /// before this call returns; the Level 2 fetch runs in a spawned async
+    /// task. Sends `BarsLoaded` (once or twice — see below) or `Error`
+    /// through the update channel.
     ///
-    /// **3-level bar loading:**
+    /// **2-level bar loading** (Level 3/Phase B was removed — see below):
     ///
-    /// Level 1 — instant render: if the station's `Series<BarPoint>` already
-    /// holds bars for this key — from a previous subscribe this session or from
-    /// the dig3 Station warm-start (last-1000 replay out of dig3_storage on
-    /// subscribe + cross-session disk read_tail) — they are sent as an immediate
-    /// `BarsLoaded` below, before any network round-trip.
+    /// Level 1 — instant repaint from cache: if the station's per-instrument
+    /// `Series<BarPoint>` already holds bars for this
+    /// `(exchange, account_type, symbol, wire_interval)` key — from a live
+    /// forwarder earlier this session (including one for an instrument the
+    /// user has since switched away from — station retains the Series
+    /// independent of forwarder liveness) or the dig3 Station warm-start —
+    /// they are sent as an immediate `BarsLoaded` here, synchronously,
+    /// before the connector-wait/REST task is even spawned. Sent
+    /// unconditionally when non-empty; skipped silently when the cache is
+    /// empty (first-ever visit to this instrument).
     ///
-    /// Level 2 (Phase A) — quick fresh fetch: always fetches 300 bars from now
-    /// backward, merges with any session cache, sends `BarsLoaded`. Viewport
-    /// enters Follow mode.
-    ///
-    /// Level 3 (Phase B) — async heal: if disk cache existed before Phase A and
-    /// there was a gap between the disk tail and the fresh 300 bars, paginate
-    /// backward to fill 2× the gap, merge, send a second `BarsLoaded`.
+    /// Level 2 (Phase A) — fresh fetch: waits only for the connector to be
+    /// dialed (never for the symbol catalogue — that would block a plain
+    /// REST kline GET on network calls it doesn't need, see the
+    /// connector-wait loop below), fetches 300 bars from now backward, sends
+    /// a second `BarsLoaded`. Because Level 1 (when it fired) is always
+    /// first, `ChartApp`'s one-shot fresh-load flag is already consumed by
+    /// the time this one lands, so it reconciles with an anchor instead of
+    /// re-snapping the viewport — see the Level 1 send site below for the
+    /// full ordering argument. Viewport enters Follow mode on genuine first
+    /// load (no Level 1 fired).
     ///
     /// The `limit` and `total_bars` parameters are retained for API compatibility
     /// but are no longer used — Phase A always fetches 300 bars.
@@ -1831,14 +1872,15 @@ impl DataBridge {
         // lookups always match bubble.symbol (which is now canonical).
         let symbol_str = symbol.to_string();
         // Wire string — venue-native form required by dig3 connectors.
-        // Resolved eagerly for the station kline subscriber; the main REST task
-        // retries resolution inside the connector-wait loop if the symbol list
-        // is still empty at spawn time (Fix 2 — MUUSDC@hyperliquid race).
+        // Resolved eagerly (steps 1-3 inside `wire_symbol` are catalogue-
+        // opportunistic; step 4 falls back to `SymbolNormalizer::to_exchange`
+        // with no catalogue dependency). The REST fetch task below no longer
+        // retries resolution against the catalogue — see the connector-wait
+        // loop's comment (defect: 15s catalogue wait before REST klines,
+        // measured 16 728ms BitMEX XBTUSD before this fix).
         let _rb_t_wire = web_time::Instant::now();
         let wire_sym = self.wire_symbol(exchange_id, account_type, symbol);
         let rb_wire_us = _rb_t_wire.elapsed().as_micros();
-        // Station handle cloned for the resolution retry inside the main task.
-        let station_for_retry = self.station.clone();
         let interval = timeframe_to_interval(timeframe);
         let tf_name = timeframe.name.clone();
         let tf_name_for_log = tf_name.clone();
@@ -1859,14 +1901,19 @@ impl DataBridge {
         // (existing live-trade-aggregation path, also zero behavior change).
         let kline_agg = self.resolve_kline_aggregation(exchange_id, account_type, &interval, target_interval_ms);
 
+        // Wire interval actually dialed for BOTH the live forwarder
+        // subscription and the Phase A REST fetch below — a non-native
+        // target TF dials the BASE interval and folds client-side
+        // (`kline_agg`). This is also the correct key for the station's own
+        // per-instrument `Series<BarPoint>` cache (Level 1 below) — that
+        // cache is written under the same wire interval it was subscribed
+        // at, never under the target TF name for an aggregated TF.
+        let station_interval = kline_agg
+            .as_ref()
+            .map(|agg| agg.base_interval.clone())
+            .unwrap_or_else(|| interval.clone());
+
         let cache_key: FetchKey = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
-        let station_bar_seriskey = station_bar_key(exchange_id, account_type, &symbol_str, &tf_name);
-        // `station_bar_seriskey` is consumed by the forwarder spawn below; the
-        // dedup hot-path never touches the station ring. Snapshotting bars
-        // here (the old `cached_bars` path) cost ~100µs per bar × 1500-2000
-        // bars = ~150ms on a non-force LoadPreset call where dedup-L2 would
-        // throw the result away anyway. Bug 10 in handoff-2026-06-17.
-        let _ = &station_bar_seriskey;
 
         crate::dlog!(
             "[Bridge::request_bars enter] {:?} {} at={:?} tf={} force={}",
@@ -1920,26 +1967,72 @@ impl DataBridge {
             if subs.contains(&cache_key) { false } else { subs.insert(cache_key.clone()); true }
         };
 
-        // Level 1 — REMOVED in the Phase 2B aftermath.
+        // Level 1 — instant repaint from the per-instrument station cache
+        // (RESTORED 2026-08-30; see the removal history at the bottom of
+        // this comment for why it once went away). Station's
+        // `Series<BarPoint>` is keyed by INSTRUMENT (exchange, account,
+        // symbol, interval), not by bubble — it outlives a bubble's own
+        // `kline_layers` wipe on instrument reassignment
+        // (`BubbleStore::reset_raw_layers`), so returning to an
+        // already-visited instrument this session repaints instantly
+        // instead of waiting on a fresh REST round trip AND collapsing
+        // depth back to Phase A's 300-bar window (measured: BNB_USDT 2000
+        // bars -> ETHUSDT -> back to BNB_USDT dropped to 300 bars on
+        // every return).
         //
-        // Pre-Phase 2B the bridge maintained its own mlc-side ring buffer
-        // (bar_cache: SharedSeriesMap). The Stream::Kline subscriber wrote
-        // INTO it, and cached_bars read FROM the same ring. Re-emitting
-        // BarsLoaded with cached_bars was safe — the ring was in lockstep
-        // with what the app had already received.
+        // Ordering is what makes this safe against the original removal
+        // reason (below): this send happens synchronously, BEFORE the
+        // async fetch task is even spawned, so it is always the FIRST
+        // `BarsLoaded` the reactor sees for this key. `ChartApp`'s
+        // one-shot `pending_symbol_load` flag is consumed by whichever
+        // `BarsLoaded` arrives first — this one — so Phase A's later,
+        // second `BarsLoaded` for the SAME key lands with
+        // `pending_symbol_load` already cleared and is reconciled with
+        // `reconcile_view_keep_anchor` instead of treated as a second
+        // fresh snap. Its anchor (`prev_bars`, snapshotted by
+        // `tick_writers` right before overwrite) is THIS event's bars —
+        // freshly cache-read, not a stale disk-tail — so the two events'
+        // ranges are contiguous/overlapping in practice and the anchor
+        // reconcile does not jump. Depth is preserved the same way:
+        // `kline_layer_seed_block` (raw kline layer, Stage Э1) merges
+        // Phase A's fresh page into the layer this event just seeded
+        // instead of resetting it, as long as the two blocks are not
+        // disjoint — true here since both end at "now".
         //
-        // After Phase 2B cached_bars comes from station's own Series<BarPoint>,
-        // which is fed not only by live WS ticks but also by warm-seed
-        // (REST replay-1000 on subscribe) and cross-session disk read_tail.
-        // That means the station ring is a DIFFERENT timestamp range than
-        // what the upcoming Phase A fetch_history is about to return — so
-        // emitting Level-1 BarsLoaded here, then Phase A BarsLoaded a moment
-        // later, sets window.bars to two different ranges back-to-back, which
-        // caused the viewport to "jump a month back every second".
-        //
-        // Phase A always runs (cache-fresh skip short-circuits later but
-        // emits no BarsLoaded), so the chart's initial paint is the
-        // freshly fetched 300 bars; live ticks arrive via LiveUpdate::BarUpdate.
+        // Removal history: pre-Phase-2B the bridge kept its own ring
+        // (`bar_cache: SharedSeriesMap`) written by the SAME Stream::Kline
+        // subscriber that read it back, so it was always in lockstep with
+        // Phase A. After Phase 2B, the cache read from station's Series
+        // instead, which is ALSO fed by warm-seed (REST replay-1000) and
+        // cross-session disk `read_tail` — ranges that could predate Phase
+        // A's fresh page by weeks with nothing to reconcile against, which
+        // is what caused the viewport to "jump a month back every second"
+        // and got Level 1 pulled entirely. That failure mode needed BOTH
+        // no ordering guarantee (so `pending_symbol_load` could still be
+        // armed when Phase A landed) AND a disjoint anchor; this restore
+        // closes the first by construction (synchronous send before spawn)
+        // and the second follows from it (a same-session live-fed cache is
+        // never weeks stale — the worst case is "as of when the user left
+        // this venue", which Phase A's fresh page abuts, not a gap).
+        if let Some(cached) = self.get_cached_bars(&exchange_id, account_type, &symbol_str, &station_interval) {
+            let cached = match &kline_agg {
+                Some(agg) => crate::kline_agg::fold_bars_into_buckets(&cached, agg.target_ms()),
+                None => cached,
+            };
+            if !cached.is_empty() {
+                crate::dlog!(
+                    "[Bridge::request_bars Level1] instant repaint from station cache {:?} {} at={:?} tf={} bars={}",
+                    exchange_id, symbol_str, account_type, tf_name, cached.len(),
+                );
+                let _ = tx.send(LiveUpdate::BarsLoaded {
+                    exchange_id,
+                    account_type,
+                    symbol: symbol_str.clone(),
+                    timeframe: tf_name.clone(),
+                    bars: cached,
+                });
+            }
+        }
 
         if need_spawn_kline_sub {
             crate::dlog!(
@@ -1956,10 +2049,10 @@ impl DataBridge {
             // still emit under the TARGET tf name — `agg_fold` carries the
             // fold parameters (`base_ms` unused directly here, `ratio` for
             // the log line) plus the running target-bucket accumulator.
-            let station_interval = kline_agg
-                .as_ref()
-                .map(|agg| agg.base_interval.clone())
-                .unwrap_or_else(|| interval.clone());
+            // `station_interval` is the hoisted value computed above (also
+            // used by the Level-1 cache read) — cloned here for the move
+            // into this task.
+            let station_interval = station_interval.clone();
             let station_tf_name = tf_name.clone();
             let agg_target_ms = kline_agg.as_ref().map(|_| target_interval_ms);
             // Dedup-gate guards, cloned so the task can evict its own key on
@@ -2082,48 +2175,26 @@ impl DataBridge {
                 };
             }
 
-            // Wait for the connector to be dialed and, if necessary, for the
-            // symbol list to arrive so wire_symbol can resolve canonical →
-            // native (e.g. "MUUSDC" → "MU/USDC" on Hyperliquid Spot).
-            //
-            // Both conditions share the same 150-step × 100 ms = 15 s budget.
-            // The dig3 backfill helpers resolve hub.rest themselves, so this
-            // is purely a readiness + resolution barrier.
-            let mut wire_sym = wire_sym; // shadow with mutable local
+            // Wait ONLY for the connector to be dialed — a REST kline GET
+            // must never block on the symbol catalogue (measured defect: BitMEX
+            // XBTUSD and Binance BTCUSDT both have `wire_sym == symbol_str`
+            // eagerly, so the old shared wait burned its full 15s budget
+            // polling `try_resolve_wire_symbol` for a catalogue that was never
+            // going to change the outcome, then fell back to the SAME
+            // passthrough value it already had — first `/trade/bucketed`
+            // landed 16 728ms after the click). `wire_symbol()` above already
+            // ran its own opportunistic catalogue-aware steps (1-3) before a
+            // step-4 no-catalogue fallback, so this task has nothing left to
+            // gain from waiting on the symbol list — only the connector dial
+            // is a genuine prerequisite for `fetch_hub.rest(exchange_id)`.
             {
-                const MAX_ATTEMPTS: u32 = 150; // 15 s total budget
+                const MAX_ATTEMPTS: u32 = 150; // 15 s total budget — connector dial only
                 let mut attempts = 0u32;
-                let mut connector_ready = false;
-                let mut symbol_resolved = false;
                 loop {
-                    if !connector_ready && fetch_hub.rest(exchange_id).is_some() {
-                        connector_ready = true;
-                    }
-                    if connector_ready && !symbol_resolved {
-                        // Attempt a confident resolution now that the symbol
-                        // list may have arrived from the warmup task.
-                        if let Some(resolved) = try_resolve_wire_symbol(
-                            &station_for_retry, exchange_id, account_type, &symbol_str,
-                        ) {
-                            wire_sym = resolved;
-                            symbol_resolved = true;
-                        }
-                    }
-                    if connector_ready && symbol_resolved {
+                    if fetch_hub.rest(exchange_id).is_some() {
                         break;
                     }
-                    // If connector is ready but symbol list is still empty, keep
-                    // polling until the budget runs out — then proceed with the
-                    // passthrough fallback (symbol_str unchanged) which matches
-                    // venues where canonical == native (e.g. Binance).
-                    if connector_ready && attempts >= MAX_ATTEMPTS {
-                        crate::dlog!(
-                            "[Bridge] wire_symbol unresolved after {}ms: exchange={:?} sym={} at={:?} — using passthrough",
-                            attempts * 100, exchange_id, symbol_str, account_type
-                        );
-                        break;
-                    }
-                    if !connector_ready && attempts >= MAX_ATTEMPTS {
+                    if attempts >= MAX_ATTEMPTS {
                         let _ = tx.send(LiveUpdate::Error {
                             exchange_id,
                             account_type,
@@ -2321,6 +2392,227 @@ impl DataBridge {
             _rb_total.elapsed().as_micros(),
             rb_hub_us, rb_wire_us,
         );
+    }
+
+    /// Fetch bars ONCE, with no live subscription left behind.
+    ///
+    /// For a caller with no open chart/bubble on this instrument — today
+    /// that means watchlist-row warm-up, whose only job is to paint a
+    /// sparkline/last-price once; the mini-ticker already carries the live
+    /// price, so nothing reads a live-updating candle for a row nobody has
+    /// opened. Unlike `request_bars`, this NEVER calls `station.subscribe`
+    /// and never spawns a `Stream::Kline` forwarder — no WS subscription, no
+    /// forwarder task, nothing left running once this call's fetch
+    /// completes. Sends the same Level-1-then-Phase-A `BarsLoaded` sequence
+    /// `request_bars` does (so a warm row still benefits from an already-hot
+    /// station cache), then returns with zero footprint.
+    ///
+    /// Fixes a measured leak (2026-08-30): warm-up used to call
+    /// `request_bars`, which — for EVERY instrument, including ones with no
+    /// chart ever opened — spawned a live kline forwarder with no owner to
+    /// ever retire it (`PendingKlineTeardown` only fires on a BUBBLE identity
+    /// change; a warm row has no bubble). For a venue whose WS kline channel
+    /// does not hold a stable connection, that forwarder can enter
+    /// `digdigdig3-station`'s disconnect/heal/resub loop
+    /// (`digdigdig3-station/src/station.rs`'s `spawn_forwarder`, roughly
+    /// lines 1645-1763) — measured: Gemini `/v2/candles` and dYdX
+    /// `/v4/candles` REST calls at a near-fixed ~0.6-0.8s cadence, still
+    /// climbing 30s into total idle after a hard reload, with NOTHING ever
+    /// clicked. That loop's cadence is governed entirely inside
+    /// `digdigdig3-station` (no backoff between `stream_ended`/`stream_err`
+    /// disconnect cycles there — out of this crate's file set, flagged
+    /// separately), so this method's fix is narrower and sits entirely on
+    /// this side of the boundary: never let warm-up start that forwarder in
+    /// the first place. A genuinely open chart on the SAME venue still calls
+    /// `request_bars` (unchanged) and still gets a live subscription with
+    /// live `BarUpdate` pushes — this method is warm-up-only.
+    ///
+    /// If a live forwarder for this EXACT key already exists (the user has
+    /// this instrument open elsewhere), this is a pure no-op skip — that
+    /// subscription's own Phase A + Level 1 already cover it, and fetching
+    /// again here would only duplicate REST traffic.
+    pub fn request_bars_once(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        timeframe: &Timeframe,
+        account_type: AccountType,
+    ) {
+        if symbol.is_empty() {
+            crate::dlog!("[request_bars_once] empty symbol refused exchange={} tf={}", exchange_id.as_str(), timeframe.name);
+            return;
+        }
+        // Trade-built TFs have no dig3 kline source at all (see
+        // `request_bars`'s matching guard) — nothing to one-shot fetch. A
+        // warm row simply shows no sparkline for such a TF; mini-ticker
+        // still carries price.
+        if self.is_kline_trade_built(exchange_id, account_type, timeframe.interval_ms) {
+            crate::dlog!(
+                "[request_bars_once] trade-built TF, nothing to fetch exchange={} sym={} tf={}",
+                exchange_id.as_str(), symbol, timeframe.name,
+            );
+            return;
+        }
+
+        let symbol_str = symbol.to_string();
+        let tf_name = timeframe.name.clone();
+        let cache_key: FetchKey = (exchange_id, account_type, symbol_str.clone(), tf_name.clone());
+
+        // A live forwarder already covers this key (chart open elsewhere) —
+        // its own Phase A + Level 1 are authoritative; don't duplicate.
+        {
+            let subs = self.station_kline_subscribed.lock().unwrap_or_else(|e| e.into_inner());
+            if subs.contains(&cache_key) {
+                crate::dlog!(
+                    "[request_bars_once] live subscriber already covers {:?} {} tf={}, skip",
+                    exchange_id, symbol_str, tf_name,
+                );
+                return;
+            }
+        }
+        {
+            let mut af = self.active_fetches.lock().unwrap_or_else(|e| e.into_inner());
+            if af.contains(&cache_key) {
+                crate::dlog!("[request_bars_once] fetch in-flight, skip {:?} {} tf={}", exchange_id, symbol_str, tf_name);
+                return;
+            }
+            af.insert(cache_key.clone());
+        }
+
+        let fetch_hub = self.station.hub();
+        let tx = self.tx.clone();
+        let wire_sym = self.wire_symbol(exchange_id, account_type, symbol);
+        let interval = timeframe_to_interval(timeframe);
+        let target_interval_ms = timeframe.interval_ms;
+        let kline_agg = self.resolve_kline_aggregation(exchange_id, account_type, &interval, target_interval_ms);
+        let station_interval = kline_agg
+            .as_ref()
+            .map(|agg| agg.base_interval.clone())
+            .unwrap_or_else(|| interval.clone());
+        let active_fetches = self.active_fetches.clone();
+
+        // Level 1 — same cache-restore semantics as `request_bars` (see its
+        // Level-1 comment for the full ordering argument; a one-shot caller
+        // sends at most one `BarsLoaded` after this anyway, so there is no
+        // second event to reconcile against here).
+        if let Some(cached) = self.get_cached_bars(&exchange_id, account_type, &symbol_str, &station_interval) {
+            let cached = match &kline_agg {
+                Some(agg) => crate::kline_agg::fold_bars_into_buckets(&cached, agg.target_ms()),
+                None => cached,
+            };
+            if !cached.is_empty() {
+                crate::dlog!(
+                    "[request_bars_once Level1] instant repaint from station cache {:?} {} at={:?} tf={} bars={}",
+                    exchange_id, symbol_str, account_type, tf_name, cached.len(),
+                );
+                let _ = tx.send(LiveUpdate::BarsLoaded {
+                    exchange_id,
+                    account_type,
+                    symbol: symbol_str.clone(),
+                    timeframe: tf_name.clone(),
+                    bars: cached,
+                });
+            }
+        }
+
+        self.spawn_bg(async move {
+            macro_rules! finish_fetch {
+                () => {
+                    if let Ok(mut af) = active_fetches.lock() {
+                        af.remove(&cache_key);
+                    }
+                };
+            }
+
+            // Wait for the connector to be dialed — same bound and rationale
+            // as `request_bars`'s connector-wait loop (never waits on the
+            // symbol catalogue).
+            {
+                const MAX_ATTEMPTS: u32 = 150; // 15 s total budget
+                let mut attempts = 0u32;
+                loop {
+                    if fetch_hub.rest(exchange_id).is_some() {
+                        break;
+                    }
+                    if attempts >= MAX_ATTEMPTS {
+                        // No Error emission: warm-up has no open chart to
+                        // route it to. dlog is the only observer.
+                        crate::dlog!(
+                            "[request_bars_once] connector {:?} not initialized after 15s, giving up sym={}",
+                            exchange_id, symbol_str,
+                        );
+                        finish_fetch!();
+                        return;
+                    }
+                    attempts += 1;
+                    sleep_ms(100).await;
+                }
+            }
+
+            let (fetch_interval, fetch_limit): (&str, u16) = match &kline_agg {
+                Some(agg) => {
+                    let scaled = 300i64.saturating_mul(agg.ratio).min(1000);
+                    (agg.base_interval.as_str(), scaled.max(1) as u16)
+                }
+                None => (interval.as_str(), 300),
+            };
+            let now_ms = web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as i64)
+                .unwrap_or(i64::MAX);
+            let result = digdigdig3_station::backfill::fetch_history(
+                &fetch_hub,
+                exchange_id,
+                &wire_sym,
+                account_type,
+                &KlineInterval::new(fetch_interval),
+                now_ms,
+                fetch_limit,
+            )
+            .await;
+
+            match result {
+                Ok(points) => {
+                    let base_bars = points.iter().map(bar_point_to_bar).collect::<Vec<_>>();
+                    // Same substitution guard as `request_bars`'s Phase A —
+                    // a silently-substituted interval is worse than nothing.
+                    let expected_ms = crate::convert::interval_to_ms(fetch_interval).unwrap_or(0);
+                    if !crate::kline_agg::bars_match_interval(&base_bars, expected_ms) {
+                        crate::dlog!(
+                            "[request_bars_once] REJECT: venue substituted interval {:?} {} requested={}",
+                            exchange_id, symbol_str, fetch_interval,
+                        );
+                        finish_fetch!();
+                        return;
+                    }
+                    let bars = match &kline_agg {
+                        Some(agg) => crate::kline_agg::fold_bars_into_buckets(&base_bars, agg.target_ms()),
+                        None => base_bars,
+                    };
+                    if !bars.is_empty() {
+                        crate::dlog!(
+                            "[request_bars_once] ok: {:?} {} at={:?} tf={} -> {} bars",
+                            exchange_id, symbol_str, account_type, tf_name, bars.len(),
+                        );
+                        let _ = tx.send(LiveUpdate::BarsLoaded {
+                            exchange_id,
+                            account_type,
+                            symbol: symbol_str.clone(),
+                            timeframe: tf_name.clone(),
+                            bars,
+                        });
+                    }
+                    // Empty result: no Error emission — no open chart to show
+                    // one, and warm-up simply shows no sparkline for this row.
+                }
+                Err(e) => {
+                    // No Error emission — see above; dlog is the only observer.
+                    crate::dlog!("[request_bars_once] Phase A error: {:?} sym={} {}", exchange_id, symbol_str, e);
+                }
+            }
+
+            finish_fetch!();
+        });
     }
 
     /// Abort the active `Stream::Kline` forwarder for an instrument + TF

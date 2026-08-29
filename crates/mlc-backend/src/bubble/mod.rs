@@ -11,7 +11,7 @@ pub(crate) mod bar_derived_cache;
 pub(crate) mod markup_guards;
 pub(crate) mod markup_weld;
 pub use data_bubble::*;
-pub use store::{BubbleStore, InstrumentKey};
+pub use store::{BubbleStore, InstrumentKey, PendingKlineTeardown};
 pub use render::{build_chart_render_state, ChartWindowRenderInputs};
 pub use facade::{BubbleView, Bubbles, BubblesMut};
 pub use raw_layer::{RawLayer, RawTrade};

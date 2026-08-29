@@ -2293,6 +2293,37 @@ impl BackendCore {
             }
         }
 
+        // Kline-forwarder ownership sweep (measured leak, 2026-08-30): a
+        // genuine instrument-identity reassignment (`BubbleStore`'s
+        // `set_*instrument*` family) leaves the OLD instrument's live kline
+        // forwarder running forever — the only existing teardown calls
+        // (`ChangeTimeframe`/`ChangeChartType` handlers in `mlc-app`) fire
+        // on TF/chart-type switches, not on a plain symbol switch, and no
+        // call site retired it for THAT case. `BubbleStore` queues the
+        // orphaned key at the moment it overwrites `bubble.address` (see
+        // `PendingKlineTeardown`); drain it here — the one central per-frame
+        // writer sweep — so every current and future `set_*instrument*` call
+        // site is covered without each one having to remember this call.
+        {
+            let teardowns = self.bubbles_mut().take_pending_kline_teardowns();
+            for t in teardowns {
+                let Some(ex) = ExchangeId::from_str(&t.exchange) else { continue };
+                let at = mlc_backend_data_bridge::account_type_to_dig3(t.account_type);
+                // A sibling bubble/window may still be pinned to the OLD
+                // instrument (two charts on the same symbol) — only retire
+                // the forwarder when nothing references it anymore, mirroring
+                // the sibling-aware guard `ChangeChartType`'s handler already
+                // applies before releasing a derived subscription.
+                if self.bubbles().bubbles_for_instrument(ex.as_str(), at.short_label(), &t.symbol).is_empty() {
+                    mlc_backend_data_bridge::dlog!(
+                        "[tick_writers] kline-forwarder teardown sweep → abort {}:{:?}:{} tf={}",
+                        ex.as_str(), at, t.symbol, t.timeframe,
+                    );
+                    self.abort_kline_bars(ex, &t.symbol, at, &t.timeframe);
+                }
+            }
+        }
+
         events
     }
 
@@ -2392,6 +2423,27 @@ impl BackendCore {
                 pending.extend(queued);
             }
         }
+    }
+
+    /// One-shot bars fetch with NO live subscription left behind — see
+    /// [`mlc_backend_data_bridge::DataBridge::request_bars_once`]'s doc
+    /// comment for the full rationale and the measured leak it closes.
+    ///
+    /// For callers with no open chart/bubble on this instrument (today:
+    /// watchlist-row warm-up only). A caller that DOES have an open
+    /// chart/bubble must keep using [`Self::request_kline`] — that is the
+    /// only path that installs the live `Stream::Kline` forwarder a real
+    /// chart needs for `BarUpdate` pushes; this method intentionally never
+    /// does. Trade-built TFs have no dig3 kline source either way — this is
+    /// simply a no-op for them (mirrors `request_kline`'s guard).
+    pub fn request_kline_once(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        tf: &Timeframe,
+        account_type: AccountType,
+    ) {
+        self.bridge.request_bars_once(exchange_id, symbol, tf, account_type);
     }
 
     /// Abort the active kline forwarder for an instrument + timeframe.

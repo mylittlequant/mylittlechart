@@ -957,8 +957,10 @@ impl ChartApp {
                 use mlc_core::state::ChartId;
                 let target_cid = ChartId(chart_id);
 
-                let resolved_exchange = self.core.exchange_symbols()
-                    .find_by_label(exchange.as_str())
+                // Parse the label directly — see the matching comment in
+                // `apply_instrument_from_sidebar_click`: `find_by_label` is
+                // catalogue-gated and loses the venue before it has loaded.
+                let resolved_exchange = digdigdig3::ExchangeId::from_str(exchange.as_str())
                     .unwrap_or(self.active_exchange);
 
                 let previous_symbol: String = self.symbol_for_chart(target_cid)
@@ -1154,8 +1156,10 @@ impl ChartApp {
                 // the compare toolbar/search modal has always resolved it.
                 self.compare_add_attempts = self.compare_add_attempts.saturating_add(1);
 
-                let resolved_exchange = self.core.exchange_symbols()
-                    .find_by_label(exchange.as_str())
+                // Parse the label directly — see the matching comment in
+                // `apply_instrument_from_sidebar_click`: `find_by_label` is
+                // catalogue-gated and loses the venue before it has loaded.
+                let resolved_exchange = digdigdig3::ExchangeId::from_str(exchange.as_str())
                     .unwrap_or(self.active_exchange);
 
                 // Add the selected symbol as a compare overlay on the active chart window.

@@ -24,6 +24,36 @@ use super::data_bubble::DataBubble;
 pub struct BubbleStore {
     bubbles: std::collections::HashMap<BubbleId, DataBubble>,
     next_indicator_config_id: u64,
+    /// Kline-forwarder keys orphaned by an instrument-identity reassignment
+    /// this tick, queued for `BackendCore::tick_writers` to retire — see
+    /// [`PendingKlineTeardown`]'s doc comment.
+    pending_kline_teardowns: Vec<PendingKlineTeardown>,
+}
+
+/// Snapshot of a kline-forwarder key that just lost its only reason to
+/// exist: a bubble that was displaying `(exchange, account_type, symbol,
+/// timeframe)` was reassigned to a different instrument.
+///
+/// Captured by every `identity_changed` branch in the `set_*instrument*`
+/// family (alongside `reset_raw_layers()`) and drained by
+/// `BackendCore::tick_writers`, which owns the `DataBridge` handle needed to
+/// actually abort the forwarder — `BubbleStore` itself has no bridge access
+/// (doctrine: `bridge: Arc<DataBridge>` lives on `BackendCore` only).
+///
+/// Fixes a measured leak (2026-08-30): no `set_*instrument*` call site ever
+/// tore down the OLD instrument's live kline forwarder — only the bespoke
+/// TF-switch/chart-type-switch handlers in `mlc-app` called
+/// `abort_kline_bars` explicitly, and a plain symbol switch (watchlist row
+/// click) matched none of them. Measured via Gemini's `/v2/candles` REST
+/// poll: 0 requests before ever visiting Gemini, 8 while on it, 23 (still
+/// climbing) after switching away to BTCUSDT/BINANCE — every venue visited
+/// once left its poller running forever, compounding across every switch.
+#[derive(Debug, Clone)]
+pub struct PendingKlineTeardown {
+    pub exchange: String,
+    pub account_type: mlc_core::instrument::AccountType,
+    pub symbol: String,
+    pub timeframe: String,
 }
 
 /// Lifecycle tripwire (2026-07-17): every genuine instrument-identity
@@ -55,7 +85,15 @@ impl BubbleStore {
         Self {
             bubbles: std::collections::HashMap::new(),
             next_indicator_config_id: 1,
+            pending_kline_teardowns: Vec::new(),
         }
+    }
+
+    /// Drain every kline-forwarder key orphaned by an instrument-identity
+    /// change since the last drain. See [`PendingKlineTeardown`]'s doc
+    /// comment — called once per frame from `BackendCore::tick_writers`.
+    pub fn take_pending_kline_teardowns(&mut self) -> Vec<PendingKlineTeardown> {
+        std::mem::take(&mut self.pending_kline_teardowns)
     }
 
     // =========================================================================
@@ -390,11 +428,22 @@ impl BubbleStore {
         if identity_changed {
             log_identity_reset(bubble, bid, &exchange, at, &symbol, "set_instrument");
         }
+        // Snapshot the OLD key while `bubble` is still the pre-change
+        // instrument — see [`PendingKlineTeardown`]'s doc comment.
+        let teardown = identity_changed.then(|| PendingKlineTeardown {
+            exchange: bubble.address.exchange.clone(),
+            account_type: bubble.address.account_type,
+            symbol: bubble.address.symbol.clone(),
+            timeframe: bubble.timeframe.name.clone(),
+        });
         bubble.address.symbol = symbol;
         bubble.address.exchange = exchange;
         bubble.address.account_type = at;
         if identity_changed {
             bubble.reset_raw_layers();
+        }
+        if let Some(t) = teardown {
+            self.pending_kline_teardowns.push(t);
         }
         true
     }
@@ -414,10 +463,20 @@ impl BubbleStore {
             let symbol = bubble.address.symbol.clone();
             log_identity_reset(bubble, bid, &exchange, at, &symbol, "set_bubble_instrument");
         }
+        // Snapshot the OLD key — see [`PendingKlineTeardown`]'s doc comment.
+        let teardown = identity_changed.then(|| PendingKlineTeardown {
+            exchange: bubble.address.exchange.clone(),
+            account_type: bubble.address.account_type,
+            symbol: bubble.address.symbol.clone(),
+            timeframe: bubble.timeframe.name.clone(),
+        });
         bubble.address.exchange = exchange;
         bubble.address.account_type = at;
         if identity_changed {
             bubble.reset_raw_layers();
+        }
+        if let Some(t) = teardown {
+            self.pending_kline_teardowns.push(t);
         }
         true
     }
@@ -444,12 +503,26 @@ impl BubbleStore {
         if identity_changed {
             log_identity_reset(bubble, bid, &exchange, at, &symbol, "set_bid_instrument_full");
         }
+        // Snapshot the OLD (instrument, timeframe) key BEFORE either field
+        // is overwritten — see [`PendingKlineTeardown`]'s doc comment. Uses
+        // `bubble.timeframe`, not the incoming `timeframe` param: the
+        // forwarder being retired was subscribed at whatever TF this
+        // bubble held for the OLD instrument.
+        let teardown = identity_changed.then(|| PendingKlineTeardown {
+            exchange: bubble.address.exchange.clone(),
+            account_type: bubble.address.account_type,
+            symbol: bubble.address.symbol.clone(),
+            timeframe: bubble.timeframe.name.clone(),
+        });
         bubble.address.symbol = symbol;
         bubble.address.exchange = exchange;
         bubble.address.account_type = at;
         bubble.timeframe = timeframe;
         if identity_changed {
             bubble.reset_raw_layers();
+        }
+        if let Some(t) = teardown {
+            self.pending_kline_teardowns.push(t);
         }
         true
     }
@@ -465,9 +538,19 @@ impl BubbleStore {
             let symbol = bubble.address.symbol.clone();
             log_identity_reset(bubble, bid, &exchange, bubble.address.account_type, &symbol, "set_exchange_for_bid");
         }
+        // Snapshot the OLD key — see [`PendingKlineTeardown`]'s doc comment.
+        let teardown = identity_changed.then(|| PendingKlineTeardown {
+            exchange: bubble.address.exchange.clone(),
+            account_type: bubble.address.account_type,
+            symbol: bubble.address.symbol.clone(),
+            timeframe: bubble.timeframe.name.clone(),
+        });
         bubble.address.exchange = exchange;
         if identity_changed {
             bubble.reset_raw_layers();
+        }
+        if let Some(t) = teardown {
+            self.pending_kline_teardowns.push(t);
         }
         true
     }

@@ -925,7 +925,33 @@ impl ChartApp {
                     let sym_name = address.symbol.as_str();
                     let sym_exchange = address.exchange.as_str();
                     let sym_account_type = address.account_type;
-                    let price_data = self.panel_app.panel_grid.containers().iter()
+                    let ticker_key = format!("{}:{}:{}", sym_name, sym_exchange, sym_account_type);
+
+                    let (last_price, change_percent, high_24h, low_24h, volume_24h, spark) =
+                        if let Some(ticker) = self.core.mini_ticker.get(&ticker_key) {
+                            (
+                                ticker.last_price,
+                                ticker.price_change_percent,
+                                ticker.high_price,
+                                ticker.low_price,
+                                ticker.volume,
+                                ticker.spark.iter().copied().collect(),
+                            )
+                        } else {
+                            (0.0, 0.0, 0.0, 0.0, 0.0, Vec::new())
+                        };
+
+                    // A currently-open chart on this EXACT instrument tracks its
+                    // own kline-specific error in `window.data_error`, cleared
+                    // precisely on the next successful reload
+                    // (`ChartContainer::reconcile_view_fresh`) independent of the
+                    // mini-ticker's own health. Checked AHEAD of `last_price`
+                    // (owner repro 2026-08-30 round 3: Bitfinex WS ticker alive,
+                    // REST klines dead behind a killed proxy — the row showed a
+                    // plain live price with no error at all while its own chart
+                    // was failing) so a klines-dead-but-ticker-alive venue still
+                    // surfaces the class on the row instead of reading as healthy.
+                    let open_chart_error = self.panel_app.panel_grid.containers().iter()
                         .find(|(cid, _)| {
                             self.symbol_for_chart(**cid)
                                 .map_or(false, |s| s == sym_name)
@@ -934,54 +960,33 @@ impl ChartApp {
                             && self.account_type_for_chart(**cid)
                                 .map_or(false, |a| a == sym_account_type)
                         })
-                        .and_then(|(_, _w)| None::<&mlc_core::Bar>)
-                        .map(|bar| (bar.close, bar.open, bar.high, bar.low, bar.volume));
+                        .and_then(|(_, w)| w.data_error.as_deref())
+                        .map(classify_watchlist_feed_error);
 
-                    if let Some((price, open, high, low, volume)) = price_data {
-                        let change_pct = if open != 0.0 {
-                            (price - open) / open * 100.0
-                        } else {
-                            0.0
-                        };
-                        self.sidebar_state.watchlist_items.push(WatchlistItem {
-                            symbol: sym_name.to_string(),
-                            exchange: sym_exchange.to_string(),
-                            last_price: price,
-                            change_percent: change_pct,
-                            high_24h: high,
-                            low_24h: low,
-                            volume_24h: volume,
-                            account_type: sym_account_type.to_string(),
-                            address: address.clone(),
-                            spark: Vec::new(),
-                        });
-                    } else if let Some(ticker) = self.core.mini_ticker.get(&format!("{}:{}:{}", sym_name, sym_exchange, sym_account_type)) {
-                        self.sidebar_state.watchlist_items.push(WatchlistItem {
-                            symbol: sym_name.to_string(),
-                            exchange: sym_exchange.to_string(),
-                            last_price: ticker.last_price,
-                            change_percent: ticker.price_change_percent,
-                            high_24h: ticker.high_price,
-                            low_24h: ticker.low_price,
-                            volume_24h: ticker.volume,
-                            account_type: sym_account_type.to_string(),
-                            address: address.clone(),
-                            spark: ticker.spark.iter().copied().collect(),
-                        });
+                    let status = if let Some(s) = open_chart_error {
+                        Some(s)
+                    } else if last_price > 0.0 {
+                        self.sidebar_state.feed_status.remove(&ticker_key);
+                        None
+                    } else if let Some(s) = self.sidebar_state.feed_status.get(&ticker_key) {
+                        Some(s.clone())
                     } else {
-                        self.sidebar_state.watchlist_items.push(WatchlistItem {
-                            symbol: sym_name.to_string(),
-                            exchange: sym_exchange.to_string(),
-                            last_price: 0.0,
-                            change_percent: 0.0,
-                            high_24h: 0.0,
-                            low_24h: 0.0,
-                            volume_24h: 0.0,
-                            account_type: sym_account_type.to_string(),
-                            address: address.clone(),
-                            spark: Vec::new(),
-                        });
-                    }
+                        None
+                    };
+
+                    self.sidebar_state.watchlist_items.push(WatchlistItem {
+                        symbol: sym_name.to_string(),
+                        exchange: sym_exchange.to_string(),
+                        last_price,
+                        change_percent,
+                        high_24h,
+                        low_24h,
+                        volume_24h,
+                        account_type: sym_account_type.to_string(),
+                        address: address.clone(),
+                        spark,
+                        status,
+                    });
                 }
             }
 
@@ -1536,4 +1541,217 @@ impl ChartApp {
             }
         }
     }
+}
+
+/// Classify a venue feed-error message into a short, stable class label.
+///
+/// `None` for a message shape this classifier doesn't recognize yet — both
+/// renderings below fall back to a raw clip of `msg` itself in that case.
+///
+/// The single decision point behind BOTH user-facing renderings (owner spec
+/// 2026-08-30, revised: "the watchlist row and the chart draw from ONE
+/// classification decision" — `classify_watchlist_feed_error` renders the
+/// label alone for the narrow sidebar column; `classify_chart_feed_error`
+/// renders the label PLUS the literal cause for the ~450px chart pane,
+/// which has room for a full sentence and — per the owner's own read of
+/// `render_chart.rs`'s existing comment — is meant to show it). Splitting
+/// this out is also what stops the two renderings from drifting into two
+/// independent keyword lists.
+///
+/// Checks are ordered most-specific-first so an unambiguous signal (a venue
+/// body code, an exact wire phrase) is never shadowed by a broader keyword
+/// match lower down. Message shapes are wire-verified against
+/// `digdigdig3::core::types::common::ExchangeError`'s `Display` impl
+/// (`"API error: {code} - {message}"`, `"Network error: ..."`,
+/// `"Timeout: ..."`, `"Rate limit exceeded..."`, ...) plus the wrappers
+/// `mlc-backend-data-bridge` adds on top: `"warmup failed: {err}"` (bulk
+/// connector warm-up, empty symbol), a bare `err.to_string()` (on-demand
+/// `ensure_connector` dial failure, empty symbol), and
+/// `Bridge::phase_a_fail_message`'s three Phase-A-REST-failure shapes —
+/// `"{exch} klines unavailable: {err} (proxy down?)"`,
+/// `"{exch} klines unavailable: {err}. Paid relay proxy is planned for
+/// geo-blocks."`, `"{exch} needs the data proxy (paid). ..."` — plus its
+/// sibling terminal-empty message `"{exch} klines unavailable: venue
+/// returned no bars for {symbol} {interval}"` (`bridge.rs:2331`), which is
+/// checked AHEAD of the generic "klines unavailable" match below because it
+/// is a genuinely different class: the venue answered, it just had nothing.
+fn classify_label(msg: &str) -> Option<&'static str> {
+    let l = msg.to_lowercase();
+
+    // Geo-blocked / region-restricted. Covers a plain HTTP 403 AND the
+    // KuCoin shape actually seen from the production egress: HTTP 200 with
+    // body `{"code":"400302","msg":"IP is from restricted area"}`, which
+    // `digdigdig3`'s KuCoin connector already turns into a proper `Err`
+    // (`ExchangeError::Api{code:400302,..}`) rather than reading it as
+    // success — this classifier just has to recognize the resulting text.
+    if l.contains("400302")
+        || l.contains("restricted area")
+        || l.contains("403")
+        || l.contains("forbidden")
+        // Anchored spellings only — a bare "geo" substring also matches the
+        // ticker GEO (GEOUSDT), which would report a missing symbol as a
+        // geo-block and send the reader hunting for an egress that is fine.
+        || l.contains("geo-block")
+        || l.contains("geoblock")
+        || l.contains("geo block")
+        || l.contains("geographic")
+        || l.contains("geo restriction")
+        || l.contains("region restricted")
+        || l.contains("not available in your")
+        || l.contains("cloudfront")
+    {
+        return Some("Geo-blocked by venue");
+    }
+
+    // Rate limited — checked before the generic API-error bucket so a 429
+    // body reads as a limit, not a mystery error.
+    if l.contains("rate limit") || l.contains("429") || l.contains("too many requests") {
+        return Some("Rate limited");
+    }
+
+    // Symbol rejected by the venue (HTX: concatenated "ETHUSDT" -> "invalid
+    // symbol").
+    if l.contains("invalid symbol") || l.contains("symbol not found") || l.contains("unknown symbol") {
+        return Some("Symbol not on venue");
+    }
+
+    // Timeframe rejected by the venue (HTX: `period=1h` -> "invalid
+    // period").
+    if l.contains("invalid period") || l.contains("invalid interval") || l.contains("invalid timeframe") {
+        return Some("Timeframe not supported");
+    }
+
+    // The venue answered but sent zero bars (`bridge.rs:2331`'s terminal-
+    // empty path, dig3's own retry budget already spent) — a different
+    // class from "couldn't reach the venue at all", so it must be caught
+    // ahead of the generic "klines unavailable" wrapper match below (this
+    // message shape contains that same wrapper text).
+    if l.contains("returned no bars") {
+        return Some("No data returned by venue");
+    }
+
+    // The connector itself never came up. `"warmup failed: {err}"` is the
+    // bulk connector warm-up's own wrapper text (`Bridge::
+    // warmup_all_connectors`) — recognized ahead of the generic
+    // network/unreachable bucket below so this reads as "the venue never
+    // started" rather than a mid-session drop.
+    if l.contains("warmup failed") {
+        return Some("Connector failed to start");
+    }
+
+    // Unreachable — transport failed before any venue response existed to
+    // classify (wasm's CORS `"Failed to fetch"`, an on-demand connector
+    // dial that failed outright), OR the bridge's own Phase-A-REST wrapper
+    // said so in plain words: `"klines unavailable"` / `"(proxy down?)"` /
+    // `"needs the data proxy"` (`Bridge::phase_a_fail_message`) — added
+    // 2026-08-30 after a dead local CORS proxy (`:17800`) produced an inner
+    // `{err}` text (wasm fetch failure) that matched none of the patterns
+    // above; the OUTER wrapper the bridge always adds is the reliable,
+    // transport-independent signal, so match on that instead of chasing
+    // every possible inner error string.
+    if l.contains("failed to fetch")
+        || l.contains("network error")
+        || l.contains("cors")
+        || l.contains("blocked")
+        || l.contains("connection error")
+        || l.contains("not connected")
+        || l.contains("timeout")
+        || l.contains("klines unavailable")
+        || l.contains("proxy down")
+        || l.contains("needs the data proxy")
+    {
+        return Some("Venue unreachable");
+    }
+
+    None
+}
+
+/// Short watchlist-row copy for a venue feed error (Last/spark
+/// replacement). The class label alone — the column is narrow and the
+/// class is the useful part (owner spec 2026-08-30: "This is right today,
+/// keep it."). Falls back to a word-boundary clip of the raw message when
+/// [`classify_label`] doesn't recognize the shape.
+pub(crate) fn classify_watchlist_feed_error(msg: &str) -> String {
+    match classify_label(msg) {
+        Some(label) => label.to_string(),
+        None => clip_on_word_boundary(msg.trim(), 32),
+    }
+}
+
+/// Chart empty-state copy for a venue feed error (`ChartContainer::
+/// data_error`, drawn by `render_full_chart_panel` —
+/// `mlc-app-layout/src/layout/render_chart.rs`). The class label PLUS the
+/// literal cause: the chart pane has room for a full sentence, and
+/// downgrading it to the row's short label alone threw away exactly the
+/// cause the user needs (owner spec 2026-08-30, e.g. `"Venue unreachable —
+/// Bitfinex klines unavailable: <err> (proxy down?)"`).
+///
+/// Returns the FULL composed string, uncapped — a fixed character budget
+/// here overshot on a narrow pane and ran the text off both edges (live
+/// regression, 2026-08-30 round 2: a 120-char budget on a ~450px pane).
+/// Composition (this function) and fitting are two different jobs: this
+/// function only decides WHAT the text says; wrapping it to the pane's
+/// actual measured width belongs at the draw site where that width is
+/// known (`mlc-app-layout::layout::render_chart::wrap_and_ellipsize`).
+pub(crate) fn classify_chart_feed_error(msg: &str) -> String {
+    let cause = strip_wrapper_noise(msg.trim());
+    match classify_label(msg) {
+        Some(label) => format!("{} — {}", label, cause),
+        None => cause,
+    }
+}
+
+/// Plumbing-layer prefixes that tell the user nothing about WHAT failed —
+/// stripped entirely from the front of the chart's cause text. Fixed list,
+/// exact match only (owner spec 2026-08-30 round 2: "keep this
+/// conservative... do not attempt clever parsing").
+const PLUMBING_SEGMENTS: &[&str] = &["core error", "get_klines failed"];
+
+/// Strip leading plumbing prefixes, then collapse an exact-repeat
+/// `"<segment>: <segment>: "` prefix down to one copy. Each connector layer
+/// re-wraps the error from the layer below it, so the SAME segment name can
+/// end up doubled at the front — e.g. `"core error: get_klines failed:
+/// Invalid request: Invalid request: <the actual venue text>"`. Plumbing
+/// prefixes are dropped outright (`"core error:"`, `"get_klines failed:"`);
+/// a repeated segment like `"Invalid request:"` is real information and
+/// kept, just de-duplicated to one copy. Conservative on purpose: exact
+/// prefix matches only, no parsing of the message's structure.
+fn strip_wrapper_noise(msg: &str) -> String {
+    // Segment-wise, not prefix-wise: each layer wraps the one below as
+    // "<layer>: <inner>", so the plumbing lands in the MIDDLE of the string
+    // ("Bitfinex klines unavailable: core error: get_klines failed: ...").
+    // Anchoring at the front only, as the first version did, matched nothing
+    // and left the duplicate visible on the chart.
+    // Split/rejoin on the same separator is lossless, so a segment that
+    // legitimately contains a colon inside parentheses survives intact.
+    let mut out: Vec<&str> = Vec::new();
+    for seg in msg.split(": ") {
+        let seg = seg.trim();
+        if seg.is_empty() || PLUMBING_SEGMENTS.contains(&seg) {
+            continue;
+        }
+        // Collapse an immediate repeat of the layer below ("Invalid
+        // request: Invalid request: ...").
+        if out.last() == Some(&seg) {
+            continue;
+        }
+        out.push(seg);
+    }
+    out.join(": ")
+}
+
+/// Clip `text` to at most `max_chars`, breaking at the last whitespace
+/// boundary within budget instead of mid-word, with a trailing ellipsis.
+/// Falls back to a hard character cutoff only when `text` has no whitespace
+/// at all within budget (a single long token — no boundary exists to back
+/// off to).
+fn clip_on_word_boundary(text: &str, max_chars: usize) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    if chars.len() <= max_chars {
+        return text.to_string();
+    }
+    let hard_cut = max_chars.saturating_sub(1); // room for the ellipsis
+    let cut = chars[..hard_cut].iter().rposition(|c| c.is_whitespace()).unwrap_or(hard_cut);
+    let clipped: String = chars[..cut].iter().collect();
+    format!("{}…", clipped.trim_end())
 }

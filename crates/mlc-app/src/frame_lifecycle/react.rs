@@ -6,6 +6,7 @@
 //! happened inside `tick_writers`. This module is the read/react half.
 
 use crate::ChartApp;
+use crate::WarmupBudget;
 use crate::chart_container::DEFAULT_SNAP_MARGIN;
 use mlc_backend::BubbleEvent;
 use mlc_backend_indicator_engine::RecalcMode;
@@ -1197,12 +1198,40 @@ impl ChartApp {
                     return;
                 }
                 let exchange_str = eid_str;
+                // Feature: warm the watchlist (owner 2026-08-30) — "не
+                // греются данные из списка вочлистов, а могли бы сразу
+                // загружаться". A watchlist row click today always starts a
+                // cold download; queue a background `request_kline` for
+                // every row on this venue at the ACTIVE chart's timeframe
+                // (falls back to the app default `Timeframe::h1()`, same
+                // fallback used elsewhere in this file) so the row already
+                // holds bars by the time it's clicked — the click still
+                // force-fetches a fresh page on top (`panel_click.rs`'s
+                // `apply_instrument_from_sidebar_click`, unchanged).
+                // `drain_watchlist_warmup` (below) spends this queue against
+                // a per-venue REST budget instead of firing the whole venue
+                // at once.
+                let warmup_tf = self.panel_app.panel_grid.active_container_id()
+                    .and_then(|cid| self.timeframe_for_chart(cid))
+                    .unwrap_or_else(mlc_core::state::Timeframe::h1);
                 let wl_guard = self.core.watchlists();
                 if let Some(wl) = wl_guard.find(self.watchlist_ui.active_list_id) {
                     for ws in wl.all_symbols() {
                         if ws.exchange == exchange_str {
                             let ws_at = mlc_backend_data_bridge::account_type_to_dig3(ws.account_type);
                             self.core.bridge_handle().subscribe_mini_ticker(*exchange_id, &ws.symbol, ws_at);
+                            // `ConnectorReady` can refire for a venue that
+                            // is already warm (reconnect) — only queue a
+                            // key this session has never warmed. The
+                            // bridge's own dedup is NOT a backstop here:
+                            // REST-poll venues with no kline WS stream
+                            // (dYdX, Gemini) never register a live
+                            // subscriber, so a repeat non-force
+                            // `request_kline` is not deduped for them and
+                            // would otherwise re-fire forever.
+                            if !self.watchlist_warmed.contains(&(ws.clone(), warmup_tf.clone())) {
+                                self.watchlist_warmup_queue.push_back((*exchange_id, ws.clone(), warmup_tf.clone()));
+                            }
                         }
                     }
                 }
@@ -1231,6 +1260,15 @@ impl ChartApp {
 
             // ── ErrorReported ──────────────────────────────────────────────────
             BubbleEvent::ErrorReported { exchange_id, symbol, account_type, timeframe, message } => {
+                // Two renderings of one classification (owner spec
+                // 2026-08-30, revised): `status` is the short class label
+                // alone for the narrow watchlist column; `chart_text` is
+                // the class PLUS the literal cause for the chart's
+                // empty-state text, which has room for a full sentence and
+                // is where the user actually needs to see WHAT failed, not
+                // just its category.
+                let status = super::prepare::classify_watchlist_feed_error(message);
+                let chart_text = super::prepare::classify_chart_feed_error(message);
                 if !symbol.is_empty() {
                     let event_account_type: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                     let error_instrument_map: std::collections::HashMap<mlc_core::state::ChartId, bool> = {
@@ -1249,20 +1287,51 @@ impl ChartApp {
                             .collect()
                     };
                     let matched = !error_instrument_map.is_empty();
+                    // Classified, not the raw dump — but the CHART gets the
+                    // class-plus-cause text (`chart_text`), not the row's
+                    // bare label; the row's `status` is deliberately
+                    // shorter than what the chart can afford to show.
                     for (cid_err, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
                         if error_instrument_map.contains_key(cid_err) {
-                            window.data_error = Some(message.clone());
+                            window.data_error = Some(chart_text.clone());
                         }
                     }
+                    let key = format!("{}:{}:{}", symbol, exchange_id.as_str(), account_type);
+                    self.sidebar_state.feed_status.insert(key, status);
                     log::warn!(
                         "[data-error] {:?} {} at={} tf={}: {} (window_match={})",
                         exchange_id, symbol, account_type, timeframe, message, matched,
                     );
                 } else {
                     // Connector/warmup-level error — no instrument to attach it
-                    // to (empty symbol = venue-wide, e.g. connect_public
-                    // failure). No window field to set; still surface to the log
-                    // so it isn't silently dropped (audit D6).
+                    // to (empty symbol = venue-wide, e.g. connect_public /
+                    // warmup failure). Stamp every watchlist row on this venue
+                    // so the row can show the classified failure AND every
+                    // open chart window on this venue, so a chart left with
+                    // no bars explains itself instead of sitting silently
+                    // empty (owner spec 2026-08-30 — this branch used to skip
+                    // `window.data_error` entirely; only the per-instrument
+                    // branch above touched it).
+                    let exch = exchange_id.as_str();
+                    let keys: Vec<String> = self.sidebar_state.watchlist_items.iter()
+                        .filter(|it| it.exchange == exch)
+                        .map(|it| format!("{}:{}:{}", it.symbol, it.exchange, it.account_type))
+                        .collect();
+                    for key in keys {
+                        self.sidebar_state.feed_status.insert(key, status.clone());
+                    }
+                    let matching_windows: std::collections::HashSet<mlc_core::state::ChartId> = self
+                        .panel_app.panel_grid.containers().keys()
+                        .filter(|cid| self.exchange_for_chart(**cid).is_some_and(|e| e == exch))
+                        .copied()
+                        .collect();
+                    if !matching_windows.is_empty() {
+                        for (cid_err, window) in self.panel_app.panel_grid.containers_mut().iter_mut() {
+                            if matching_windows.contains(cid_err) {
+                                window.data_error = Some(chart_text.clone());
+                            }
+                        }
+                    }
                     log::warn!(
                         "[data-error] {:?} (connector-level, no instrument): {}",
                         exchange_id, message,
@@ -1700,6 +1769,107 @@ impl ChartApp {
                 // calling this method. No additional window-level work needed here.
             }
         }
+    }
+
+    /// Drain `watchlist_warmup_queue` against each venue's token bucket in
+    /// `watchlist_warmup_budget` (feature: "warm the watchlist", owner
+    /// 2026-08-30). Called once per tick from `react_to_events`
+    /// (`frame_lifecycle/tick.rs`), same cadence as `warmup_connectors`.
+    ///
+    /// Every queued row is checked every call — cheap (a hashmap lookup per
+    /// row) — but only NOT-YET-WARMED rows whose venue currently has a
+    /// spare token are actually sent; a row already recorded in
+    /// `watchlist_warmed` is dropped here without spending a token (it can
+    /// arrive stale from a duplicate enqueue — e.g. two `ConnectorReady`
+    /// fires before the first copy drained). A row that IS still unwarmed
+    /// but has no spare token is re-queued in its original order and
+    /// retried on a later tick once the bucket refills — the "queue rather
+    /// than drop" half of the rate limit, unaffected by the memory added
+    /// here: a large watchlist on a tight venue (BitMEX ~30 req/min) still
+    /// drains progressively instead of either blowing the venue's REST
+    /// budget in one sweep or losing rows.
+    ///
+    /// `watchlist_warmed` is the stopping condition for "warm each row at
+    /// most once" REGARDLESS of what the bridge does underneath — it is
+    /// what stops THIS sweep from re-enqueuing/re-sending a key, not a
+    /// side-effect of the bridge's own dedup. That distinction mattered in
+    /// practice: venues that never register a live kline WS subscriber
+    /// (dYdX, Gemini: REST-poll only) don't trip the bridge's subscriber-
+    /// already-live skip, so a repeat call for them was a real network
+    /// call every time — measured 2026-08-30, ~1.3 req/s sustained against
+    /// dYdX with the app fully idle before this set existed.
+    ///
+    /// The send itself is `core.request_kline_once` (round 4 fix), not
+    /// `request_kline(..., force=false)`: the ordinary path spawns a live
+    /// `Stream::Kline` forwarder that stays subscribed forever, and for
+    /// the same REST-poll venues that forwarder's own heal loop was
+    /// re-fetching full candle history repeatedly (~1.5x/s), indefinitely,
+    /// for rows the user never opened — `watchlist_warmed` stopped THIS
+    /// sweep's repeats, but not the standing forwarder it had already
+    /// started. `request_kline_once` fetches bars once and leaves nothing
+    /// running.
+    pub(crate) fn drain_watchlist_warmup(&mut self) {
+        if self.watchlist_warmup_queue.is_empty() {
+            return;
+        }
+        let now = web_time::Instant::now();
+        let mut requeue: std::collections::VecDeque<(
+            digdigdig3::ExchangeId,
+            mlc_core::instrument::InstrumentAddress,
+            mlc_core::state::Timeframe,
+        )> = std::collections::VecDeque::new();
+        while let Some((exchange_id, address, tf)) = self.watchlist_warmup_queue.pop_front() {
+            let warm_key = (address, tf);
+            if self.watchlist_warmed.contains(&warm_key) {
+                continue;
+            }
+            let budget = self
+                .watchlist_warmup_budget
+                .entry(exchange_id)
+                .or_insert_with(|| WarmupBudget::new(warmup_requests_per_minute(exchange_id), now));
+            budget.refill(now);
+            if budget.take() {
+                let (address, tf) = &warm_key;
+                let at = mlc_backend_data_bridge::account_type_to_dig3(address.account_type);
+                self.core.ensure_connector(exchange_id);
+                // One-shot fetch, not `request_kline(..., force=false)`
+                // (owner spec 2026-08-30 round 4): the ordinary path spawns
+                // a live `Stream::Kline` forwarder that stays subscribed
+                // forever, and for REST-poll venues with no push stream
+                // (dYdX, Gemini) that forwarder's heal loop was re-fetching
+                // full candle history ~1.5x/s indefinitely for rows the
+                // user never opened — `watchlist_warmed` stopped OUR
+                // re-requests, but not the forwarder it had already
+                // started. `request_kline_once` sends the same Level-1-
+                // cache-then-Phase-A-REST `BarsLoaded` and leaves nothing
+                // running (no-op skip if a live forwarder already covers
+                // this key, e.g. an open chart on the same instrument). The
+                // mini-ticker subscription above already carries live
+                // price for the row; a warm row needs bars once, not a
+                // standing subscription.
+                self.core.request_kline_once(exchange_id, &address.symbol, tf, at);
+                self.watchlist_warmed.insert(warm_key);
+            } else {
+                let (address, tf) = warm_key;
+                requeue.push_back((exchange_id, address, tf));
+            }
+        }
+        self.watchlist_warmup_queue = requeue;
+    }
+}
+
+/// Per-venue REST budget for the watchlist warm-up sweep (rows/minute).
+///
+/// BitMEX rejects aggressively past roughly 30 requests/minute on its
+/// public kline endpoint (owner-measured, 2026-08-30). Every other venue
+/// defaults to a conservative generic ceiling until it, too, earns a
+/// measured number — the point of a PER-venue budget (rather than one
+/// shared number) is precisely so a tight venue like this one doesn't cap
+/// every other venue's warm-up throughput.
+fn warmup_requests_per_minute(exchange_id: digdigdig3::ExchangeId) -> u32 {
+    match exchange_id {
+        digdigdig3::ExchangeId::Bitmex => 30,
+        _ => 60,
     }
 }
 

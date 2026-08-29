@@ -239,6 +239,36 @@ fn truncate_to_width(ctx: &dyn RenderContext, text: &str, max_width: f64) -> Str
     truncated
 }
 
+/// Like [`truncate_to_width`] but backs off to the last whitespace boundary
+/// within the fitted prefix instead of cutting mid-word.
+///
+/// Used for the watchlist row's venue-error status text (owner spec
+/// 2026-08-30): the classified phrases from `classify_watchlist_feed_error`
+/// are already short, but a narrow Last-price column can still be tighter
+/// than the phrase — clipping "Connector failed to start" mid-word to
+/// "Connector fai…" reads as noise, "Connector…" still reads as a phrase.
+/// Falls back to the plain char-level fit when the fitted prefix has no
+/// whitespace at all (a single long token — no boundary to back off to).
+fn truncate_to_width_word_boundary(ctx: &dyn RenderContext, text: &str, max_width: f64) -> String {
+    if ctx.measure_text(text) <= max_width {
+        return text.to_string();
+    }
+    let ellipsis = "\u{2026}"; // …
+    let ellipsis_w = ctx.measure_text(ellipsis);
+    let available = max_width - ellipsis_w;
+    if available <= 0.0 {
+        return String::new();
+    }
+    let mut truncated = text.to_string();
+    while !truncated.is_empty() && ctx.measure_text(&truncated) > available {
+        truncated.pop();
+    }
+    if let Some(last_space) = truncated.trim_end().rfind(char::is_whitespace) {
+        truncated.truncate(last_space);
+    }
+    format!("{}{}", truncated.trim_end(), ellipsis)
+}
+
 // =============================================================================
 // Main render function
 // =============================================================================
@@ -1827,13 +1857,38 @@ fn render_watchlist_items(
             col_idx += 1;
         }
 
+        // A failing row reports the CLASS of the failure, and it gets the
+        // whole remaining row width to say it in. Two earlier attempts were
+        // both wrong for the owner's repro (2026-08-30): guarding on
+        // `last_price == 0.0` hid the error entirely for a venue whose WS
+        // ticker is alive while its klines are dead, and drawing it inside
+        // the narrow Last column clipped "Venue unreachable" down to
+        // "Venue…", which names nothing. `prepare` only sets `status` for a
+        // genuine error — it clears `feed_status` the moment a price
+        // arrives — so a set status is never stale, and preempting the
+        // price/change/spark cells for that row is the intended trade.
+        let row_status = item.status.as_deref();
+
         if col_cfg.show_last_price {
             let (clip_l, clip_r) = col_clip(col_idx);
             let clip_w = (clip_r - clip_l).max(0.0);
-            if clip_w >= 1.0 {
+            if let Some(st) = row_status {
+                let span_r = col_clip(n_cols.saturating_sub(1)).1;
+                let span_w = (span_r - clip_l - 4.0).max(0.0);
+                if span_w >= 1.0 {
+                    ctx.set_fill_color(&theme.danger);
+                    ctx.set_text_align(TextAlign::Left);
+                    let display_status = truncate_to_width_word_boundary(ctx, st, span_w);
+                    ctx.fill_text(
+                        &display_status,
+                        clip_l + 2.0,
+                        current_y + data_row_h / 2.0,
+                    );
+                }
+            } else if clip_w >= 1.0 {
                 let (align, tx) = col_text_x(col_idx, clip_l, clip_r);
-                ctx.set_fill_color(&theme.item_text);
                 ctx.set_text_align(align);
+                ctx.set_fill_color(&theme.item_text);
                 let price_str = format_price(item.last_price);
                 let display_price = truncate_to_width(ctx, &price_str, clip_w);
                 ctx.fill_text(
@@ -1848,7 +1903,7 @@ fn render_watchlist_items(
         if col_cfg.show_change_pct {
             let (clip_l, clip_r) = col_clip(col_idx);
             let clip_w = (clip_r - clip_l).max(0.0);
-            if clip_w >= 1.0 {
+            if clip_w >= 1.0 && (row_status.is_none() || !col_cfg.show_last_price) {
                 let change_color = if item.change_percent > 0.0 {
                     theme.success.as_str()
                 } else if item.change_percent < 0.0 {
@@ -1876,7 +1931,7 @@ fn render_watchlist_items(
             // the 24h change sign.
             let (clip_l, clip_r) = col_clip(col_idx);
             let clip_w = (clip_r - clip_l).max(0.0);
-            if clip_w >= 14.0 && item.spark.len() >= 2 {
+            if clip_w >= 14.0 && item.spark.len() >= 2 && !(row_status.is_some() && col_cfg.show_last_price) {
                 let up = item.change_percent >= 0.0;
                 let color = if up { theme.success.as_str() } else { theme.danger.as_str() };
                 draw_price_sparkline(
@@ -1888,6 +1943,21 @@ fn render_watchlist_items(
                     &item.spark,
                     color,
                 );
+            } else if clip_w >= 1.0
+                && item.spark.len() < 2
+                && !col_cfg.show_last_price
+            {
+                if let Some(st) = row_status {
+                    let (align, tx) = col_text_x(col_idx, clip_l, clip_r);
+                    ctx.set_fill_color(&theme.danger);
+                    ctx.set_text_align(align);
+                    let display_status = truncate_to_width_word_boundary(ctx, st, clip_w);
+                    ctx.fill_text(
+                        &display_status,
+                        tx,
+                        current_y + data_row_h / 2.0,
+                    );
+                }
             }
             col_idx += 1;
         }

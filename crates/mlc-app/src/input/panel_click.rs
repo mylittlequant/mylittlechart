@@ -38,9 +38,13 @@ impl ChartApp {
     /// symbol-switch semantics (drawing snapshot swap, trade-stream
     /// resubscribe, sync-group propagation) with zero duplicated logic.
     fn apply_instrument_from_sidebar_click(&mut self, symbol: String, item_exchange: String, item_account_type: String) {
-        // Resolve ExchangeId from the item's exchange string.
-        let resolved_exchange = self.core.exchange_symbols()
-            .find_by_label(&item_exchange)
+        // Resolve ExchangeId from the item's exchange string. Parse the label
+        // directly — `find_by_label` only answers for venues whose catalogue
+        // has already landed, so it silently returned None for a not-yet-
+        // catalogued venue and dialled klines at the PREVIOUS chart's exchange
+        // (live-caught 2026-08-30: a Bitfinex row fetched ETHUSD from Binance,
+        // a BitMEX row fetched XBTUSD from KuCoin futures — both empty charts).
+        let resolved_exchange = digdigdig3::ExchangeId::from_str(&item_exchange)
             .unwrap_or(self.active_exchange);
 
         // S2.7.1e: read prev instrument fields via branch_meta (B1).

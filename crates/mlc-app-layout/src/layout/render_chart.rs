@@ -3195,6 +3195,62 @@ pub struct ChartPanelRenderData<'a> {
     pub above_main_ids: Option<&'a std::collections::HashSet<u64>>,
 }
 
+/// Word-wrap `text` to at most `max_lines` lines that each fit within
+/// `max_width` pixels (measured via `ctx.measure_text`, so the caller's
+/// already-set font applies — see `record_label_text_rect` in
+/// `mlc-core/src/engine/render/context.rs` for the same measure-after-
+/// set-font convention). Whatever still doesn't fit after `max_lines` is
+/// ellipsized on the last line, backed off to a word boundary the same way
+/// `mlc-app-sidebar-content::render::truncate_to_width_word_boundary` does
+/// for the watchlist row — never cut mid-word except for a single token
+/// that alone overflows `max_width` (no boundary exists to back off to).
+///
+/// Used by the chart's empty-state error text (owner spec 2026-08-30): a
+/// fixed character budget cannot know the pane's actual width, so it either
+/// overshoots the pane (text clipped off both edges) or undershoots it
+/// (needless clipping on a wide pane) — only a real measurement fits.
+fn wrap_and_ellipsize(ctx: &dyn RenderContext, text: &str, max_width: f64, max_lines: usize) -> Vec<String> {
+    if max_width <= 0.0 || max_lines == 0 {
+        return Vec::new();
+    }
+    let words: Vec<&str> = text.split_whitespace().collect();
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let mut lines: Vec<String> = Vec::new();
+    let mut idx = 0usize;
+    while idx < words.len() && lines.len() < max_lines {
+        let mut line = words[idx].to_string();
+        idx += 1;
+        while idx < words.len() {
+            let candidate = format!("{} {}", line, words[idx]);
+            if ctx.measure_text(&candidate) > max_width {
+                break;
+            }
+            line = candidate;
+            idx += 1;
+        }
+        lines.push(line);
+    }
+    let overflowed_last_line = lines.last().is_some_and(|l| ctx.measure_text(l) > max_width);
+    if idx < words.len() || overflowed_last_line {
+        if let Some(last) = lines.last_mut() {
+            let ellipsis = "\u{2026}";
+            let ellipsis_w = ctx.measure_text(ellipsis);
+            let available = (max_width - ellipsis_w).max(0.0);
+            while !last.is_empty() && ctx.measure_text(last) > available {
+                last.pop();
+            }
+            if let Some(pos) = last.trim_end().rfind(char::is_whitespace) {
+                last.truncate(pos);
+            }
+            let trimmed = last.trim_end().to_string();
+            *last = format!("{}{}", trimmed, ellipsis);
+        }
+    }
+    lines
+}
+
 /// Render a complete chart panel — background, grid, series, scales, indicators,
 /// alerts, drawing primitives, sub-panes, crosshair, and borders.
 ///
@@ -3397,11 +3453,27 @@ pub fn render_full_chart_panel(
         let mut result = ChartPanelRenderResult::empty();
         if let Some(err_msg) = data.data_error {
             // Error path keeps text — the user needs to see WHAT failed.
+            //
+            // Wrapped to the PANE's actual measured width, not a fixed
+            // character budget (owner spec 2026-08-30): a character count
+            // cannot know the pane's real width, so it either overshoots
+            // (text clipped off both edges by the renderer, worse than no
+            // wrap at all — the live regression this replaces) or
+            // undershoots (needless clipping on a wide pane). The font is
+            // set BEFORE `measure_text` below runs, so line-fit is true.
+            let font_size = 14.0;
             ctx.set_font("14px sans-serif");
             ctx.set_text_align(mlc_core::render::TextAlign::Center);
             ctx.set_text_baseline(mlc_core::render::TextBaseline::Middle);
             ctx.set_fill_color(&corrected_state.theme.candle_down);
-            ctx.fill_text(err_msg, cx, cy);
+            const TEXT_SIDE_PADDING: f64 = 24.0;
+            let max_text_width = (main_chart.chart.width - TEXT_SIDE_PADDING * 2.0).max(40.0);
+            let lines = wrap_and_ellipsize(ctx, err_msg, max_text_width, 3);
+            let line_height = font_size * 1.2;
+            let top_y = cy - (lines.len() as f64 - 1.0) * line_height / 2.0;
+            for (i, line) in lines.iter().enumerate() {
+                ctx.fill_text(line, cx, top_y + i as f64 * line_height);
+            }
         } else {
             // Hand the spinner geometry up to the host renderer.
             let pane_min = main_chart.chart.width.min(main_chart.chart.height);
