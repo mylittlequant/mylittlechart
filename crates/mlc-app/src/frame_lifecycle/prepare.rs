@@ -1584,6 +1584,18 @@ fn classify_label(msg: &str) -> Option<&'static str> {
     // `digdigdig3`'s KuCoin connector already turns into a proper `Err`
     // (`ExchangeError::Api{code:400302,..}`) rather than reading it as
     // success — this classifier just has to recognize the resulting text.
+    // Which side is blocked is decided upstream, where the routing is known:
+    // a must-proxy venue was dialed by our server, anything else left the
+    // user's own browser (`DataBridge::phase_a_fail_message`). A geo-block is
+    // a final answer here — we do not relay around it (owner 2026-08-30) — so
+    // the row has to say whose region it is.
+    if l.contains("geo-blocks our server") {
+        return Some("Geo-blocked at our server");
+    }
+    if l.contains("geo-blocks your region") {
+        return Some("Geo-blocked in your region");
+    }
+
     if l.contains("400302")
         || l.contains("restricted area")
         || l.contains("403")

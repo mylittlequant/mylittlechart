@@ -1647,24 +1647,58 @@ impl DataBridge {
             .set_rest_base_override(exchange_id, override_url);
     }
 
-    /// Chart-visible Phase A failure copy. Direct venues (ACAO) that geo/ban
-    /// the user's IP stay direct — we do not silently relay. Must-proxy
-    /// venues mention the proxy; if the whole-proxy paywall is on and this
-    /// session is not entitled, that is the message instead of a CORS dump.
+    /// Chart-visible Phase A failure copy.
+    ///
+    /// A geo-block is an ANSWER, not a problem to engineer around (owner
+    /// 2026-08-30). We never relay a venue to a friendlier egress and we
+    /// never widen the must-proxy list for convenience: our proxy is ONE
+    /// rate-limit bucket shared by every client, while a browser calling
+    /// the venue direct spends its own. So the copy has to name which side
+    /// is blocked and stop there.
+    ///
+    /// Which side it is follows from how the call was routed — a
+    /// `CORS_BLOCKED_REST` venue went through our server, anything else
+    /// left the user's own browser.
     fn phase_a_fail_message(exchange_id: ExchangeId, err: &impl std::fmt::Display) -> String {
-        if Self::CORS_BLOCKED_REST.contains(&exchange_id) {
+        let via_our_server = Self::CORS_BLOCKED_REST.contains(&exchange_id);
+        let text = err.to_string();
+
+        if Self::is_geo_block(&text) {
+            return if via_our_server {
+                format!(
+                    "{:?} geo-blocks our server's region. This venue needs CORS, so the browser cannot reach it directly. A self-hosted instance in a region it serves can.",
+                    exchange_id
+                )
+            } else {
+                format!("{:?} geo-blocks your region.", exchange_id)
+            };
+        }
+
+        if via_our_server {
             if !crate::archive_proxy_allowed() {
                 return format!(
                     "{:?} needs the data proxy (paid). Browser cannot call this venue direct.",
                     exchange_id
                 );
             }
-            return format!("{:?} klines unavailable: {} (proxy down?)", exchange_id, err);
+            return format!("{:?} klines unavailable: {} (proxy down?)", exchange_id, text);
         }
-        format!(
-            "{:?} klines unavailable: {}. Paid relay proxy is planned for geo-blocks.",
-            exchange_id, err
-        )
+        format!("{:?} klines unavailable: {}", exchange_id, text)
+    }
+
+    /// Region refusal, in the shapes venues actually send it. KuCoin answers
+    /// HTTP 200 with body code `400302` "IP is from restricted area", so a
+    /// transport-level success is not evidence of one here.
+    fn is_geo_block(text: &str) -> bool {
+        let l = text.to_lowercase();
+        l.contains("400302")
+            || l.contains("restricted area")
+            || l.contains("geo-block")
+            || l.contains("geoblock")
+            || l.contains("geographic")
+            || l.contains("region restricted")
+            || l.contains("not available in your")
+            || l.contains("unavailable in your")
     }
 
     /// Ensure a connector is initialized for the given exchange.
