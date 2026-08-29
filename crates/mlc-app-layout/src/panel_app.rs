@@ -1226,6 +1226,29 @@ pub fn chart_toolbar_render_toolbars(
                 if let Some(svg) = crate::ui::icons::icon_svg(&favorite_tool_icon(&drag.tool_id)) {
                     draw_svg_icon(ctx, svg, drag.cursor_x - 12.0, drag.cursor_y - 12.0, 24.0, 24.0, &theme.item_text_hover);
                 }
+                // In-bar reorder: vertical insertion line at the drop slot
+                // when the cursor is over the bar (drop-outside is remove,
+                // no line). Same accent as granularity-row reorder.
+                if bar_rect.contains(drag.cursor_x, drag.cursor_y) {
+                    let drop_idx = mlc_core::toolbar::favorites_bar_drop_index(
+                        fav_result.item_rects.iter().map(|(id, r)| (id.as_str(), r.x, r.width)),
+                        drag.cursor_x,
+                    );
+                    let tool_rects: Vec<_> = fav_result.item_rects.iter()
+                        .filter(|(id, _)| mlc_core::toolbar::is_favorites_bar_tool_id(id))
+                        .collect();
+                    let drop_line = tool_rects.get(drop_idx)
+                        .map(|(_, r)| (r.x, r.y, r.height))
+                        .or_else(|| tool_rects.last().map(|(_, r)| (r.x + r.width, r.y, r.height)));
+                    if let Some((lx, ly, lh)) = drop_line {
+                        ctx.set_stroke_color("#2962ff");
+                        ctx.set_stroke_width(2.0);
+                        ctx.begin_path();
+                        ctx.move_to(lx, ly);
+                        ctx.line_to(lx, ly + lh);
+                        ctx.stroke();
+                    }
+                }
             }
 
             let fav_rects: Vec<(String, ToolbarRect)> = fav_result.item_rects.into_iter()
@@ -2364,7 +2387,13 @@ fn chart_toolbar_render_dropdown(
                 // Find submenu items from toolbar definitions
                 if let Some((sub_items_def, grid_columns)) = chart_toolbar_find_submenu_items(tb, submenu_id, toolbar_config) {
                     let sub_items: Vec<DropdownItem> = sub_items_def.iter().map(|item| {
-                        convert_dropdown_item(item)
+                        let mut di = convert_dropdown_item(item);
+                        if let Some(id) = di.id() {
+                            if let Some(&on) = tb.settings_toggles.get(id) {
+                                di = di.with_toggle(on);
+                            }
+                        }
+                        di
                     }).collect();
 
                     if !sub_items.is_empty() {
@@ -2399,7 +2428,49 @@ fn chart_toolbar_render_dropdown(
                         };
 
                         // Merge submenu rects into the result
-                        all_item_rects.extend(sub_result.item_rects);
+                        all_item_rects.extend(sub_result.item_rects.clone());
+
+                        if submenu_id == "watermark_submenu" {
+                            if let Some(row_rect) = sub_result.item_rects.iter()
+                                .find(|(id, _)| id == "watermark_text")
+                                .map(|(_, r)| *r)
+                            {
+                                use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
+                                use crate::ui::widgets::types::{WidgetState, WidgetTheme};
+                                let widget_theme = WidgetTheme {
+                                    bg_normal: theme.background.clone(),
+                                    bg_hover: theme.item_bg_hover.clone(),
+                                    bg_pressed: theme.item_bg_hover.clone(),
+                                    bg_disabled: theme.background.clone(),
+                                    text_normal: theme.item_text.clone(),
+                                    text_hover: theme.item_text_hover.clone(),
+                                    text_disabled: theme.item_text_disabled.clone(),
+                                    border_normal: theme.border.clone(),
+                                    border_hover: theme.item_bg_hover.clone(),
+                                    border_focused: "#2962ff".to_string(),
+                                    accent: "#2962ff".to_string(),
+                                    accent_hover: "#2962ff".to_string(),
+                                    success: theme.item_text.clone(),
+                                    warning: theme.item_text.clone(),
+                                    danger: theme.item_danger.clone(),
+                                };
+                                let input_config = InputConfig::new(&tb.watermark_draft)
+                                    .with_focused(tb.watermark_edit_focused)
+                                    .with_cursor(tb.watermark_edit_cursor)
+                                    .with_placeholder("…")
+                                    .with_padding(8.0);
+                                let input_rect = uzor::types::Rect::new(
+                                    row_rect.x + 2.0,
+                                    row_rect.y + 2.0,
+                                    (row_rect.width - 4.0).max(0.0),
+                                    (row_rect.height - 4.0).max(0.0),
+                                );
+                                let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
+                                if tb.watermark_edit_focused && tb.watermark_edit_cursor_visible {
+                                    draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &theme.item_text);
+                                }
+                            }
+                        }
 
                         // Expand menu_rect to encompass both menus
                         let combined_right = final_menu_rect.right().max(sub_result.menu_rect.right());

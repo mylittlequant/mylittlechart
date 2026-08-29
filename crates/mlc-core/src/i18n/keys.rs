@@ -408,10 +408,16 @@ pub enum ConfigKey {
     ImpulseKindPlain               = 165,
     ImpulseKindLeadingDiagonal     = 166,
     ImpulseKindEndingDiagonal      = 167,
+
+    // Date Range vertical extend (2026-08-29) — the price-axis counterpart
+    // of `ExtendLeft`/`ExtendRight` on Price Range. Discriminant frozen to
+    // the matching CONFIG_KEY_TABLE row.
+    ExtendUp                      = 168,
+    ExtendDown                    = 169,
 }
 
 impl ConfigKey {
-    pub const COUNT: usize = 168;
+    pub const COUNT: usize = 170;
 
     /// Get translation for this key
     #[inline]
@@ -1025,10 +1031,21 @@ pub enum UserSettingsKey {
     ControlPointSizeSmall          = 32,
     ControlPointSizeMedium         = 33,
     ControlPointSizeLarge          = 34,
+
+    // Tab strip (2026-08-29 Persistence tab). Discriminants frozen to
+    // USER_SETTINGS_KEY_TABLE rows.
+    TabGeneral                     = 35,
+    TabPersistence                 = 36,
+    TabPerformance                 = 37,
+    TabServer                      = 38,
+    PersistToolbarLastTools        = 39,
+    PersistToolbarLastToolsHint    = 40,
+    PersistToolbarToggles          = 41,
+    PersistToolbarTogglesHint      = 42,
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 35;
+    pub const COUNT: usize = 43;
 
     /// Get translation for this key.
     #[inline]
@@ -1690,10 +1707,12 @@ pub enum PrimitiveNameKey {
     AbsorptionMark      = 96,
     DeltaDivergence     = 97,
     OrderFlowScan       = 98,
+    RayLeft             = 99,
+    HorizontalRayLeft   = 100,
 }
 
 impl PrimitiveNameKey {
-    pub const COUNT: usize = 99;
+    pub const COUNT: usize = 101;
 
     /// Get translation for this key.
     #[inline]
@@ -1709,6 +1728,8 @@ impl PrimitiveNameKey {
             "horizontal_line"          => Some(Self::HorizontalLine),
             "vertical_line"            => Some(Self::VerticalLine),
             "ray"                      => Some(Self::Ray),
+            "ray_left"                 => Some(Self::RayLeft),
+            "horizontal_ray_left"      => Some(Self::HorizontalRayLeft),
             "extended_line"            => Some(Self::ExtendedLine),
             "info_line"                => Some(Self::InfoLine),
             "trend_angle"              => Some(Self::TrendAngle),
@@ -1927,10 +1948,12 @@ pub enum PrimitiveTooltipKey {
     // Icons (82-83)
     Image               = 82,
     Sticker             = 83,
+    RayLeft             = 84,
+    HorizontalRayLeft   = 85,
 }
 
 impl PrimitiveTooltipKey {
-    pub const COUNT: usize = 84;
+    pub const COUNT: usize = 86;
 
     /// Get translation for this key.
     #[inline]
@@ -1945,6 +1968,8 @@ impl PrimitiveTooltipKey {
             "horizontal_line"          => Some(Self::HorizontalLine),
             "vertical_line"            => Some(Self::VerticalLine),
             "ray"                      => Some(Self::Ray),
+            "ray_left"                 => Some(Self::RayLeft),
+            "horizontal_ray_left"      => Some(Self::HorizontalRayLeft),
             "extended_line"            => Some(Self::ExtendedLine),
             "info_line"                => Some(Self::InfoLine),
             "trend_angle"              => Some(Self::TrendAngle),

@@ -19,6 +19,23 @@ use super::super::{
 };
 use super::super::types::point_to_ray_distance;
 
+fn point_to_infinite_line_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f64) -> f64 {
+    let dx = x2 - x1;
+    let dy = y2 - y1;
+    let len_sq = dx * dx + dy * dy;
+    if len_sq < 0.0001 {
+        let ddx = px - x1;
+        let ddy = py - y1;
+        return (ddx * ddx + ddy * ddy).sqrt();
+    }
+    let t = ((px - x1) * dx + (py - y1) * dy) / len_sq;
+    let proj_x = x1 + t * dx;
+    let proj_y = y1 + t * dy;
+    let ddx = px - proj_x;
+    let ddy = py - proj_y;
+    (ddx * ddx + ddy * ddy).sqrt()
+}
+
 /// Level mode for Pitchfork - determines which levels are shown
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum PitchforkLevelMode {
@@ -224,9 +241,10 @@ pub struct Pitchfork {
     /// Median (0) is always rendered automatically
     #[serde(default = "default_level_configs", deserialize_with = "deserialize_level_configs")]
     pub level_configs: Vec<FibLevelConfig>,
-    /// Extend lines
+    #[serde(default)]
+    pub extend_left: bool,
     #[serde(default = "default_true")]
-    pub extend: bool,
+    pub extend_right: bool,
     /// Show level labels
     #[serde(default = "default_true")]
     pub show_labels: bool,
@@ -265,7 +283,8 @@ impl Pitchfork {
             ts3,
             price3,
             level_configs: default_level_configs(),
-            extend: true,
+            extend_left: false,
+            extend_right: true,
             show_labels: true,
             level_mode: PitchforkLevelMode::Both,
             show_percentages: true,
@@ -463,10 +482,10 @@ impl Primitive for Pitchfork {
 
         // Check median line (always present)
         {
-            let dist = if self.extend {
-                point_to_ray_distance(screen_x, screen_y, x1, y1, mid_x, mid_y)
+            let dist = if self.extend_left {
+                point_to_infinite_line_distance(screen_x, screen_y, x1, y1, mid_x, mid_y)
             } else {
-                point_to_line_distance(screen_x, screen_y, x1, y1, mid_x, mid_y)
+                point_to_ray_distance(screen_x, screen_y, x1, y1, mid_x, mid_y)
             };
             if dist < HIT_TOLERANCE {
                 return HitTestResult::Body;
@@ -480,10 +499,10 @@ impl Primitive for Pitchfork {
             let end_x = mid_x + offset_x * level;
             let end_y = mid_y + offset_y * level;
 
-            let dist = if self.extend {
-                point_to_ray_distance(screen_x, screen_y, start_x, start_y, end_x, end_y)
+            let dist = if self.extend_left {
+                point_to_infinite_line_distance(screen_x, screen_y, start_x, start_y, end_x, end_y)
             } else {
-                point_to_line_distance(screen_x, screen_y, start_x, start_y, end_x, end_y)
+                point_to_ray_distance(screen_x, screen_y, start_x, start_y, end_x, end_y)
             };
 
             if dist < HIT_TOLERANCE {
@@ -548,16 +567,12 @@ impl Primitive for Pitchfork {
                     .or(config.color.as_deref())
                     .unwrap_or(&self.data.color.stroke);
 
-                // Calculate corners of the fill quad between +level and -level
-                // Start points (at handle)
-                let pos_start_x = x1 + offset_x * level;
-                let pos_start_y = y1 + offset_y * level;
-                let neg_start_x = x1 + offset_x * (-level);
-                let neg_start_y = y1 + offset_y * (-level);
+                let mut pos_start_x = x1 + offset_x * level;
+                let mut pos_start_y = y1 + offset_y * level;
+                let mut neg_start_x = x1 + offset_x * (-level);
+                let mut neg_start_y = y1 + offset_y * (-level);
 
-                // End points (extended or at midpoint)
-                let (pos_end_x, pos_end_y, neg_end_x, neg_end_y) = if self.extend {
-                    // Extend to chart edge
+                let (pos_end_x, pos_end_y, neg_end_x, neg_end_y) = {
                     let pos_dx = (mid_x + offset_x * level) - pos_start_x;
                     let pos_dy = (mid_y + offset_y * level) - pos_start_y;
                     let pos_len = (pos_dx * pos_dx + pos_dy * pos_dy).sqrt();
@@ -577,10 +592,15 @@ impl Primitive for Pitchfork {
                     } else {
                         (neg_start_x, neg_start_y)
                     };
+                    if self.extend_left && pos_len > 0.0 {
+                        pos_start_x -= pos_dx / pos_len * ext;
+                        pos_start_y -= pos_dy / pos_len * ext;
+                    }
+                    if self.extend_left && neg_len > 0.0 {
+                        neg_start_x -= neg_dx / neg_len * ext;
+                        neg_start_y -= neg_dy / neg_len * ext;
+                    }
                     (pex, pey, nex, ney)
-                } else {
-                    (mid_x + offset_x * level, mid_y + offset_y * level,
-                     mid_x + offset_x * (-level), mid_y + offset_y * (-level))
                 };
 
                 // Draw fill quad
@@ -629,59 +649,45 @@ impl Primitive for Pitchfork {
 
         // Helper macro-like function to draw a line at given level
         fn draw_pitchfork_line(
-            ctx: &mut dyn RenderContext, dpr: f64, chart_width: f64, extend: bool,
+            ctx: &mut dyn RenderContext, dpr: f64, chart_width: f64, extend_back: bool,
             x1: f64, y1: f64, mid_x: f64, mid_y: f64,
             offset_x: f64, offset_y: f64, level: f64,
             with_gap: bool, gap_t_start: f64, gap_t_end: f64,
         ) {
+            // Forward ray from the handle through the midpoint is always on
+            // (Andrews default). `extend_back` also shoots the opposite way
+            // so the fork becomes a channel.
             let start_x = x1 + offset_x * level;
             let start_y = y1 + offset_y * level;
             let end_x = mid_x + offset_x * level;
             let end_y = mid_y + offset_y * level;
+            let dx = end_x - start_x;
+            let dy = end_y - start_y;
+            let len = (dx * dx + dy * dy).sqrt();
+            let ext = chart_width * 2.0;
+            let (nx, ny) = if len > 0.0 { (dx / len, dy / len) } else { (0.0, 0.0) };
+            let from_x = if extend_back { start_x - nx * ext } else { start_x };
+            let from_y = if extend_back { start_y - ny * ext } else { start_y };
+            let to_x = start_x + nx * ext;
+            let to_y = start_y + ny * ext;
 
             ctx.begin_path();
 
-            if with_gap && gap_t_end > gap_t_start {
-                let dx = end_x - start_x;
-                let dy = end_y - start_y;
-                let base_len = (dx * dx + dy * dy).sqrt();
-
+            if with_gap && gap_t_end > gap_t_start && len > 0.0 {
                 if gap_t_start > 0.001 {
                     let gap_x1 = start_x + dx * gap_t_start;
                     let gap_y1 = start_y + dy * gap_t_start;
-                    ctx.move_to(crisp(start_x, dpr), crisp(start_y, dpr));
+                    ctx.move_to(crisp(from_x, dpr), crisp(from_y, dpr));
                     ctx.line_to(crisp(gap_x1, dpr), crisp(gap_y1, dpr));
                 }
 
                 let gap_x2 = start_x + dx * gap_t_end;
                 let gap_y2 = start_y + dy * gap_t_end;
-
-                if extend && base_len > 0.0 {
-                    let ext = chart_width * 2.0;
-                    let nx = dx / base_len;
-                    let ny = dy / base_len;
-                    ctx.move_to(crisp(gap_x2, dpr), crisp(gap_y2, dpr));
-                    ctx.line_to(crisp(start_x + nx * ext, dpr), crisp(start_y + ny * ext, dpr));
-                } else if gap_t_end < 0.999 {
-                    ctx.move_to(crisp(gap_x2, dpr), crisp(gap_y2, dpr));
-                    ctx.line_to(crisp(end_x, dpr), crisp(end_y, dpr));
-                }
+                ctx.move_to(crisp(gap_x2, dpr), crisp(gap_y2, dpr));
+                ctx.line_to(crisp(to_x, dpr), crisp(to_y, dpr));
             } else {
-                ctx.move_to(crisp(start_x, dpr), crisp(start_y, dpr));
-
-                if extend {
-                    let dx = end_x - start_x;
-                    let dy = end_y - start_y;
-                    let len = (dx * dx + dy * dy).sqrt();
-                    if len > 0.0 {
-                        let ext = chart_width * 2.0;
-                        let nx = dx / len;
-                        let ny = dy / len;
-                        ctx.line_to(crisp(start_x + nx * ext, dpr), crisp(start_y + ny * ext, dpr));
-                    }
-                } else {
-                    ctx.line_to(crisp(end_x, dpr), crisp(end_y, dpr));
-                }
+                ctx.move_to(crisp(from_x, dpr), crisp(from_y, dpr));
+                ctx.line_to(crisp(to_x, dpr), crisp(to_y, dpr));
             }
             ctx.stroke();
         }
@@ -696,7 +702,7 @@ impl Primitive for Pitchfork {
             LineStyle::LargeDashed => ctx.set_line_dash(&[12.0, 6.0]),
             LineStyle::SparseDotted => ctx.set_line_dash(&[2.0, 8.0]),
         }
-        draw_pitchfork_line(ctx, dpr, chart_width, self.extend,
+        draw_pitchfork_line(ctx, dpr, chart_width, self.extend_left,
             x1, y1, mid_x, mid_y, offset_x, offset_y, 0.0,
             needs_gap, gap_t_start, gap_t_end);
 
@@ -780,7 +786,7 @@ impl Primitive for Pitchfork {
             };
 
             let has_label_gap = label.is_some() && label_gap_t_end > label_gap_t_start;
-            draw_pitchfork_line(ctx, dpr, chart_width, self.extend,
+            draw_pitchfork_line(ctx, dpr, chart_width, self.extend_left,
                 x1, y1, mid_x, mid_y, offset_x, offset_y, level,
                 has_label_gap, label_gap_t_start, label_gap_t_end);
 
@@ -886,9 +892,8 @@ impl Primitive for Pitchfork {
         vec![
             ConfigProperty::level_mode(self.level_mode.as_str())
                 .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
-            ConfigProperty::extend(self.extend)
-                .with_category(PropertyCategory::LevelsBase)
-                .with_order(1).in_group(PropertyGroup::General),
+            ConfigProperty::extend(self.extend_left)
+                .with_category(PropertyCategory::LevelsBase).with_order(1).in_group(PropertyGroup::General),
             ConfigProperty::show_labels(self.show_labels)
                 .with_category(PropertyCategory::LevelsBase)
                 .with_order(2).in_group(PropertyGroup::General),
@@ -903,11 +908,15 @@ impl Primitive for Pitchfork {
                     return true;
                 }
             }
-            "extend" => {
+            "extend" | "extend_left" => {
                 if let Some(v) = value.as_bool() {
-                    self.extend = v;
+                    self.extend_left = v;
                     return true;
                 }
+            }
+            "extend_right" => {
+                // Historical L/R pair collapsed to one "other side" toggle.
+                return true;
             }
             "show_labels" => {
                 if let Some(v) = value.as_bool() {
@@ -960,12 +969,13 @@ impl Primitive for Pitchfork {
                     return true;
                 }
             }
-            "extend" => {
+            "extend" | "extend_left" => {
                 if let Some(v) = value.as_bool() {
-                    self.extend = v;
+                    self.extend_left = v;
                     return true;
                 }
             }
+            "extend_right" => { return true; }
             _ => {}
         }
         false
@@ -991,6 +1001,10 @@ impl Primitive for Pitchfork {
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
     }
+    fn extend_mode_raw(&self) -> u8 {
+        if self.extend_left { 3 } else { 1 }
+    }
+    fn unbounded_in_price(&self) -> bool { true }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {

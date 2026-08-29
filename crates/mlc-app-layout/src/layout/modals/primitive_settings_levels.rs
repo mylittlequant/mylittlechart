@@ -922,8 +922,10 @@ fn draw_ladder(
 }
 
 pub fn draw_checkbox(ctx: &mut dyn RenderContext, rect: WidgetRect, checked: bool, toolbar_theme: &ToolbarTheme, off_bg: &str) {
-    ctx.set_fill_color(if checked { &toolbar_theme.item_bg_active } else { off_bg });
-    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);
+    crate::ui::overlay_fill::fill_checkbox(
+        ctx, checked, &toolbar_theme.item_bg_active, &toolbar_theme.dropdown_bg, off_bg,
+        rect.x, rect.y, rect.width, rect.height, 3.0,
+    );
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);
@@ -1025,8 +1027,10 @@ fn draw_inspector(
     next_label: Option<String>,
 ) {
     let lang = current_language();
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rect(x0, y0, x1 - x0, INSPECTOR_H);
+    if !crate::ui::overlay_fill::color_is_translucent(&toolbar_theme.dropdown_bg) {
+        ctx.set_fill_color(&toolbar_theme.background);
+        ctx.fill_rect(x0, y0, x1 - x0, INSPECTOR_H);
+    }
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.begin_path();

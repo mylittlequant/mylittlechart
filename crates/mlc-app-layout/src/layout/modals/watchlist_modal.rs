@@ -149,7 +149,7 @@ pub fn render_watchlist_modal(
     // shell's default for a horizontal strip.
     // -------------------------------------------------------------------------
     let modal_theme = ModalTheme::from_frame_theme(
-        &frame_theme.toolbar_bg,
+        &frame_theme.modal_bg,
         &toolbar_theme.separator,
         &toolbar_theme.item_text,
         &toolbar_theme.item_text_hover,
@@ -1060,7 +1060,7 @@ pub fn render_wl_group_name_input(
 
     // Modal frame (blur + background + border)
     let modal_theme = ModalTheme::from_frame_theme(
-        &frame_theme.toolbar_bg,
+        &frame_theme.modal_bg,
         &toolbar_theme.separator,
         &toolbar_theme.item_text,
         &toolbar_theme.item_text_hover,

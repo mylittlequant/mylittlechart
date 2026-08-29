@@ -283,6 +283,9 @@ async fn run() -> Result<(), JsValue> {
     if !profile.ui.active_theme.is_empty() {
         app.panel_app.theme_manager.set_preset(&profile.ui.active_theme);
     }
+    if let Some(style) = mlc_core::UIStyle::from_name(&profile.ui.active_ui_style) {
+        app.panel_app.theme_manager.current_mut().set_style(style);
+    }
     web_sys::console::log_1(&"[mlc-app-shell-web] app ready".into());
 
     let provider = WebWindowProvider::from_id("chart")
@@ -1697,13 +1700,14 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
         ctx.translate(0.0, CHROME_HEIGHT);
         {
             let mut st = state.borrow_mut();
-            st.chart.render(&mut ctx, now_ms, false);
-            // Overlay pass (crosshair, cursor labels, drawing previews) — a
-            // separate draw call by contract (native invokes it via its own
-            // overlay_scene, scene_builder.rs:186); canvas2d is immediate-mode
-            // so painting into the same ctx right after the base pass is
-            // equivalent compositing.
+            // skip_toolbar_draw: chart + sidebar first. Immediate-mode
+            // canvas2d would otherwise paint the right sidebar ON TOP of
+            // left/top-toolbar flyouts (native composites toolbar_scene
+            // after sidebar_scene). Hits still come from last_toolbar_result
+            // inside render(); paint of toolbars/dropdowns is the pass below.
+            st.chart.render(&mut ctx, now_ms, true);
             st.chart.render_overlay(&mut ctx);
+            st.chart.render_toolbar_only(&mut ctx);
             st.chart.render_modal_layer(&mut ctx, now_ms);
             // Panel overlay popups (sync color grid targeting a panel, e.g. the
             // Trading tab's color picker) — composited after the modal layer so

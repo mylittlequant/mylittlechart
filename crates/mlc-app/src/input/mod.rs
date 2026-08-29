@@ -1626,6 +1626,20 @@ impl ChartApp {
             return false;
         }
 
+        if live_hover.as_deref() == Some("watchlist_metrics_sep") {
+            let list_id = self.watchlist_ui.active_list_id;
+            let cfg = self.watchlist_ui.column_config(list_id);
+            let start_h = mlc_app_sidebar_content::render::watchlist_metrics_block_h(
+                &cfg,
+                self.sidebar_state.ticker_section.as_ref(),
+                &self.sidebar_state.counter_rows,
+                self.height as f64,
+            );
+            self.sidebar_state.watchlist_metrics_sep_drag = Some((y, start_h));
+            self.ui_drag_active = true;
+            return false;
+        }
+
         // Check if drag starts on a watchlist column separator — begin separator drag.
         // Must be checked before the watchlist row drag so separators win the hit-test.
         if self.sidebar_state.right_panel == mlc_app_sidebar_content::state::RightSidebarPanel::Watchlist {
@@ -1745,7 +1759,7 @@ impl ChartApp {
                         && y >= track_rect.y && y <= track_rect.y + track_rect.height;
                     if hit {
                         let content_h = sidebar_result.content_height;
-                        let viewport_h = sidebar_result.content_rect.height;
+                        let viewport_h = sidebar_result.viewport_rect.height;
                         self.sidebar_state.current_right_scroll_mut().handle_track_click(
                             y, track_rect.y, track_rect.height, content_h, viewport_h,
                         );
@@ -2163,9 +2177,12 @@ impl ChartApp {
                             true
                         } else { false }
                     }
-                    "search_modal" => {
+                    "search_modal" | "modal_search" => {
                         if let Some(ref smr) = self.search_modal_result {
-                            self.modal_state.start_drag(x, y, smr.modal_rect.x, smr.modal_rect.y);
+                            let (hx, hy) = smr.header_rect
+                                .map(|r| (r.x, r.y))
+                                .unwrap_or((smr.modal_rect.x, smr.modal_rect.y));
+                            self.modal_state.start_drag(x, y, hx, hy);
                             true
                         } else { false }
                     }
@@ -2236,6 +2253,7 @@ impl ChartApp {
                     let scroll = match self.panel_app.user_settings_state.active_tab {
                         UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                         UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                        UserSettingsTab::Persistence => &mut self.panel_app.user_settings_state.persistence_tab_scroll,
                         UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                     };
@@ -2782,6 +2800,7 @@ impl ChartApp {
                     let scroll_state = match self.panel_app.user_settings_state.active_tab {
                         UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                         UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                        UserSettingsTab::Persistence => &mut self.panel_app.user_settings_state.persistence_tab_scroll,
                         UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                     };
@@ -3612,6 +3631,13 @@ impl ChartApp {
             return;
         }
 
+        if let Some((start_y, start_h)) = self.sidebar_state.watchlist_metrics_sep_drag {
+            let list_id = self.watchlist_ui.active_list_id;
+            let new_h = (start_h - (y - start_y)).max(80.0);
+            self.watchlist_ui.column_config_mut(list_id).metrics_block_h = Some(new_h);
+            return;
+        }
+
         // Watchlist column-separator drag: update absolute separator offset (clip curtain model).
         if let Some((sep_idx, start_x, sep_offset_at_start)) = self.sidebar_state.watchlist_sep_drag {
             let active_list_id = self.watchlist_ui.active_list_id;
@@ -3824,7 +3850,7 @@ impl ChartApp {
             if let Some(ref sidebar_result) = self.last_sidebar_result {
                 if let Some(ref track_rect) = sidebar_result.scrollbar_track_rect {
                     let content_h = sidebar_result.content_height;
-                    let viewport_h = sidebar_result.content_rect.height;
+                    let viewport_h = sidebar_result.viewport_rect.height;
                     self.sidebar_state.current_right_scroll_mut().handle_drag(
                         y, track_rect.height, content_h, viewport_h,
                     );
@@ -3839,7 +3865,7 @@ impl ChartApp {
             self.sidebar_state.sidebar_drag_last_y = y;
             if let Some(ref sidebar_result) = self.last_sidebar_result {
                 let content_h = sidebar_result.content_height;
-                let viewport_h = sidebar_result.content_rect.height;
+                let viewport_h = sidebar_result.viewport_rect.height;
                 let max_offset = (content_h - viewport_h).max(0.0);
                 let scroll = self.sidebar_state.current_right_scroll_mut();
                 scroll.offset = (scroll.offset + delta).clamp(0.0, max_offset);
@@ -4219,6 +4245,7 @@ impl ChartApp {
                     let scroll_state = match self.panel_app.user_settings_state.active_tab {
                         UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                         UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                        UserSettingsTab::Persistence => &mut self.panel_app.user_settings_state.persistence_tab_scroll,
                         UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                     };
@@ -4547,13 +4574,13 @@ impl ChartApp {
         // click routing below, unchanged). ───────────────────────────────
         self.granularity_drag_pending = None;
 
-        // ── End favorites-bar item drag-out (favorite-primitives arc):
+        // ── End favorites-bar item drag (favorite-primitives arc):
         // release OUTSIDE the bar rect removes the tool from favorites (the
         // same `ToggleFavoritePrimitive` path the flyout stars use); release
-        // INSIDE the bar cancels — no remove, no select (the click path is
-        // suppressed in `dispatch_panel_click` while the drag is live).
-        // Pending presses that never crossed 5px fall through to the normal
-        // click routing, unchanged (mirrors `granularity_drag_pending`). ───
+        // INSIDE the bar reorders via `ReorderFavoritePrimitive` (same
+        // index space the bar renders). Pending presses that never crossed
+        // 5px fall through to the normal click routing, unchanged
+        // (mirrors `granularity_drag_pending`). ───
         self.fav_item_drag_pending = None;
         self.fav_group_drag_pending = None;
         if let Some((tool_id, cx, cy)) = self.fav_item_drag.take() {
@@ -4566,7 +4593,26 @@ impl ChartApp {
                     mlc_core::events::ChartOutEvent::ToggleFavoritePrimitive { tool_id }
                 );
             } else {
-                eprintln!("[ChartApp] favorites item drag cancelled (dropped inside bar): {}", tool_id);
+                let from_index = self.core.user().profile().ui.favorite_primitives
+                    .iter()
+                    .position(|t| t == &tool_id);
+                let to_index = self.fav_drop_index(cx);
+                if let Some(from_index) = from_index {
+                    if from_index != to_index {
+                        eprintln!(
+                            "[ChartApp] favorites item reordered: {} {} -> {}",
+                            tool_id, from_index, to_index
+                        );
+                        self.process_chart_out_event(
+                            mlc_core::events::ChartOutEvent::ReorderFavoritePrimitive {
+                                from_index,
+                                to_index,
+                            }
+                        );
+                    } else {
+                        eprintln!("[ChartApp] favorites item drag cancelled (same slot): {}", tool_id);
+                    }
+                }
             }
             return;
         }
@@ -4737,6 +4783,13 @@ impl ChartApp {
             self.sidebar_separator_drag_active = false;
             self.persist_profile();
             eprintln!("[ChartApp] Sidebar width: {:.0}", self.sidebar_state.right_width());
+            return;
+        }
+
+        if self.sidebar_state.watchlist_metrics_sep_drag.is_some() {
+            self.sidebar_state.watchlist_metrics_sep_drag = None;
+            self.watchlists_dirty = true;
+            self.persist_watchlists();
             return;
         }
 
@@ -6237,6 +6290,14 @@ impl ChartApp {
             return CursorStyle::EwResize;
         }
 
+        let on_metrics_sep = self.sidebar_state.watchlist_metrics_sep_drag.is_some()
+            || self.input_coordinator.borrow().hit_test_now(x, y)
+                .map(|h| h.as_str() == "watchlist_metrics_sep")
+                .unwrap_or(false);
+        if on_metrics_sep {
+            return CursorStyle::NsResize;
+        }
+
         // When a watchlist modal or group name input is open, the entire screen
         // should show the default cursor — modals capture all interaction.
         if self.standalone_panels.watchlist_modal.is_open() || self.standalone_panels.wl_group_name_input.is_open() {
@@ -6604,6 +6665,7 @@ impl ChartApp {
                                 let scroll_state = match self.panel_app.user_settings_state.active_tab {
                                     UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                                     UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                                    UserSettingsTab::Persistence => &mut self.panel_app.user_settings_state.persistence_tab_scroll,
                                     UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                                     UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                                 };
@@ -7210,7 +7272,7 @@ impl ChartApp {
                         let sidebar_hovered = self.input_coordinator.borrow_mut().process_scroll(x, y).map(|h| h.as_str().to_string());
                         if sidebar_hovered.as_deref() == Some("right_sidebar:viewport") {
                             let content_h = sidebar_result.content_height;
-                            let viewport_h = sidebar_result.content_rect.height;
+                            let viewport_h = sidebar_result.viewport_rect.height;
                             let max_offset = (content_h - viewport_h).max(0.0);
                             let scroll = self.sidebar_state.current_right_scroll_mut();
                             scroll.offset = (scroll.offset - dy * 30.0).clamp(0.0, max_offset);

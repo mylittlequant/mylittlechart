@@ -309,6 +309,9 @@ impl Primitive for FairValueGap {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+    fn extend_mode_raw(&self) -> u8 {
+        super::super::extend_mode_lr(false, self.extend_right)
+    }
 
     fn refresh_bar_derived_cache(&mut self, bars: &[Bar]) {
         let detected = self.detect(bars);

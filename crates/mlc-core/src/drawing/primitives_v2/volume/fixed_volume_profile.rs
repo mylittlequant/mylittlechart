@@ -19,6 +19,10 @@ pub struct FixedVolumeProfile {
     #[serde(default = "default_rows")] pub rows: u16,
     #[serde(default = "default_true")] pub show_poc: bool,
     #[serde(default = "default_true")] pub show_value_area: bool,
+    /// Full-height vertical fences at both span ends. Default on — that is
+    /// the historical look. Off = fences only across the profile's own
+    /// price band (a bounded range, not an infinite pair of lines).
+    #[serde(default = "default_true")] pub extend_lines: bool,
     /// The profile computed from the current bars — see
     /// [`Primitive::refresh_bar_derived_cache`]'s own contract. Filled by
     /// that hook from the SAME [`super::profile_render::profile_for`] call
@@ -43,6 +47,7 @@ impl FixedVolumeProfile {
         Self {
             data: PrimitiveData { type_id: "fixed_volume_profile".to_string(), display_name: "Fixed Volume Profile".to_string(), color: PrimitiveColor::new(color), width: 1.0, ..Default::default() },
             ts1, ts2, rows: 24, show_poc: true, show_value_area: true,
+            extend_lines: true,
             cached_profile: None,
         }
     }
@@ -77,18 +82,23 @@ impl Primitive for FixedVolumeProfile {
     fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
         let x1 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.ts1));
         let x2 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.ts2));
-        if (sx - x1).abs() < HIT_TOLERANCE { return HitTestResult::ControlPoint(ControlPointType::Point1); }
-        if (sx - x2).abs() < HIT_TOLERANCE { return HitTestResult::ControlPoint(ControlPointType::Point2); }
+        let window = super::profile_render::bars_in_window(bars, self.ts1, self.ts2);
+        let (y_lo, y_hi) = match super::profile_render::price_span(window) {
+            Some((lo, hi)) => (
+                vp.price_to_y(hi, ps.price_min, ps.price_max),
+                vp.price_to_y(lo, ps.price_min, ps.price_max),
+            ),
+            None => return HitTestResult::Miss,
+        };
+        let (fy0, fy1) = fence_ys(self.extend_lines, vp.chart_height, y_lo, y_hi);
+        let on_fence_y = sy >= fy0 - HIT_TOLERANCE && sy <= fy1 + HIT_TOLERANCE;
+        if (sx - x1).abs() < HIT_TOLERANCE && on_fence_y { return HitTestResult::ControlPoint(ControlPointType::Point1); }
+        if (sx - x2).abs() < HIT_TOLERANCE && on_fence_y { return HitTestResult::ControlPoint(ControlPointType::Point2); }
         let (min_x, max_x) = (x1.min(x2), x1.max(x2));
         if sx < min_x || sx > max_x { return HitTestResult::Miss; }
-        // Vertical boundaries are lines and are grabbable over their full run.
-        if (sx - min_x).abs() < HIT_TOLERANCE || (sx - max_x).abs() < HIT_TOLERANCE {
+        if ((sx - min_x).abs() < HIT_TOLERANCE || (sx - max_x).abs() < HIT_TOLERANCE) && on_fence_y {
             return HitTestResult::Body;
         }
-        let window = super::profile_render::bars_in_window(bars, self.ts1, self.ts2);
-        let Some((lo, hi)) = super::profile_render::price_span(window) else { return HitTestResult::Miss };
-        let y_lo = vp.price_to_y(hi, ps.price_min, ps.price_max);
-        let y_hi = vp.price_to_y(lo, ps.price_min, ps.price_max);
         if sy >= y_lo - HIT_TOLERANCE && sy <= y_hi + HIT_TOLERANCE {
             return HitTestResult::Body;
         }
@@ -133,25 +143,29 @@ impl Primitive for FixedVolumeProfile {
         let x2 = ctx.ts_to_x_ms(self.ts2);
         let (min_x, max_x) = (x1.min(x2), x1.max(x2));
         let chart_height = ctx.chart_height();
+        let span = super::profile_render::price_span(
+            super::profile_render::bars_in_window(ctx.bars(), self.ts1, self.ts2),
+        );
+        let (y_top, y_bot) = match span {
+            Some((lo, hi)) => (ctx.price_to_y(hi), ctx.price_to_y(lo)),
+            None => (0.0, chart_height),
+        };
+        let (fy0, fy1) = fence_ys(self.extend_lines, chart_height, y_top, y_bot);
 
-        // Draw vertical boundary lines
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_stroke_width(self.data.width);
         ctx.set_line_dash(&[]);
 
         ctx.begin_path();
-        ctx.move_to(crisp(min_x, dpr), 0.0);
-        ctx.line_to(crisp(min_x, dpr), chart_height);
+        ctx.move_to(crisp(min_x, dpr), fy0);
+        ctx.line_to(crisp(min_x, dpr), fy1);
         ctx.stroke();
 
         ctx.begin_path();
-        ctx.move_to(crisp(max_x, dpr), 0.0);
-        ctx.line_to(crisp(max_x, dpr), chart_height);
+        ctx.move_to(crisp(max_x, dpr), fy0);
+        ctx.line_to(crisp(max_x, dpr), fy1);
         ctx.stroke();
 
-        // The real profile over the bars this range covers, growing rightward
-        // from the LEFT boundary — the direction a fixed-range profile is read
-        // in, and the direction the chart's own overlay grows in.
         let window = super::profile_render::bars_in_window(ctx.bars(), self.ts1, self.ts2);
         let Some(vp) = super::profile_render::profile_for(window, self.rows) else { return };
         let geom = super::profile_render::ProfileGeometry {
@@ -181,6 +195,7 @@ impl Primitive for FixedVolumeProfile {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+    fn unbounded_in_price(&self) -> bool { self.extend_lines }
 
     /// Recompute [`Self::cached_profile`] from `bars` through the SAME
     /// [`super::profile_render::bars_in_window`] +
@@ -211,6 +226,8 @@ impl Primitive for FixedVolumeProfile {
         // measured to have no existing group and left ungrouped, same
         // verdict `bars_pattern.rs` already recorded for its own rows.
         vec![
+            ConfigProperty::extend_lines(self.extend_lines)
+                .with_order(8).in_group(PropertyGroup::Extend),
             ConfigProperty::number("rows", ConfigKey::Rows.get(lang), self.rows as f64, Some(5.0), Some(100.0))
                 .with_order(20),
             ConfigProperty::boolean("show_poc", ConfigKey::ShowPoc.get(lang), self.show_poc)
@@ -222,12 +239,21 @@ impl Primitive for FixedVolumeProfile {
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
+            "extend_lines" => { if let Some(v) = value.as_bool() { self.extend_lines = v; return true; } }
             "rows" => { if let Some(v) = value.as_number() { self.rows = v.round().clamp(5.0, 100.0) as u16; return true; } }
             "show_poc" => { if let Some(v) = value.as_bool() { self.show_poc = v; return true; } }
             "show_value_area" => { if let Some(v) = value.as_bool() { self.show_value_area = v; return true; } }
             _ => {}
         }
         false
+    }
+}
+
+fn fence_ys(extend_lines: bool, chart_height: f64, y_top: f64, y_bot: f64) -> (f64, f64) {
+    if extend_lines {
+        (0.0, chart_height)
+    } else {
+        (y_top.min(y_bot), y_top.max(y_bot))
     }
 }
 

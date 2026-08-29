@@ -4,7 +4,8 @@ use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
-    PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
+    PrimitiveMetadata, ControlPoint, ControlPointType, ControlPointCursor, PrimitiveColor,
+    HIT_TOLERANCE, CONTROL_POINT_HIT_RADIUS,
     RenderContext, crisp, LineStyle,
     render_primitive_text, TextAlign,
     config::{LabelStyle, ConfigProperty, PropertyValue, PropertyCategory, PropertyGroup, StatRow},
@@ -16,10 +17,20 @@ use super::{draw_stat_plate, price_diff, percentage};
 pub struct PriceRange {
     pub data: PrimitiveData,
     pub ts_ms: i64,
+    /// Second stem timestamp. `0` = same as `ts_ms` (legacy vertical stem).
+    #[serde(default)]
+    pub ts2: i64,
     pub price1: f64,
     pub price2: f64,
     #[serde(default = "default_true")] pub show_percentage: bool,
     #[serde(default = "default_true")] pub show_pips: bool,
+    /// Horizontals past the date-span box: neither = closed rectangle
+    /// (segment), one side = ray, both = infinite line. Serde default is
+    /// `true` so drawings saved before this field existed keep the
+    /// historical full-width levels; `new()` starts with both off so a
+    /// fresh tool is a box like Price/Date Range.
+    #[serde(default = "default_true")] pub extend_left: bool,
+    #[serde(default = "default_true")] pub extend_right: bool,
     #[serde(default = "default_label_style")]
     pub label_style: LabelStyle,
 }
@@ -29,10 +40,13 @@ fn default_label_style() -> LabelStyle {
 }
 
 impl PriceRange {
+    fn stem_ts2(&self) -> i64 { if self.ts2 == 0 { self.ts_ms } else { self.ts2 } }
+
     pub fn new(ts_ms: i64, price1: f64, price2: f64, color: &str) -> Self {
         Self {
             data: PrimitiveData { type_id: "price_range".to_string(), display_name: "Price Range".to_string(), color: PrimitiveColor::new(color), width: 2.0, ..Default::default() },
-            ts_ms, price1, price2, show_percentage: true, show_pips: true,
+            ts_ms, ts2: 0, price1, price2, show_percentage: true, show_pips: true,
+            extend_left: false, extend_right: false,
             label_style: default_label_style(),
         }
     }
@@ -61,64 +75,116 @@ impl Primitive for PriceRange {
     fn click_behavior(&self) -> ClickBehavior { ClickBehavior::TwoPoint }
     fn data(&self) -> &PrimitiveData { &self.data }
     fn data_mut(&mut self) -> &mut PrimitiveData { &mut self.data }
-    fn points(&self) -> Vec<(i64, f64)> { vec![(self.ts_ms, self.price1), (self.ts_ms, self.price2)] }
+    fn points(&self) -> Vec<(i64, f64)> {
+        vec![(self.ts_ms, self.price1), (self.stem_ts2(), self.price2)]
+    }
     fn set_points(&mut self, pts: &[(i64, f64)]) {
         if let Some(&(ts, p)) = pts.first() { self.ts_ms = ts; self.price1 = p; }
-        if let Some(&(_, p)) = pts.get(1) { self.price2 = p; }
+        if let Some(&(ts, p)) = pts.get(1) { self.ts2 = ts; self.price2 = p; }
     }
-    fn translate(&mut self, ts_delta_ms: i64, pd: f64) { self.ts_ms += ts_delta_ms; self.price1 += pd; self.price2 += pd; }
+    fn translate(&mut self, ts_delta_ms: i64, pd: f64) {
+        self.ts_ms += ts_delta_ms;
+        if self.ts2 != 0 { self.ts2 += ts_delta_ms; }
+        self.price1 += pd; self.price2 += pd;
+    }
     fn move_control_point(&mut self, pt: ControlPointType, ts_ms: i64, price: f64) {
         match pt {
-            ControlPointType::Point1 => { self.ts_ms = ts_ms; self.price1 = price; }
-            ControlPointType::Point2 => self.price2 = price,
+            // Same corner/edge convention as `PriceDateRange` / `Rectangle`.
+            ControlPointType::Point1 | ControlPointType::Corner(0) => { self.ts_ms = ts_ms; self.price1 = price; }
+            ControlPointType::Corner(1) => { self.ts2 = ts_ms; self.price1 = price; }
+            ControlPointType::Point2 | ControlPointType::Corner(2) => { self.ts2 = ts_ms; self.price2 = price; }
+            ControlPointType::Corner(3) => { self.ts_ms = ts_ms; self.price2 = price; }
+            ControlPointType::Edge(0) => { self.price1 = price; }
+            ControlPointType::Edge(1) => { self.ts2 = ts_ms; }
+            ControlPointType::Edge(2) => { self.price2 = price; }
+            ControlPointType::Edge(3) => { self.ts_ms = ts_ms; }
             ControlPointType::Move => { let td = ts_ms - self.ts_ms; let pd = price - self.price1; self.translate(td, pd); }
             _ => {}
         }
     }
     fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
-        let b = timestamp_ms_to_bar_f64(bars, self.ts_ms);
-        let x = vp.bar_to_x_f64(b);
+        let x1 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.ts_ms));
+        let x2 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.stem_ts2()));
         let y1 = vp.price_to_y(self.price1, ps.price_min, ps.price_max);
         let y2 = vp.price_to_y(self.price2, ps.price_min, ps.price_max);
-        let r = 8.0;
-        if (sx - x).powi(2) + (sy - y1).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point1); }
-        if (sx - x).powi(2) + (sy - y2).powi(2) <= r * r { return HitTestResult::ControlPoint(ControlPointType::Point2); }
-        // Both horizontal lines, over their whole drawn width — same
-        // geometry `render` strokes via `horizontal_lines`.
-        if hit_test_strokes(sx, sy, &horizontal_lines(y1, y2, vp.chart_width), HIT_TOLERANCE) { return HitTestResult::Body; }
+        let r2 = CONTROL_POINT_HIT_RADIUS.powi(2);
+        let corners = [
+            (x1, y1, ControlPointType::Corner(0)),
+            (x2, y1, ControlPointType::Corner(1)),
+            (x2, y2, ControlPointType::Corner(2)),
+            (x1, y2, ControlPointType::Corner(3)),
+        ];
+        for (cx, cy, cp_type) in corners {
+            if (sx - cx).powi(2) + (sy - cy).powi(2) <= r2 { return HitTestResult::ControlPoint(cp_type); }
+        }
+        let edges = [
+            ((x1 + x2) / 2.0, y1, ControlPointType::Edge(0)),
+            (x2, (y1 + y2) / 2.0, ControlPointType::Edge(1)),
+            ((x1 + x2) / 2.0, y2, ControlPointType::Edge(2)),
+            (x1, (y1 + y2) / 2.0, ControlPointType::Edge(3)),
+        ];
+        for (ex, ey, cp_type) in edges {
+            if (sx - ex).powi(2) + (sy - ey).powi(2) <= r2 { return HitTestResult::ControlPoint(cp_type); }
+        }
+        let (min_x, max_x) = (x1.min(x2), x1.max(x2));
+        let (min_y, max_y) = (y1.min(y2), y1.max(y2));
+        let (left, right) = horizontal_span(min_x, max_x, vp.chart_width, self.extend_left, self.extend_right);
+        if hit_test_strokes(sx, sy, &price_horizontals(left, right, min_y, max_y), HIT_TOLERANCE) {
+            return HitTestResult::Body;
+        }
+        if sx >= left - HIT_TOLERANCE && sx <= right + HIT_TOLERANCE
+            && sy >= min_y - HIT_TOLERANCE && sy <= max_y + HIT_TOLERANCE
+        {
+            return HitTestResult::Body;
+        }
         HitTestResult::Miss
     }
     fn control_points(&self, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> Vec<ControlPoint> {
-        let b = timestamp_ms_to_bar_f64(bars, self.ts_ms);
-        let x = vp.bar_to_x_f64(b);
-        vec![ControlPoint::point1(x, vp.price_to_y(self.price1, ps.price_min, ps.price_max)), ControlPoint::point2(x, vp.price_to_y(self.price2, ps.price_min, ps.price_max))]
+        let x1 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.ts_ms));
+        let x2 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.stem_ts2()));
+        let y1 = vp.price_to_y(self.price1, ps.price_min, ps.price_max);
+        let y2 = vp.price_to_y(self.price2, ps.price_min, ps.price_max);
+        vec![
+            ControlPoint::new(ControlPointType::Corner(0), x1, y1, ControlPointCursor::ResizeNWSE),
+            ControlPoint::new(ControlPointType::Corner(1), x2, y1, ControlPointCursor::ResizeNESW),
+            ControlPoint::new(ControlPointType::Corner(2), x2, y2, ControlPointCursor::ResizeNWSE),
+            ControlPoint::new(ControlPointType::Corner(3), x1, y2, ControlPointCursor::ResizeNESW),
+            ControlPoint::new(ControlPointType::Edge(0), (x1 + x2) / 2.0, y1, ControlPointCursor::ResizeNS),
+            ControlPoint::new(ControlPointType::Edge(1), x2, (y1 + y2) / 2.0, ControlPointCursor::ResizeEW),
+            ControlPoint::new(ControlPointType::Edge(2), (x1 + x2) / 2.0, y2, ControlPointCursor::ResizeNS),
+            ControlPoint::new(ControlPointType::Edge(3), x1, (y1 + y2) / 2.0, ControlPointCursor::ResizeEW),
+        ]
     }
 
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
         let dpr = ctx.dpr();
-        let x = ctx.ts_to_x_ms(self.ts_ms);
+        let x1 = ctx.ts_to_x_ms(self.ts_ms);
+        let x2 = ctx.ts_to_x_ms(self.stem_ts2());
         let y1 = ctx.price_to_y(self.price1);
         let y2 = ctx.price_to_y(self.price2);
 
+        let min_x = x1.min(x2);
+        let max_x = x1.max(x2);
         let min_y = y1.min(y2);
         let max_y = y1.max(y2);
+        let w = max_x - min_x;
         let h = max_y - min_y;
 
-        // Light translucent band between the two horizontal lines — a ruler
-        // measures the range, it should not paint over it.
-        ctx.set_fill_color(&format!("{}1a", &self.data.color.stroke));
-        ctx.fill_rect(0.0, crisp(min_y, dpr), ctx.chart_width(), h);
+        let (left, right) = horizontal_span(min_x, max_x, ctx.chart_width(), self.extend_left, self.extend_right);
+        let fill_w = right - left;
 
-        // Draw the two horizontal lines — same geometry `hit_test` tests via
-        // `horizontal_lines`, so the drawn and clickable lines can't drift.
+        if fill_w.abs() > 0.5 && h.abs() > 0.5 {
+            ctx.set_fill_color(&format!("{}1a", &self.data.color.stroke));
+            ctx.fill_rect(crisp(left, dpr), crisp(min_y, dpr), fill_w, h);
+        }
+
         ctx.set_stroke_color(&self.data.color.stroke);
         ctx.set_line_style(LineStyle::Solid);
         ctx.set_stroke_width(self.data.width);
-
-        for line in horizontal_lines(y1, y2, ctx.chart_width()) {
+        for edge in price_horizontals(left, right, min_y, max_y) {
             ctx.begin_path();
-            ctx.move_to(crisp(line.x1, dpr), crisp(line.y1, dpr));
-            ctx.line_to(crisp(line.x2, dpr), crisp(line.y2, dpr));
+            ctx.move_to(crisp(edge.x1, dpr), crisp(edge.y1, dpr));
+            ctx.line_to(crisp(edge.x2, dpr), crisp(edge.y2, dpr));
             ctx.stroke();
         }
 
@@ -140,7 +206,7 @@ impl Primitive for PriceRange {
             parts.join("  /  ")
         };
 
-        draw_stat_plate(ctx, x + 60.0, min_y + h / 2.0, &[line], &self.label_style, &self.data.color.stroke);
+        draw_stat_plate(ctx, min_x + w / 2.0, min_y + h / 2.0, &[line], &self.label_style, &self.data.color.stroke);
 
         // Render text if present
         if let Some(ref text) = self.data.text {
@@ -163,12 +229,21 @@ impl Primitive for PriceRange {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+    fn extend_mode_raw(&self) -> u8 {
+        super::super::extend_mode_lr(self.extend_left, self.extend_right)
+    }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         // `PropertyGroup::Values` (W2) — the approved measurement
         // archetype's own `ValuesGroupTitle` (the "show ___" checklist),
         // matching `PriceDateRange::style_properties()`'s own choice.
         let mut props = vec![
+            ConfigProperty::extend_left(self.extend_left)
+                .with_category(PropertyCategory::AppearanceLine)
+                .with_order(8).in_group(PropertyGroup::Extend),
+            ConfigProperty::extend_right(self.extend_right)
+                .with_category(PropertyCategory::AppearanceLine)
+                .with_order(9).in_group(PropertyGroup::Extend),
             ConfigProperty::show_price_diff(self.show_pips)
                 .with_category(PropertyCategory::AppearanceLine)
                 .with_order(10).in_group(PropertyGroup::Values),
@@ -199,6 +274,12 @@ impl Primitive for PriceRange {
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
             "price_range_stats" => {}
+            "extend_left" => {
+                if let Some(v) = value.as_bool() { self.extend_left = v; return true; }
+            }
+            "extend_right" => {
+                if let Some(v) = value.as_bool() { self.extend_right = v; return true; }
+            }
             "show_pips" => {
                 if let Some(v) = value.as_bool() { self.show_pips = v; return true; }
             }
@@ -218,13 +299,23 @@ impl Primitive for PriceRange {
     }
 }
 
-/// The two full-width horizontal lines — shared by `render` (draws each)
-/// and `hit_test` (tests each) so the drawn lines and the clickable lines
-/// can never disagree.
-fn horizontal_lines(y1: f64, y2: f64, chart_width: f64) -> [Segment; 2] {
+/// Horizontal span of the top/bottom edges. Segment mode stays inside the
+/// date-span box (`min_x`..`max_x`); each checkbox grows that edge past
+/// the box on its side, same as Price/Date Range growing into a slab.
+fn horizontal_span(min_x: f64, max_x: f64, chart_width: f64, extend_left: bool, extend_right: bool) -> (f64, f64) {
+    (
+        if extend_left { 0.0 } else { min_x },
+        if extend_right { chart_width } else { max_x },
+    )
+}
+
+/// The two price-level horizontals — the only stroked edges. Left/right
+/// verticals of the date span are never drawn; the fill's own edges are
+/// the date bounds. Shared by `render` and `hit_test`.
+fn price_horizontals(h_left: f64, h_right: f64, min_y: f64, max_y: f64) -> [Segment; 2] {
     [
-        Segment::new(0.0, y1, chart_width, y1),
-        Segment::new(0.0, y2, chart_width, y2),
+        Segment::new(h_left, min_y, h_right, min_y),
+        Segment::new(h_left, max_y, h_right, max_y),
     ]
 }
 
@@ -233,9 +324,11 @@ pub fn metadata() -> PrimitiveMetadata {
         type_id: "price_range", display_name: "Price Range", kind: PrimitiveKind::Measurement,
         click_behavior: ClickBehavior::TwoPoint, tooltip: "Measure price difference", icon: "price_range", default_color: "#4CAF50",
         factory: |points, color| {
-            let (ts, p1) = points.first().copied().unwrap_or((0, 100.0));
-            let (_, p2) = points.get(1).copied().unwrap_or((ts, p1 + 10.0));
-            Box::new(PriceRange::new(ts, p1, p2, color))
+            let (ts1, p1) = points.first().copied().unwrap_or((0, 100.0));
+            let (ts2, p2) = points.get(1).copied().unwrap_or((ts1, p1 + 10.0));
+            let mut pr = PriceRange::new(ts1, p1, p2, color);
+            pr.ts2 = ts2;
+            Box::new(pr)
         },
         supports_text: true,
         has_levels: false,

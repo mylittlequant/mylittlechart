@@ -244,6 +244,7 @@ impl Primitive for HorizontalLine {
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
     }
+    fn extend_mode_raw(&self) -> u8 { 3 }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![ConfigProperty::show_price(self.show_price_label).with_order(20)]

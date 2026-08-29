@@ -210,11 +210,27 @@ pub struct LabelTextRect {
     pub rect: (f64, f64, f64, f64),
 }
 
+/// One painted Fib/Gann (or other level-ladder) VALUE label's hit/anchor
+/// rectangle. Distinct from [`LabelTextRect`]: those match `data.text`
+/// content, these carry the raw stored `level` so a double-click can seed
+/// `level_value_label` / commit via `parse_level_value`.
+#[derive(Clone, Copy, Debug)]
+pub struct LevelLabelRect {
+    pub bid: crate::BubbleId,
+    pub pane: Option<u64>,
+    pub prim_id: u64,
+    pub level: f64,
+    /// Axis-aligned bbox (min_x, min_y, max_x, max_y), pane-local coords.
+    pub rect: (f64, f64, f64, f64),
+}
+
 thread_local! {
     static CURRENT_BID: Cell<Option<crate::BubbleId>> = const { Cell::new(None) };
     /// (pane, prim_id, expected content) — set by the primitive render loop.
     static CURRENT_PRIM: RefCell<Option<(Option<u64>, u64, String)>> = const { RefCell::new(None) };
     static LABEL_RECTS: RefCell<Vec<LabelTextRect>> = const { RefCell::new(Vec::new()) };
+    static CURRENT_LEVEL: Cell<Option<f64>> = const { Cell::new(None) };
+    static LEVEL_RECTS: RefCell<Vec<LevelLabelRect>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Arm/clear the bubble tag for the current primitive render pass. Called
@@ -227,6 +243,20 @@ pub fn set_label_text_bid(bid: Option<crate::BubbleId>) {
 /// before the first `prim.render`.
 pub fn clear_label_text_rects() {
     LABEL_RECTS.with(|l| l.borrow_mut().clear());
+    LEVEL_RECTS.with(|l| l.borrow_mut().clear());
+}
+
+/// Arm the level-value slot for the next [`crate::drawing::primitives_v2`]
+/// label plate. Pair with [`clear_current_level_label`] immediately after
+/// the plate draws. `None` means "this plate is not a level value".
+pub fn set_current_level_label(level: f64) {
+    CURRENT_LEVEL.with(|c| c.set(Some(level)));
+}
+
+/// Disarm the level-value slot — system / point / user-text plates must
+/// not attribute themselves as a level.
+pub fn clear_current_level_label() {
+    CURRENT_LEVEL.with(|c| c.set(None));
 }
 
 /// Arm the "current primitive" slot for a primitive that carries user text
@@ -278,6 +308,77 @@ pub fn label_text_rect_for(
             .find(|e| e.bid == bid && e.pane == pane && e.prim_id == prim_id)
             .map(|e| e.rect)
     })
+}
+
+/// Topmost-first hit over recorded Fib/Gann level-value plates of one
+/// (bid, pane), in pane-local coords. `slop` grows each rect on every side.
+pub fn find_level_label_at(
+    bid: crate::BubbleId,
+    pane: Option<u64>,
+    x: f64,
+    y: f64,
+    slop: f64,
+) -> Option<LevelLabelRect> {
+    LEVEL_RECTS.with(|l| {
+        l.borrow()
+            .iter()
+            .rev()
+            .find(|e| {
+                e.bid == bid && e.pane == pane
+                    && x >= e.rect.0 - slop && x <= e.rect.2 + slop
+                    && y >= e.rect.1 - slop && y <= e.rect.3 + slop
+            })
+            .copied()
+    })
+}
+
+/// Fresh rect for one primitive's level-value plate (the inline editor
+/// re-reads it each frame so the plate follows the line while the chart
+/// pans mid-edit).
+pub fn level_label_rect_for(
+    bid: crate::BubbleId,
+    pane: Option<u64>,
+    prim_id: u64,
+    level: f64,
+) -> Option<(f64, f64, f64, f64)> {
+    LEVEL_RECTS.with(|l| {
+        l.borrow()
+            .iter()
+            .rev()
+            .find(|e| {
+                e.bid == bid && e.pane == pane && e.prim_id == prim_id
+                    && (e.level - level).abs() < 1e-9
+            })
+            .map(|e| e.rect)
+    })
+}
+
+/// Record the just-painted level-value plate when CURRENT_LEVEL is armed.
+/// Called from `draw_label_plate` after the text is measured so the rect
+/// matches the painted plate (including padding).
+pub fn record_level_label_rect(
+    x: f64,
+    y: f64,
+    text_width: f64,
+    font_size: f64,
+    padding: f64,
+) {
+    let Some(level) = CURRENT_LEVEL.with(|c| c.get()) else { return };
+    let armed = CURRENT_PRIM.with(|c| c.borrow().clone());
+    let Some((pane, prim_id, _)) = armed else { return };
+    let bid = CURRENT_BID.with(|c| c.get());
+    let Some(bid) = bid else { return };
+    let bg_x = x - text_width / 2.0 - padding;
+    let bg_y = y - font_size / 2.0 - padding;
+    let bg_w = text_width + padding * 2.0;
+    let bg_h = font_size + padding * 2.0;
+    LEVEL_RECTS.with(|l| l.borrow_mut().push(LevelLabelRect {
+        bid,
+        pane,
+        prim_id,
+        level,
+        rect: (bg_x, bg_y, bg_x + bg_w, bg_y + bg_h),
+    }));
 }
 
 /// Record the just-painted text's bbox when it IS the armed primitive's

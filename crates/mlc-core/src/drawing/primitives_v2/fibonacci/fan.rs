@@ -10,9 +10,9 @@ use super::super::{
     PrimitiveMetadata,
     ControlPoint, ControlPointType,
     PrimitiveColor, LineStyle, TextAlign,
-    HIT_TOLERANCE,
+    HIT_TOLERANCE, extend_segment_to_edges,
     RenderContext, crisp,
-    render_primitive_text_rotated, calculate_line_text_params, draw_label_plate, stagger_t, level_rank,
+    render_primitive_text_rotated, calculate_line_text_params, draw_level_label_plate, stagger_t, level_rank,
     config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
 use super::retracement::{default_level_configs, LEVEL_SET_PRESETS};
@@ -47,9 +47,11 @@ pub struct FibFan {
     /// Show levels as percentages (true) or coefficients (false)
     #[serde(default = "default_true")]
     pub show_as_percent: bool,
-    /// Extend rays to edge of chart
+    /// Extend each fan ray past the origin (back) / past the level point (forward).
+    #[serde(default)]
+    pub extend_left: bool,
     #[serde(default = "default_true")]
-    pub extend: bool,
+    pub extend_right: bool,
     /// Style for level labels (font, background plate, offset, border)
     #[serde(default)]
     pub label_style: LabelStyle,
@@ -100,7 +102,8 @@ impl FibFan {
             show_percentages: true,
             label_position: "center".to_string(),
             show_as_percent: true,
-            extend: true,
+            extend_left: false,
+            extend_right: true,
             label_style: LabelStyle::default(),
         }
     }
@@ -219,10 +222,11 @@ impl Primitive for FibFan {
             let fx = viewport.bar_to_x_f64(fan_bar);
             let fy = viewport.price_to_y(fan_price, price_scale.price_min, price_scale.price_max);
 
-            let dist = if self.extend {
-                point_to_ray_distance(screen_x, screen_y, x1, y1, fx, fy)
-            } else {
-                point_to_line_distance(screen_x, screen_y, x1, y1, fx, fy)
+            let dist = match (self.extend_left, self.extend_right) {
+                (true, true) => point_to_line_distance(screen_x, screen_y, x1, y1, fx, fy),
+                (false, true) => point_to_ray_distance(screen_x, screen_y, x1, y1, fx, fy),
+                (true, false) => point_to_ray_distance(screen_x, screen_y, fx, fy, x1, y1),
+                (false, false) => point_to_line_distance(screen_x, screen_y, x1, y1, fx, fy),
             };
 
             if dist < HIT_TOLERANCE {
@@ -303,7 +307,7 @@ impl Primitive for FibFan {
                     .unwrap_or(&self.data.color.stroke);
 
                 // Calculate extended endpoints if extend is enabled
-                let (end_x1, end_y1, end_x2, end_y2) = if self.extend {
+                let (end_x1, end_y1, end_x2, end_y2) = if self.extend_left || self.extend_right {
                     let dx1 = fx1 - x1;
                     let dy1 = fy1 - y1;
                     let len1 = (dx1 * dx1 + dy1 * dy1).sqrt();
@@ -491,24 +495,18 @@ impl Primitive for FibFan {
                 let gap_y2 = y1 + dy * gap_t_end;
                 ctx.move_to(crisp(gap_x2, dpr), crisp(gap_y2, dpr));
 
-                if self.extend {
-                    let ext = chart_width * 2.0;
-                    let nx = dx / base_len;
-                    let ny = dy / base_len;
-                    ctx.line_to(crisp(x1 + nx * ext, dpr), crisp(y1 + ny * ext, dpr));
-                } else {
-                    ctx.line_to(crisp(fx, dpr), crisp(fy, dpr));
-                }
+                let (ex1, ey1, ex2, ey2) = extend_segment_to_edges(
+                    x1, y1, fx, fy, self.extend_left, self.extend_right, chart_width);
+                ctx.line_to(crisp(ex2, dpr), crisp(ey2, dpr));
+                let _ = (ex1, ey1);
             } else {
                 ctx.move_to(crisp(x1, dpr), crisp(y1, dpr));
-                if self.extend && base_len > 0.0 {
-                    let ext = chart_width * 2.0;
-                    let nx = dx / base_len;
-                    let ny = dy / base_len;
-                    ctx.line_to(crisp(x1 + nx * ext, dpr), crisp(y1 + ny * ext, dpr));
-                } else {
-                    ctx.line_to(crisp(fx, dpr), crisp(fy, dpr));
+                let (ex1, ey1, ex2, ey2) = extend_segment_to_edges(
+                    x1, y1, fx, fy, self.extend_left, self.extend_right, chart_width);
+                if self.extend_left {
+                    ctx.move_to(crisp(ex1, dpr), crisp(ey1, dpr));
                 }
+                ctx.line_to(crisp(ex2, dpr), crisp(ey2, dpr));
             }
             ctx.stroke();
 
@@ -521,7 +519,7 @@ impl Primitive for FibFan {
                 ctx.set_fill_color(label_color);
                 let label_x = x1 + dx * label_t;
                 let label_y = y1 + dy * label_t;
-                draw_label_plate(ctx, label_x, label_y, &lbl, self.label_style.font_size, &self.label_style, label_color);
+                draw_level_label_plate(ctx, label_x, label_y, &lbl, self.label_style.font_size, &self.label_style, label_color, cfg.level);
             }
         }
         ctx.set_line_dash(&[]);
@@ -617,8 +615,10 @@ impl Primitive for FibFan {
             // same bug `Pitchfork::style_properties()`'s own doc records as
             // already fixed once for the pitchfork family; `channel.rs`
             // carries the identical bug, fixed alongside this one).
-            ConfigProperty::extend(self.extend)
+            ConfigProperty::extend_left(self.extend_left)
                 .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
+            ConfigProperty::extend_right(self.extend_right)
+                .with_category(PropertyCategory::LevelsBase).with_order(1).in_group(PropertyGroup::General),
             ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40).in_group(PropertyGroup::LevelLabels),
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41).in_group(PropertyGroup::LevelLabels),
         ];
@@ -653,9 +653,15 @@ impl Primitive for FibFan {
                     return true;
                 }
             }
-            "extend" => {
+            "extend_left" => {
                 if let PropertyValue::Boolean(v) = value {
-                    self.extend = *v;
+                    self.extend_left = *v;
+                    return true;
+                }
+            }
+            "extend_right" => {
+                if let PropertyValue::Boolean(v) = value {
+                    self.extend_right = *v;
                     return true;
                 }
             }
@@ -686,6 +692,10 @@ impl Primitive for FibFan {
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
     }
+    fn extend_mode_raw(&self) -> u8 {
+        super::super::extend_mode_lr(self.extend_left, self.extend_right)
+    }
+    fn unbounded_in_price(&self) -> bool { self.extend_left || self.extend_right }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {

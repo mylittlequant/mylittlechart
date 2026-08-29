@@ -91,7 +91,7 @@ pub fn render_settings_modal(
         .collect();
 
     let modal_theme = ModalTheme::from_toolbar(
-        &frame_theme.toolbar_bg,
+        &frame_theme.modal_bg,
         &toolbar_theme.separator,
         toolbar_theme,
     );
@@ -137,8 +137,10 @@ pub fn render_settings_modal(
     let content_height = shell.content.height;
     let content_padding = 12.0;
 
-    ctx.set_fill_color(&frame_theme.toolbar_bg);
-    ctx.fill_rect(content_x, content_y, content_width, content_height);
+    if !crate::ui::overlay_fill::color_is_translucent(&frame_theme.modal_bg) {
+        ctx.set_fill_color(&frame_theme.toolbar_bg);
+        ctx.fill_rect(content_x, content_y, content_width, content_height);
+    }
 
     // Tab title
     let active_tab = ChartSettingsTab::from_index(active_tab_idx).unwrap_or_default();
@@ -255,9 +257,9 @@ pub fn render_settings_modal(
         let dd_x = template_btn_x;
         let menu_y = button_y + button_height + 2.0;
 
-        // Menu background + border
-        ctx.set_fill_color(&toolbar_theme.dropdown_bg);
-        ctx.fill_rounded_rect(dd_x, menu_y, menu_w, total_h, 4.0);
+        crate::ui::overlay_fill::fill_overlay_rounded(
+            ctx, &toolbar_theme.dropdown_bg, dd_x, menu_y, menu_w, total_h, 4.0,
+        );
         ctx.set_stroke_color(&toolbar_theme.separator);
         ctx.set_stroke_width(1.0);
         ctx.stroke_rounded_rect(dd_x, menu_y, menu_w, total_h, 4.0);
@@ -2650,12 +2652,10 @@ fn render_status_line_settings(
 
 /// Draw a standard checkbox at the given rect with the given checked state.
 fn draw_checkbox(ctx: &mut dyn RenderContext, rect: WidgetRect, checked: bool, theme: &ToolbarTheme) {
-    if checked {
-        ctx.set_fill_color(&theme.item_bg_active);
-    } else {
-        ctx.set_fill_color(&theme.background);
-    }
-    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);
+    crate::ui::overlay_fill::fill_checkbox(
+        ctx, checked, &theme.item_bg_active, &theme.dropdown_bg, &theme.background,
+        rect.x, rect.y, rect.width, rect.height, 3.0,
+    );
     ctx.set_stroke_color(&theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);
@@ -2684,8 +2684,14 @@ fn draw_split_dropdown(
     text_center_y: f64,
     theme: &ToolbarTheme,
 ) {
-    ctx.set_fill_color(&theme.background);
-    ctx.fill_rounded_rect(x, y, width, height, 4.0);
+    if crate::ui::overlay_fill::color_is_translucent(&theme.dropdown_bg) {
+        crate::ui::overlay_fill::fill_overlay_rounded(
+            ctx, &theme.dropdown_bg, x, y, width, height, 4.0,
+        );
+    } else {
+        ctx.set_fill_color(&theme.background);
+        ctx.fill_rounded_rect(x, y, width, height, 4.0);
+    }
     ctx.set_stroke_color(&theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(x, y, width, height, 4.0);

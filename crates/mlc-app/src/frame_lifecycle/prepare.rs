@@ -155,6 +155,10 @@ impl ChartApp {
             let profile = user_guard.profile();
             self.panel_app.user_settings_state.trading_panel_topbar_takeover =
                 profile.ui.trading_panel_topbar_takeover;
+            self.panel_app.user_settings_state.persist_toolbar_last_tools =
+                profile.ui.persist_toolbar_last_tools;
+            self.panel_app.user_settings_state.persist_toolbar_toggles =
+                profile.ui.persist_toolbar_toggles;
             self.panel_app.user_settings_state.control_point_shape = profile.ui.control_point_shape;
             self.panel_app.user_settings_state.control_point_size = profile.ui.control_point_size;
             // EWA engine configuration (owner ask 2026-08-14) — same
@@ -1042,27 +1046,39 @@ impl ChartApp {
                         let symbol = self.symbol_for_chart(cid)?;
                         let exchange = self.exchange_for_chart(cid)?;
                         let at = self.account_type_for_chart(cid).unwrap_or_default();
-                        let ticker = self
+                        if let Some(ticker) = self
                             .core
                             .mini_ticker
-                            .get(&format!("{}:{}:{}", symbol, exchange, at))?;
-                        let pct = ticker.price_change_percent;
-                        // Absolute change back-derived from the percent
-                        // (display only — the wire event carries no abs).
-                        let change_abs = if (100.0 + pct).abs() > f64::EPSILON {
-                            ticker.last_price * pct / (100.0 + pct)
+                            .get(&format!("{}:{}:{}", symbol, exchange, at))
+                        {
+                            let pct = ticker.price_change_percent;
+                            // Absolute change back-derived from the percent
+                            // (display only — the wire event carries no abs).
+                            let change_abs = if (100.0 + pct).abs() > f64::EPSILON {
+                                ticker.last_price * pct / (100.0 + pct)
+                            } else {
+                                0.0
+                            };
+                            Some(TickerSectionData {
+                                symbol,
+                                exchange,
+                                account_type: at.to_string(),
+                                last_price: ticker.last_price,
+                                change_pct: pct,
+                                change_abs,
+                                spark: ticker.spark.iter().copied().collect(),
+                            })
                         } else {
-                            0.0
-                        };
-                        Some(TickerSectionData {
-                            symbol,
-                            exchange,
-                            account_type: at.to_string(),
-                            last_price: ticker.last_price,
-                            change_pct: pct,
-                            change_abs,
-                            spark: ticker.spark.iter().copied().collect(),
-                        })
+                            Some(TickerSectionData {
+                                symbol,
+                                exchange,
+                                account_type: at.to_string(),
+                                last_price: 0.0,
+                                change_pct: 0.0,
+                                change_abs: 0.0,
+                                spark: Vec::new(),
+                            })
+                        }
                     });
             }
 

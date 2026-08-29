@@ -30,6 +30,9 @@ pub const AGENT_CHAT: &str = "agent_chat";
 /// `ChartOutEvent::UpdateBarModeParam` is emitted.
 pub const BAR_MODE_PARAM: &str = "bar_mode_param";
 
+/// Custom watermark text in the settings-gear submenu.
+pub const WATERMARK_TEXT: &str = "watermark_text";
+
 /// Per-panel DOM depth-bounds band, in percent. Dynamic id — the panel id is
 /// appended, so the field belongs to the ladder being edited and survives the
 /// modal being reopened on another panel.

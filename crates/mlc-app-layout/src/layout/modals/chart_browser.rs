@@ -86,7 +86,7 @@ pub fn render_chart_browser(
     // and the ✕, and the body below is untouched. It has a fixed height, so
     // `max_content_height` matches what it asks for and nothing overflows.
     let modal_theme = ModalTheme::from_frame_theme(
-        &frame_theme.toolbar_bg,
+        &frame_theme.modal_bg,
         &toolbar_theme.separator,
         &toolbar_theme.item_text,
         &toolbar_theme.item_text_hover,

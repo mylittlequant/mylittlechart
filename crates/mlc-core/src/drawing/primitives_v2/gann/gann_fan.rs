@@ -13,7 +13,7 @@ use super::super::{
     PrimitiveColor, LineStyle,
     HIT_TOLERANCE, point_to_line_distance,
     RenderContext, crisp,
-    render_primitive_text, draw_label_plate, level_ramp_color, level_rank, stagger_t,
+    render_primitive_text, draw_level_label_plate, level_ramp_color, level_rank, stagger_t,
     config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
 use super::super::types::point_to_ray_distance;
@@ -166,9 +166,10 @@ pub struct GannFan {
     /// Show labels
     #[serde(default = "default_true")]
     pub show_labels: bool,
-    /// Extend lines to chart edge
+    #[serde(default)]
+    pub extend_left: bool,
     #[serde(default = "default_true")]
-    pub extend: bool,
+    pub extend_right: bool,
     /// Direction: true = upward fan, false = downward fan
     #[serde(default = "default_true")]
     pub upward: bool,
@@ -194,7 +195,8 @@ impl GannFan {
             price2,
             level_configs: default_gann_fan_configs(),
             show_labels: true,
-            extend: true,
+            extend_left: false,
+            extend_right: true,
             upward: true,
             label_style: LabelStyle::default(),
         }
@@ -333,7 +335,7 @@ impl Primitive for GannFan {
             let end_x = viewport.bar_to_x_f64(end_b);
             let end_y = viewport.price_to_y(end_price, price_scale.price_min, price_scale.price_max);
 
-            let dist = if self.extend {
+            let dist = if (self.extend_left || self.extend_right) {
                 point_to_ray_distance(screen_x, screen_y, x1, y1, end_x, end_y)
             } else {
                 point_to_line_distance(screen_x, screen_y, x1, y1, end_x, end_y)
@@ -411,7 +413,7 @@ impl Primitive for GannFan {
                 .or(config.color.as_deref())
                 .unwrap_or(&self.data.color.stroke);
 
-            let ext = if self.extend {
+            let ext = if (self.extend_left || self.extend_right) {
                 (chart_width + chart_height) * 2.0
             } else {
                 ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt()
@@ -425,7 +427,7 @@ impl Primitive for GannFan {
             let dx1 = end_x1_raw - x1;
             let dy1 = end_y1_raw - y1;
             let len1 = (dx1 * dx1 + dy1 * dy1).sqrt();
-            let (end_x1, end_y1) = if len1 > 0.0 && self.extend {
+            let (end_x1, end_y1) = if len1 > 0.0 && (self.extend_left || self.extend_right) {
                 (x1 + dx1 / len1 * ext, y1 + dy1 / len1 * ext)
             } else {
                 (end_x1_raw, end_y1_raw)
@@ -439,7 +441,7 @@ impl Primitive for GannFan {
             let dx2 = end_x2_raw - x1;
             let dy2 = end_y2_raw - y1;
             let len2 = (dx2 * dx2 + dy2 * dy2).sqrt();
-            let (end_x2, end_y2) = if len2 > 0.0 && self.extend {
+            let (end_x2, end_y2) = if len2 > 0.0 && (self.extend_left || self.extend_right) {
                 (x1 + dx2 / len2 * ext, y1 + dy2 / len2 * ext)
             } else {
                 (end_x2_raw, end_y2_raw)
@@ -501,7 +503,7 @@ impl Primitive for GannFan {
             ctx.begin_path();
             ctx.move_to(crisp(x1, dpr), crisp(y1, dpr));
 
-            if self.extend {
+            if (self.extend_left || self.extend_right) {
                 // Extend ray to chart edge
                 let dx = end_x - x1;
                 let dy = end_y - y1;
@@ -533,7 +535,7 @@ impl Primitive for GannFan {
                     ctx.set_text_baseline(crate::render::TextBaseline::Middle);
                     ctx.set_text_align(crate::render::TextAlign::Center);
                     ctx.set_fill_color(label_color);
-                    draw_label_plate(ctx, label_x, label_y, &label, self.label_style.font_size, &self.label_style, label_color);
+                    draw_level_label_plate(ctx, label_x, label_y, &label, self.label_style.font_size, &self.label_style, label_color, ratio);
                 }
             }
         }
@@ -604,6 +606,10 @@ impl Primitive for GannFan {
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
     }
+    fn extend_mode_raw(&self) -> u8 {
+        super::super::extend_mode_lr(self.extend_left, self.extend_right)
+    }
+    fn unbounded_in_price(&self) -> bool { self.extend_left || self.extend_right }
 
     /// `extend`/`upward` are real fields `render`/`hit_test` already read
     /// (whether the fan rays reach the panel edge, and which direction the
@@ -617,7 +623,9 @@ impl Primitive for GannFan {
     fn level_properties(&self) -> Vec<super::super::config::ConfigProperty> {
         use super::super::config::{ConfigProperty, PropertyCategory, PropertyGroup};
         vec![
-            ConfigProperty::extend(self.extend)
+            ConfigProperty::extend_left(self.extend_left)
+                .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
+            ConfigProperty::extend_right(self.extend_right)
                 .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
             ConfigProperty::upward(self.upward)
                 .with_category(PropertyCategory::LevelsBase).with_order(1).in_group(PropertyGroup::General),
@@ -626,7 +634,8 @@ impl Primitive for GannFan {
 
     fn apply_level_property(&mut self, id: &str, value: &super::super::config::PropertyValue) -> bool {
         match id {
-            "extend" => { if let Some(v) = value.as_bool() { self.extend = v; return true; } }
+            "extend_left" => { if let Some(v) = value.as_bool() { self.extend_left = v; return true; } }
+            "extend_right" => { if let Some(v) = value.as_bool() { self.extend_right = v; return true; } }
             "upward" => { if let Some(v) = value.as_bool() { self.upward = v; return true; } }
             _ => {}
         }
@@ -726,7 +735,8 @@ mod declared_toggles_tests {
     fn property_list_contains_extend_and_upward() {
         let gann = GannFan::new(0, 100.0, 3_600_000, 120.0, "#FF9800");
         let ids: Vec<String> = gann.level_properties().into_iter().map(|p| p.id).collect();
-        assert!(ids.iter().any(|id| id == "extend"), "level_properties() must declare extend: {ids:?}");
+        assert!(ids.iter().any(|id| id == "extend_left"), "level_properties() must declare extend_left: {ids:?}");
+        assert!(ids.iter().any(|id| id == "extend_right"), "level_properties() must declare extend_right: {ids:?}");
         assert!(ids.iter().any(|id| id == "upward"), "level_properties() must declare upward: {ids:?}");
     }
 }

@@ -118,7 +118,7 @@ pub fn render_indicator_settings_modal(
         .collect();
 
     let modal_theme = ModalTheme::from_toolbar(
-        &frame_theme.toolbar_bg,
+        &frame_theme.modal_bg,
         &toolbar_theme.separator,
         toolbar_theme,
     );
@@ -162,9 +162,10 @@ pub fn render_indicator_settings_modal(
     let content_height = shell.content.height;
     let content_padding = 12.0;
 
-    // Content background
-    ctx.set_fill_color(&frame_theme.toolbar_bg);
-    ctx.fill_rect(content_x, content_y, content_width, content_height);
+    if !crate::ui::overlay_fill::color_is_translucent(&frame_theme.modal_bg) {
+        ctx.set_fill_color(&frame_theme.toolbar_bg);
+        ctx.fill_rect(content_x, content_y, content_width, content_height);
+    }
 
     // Tab title
     ctx.set_font("bold 14px sans-serif");
@@ -560,8 +561,10 @@ pub fn render_indicator_settings_modal(
 
                 // Checkbox
                 let check_rect = WidgetRect::new(check_x, check_y, checkbox_size, checkbox_size);
-                ctx.set_fill_color(if *enabled { &toolbar_theme.item_bg_active } else { &frame_theme.toolbar_bg });
-                ctx.fill_rounded_rect(check_rect.x, check_rect.y, check_rect.width, check_rect.height, 3.0);
+                crate::ui::overlay_fill::fill_checkbox(
+                    ctx, *enabled, &toolbar_theme.item_bg_active, &toolbar_theme.dropdown_bg, &frame_theme.toolbar_bg,
+                    check_rect.x, check_rect.y, check_rect.width, check_rect.height, 3.0,
+                );
                 ctx.set_stroke_color(&toolbar_theme.separator);
                 ctx.set_stroke_width(1.0);
                 ctx.stroke_rounded_rect(check_rect.x, check_rect.y, check_rect.width, check_rect.height, 3.0);

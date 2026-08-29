@@ -5370,6 +5370,12 @@ impl ChartApp {
                 "trading_panel_topbar_takeover" => {
                     self.toggle_trading_panel_topbar_takeover();
                 }
+                "persist_toolbar_last_tools" => {
+                    self.toggle_persist_toolbar_last_tools();
+                }
+                "persist_toolbar_toggles" => {
+                    self.toggle_persist_toolbar_toggles();
+                }
                 // Control-point shape option selected — hit id: "control_point_shape:{Variant}"
                 rest if rest.starts_with("control_point_shape:") => {
                     use mlc_core::drawing::primitives_v2::ControlPointShape;
@@ -7669,6 +7675,31 @@ impl ChartApp {
         self.panel_app.user_settings_state.trading_panel_topbar_takeover = now_on;
         self.autosave_snapshot();
         eprintln!("[ChartApp] trading_panel_topbar_takeover = {}", now_on);
+    }
+
+    /// Flip local-persist policy for left-toolbar last-picked tools.
+    /// Off → next launch uses flyout defaults; the on-disk snapshot is
+    /// left in the file but not applied.
+    pub(crate) fn toggle_persist_toolbar_last_tools(&mut self) {
+        let now_on = {
+            let mut user_mut = self.core.user_mut();
+            let ui = &mut user_mut.profile_mut().ui;
+            ui.persist_toolbar_last_tools = !ui.persist_toolbar_last_tools;
+            ui.persist_toolbar_last_tools
+        };
+        self.panel_app.user_settings_state.persist_toolbar_last_tools = now_on;
+        self.autosave_snapshot();
+    }
+
+    pub(crate) fn toggle_persist_toolbar_toggles(&mut self) {
+        let now_on = {
+            let mut user_mut = self.core.user_mut();
+            let ui = &mut user_mut.profile_mut().ui;
+            ui.persist_toolbar_toggles = !ui.persist_toolbar_toggles;
+            ui.persist_toolbar_toggles
+        };
+        self.panel_app.user_settings_state.persist_toolbar_toggles = now_on;
+        self.autosave_snapshot();
     }
 
     /// Set `ProfileUiSettings::control_point_shape`, push it into the live

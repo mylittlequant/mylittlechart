@@ -1759,9 +1759,15 @@ impl ChartApp {
                 }
             }
 
+            BubbleEvent::MiniTickerUpdated { exchange_id, symbol, account_type, last_price } => {
+                if *last_price > 0.0 {
+                    let key = format!("{}:{}:{}", symbol, exchange_id.as_str(), account_type);
+                    self.sidebar_state.feed_status.remove(&key);
+                }
+            }
+
             // ── Informational / no per-app reaction ────────────────────────────
-            BubbleEvent::MiniTickerUpdated { .. }
-            | BubbleEvent::SymbolsLoaded { .. }
+            BubbleEvent::SymbolsLoaded { .. }
             | BubbleEvent::OrderbookSnapshotRest { .. }
             | BubbleEvent::OrderbookDelta { .. }
             | BubbleEvent::TradingUpdate { .. } => {

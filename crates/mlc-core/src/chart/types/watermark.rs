@@ -129,8 +129,8 @@ impl Default for Watermark {
             horz_align: HorzAlign::Left,
             vert_align: VertAlign::Bottom,
             lines: vec![WatermarkLine::new(
-                "SEE YOU...",
-                "#2a2e39", // Theme border color (will be overridden at render time)
+                "",
+                "#2a2e39",
                 24.0,
             )],
             padding: default_padding(),

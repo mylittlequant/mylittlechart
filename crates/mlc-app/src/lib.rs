@@ -784,6 +784,8 @@ pub struct ChartApp {
     /// Set to true when this window's tab/preset state changed and needs saving.
     /// Checked and cleared by App each frame.
     pub profile_dirty: bool,
+    /// Shift held — 8-compass / square constrain while placing drawings.
+    pub(crate) shift_held: bool,
     /// Live preset state for open tabs (except the active one).
     /// Key = preset id. On tab switch: park active → cache, unpark target → active.
     live_preset_cache: std::collections::HashMap<String, persistence::live_cache::LivePresetState>,
@@ -1630,6 +1632,10 @@ pub(crate) struct InlinePrimTextEdit {
     pub bid: mlc_core::BubbleId,
     pub prim_id: u64,
     pub pane: Option<u64>,
+    /// `Some` = Fib/Gann (or other ladder) VALUE edit of this stored
+    /// level, seeded with `level_value_label` and committed via
+    /// `parse_level_value`. `None` = `data.text` edit.
+    pub level: Option<f64>,
 }
 
 /// Pending granularity row drag — set on mousedown over a reorderable row,
@@ -3046,6 +3052,41 @@ impl ChartApp {
         })
     }
 
+    /// Insertion index for a favorites-bar tool dropped at cursor x: the
+    /// count of tool slots (grip / empty / add skipped) whose midpoint
+    /// lies left of x. Range 0..=len. Used by in-bar reorder.
+    pub(crate) fn fav_drop_index(&self, x: f64) -> usize {
+        let Some(fav) = self.last_toolbar_result.as_ref()
+            .and_then(|r| r.favorites_bar.as_ref())
+        else {
+            return 0;
+        };
+        mlc_core::toolbar::favorites_bar_drop_index(
+            fav.item_rects.iter().map(|(id, r)| (id.as_str(), r.x, r.width)),
+            x,
+        )
+    }
+
+    pub fn set_shift_held(&mut self, held: bool) {
+        self.shift_held = held;
+        if let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) {
+            self.core.drawings_mut().set_shift_constrain(bid, held);
+        }
+    }
+
+    /// Shift-constrain a drawing cursor against the first placed pivot.
+    pub(crate) fn snap_draw_point(&self, tool_id: &str, ts0: i64, p0: f64, ts1: i64, p1: f64) -> (i64, f64) {
+        let Some(w) = self.panel_app.panel_grid.active_container() else {
+            return (ts1, p1);
+        };
+        let bars = self.active_chart_bars();
+        let vp = w.viewport();
+        let ps = w.price_scale();
+        mlc_core::drawing::snap_drawing_data(
+            tool_id, &bars, vp, ps.price_min, ps.price_max, ts0, p0, ts1, p1,
+        )
+    }
+
     /// Whether the footprint bucket dropdown (`ResolutionKind::Interval`)
     /// should mark every item "live only" for the ACTIVE window's (exchange,
     /// account_type) — true exactly when `mlc_backend::chart_type::
@@ -3201,6 +3242,7 @@ impl ChartApp {
             window_width: None,
             window_height: None,
             profile_dirty: false,
+            shift_held: false,
             profile_geometry_dirty: false,
             watchlists_dirty: false,
             watchlist_actions: Vec::new(),
@@ -3496,6 +3538,7 @@ impl ChartApp {
             tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
                 .with_filter(|c| c.is_ascii_digit() || c == '.')
                 .with_max_len(12));
+            tf.register(text_input::WATERMARK_TEXT, TextFieldConfig::text().with_max_len(64));
             // Granularity favorites (kusok 1): custom TF name (letters+digits,
             // e.g. "7m") and custom numeric param (digits+dot) input rows.
             tf.register(text_input::TF_FAVORITE_INPUT, TextFieldConfig::text()
@@ -3632,6 +3675,7 @@ impl ChartApp {
             window_width: None,
             window_height: None,
             profile_dirty: false,
+            shift_held: false,
             profile_geometry_dirty: false,
             watchlists_dirty: false,
             watchlist_actions: Vec::new(),
@@ -3763,6 +3807,7 @@ impl ChartApp {
             tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
                 .with_filter(|c| c.is_ascii_digit() || c == '.')
                 .with_max_len(12));
+            tf.register(text_input::WATERMARK_TEXT, TextFieldConfig::text().with_max_len(64));
             // Granularity favorites (kusok 1): custom TF name (letters+digits,
             // e.g. "7m") and custom numeric param (digits+dot) input rows.
             tf.register(text_input::TF_FAVORITE_INPUT, TextFieldConfig::text()
@@ -4211,6 +4256,7 @@ impl ChartApp {
             window_width: None,
             window_height: None,
             profile_dirty: false,
+            shift_held: false,
             profile_geometry_dirty: false,
             watchlists_dirty: false,
             watchlist_actions: Vec::new(),
@@ -4712,6 +4758,7 @@ impl ChartApp {
             tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
                 .with_filter(|c| c.is_ascii_digit() || c == '.')
                 .with_max_len(12));
+            tf.register(text_input::WATERMARK_TEXT, TextFieldConfig::text().with_max_len(64));
             // Granularity favorites (kusok 1): custom TF name (letters+digits,
             // e.g. "7m") and custom numeric param (digits+dot) input rows.
             tf.register(text_input::TF_FAVORITE_INPUT, TextFieldConfig::text()
@@ -4828,6 +4875,10 @@ impl ChartApp {
         self.panel_app.user_settings_state.control_point_shape = profile.ui.control_point_shape;
         self.panel_app.user_settings_state.control_point_size = profile.ui.control_point_size;
 
+        if let Some(style) = mlc_core::UIStyle::from_name(&profile.ui.active_ui_style) {
+            self.panel_app.theme_manager.current_mut().set_style(style);
+        }
+
         // EWA engine configuration (owner ask 2026-08-14) — process-level
         // like the control-point style above: `set_ewa_engine_config` writes
         // the one global `wave_label_offset`/`elliott::guard`/each Elliott
@@ -4902,6 +4953,16 @@ impl ChartApp {
             };
         }
         self.panel_app.toolbar_state.favorites_bar_visible = profile.ui.favorites_bar_visible;
+
+        if profile.ui.persist_toolbar_last_tools {
+            for (dropdown_id, tool_id) in &profile.ui.toolbar_last_tools {
+                self.panel_app.toolbar_state.set_quick_select(dropdown_id, tool_id, tool_id);
+            }
+        }
+        if profile.ui.persist_toolbar_toggles {
+            self.panel_app.toolbar_state.drawings_locked = profile.ui.drawings_locked;
+            self.panel_app.toolbar_state.drawings_visible = profile.ui.drawings_visible;
+        }
 
         // Notification settings — load from profile into alert settings state.
         dlog!(
@@ -5866,19 +5927,29 @@ impl ChartApp {
             };
             let data = prim.data();
             let t = data.text.as_ref();
-            let stored = t.map(|t| t.content.clone()).unwrap_or_default();
-            let font_size = t.map(|t| t.font_size).unwrap_or(14.0);
+            let stored = if let Some(level) = edit.level {
+                prim.level_value_label(level)
+            } else {
+                t.map(|t| t.content.clone()).unwrap_or_default()
+            };
+            let font_size = t.map(|t| t.font_size).unwrap_or(12.0);
             let text_color = t.and_then(|t| t.color.clone())
                 .unwrap_or_else(|| data.color.stroke.clone());
             // Prefer the label's own rendered rect (this frame's registry)
             // over the control-point anchor: for a labeled line/channel the
             // text hangs OFF the first handle, so the plate must sit where
-            // the label is drawn, not where the line starts. The registry
-            // rect is pane-local — shift by the pane origin, same space the
+            // the label is drawn, not where the line starts. Level-value
+            // edits use the Fib/Gann plate registry. The registry rect is
+            // pane-local — shift by the pane origin, same space the
             // anchor math above produces.
-            let label_rect = mlc_core::engine::render::label_text_rect_for(
-                edit.bid, edit.pane, edit.prim_id)
-                .map(|(x0, y0, x1, y1)| {
+            let raw_rect = if let Some(level) = edit.level {
+                mlc_core::engine::render::level_label_rect_for(
+                    edit.bid, edit.pane, edit.prim_id, level)
+            } else {
+                mlc_core::engine::render::label_text_rect_for(
+                    edit.bid, edit.pane, edit.prim_id)
+            };
+            let label_rect = raw_rect.map(|(x0, y0, x1, y1)| {
                     let origin = match edit.pane {
                         None => (render_state.chart_rect.x, render_state.chart_rect.y),
                         Some(iid) => layout.sub_panes.iter()
@@ -9928,7 +9999,7 @@ impl ChartApp {
                 );
 
                 // Frame + header.
-                ctx.set_fill_color(&frame_theme.toolbar_bg);
+                ctx.set_fill_color(&frame_theme.modal_bg);
                 ctx.fill_rounded_rect(mx, my, RC_W, RC_H, 6.0);
                 ctx.set_fill_color(&toolbar_theme.item_text);
                 ctx.set_font("12px sans-serif");
@@ -12430,6 +12501,77 @@ impl ChartApp {
                 P::Monitoring => Some("monitoring".to_string()),
                 p => Self::panel_to_str(p),
             };
+        self.stamp_settings_menu_state();
+    }
+
+    fn stamp_settings_menu_state(&mut self) {
+        use mlc_core::chart::types::crosshair::CrosshairMode;
+        use mlc_core::{HorzAlign, VertAlign};
+        let mut toggles = std::collections::HashMap::new();
+        let mut draft = None;
+        let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+        if let Some(pid) = pid {
+            if let Some(panel) = self.panels_store.chart_panel.get(&pid) {
+                let gv = panel.grid_options.vert_lines.visible;
+                let gh = panel.grid_options.horz_lines.visible;
+                toggles.insert("grid_toggle".into(), gv && gh);
+                toggles.insert("grid_vert".into(), gv);
+                toggles.insert("grid_horz".into(), gh);
+                toggles.insert("legend_toggle".into(), panel.legend.visible);
+                toggles.insert("tooltip_toggle".into(), panel.tooltip.visible);
+                toggles.insert("tooltip_follow".into(), panel.tooltip.follow_cursor);
+                let wm_on = panel.watermark.as_ref().map(|w| w.visible).unwrap_or(false);
+                toggles.insert("watermark_toggle".into(), wm_on);
+                if let Some(wm) = panel.watermark.as_ref() {
+                    toggles.insert("watermark_pos_center".into(),
+                        wm.horz_align == HorzAlign::Center && wm.vert_align == VertAlign::Center);
+                    toggles.insert("watermark_pos_bl".into(),
+                        wm.horz_align == HorzAlign::Left && wm.vert_align == VertAlign::Bottom);
+                    toggles.insert("watermark_pos_br".into(),
+                        wm.horz_align == HorzAlign::Right && wm.vert_align == VertAlign::Bottom);
+                    draft = Some(wm.lines.first().map(|l| l.text.clone()).unwrap_or_default());
+                }
+            }
+        }
+        if let Some(w) = self.panel_app.panel_grid.active_container() {
+            toggles.insert("crosshair_toggle".into(), w.crosshair.enabled);
+            toggles.insert("ch_normal".into(), matches!(w.crosshair.mode, CrosshairMode::Normal));
+            toggles.insert("ch_magnet".into(), matches!(w.crosshair.mode, CrosshairMode::Magnet));
+            toggles.insert("ch_magnet_ohlc".into(), matches!(w.crosshair.mode, CrosshairMode::MagnetOHLC));
+        }
+        let theme = self.panel_app.theme_manager.preset_name().to_string();
+        for name in ["dark", "light", "high_contrast", "high_contrast_mono", "mascot", "surf", "vaporwave", "terminal"] {
+            toggles.insert(format!("theme_{name}"), theme == name);
+        }
+        let style = self.panel_app.theme_manager.current().style;
+        toggles.insert("style_solid".into(), matches!(style, mlc_core::UIStyle::Solid));
+        toggles.insert("style_glass".into(), matches!(style, mlc_core::UIStyle::Glass));
+        toggles.insert("style_frosted_glass_flat".into(), matches!(style, mlc_core::UIStyle::FrostedGlassFlat));
+
+        let wid = uzor::WidgetId::from(crate::text_input::WATERMARK_TEXT);
+        let (focused, live_text, cursor, cursor_vis) = {
+            let ic = self.input_coordinator.borrow();
+            let tf = ic.text_fields();
+            if tf.focused().map(|f| f.as_str()) == Some(crate::text_input::WATERMARK_TEXT) {
+                let t = web_time::SystemTime::now().duration_since(web_time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+                (true, tf.text(&wid).to_string(), tf.cursor(&wid), tf.cursor_visible(t))
+            } else {
+                (false, String::new(), 0, false)
+            }
+        };
+        let tb = &mut self.panel_app.toolbar_state;
+        tb.settings_toggles = toggles;
+        if focused {
+            tb.watermark_edit_focused = true;
+            tb.watermark_draft = live_text;
+            tb.watermark_edit_cursor = cursor;
+            tb.watermark_edit_cursor_visible = cursor_vis;
+        } else {
+            tb.watermark_edit_focused = false;
+            if let Some(d) = draft {
+                tb.watermark_draft = d;
+            }
+        }
     }
 
     pub fn panel_to_str(panel: mlc_app_sidebar_content::state::RightSidebarPanel) -> Option<String> {

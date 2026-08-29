@@ -165,9 +165,19 @@ where
         }
     };
 
-    // Draw background
-    ctx.set_fill_color(bg_color);
-    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, config.radius);
+    let glass_accent = if config.active
+        && crate::ui::overlay_fill::color_is_translucent(&theme.bg_normal)
+    {
+        let a = mlc_core::parse_css_color(&theme.bg_normal).3 as f64 / 255.0;
+        Some(mlc_core::apply_opacity(&theme.accent, a))
+    } else {
+        None
+    };
+    let fill = glass_accent.as_deref().unwrap_or(bg_color);
+
+    crate::ui::overlay_fill::fill_overlay_rounded(
+        ctx, fill, rect.x, rect.y, rect.width, rect.height, config.radius,
+    );
 
     // Draw active border if enabled
     if config.active && config.active_border {

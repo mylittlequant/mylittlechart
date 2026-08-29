@@ -893,6 +893,72 @@ pub fn point_to_ray_distance(px: f64, py: f64, x1: f64, y1: f64, x2: f64, y2: f6
 /// horizontal run has no meaningful "reach the edge" height, so this keeps
 /// `TrendLine`'s own guard-band intent (`-1000.0`/`1000.0`) without
 /// hardcoding the literal at every call site.
+
+/// Snap `(x1,y1)` toward `(x0,y0)` onto the nearest of 8 compass
+/// directions (0/45/90/…). Drawing-app Shift while placing a line/ray.
+pub fn snap_compass8(x0: f64, y0: f64, x1: f64, y1: f64) -> (f64, f64) {
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < 1e-9 {
+        return (x1, y1);
+    }
+    let ang = dy.atan2(dx);
+    let step = std::f64::consts::PI / 4.0;
+    let snapped = (ang / step).round() * step;
+    (x0 + len * snapped.cos(), y0 + len * snapped.sin())
+}
+
+/// Shift-constrain a box tool to a square in screen pixels (equal |dx|, |dy|).
+pub fn snap_square(x0: f64, y0: f64, x1: f64, y1: f64) -> (f64, f64) {
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    let m = dx.abs().max(dy.abs());
+    if m < 1e-9 {
+        return (x1, y1);
+    }
+    (x0 + m * dx.signum(), y0 + m * dy.signum())
+}
+
+/// True for tools whose Shift-constrain is "square/circle", not 8-compass.
+pub fn shift_snaps_square(tool_id: &str) -> bool {
+    matches!(
+        tool_id,
+        "rectangle" | "rotated_rectangle" | "ellipse" | "circle"
+            | "gann_box" | "price_date_range" | "price_range" | "date_range" | "triangle"
+    )
+}
+
+pub fn snap_drawing_screen(tool_id: &str, x0: f64, y0: f64, x1: f64, y1: f64) -> (f64, f64) {
+    if shift_snaps_square(tool_id) {
+        snap_square(x0, y0, x1, y1)
+    } else {
+        snap_compass8(x0, y0, x1, y1)
+    }
+}
+
+/// Shift-snap a data-space cursor against the first placed point.
+pub fn snap_drawing_data(
+    tool_id: &str,
+    bars: &[crate::Bar],
+    vp: &crate::Viewport,
+    price_min: f64,
+    price_max: f64,
+    ts0: i64,
+    p0: f64,
+    ts1: i64,
+    p1: f64,
+) -> (i64, f64) {
+    let x0 = vp.bar_to_x_f64(crate::timestamp_ms_to_bar_f64(bars, ts0));
+    let y0 = vp.price_to_y(p0, price_min, price_max);
+    let x1 = vp.bar_to_x_f64(crate::timestamp_ms_to_bar_f64(bars, ts1));
+    let y1 = vp.price_to_y(p1, price_min, price_max);
+    let (sx, sy) = snap_drawing_screen(tool_id, x0, y0, x1, y1);
+    let bar = vp.x_to_bar_f64(sx);
+    let price = vp.y_to_price(sy, price_min, price_max);
+    (crate::bar_f64_to_timestamp_ms(bars, bar), price)
+}
+
 pub fn extend_segment_to_edges(
     x1: f64, y1: f64, x2: f64, y2: f64,
     extend_left: bool, extend_right: bool,

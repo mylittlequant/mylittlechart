@@ -83,7 +83,7 @@ pub fn render_search_overlay(
     let screen_h = screen.y + screen.height;
 
     let modal_theme = ModalTheme::from_frame_theme(
-        &theme.toolbar_bg,
+        &theme.modal_bg,
         &toolbar_theme.separator,
         &toolbar_theme.item_text,
         &toolbar_theme.item_text_hover,

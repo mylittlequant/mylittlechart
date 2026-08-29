@@ -311,6 +311,10 @@ pub struct WatchlistItem {
     /// 2026-07-31). Empty when the symbol has no live ticker yet.
     #[serde(default)]
     pub spark: Vec<f64>,
+    /// Venue feed status shown instead of Last/spark when price is unavailable
+    /// (e.g. `"403 geoblock"`). Empty/None = normal price paint.
+    #[serde(default)]
+    pub status: Option<String>,
 }
 
 impl WatchlistItem {
@@ -338,8 +342,10 @@ pub struct WatchlistColumnConfig {
     pub show_change_abs: bool,
     pub show_volume: bool,
     pub show_high_low: bool,
-    /// Show account type column (e.g. "S", "FC", "M"). Default false.
-    #[serde(default)]
+    /// Show account type column (e.g. "S", "F", "M"). Default true —
+    /// the column is sized to the "Type" header (collapses to "T"
+    /// when squeezed), not an equal share of the row.
+    #[serde(default = "default_true_column_config")]
     pub show_account_type: bool,
     /// Show the price sparkline column (TapeSurf watch-list borrow,
     /// 2026-07-31). Default true.
@@ -377,6 +383,11 @@ pub struct WatchlistColumnConfig {
     /// column separators to custom widths.
     #[serde(default = "default_true_column_config")]
     pub align_columns: bool,
+
+    /// User-dragged height of the pinned metrics block (Fund/OI + ticker)
+    /// at the bottom of the watchlist. `None` = auto (ticker 96 + counters).
+    #[serde(default)]
+    pub metrics_block_h: Option<f64>,
 }
 
 fn default_true_column_config() -> bool {
@@ -392,12 +403,13 @@ impl Default for WatchlistColumnConfig {
             show_change_abs: false,
             show_volume: false,
             show_high_low: false,
-            show_account_type: false,
+            show_account_type: true,
             show_spark: true,
             show_ticker_section: true,
             show_market_counters: true,
             separator_offsets: None,
             align_columns: true,
+            metrics_block_h: None,
         }
     }
 }

@@ -108,6 +108,10 @@ impl WatchlistUiState {
         self.list(list_id).map(|l| l.column_config.clone()).unwrap_or_default()
     }
 
+    pub fn column_config_mut(&mut self, list_id: u64) -> &mut WatchlistColumnConfig {
+        &mut self.list_mut(list_id).column_config
+    }
+
     /// Drop the sidecar for a deleted list (call alongside
     /// `WatchlistManager::delete_list`).
     pub fn remove_list(&mut self, list_id: u64) {

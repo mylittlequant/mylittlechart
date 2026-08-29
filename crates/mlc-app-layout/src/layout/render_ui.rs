@@ -25,8 +25,13 @@ use crate::ui::widgets::types::WidgetTheme;
 
 /// Convert ToolbarTheme to WidgetTheme for slider rendering.
 pub fn toolbar_to_widget_theme(toolbar_theme: &ToolbarTheme, frame_theme: &FrameTheme) -> WidgetTheme {
+    let field_bg = if crate::ui::overlay_fill::color_is_translucent(&frame_theme.modal_bg) {
+        frame_theme.modal_bg.clone()
+    } else {
+        frame_theme.toolbar_bg.clone()
+    };
     WidgetTheme {
-        bg_normal: frame_theme.toolbar_bg.clone(),
+        bg_normal: field_bg,
         bg_hover: toolbar_theme.item_bg_hover.clone(),
         bg_pressed: toolbar_theme.item_bg_active.clone(),
         bg_disabled: toolbar_theme.separator.clone(),

@@ -28,7 +28,7 @@ const ROW_GAP: f64 = 20.0;
 
 /// Sidebar modals all wear the toolbar's colours.
 fn shell_theme(frame_theme: &FrameTheme, tt: &ToolbarTheme) -> ModalTheme {
-    ModalTheme::from_toolbar(&frame_theme.toolbar_bg, &frame_theme.toolbar_border, tt)
+    ModalTheme::from_toolbar(&frame_theme.modal_bg, &frame_theme.toolbar_border, tt)
 }
 
 /// The shared spec: one id space (`dom_modal:*`), one remembered position,

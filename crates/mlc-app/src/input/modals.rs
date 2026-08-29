@@ -1869,6 +1869,15 @@ impl ChartApp {
                 let ts_ms = self.panel_app.panel_grid.active_container()
                     .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&click_bars_main[..], bar))
                     .unwrap_or(0);
+                let (ts_ms, price) = if self.shift_held {
+                    if let Some(bid) = active_bid_tool {
+                        let tool = self.core.drawings().current_tool(bid).unwrap_or("").to_string();
+                        let pts = self.core.drawings().drawing_points(bid);
+                        if let Some(&(ts0, p0)) = pts.first() {
+                            self.snap_draw_point(&tool, ts0, p0, ts_ms, price)
+                        } else { (ts_ms, price) }
+                    } else { (ts_ms, price) }
+                } else { (ts_ms, price) };
                 let primitive_created = active_bid_tool
                     .map(|bid| self.core.drawings_mut().on_canvas_click(bid, ts_ms, price))
                     .unwrap_or(false);
@@ -1961,6 +1970,15 @@ impl ChartApp {
                 let sub_ts_ms = self.panel_app.panel_grid.active_container()
                     .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&click_bars_sub[..], bar))
                     .unwrap_or(0);
+                let (sub_ts_ms, price) = if self.shift_held {
+                    if let Some(bid) = active_bid_tool {
+                        let tool = self.core.drawings().current_tool(bid).unwrap_or("").to_string();
+                        let pts = self.core.drawings().drawing_points(bid);
+                        if let Some(&(ts0, p0)) = pts.first() {
+                            self.snap_draw_point(&tool, ts0, p0, sub_ts_ms, price)
+                        } else { (sub_ts_ms, price) }
+                    } else { (sub_ts_ms, price) }
+                } else { (sub_ts_ms, price) };
                 let primitive_created = active_bid_tool
                     .map(|bid| self.core.drawings_mut().on_canvas_click(bid, sub_ts_ms, price))
                     .unwrap_or(false);

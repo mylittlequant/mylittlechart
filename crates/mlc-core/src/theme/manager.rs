@@ -55,14 +55,18 @@ impl ThemeManager {
 
     /// Switch to a preset theme
     pub fn set_preset(&mut self, name: &str) {
+        let style = self.current.style;
         self.current = RuntimeTheme::from_preset(name);
+        self.current.set_style(style);
         self.base_preset = name.to_string();
         self.dirty = true;
     }
 
     /// Reset current theme to base preset (discards customizations)
     pub fn reset_to_preset(&mut self) {
+        let style = self.current.style;
         self.current = RuntimeTheme::from_preset(&self.base_preset);
+        self.current.set_style(style);
         self.dirty = true;
     }
 

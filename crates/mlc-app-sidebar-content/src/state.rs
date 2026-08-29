@@ -241,6 +241,11 @@ pub struct SidebarState {
     /// instrument or no venue has reported yet.
     pub counter_rows: Vec<crate::types::CounterRowData>,
 
+    /// Key `{symbol}:{exchange}:{account_type}` (same grammar as mini_ticker).
+    /// Set from ErrorReported / REST ticker 403; cleared when a live ticker arrives.
+    /// Not rebuilt with `watchlist_items` — survives per-frame item reconstruction.
+    pub feed_status: HashMap<String, String>,
+
     /// Rows for the Screener panel (plan F v1, owner spec 2026-08-01).
     /// Populated by the app each frame from the active watchlist's live
     /// mini-ticker data plus `BackendCore::screener_metrics` (RSI/ATR/dist
@@ -350,6 +355,9 @@ pub struct SidebarState {
     /// `sep_offset_at_start` is the separator's absolute X offset from the
     /// left edge of the usable area at the moment the drag started.
     pub watchlist_sep_drag: Option<(usize, f64, f64)>,
+
+    /// Drag of the watchlist / metrics-block splitter: `(start_y, start_h)`.
+    pub watchlist_metrics_sep_drag: Option<(f64, f64)>,
 
     /// Currently open color flag picker: `Some((row_index, screen_x, screen_y))`.
     ///
@@ -833,6 +841,7 @@ impl Default for SidebarState {
             watchlist_items: Vec::new(),
             ticker_section: None,
             counter_rows: Vec::new(),
+            feed_status: HashMap::new(),
             screener_items: Vec::new(),
             screener_filters: crate::types::ScreenerFilters::default(),
             screener_sort_key: crate::types::ScreenerSortKey::default(),
@@ -861,6 +870,7 @@ impl Default for SidebarState {
             watchlist_drag_y: 0.0,
             watchlist_drop_index: None,
             watchlist_sep_drag: None,
+            watchlist_metrics_sep_drag: None,
             watchlist_color_picker_open: None,
             watchlist_sort_mode: 0,
             metrics_history: HashMap::new(),

@@ -35,9 +35,11 @@ pub enum Icon {
     HorizontalLine,
     VerticalLine,
     Ray,
+    RayLeft,
     ExtendedLine,
     ParallelChannel,
     HorizontalRay,
+    HorizontalRayLeft,
     CrossLine,
     InfoLine,
     TrendAngle,
@@ -540,6 +542,12 @@ pub const ICON_RAY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="
   <path d="M18 6l2 2-2 2"/>
 </svg>"##;
 
+pub const ICON_RAY_LEFT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M20 16L4 8"/>
+  <circle cx="20" cy="16" r="2" fill="currentColor"/>
+  <path d="M6 6L4 8l2 2"/>
+</svg>"##;
+
 pub const ICON_EXTENDED_LINE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <path d="M2 18L22 6"/>
   <circle cx="8" cy="14" r="2" fill="currentColor"/>
@@ -557,6 +565,12 @@ pub const ICON_HORIZONTAL_RAY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg
   <path d="M4 12h17"/>
   <circle cx="4" cy="12" r="2" fill="currentColor"/>
   <path d="M19 9l3 3-3 3"/>
+</svg>"##;
+
+pub const ICON_HORIZONTAL_RAY_LEFT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M20 12H3"/>
+  <circle cx="20" cy="12" r="2" fill="currentColor"/>
+  <path d="M5 9L2 12l3 3"/>
 </svg>"##;
 
 pub const ICON_CROSS_LINE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2043,9 +2057,11 @@ impl Icon {
             Icon::HorizontalLine => ICON_HORIZONTAL_LINE,
             Icon::VerticalLine => ICON_VERTICAL_LINE,
             Icon::Ray => ICON_RAY,
+            Icon::RayLeft => ICON_RAY_LEFT,
             Icon::ExtendedLine => ICON_EXTENDED_LINE,
             Icon::ParallelChannel => ICON_PARALLEL_CHANNEL,
             Icon::HorizontalRay => ICON_HORIZONTAL_RAY,
+            Icon::HorizontalRayLeft => ICON_HORIZONTAL_RAY_LEFT,
             Icon::CrossLine => ICON_CROSS_LINE,
             Icon::InfoLine => ICON_INFO_LINE,
             Icon::TrendAngle => ICON_TREND_ANGLE,
@@ -2248,9 +2264,11 @@ impl Icon {
             "horizontal_line" | "horizontalline" => Some(Icon::HorizontalLine),
             "vertical_line" | "verticalline" => Some(Icon::VerticalLine),
             "ray" => Some(Icon::Ray),
+            "ray_left" | "rayleft" => Some(Icon::RayLeft),
             "extended_line" | "extendedline" => Some(Icon::ExtendedLine),
             "parallel_channel" | "parallelchannel" => Some(Icon::ParallelChannel),
             "horizontal_ray" | "horizontalray" => Some(Icon::HorizontalRay),
+            "horizontal_ray_left" | "horizontalrayleft" => Some(Icon::HorizontalRayLeft),
             "cross_line" | "crossline" => Some(Icon::CrossLine),
             "info_line" | "infoline" => Some(Icon::InfoLine),
             "trend_angle" | "trendangle" => Some(Icon::TrendAngle),
@@ -2523,9 +2541,11 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "horizontal_line" | "horizontalline" => Some(ICON_HORIZONTAL_LINE),
         "vertical_line" | "verticalline" => Some(ICON_VERTICAL_LINE),
         "ray" => Some(ICON_RAY),
+        "ray_left" | "rayleft" => Some(ICON_RAY_LEFT),
         "extended_line" | "extendedline" => Some(ICON_EXTENDED_LINE),
         "parallel_channel" | "parallelchannel" => Some(ICON_PARALLEL_CHANNEL),
         "horizontal_ray" | "horizontalray" => Some(ICON_HORIZONTAL_RAY),
+        "horizontal_ray_left" | "horizontalrayleft" => Some(ICON_HORIZONTAL_RAY_LEFT),
         "cross_line" | "crossline" => Some(ICON_CROSS_LINE),
         "info_line" | "infoline" => Some(ICON_INFO_LINE),
         "trend_angle" | "trendangle" => Some(ICON_TREND_ANGLE),

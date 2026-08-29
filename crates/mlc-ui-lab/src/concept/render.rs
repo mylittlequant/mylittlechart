@@ -148,7 +148,7 @@ pub fn render_concept_modal(
     let min_content_width = label_col + 150.0 + modal_padding * 2.0;
     let modal_width = min_header_width.max(tabs_row_width).max(min_content_width).max(560.0);
 
-    let modal_theme = ModalTheme::from_toolbar(&frame_theme.toolbar_bg, &toolbar_theme.separator, toolbar_theme);
+    let modal_theme = ModalTheme::from_toolbar(&frame_theme.modal_bg, &toolbar_theme.separator, toolbar_theme);
     let spec = ModalShellSpec {
         padding: modal_padding,
         placement: ModalPlacement::At(Some(state.position.unwrap_or(((screen_w - modal_width) / 2.0, default_modal_y)))),

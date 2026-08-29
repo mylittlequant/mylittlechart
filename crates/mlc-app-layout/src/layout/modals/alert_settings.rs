@@ -87,8 +87,9 @@ fn draw_field(
     // Field background
     let field_x = content_x + label_w;
     let bg = if is_hovered { &toolbar_theme.item_bg_hover } else { &toolbar_theme.dropdown_bg };
-    ctx.set_fill_color(bg);
-    ctx.fill_rounded_rect(field_x, y, field_w, row_h, 4.0);
+    crate::ui::overlay_fill::fill_overlay_rounded(
+        ctx, bg, field_x, y, field_w, row_h, 4.0,
+    );
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(field_x, y, field_w, row_h, 4.0);
@@ -180,7 +181,7 @@ pub fn render_alert_settings_modal(
     };
 
     let modal_theme = ModalTheme::from_toolbar(
-        &frame_theme.toolbar_bg,
+        &frame_theme.modal_bg,
         &toolbar_theme.separator,
         toolbar_theme,
     );

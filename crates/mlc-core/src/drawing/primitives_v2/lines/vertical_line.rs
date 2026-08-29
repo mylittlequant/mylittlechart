@@ -204,6 +204,7 @@ impl Primitive for VerticalLine {
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
     }
+    fn unbounded_in_price(&self) -> bool { true }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![ConfigProperty::boolean("show_time_label", ConfigKey::ShowTimeLabel.get(current_language()), self.show_time_label).with_order(20)]

@@ -259,6 +259,10 @@ impl Primitive for DisjointChannel {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+    fn extend_mode_raw(&self) -> u8 {
+        super::super::extend_mode_lr(self.extend_left, self.extend_right)
+    }
+    fn unbounded_in_price(&self) -> bool { self.extend_left || self.extend_right }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         // Channel archetype (W3) — same skeleton `parallel_channel.rs`'s own

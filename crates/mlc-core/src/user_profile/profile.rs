@@ -501,6 +501,12 @@ pub struct ProfileUiSettings {
     #[serde(default = "default_theme")]
     pub active_theme: String,
 
+    /// UI visual style (`"solid"`, `"glass"`, `"frosted_glass_flat"`).
+    /// Orthogonal to `active_theme`. Empty / unknown → Solid. Wasm maps
+    /// Frosted onto Glass on load.
+    #[serde(default)]
+    pub active_ui_style: String,
+
     /// Whether the right sidebar is currently visible.
     #[serde(default)]
     pub sidebar_visible: bool,
@@ -713,6 +719,29 @@ pub struct ProfileUiSettings {
     /// every field's own reader.
     #[serde(default)]
     pub orderflow_engine: OrderFlowEngineConfig,
+
+    /// When `true` (default), restore the left-toolbar flyout last-picks
+    /// (`toolbar_last_tools`) on load. When `false`, load uses the
+    /// built-in defaults and the on-disk snapshot is not applied. The
+    /// snapshot itself is only rewritten while this flag is on — turning
+    /// the toggle off does not wipe the file.
+    #[serde(default = "default_true")]
+    pub persist_toolbar_last_tools: bool,
+
+    /// `dropdown_id → tool_id` for left-toolbar quick-select flyouts.
+    /// Applied only when `persist_toolbar_last_tools` is true.
+    #[serde(default)]
+    pub toolbar_last_tools: std::collections::BTreeMap<String, String>,
+
+    /// When `true` (default), restore drawings lock / hide-drawings after
+    /// restart. Same load/skip contract as `persist_toolbar_last_tools`.
+    #[serde(default = "default_true")]
+    pub persist_toolbar_toggles: bool,
+
+    #[serde(default)]
+    pub drawings_locked: bool,
+    #[serde(default = "default_true")]
+    pub drawings_visible: bool,
 }
 
 fn default_true() -> bool {
@@ -725,6 +754,7 @@ impl ProfileUiSettings {
             active_preset_id: String::new(),
             open_tabs: Vec::new(),
             active_theme: default_theme(),
+            active_ui_style: String::new(),
             sidebar_visible: false,
             sidebar_panel: None,
             sidebar_width: None,
@@ -754,6 +784,11 @@ impl ProfileUiSettings {
             candle_pattern_engine: CandlePatternEngineConfig::default(),
             smc_engine: SmcEngineConfig::default(),
             orderflow_engine: OrderFlowEngineConfig::default(),
+            persist_toolbar_last_tools: true,
+            toolbar_last_tools: std::collections::BTreeMap::new(),
+            persist_toolbar_toggles: true,
+            drawings_locked: false,
+            drawings_visible: true,
         }
     }
 }
@@ -1304,6 +1339,7 @@ mod json_compat_tests {
         assert!(!json.contains("\"ui\":{"), "ui must not nest: {json}");
         for key in [
             "\"version\"", "\"active_preset_id\"", "\"open_tabs\"", "\"active_theme\"",
+            "\"active_ui_style\"",
             "\"sidebar_visible\"", "\"sidebar_panel\"", "\"sidebar_width\"",
             "\"inline_bar_x\"", "\"inline_bar_y\"", "\"inline_bar_dock\"",
             "\"device_name\"", "\"app_version\"", "\"bar_count\"", "\"recalc_mode\"",

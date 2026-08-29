@@ -20,6 +20,7 @@ pub fn frame_theme(theme_manager: &ThemeManager) -> FrameTheme {
     let rt = theme_manager.current();
     FrameTheme {
         toolbar_bg: rt.colors.toolbar_bg.clone(),
+        modal_bg: rt.modal_bg_styled(),
         toolbar_border: rt.colors.ui_border.clone(),
         chart_border: rt.chart.chart_border.clone(),
         frame_border: rt.chart.frame_border.clone(),
@@ -32,7 +33,7 @@ pub fn toolbar_theme(theme_manager: &ThemeManager) -> ToolbarTheme {
     let rt = theme_manager.current();
     ToolbarTheme {
         background: rt.colors.toolbar_bg.clone(),
-        dropdown_bg: rt.colors.dropdown_bg.clone(),
+        dropdown_bg: rt.menu_bg_styled(),
         separator: rt.colors.toolbar_divider.clone(),
         item_bg_hover: rt.colors.button_bg_hover.clone(),
         item_bg_active: rt.colors.button_bg_active.clone(),

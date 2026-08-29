@@ -12,7 +12,7 @@ use super::super::{
     PrimitiveColor, LineStyle, TextAlign,
     HIT_TOLERANCE,
     RenderContext, crisp,
-    render_primitive_text_rotated, calculate_line_text_params, draw_label_plate,
+    render_primitive_text_rotated, calculate_line_text_params, draw_level_label_plate,
     config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
 // Shared level table with retracement, band fill on by default — see the
@@ -54,8 +54,10 @@ pub struct FibChannel {
     pub show_prices: bool,
     #[serde(default = "default_true")]
     pub show_percentages: bool,
+    #[serde(default)]
+    pub extend_left: bool,
     #[serde(default = "default_true")]
-    pub extend: bool,
+    pub extend_right: bool,
     #[serde(default = "default_label_position")]
     pub label_position: String,
     #[serde(default = "default_true")]
@@ -82,7 +84,8 @@ impl FibChannel {
             level_configs: default_level_configs(),
             show_prices: true,
             show_percentages: true,
-            extend: true,
+            extend_left: false,
+            extend_right: true,
             label_position: "left".to_string(),
             show_as_percent: true,
             label_style: LabelStyle::default(),
@@ -164,7 +167,7 @@ impl Primitive for FibChannel {
             let ly1 = y1 + oy * cfg.level;
             let lx2 = x2 + ox * cfg.level;
             let ly2 = y2 + oy * cfg.level;
-            if point_to_line_distance_extended(sx, sy, lx1, ly1, lx2, ly2, self.extend) < HIT_TOLERANCE {
+            if point_to_line_distance_extended(sx, sy, lx1, ly1, lx2, ly2, self.extend_left || self.extend_right) < HIT_TOLERANCE {
                 return HitTestResult::Body;
             }
         }
@@ -224,7 +227,7 @@ impl Primitive for FibChannel {
                 let fill_color = cfg.fill_color.as_deref()
                     .or(cfg.color.as_deref())
                     .unwrap_or(&self.data.color.stroke);
-                let (ex_ax1, ex_ay1, ex_ax2, ex_ay2, ex_bx1, ex_by1, ex_bx2, ex_by2) = if self.extend {
+                let (ex_ax1, ex_ay1, ex_ax2, ex_ay2, ex_bx1, ex_by1, ex_bx2, ex_by2) = if self.extend_left || self.extend_right {
                     let dx_a = ax2 - ax1; let dy_a = ay2 - ay1;
                     let len_a = (dx_a * dx_a + dy_a * dy_a).sqrt();
                     let dx_b = bx2 - bx1; let dy_b = by2 - by1;
@@ -338,7 +341,7 @@ impl Primitive for FibChannel {
                     let gap_t_end = (t_center + half_gap_t).min(1.0);
                     if gap_t_start > 0.001 {
                         let gap_x1 = lx1 + dx * gap_t_start; let gap_y1 = ly1 + dy * gap_t_start;
-                        if self.extend {
+                        if self.extend_left || self.extend_right {
                             let ext = chart_width * 2.0; let nx = dx / base_len; let ny = dy / base_len;
                             ctx.move_to(crisp(lx1 - nx * ext, dpr), crisp(ly1 - ny * ext, dpr));
                         } else { ctx.move_to(crisp(lx1, dpr), crisp(ly1, dpr)); }
@@ -349,7 +352,7 @@ impl Primitive for FibChannel {
                     if gap_t_end < 0.999 {
                         let gap_x2 = lx1 + dx * gap_t_end; let gap_y2 = ly1 + dy * gap_t_end;
                         ctx.move_to(crisp(gap_x2, dpr), crisp(gap_y2, dpr));
-                        if self.extend {
+                        if self.extend_left || self.extend_right {
                             let ext = chart_width * 2.0; let nx = dx / base_len; let ny = dy / base_len;
                             ctx.line_to(crisp(lx2 + nx * ext, dpr), crisp(ly2 + ny * ext, dpr));
                         } else { ctx.line_to(crisp(lx2, dpr), crisp(ly2, dpr)); }
@@ -362,7 +365,7 @@ impl Primitive for FibChannel {
                 if base_len > 0.001 {
                     if gap_t_start > 0.001 {
                         let gap_x1 = lx1 + dx * gap_t_start; let gap_y1 = ly1 + dy * gap_t_start;
-                        if self.extend {
+                        if self.extend_left || self.extend_right {
                             let ext = chart_width * 2.0; let nx = dx / base_len; let ny = dy / base_len;
                             ctx.move_to(crisp(lx1 - nx * ext, dpr), crisp(ly1 - ny * ext, dpr));
                         } else { ctx.move_to(crisp(lx1, dpr), crisp(ly1, dpr)); }
@@ -373,14 +376,14 @@ impl Primitive for FibChannel {
                     if gap_t_end < 0.999 {
                         let gap_x2 = lx1 + dx * gap_t_end; let gap_y2 = ly1 + dy * gap_t_end;
                         ctx.move_to(crisp(gap_x2, dpr), crisp(gap_y2, dpr));
-                        if self.extend {
+                        if self.extend_left || self.extend_right {
                             let ext = chart_width * 2.0; let nx = dx / base_len; let ny = dy / base_len;
                             ctx.line_to(crisp(lx2 + nx * ext, dpr), crisp(ly2 + ny * ext, dpr));
                         } else { ctx.line_to(crisp(lx2, dpr), crisp(ly2, dpr)); }
                     }
                     ctx.stroke();
                 }
-            } else if self.extend {
+            } else if self.extend_left || self.extend_right {
                 let dx = lx2 - lx1; let dy = ly2 - ly1;
                 let len = (dx * dx + dy * dy).sqrt();
                 if len > 0.0 {
@@ -407,7 +410,7 @@ impl Primitive for FibChannel {
                     "center" => (lx1 + dx / 2.0, ly1 + dy / 2.0),
                     _ => (lx1, ly1),
                 };
-                draw_label_plate(ctx, label_x, label_y, lbl, self.label_style.font_size, &self.label_style, label_color);
+                draw_level_label_plate(ctx, label_x, label_y, lbl, self.label_style.font_size, &self.label_style, label_color, cfg.level);
             }
         }
         ctx.set_line_dash(&[]);
@@ -467,7 +470,9 @@ impl Primitive for FibChannel {
             // own doc records as already fixed once for the pitchfork
             // family; `fan.rs` carries the identical bug, fixed alongside
             // this one).
-            ConfigProperty::extend(self.extend)
+            ConfigProperty::extend_left(self.extend_left)
+                .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
+            ConfigProperty::extend_right(self.extend_right)
                 .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
             ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40).in_group(PropertyGroup::LevelLabels),
             ConfigProperty::label_color(self.label_style.color.as_deref().unwrap_or(&self.data.color.stroke)).with_category(PropertyCategory::LabelsText).with_order(41).in_group(PropertyGroup::LevelLabels),
@@ -483,7 +488,8 @@ impl Primitive for FibChannel {
             "show_percentages" => { if let PropertyValue::Boolean(v) = value { self.show_percentages = *v; return true; } }
             "show_as_percent" => { if let PropertyValue::Boolean(v) = value { self.show_as_percent = *v; return true; } }
             "label_position" => { if let PropertyValue::String(v) = value { self.label_position = v.clone(); return true; } }
-            "extend" => { if let PropertyValue::Boolean(v) = value { self.extend = *v; return true; } }
+            "extend_left" => { if let PropertyValue::Boolean(v) = value { self.extend_left = *v; return true; } }
+            "extend_right" => { if let PropertyValue::Boolean(v) = value { self.extend_right = *v; return true; } }
             "label_font_size" => { if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; } }
             "label_color" => { if let Some(c) = value.as_color() { self.label_style.color = Some(c.to_string()); return true; } }
             _ => {}
@@ -494,6 +500,10 @@ impl Primitive for FibChannel {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+    fn extend_mode_raw(&self) -> u8 {
+        super::super::extend_mode_lr(self.extend_left, self.extend_right)
+    }
+    fn unbounded_in_price(&self) -> bool { self.extend_left || self.extend_right }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {

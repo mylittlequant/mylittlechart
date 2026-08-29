@@ -66,7 +66,7 @@ pub fn render_preset_name_input(
     .with_footer(ModalFooter::Creator { label: save_label });
 
     let theme = ModalTheme::from_frame_theme(
-        &frame_theme.toolbar_bg,
+        &frame_theme.modal_bg,
         &toolbar_theme.separator,
         &toolbar_theme.item_text,
         &toolbar_theme.item_text_hover,

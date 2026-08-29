@@ -8,5 +8,5 @@
 
 mod manager;
 mod facade;
-pub use manager::WatchlistManager;
+pub use manager::{WatchlistManager, SEED_GENERATION};
 pub use facade::{Watchlists, WatchlistsMut};

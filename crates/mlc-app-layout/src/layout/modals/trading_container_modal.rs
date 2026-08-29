@@ -211,7 +211,7 @@ pub fn render_trading_container_modal(
     // no icons — the shell draws the label when a tab carries none, and marks
     // the selected row the way every rail in this app marks it.
     let modal_theme = ModalTheme::from_frame_theme(
-        &frame_theme.toolbar_bg,
+        &frame_theme.modal_bg,
         &frame_theme.toolbar_border,
         &toolbar_theme.item_text,
         &toolbar_theme.item_text_active,

@@ -12,7 +12,7 @@ use super::super::{
     PrimitiveColor, LineStyle, TextAlign,
     HIT_TOLERANCE,
     RenderContext,
-    render_primitive_text, draw_label_plate,
+    render_primitive_text, draw_level_label_plate,
     config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
 use super::retracement::{default_level_configs, LEVEL_SET_PRESETS};
@@ -351,7 +351,7 @@ impl Primitive for FibSpiral {
                     ctx.set_text_align(crate::render::TextAlign::Center);
                     ctx.set_fill_color(label_color);
                     let label_x = lx + ctx.measure_text(&label) / 2.0 + 4.0;
-                    draw_label_plate(ctx, label_x, ly, &label, self.label_style.font_size, &self.label_style, label_color);
+                    draw_level_label_plate(ctx, label_x, ly, &label, self.label_style.font_size, &self.label_style, label_color, cfg.level);
                 }
             }
         }

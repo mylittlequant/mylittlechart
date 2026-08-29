@@ -225,6 +225,8 @@ struct BubbleDrawingSession {
     /// read-mostly traffic where a write-lock-per-frame-per-bubble would
     /// be a real contention risk on multi-bubble layouts.
     preview_cache: Mutex<Option<PreviewCache>>,
+    /// Shift held — 8-compass / square snap of the live drawing cursor.
+    shift_constrain: bool,
 }
 
 impl Default for BubbleDrawingSession {
@@ -242,6 +244,7 @@ impl Default for BubbleDrawingSession {
             visible: true,
             default_color: "#2196F3".to_string(),
             preview_cache: Mutex::new(None),
+            shift_constrain: false,
         }
     }
 }
@@ -357,6 +360,14 @@ impl DrawingManager {
 
     pub(crate) fn drawing_points(&self, bid: BubbleId) -> Vec<(i64, f64)> {
         self.session(bid).map(|s| s.state.points().to_vec()).unwrap_or_default()
+    }
+
+    pub(crate) fn shift_constrain(&self, bid: BubbleId) -> bool {
+        self.session(bid).is_some_and(|s| s.shift_constrain)
+    }
+
+    pub(crate) fn set_shift_constrain(&mut self, bid: BubbleId, held: bool) {
+        self.session_mut(bid).shift_constrain = held;
     }
 
     pub(crate) fn is_locked(&self, bid: BubbleId) -> bool {
@@ -703,6 +714,16 @@ impl DrawingManager {
             .collect()
     }
 
+    /// True when this bubble's editing session exists AND has hidden or
+    /// locked the whole drawing layer. A missing session is the cold-load
+    /// default (visible, unlocked) — primitives live on the bubble, the
+    /// session is created lazily on first *edit*. Gating hit-test on
+    /// `session()?` made every restored drawing unclickable until something
+    /// else called `session_mut` (tool pick, shift, select via object tree).
+    fn session_blocks_hit(&self, bid: BubbleId) -> bool {
+        self.session(bid).is_some_and(|s| !s.visible || s.locked)
+    }
+
     pub(crate) fn hit_test(
         &self,
         bubbles: &BubbleStore,
@@ -713,8 +734,7 @@ impl DrawingManager {
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Option<u64> {
-        let session = self.session(bid)?;
-        if !session.visible || session.locked {
+        if self.session_blocks_hit(bid) {
             return None;
         }
         let b = bubbles.bubble(bid)?;
@@ -740,8 +760,7 @@ impl DrawingManager {
         viewport: &Viewport,
         price_scale: &PriceScale,
     ) -> Option<u64> {
-        let session = self.session(bid)?;
-        if !session.visible || session.locked {
+        if self.session_blocks_hit(bid) {
             return None;
         }
         let b = bubbles.bubble(bid)?;
@@ -3684,6 +3703,61 @@ mod park_unpark_tests {
 
         assert!(mgr.is_locked(window_a_bid), "window A's session must survive parking window B's preset");
         assert!(!parked_b.is_locked(window_a_bid), "extraction must not leak window A's session into window B's payload");
+    }
+}
+
+#[cfg(test)]
+mod hit_test_without_session_tests {
+    //! Cold load writes primitives onto the bubble and does NOT create an
+    //! editing session (`session_mut` is first-touch). Hit-test used to
+    //! `session()?` and so missed every restored drawing until some other
+    //! path created the session. Missing session = visible + unlocked.
+
+    use super::*;
+    use crate::bubble::BubbleStore;
+    use mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry;
+
+    fn bubble_with_hline() -> (DrawingManager, BubbleStore, BubbleId, u64) {
+        let mgr = DrawingManager::default();
+        let mut bubbles = BubbleStore::new();
+        let bid = bubbles.create_bubble("BTCUSDT".to_string(), mlc_core::Timeframe::m1());
+        let b = bubbles.bubble_mut(bid).expect("just-created bubble");
+        let registry = PrimitiveRegistry::global().read().unwrap();
+        let prim = registry
+            .create("horizontal_line", &[(0, 100.0)], Some("#2196F3"))
+            .expect("registry has horizontal_line");
+        let id = prim.data().id;
+        b.primitives.push(prim);
+        (mgr, bubbles, bid, id)
+    }
+
+    fn hit_at(mgr: &DrawingManager, bubbles: &BubbleStore, bid: BubbleId, y: f64) -> Option<u64> {
+        let vp = Viewport::new(200.0, 100.0);
+        let ps = PriceScale::new(0.0, 200.0);
+        mgr.hit_test(bubbles, bid, 50.0, y, &[], &vp, &ps)
+    }
+
+    #[test]
+    fn hit_test_finds_primitive_when_no_session_exists() {
+        let (mgr, bubbles, bid, id) = bubble_with_hline();
+        assert!(mgr.session(bid).is_none(), "cold-load must not have created a session");
+        // price 100 on a 0..200 scale of height 100 → y = 50
+        assert_eq!(hit_at(&mgr, &bubbles, bid, 50.0), Some(id));
+        assert_eq!(hit_at(&mgr, &bubbles, bid, 0.0), None, "far from the line is a miss");
+    }
+
+    #[test]
+    fn hit_test_still_refuses_a_locked_session() {
+        let (mut mgr, bubbles, bid, _id) = bubble_with_hline();
+        mgr.set_locked(bid, true);
+        assert_eq!(hit_at(&mgr, &bubbles, bid, 50.0), None);
+    }
+
+    #[test]
+    fn hit_test_still_refuses_a_hidden_session() {
+        let (mut mgr, bubbles, bid, _id) = bubble_with_hline();
+        mgr.set_visible(bid, false);
+        assert_eq!(hit_at(&mgr, &bubbles, bid, 50.0), None);
     }
 }
 

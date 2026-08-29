@@ -374,6 +374,7 @@ pub fn process_event(
                     if chart.sidebar_state.is_right_open() {
                         let panel   = chart.sidebar_state.right_panel;
                         let is_agents = panel == RightSidebarPanel::Agents;
+                        let is_watchlist = panel == RightSidebarPanel::Watchlist;
                         let is_slot = matches!(
                             panel,
                             RightSidebarPanel::SlotTrading
@@ -382,7 +383,7 @@ pub fn process_event(
                                 | RightSidebarPanel::SlotL2
                                 | RightSidebarPanel::SlotBigTrades
                         );
-                        if is_agents || is_slot {
+                        if is_agents || is_slot || is_watchlist {
                             if let Some(ref sr) = chart.last_sidebar_result {
                                 for (wid_str, wrect) in &sr.item_rects {
                                     if x >= wrect.x && x < wrect.x + wrect.width
@@ -390,6 +391,8 @@ pub fn process_event(
                                     {
                                         let tip_text = if is_agents {
                                             mlc_app_sidebar_content::render::find_agent_tooltip(wid_str)
+                                        } else if is_watchlist {
+                                            mlc_app_sidebar_content::render::find_watchlist_tooltip(wid_str)
                                         } else {
                                             mlc_app_sidebar_content::render::find_free_slot_tooltip(wid_str)
                                         };
@@ -829,6 +832,7 @@ pub fn process_event(
         // ─── Modifier keys ────────────────────────────────────────────────
         ShellEvent::ModifiersChanged(mods) => {
             state.modifiers = mods;
+            chart.set_shift_held(mods.shift);
         }
 
         // ─── Keyboard ─────────────────────────────────────────────────────

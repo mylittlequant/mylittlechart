@@ -119,7 +119,7 @@ pub fn begin_tab_body_shell(
         .max(400.0)
         .min((screen_w - SECTOR_MARGIN * 2.0).max(MIN_MODAL_W));
 
-    let modal_theme = ModalTheme::from_toolbar(&frame_theme.toolbar_bg, &toolbar_theme.separator, toolbar_theme);
+    let modal_theme = ModalTheme::from_toolbar(&frame_theme.modal_bg, &toolbar_theme.separator, toolbar_theme);
     let max_content_height = (screen_h - 160.0).clamp(80.0, 460.0);
 
     let mut spec = ModalShellSpec {

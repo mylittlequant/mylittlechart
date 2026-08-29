@@ -862,6 +862,7 @@ impl ChartApp {
                 let style_index = ui_style_str.parse::<usize>().unwrap_or(0);
                 if let Some(style) = UIStyle::from_index(style_index) {
                     self.panel_app.theme_manager.current_mut().set_style(style);
+                    self.profile_dirty = true;
                     eprintln!("[ChartApp] UI style: {:?}", style);
                 }
                 return;

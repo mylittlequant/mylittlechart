@@ -169,7 +169,7 @@ pub fn render_markup_engine_settings_modal(
     let family = state.family;
     let body_h = content_height();
 
-    let modal_theme = ModalTheme::from_toolbar(&frame_theme.toolbar_bg, &toolbar_theme.separator, toolbar_theme);
+    let modal_theme = ModalTheme::from_toolbar(&frame_theme.modal_bg, &toolbar_theme.separator, toolbar_theme);
     let spec = ModalShellSpec {
         placement: crate::ui::widgets::ModalPlacement::At(Some(
             state.position.unwrap_or(((screen_w - MODAL_W) / 2.0, (screen_h - body_h) / 2.0)),
@@ -344,8 +344,10 @@ fn draw_checkbox_row(
     let checkbox_size = 16.0;
     let cb_x = x0;
     let cb_y = y + (ROW_H - checkbox_size) / 2.0;
-    ctx.set_fill_color(if checked { &toolbar_theme.item_bg_active } else { &toolbar_theme.background });
-    ctx.fill_rounded_rect(cb_x, cb_y, checkbox_size, checkbox_size, 3.0);
+    crate::ui::overlay_fill::fill_checkbox(
+        ctx, checked, &toolbar_theme.item_bg_active, &toolbar_theme.dropdown_bg, &toolbar_theme.background,
+        cb_x, cb_y, checkbox_size, checkbox_size, 3.0,
+    );
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(cb_x, cb_y, checkbox_size, checkbox_size, 3.0);

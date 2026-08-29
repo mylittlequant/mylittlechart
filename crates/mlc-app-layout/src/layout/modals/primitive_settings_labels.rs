@@ -330,8 +330,10 @@ fn draw_align_grid(
         for (hi, h) in hs.iter().enumerate() {
             let rect = WidgetRect::new(x0 + hi as f64 * (cell + gap), y0 + vi as f64 * (cell + gap), cell, cell);
             let on = *v == v_align && *h == h_align;
-            ctx.set_fill_color(if on { &toolbar_theme.item_bg_active } else { &toolbar_theme.background });
-            ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);
+            crate::ui::overlay_fill::fill_checkbox(
+                ctx, on, &toolbar_theme.item_bg_active, &toolbar_theme.dropdown_bg, &toolbar_theme.background,
+                rect.x, rect.y, rect.width, rect.height, 3.0,
+            );
             ctx.set_stroke_color(&toolbar_theme.separator);
             ctx.set_stroke_width(1.0);
             ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);

@@ -160,6 +160,9 @@ impl ChartPanelRenderResult {
 pub struct FrameTheme {
     /// Toolbar background color
     pub toolbar_bg: String,
+    /// Modal / popup / overlay chrome fill. Glass styles this with alpha so
+    /// the chart shows through; toolbars stay on `toolbar_bg`.
+    pub modal_bg: String,
     /// Toolbar border color (ui_border)
     pub toolbar_border: String,
     /// Chart area border color (all 4 sides of chart)
@@ -174,6 +177,7 @@ impl Default for FrameTheme {
     fn default() -> Self {
         Self {
             toolbar_bg: "#131722".to_string(),
+            modal_bg: "#131722".to_string(),
             toolbar_border: "#363a45".to_string(),
             chart_border: "#363a45".to_string(),
             frame_border: "#2a2e39".to_string(),
@@ -1921,15 +1925,15 @@ pub fn render_sub_pane_primitives(
             }
 
             let is_selected = selected_idx == Some(data.id);
-            let label_armed = data.text.as_ref().is_some_and(|t| !t.content.is_empty());
-            if label_armed {
-                mlc_core::engine::render::set_current_label_text_prim(
-                    Some(instance_id), data.id, &data.text.as_ref().unwrap().content);
-            }
+            // Always arm identity so Fib/Gann level plates can attribute;
+            // user-text recording still content-matches against `expected`
+            // (empty string when there is no `data.text` — system labels
+            // never equal that, so they stay unregistered).
+            let expected = data.text.as_ref().map(|t| t.content.as_str()).unwrap_or("");
+            mlc_core::engine::render::set_current_label_text_prim(
+                Some(instance_id), data.id, expected);
             prim.render(ctx, is_selected);
-            if label_armed {
-                mlc_core::engine::render::clear_current_label_text_prim();
-            }
+            mlc_core::engine::render::clear_current_label_text_prim();
 
             // Draw control points for selected primitive
             if is_selected {
@@ -2366,6 +2370,15 @@ pub(crate) fn draw_main_chart_drawing_preview(
     } else {
         // For non-freehand tools, use standard preview
         let cursor_ts_ms = mlc_core::bar_f64_to_timestamp_ms(state.bars, cursor_bar);
+        let (cursor_ts_ms, cursor_price) = if dm.shift_constrain() {
+            if let (Some(tool), Some((ts0, p0))) = (dm.drawing_tool_id(), dm.drawing_points().first().copied()) {
+                mlc_core::drawing::snap_drawing_data(
+                    &tool, state.bars, state.viewport,
+                    state.price_scale.price_min, state.price_scale.price_max,
+                    ts0, p0, cursor_ts_ms, cursor_price,
+                )
+            } else { (cursor_ts_ms, cursor_price) }
+        } else { (cursor_ts_ms, cursor_price) };
         if let Some(preview_prim) = dm.create_preview(cursor_ts_ms, cursor_price) {
             preview_prim.render(ctx, false);
 
@@ -2477,6 +2490,15 @@ pub(crate) fn draw_sub_pane_drawing_preview(
         }
     } else {
         let cursor_ts_ms = mlc_core::bar_f64_to_timestamp_ms(state.bars, cursor_bar);
+        let (cursor_ts_ms, cursor_price) = if dm.shift_constrain() {
+            if let (Some(tool), Some((ts0, p0))) = (dm.drawing_tool_id(), dm.drawing_points().first().copied()) {
+                mlc_core::drawing::snap_drawing_data(
+                    &tool, state.bars, state.viewport,
+                    state.price_scale.price_min, state.price_scale.price_max,
+                    ts0, p0, cursor_ts_ms, cursor_price,
+                )
+            } else { (cursor_ts_ms, cursor_price) }
+        } else { (cursor_ts_ms, cursor_price) };
         if let Some(preview_prim) = dm.create_preview(cursor_ts_ms, cursor_price) {
             preview_prim.render(ctx, false);
 
@@ -2604,11 +2626,13 @@ pub fn render_main_chart_primitives(
             // Viewport culling: skip primitives whose coordinates are entirely
             // outside the visible area.  This prevents million-pixel-wide lines
             // when a primitive was drawn at a price/bar far from the current view
-            // (e.g. a line at $40,000 while the chart shows $5).
+            // (e.g. a HORIZONTAL line at $40,000 while the chart shows $5).
             //
-            // The check uses generous margins (±100 bars, ×10 / ×0.1 price) so
-            // lines that merely start outside but cross into the viewport are
-            // never accidentally culled.
+            // The AABB-of-points test is only valid for SEGMENTS / shapes —
+            // rays, extended lines, and any tool with ExtendMode != None keep
+            // drawing past their anchors. Culling those as soon as both
+            // points leave the padded view is why a ray/line vanished on
+            // pan (owner report 2026-08-28).
             let points = prim.points();
             if !points.is_empty() {
                 let view_start = state.viewport.view_start;
@@ -2618,6 +2642,9 @@ pub fn render_main_chart_primitives(
                 // Margin of 100 bars expressed in bar-index space for ts-based culling.
                 let bar_margin = 100.0;
 
+                let (skip_left, skip_right, skip_above, skip_below) =
+                    unbounded_cull_skips(prim.as_ref());
+
                 // A timestamp of exactly 0 is the same kind of sentinel one
                 // axis over: a horizontal line has no time, it spans the whole
                 // width. Bar-index for ts=0 lands far to the left of any real
@@ -2625,12 +2652,12 @@ pub fn render_main_chart_primitives(
                 // the app never painted at all.
                 let stamped = points.iter().filter(|(ts, _)| *ts != 0).count();
                 let fully_stamped = stamped == points.len();
-                let all_left = fully_stamped
+                let all_left = !skip_left && fully_stamped
                     && points.iter().all(|(ts_ms, _)| {
                         let b = mlc_core::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
                         b < view_start - bar_margin
                     });
-                let all_right = fully_stamped
+                let all_right = !skip_right && fully_stamped
                     && points.iter().all(|(ts_ms, _)| {
                         let b = mlc_core::timestamp_ms_to_bar_f64(state.bars, *ts_ms);
                         b > view_end + bar_margin
@@ -2643,9 +2670,9 @@ pub fn render_main_chart_primitives(
                 // `0.0 < price_min * 0.1` is true for every real instrument.
                 let priced = points.iter().filter(|(_, p)| *p != 0.0).count();
                 let fully_priced = priced == points.len();
-                let all_above = fully_priced
+                let all_above = !skip_above && fully_priced
                     && points.iter().all(|(_, price)| *price > price_max * 10.0);
-                let all_below = fully_priced
+                let all_below = !skip_below && fully_priced
                     && points.iter().all(|(_, price)| *price < price_min * 0.1);
 
                 if all_left || all_right || all_above || all_below {
@@ -2654,19 +2681,15 @@ pub fn render_main_chart_primitives(
             }
 
             let is_selected = selected_idx == Some(data.id);
-            // Arm the user-text label registry while this primitive paints:
-            // its `data.text` label's bbox gets recorded for the app's
-            // double-click inline editor. Primitives without user text never
-            // arm the slot, so their system labels stay unregistered.
-            let label_armed = data.text.as_ref().is_some_and(|t| !t.content.is_empty());
-            if label_armed {
-                mlc_core::engine::render::set_current_label_text_prim(
-                    None, data.id, &data.text.as_ref().unwrap().content);
-            }
+            // Always arm identity so Fib/Gann level plates can attribute;
+            // user-text recording still content-matches against `expected`
+            // (empty string when there is no `data.text` — system labels
+            // never equal that, so they stay unregistered).
+            let expected = data.text.as_ref().map(|t| t.content.as_str()).unwrap_or("");
+            mlc_core::engine::render::set_current_label_text_prim(
+                None, data.id, expected);
             prim.render(ctx, is_selected);
-            if label_armed {
-                mlc_core::engine::render::clear_current_label_text_prim();
-            }
+            mlc_core::engine::render::clear_current_label_text_prim();
 
             // Draw control points for selected primitive
             if is_selected {
@@ -4198,4 +4221,31 @@ pub fn render_chart_overlay(
     // the overlay refactor must not resurrect it, or stale OHLC numbers render
     // unclipped over the scales/tab area. Kept defined for potential future use.
     let _ = (symbol, timeframe);
+}
+
+/// Which AABB-of-points culls to skip for a primitive whose drawn geometry
+/// continues past its control points.
+///
+/// Returns `(skip_left, skip_right, skip_above, skip_below)`.
+///
+/// `extend_mode_raw`: 0=segment, 1=right, 2=left, 3=both. Inherent
+/// unbounded tools (ray / extended line / horiz / cross / vertical) are
+/// mapped onto that encoding so a pan that leaves both anchors off-screen
+/// does not drop a line that still crosses the chart.
+fn unbounded_cull_skips(prim: &dyn mlc_core::drawing::primitives_v2::Primitive) -> (bool, bool, bool, bool) {
+    // Authority is the primitive: `extend_mode_raw` (time) and
+    // `unbounded_in_price`. Segment (0) keeps AABB cull.
+    //
+    // A RAY/EXTENDED LINE has an arbitrary slope: "skip left only" is
+    // wrong — both anchors can leave to the right while the ray still
+    // crosses the view (owner report: ray vanishes, price-range does not).
+    // When the drawn geometry is unbounded in PRICE it is also unbounded
+    // in TIME regardless of the 1/2 encoding, which is only meaningful
+    // for axis-aligned tools (horizontal ray, price-range levels).
+    let ext = prim.extend_mode_raw();
+    let skip_price = prim.unbounded_in_price();
+    let skip_time_both = skip_price && ext != 0;
+    let skip_left = skip_time_both || ext == 1 || ext == 3;
+    let skip_right = skip_time_both || ext == 2 || ext == 3;
+    (skip_left, skip_right, skip_price, skip_price)
 }

@@ -16,7 +16,7 @@ pub fn render_panel_color_tag_picker_popup(
         ColorPickerLevel, PopupTheme,
     };
 
-    let popup_theme = PopupTheme::new(&toolbar_theme.background, &toolbar_theme.separator)
+    let popup_theme = PopupTheme::new(&toolbar_theme.dropdown_bg, &toolbar_theme.separator)
         .with_active(&toolbar_theme.item_bg_active);
     let origin = panel_picker_state.origin;
     let level = panel_picker_state.level;

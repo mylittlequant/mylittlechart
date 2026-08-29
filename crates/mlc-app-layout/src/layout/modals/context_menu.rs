@@ -43,8 +43,9 @@ pub fn render_context_menu(
     // Blur background (FrostedGlass/LiquidGlass)
     ctx.draw_blur_background(menu_x, menu_y, menu_width, menu_height);
 
-    ctx.set_fill_color(&theme.background);
-    ctx.fill_rect(menu_x, menu_y, menu_width, menu_height);
+    crate::ui::overlay_fill::fill_overlay_rounded(
+        ctx, &theme.background, menu_x, menu_y, menu_width, menu_height, 0.0,
+    );
 
     // Draw border
     ctx.set_stroke_color(&theme.border);

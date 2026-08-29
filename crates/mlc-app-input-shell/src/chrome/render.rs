@@ -137,8 +137,9 @@ impl ButtonPositions {
 ///
 /// A tab being renamed inline sizes to the LIVE field text, so the tab grows
 /// as the name is typed instead of clipping it. The strip then compresses
-/// (`logic::fit_tab_widths`): tabs shrink proportionally so everything —
-/// including the always-visible "+" — stays left of the right-side controls.
+/// (`logic::fit_tab_widths`): on overflow tabs equalize (the live-renaming
+/// tab keeps its natural width so the typed name stays visible) so everything
+/// — including the always-visible "+" — stays left of the right-side controls.
 pub fn update_tab_widths(
     ctx: &mut dyn RenderContext,
     state: &mut ChromeState,

@@ -10,8 +10,15 @@
 //! takes `list_id: u64` explicitly — the caller (facade) supplies it from
 //! the UI-side `active_list_id`.
 
+use std::collections::HashSet;
+
 use mlc_core::{InstrumentAddress, WatchlistList};
 use serde::{Deserialize, Serialize};
+
+/// Bumped when `seed_addresses` gains venues. Old `watchlists.json` (serde
+/// default 0) is merged once, then the generation is persisted so a user
+/// who later deletes a venue does not get it re-inserted on the next boot.
+pub const SEED_GENERATION: u32 = 3;
 
 /// Manages multiple watchlists.
 ///
@@ -21,9 +28,96 @@ use serde::{Deserialize, Serialize};
 pub struct WatchlistManager {
     pub lists: Vec<WatchlistList>,
     next_id: u64,
+    #[serde(default)]
+    seed_generation: u32,
 }
 
 impl WatchlistManager {
+    /// One ticker per crypto venue. Mix of BTC spot / BTC futures and the
+    /// other top coins (ETH, SOL, BNB, XRP) so a fresh list demonstrates
+    /// every connected CEX/DEX without dumping five rows per exchange.
+    pub fn seed_addresses() -> Vec<InstrumentAddress> {
+        use mlc_core::instrument::AccountType::{FuturesCross, Spot};
+        fn a(ex: &str, sym: &str, at: mlc_core::instrument::AccountType) -> InstrumentAddress {
+            InstrumentAddress::new(ex, sym, at)
+        }
+        vec![
+            a("binance", "BTCUSDT", Spot),
+            a("bybit", "BTCUSDT", FuturesCross),
+            a("okx", "SOL-USDT", Spot),
+            a("kucoin", "XRP-USDT", Spot),
+            a("kraken", "ETHUSDT", Spot),
+            a("coinbase", "SOL-USD", Spot),
+            a("gateio", "BNB_USDT", Spot),
+            a("bitfinex", "ETHUSD", Spot),
+            a("bitstamp", "XRPUSD", Spot),
+            a("gemini", "ETHUSD", Spot),
+            a("mexc", "SOLUSDT", Spot),
+            a("htx", "ETHUSDT", FuturesCross),
+            a("bitget", "BNBUSDT", FuturesCross),
+            a("bingx", "BNBUSDT", Spot),
+            a("crypto_com", "ETH_USDT", Spot),
+            a("upbit", "KRW-XRP", Spot),
+            a("deribit", "ETH-PERPETUAL", FuturesCross),
+            a("hyperliquid", "SOL", FuturesCross),
+            a("bitmex", "XBTUSD", FuturesCross),
+            a("lighter", "ETH", FuturesCross),
+            a("dydx", "ETH-USD", FuturesCross),
+        ]
+    }
+
+    /// Default seed used when `watchlists.json` is missing.
+    pub fn default_seed() -> Self {
+        let mut mgr = Self::new(Self::seed_addresses());
+        mgr.seed_generation = SEED_GENERATION;
+        mgr
+    }
+
+    /// Append any seed venue the first list does not already carry.
+    ///
+    /// Existing rows (including several Binance tickers on an old default)
+    /// stay put. Returns `true` when the file should be rewritten.
+    pub fn apply_seed_migration(&mut self) -> bool {
+        if self.seed_generation >= SEED_GENERATION {
+            return false;
+        }
+        if let Some(list) = self.lists.first_mut() {
+            let seed = Self::seed_addresses();
+            for wanted in &seed {
+                let hits: Vec<usize> = list
+                    .ungrouped
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, a)| a.exchange.eq_ignore_ascii_case(&wanted.exchange))
+                    .map(|(i, _)| i)
+                    .collect();
+                if hits.len() == 1 {
+                    let i = hits[0];
+                    if list.ungrouped[i].symbol != wanted.symbol
+                        || list.ungrouped[i].account_type != wanted.account_type
+                    {
+                        list.ungrouped[i] = wanted.clone();
+                    }
+                }
+            }
+            let mut have: HashSet<String> = list
+                .all_symbols()
+                .into_iter()
+                .map(|a| a.exchange.to_ascii_lowercase())
+                .collect();
+            for addr in seed {
+                let ex = addr.exchange.to_ascii_lowercase();
+                if have.contains(&ex) {
+                    continue;
+                }
+                have.insert(ex);
+                list.add_symbol(addr);
+            }
+        }
+        self.seed_generation = SEED_GENERATION;
+        true
+    }
+
     /// Create with a single default list containing the given symbols.
     pub fn new(default_symbols: Vec<InstrumentAddress>) -> Self {
         let list = WatchlistList {
@@ -33,7 +127,7 @@ impl WatchlistManager {
             ungrouped: default_symbols,
             color_flags: std::collections::HashMap::new(),
         };
-        Self { lists: vec![list], next_id: 2 }
+        Self { lists: vec![list], next_id: 2, seed_generation: 0 }
     }
 
     /// Find a watchlist by id.
@@ -186,5 +280,60 @@ mod tests {
         mgr.add_symbol(id, address.clone());
         mgr.find_mut(id).unwrap().set_color_flag(&address, "#ff0000");
         assert_eq!(mgr.find(id).unwrap().get_color_flag(&address), Some("#ff0000"));
+    }
+
+    #[test]
+    fn default_seed_has_one_row_per_crypto_venue() {
+        let addrs = WatchlistManager::seed_addresses();
+        let mut seen = std::collections::HashSet::new();
+        for a in &addrs {
+            assert!(seen.insert(a.exchange.as_str()), "duplicate venue {}", a.exchange);
+        }
+        assert_eq!(addrs.len(), 21);
+        let mut seeded = WatchlistManager::default_seed();
+        assert_eq!(seeded.seed_generation, SEED_GENERATION);
+        assert!(!seeded.apply_seed_migration(), "fresh seed must not rewrite");
+    }
+
+    #[test]
+    fn seed_migration_keeps_old_rows_and_fills_missing_venues() {
+        use mlc_core::AccountType::{FuturesCross, Spot};
+        let mut mgr = WatchlistManager::new(vec![
+            InstrumentAddress::new("binance", "BTCUSDT", Spot),
+            InstrumentAddress::new("binance", "ETHUSDT", Spot),
+            InstrumentAddress::new("binance", "SOLUSDT", Spot),
+            InstrumentAddress::new("binance", "BNBUSDT", Spot),
+            InstrumentAddress::new("bybit", "BTCUSDT", FuturesCross),
+            InstrumentAddress::new("okx", "BTC-USDT", Spot),
+        ]);
+        assert_eq!(mgr.lists[0].ungrouped.len(), 6);
+        assert!(mgr.apply_seed_migration());
+        assert!(!mgr.apply_seed_migration(), "second pass is a no-op");
+        let list = &mgr.lists[0];
+        assert_eq!(list.ungrouped[0].symbol, "BTCUSDT");
+        assert_eq!(list.ungrouped[1].symbol, "ETHUSDT");
+        assert_eq!(list.ungrouped[4].exchange, "bybit");
+        assert_eq!(list.ungrouped[5].exchange, "okx");
+        let venues: std::collections::HashSet<_> = list
+            .all_symbols()
+            .into_iter()
+            .map(|a| a.exchange.as_str())
+            .collect();
+        assert_eq!(venues.len(), 21, "every seed venue present after migrate");
+        assert_eq!(list.ungrouped.len(), 6 + (21 - 3), "kept 6, added 18 missing venues");
+    }
+
+    #[test]
+    fn seed_generation_3_rewrites_lighter_ethusdt_to_eth_perp() {
+        use mlc_core::AccountType::Spot;
+        let mut mgr = WatchlistManager::new(vec![
+            InstrumentAddress::new("lighter", "ETHUSDT", Spot),
+        ]);
+        mgr.seed_generation = 2;
+        assert!(mgr.apply_seed_migration());
+        let row = &mgr.lists[0].ungrouped[0];
+        assert_eq!(row.exchange, "lighter");
+        assert_eq!(row.symbol, "ETH");
+        assert_eq!(row.account_type, mlc_core::AccountType::FuturesCross);
     }
 }

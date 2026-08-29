@@ -6,6 +6,7 @@
 use uzor::render::{RenderContext, TextAlign, TextBaseline};
 use super::toolbar_core::{WidgetRect, IconId};
 use super::toolbar_theme::ToolbarTheme;
+use super::overlay_fill::fill_overlay_rounded;
 
 /// Square size of a trailing icon button.
 const TRAILING_ICON_SIZE: f64 = 16.0;
@@ -593,10 +594,7 @@ where
         config.radius,
     );
 
-    // Draw fully opaque background (no blur — dropdowns must be solid
-    // so content underneath doesn't bleed through)
-    ctx.set_fill_color(&theme.background);
-    ctx.fill_rounded_rect(menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height, config.radius);
+    fill_overlay_rounded(ctx, &theme.background, menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height, config.radius);
 
     // Draw border
     ctx.set_stroke_color(&theme.border);
@@ -1014,10 +1012,7 @@ where
         config.radius,
     );
 
-    // Draw fully opaque background (no blur — dropdowns must be solid
-    // so content underneath doesn't bleed through)
-    ctx.set_fill_color(&theme.background);
-    ctx.fill_rounded_rect(menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height, config.radius);
+    fill_overlay_rounded(ctx, &theme.background, menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height, config.radius);
 
     // Draw border
     ctx.set_stroke_color(&theme.border);
@@ -1239,10 +1234,7 @@ where
         config.radius,
     );
 
-    // Draw fully opaque background (no blur — dropdowns must be solid
-    // so content underneath doesn't bleed through)
-    ctx.set_fill_color(&theme.background);
-    ctx.fill_rounded_rect(menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height, config.radius);
+    fill_overlay_rounded(ctx, &theme.background, menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height, config.radius);
 
     // Draw border
     ctx.set_stroke_color(&theme.border);

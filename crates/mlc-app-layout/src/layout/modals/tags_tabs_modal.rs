@@ -117,7 +117,7 @@ pub fn render_tags_tabs_modal(
     };
 
     let modal_theme = ModalTheme::from_toolbar(
-        &frame_theme.toolbar_bg,
+        &frame_theme.modal_bg,
         &frame_theme.toolbar_border,
         toolbar_theme,
     );

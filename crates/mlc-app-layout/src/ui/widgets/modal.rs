@@ -65,13 +65,23 @@ impl Default for ModalTheme {
     }
 }
 
+/// Dimmer behind a modal. Solid chrome keeps the old 0.6 veil; Glass
+/// (`rgba(...)` fill) only tints so the chart still reads around the frame.
+fn overlay_backdrop(bg: &str) -> String {
+    if bg.starts_with("rgba(") {
+        "rgba(0,0,0,0.12)".to_string()
+    } else {
+        "rgba(0,0,0,0.6)".to_string()
+    }
+}
+
 impl ModalTheme {
     /// The one every modal in the app should use: the toolbar owns these
     /// colours already, and passing five loose strings to `from_frame_theme`
     /// is how two modals ended up with different tab and button tints.
     pub fn from_toolbar(toolbar_bg: &str, toolbar_border: &str, tt: &ToolbarTheme) -> Self {
         Self {
-            backdrop: "rgba(0,0,0,0.6)".to_string(),
+            backdrop: overlay_backdrop(toolbar_bg),
             background: toolbar_bg.to_string(),
             border: toolbar_border.to_string(),
             shadow: "rgba(0,0,0,0.4)".to_string(),
@@ -108,7 +118,7 @@ impl ModalTheme {
         separator: &str,
     ) -> Self {
         Self {
-            backdrop: "rgba(0,0,0,0.6)".to_string(),
+            backdrop: overlay_backdrop(toolbar_bg),
             background: toolbar_bg.to_string(),
             border: toolbar_border.to_string(),
             shadow: "rgba(0,0,0,0.4)".to_string(),
@@ -165,13 +175,15 @@ pub fn render_modal_frame_only(
     // Blur background (FrostedGlass/LiquidGlass effect)
     ctx.draw_blur_background(frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
 
-    // Background
-    ctx.set_fill_color(&theme.background);
-    if with_radius > 0.0 {
-        ctx.fill_rounded_rect(frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height, with_radius);
-    } else {
-        ctx.fill_rect(frame_rect.x, frame_rect.y, frame_rect.width, frame_rect.height);
-    }
+    crate::ui::overlay_fill::fill_overlay_rounded(
+        ctx,
+        &theme.background,
+        frame_rect.x,
+        frame_rect.y,
+        frame_rect.width,
+        frame_rect.height,
+        with_radius,
+    );
 
     // Border
     ctx.set_stroke_color(&theme.border);
@@ -620,9 +632,12 @@ pub fn begin_modal_shell(
 
     render_modal_frame_only(ctx, frame, theme, spec.radius);
 
-    // Header.
-    ctx.set_fill_color(&theme.header_bg);
-    ctx.fill_rect(header.x, header.y, header.width, header.height);
+    // Header fill is skipped when it matches the frame: a second 0.4 overlay
+    // on Glass stacked to ~0.64 and the old 0.9 Glass stacked to opaque.
+    if theme.header_bg != theme.background {
+        ctx.set_fill_color(&theme.header_bg);
+        ctx.fill_rect(header.x, header.y, header.width, header.height);
+    }
     ctx.set_font("13px sans-serif");
     ctx.set_fill_color(&theme.header_text);
     ctx.set_text_align(TextAlign::Left);

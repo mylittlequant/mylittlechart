@@ -197,10 +197,34 @@ pub fn archive_proxy_allowed() -> bool {
     }
 }
 
+/// True when the wasm page is served from loopback (DEV http-server).
+/// Native is never a browser CORS client.
+#[cfg(target_arch = "wasm32")]
+pub fn is_loopback_dev() -> bool {
+    web_sys::window()
+        .and_then(|w| w.location().hostname().ok())
+        .map(|h| h == "127.0.0.1" || h == "localhost" || h == "[::1]")
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+pub fn is_loopback_dev() -> bool {
+    false
+}
+
+/// Local d-watchdog CORS proxy (`digdigdig3-proxy`).
+pub const LOCAL_CORS_PROXY: &str = "http://127.0.0.1:17800";
+
 /// Absolutize a same-origin relative proxy base (starts with `/`) against
 /// the page origin. Identity on native and for already-absolute bases.
+
 #[cfg(target_arch = "wasm32")]
 pub fn absolutize_proxy_base(base: &str) -> String {
+    // DEV stand on :17499 has no nginx `/archive-proxy`. Route through the
+    // loopback dig3 proxy (ACAO *) so CORS-blocked venues actually load.
+    if is_loopback_dev() && (base.starts_with('/') || base.is_empty()) {
+        return LOCAL_CORS_PROXY.to_string();
+    }
     if base.starts_with('/') {
         if let Some(origin) = web_sys::window().and_then(|w| w.location().origin().ok()) {
             return format!("{origin}{base}");

@@ -199,6 +199,8 @@ impl Primitive for ExtendedLine {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+    fn extend_mode_raw(&self) -> u8 { 3 }
+    fn unbounded_in_price(&self) -> bool { true }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {

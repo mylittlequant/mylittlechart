@@ -53,6 +53,7 @@ pub fn render_user_settings_modal(
             let icon = match tab {
                 UserSettingsTab::General => Icon::Settings,
                 UserSettingsTab::Sync => Icon::Lock,
+                UserSettingsTab::Persistence => Icon::Pin,
                 UserSettingsTab::Performance => Icon::Grid,
                 UserSettingsTab::Server => Icon::Layers,
             };
@@ -65,7 +66,7 @@ pub fn render_user_settings_modal(
         .unwrap_or(0);
 
     let modal_theme = ModalTheme::from_toolbar(
-        &frame_theme.toolbar_bg,
+        &frame_theme.modal_bg,
         &toolbar_theme.separator,
         toolbar_theme,
     );
@@ -158,6 +159,24 @@ pub fn render_user_settings_modal(
             );
         }
         UserSettingsTab::Sync => {}
+        UserSettingsTab::Persistence => {
+            let viewport_rect = WidgetRect::new(
+                content_x + padding,
+                settings_y,
+                content_w - padding * 2.0,
+                scroll_viewport_h,
+            );
+            render_persistence_tab(
+                ctx,
+                viewport_rect,
+                state,
+                toolbar_theme,
+                &scroll_widget_theme,
+                input_coordinator,
+                &layer_id,
+                &mut result,
+            );
+        }
         UserSettingsTab::Performance => {
             let viewport_rect = WidgetRect::new(
                 content_x + padding,
@@ -205,6 +224,148 @@ pub fn render_user_settings_modal(
 // =============================================================================
 // Tab content renderers
 // =============================================================================
+
+/// Word-wrap `text` to `max_w` pixels using the current font. Char-count
+/// wrap is wrong here: 11px CJK vs Latin would overflow the same way the
+/// unwrapped `fill_text` did.
+fn wrap_to_width(ctx: &dyn RenderContext, text: &str, max_w: f64) -> Vec<String> {
+    let mut out = Vec::new();
+    for para in text.split('\n') {
+        let mut rest = para.trim();
+        if rest.is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        while !rest.is_empty() {
+            if ctx.measure_text(rest) <= max_w {
+                out.push(rest.to_string());
+                break;
+            }
+            let mut last_fit_end = 0usize;
+            let mut last_fit_space = 0usize;
+            let mut acc = String::new();
+            for (i, ch) in rest.char_indices() {
+                acc.push(ch);
+                if ctx.measure_text(&acc) > max_w {
+                    break;
+                }
+                last_fit_end = i + ch.len_utf8();
+                if ch == ' ' {
+                    last_fit_space = last_fit_end;
+                }
+            }
+            if last_fit_end == 0 {
+                let ch = rest.chars().next().unwrap();
+                out.push(ch.to_string());
+                rest = &rest[ch.len_utf8()..];
+                continue;
+            }
+            let cut = if last_fit_space > 0 { last_fit_space } else { last_fit_end };
+            out.push(rest[..cut].trim_end().to_string());
+            rest = rest[cut..].trim_start();
+        }
+    }
+    out
+}
+
+fn persist_checkbox_row(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+    x: f64,
+    y: f64,
+    available_w: f64,
+    checked: bool,
+    hit_id: &str,
+    label: &str,
+    hint: &str,
+) -> f64 {
+    let row_h = 24.0;
+    let cb_size = 16.0;
+    let cb_y = y + (row_h - cb_size) / 2.0;
+    let text_x = x + cb_size + 10.0;
+    let text_w = (available_w - cb_size - 10.0).max(0.0);
+
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x, cb_y, cb_size, cb_size, 2.0);
+    if checked {
+        ctx.set_fill_color(&toolbar_theme.item_text_active);
+        ctx.fill_rounded_rect(x + 3.0, cb_y + 3.0, cb_size - 6.0, cb_size - 6.0, 1.0);
+    }
+
+    ctx.set_fill_color(&toolbar_theme.item_text);
+    ctx.set_font("12px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(&fit_text_to_width(ctx, label, text_w), text_x, y + row_h / 2.0);
+
+    let desc_y = y + row_h + 2.0;
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let lines = wrap_to_width(ctx, hint, text_w);
+    let line_h = 14.0;
+    for (i, line) in lines.iter().enumerate() {
+        ctx.fill_text(line, text_x, desc_y + i as f64 * line_h);
+    }
+    let hint_h = (lines.len().max(1) as f64) * line_h;
+    let hit_h = row_h + 2.0 + hint_h;
+
+    result.content_items.push((hit_id.to_string(), WidgetRect::new(x, y, available_w, hit_h)));
+    input_coordinator.register_on_layer(
+        format!("user_settings:{hit_id}"),
+        uzor::types::Rect::new(x, y, available_w, hit_h),
+        Sense::CLICK | Sense::HOVER,
+        layer_id,
+    );
+    desc_y + hint_h + 12.0
+}
+
+fn render_persistence_tab(
+    ctx: &mut dyn RenderContext,
+    viewport_rect: WidgetRect,
+    state: &UserSettingsState,
+    toolbar_theme: &ToolbarTheme,
+    scroll_widget_theme: &WidgetTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    let lang = current_language();
+    let container = ScrollableContainer::new(viewport_rect, &state.persistence_tab_scroll, None);
+    container.begin(ctx);
+    let x = viewport_rect.x;
+    let available_w = container.content_width();
+    let mut cy = container.content_y();
+
+    cy = persist_checkbox_row(
+        ctx, toolbar_theme, input_coordinator, layer_id, result,
+        x, cy, available_w,
+        state.persist_toolbar_last_tools,
+        "persist_toolbar_last_tools",
+        UserSettingsKey::PersistToolbarLastTools.get(lang),
+        UserSettingsKey::PersistToolbarLastToolsHint.get(lang),
+    );
+    cy = persist_checkbox_row(
+        ctx, toolbar_theme, input_coordinator, layer_id, result,
+        x, cy, available_w,
+        state.persist_toolbar_toggles,
+        "persist_toolbar_toggles",
+        UserSettingsKey::PersistToolbarToggles.get(lang),
+        UserSettingsKey::PersistToolbarTogglesHint.get(lang),
+    );
+
+    let total_content_h = cy - container.content_y();
+    let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
+    result.scroll_viewport_rect = Some(viewport_rect);
+    result.scroll_content_height = scroll_result.content_height;
+    result.scrollbar_handle_rect = scroll_result.handle_rect;
+    result.scrollbar_track_rect = scroll_result.track_rect;
+    result.scroll_viewport_height = scroll_result.viewport_height;
+}
 
 #[allow(clippy::too_many_arguments)]
 fn render_general_tab(
@@ -471,22 +632,28 @@ fn render_general_tab(
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(&toolbar_theme.item_text_muted);
         ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(
+        let hint_w = (available_w - cb_size - 10.0).max(0.0);
+        let hint_lines = wrap_to_width(
+            ctx,
             "Symbol/exchange controls move to the topbar while the Trading tab is focused.",
-            cb_x + cb_size + 10.0,
-            desc_y,
+            hint_w,
         );
+        let line_h = 14.0;
+        for (i, line) in hint_lines.iter().enumerate() {
+            ctx.fill_text(line, cb_x + cb_size + 10.0, desc_y + i as f64 * line_h);
+        }
 
-        let toggle_rect = WidgetRect::new(cb_x, cy, available_w, row_h);
+        let hit_h = row_h + 2.0 + (hint_lines.len().max(1) as f64) * line_h;
+        let toggle_rect = WidgetRect::new(cb_x, cy, available_w, hit_h);
         result.content_items.push(("trading_panel_topbar_takeover".to_string(), toggle_rect));
         input_coordinator.register_on_layer(
             "user_settings:trading_panel_topbar_takeover",
-            uzor::types::Rect::new(cb_x, cy, available_w, row_h),
+            uzor::types::Rect::new(cb_x, cy, available_w, hit_h),
             Sense::CLICK | Sense::HOVER,
             layer_id,
         );
 
-        cy = desc_y + 15.0 + 16.0;
+        cy = desc_y + (hint_lines.len().max(1) as f64) * line_h + 16.0;
     }
 
     // ── Version info (always shown at bottom) ─────────────────────────────────

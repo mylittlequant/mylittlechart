@@ -148,6 +148,8 @@ impl Primitive for HorizontalRay {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+    fn extend_mode_raw(&self) -> u8 { 1 }
+    fn unbounded_in_price(&self) -> bool { false }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         vec![ConfigProperty::show_price(self.show_price_label).with_order(20)]

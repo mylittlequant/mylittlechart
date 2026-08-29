@@ -197,10 +197,12 @@ impl PrimitiveRegistry {
         self.register_typed::<super::lines::horizontal_line::HorizontalLine>(super::lines::horizontal_line::metadata());
         self.register_typed::<super::lines::vertical_line::VerticalLine>(super::lines::vertical_line::metadata());
         self.register_typed::<super::lines::ray::Ray>(super::lines::ray::metadata());
+        self.register_typed::<super::lines::ray_left::RayLeft>(super::lines::ray_left::metadata());
         self.register_typed::<super::lines::extended_line::ExtendedLine>(super::lines::extended_line::metadata());
         self.register_typed::<super::lines::info_line::InfoLine>(super::lines::info_line::metadata());
         self.register_typed::<super::lines::trend_angle::TrendAngle>(super::lines::trend_angle::metadata());
         self.register_typed::<super::lines::horizontal_ray::HorizontalRay>(super::lines::horizontal_ray::metadata());
+        self.register_typed::<super::lines::horizontal_ray_left::HorizontalRayLeft>(super::lines::horizontal_ray_left::metadata());
         self.register_typed::<super::lines::cross_line::CrossLine>(super::lines::cross_line::metadata());
 
         // Channels

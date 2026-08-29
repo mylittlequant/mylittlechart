@@ -116,7 +116,7 @@ pub fn render_compare_settings_modal(
     let content_h = MODAL_H - HEADER_H - TAB_BAR_H - PADDING * 2.0 - FOOTER_H;
 
     let modal_theme = ModalTheme::from_toolbar(
-        &frame_theme.toolbar_bg,
+        &frame_theme.modal_bg,
         &toolbar_theme.separator,
         toolbar_theme,
     );
@@ -669,8 +669,10 @@ fn draw_visibility_tab(
 
         // Checkbox fill
         let check_rect = WidgetRect::new(check_x, check_y, checkbox_size, checkbox_size);
-        ctx.set_fill_color(if *enabled { &toolbar_theme.item_bg_active } else { &frame_theme.toolbar_bg });
-        ctx.fill_rounded_rect(check_rect.x, check_rect.y, check_rect.width, check_rect.height, 3.0);
+        crate::ui::overlay_fill::fill_checkbox(
+            ctx, *enabled, &toolbar_theme.item_bg_active, &toolbar_theme.dropdown_bg, &frame_theme.toolbar_bg,
+            check_rect.x, check_rect.y, check_rect.width, check_rect.height, 3.0,
+        );
         ctx.set_stroke_color(&toolbar_theme.separator);
         ctx.set_stroke_width(1.0);
         ctx.stroke_rounded_rect(check_rect.x, check_rect.y, check_rect.width, check_rect.height, 3.0);

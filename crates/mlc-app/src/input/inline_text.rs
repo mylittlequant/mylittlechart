@@ -49,6 +49,34 @@ impl ChartApp {
         let local_x = x - chart_rect.x;
         let local_y = y - chart_rect.y;
 
+        // Stage -1: Fib/Gann level-value plates — a separate registry from
+        // user-text (`find_level_label_at`). A double-click on the number
+        // sitting on a retracement/fan/box line edits that stored level,
+        // not `data.text`. Checked first: a level plate is smaller and
+        // more specific than a user-text label that may share the line.
+        let mut resolved_level: Option<(u64, Option<u64>, f64)> =
+            mlc_core::engine::render::find_level_label_at(bid, None, local_x, local_y, 2.0)
+                .map(|e| (e.prim_id, None, e.level));
+        if resolved_level.is_none() {
+            for pane_layout in extended.sub_panes.iter() {
+                let content = pane_layout.content;
+                let plx = x - content.x;
+                let ply = y - content.y;
+                if plx < 0.0 || plx > content.width || ply < 0.0 || ply > content.height {
+                    continue;
+                }
+                if let Some(entry) = mlc_core::engine::render::find_level_label_at(
+                    bid, Some(pane_layout.instance_id), plx, ply, 2.0,
+                ) {
+                    resolved_level = Some((entry.prim_id, Some(pane_layout.instance_id), entry.level));
+                    break;
+                }
+            }
+        }
+        if let Some((prim_id, hit_pane, level)) = resolved_level {
+            return self.arm_inline_prim_edit(bid, prim_id, hit_pane, Some(level));
+        }
+
         // Stage 0: user-text label plates — the registry the render pass
         // fills every frame (`engine::render::find_label_text_at`). A
         // double-click that lands on a LABEL owns the edit even when the
@@ -118,11 +146,20 @@ impl ChartApp {
         }
 
         let Some((prim_id, hit_pane)) = resolved else { return false; };
+        self.arm_inline_prim_edit(bid, prim_id, hit_pane, None)
+    }
 
-        // Locked / non-text primitives never open the editor. The registry's
-        // `supports_text` is the same gate the settings modal uses to show
-        // its Text tab. Read out under the guard, drop it before the
-        // selection writes below.
+    /// Shared arm for user-text (`level = None`) and Fib/Gann level-value
+    /// (`level = Some`) inline edits. Locked primitives never open. User-text
+    /// still requires registry `supports_text`; a level-value hit does not
+    /// (Fib/Gann have a Levels tab, not necessarily a Text tab).
+    fn arm_inline_prim_edit(
+        &mut self,
+        bid: mlc_core::BubbleId,
+        prim_id: u64,
+        hit_pane: Option<u64>,
+        level: Option<f64>,
+    ) -> bool {
         let prim_info: Option<(bool, bool, String)> = {
             let guard = self.core.drawings();
             guard.primitives(bid).iter().find(|p| p.data().id == prim_id).map(|p| {
@@ -130,23 +167,26 @@ impl ChartApp {
                     .read()
                     .map(|r| r.supports_text(p.type_id()))
                     .unwrap_or(false);
-                let seed = p.data().text.as_ref().map(|t| t.content.clone()).unwrap_or_default();
+                let seed = if let Some(lv) = level {
+                    p.level_value_label(lv)
+                } else {
+                    p.data().text.as_ref().map(|t| t.content.clone()).unwrap_or_default()
+                };
                 (p.data().locked, supports_text, seed)
             })
         };
         let Some((locked, supports_text, seed)) = prim_info else { return false; };
-        if locked || !supports_text {
+        if locked {
+            return false;
+        }
+        if level.is_none() && !supports_text {
             return false;
         }
 
-        // Select so the inline toolbar and the settings modal agree with
-        // what the editor is about — mirrors `try_wave_gesture`.
         self.blur_agent_focus_for_primitive_select();
         self.core.drawings_mut().set_current_pane(bid, hit_pane);
         self.core.drawings_mut().select(bid, prim_id);
 
-        // Arm the shared TextFieldStore field, seeded + select-all — the
-        // `start_oe_field_edit` / `start_prim_field_editing` contract.
         let wid = WidgetId::from(crate::text_input::PRIM_INLINE_TEXT);
         {
             let mut coord = self.input_coordinator.borrow_mut();
@@ -157,8 +197,8 @@ impl ChartApp {
                 fs.selection_start = Some(0);
             }
         }
-        self.inline_prim_text_edit = Some(crate::InlinePrimTextEdit { bid, prim_id, pane: hit_pane });
-        sglog!("[ChartApp] inline text edit started for primitive #{}", prim_id);
+        self.inline_prim_text_edit = Some(crate::InlinePrimTextEdit { bid, prim_id, pane: hit_pane, level });
+        sglog!("[ChartApp] inline text edit started for primitive #{} level={:?}", prim_id, level);
         true
     }
 
@@ -176,7 +216,11 @@ impl ChartApp {
         let text = self.input_coordinator.borrow().text_fields().text(&wid).to_string();
         self.input_coordinator.borrow_mut().text_fields_mut().blur();
         self.edit_primitive_recorded(edit.prim_id, |app| {
-            app.write_inline_prim_text(edit.bid, edit.prim_id, &text)
+            if let Some(old_level) = edit.level {
+                app.write_inline_level_value(edit.bid, edit.prim_id, old_level, &text);
+            } else {
+                app.write_inline_prim_text(edit.bid, edit.prim_id, &text);
+            }
         });
     }
 
@@ -235,5 +279,41 @@ impl ChartApp {
             self.sync_drawing_back_to_group();
             sglog!("[ChartApp] inline text committed for primitive #{}", prim_id);
         }
+    }
+
+    /// Write half of a Fib/Gann level-value inline commit: parse via the
+    /// primitive's own `parse_level_value` (Gann `"2x1"` etc.) then rename
+    /// the matching row in `level_configs` — the same `rename_level` the
+    /// settings modal's value field uses.
+    fn write_inline_level_value(
+        &mut self,
+        bid: mlc_core::BubbleId,
+        prim_id: u64,
+        old_level: f64,
+        text: &str,
+    ) {
+        let new_level = {
+            let guard = self.core.drawings();
+            guard.primitives(bid).iter().find(|p| p.data().id == prim_id)
+                .and_then(|p| p.parse_level_value(text))
+        };
+        let Some(new_level) = new_level else { return };
+        {
+            let mut guard = self.core.drawings_mut();
+            if let Some(mut configs) = guard.primitives(bid).iter()
+                .find(|p| p.data().id == prim_id)
+                .and_then(|p| p.level_configs())
+            {
+                mlc_app_layout::layout::modals::primitive_settings_intent::rename_level(
+                    &mut configs,
+                    &mut self.panel_app.primitive_settings_state,
+                    old_level,
+                    new_level,
+                );
+                guard.set_level_configs(bid, prim_id, configs);
+            }
+        }
+        self.sync_drawing_back_to_group();
+        sglog!("[ChartApp] inline level {} -> {} for primitive #{}", old_level, new_level, prim_id);
     }
 }

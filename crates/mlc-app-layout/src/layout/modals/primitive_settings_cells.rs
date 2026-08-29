@@ -194,8 +194,13 @@ fn draw_stepper_row(
 }
 
 fn draw_step_button(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, rect: WidgetRect, glyph: &str) {
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);
+    crate::ui::overlay_fill::fill_modal_control(
+        ctx,
+        &toolbar_theme.dropdown_bg,
+        &toolbar_theme.background,
+        rect.x, rect.y, rect.width, rect.height,
+        3.0,
+    );
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);

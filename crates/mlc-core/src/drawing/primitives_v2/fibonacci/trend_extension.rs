@@ -12,7 +12,7 @@ use super::super::{
     PrimitiveColor, LineStyle, TextAlign,
     HIT_TOLERANCE,
     RenderContext, crisp,
-    render_primitive_text, draw_label_plate,
+    render_primitive_text, draw_level_label_plate,
     config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
 // Shared level table with retracement, band fill on by default — see the
@@ -60,6 +60,8 @@ pub struct FibTrendExtension {
     pub show_as_percent: bool,
     #[serde(default = "default_true")]
     pub show_trend_line: bool,
+    #[serde(default)]
+    pub extend_left: bool,
     #[serde(default = "default_true")]
     pub extend_right: bool,
     /// Style for level labels (font, background plate, offset, border)
@@ -87,6 +89,7 @@ impl FibTrendExtension {
             label_position: "left".to_string(),
             show_as_percent: true,
             show_trend_line: true,
+            extend_left: false,
             extend_right: true,
             label_style: LabelStyle::default(),
         }
@@ -366,7 +369,7 @@ impl Primitive for FibTrendExtension {
                     "center" => (x3 + right_x) / 2.0,
                     _ => x3 + ctx.measure_text(lbl) / 2.0 + 4.0,
                 };
-                draw_label_plate(ctx, label_x, y, lbl, self.label_style.font_size, &self.label_style, label_color);
+                draw_level_label_plate(ctx, label_x, y, lbl, self.label_style.font_size, &self.label_style, label_color, cfg.level);
             }
         }
         ctx.set_line_dash(&[]);
@@ -424,8 +427,10 @@ impl Primitive for FibTrendExtension {
             // `show_trend_line` ids `FibRetracement` declares into this
             // exact group (this type has no `extend_left` — the ladder only
             // extends past point 3, never before point 1).
-            ConfigProperty::extend_right(self.extend_right)
+            ConfigProperty::extend_left(self.extend_left)
                 .with_category(PropertyCategory::LevelsBase).with_order(0).in_group(PropertyGroup::General),
+            ConfigProperty::extend_right(self.extend_right)
+                .with_category(PropertyCategory::LevelsBase).with_order(1).in_group(PropertyGroup::General),
             ConfigProperty::show_trend_line(self.show_trend_line)
                 .with_category(PropertyCategory::LevelsBase).with_order(1).in_group(PropertyGroup::General),
             ConfigProperty::label_font_size(self.label_style.font_size).with_category(PropertyCategory::LabelsText).with_order(40).in_group(PropertyGroup::LevelLabels),
@@ -442,6 +447,7 @@ impl Primitive for FibTrendExtension {
             "show_percentages" => { if let PropertyValue::Boolean(v) = value { self.show_percentages = *v; return true; } }
             "show_as_percent" => { if let PropertyValue::Boolean(v) = value { self.show_as_percent = *v; return true; } }
             "label_position" => { if let PropertyValue::String(v) = value { self.label_position = v.clone(); return true; } }
+            "extend_left" => { if let PropertyValue::Boolean(v) = value { self.extend_left = *v; return true; } }
             "extend_right" => { if let PropertyValue::Boolean(v) = value { self.extend_right = *v; return true; } }
             "show_trend_line" => { if let PropertyValue::Boolean(v) = value { self.show_trend_line = *v; return true; } }
             "label_font_size" => { if let Some(v) = value.as_number() { self.label_style.font_size = v; return true; } }
@@ -454,6 +460,10 @@ impl Primitive for FibTrendExtension {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+    fn extend_mode_raw(&self) -> u8 {
+        super::super::extend_mode_lr(self.extend_left, self.extend_right)
+    }
+    fn unbounded_in_price(&self) -> bool { false }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {

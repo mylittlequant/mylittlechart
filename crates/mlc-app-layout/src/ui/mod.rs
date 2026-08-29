@@ -5,6 +5,7 @@ pub mod toolbar_theme;
 pub mod icons;
 pub mod toolbar_core;
 pub mod dropdown;
+pub mod overlay_fill;
 pub mod color_picker_state;
 pub mod scroll_state;
 pub mod scroll_widget;

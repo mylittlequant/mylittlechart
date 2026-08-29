@@ -626,17 +626,11 @@ fn render_toasts(
     }
 }
 
-/// Default watchlist seed — six symbols across three exchanges, used when no
-/// `watchlists.json` exists yet (first run or migration).
+/// Default watchlist seed — one ticker per crypto venue, used when no
+/// `watchlists.json` exists yet (first run). Existing files are merged via
+/// `WatchlistManager::apply_seed_migration`.
 fn default_watchlist() -> mlc_app::WatchlistManager {
-    mlc_app::WatchlistManager::new(vec![
-        mlc_app::InstrumentAddress::new("binance", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
-        mlc_app::InstrumentAddress::new("binance", "ETHUSDT", mlc_core::instrument::AccountType::Spot),
-        mlc_app::InstrumentAddress::new("binance", "SOLUSDT", mlc_core::instrument::AccountType::Spot),
-        mlc_app::InstrumentAddress::new("binance", "BNBUSDT", mlc_core::instrument::AccountType::Spot),
-        mlc_app::InstrumentAddress::new("bybit", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
-        mlc_app::InstrumentAddress::new("okx", "BTCUSDT", mlc_core::instrument::AccountType::Spot),
-    ])
+    mlc_app::WatchlistManager::default_seed()
 }
 
 /// Seed `core`'s domain managers (presets, templates, watchlists, snapshots,
@@ -659,7 +653,7 @@ fn seed_core_from_profile(
 ) {
     let profile = &profile_manager.profile;
 
-    let watchlist_manager = {
+    let mut watchlist_manager = {
         let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
         if watchlists_path.exists() {
             // Watchlists are always plaintext — pass None regardless of vault key.
@@ -672,7 +666,15 @@ fn seed_core_from_profile(
             default_watchlist()
         }
     };
+    let watchlists_migrated = watchlist_manager.apply_seed_migration();
     core.watchlists_mut().replace_all(watchlist_manager);
+    if watchlists_migrated {
+        let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
+        let snap = core.watchlists().snapshot();
+        if let Err(e) = mlc_core::save_json(&watchlists_path, &snap, None) {
+            eprintln!("[App] Failed to persist migrated watchlists: {}", e);
+        }
+    }
     core.presets_mut().replace_all(profile_manager.presets.clone());
     core.templates_mut().replace_all(profile_manager.template_manager.clone());
     core.user_mut().set_snapshots(profile_manager.snapshots.clone());
@@ -2113,6 +2115,16 @@ impl App<'_> {
         // as `favorite_primitives` above (mutated in-place on the shared core
         // profile by `ToggleIndicatorStar`).
         profile.ui.favorite_indicators = self.core.user().profile().ui.favorite_indicators.clone();
+        let core_ui = self.core.user().profile().ui.clone();
+        profile.ui.persist_toolbar_last_tools = core_ui.persist_toolbar_last_tools;
+        profile.ui.persist_toolbar_toggles = core_ui.persist_toolbar_toggles;
+        if !core_ui.persist_toolbar_last_tools {
+            profile.ui.toolbar_last_tools = core_ui.toolbar_last_tools;
+        }
+        if !core_ui.persist_toolbar_toggles {
+            profile.ui.drawings_locked = core_ui.drawings_locked;
+            profile.ui.drawings_visible = core_ui.drawings_visible;
+        }
         profile.ui.active_theme = self.app_state.theme_preset.clone();
         profile.ui.device_name = self.app_state.device_name.clone();
         profile.domain.app_version = self.app_state.app_version.clone();
@@ -2120,6 +2132,7 @@ impl App<'_> {
 
         if let Some(key) = preferred_key {
             if let Some(pw) = self.windows.get(&key) {
+                profile.ui.active_ui_style = pw.chart.panel_app.theme_manager.current().style.as_name().to_string();
                 profile.ui.sidebar_visible = pw.chart.sidebar_state.is_right_open();
                 profile.ui.sidebar_panel = mlc_app::ChartApp::panel_to_str(pw.chart.sidebar_state.right_panel);
                 profile.ui.sidebar_width = Some(pw.chart.sidebar_state.right_sidebar_width);
@@ -2145,6 +2158,16 @@ impl App<'_> {
                 };
                 profile.ui.favorites_bar_dock = Some(fav_dock_str.to_string());
                 profile.ui.favorites_bar_visible = pw.chart.panel_app.toolbar_state.favorites_bar_visible;
+                if profile.ui.persist_toolbar_last_tools {
+                    profile.ui.toolbar_last_tools = pw.chart.panel_app.toolbar_state.quick_select_memory
+                        .iter()
+                        .map(|(k, (t, _))| (k.clone(), t.clone()))
+                        .collect();
+                }
+                if profile.ui.persist_toolbar_toggles {
+                    profile.ui.drawings_locked = pw.chart.panel_app.toolbar_state.drawings_locked;
+                    profile.ui.drawings_visible = pw.chart.panel_app.toolbar_state.drawings_visible;
+                }
             }
         }
 

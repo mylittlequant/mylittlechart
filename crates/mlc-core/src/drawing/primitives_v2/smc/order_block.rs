@@ -351,6 +351,9 @@ impl Primitive for OrderBlock {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+    fn extend_mode_raw(&self) -> u8 {
+        super::super::extend_mode_lr(false, self.extend_right)
+    }
 
     /// Recompute [`Self::cached_block`]/[`Self::cached_violations`] from
     /// `bars` through the SAME [`Self::detect`] call `render` makes

@@ -1478,6 +1478,19 @@ pub trait Primitive: Send + Sync {
     fn extend_mode_raw(&self) -> u8 {
         0
     }
+
+    /// Drawn geometry can leave the control-point AABB on the PRICE axis
+    /// (full-height verticals, diagonal infinite lines). Default false:
+    /// a horizontal field at $40k must still drop off a $5 chart.
+    fn unbounded_in_price(&self) -> bool {
+        false
+    }
+}
+
+/// Encode independent left/right extend flags into `extend_mode_raw`.
+/// 0=segment, 1=right, 2=left, 3=both.
+pub fn extend_mode_lr(left: bool, right: bool) -> u8 {
+    u8::from(right) | (u8::from(left) << 1)
 }
 
 /// Helper trait for cloning boxed primitives

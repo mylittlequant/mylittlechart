@@ -3227,6 +3227,7 @@ pub enum UserSettingsTab {
     #[default]
     General,
     Sync,
+    Persistence,
     Performance,
     Server,
 }
@@ -3236,31 +3237,36 @@ impl UserSettingsTab {
         match self {
             Self::General => "general",
             Self::Sync => "sync",
+            Self::Persistence => "persistence",
             Self::Performance => "performance",
             Self::Server => "server",
         }
     }
 
     pub fn label(&self) -> &'static str {
+        use mlc_core::i18n::{UserSettingsKey, current_language};
+        let lang = current_language();
         match self {
-            Self::General => "General",
+            Self::General => UserSettingsKey::TabGeneral.get(lang),
             Self::Sync => "Sync",
-            Self::Performance => "Performance",
-            Self::Server => "Server",
+            Self::Persistence => UserSettingsKey::TabPersistence.get(lang),
+            Self::Performance => UserSettingsKey::TabPerformance.get(lang),
+            Self::Server => UserSettingsKey::TabServer.get(lang),
         }
     }
 
     pub fn all() -> &'static [Self] {
         // `Sync` retained as a variant for serde back-compat but hidden
-        // from the tab strip — the cloud sync surface was removed in the
-        // OSS strip and the empty tab confuses users.
-        &[Self::General, Self::Performance, Self::Server]
+        // from the tab strip — cloud sync is a paid server feature, not
+        // local persist (Persistence tab below).
+        &[Self::General, Self::Persistence, Self::Performance, Self::Server]
     }
 
     pub fn from_id(s: &str) -> Option<Self> {
         match s {
             "general" => Some(Self::General),
             "sync" => Some(Self::Sync),
+            "persistence" => Some(Self::Persistence),
             "performance" => Some(Self::Performance),
             "server" => Some(Self::Server),
             _ => None,
@@ -3344,6 +3350,9 @@ pub struct UserSettingsState {
     /// `ProfileUiSettings::control_point_size` before each render — same
     /// role as `control_point_shape` for the Size picker.
     pub control_point_size: ControlPointSize,
+    /// Persistence-tab mirrors of `ProfileUiSettings::persist_toolbar_*`.
+    pub persist_toolbar_last_tools: bool,
+    pub persist_toolbar_toggles: bool,
     /// Whether the internal Agent API server is enabled.
     pub server_enabled: bool,
     /// Port the server listens on.
@@ -3355,6 +3364,8 @@ pub struct UserSettingsState {
     pub general_tab_scroll: ScrollState,
     /// Scroll state for the Sync tab content.
     pub sync_tab_scroll: ScrollState,
+    /// Scroll state for the Persistence tab content.
+    pub persistence_tab_scroll: ScrollState,
     /// Scroll state for the Server tab content.
     pub server_tab_scroll: ScrollState,
     /// Scroll state for the Performance tab content.
@@ -3502,11 +3513,14 @@ impl Default for UserSettingsState {
             trading_panel_topbar_takeover: false,
             control_point_shape: ControlPointShape::default(),
             control_point_size: ControlPointSize::default(),
+            persist_toolbar_last_tools: true,
+            persist_toolbar_toggles: true,
             server_enabled: true,
             server_port: 17420,
             server_status: "running".to_string(),
             general_tab_scroll: ScrollState::default(),
             sync_tab_scroll: ScrollState::default(),
+            persistence_tab_scroll: ScrollState::default(),
             server_tab_scroll: ScrollState::default(),
             performance_tab_scroll: ScrollState::default(),
             show_welcome_wizard: false,

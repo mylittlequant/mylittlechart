@@ -343,8 +343,10 @@ pub(crate) fn draw_property_row(
                     ICON_PICKER_CELL_W,
                     ICON_PICKER_CELL_H,
                 );
-                ctx.set_fill_color(if cell.active { &toolbar_theme.item_bg_active } else { &toolbar_theme.background });
-                ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 4.0);
+                crate::ui::overlay_fill::fill_checkbox(
+                    ctx, cell.active, &toolbar_theme.item_bg_active, &toolbar_theme.dropdown_bg, &toolbar_theme.background,
+                    rect.x, rect.y, rect.width, rect.height, 4.0,
+                );
                 ctx.set_stroke_color(&toolbar_theme.separator);
                 ctx.set_stroke_width(1.0);
                 ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, 4.0);
@@ -567,8 +569,10 @@ fn draw_table_cell(
         }
         TableCell::Check(checked) | TableCell::EditableCheck(checked) => {
             let box_rect = WidgetRect::new(rect.x, rect.y + (rect.height - 16.0) / 2.0, 16.0, 16.0);
-            ctx.set_fill_color(if *checked { &toolbar_theme.item_bg_active } else { &toolbar_theme.background });
-            ctx.fill_rounded_rect(box_rect.x, box_rect.y, box_rect.width, box_rect.height, 3.0);
+            crate::ui::overlay_fill::fill_checkbox(
+                ctx, *checked, &toolbar_theme.item_bg_active, &toolbar_theme.dropdown_bg, &toolbar_theme.background,
+                box_rect.x, box_rect.y, box_rect.width, box_rect.height, 3.0,
+            );
             ctx.set_stroke_color(&toolbar_theme.separator);
             ctx.set_stroke_width(1.0);
             ctx.stroke_rounded_rect(box_rect.x, box_rect.y, box_rect.width, box_rect.height, 3.0);

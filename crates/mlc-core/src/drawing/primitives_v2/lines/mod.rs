@@ -15,10 +15,12 @@ pub mod trend_line;
 pub mod horizontal_line;
 pub mod vertical_line;
 pub mod ray;
+pub mod ray_left;
 pub mod extended_line;
 pub mod info_line;
 pub mod trend_angle;
 pub mod horizontal_ray;
+pub mod horizontal_ray_left;
 pub mod cross_line;
 
 // Re-export primitive types
@@ -26,8 +28,10 @@ pub use trend_line::TrendLine;
 pub use horizontal_line::HorizontalLine;
 pub use vertical_line::VerticalLine;
 pub use ray::Ray;
+pub use ray_left::RayLeft;
 pub use extended_line::ExtendedLine;
 pub use info_line::InfoLine;
 pub use trend_angle::TrendAngle;
 pub use horizontal_ray::HorizontalRay;
+pub use horizontal_ray_left::HorizontalRayLeft;
 pub use cross_line::CrossLine;

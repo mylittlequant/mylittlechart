@@ -93,6 +93,10 @@ impl<'a> BubbleDrawingView<'a> {
         self.mgr.drawing_points(self.bid)
     }
 
+    pub fn shift_constrain(&self) -> bool {
+        self.mgr.shift_constrain(self.bid)
+    }
+
     pub fn selected(&self) -> Option<u64> {
         self.mgr.selected(self.bid)
     }
@@ -151,6 +155,9 @@ impl<'a> mlc_core::drawing::DrawingRenderView for BubbleDrawingView<'a> {
     }
     fn create_preview(&self, cursor_ts_ms: i64, cursor_price: f64) -> Option<Box<dyn Primitive>> {
         BubbleDrawingView::create_preview(self, cursor_ts_ms, cursor_price)
+    }
+    fn shift_constrain(&self) -> bool {
+        BubbleDrawingView::shift_constrain(self)
     }
     fn render_bid(&self) -> Option<BubbleId> {
         Some(self.bid)
@@ -232,6 +239,10 @@ impl<'a> Drawings<'a> {
 
     pub fn current_tool(&self, bid: BubbleId) -> Option<&str> {
         self.mgr.current_tool(bid)
+    }
+
+    pub fn drawing_points(&self, bid: BubbleId) -> Vec<(i64, f64)> {
+        self.mgr.drawing_points(bid)
     }
 
     pub fn tool_variant(&self, bid: BubbleId) -> Option<&str> {
@@ -362,6 +373,14 @@ impl<'a> DrawingsMut<'a> {
 
     pub fn current_tool(&self, bid: BubbleId) -> Option<&str> {
         self.mgr.current_tool(bid)
+    }
+
+    pub fn drawing_points(&self, bid: BubbleId) -> Vec<(i64, f64)> {
+        self.mgr.drawing_points(bid)
+    }
+
+    pub fn set_shift_constrain(&mut self, bid: BubbleId, held: bool) {
+        self.mgr.set_shift_constrain(bid, held);
     }
 
     pub fn current_pane(&self, bid: BubbleId) -> Option<u64> {

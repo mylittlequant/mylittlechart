@@ -53,6 +53,10 @@ pub struct RightSidebarResult {
     pub hovered_item_id: Option<String>,
     /// Scrollable content area rect.
     pub content_rect: WidgetRect,
+    /// Body clip under sidebar header + column header, above the metrics
+    /// footer. Wheel/scrollbar max-offset must use this height, not
+    /// `content_rect.height` (that still includes the pinned footer).
+    pub viewport_rect: WidgetRect,
     /// Total content height (used for scrollbar calculation).
     pub content_height: f64,
     /// Scrollbar handle rect (for drag detection).
@@ -573,11 +577,24 @@ pub fn render_right_sidebar(
     let screener_header_h = if panel == RightSidebarPanel::Screener { SCREENER_HEADER_H } else { 0.0 };
     let extra_header_h = watchlist_header_h + screener_header_h; // mutually exclusive — at most one is nonzero
 
+    // Metrics footer is pinned below the body; subtract it from the scroll
+    // viewport so rows cannot register hits in the footer (or overpaint it).
+    let metrics_h = if panel == RightSidebarPanel::Watchlist {
+        watchlist_metrics_block_h(
+            watchlist_column_config,
+            sidebar_state.ticker_section.as_ref(),
+            &sidebar_state.counter_rows,
+            rect.height,
+        )
+    } else {
+        0.0
+    };
+
     let viewport_rect = WidgetRect::new(
         content_rect.x,
         content_rect.y + extra_header_h,
         content_rect.width + scrollbar_width,
-        (content_rect.height - extra_header_h).max(0.0),
+        (content_rect.height - extra_header_h - metrics_h).max(0.0),
     );
     let scroll_config = ScrollableConfig {
         scrollbar_width,
@@ -589,6 +606,7 @@ pub fn render_right_sidebar(
         sidebar_state.current_right_scroll(),
         Some(scroll_config),
     );
+    result.viewport_rect = viewport_rect;
 
     // Draw the watchlist column header at a fixed position before clipping.
     if panel == RightSidebarPanel::Watchlist {
@@ -662,14 +680,8 @@ pub fn render_right_sidebar(
                 input_coordinator,
                 watchlist_column_config,
                 watchlist_color_flag_fn,
+                viewport_rect.height,
             );
-            // Reserve scroll room under the pinned TICKER section so the
-            // last rows can scroll up from beneath it.
-            if watchlist_column_config.show_ticker_section
-                && sidebar_state.ticker_section.is_some()
-            {
-                content_height += WATCHLIST_TICKER_SECTION_H;
-            }
         }
 
         RightSidebarPanel::Alerts => {
@@ -814,15 +826,51 @@ pub fn render_right_sidebar(
     // ACTIVE chart's instrument, pinned OVER the scroll area's bottom.
     // -------------------------------------------------------------------------
     if panel == RightSidebarPanel::Watchlist && watchlist_column_config.show_ticker_section {
-        if let Some(ref t) = sidebar_state.ticker_section {
-            render_watchlist_ticker_section(
-                ctx,
-                rect,
-                toolbar_theme,
-                t,
-                watchlist_column_config.show_market_counters,
-                &sidebar_state.counter_rows,
-            );
+        let total_h = watchlist_metrics_block_h(
+            watchlist_column_config,
+            sidebar_state.ticker_section.as_ref(),
+            &sidebar_state.counter_rows,
+            rect.height,
+        );
+        if total_h > 0.0 {
+            if let Some(ref t) = sidebar_state.ticker_section {
+                render_watchlist_ticker_section(
+                    ctx,
+                    rect,
+                    toolbar_theme,
+                    t,
+                    watchlist_column_config.show_market_counters,
+                    &sidebar_state.counter_rows,
+                    total_h,
+                );
+            } else {
+                let block_y0 = rect.y + rect.height - total_h;
+                ctx.set_fill_color(&toolbar_theme.background);
+                ctx.fill_rect(rect.x, block_y0, rect.width, total_h);
+                ctx.set_fill_color(&toolbar_theme.separator);
+                ctx.fill_rect(rect.x, block_y0, rect.width, 1.0);
+            }
+            let block_y0 = rect.y + rect.height - total_h;
+            let sep_hit_h = 7.0;
+            let sep_rect = WidgetRect::new(rect.x, block_y0 - 3.0, rect.width, sep_hit_h);
+            let sep_id = "watchlist_metrics_sep";
+            let sep_hovered = input_coordinator
+                .is_hovered(&uzor::types::WidgetId::from(sep_id));
+            ctx.set_fill_color(if sep_hovered { "#4a9eff" } else { toolbar_theme.separator.as_str() });
+            ctx.fill_rect(rect.x, block_y0, rect.width, if sep_hovered { 2.0 } else { 1.0 });
+            input_coordinator.register(sep_id, sep_rect, uzor::input::Sense::DRAG);
+            result.item_rects.push((sep_id.to_string(), sep_rect));
+        }
+    }
+
+    // Header widgets were registered before rows; last-registered wins, so
+    // re-register them after the body so ⋯ / expand / close beat any overlap.
+    if panel == RightSidebarPanel::Watchlist {
+        for id in ["watchlist_column_config", "watchlist_open_modal", "right_sidebar_close"] {
+            if let Some((_, r)) = result.item_rects.iter().find(|(wid, _)| wid == id) {
+                let r = *r;
+                input_coordinator.register(id, r, uzor::input::Sense::CLICK);
+            }
         }
     }
 
@@ -863,7 +911,8 @@ pub fn render_right_sidebar(
     result
 }
 
-/// Height of the watchlist-bottom TICKER section.
+/// Height of the watchlist-bottom TICKER section (price + spark), not
+/// including the Fund/OI counters stacked above it.
 pub const WATCHLIST_TICKER_SECTION_H: f64 = 96.0;
 
 /// Height of one market-counters row (funding/OI block, owner spec 2026-08-01).
@@ -871,6 +920,35 @@ const COUNTERS_ROW_H: f64 = 15.0;
 /// Header + top/bottom padding reserved by the market-counters block on top
 /// of `COUNTERS_ROW_H * rows.len()`.
 const COUNTERS_CHROME_H: f64 = 16.0 + 4.0;
+
+fn counters_block_h(show_counters: bool, counter_rows: &[crate::types::CounterRowData]) -> f64 {
+    if show_counters && !counter_rows.is_empty() {
+        COUNTERS_CHROME_H + COUNTERS_ROW_H * counter_rows.len() as f64
+    } else {
+        0.0
+    }
+}
+
+/// Painted height of the pinned metrics block (counters + ticker).
+///
+/// `WatchlistColumnConfig::metrics_block_h` is the user-dragged total;
+/// `None` uses the auto size. Clamped so the ticker never collapses under
+/// the counters and never eats more than ~65% of the sidebar.
+pub fn watchlist_metrics_block_h(
+    col_cfg: &WatchlistColumnConfig,
+    _ticker: Option<&crate::types::TickerSectionData>,
+    counter_rows: &[crate::types::CounterRowData],
+    sidebar_h: f64,
+) -> f64 {
+    if !col_cfg.show_ticker_section {
+        return 0.0;
+    }
+    let counters_h = counters_block_h(col_cfg.show_market_counters, counter_rows);
+    let auto = WATCHLIST_TICKER_SECTION_H + counters_h;
+    let min_h = (counters_h + 72.0).max(80.0);
+    let max_h = (sidebar_h * 0.65).max(min_h);
+    col_cfg.metrics_block_h.unwrap_or(auto).clamp(min_h, max_h)
+}
 
 /// The TICKER section pinned to the watchlist bottom: instrument line,
 /// big price with a direction arrow, change % + abs, area sparkline
@@ -885,14 +963,10 @@ fn render_watchlist_ticker_section(
     t: &crate::types::TickerSectionData,
     show_counters: bool,
     counter_rows: &[crate::types::CounterRowData],
+    total_h: f64,
 ) {
-    let counters_h = if show_counters && !counter_rows.is_empty() {
-        COUNTERS_CHROME_H + COUNTERS_ROW_H * counter_rows.len() as f64
-    } else {
-        0.0
-    };
-    let h = WATCHLIST_TICKER_SECTION_H;
-    let total_h = h + counters_h;
+    let counters_h = counters_block_h(show_counters, counter_rows);
+    let h = (total_h - counters_h).max(72.0);
     let block_y0 = rect.y + rect.height - total_h;
 
     // Opaque backdrop over the WHOLE combined block (counters + ticker) + top separator.
@@ -1097,7 +1171,7 @@ fn render_watchlist_config_dropdown(
         ("show_change_abs",   "Change",        col_cfg.show_change_abs),
         ("show_volume",       "Volume",        col_cfg.show_volume),
         ("show_high_low",     "High / Low",    col_cfg.show_high_low),
-        ("show_ticker",       "Ticker",        col_cfg.show_ticker_section),
+        ("show_ticker",       "Metrics panel", col_cfg.show_ticker_section),
         ("show_counters",     "Fund/OI",       col_cfg.show_market_counters),
         ("show_align_columns","Align columns", col_cfg.align_columns),
     ];
@@ -1321,6 +1395,69 @@ fn render_slot_spawn_dropdown(
 /// and the area edge).  Approximately 2 characters at 11px font.
 const WATCHLIST_SEP_MIN_GAP: f64 = 16.0;
 
+/// Header of the account-type column. Cells are one-letter (`S`/`F`/`M`);
+/// the header is the wide case. When the column is squeezed below this
+/// label it collapses to `WATCHLIST_TYPE_COMPACT`.
+const WATCHLIST_TYPE_HEADER: &str = "Type";
+const WATCHLIST_TYPE_COMPACT: &str = "T";
+const WATCHLIST_TYPE_PAD: f64 = 6.0;
+
+/// Column starts and separator X for the watchlist. The Type column (if
+/// present) takes its natural header width; remaining space is split
+/// equally among the other columns. Custom `separator_offsets` still win
+/// when their count matches.
+fn watchlist_col_layout(
+    n_cols: usize,
+    area_left: f64,
+    usable_w: f64,
+    type_col: Option<usize>,
+    type_w: f64,
+    custom_offsets: Option<&[f64]>,
+) -> (Vec<f64>, Vec<f64>) {
+    let n_seps = n_cols.saturating_sub(1);
+    let area_right = area_left + usable_w;
+    let mut widths = vec![if n_cols > 0 { usable_w / n_cols as f64 } else { 0.0 }; n_cols];
+    if let Some(ti) = type_col {
+        if ti < n_cols && n_cols > 1 {
+            let tw = type_w.clamp(WATCHLIST_SEP_MIN_GAP, usable_w);
+            widths[ti] = tw;
+            let other = (usable_w - tw).max(0.0) / (n_cols - 1) as f64;
+            for (i, w) in widths.iter_mut().enumerate() {
+                if i != ti {
+                    *w = other;
+                }
+            }
+        }
+    }
+    let mut col_x = Vec::with_capacity(n_cols);
+    let mut x = area_left;
+    for w in &widths {
+        col_x.push(x);
+        x += *w;
+    }
+    let default_sep: Vec<f64> = (1..n_cols).map(|i| col_x[i]).collect();
+    let use_custom = custom_offsets.map(|o| o.len() == n_seps).unwrap_or(false);
+    let sep_positions = if use_custom && n_seps > 0 {
+        let mut positions: Vec<f64> = custom_offsets.unwrap().iter().map(|&o| area_left + o).collect();
+        let mut prev = area_left;
+        for p in positions.iter_mut() {
+            let min_pos = prev + WATCHLIST_SEP_MIN_GAP;
+            if *p < min_pos { *p = min_pos; }
+            prev = *p;
+        }
+        let mut next = area_right;
+        for p in positions.iter_mut().rev() {
+            let max_pos = next - WATCHLIST_SEP_MIN_GAP;
+            if *p > max_pos { *p = max_pos; }
+            next = *p;
+        }
+        positions
+    } else {
+        default_sep
+    };
+    (col_x, sep_positions)
+}
+
 /// Render the watchlist column header row at a fixed (non-scrolling) position.
 ///
 /// This is called BEFORE the scrollable clip is established so the header
@@ -1358,43 +1495,17 @@ fn render_watchlist_column_header(
     let area_left = rect.x + item_padding;
     let area_right = area_left + usable_w;
     let n_seps = n_cols.saturating_sub(1);
-    let equal_col_w = if n_cols > 0 { usable_w / n_cols as f64 } else { 0.0 };
-
-    let mut col_x: Vec<f64> = Vec::with_capacity(n_cols);
-    {
-        let mut x = area_left;
-        for _ in 0..n_cols {
-            col_x.push(x);
-            x += equal_col_w;
-        }
-    }
-    let default_sep_x: Vec<f64> = (1..n_cols).map(|i| col_x[i]).collect();
-
-    let sep_positions: Vec<f64> = {
-        let use_custom = col_cfg.separator_offsets
-            .as_ref()
-            .map(|o| o.len() == n_seps)
-            .unwrap_or(false);
-        if use_custom && n_seps > 0 {
-            let offsets = col_cfg.separator_offsets.as_ref().unwrap();
-            let mut positions: Vec<f64> = offsets.iter().map(|&o| area_left + o).collect();
-            let mut prev = area_left;
-            for p in positions.iter_mut() {
-                let min_pos = prev + WATCHLIST_SEP_MIN_GAP;
-                if *p < min_pos { *p = min_pos; }
-                prev = *p;
-            }
-            let mut next = area_right;
-            for p in positions.iter_mut().rev() {
-                let max_pos = next - WATCHLIST_SEP_MIN_GAP;
-                if *p > max_pos { *p = max_pos; }
-                next = *p;
-            }
-            positions
-        } else {
-            default_sep_x
-        }
-    };
+    ctx.set_font("10px sans-serif");
+    let type_w = ctx.measure_text(WATCHLIST_TYPE_COMPACT) + WATCHLIST_TYPE_PAD;
+    let type_col = col_labels.iter().position(|l| *l == WATCHLIST_TYPE_HEADER);
+    let (_col_x, sep_positions) = watchlist_col_layout(
+        n_cols,
+        area_left,
+        usable_w,
+        type_col,
+        type_w,
+        col_cfg.separator_offsets.as_deref(),
+    );
 
     let col_clip = |col_i: usize| -> (f64, f64) {
         let left = if col_i == 0 { area_left } else { sep_positions[col_i - 1] };
@@ -1469,8 +1580,25 @@ fn render_watchlist_column_header(
         if clip_w < 1.0 { continue; }
         let (align, tx) = col_text_x(i, clip_l, clip_r);
         ctx.set_text_align(align);
+        let type_full_w = ctx.measure_text(WATCHLIST_TYPE_HEADER);
+        let (label, type_compact) = if *label == WATCHLIST_TYPE_HEADER {
+            if clip_w + 0.5 >= type_full_w {
+                (WATCHLIST_TYPE_HEADER, false)
+            } else if clip_w + 0.5 >= ctx.measure_text(WATCHLIST_TYPE_COMPACT) {
+                (WATCHLIST_TYPE_COMPACT, true)
+            } else {
+                continue;
+            }
+        } else {
+            (*label, false)
+        };
         let display_label = truncate_to_width(ctx, label, clip_w);
         ctx.fill_text(&display_label, tx, header_y + header_row_h / 2.0);
+        if type_compact {
+            let type_rect = WidgetRect::new(clip_l, header_y, clip_w, header_row_h);
+            input_coordinator.register("watchlist_col_type", type_rect, uzor::input::Sense::HOVER);
+            result.item_rects.push(("watchlist_col_type".to_string(), type_rect));
+        }
     }
 
     // Separator lines and draggable hit zones.
@@ -1512,6 +1640,7 @@ fn render_watchlist_items(
     input_coordinator: &mut InputCoordinator,
     watchlist_column_config: &WatchlistColumnConfig,
     watchlist_color_flag_fn: &dyn Fn(&mlc_core::InstrumentAddress) -> Option<String>,
+    body_h: f64,
 ) -> f64 {
     let _ = scrollbar_width;
 
@@ -1539,24 +1668,11 @@ fn render_watchlist_items(
     let delete_icon_right_pad = 6.0;
     let mut current_y = content_y;
 
-    // -------------------------------------------------------------------------
-    // Virtual-scrolling bounds.
-    //
-    // `content_y = viewport.y - scroll_offset`, so:
-    //   viewport_top    = content_y + scroll_offset
-    //   viewport_bottom = viewport_top + viewport_height
-    //
-    // Constants that match the layout computed in render_right_sidebar():
-    //   sidebar header : 40 px
-    //   watchlist col header: 23 px
-    //   → content area height = rect.height - 63 px
-    // -------------------------------------------------------------------------
+    // Virtual-scrolling bounds. `body_h` is the body viewport height
+    // (below sidebar + column headers, above the metrics footer).
     let scroll_offset = state.current_right_scroll().offset;
     let viewport_top = content_y + scroll_offset;
-    let watchlist_col_header_h = 23.0;
-    let sidebar_header_h = 40.0;
-    let viewport_height = (rect.height - sidebar_header_h - watchlist_col_header_h).max(0.0);
-    let viewport_bottom = viewport_top + viewport_height;
+    let viewport_bottom = viewport_top + body_h;
 
     let col_cfg = watchlist_column_config.clone();
 
@@ -1601,69 +1717,18 @@ fn render_watchlist_items(
     let area_right = area_left + usable_w;
 
     let data_cols = n_cols.saturating_sub(1);
-
-    // -------------------------------------------------------------------------
-    // Default column layout — all columns equal width.  Text alignment per
-    // column creates the visual spread: first col left-aligned, last col
-    // right-aligned, middle columns centered.
-    // -------------------------------------------------------------------------
-    let equal_col_w = if n_cols > 0 { usable_w / n_cols as f64 } else { 0.0 };
-
-    // Absolute X position of each column's content (fixed — never changes).
-    let mut col_x: Vec<f64> = Vec::with_capacity(n_cols);
-    {
-        let mut x = area_left;
-        for _i in 0..n_cols {
-            col_x.push(x);
-            x += equal_col_w;
-        }
-    }
-
-    // -------------------------------------------------------------------------
-    // Default separator positions: left edge of each data column (absolute X).
-    // sep_positions[i] is the absolute X of the separator between column i and i+1.
-    // -------------------------------------------------------------------------
+    ctx.set_font("10px sans-serif");
+    let type_w = ctx.measure_text(WATCHLIST_TYPE_COMPACT) + WATCHLIST_TYPE_PAD;
+    let type_col = col_labels.iter().position(|l| *l == WATCHLIST_TYPE_HEADER);
     let n_seps = n_cols.saturating_sub(1);
-    let default_sep_x: Vec<f64> = (1..n_cols).map(|i| col_x[i]).collect();
-
-    // -------------------------------------------------------------------------
-    // Resolve actual separator positions.
-    // Use custom offsets when present and the count matches; otherwise use defaults.
-    // Clamp to maintain minimum gap between neighbours.
-    // -------------------------------------------------------------------------
-    let sep_positions: Vec<f64> = {
-        let use_custom = col_cfg.separator_offsets
-            .as_ref()
-            .map(|o| o.len() == n_seps)
-            .unwrap_or(false);
-
-        if use_custom && n_seps > 0 {
-            let offsets = col_cfg.separator_offsets.as_ref().unwrap();
-            // Convert offsets (relative to area_left) to absolute X, then clamp.
-            let mut positions: Vec<f64> = offsets.iter().map(|&o| area_left + o).collect();
-            // Forward pass: ensure each separator is at least MIN_GAP after the previous boundary.
-            let mut prev = area_left;
-            for p in positions.iter_mut() {
-                let min_pos = prev + WATCHLIST_SEP_MIN_GAP;
-                if *p < min_pos {
-                    *p = min_pos;
-                }
-                prev = *p;
-            }
-            // Backward pass: ensure each separator is at least MIN_GAP before the next boundary.
-            let mut next = area_right;
-            for p in positions.iter_mut().rev() {
-                let max_pos = next - WATCHLIST_SEP_MIN_GAP;
-                if *p > max_pos {
-                    *p = max_pos;
-                }
-                next = *p;
-            }
-            positions
-        } else {
-            default_sep_x.clone()
-        }
-    };
+    let (_col_x, sep_positions) = watchlist_col_layout(
+        n_cols,
+        area_left,
+        usable_w,
+        type_col,
+        type_w,
+        col_cfg.separator_offsets.as_deref(),
+    );
 
     // Use a smaller font when many data columns are visible (>4) to avoid overflow.
     let data_font = if data_cols > 4 { "10px sans-serif" } else { "11px sans-serif" };
@@ -1708,25 +1773,38 @@ fn render_watchlist_items(
     //  see render_watchlist_column_header.)
     // -------------------------------------------------------------------------
     for (i, item) in state.watchlist_items.iter().enumerate() {
+        let row_top = current_y;
+        let row_bot = current_y + data_row_h;
+        let row_visible = row_bot > viewport_top && row_top < viewport_bottom;
+        if !row_visible {
+            current_y += data_row_h;
+            continue;
+        }
+
         let row_id = format!("watchlist_{}", i);
         let del_id = format!("watchlist_delete_{}", i);
 
+        // Paint uses the full row; hits are clipped to the body so a
+        // straddling row cannot steal ⋯ / column-header / metrics clicks.
         let row_rect = WidgetRect::new(
             rect.x,
             current_y,
             content_width,
             data_row_h,
         );
+        let hit_y = row_top.max(viewport_top);
+        let hit_h = (row_bot.min(viewport_bottom) - hit_y).max(0.0);
+        let hit_rect = WidgetRect::new(rect.x, hit_y, content_width, hit_h);
 
         // Register row FIRST so delete button (registered after) wins hit-test.
         // Use CLICK_AND_DRAG so both row selection and drag-to-reorder are supported.
         input_coordinator.register(
             row_id.as_str(),
-            row_rect,
+            hit_rect,
             uzor::input::Sense::CLICK_AND_DRAG,
         );
-        result.item_rects.push((row_id.clone(), row_rect));
-        result.watchlist_row_rects.push((i, row_rect));
+        result.item_rects.push((row_id.clone(), hit_rect));
+        result.watchlist_row_rects.push((i, hit_rect));
 
         // Hover detection: row OR delete button hovered.
         let is_hovered = input_coordinator
@@ -1735,27 +1813,6 @@ fn render_watchlist_items(
                 .is_hovered(&uzor::types::WidgetId::from(del_id.as_str()));
         let del_hovered = input_coordinator
             .is_hovered(&uzor::types::WidgetId::from(del_id.as_str()));
-
-        // Virtual scrolling: skip draw calls for rows entirely outside the
-        // visible viewport.  Hit-zone registrations above are kept so that
-        // keyboard/click events still resolve correctly for all rows.
-        let row_visible = current_y + data_row_h > viewport_top
-            && current_y < viewport_bottom;
-
-        if !row_visible {
-            // Still register flag + delete zones for off-screen rows so that
-            // click events that somehow reach them resolve correctly.
-            let flag_id = format!("watchlist_flag_{}", i);
-            let flag_rect = WidgetRect::new(rect.x, current_y, 10.0, data_row_h);
-            input_coordinator.register(flag_id.as_str(), flag_rect, uzor::input::Sense::CLICK);
-            let del_icon_x = rect.x + content_width - delete_icon_right_pad - delete_icon_size;
-            let del_icon_y = current_y + (data_row_h - delete_icon_size) / 2.0;
-            let del_rect = WidgetRect::new(del_icon_x, del_icon_y, delete_icon_size, delete_icon_size);
-            input_coordinator.register(del_id.as_str(), del_rect, uzor::input::Sense::CLICK);
-            result.delete_button_rects.push((del_id, del_rect));
-            current_y += data_row_h;
-            continue;
-        }
 
         if is_hovered {
             ctx.set_fill_color(&theme.item_bg_hover);
@@ -1768,7 +1825,7 @@ fn render_watchlist_items(
         // Flag click zone (first 10 px of row) — register BEFORE drawing so
         // is_hovered works on the same frame.
         let flag_id = format!("watchlist_flag_{}", i);
-        let flag_rect = WidgetRect::new(rect.x, current_y, 10.0, data_row_h);
+        let flag_rect = WidgetRect::new(rect.x, hit_y, 10.0, hit_h);
         input_coordinator.register(flag_id.as_str(), flag_rect, uzor::input::Sense::CLICK);
         let flag_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::from(flag_id.as_str()));
 
@@ -1794,9 +1851,10 @@ fn render_watchlist_items(
         let del_icon_x = rect.x + content_width - delete_icon_right_pad - delete_icon_size;
         let del_icon_y = current_y + (data_row_h - delete_icon_size) / 2.0;
         let del_rect = WidgetRect::new(del_icon_x, del_icon_y, delete_icon_size, delete_icon_size);
-        // Register delete button after row so it wins the hit-test.
-        input_coordinator.register(del_id.as_str(), del_rect, uzor::input::Sense::CLICK);
-        result.delete_button_rects.push((del_id.clone(), del_rect));
+        if del_icon_y + delete_icon_size > viewport_top && del_icon_y < viewport_bottom {
+            input_coordinator.register(del_id.as_str(), del_rect, uzor::input::Sense::CLICK);
+            result.delete_button_rects.push((del_id.clone(), del_rect));
+        }
 
         // --- Column data, each cell clipped to its separator region ---
 
@@ -2146,9 +2204,6 @@ fn render_watchlist_items(
             input_coordinator.register(swatch_id.as_str(), swatch_rect, uzor::input::Sense::CLICK);
         }
     }
-
-    // Add bottom padding so the last row is fully visible when scrolled to the end.
-    current_y += data_row_h;
 
     current_y - content_y
 }
@@ -7350,6 +7405,14 @@ fn word_wrap_text(ctx: &dyn RenderContext, text: &str, max_w: f64) -> Vec<String
 ///
 /// Widget IDs use the form `"slot:{idx}:{suffix}"` or `"slot:{idx}:leaf:{leaf_id}:{suffix}"`.
 /// This function matches only the suffix part so callers can strip the dynamic prefix.
+/// Tooltip for watchlist chrome (compact Type column header).
+pub fn find_watchlist_tooltip(widget_id: &str) -> Option<&'static str> {
+    match widget_id {
+        "watchlist_col_type" => Some("Type"),
+        _ => None,
+    }
+}
+
 pub fn find_free_slot_tooltip(widget_id: &str) -> Option<&'static str> {
     // Strip the leading "slot:{N}:" prefix before matching the stable suffix.
     let rest = widget_id.strip_prefix("slot:")?;

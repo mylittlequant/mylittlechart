@@ -1367,7 +1367,7 @@ impl DataBridge {
         target_interval: &str,
         target_ms: i64,
     ) -> Option<crate::kline_agg::KlineAggregation> {
-        let caps = self.hub.kline_interval_capabilities(exchange_id)?;
+        let caps = self.station.hub().kline_interval_capabilities(exchange_id)?;
         if caps.supports(target_interval, account_type) {
             return None;
         }
@@ -1418,7 +1418,14 @@ impl DataBridge {
     /// for every open window the moment the connector lands, so a deferred
     /// request is re-driven, never lost.
     pub fn kline_caps_known(&self, exchange_id: ExchangeId) -> bool {
-        self.hub.kline_interval_capabilities(exchange_id).is_some()
+        // Caps live on the connector. Warm-up and Phase A dial
+        // `station.hub()`, not `self.hub` — reading the raw hub here
+        // deferred BitMEX (and any venue only present on the station)
+        // forever: ticker REST (station hub) worked, klines never fired.
+        self.station
+            .hub()
+            .kline_interval_capabilities(exchange_id)
+            .is_some()
     }
 
     pub fn is_kline_trade_built(
@@ -1427,7 +1434,7 @@ impl DataBridge {
         account_type: AccountType,
         target_ms: i64,
     ) -> bool {
-        let Some(caps) = self.hub.kline_interval_capabilities(exchange_id) else {
+        let Some(caps) = self.station.hub().kline_interval_capabilities(exchange_id) else {
             return false;
         };
         let native: Vec<(&str, i64)> = caps
@@ -1850,20 +1857,12 @@ impl DataBridge {
             return;
         }
 
-        // TF-ROUTING determinism (2026-07-17): never dial while interval
-        // capabilities are unresolved — the trade-built classification and
-        // the aggregation plan below would both fail open and the dial
-        // would go out RAW (venue fallback → coarse bars mislabeled with
-        // this TF's name, poisoning the station series + kline layer). The
-        // `ConnectorReady` sweep re-issues this request once caps resolve
-        // — see `kline_caps_known`'s doc comment.
-        if !self.kline_caps_known(exchange_id) {
-            crate::dlog!(
-                "[request_bars] caps unknown, defer until ConnectorReady exchange={} sym={} tf={}",
-                exchange_id.as_str(), symbol, timeframe.name,
-            );
-            return;
-        }
+        // Caps-unknown used to `return` here and wait for ConnectorReady.
+        // That drop is terminal when Ready already fired (BitMEX ticker
+        // live, user clicks the row later): no second Ready, no REST
+        // `/trade/bucketed`, empty chart, WS still ticks. The async wait
+        // loop below already sits on `hub.rest()` — once that is Some,
+        // caps exist. Trade-built is re-checked there.
 
         // TRADE-BUILT klines fix (2026-07-16): a target TF with no native
         // divisor (e.g. Bybit 15s — smallest native kline is 1m) must NOT
@@ -2241,6 +2240,22 @@ impl DataBridge {
                     }
                     attempts += 1;
                     sleep_ms(100).await;
+                }
+            }
+
+            if let Some(caps) = fetch_hub.kline_interval_capabilities(exchange_id) {
+                let native: Vec<(&str, i64)> = caps
+                    .intervals_for(account_type)
+                    .iter()
+                    .filter_map(|&label| crate::convert::interval_to_ms(label).map(|ms| (label, ms)))
+                    .collect();
+                if crate::kline_agg::is_trade_built(target_interval_ms, &native) {
+                    crate::dlog!(
+                        "[Bridge] Phase A skip trade-built {:?} {} tf={}",
+                        exchange_id, symbol_str, tf_name
+                    );
+                    finish_fetch!();
+                    return;
                 }
             }
 
@@ -3865,13 +3880,12 @@ impl DataBridge {
             let mut subs = self.station_ticker_subscribed
                 .lock()
                 .unwrap_or_else(|e| e.into_inner());
-            if !subs.insert(ticker_key.clone()) {
+            if !subs.insert(ticker_key) {
                 return;
             }
         }
         let station = self.station.clone();
         let tx = self.tx.clone();
-        let subs_set = self.station_ticker_subscribed.clone();
         // Canonical form — emitted back in MiniTickerUpdate.symbol AND passed
         // to dig3 station via `.add()` (the normalizer-translated path).
         // Pre-2026-06-24 we did `wire_symbol(...) → .add_raw(...)`, but
@@ -3886,7 +3900,6 @@ impl DataBridge {
         // path below; the real subscription uses canonical now.
         let symbol_canonical = symbol.to_string();
         let symbol_wire = self.wire_symbol(exchange_id, account_type, symbol);
-        let key_for_cleanup = ticker_key;
         let canonical_for_sub = symbol_canonical.clone();
         self.spawn_bg(async move {
             let sub_set = digdigdig3_station::SubscriptionSet::new().add(
@@ -3900,9 +3913,8 @@ impl DataBridge {
                 Err(e) => {
                     crate::dlog!("[Bridge] station ticker subscribe failed {:?} sym={}: {:?}",
                         exchange_id, symbol_wire, e);
-                    if let Ok(mut s) = subs_set.lock() {
-                        s.remove(&key_for_cleanup);
-                    }
+                    // Keep the gate: REST ticker poll owns "still subscribed?"
+                    // (KuCoin/Upbit WS Origin reject must not kill REST).
                     return;
                 }
             };
@@ -3927,12 +3939,90 @@ impl DataBridge {
                     });
                 }
             }
-            // Forwarder handle dropped. Remove gate so a future subscribe_mini_ticker can re-spawn.
-            if let Ok(mut s) = subs_set.lock() {
-                s.remove(&key_for_cleanup);
-            }
-            crate::dlog!("[Bridge] station ticker forwarder exited {:?} sym={}, gate removed",
+            crate::dlog!("[Bridge] station ticker forwarder exited {:?} sym={}",
                 exchange_id, symbol_wire);
+        });
+
+        // REST get_ticker poll — same hub/proxy as klines. Fills Last when
+        // the browser WS Origin is rejected (KuCoin/Upbit) or WS never lands.
+        let hub_rest = self.station.hub();
+        let tx_rest = self.tx.clone();
+        let subs_rest = self.station_ticker_subscribed.clone();
+        let symbol_canonical_rest = symbol.to_string();
+        let symbol_wire_rest = self.wire_symbol(exchange_id, account_type, symbol);
+        let key_rest = (exchange_id, symbol.to_string(), account_type);
+        self.spawn_bg(async move {
+            let mut emitted_err = false;
+            let mut none_streak: u8 = 0;
+            loop {
+                let still = {
+                    let s = subs_rest.lock().unwrap_or_else(|e| e.into_inner());
+                    s.contains(&key_rest)
+                };
+                if !still {
+                    break;
+                }
+                if let Some(rest) = hub_rest.rest(exchange_id) {
+                    none_streak = 0;
+                    // Watchlist symbols are already venue-native (KRW-XRP,
+                    // XRP-USDT, XBTUSD). Boot-time wire_symbol with an empty
+                    // catalogue parses KRW-XRP as base/quote and Upbit's
+                    // reversed normalizer emits XRP-KRW — empty ticker, Last=0.
+                    let ticker_sym = if !symbol_canonical_rest.is_empty() {
+                        symbol_canonical_rest.as_str()
+                    } else {
+                        symbol_wire_rest.as_str()
+                    };
+                    match rest
+                        .get_ticker(
+                            digdigdig3::core::types::SymbolInput::Raw(ticker_sym),
+                            account_type,
+                        )
+                        .await
+                    {
+                        Ok(t) if t.last_price > 0.0 => {
+                            let _ = tx_rest.send(LiveUpdate::MiniTickerUpdate {
+                                exchange_id,
+                                account_type,
+                                symbol: symbol_canonical_rest.clone(),
+                                last_price: t.last_price,
+                                price_change_percent: t.price_change_percent_24h,
+                                high_price: t.high_24h,
+                                low_price: t.low_24h,
+                                volume: t.volume_24h,
+                            });
+                        }
+                        Err(e) => {
+                            if !emitted_err {
+                                emitted_err = true;
+                                let _ = tx_rest.send(LiveUpdate::Error {
+                                    exchange_id,
+                                    account_type,
+                                    symbol: symbol_canonical_rest.clone(),
+                                    timeframe: String::new(),
+                                    message: e.to_string(),
+                                });
+                            }
+                            sleep_ms(15000).await;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                } else {
+                    none_streak = none_streak.saturating_add(1);
+                    if !emitted_err && none_streak >= 2 {
+                        emitted_err = true;
+                        let _ = tx_rest.send(LiveUpdate::Error {
+                            exchange_id,
+                            account_type,
+                            symbol: symbol_canonical_rest.clone(),
+                            timeframe: String::new(),
+                            message: "403 geoblock".into(),
+                        });
+                    }
+                }
+                sleep_ms(3000).await;
+            }
         });
     }
 
@@ -4479,10 +4569,13 @@ impl DataBridge {
 
     /// Unsubscribe a single mini-ticker symbol (when symbol removed from watchlist).
     ///
-    /// Sends a `RemoveSymbol` command to the ticker actor; the actor applies a
-    /// 30-second grace period before actually unsubscribing from the exchange.
-    pub fn unsubscribe_mini_ticker(&self, _exchange_id: ExchangeId, _symbol: &str, _account_type: AccountType) {
-        // Station manages ticker subscription lifecycle via grace windows.
+    /// Drops the subscription gate so the REST ticker poll loop exits.
+    pub fn unsubscribe_mini_ticker(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        let key = (exchange_id, symbol.to_string(), account_type);
+        let mut subs = self.station_ticker_subscribed
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        subs.remove(&key);
     }
 
     /// Stop all WebSocket subscriptions for a specific exchange.
@@ -4618,7 +4711,10 @@ impl DataBridge {
         let mut any_at_count = 0usize;
         let mut any_at_first: Option<String> = None;
         self.station.for_each_symbol(exchange_id, |s| {
-            if s.symbol == requested {
+            // Exact name is not enough: HTX lists spot `ETHUSDT` and
+            // futures `ETH-USDT`. A name-only hit would passthrough the
+            // seed `ETHUSDT` into futures klines (`invalid symbol`).
+            if s.symbol == requested && s.account_type == account_type {
                 exact = true;
             }
             // A dated/delivery contract shares base+quote with the perp —
@@ -4769,7 +4865,10 @@ pub(crate) fn try_resolve_wire_symbol(
     let mut any_at_first: Option<String> = None;
     station.for_each_symbol(exchange_id, |s| {
         catalogue_empty = false;
-        if s.symbol == requested {
+        // Same AT filter as `wire_symbol`: HTX lists spot `ETHUSDT` and
+        // futures `ETH-USDT`. A name-only hit would freeze the futures
+        // kline fetch on concat `ETHUSDT` (`invalid symbol`).
+        if s.symbol == requested && s.account_type == account_type {
             exact = true;
         }
         // Dated/delivery contracts are never a valid answer for an

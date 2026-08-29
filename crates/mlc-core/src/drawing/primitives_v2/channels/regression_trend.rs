@@ -534,6 +534,10 @@ impl Primitive for RegressionTrend {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+    fn extend_mode_raw(&self) -> u8 {
+        super::super::extend_mode_lr(self.extend_left, self.extend_right)
+    }
+    fn unbounded_in_price(&self) -> bool { self.extend_left || self.extend_right }
 
     /// Recompute [`Self::cached_fit`] from `bars` through the SAME
     /// [`Self::fit`] `render`/`hit_test` call — see

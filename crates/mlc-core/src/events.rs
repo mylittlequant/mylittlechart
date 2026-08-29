@@ -200,6 +200,11 @@ pub enum ChartOutEvent {
     /// `handle_dropdown_select_with_chart`'s drawing-tool arm selects.
     /// Mutates `ProfileUiSettings::favorite_primitives`.
     ToggleFavoritePrimitive { tool_id: String },
+    /// Move one favorite drawing tool within `favorite_primitives` from
+    /// `from_index` to `to_index` — drag-to-reorder on the favorites
+    /// quick-pick bar. Indices are positions in the flat favorites vec
+    /// (the same order the bar renders). Does NOT add or remove entries.
+    ReorderFavoritePrimitive { from_index: usize, to_index: usize },
     /// Flip favorite membership for an indicator (indicator-search-favorites
     /// arc) — emitted by the trailing star on indicator-search result rows
     /// (`"modal_search:indstar:{type_id}"` zones). `type_id` is the indicator
@@ -274,6 +279,8 @@ pub enum ChartOutEvent {
     ToggleWatermark,
     /// Set watermark text.
     SetWatermarkText(&'static str),
+    /// Focus the settings-submenu watermark text field.
+    FocusWatermarkText,
     /// Set watermark position ("center", "bottom_left", "bottom_right").
     SetWatermarkPosition(&'static str),
 

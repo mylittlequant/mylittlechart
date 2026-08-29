@@ -353,6 +353,7 @@ impl ChartPanelApp {
         let rt = self.theme_manager.current();
         FrameTheme {
             toolbar_bg:           rt.colors.toolbar_bg.clone(),
+            modal_bg:             rt.modal_bg_styled(),
             toolbar_border:       rt.colors.ui_border.clone(),
             chart_border:         rt.chart.chart_border.clone(),
             frame_border:         rt.chart.frame_border.clone(),
@@ -367,7 +368,7 @@ impl ChartPanelApp {
     pub fn dropdown_theme_for_render(&self) -> mlc_app_layout::ui::dropdown::DropdownTheme {
         let rt = self.theme_manager.current();
         mlc_app_layout::ui::dropdown::DropdownTheme {
-            background:            rt.colors.dropdown_bg.clone(),
+            background:            rt.menu_bg_styled(),
             border:                rt.colors.border.clone(),
             shadow:                "rgba(0,0,0,0.5)".to_string(),
             item_text:             rt.colors.text_primary.clone(),
@@ -391,10 +392,10 @@ impl ChartPanelApp {
         let rt = self.theme_manager.current();
         mlc_app_layout::ui::toolbar_theme::ToolbarTheme {
             background: rt.colors.toolbar_bg.clone(),
-            dropdown_bg: rt.colors.dropdown_bg.clone(),
+            dropdown_bg: rt.menu_bg_styled(),
             separator: rt.colors.toolbar_divider.clone(),
-            item_bg_hover: rt.colors.button_bg_hover.clone(),
-            item_bg_active: rt.colors.button_bg_active.clone(),
+            item_bg_hover: rt.hover_bg_styled(),
+            item_bg_active: rt.active_bg_styled(),
             button_bg:       rt.colors.button_bg.clone(),
             button_bg_hover: rt.colors.button_bg_hover.clone(),
             item_text: rt.colors.text_primary.clone(),

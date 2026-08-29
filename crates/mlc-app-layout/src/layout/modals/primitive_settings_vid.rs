@@ -803,8 +803,10 @@ pub fn draw_group_header(
     // is the modal's own background colour, same as the Placement tab's
     // group headers — the two must agree.
     let rect = WidgetRect::new(x0, y, (x1 - x0).max(0.0), GROUP_HEADER_H);
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rect(rect.x, rect.y, rect.width, rect.height);
+    if !crate::ui::overlay_fill::color_is_translucent(&toolbar_theme.dropdown_bg) {
+        ctx.set_fill_color(&toolbar_theme.background);
+        ctx.fill_rect(rect.x, rect.y, rect.width, rect.height);
+    }
     ctx.set_font("10.5px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Center);
@@ -859,8 +861,10 @@ pub fn draw_bool_row(
 ) {
     draw_label(ctx, toolbar_theme, x0, label_col, y, label);
     let rect = WidgetRect::new(x0 + label_col, y + (ROW_H - 16.0) / 2.0, 16.0, 16.0);
-    ctx.set_fill_color(if checked { &toolbar_theme.item_bg_active } else { &toolbar_theme.background });
-    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);
+    crate::ui::overlay_fill::fill_checkbox(
+        ctx, checked, &toolbar_theme.item_bg_active, &toolbar_theme.dropdown_bg, &toolbar_theme.background,
+        rect.x, rect.y, rect.width, rect.height, 3.0,
+    );
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);
@@ -877,8 +881,10 @@ pub fn draw_bool_row(
 }
 
 pub fn draw_toggle_segment(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, rect: WidgetRect, label: &str, on: bool) {
-    ctx.set_fill_color(if on { &toolbar_theme.item_bg_active } else { &toolbar_theme.background });
-    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+    crate::ui::overlay_fill::fill_checkbox(
+        ctx, on, &toolbar_theme.item_bg_active, &toolbar_theme.dropdown_bg, &toolbar_theme.background,
+        rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS,
+    );
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
@@ -951,8 +957,13 @@ pub fn draw_split_value_control(
 ) {
     const CHEVRON_W: f64 = 22.0;
 
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+    crate::ui::overlay_fill::fill_modal_control(
+        ctx,
+        &toolbar_theme.dropdown_bg,
+        &toolbar_theme.background,
+        rect.x, rect.y, rect.width, rect.height,
+        SETTINGS_BUTTON_RADIUS,
+    );
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);

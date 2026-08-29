@@ -149,6 +149,7 @@ pub trait DrawingRenderView {
     fn drawing_tool_id(&self) -> Option<String>;
     fn effective_color(&self) -> String;
     fn create_preview(&self, cursor_ts_ms: i64, cursor_price: f64) -> Option<Box<dyn primitives_v2::Primitive>>;
+    fn shift_constrain(&self) -> bool { false }
     /// Bubble this view renders, when the implementation is bubble-scoped
     /// (the app's `BubbleDrawingView` is). The user-text label registry in
     /// `engine::render::context` tags recorded label rects with it so a
@@ -176,6 +177,7 @@ pub use primitives_v2::{
     ControlPoint, ControlPointType, ControlPointCursor,
     // Styling
     PrimitiveColor, LineStyle, PrimitiveText, TextAlign, ExtendMode,
+    snap_drawing_data, snap_drawing_screen,
     // Sync mode
     SyncMode,
     // Geometry helpers

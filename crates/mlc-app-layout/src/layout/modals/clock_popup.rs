@@ -71,8 +71,15 @@ pub fn render_clock_popup(
     // -------------------------------------------------------------------------
     // Background + border
     // -------------------------------------------------------------------------
-    ctx.set_fill_color(&frame_theme.toolbar_bg);
-    ctx.fill_rounded_rect(popup_x, popup_y, POPUP_WIDTH, POPUP_HEIGHT, 4.0);
+    crate::ui::overlay_fill::fill_overlay_rounded(
+        ctx,
+        &frame_theme.modal_bg,
+        popup_x,
+        popup_y,
+        POPUP_WIDTH,
+        POPUP_HEIGHT,
+        4.0,
+    );
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(popup_x, popup_y, POPUP_WIDTH, POPUP_HEIGHT, 4.0);
@@ -169,12 +176,10 @@ pub fn render_clock_popup(
     let cb_top = cb_cy - CHECKBOX_SIZE / 2.0;
 
     // Checkbox square
-    if use_24h {
-        ctx.set_fill_color(toolbar_theme.accent.as_str());
-    } else {
-        ctx.set_fill_color(&frame_theme.toolbar_bg);
-    }
-    ctx.fill_rounded_rect(cb_x, cb_top, CHECKBOX_SIZE, CHECKBOX_SIZE, 3.0);
+    crate::ui::overlay_fill::fill_checkbox(
+        ctx, use_24h, &toolbar_theme.item_bg_active, &toolbar_theme.dropdown_bg, &frame_theme.modal_bg,
+        cb_x, cb_top, CHECKBOX_SIZE, CHECKBOX_SIZE, 3.0,
+    );
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(cb_x, cb_top, CHECKBOX_SIZE, CHECKBOX_SIZE, 3.0);
@@ -216,12 +221,10 @@ pub fn render_clock_popup(
     let cb2_top = cb2_cy - CHECKBOX_SIZE / 2.0;
 
     // Checkbox square
-    if show_utc {
-        ctx.set_fill_color(toolbar_theme.accent.as_str());
-    } else {
-        ctx.set_fill_color(&frame_theme.toolbar_bg);
-    }
-    ctx.fill_rounded_rect(cb_x, cb2_top, CHECKBOX_SIZE, CHECKBOX_SIZE, 3.0);
+    crate::ui::overlay_fill::fill_checkbox(
+        ctx, show_utc, &toolbar_theme.item_bg_active, &toolbar_theme.dropdown_bg, &frame_theme.modal_bg,
+        cb_x, cb2_top, CHECKBOX_SIZE, CHECKBOX_SIZE, 3.0,
+    );
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(cb_x, cb2_top, CHECKBOX_SIZE, CHECKBOX_SIZE, 3.0);

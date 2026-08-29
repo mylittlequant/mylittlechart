@@ -242,6 +242,7 @@ impl ChartApp {
             AGENT_PTY                        => self.text_action_agent_pty(action),
             ALERT_TG_TOKEN                   => self.text_action_alert_token(ch, action),
             BAR_MODE_PARAM                   => self.text_action_bar_mode_param(action),
+            WATERMARK_TEXT                   => self.text_action_watermark_text(action),
             TF_FAVORITE_INPUT                => self.text_action_tf_favorite_input(action),
             PARAM_FAVORITE_INPUT             => self.text_action_param_favorite_input(action),
             SYMBOL_QUICK_SEARCH              => self.text_action_symbol_quick_search(action),
@@ -786,6 +787,38 @@ impl ChartApp {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             _ => {}
+        }
+    }
+
+    fn apply_watermark_text(&mut self, text: &str) {
+        let all_pids: Vec<_> = self.panel_app.panel_grid.containers().values().map(|w| w.chart_panel_id).collect();
+        for pid in all_pids {
+            let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
+            match &mut panel.watermark {
+                Some(wm) => wm.set_text(text.to_string()),
+                None => {
+                    let mut wm = mlc_core::Watermark::default();
+                    wm.set_text(text.to_string());
+                    panel.watermark = Some(wm);
+                }
+            }
+        }
+    }
+
+    fn text_action_watermark_text(&mut self, action: TextAction) {
+        match action {
+            TextAction::Commit(text) => {
+                self.apply_watermark_text(&text);
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                self.autosave_snapshot();
+            }
+            TextAction::TextChanged(text) => {
+                self.apply_watermark_text(&text);
+            }
+            TextAction::Cancel => {
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            }
+            TextAction::None | TextAction::RawInput(_) => {}
         }
     }
 

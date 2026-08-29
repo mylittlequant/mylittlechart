@@ -69,7 +69,7 @@ pub enum UIStyle {
     /// Opaque backgrounds - current default behavior
     #[default]
     Solid,
-    /// Semi-transparent backgrounds (opacity ~0.75-0.9)
+    /// Semi-transparent overlay chrome (modals / menus ~0.4 so the chart reads through)
     Glass,
     /// Frosted glass with flat blur buttons
     FrostedGlassFlat,
@@ -89,18 +89,15 @@ impl UIStyle {
     pub fn description(&self) -> &'static str {
         match self {
             Self::Solid => "Opaque backgrounds (default)",
-            Self::Glass => "Semi-transparent backgrounds",
+            Self::Glass => "Translucent overlay chrome (chart shows through)",
             Self::FrostedGlassFlat => "Blur effect with flat buttons",
         }
     }
 
-    /// All available styles
+    /// Styles the picker offers. Frosted is kept as a serde/name alias of
+    /// Glass — overlay blur on Glass replaced it on both shells.
     pub fn all() -> &'static [UIStyle] {
-        &[
-            Self::Solid,
-            Self::Glass,
-            Self::FrostedGlassFlat,
-        ]
+        &[Self::Solid, Self::Glass]
     }
 
     /// Get style from index
@@ -120,12 +117,19 @@ impl UIStyle {
     /// their closest supported equivalent so toolbar events never silently fail.
     pub fn from_name(name: &str) -> Option<Self> {
         match name {
-            "solid"                                   => Some(Self::Solid),
-            "glass"                                   => Some(Self::Glass),
-            "frosted_glass_flat" | "frosted_glass_3d" => Some(Self::FrostedGlassFlat),
-            // Liquid Glass variants not yet implemented — map to FrostedGlassFlat
-            "liquid_glass_flat" | "liquid_glass_3d"  => Some(Self::FrostedGlassFlat),
+            "solid" => Some(Self::Solid),
+            "glass" => Some(Self::Glass),
+            "frosted_glass_flat" | "frosted_glass_3d"
+            | "liquid_glass_flat" | "liquid_glass_3d" => Some(Self::Glass),
             _ => None,
+        }
+    }
+
+    pub fn as_name(&self) -> &'static str {
+        match self {
+            Self::Solid => "solid",
+            Self::Glass => "glass",
+            Self::FrostedGlassFlat => "frosted_glass_flat",
         }
     }
 
@@ -273,17 +277,19 @@ impl StyleParams {
         }
     }
 
-    /// Glass style - semi-transparent backgrounds
+    /// Glass style — overlay chrome is actually translucent.
+    ///
+    /// Overlay fills: modal 0.65, menus 0.60. Toolbars / sidebar stay opaque.
     pub fn glass() -> Self {
         Self {
             toolbar_bg_opacity: 0.85,
-            modal_bg_opacity: 0.9,
+            modal_bg_opacity: 0.65,
             sidebar_bg_opacity: 0.88,
-            menu_bg_opacity: 0.92,
+            menu_bg_opacity: 0.60,
             scale_bg_opacity: 0.85,
             sub_pane_bg_opacity: 0.85,
-            hover_bg_opacity: 0.7,
-            active_bg_opacity: 0.8,
+            hover_bg_opacity: 0.60,
+            active_bg_opacity: 0.60,
             crosshair_label_bg_opacity: 0.5,
             blur_radius: 0.0, // No blur in simple glass
             border_opacity: 0.6,

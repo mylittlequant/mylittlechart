@@ -2245,6 +2245,16 @@ impl ConfigProperty {
         Self::boolean("extend_right", ConfigKey::ExtendRight.get(current_language()), value)
     }
 
+    /// Create "Extend Up" boolean property with i18n (Date Range verticals).
+    pub fn extend_up(value: bool) -> Self {
+        Self::boolean("extend_up", ConfigKey::ExtendUp.get(current_language()), value)
+    }
+
+    /// Create "Extend Down" boolean property with i18n (Date Range verticals).
+    pub fn extend_down(value: bool) -> Self {
+        Self::boolean("extend_down", ConfigKey::ExtendDown.get(current_language()), value)
+    }
+
     /// Create "Show Trend Line" boolean property with i18n
     pub fn show_trend_line(value: bool) -> Self {
         Self::boolean("show_trend_line", ConfigKey::TrendLine.get(current_language()), value)

@@ -13,7 +13,7 @@ use super::super::{
     PrimitiveColor, LineStyle, TextAlign,
     HIT_TOLERANCE, point_to_line_distance, control_point_style,
     RenderContext, crisp,
-    render_primitive_text, draw_label_plate,
+    render_primitive_text, draw_level_label_plate,
     config::{FibLevelConfig, LabelStyle, LevelSetPreset},
     BAND_FILL_OPACITY, default_band_fill_opacity,
 };
@@ -701,7 +701,7 @@ impl Primitive for FibRetracement {
                     "center" => (left_x + right_x) / 2.0,
                     _ => left_x + ctx.measure_text(lbl) / 2.0 + 4.0, // "left"
                 };
-                draw_label_plate(ctx, label_x, y, lbl, self.label_style.font_size, &self.label_style, label_color);
+                draw_level_label_plate(ctx, label_x, y, lbl, self.label_style.font_size, &self.label_style, label_color, cfg.level);
             }
         }
         ctx.set_line_dash(&[]);
@@ -967,6 +967,9 @@ impl Primitive for FibRetracement {
 
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
+    }
+    fn extend_mode_raw(&self) -> u8 {
+        super::super::extend_mode_lr(self.extend_left, self.extend_right)
     }
 }
 

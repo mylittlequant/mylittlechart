@@ -129,11 +129,16 @@ pub fn tabs_right_limit(width: f64, flavor: ChromeFlavor) -> f64 {
 }
 
 /// Compress `state.tab_widths` so the whole strip fits left of the
-/// right-side controls: the "+" button must always stay visible, so tabs
-/// give up width proportionally down to MIN_TAB_WIDTH. Past the floor the
-/// strip stays wider than the window and scrolls instead (see
+/// right-side controls: the "+" button must always stay visible. Past the
+/// floor the strip stays wider than the window and scrolls instead (see
 /// `scroll_tab_strip`) — tabs never shrink below the floor and never slide
 /// under the buttons.
+///
+/// When everything fits, each tab keeps its natural (text-measured) width.
+/// On overflow they equalize — equal share of `available`, floored at
+/// `MIN_TAB_WIDTH` — so a long rename cannot leave its neighbors permanently
+/// squeezed. While a tab is being renamed live it keeps its natural width
+/// (so the typed name stays fully visible) and the rest share what is left.
 pub fn fit_tab_widths(state: &mut ChromeState, width: f64) {
     let n = state.tab_widths.len();
     if n == 0 {
@@ -150,9 +155,29 @@ pub fn fit_tab_widths(state: &mut ChromeState, width: f64) {
     if natural <= available {
         return;
     }
-    let scale = available / natural;
+    if let Some(ri) = state.renaming_tab {
+        if ri < n {
+            let live = state.tab_widths[ri].max(MIN_TAB_WIDTH);
+            let rest_n = n - 1;
+            if rest_n == 0 {
+                state.tab_widths[ri] = live;
+                return;
+            }
+            let rest_avail = (available - live).max(0.0);
+            let each = (rest_avail / rest_n as f64).max(MIN_TAB_WIDTH);
+            for (i, w) in state.tab_widths.iter_mut().enumerate() {
+                if i == ri {
+                    *w = live;
+                } else {
+                    *w = each;
+                }
+            }
+            return;
+        }
+    }
+    let each = (available / n as f64).max(MIN_TAB_WIDTH);
     for w in state.tab_widths.iter_mut() {
-        *w = (*w * scale).max(MIN_TAB_WIDTH);
+        *w = each;
     }
 }
 
@@ -496,4 +521,53 @@ pub fn tab_names(state: &ChromeState) -> impl Iterator<Item = &str> {
 /// Compute the raw tab width from a measured text width (mirrors vello chrome logic).
 pub fn tab_width_from_text(text_w: f64) -> f64 {
     TAB_PADDING_H + text_w + TAB_CLOSE_SIZE + TAB_PADDING_H
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chrome::types::{ChromeFlavor, ChromeState};
+
+    fn overflow_state(widths: Vec<f64>, renaming: Option<usize>) -> (ChromeState, f64) {
+        let mut state = ChromeState::new("t");
+        state.flavor = ChromeFlavor::Native;
+        state.tab_widths = widths;
+        state.renaming_tab = renaming;
+        // Wide enough that MIN_TAB_WIDTH * n still fits, but the natural
+        // sum does not — equalize (not the floor) is the interesting path.
+        (state, 1200.0)
+    }
+
+    #[test]
+    fn fit_keeps_natural_when_everything_fits() {
+        let (mut state, width) = overflow_state(vec![80.0, 90.0, 100.0], None);
+        fit_tab_widths(&mut state, width);
+        assert_eq!(state.tab_widths, vec![80.0, 90.0, 100.0]);
+    }
+
+    #[test]
+    fn fit_equalizes_on_overflow_after_rename() {
+        let (mut state, width) = overflow_state(vec![300.0, 300.0, 300.0, 500.0], None);
+        let before: f64 = state.tab_widths.iter().sum();
+        fit_tab_widths(&mut state, width);
+        let after: f64 = state.tab_widths.iter().sum();
+        assert!(after < before, "overflow must shrink the strip");
+        let first = state.tab_widths[0];
+        for w in &state.tab_widths {
+            assert!((w - first).abs() < 0.001, "overflow equalizes, got {:?}", state.tab_widths);
+            assert!(*w >= MIN_TAB_WIDTH);
+        }
+    }
+
+    #[test]
+    fn fit_keeps_live_rename_natural_and_equalizes_neighbors() {
+        let (mut state, width) = overflow_state(vec![300.0, 300.0, 300.0, 500.0], Some(3));
+        fit_tab_widths(&mut state, width);
+        assert!((state.tab_widths[3] - 500.0).abs() < 0.001, "live tab keeps natural");
+        let rest = &state.tab_widths[..3];
+        assert!((rest[0] - rest[1]).abs() < 0.001);
+        assert!((rest[1] - rest[2]).abs() < 0.001);
+        assert!(rest[0] >= MIN_TAB_WIDTH);
+        assert!(rest[0] < 300.0, "neighbors give up width so the live tab can stay natural");
+    }
 }

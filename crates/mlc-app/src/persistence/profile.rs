@@ -60,6 +60,7 @@ impl ChartApp {
                 active_preset_id: self.panel_app.active_preset_id.clone(),
                 open_tabs: self.panel_app.open_tabs.clone(),
                 active_theme: self.panel_app.theme_manager.preset_name().to_string(),
+                active_ui_style: self.panel_app.theme_manager.current().style.as_name().to_string(),
                 sidebar_visible: self.sidebar_state.is_right_open(),
                 sidebar_panel: Self::panel_to_str(self.sidebar_state.right_panel),
                 sidebar_width: Some(self.sidebar_state.right_sidebar_width),
@@ -137,6 +138,26 @@ impl ChartApp {
                 // 2026-08-25): same preserve-live-value pattern as
                 // `smc_engine` above — no edit UI exists yet.
                 orderflow_engine: existing.ui.orderflow_engine.clone(),
+                persist_toolbar_last_tools: existing.ui.persist_toolbar_last_tools,
+                toolbar_last_tools: if existing.ui.persist_toolbar_last_tools {
+                    self.panel_app.toolbar_state.quick_select_memory
+                        .iter()
+                        .map(|(k, (t, _))| (k.clone(), t.clone()))
+                        .collect()
+                } else {
+                    existing.ui.toolbar_last_tools.clone()
+                },
+                persist_toolbar_toggles: existing.ui.persist_toolbar_toggles,
+                drawings_locked: if existing.ui.persist_toolbar_toggles {
+                    self.panel_app.toolbar_state.drawings_locked
+                } else {
+                    existing.ui.drawings_locked
+                },
+                drawings_visible: if existing.ui.persist_toolbar_toggles {
+                    self.panel_app.toolbar_state.drawings_visible
+                } else {
+                    existing.ui.drawings_visible
+                },
             },
         }
     }
@@ -573,9 +594,7 @@ impl ChartApp {
         // every wasm boot even after a watchlist had been saved.
         let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
         match mlc_core::load_json::<mlc_backend::watchlist::WatchlistManager>(&watchlists_path, None) {
-            Ok(manager) => {
-                self.core.watchlists_mut().replace_all(manager);
-            }
+            Ok(manager) => self.adopt_loaded_watchlists(manager),
             Err(e) => {
                 eprintln!("[UserProfile] no saved watchlists ({}) — keeping defaults", e);
             }
@@ -592,12 +611,18 @@ impl ChartApp {
         // `load_json` already treats a missing key as `Err` and is handled below.
         let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
         match mlc_core::load_json::<mlc_backend::watchlist::WatchlistManager>(&watchlists_path, None) {
-            Ok(manager) => {
-                self.core.watchlists_mut().replace_all(manager);
-            }
+            Ok(manager) => self.adopt_loaded_watchlists(manager),
             Err(e) => {
                 eprintln!("[UserProfile] no saved watchlists ({}) — keeping defaults", e);
             }
+        }
+    }
+
+    fn adopt_loaded_watchlists(&mut self, manager: mlc_backend::watchlist::WatchlistManager) {
+        self.core.watchlists_mut().replace_all(manager);
+        if self.core.watchlists_mut().apply_seed_migration() {
+            eprintln!("[UserProfile] watchlist seed migration — missing venues appended");
+            self.persist_watchlists();
         }
     }
 }

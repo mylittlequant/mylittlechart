@@ -20,6 +20,7 @@ use uzor::render::{
     UiEffectHelpers,
 };
 use uzor_render_canvas2d::Canvas2dRenderContext;
+use wasm_bindgen::JsCast;
 use web_sys::CanvasRenderingContext2d;
 
 // ─── Coordinate-space parameters ──────────────────────────────────────────────
@@ -180,7 +181,57 @@ impl GradientPainter for Canvas2dChartRenderContext {
     }
 }
 
-impl UiEffectHelpers for Canvas2dChartRenderContext {}
+impl UiEffectHelpers for Canvas2dChartRenderContext {
+    /// Overlay-only: snapshot the chart already painted under this rect and
+    /// blit it back with `filter: blur`. `draw_blur_background` stays a
+    /// no-op so pane/scale/toolbar callers do not soap the chart.
+    fn blur_overlay_backdrop(&mut self, x: f64, y: f64, width: f64, height: f64) {
+        const BLUR_PX: f64 = 6.0;
+        if width < 1.0 || height < 1.0 {
+            return;
+        }
+        let Some(ctx) = self.inner.canvas_context() else {
+            return;
+        };
+        let dpr = self.inner.dpr().max(1.0);
+        let pad = BLUR_PX * 2.0;
+        let sx = (x - pad).max(0.0);
+        let sy = (y - pad).max(0.0);
+        let sw = (width + pad * 2.0).max(1.0);
+        let sh = (height + pad * 2.0).max(1.0);
+        let phys_sx = sx * dpr;
+        let phys_sy = sy * dpr;
+        let phys_sw = sw * dpr;
+        let phys_sh = sh * dpr;
+        let ow = phys_sw.ceil().max(1.0) as u32;
+        let oh = phys_sh.ceil().max(1.0) as u32;
+        let Ok(tmp) = web_sys::OffscreenCanvas::new(ow, oh) else {
+            return;
+        };
+        let Ok(Some(raw)) = tmp.get_context("2d") else {
+            return;
+        };
+        let Ok(tctx) = raw.dyn_into::<web_sys::OffscreenCanvasRenderingContext2d>() else {
+            return;
+        };
+        let Some(canvas) = ctx.canvas() else {
+            return;
+        };
+        if tctx
+            .draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+                &canvas, phys_sx, phys_sy, phys_sw, phys_sh, 0.0, 0.0, phys_sw, phys_sh,
+            )
+            .is_err()
+        {
+            return;
+        }
+        ctx.save();
+        ctx.set_filter(&format!("blur({BLUR_PX}px)"));
+        let _ = ctx.draw_image_with_offscreen_canvas_and_dw_and_dh(&tmp, sx, sy, sw, sh);
+        ctx.set_filter("none");
+        ctx.restore();
+    }
+}
 
 impl BatchPainter for Canvas2dChartRenderContext {}
 

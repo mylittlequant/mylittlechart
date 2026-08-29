@@ -159,9 +159,9 @@ pub fn draw_popup(
     // Blur background (FrostedGlass/LiquidGlass)
     ctx.draw_blur_background(popup_rect.x, popup_rect.y, popup_rect.width, popup_rect.height);
 
-    // Draw background
-    ctx.set_fill_color(&theme.background);
-    ctx.fill_rounded_rect(
+    crate::ui::overlay_fill::fill_overlay_rounded(
+        ctx,
+        &theme.background,
         popup_rect.x,
         popup_rect.y,
         popup_rect.width,

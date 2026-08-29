@@ -441,8 +441,10 @@ fn draw_search_results(
 /// other body row.
 fn draw_search_tab_header(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, x0: f64, x1: f64, y: f64, label: &str) {
     use mlc_core::render::{TextAlign, TextBaseline};
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rect(x0, y, (x1 - x0).max(0.0), SEARCH_TAB_HEADER_H);
+    if !crate::ui::overlay_fill::color_is_translucent(&toolbar_theme.dropdown_bg) {
+        ctx.set_fill_color(&toolbar_theme.background);
+        ctx.fill_rect(x0, y, (x1 - x0).max(0.0), SEARCH_TAB_HEADER_H);
+    }
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(&toolbar_theme.accent);
     ctx.set_text_align(TextAlign::Left);
@@ -596,7 +598,7 @@ pub fn render_primitive_settings_modal(
     let max_content_height = (screen_h - 250.0).clamp(200.0, 460.0);
 
     let modal_theme = ModalTheme::from_toolbar(
-        &frame_theme.toolbar_bg,
+        &frame_theme.modal_bg,
         &toolbar_theme.separator,
         toolbar_theme,
     );
@@ -880,9 +882,9 @@ pub fn render_primitive_settings_modal(
             let dd_x = template_btn_x;
             let menu_y = button_y + button_height + 2.0;
 
-            // Menu background + border
-            ctx.set_fill_color(&toolbar_theme.dropdown_bg);
-            ctx.fill_rounded_rect(dd_x, menu_y, menu_w, total_h, SETTINGS_BUTTON_RADIUS);
+            crate::ui::overlay_fill::fill_overlay_rounded(
+                ctx, &toolbar_theme.dropdown_bg, dd_x, menu_y, menu_w, total_h, SETTINGS_BUTTON_RADIUS,
+            );
             ctx.set_stroke_color(&toolbar_theme.separator);
             ctx.set_stroke_width(1.0);
             ctx.stroke_rounded_rect(dd_x, menu_y, menu_w, total_h, SETTINGS_BUTTON_RADIUS);
@@ -1149,8 +1151,13 @@ pub fn render_primitive_settings_modal(
     if let Some(search_rect) = result.content_items.iter().find(|(id, _)| id == SEARCH_FIELD_ID).map(|(_, r)| *r) {
         use mlc_core::render::{TextAlign, TextBaseline};
         let is_editing = state.active_field_id.as_deref() == Some(SEARCH_FIELD_ID);
-        ctx.set_fill_color(&toolbar_theme.background);
-        ctx.fill_rounded_rect(search_rect.x, search_rect.y, search_rect.width, search_rect.height, SETTINGS_BUTTON_RADIUS);
+        crate::ui::overlay_fill::fill_modal_control(
+            ctx,
+            &toolbar_theme.dropdown_bg,
+            &toolbar_theme.background,
+            search_rect.x, search_rect.y, search_rect.width, search_rect.height,
+            SETTINGS_BUTTON_RADIUS,
+        );
         ctx.set_stroke_color(if is_editing { &toolbar_theme.accent } else { &toolbar_theme.separator });
         ctx.set_stroke_width(1.0);
         ctx.stroke_rounded_rect(search_rect.x, search_rect.y, search_rect.width, search_rect.height, SETTINGS_BUTTON_RADIUS);
@@ -1187,7 +1194,7 @@ pub fn render_primitive_color_picker_popup(
         ColorPickerLevel, PopupTheme,
     };
 
-    let popup_theme = PopupTheme::new(&toolbar_theme.background, &toolbar_theme.separator)
+    let popup_theme = PopupTheme::new(&toolbar_theme.dropdown_bg, &toolbar_theme.separator)
         .with_active(&toolbar_theme.item_bg_active);
     let origin = primitive_state.color_picker.origin;
     let level = primitive_state.color_picker.level;

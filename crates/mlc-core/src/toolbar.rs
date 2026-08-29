@@ -38,6 +38,32 @@ pub const FAVORITES_BAR_GRIP_ITEM_ID: &str = "__grip__";
 /// `FAVORITES_ADD_DROPDOWN_ID` flat all-drawing-tools picker next to the bar.
 pub const FAVORITES_BAR_ADD_ITEM_ID: &str = "__add__";
 
+/// True when `id` is a real favorite tool slot (not grip / empty / add / bg).
+pub fn is_favorites_bar_tool_id(id: &str) -> bool {
+    id != FAVORITES_BAR_EMPTY_ITEM_ID
+        && id != FAVORITES_BAR_GRIP_ITEM_ID
+        && id != FAVORITES_BAR_ADD_ITEM_ID
+        && id != "__bg__"
+}
+
+/// Insertion index for a favorites-bar tool dropped at cursor x: the count
+/// of tool slots whose midpoint lies left of x. Range 0..=len of tools.
+pub fn favorites_bar_drop_index<'a, I>(items: I, x: f64) -> usize
+where
+    I: IntoIterator<Item = (&'a str, f64, f64)>,
+{
+    let mut idx = 0;
+    for (id, left, width) in items {
+        if !is_favorites_bar_tool_id(id) {
+            continue;
+        }
+        if x > left + width / 2.0 {
+            idx += 1;
+        }
+    }
+    idx
+}
+
 /// Dropdown id of the favorites bar's "+" picker: a flat list of every
 /// drawing tool (icons + names) with `prim_star:` trailing stars for
 /// add/quick-remove. Built in `chart_toolbar_find_dropdown_items` from the
@@ -742,6 +768,7 @@ fn line_section() -> ToolbarSectionDef {
             DropdownItemDef::action("trend_angle", PN::TrendAngle.get(lang)).with_icon(ToolbarIconId::new("TrendAngle")),
             DropdownItemDef::action("horizontal_line", PN::HorizontalLine.get(lang)).with_icon(ToolbarIconId::new("HorizontalLine")),
             DropdownItemDef::action("horizontal_ray", PN::HorizontalRay.get(lang)).with_icon(ToolbarIconId::new("HorizontalRay")),
+            DropdownItemDef::action("horizontal_ray_left", PN::HorizontalRayLeft.get(lang)).with_icon(ToolbarIconId::new("HorizontalRayLeft")),
             DropdownItemDef::action("vertical_line", PN::VerticalLine.get(lang)).with_icon(ToolbarIconId::new("VerticalLine")),
             DropdownItemDef::action("cross_line", PN::CrossLine.get(lang)).with_icon(ToolbarIconId::new("CrossLine")),
             // Channels
@@ -1112,11 +1139,13 @@ pub fn settings_menu_items() -> Vec<DropdownItemDef> {
             icon: None,
             items: vec![
                 DropdownItemDef::action("watermark_toggle", MK::ToggleWatermark.get(lang)),
-                DropdownItemDef::Separator,
-                DropdownItemDef::action("watermark_text_seeyou", MK::WatermarkSeeyou.get(lang)),
-                DropdownItemDef::action("watermark_text_demo", MK::WatermarkDemo.get(lang)),
-                DropdownItemDef::action("watermark_text_paper", MK::WatermarkPaper.get(lang)),
-                DropdownItemDef::action("watermark_text_live", MK::WatermarkLive.get(lang)),
+                DropdownItemDef::ActionWithInput {
+                    id: "watermark_text".to_string(),
+                    label: MK::SubWatermark.get(lang).to_string(),
+                    icon: None,
+                    field_id: "watermark_text".to_string(),
+                    default_text: String::new(),
+                },
                 DropdownItemDef::Separator,
                 DropdownItemDef::action("watermark_pos_center", MK::WatermarkCenter.get(lang)),
                 DropdownItemDef::action("watermark_pos_bl", MK::WatermarkBl.get(lang)),
@@ -1155,7 +1184,6 @@ pub fn settings_menu_items() -> Vec<DropdownItemDef> {
             items: vec![
                 DropdownItemDef::action("style_solid", MK::StyleSolid.get(lang)),
                 DropdownItemDef::action("style_glass", MK::StyleGlass.get(lang)),
-                DropdownItemDef::action("style_frosted_glass_flat", MK::StyleFrostedGlass.get(lang)),
             ],
             grid_columns: None,
         },

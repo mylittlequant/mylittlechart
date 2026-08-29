@@ -665,6 +665,15 @@ pub struct ChartToolbarState {
     pub quick_select_memory: std::collections::HashMap<String, (String, String)>,
     /// Currently open submenu within a dropdown
     pub open_submenu_id: Option<String>,
+    /// Settings-gear submenu bools (grid/crosshair/watermark/theme/…).
+    /// Stamped each frame from the active chart so toggle pills show the
+    /// live value. Missing key = not a toggle row.
+    pub settings_toggles: std::collections::HashMap<String, bool>,
+    /// Live watermark text shown in the settings submenu input.
+    pub watermark_draft: String,
+    pub watermark_edit_focused: bool,
+    pub watermark_edit_cursor: usize,
+    pub watermark_edit_cursor_visible: bool,
     /// Hovered item within an open submenu
     pub hovered_submenu_item: Option<String>,
     /// Timestamp of the last magnet button click — used for double-click detection.
@@ -765,6 +774,11 @@ impl Default for ChartToolbarState {
                 m
             },
             open_submenu_id: None,
+            settings_toggles: std::collections::HashMap::new(),
+            watermark_draft: String::new(),
+            watermark_edit_focused: false,
+            watermark_edit_cursor: 0,
+            watermark_edit_cursor_visible: true,
             hovered_submenu_item: None,
             last_magnet_click_time: None,
             floating_inline_bar: FloatingInlineBar::default(),
@@ -1362,6 +1376,9 @@ impl ChartToolbarState {
             // === Settings menu dropdown — full content matching terminal ===
             "settings_menu" => {
                 eprintln!("[ChartToolbar] settings action: {}", item_id);
+                if item_id != "chart_settings" {
+                    self.open_dropdown_id = Some("settings_menu".to_string());
+                }
                 match item_id {
                     // Chart settings modal
                     "chart_settings" => vec![ChartOutEvent::OpenChartSettings],
@@ -1429,10 +1446,7 @@ impl ChartToolbarState {
 
                     // Watermark
                     "watermark_toggle"       => vec![ChartOutEvent::ToggleWatermark],
-                    "watermark_text_seeyou"  => vec![ChartOutEvent::SetWatermarkText("SEE YOU...")],
-                    "watermark_text_demo"    => vec![ChartOutEvent::SetWatermarkText("DEMO")],
-                    "watermark_text_paper"   => vec![ChartOutEvent::SetWatermarkText("PAPER TRADING")],
-                    "watermark_text_live"    => vec![ChartOutEvent::SetWatermarkText("LIVE")],
+                    "watermark_text"         => vec![ChartOutEvent::FocusWatermarkText],
                     "watermark_pos_center"   => vec![ChartOutEvent::SetWatermarkPosition("center")],
                     "watermark_pos_bl"       => vec![ChartOutEvent::SetWatermarkPosition("bottom_left")],
                     "watermark_pos_br"       => vec![ChartOutEvent::SetWatermarkPosition("bottom_right")],

@@ -225,9 +225,9 @@ pub fn draw_input(
     };
 
     if config.chrome {
-        // Draw background
-        ctx.set_fill_color(bg_color);
-        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, config.radius);
+        crate::ui::overlay_fill::fill_overlay_rounded(
+            ctx, bg_color, rect.x, rect.y, rect.width, rect.height, config.radius,
+        );
 
         // Draw border
         let border_width = if config.focused { 2.0 } else { 1.0 };

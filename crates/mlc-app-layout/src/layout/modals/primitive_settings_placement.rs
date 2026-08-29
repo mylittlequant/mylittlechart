@@ -288,8 +288,13 @@ fn draw_points_group(
                 // honestly is the point, not a placeholder for a future
                 // fake number.
                 let rect = WidgetRect::new(time_x, y + 2.0, field_w, ROW_H - 4.0);
-                ctx.set_fill_color(&toolbar_theme.background);
-                ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);
+                crate::ui::overlay_fill::fill_modal_control(
+                    ctx,
+                    &toolbar_theme.dropdown_bg,
+                    &toolbar_theme.background,
+                    rect.x, rect.y, rect.width, rect.height,
+                    3.0,
+                );
                 ctx.set_stroke_color(&toolbar_theme.separator);
                 ctx.set_stroke_width(1.0);
                 ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, 3.0);
@@ -382,8 +387,20 @@ pub fn draw_pill(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, x: f
     // `SETTINGS_BUTTON_RADIUS`, not a fully-rounded pill (item 1,
     // 2026-08-08 review) — matches the generic hover highlight's own
     // radius so the two never mismatch.
-    ctx.set_fill_color(if on { &toolbar_theme.accent } else { &toolbar_theme.background });
-    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+    if on {
+        crate::ui::overlay_fill::fill_overlay_rounded(
+            ctx, &toolbar_theme.item_bg_active,
+            rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS,
+        );
+    } else {
+        crate::ui::overlay_fill::fill_modal_control(
+            ctx,
+            &toolbar_theme.dropdown_bg,
+            &toolbar_theme.background,
+            rect.x, rect.y, rect.width, rect.height,
+            SETTINGS_BUTTON_RADIUS,
+        );
+    }
     ctx.set_stroke_color(&toolbar_theme.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
@@ -514,8 +531,10 @@ fn draw_group_header(ctx: &mut dyn RenderContext, toolbar_theme: &ToolbarTheme, 
     // is the modal's own background colour, matching the Вид tab's own
     // group headers.
     let rect = WidgetRect::new(x0, y, (x1 - x0).max(0.0), GROUP_HEADER_H);
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rect(rect.x, rect.y, rect.width, rect.height);
+    if !crate::ui::overlay_fill::color_is_translucent(&toolbar_theme.dropdown_bg) {
+        ctx.set_fill_color(&toolbar_theme.background);
+        ctx.fill_rect(rect.x, rect.y, rect.width, rect.height);
+    }
     ctx.set_font("10.5px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Center);

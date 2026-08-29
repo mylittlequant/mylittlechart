@@ -16,7 +16,7 @@ pub fn render_chart_settings_color_picker_popup(
         ColorPickerLevel, PopupTheme,
     };
 
-    let popup_theme = PopupTheme::new(&toolbar_theme.background, &toolbar_theme.separator)
+    let popup_theme = PopupTheme::new(&toolbar_theme.dropdown_bg, &toolbar_theme.separator)
         .with_active(&toolbar_theme.item_bg_active);
     let origin = chart_settings_state.color_picker.origin;
     let level = chart_settings_state.color_picker.level;

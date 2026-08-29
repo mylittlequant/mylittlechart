@@ -192,6 +192,32 @@ pub(crate) fn draw_label_plate(
     }
 
     ctx.fill_text(label, x, y);
+
+    // Level-value plates (Fib/Gann) arm CURRENT_LEVEL around this call;
+    // user-text / point labels leave it unset and this is a no-op.
+    let text_width = ctx.measure_text(label);
+    crate::engine::render::record_level_label_rect(
+        x, y, text_width, font_size, label_style.background_padding,
+    );
+}
+
+/// Draw a Fib/Gann (or other ladder) VALUE label and register its plate
+/// for the on-chart double-click editor. Wraps [`draw_label_plate`] with
+/// the level-value slot so a painted `"0.618"` / `"2x1"` can be hit-tested
+/// independently of `data.text`.
+pub(crate) fn draw_level_label_plate(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    label: &str,
+    font_size: f64,
+    label_style: &LabelStyle,
+    label_color: &str,
+    level: f64,
+) {
+    crate::engine::render::set_current_level_label(level);
+    draw_label_plate(ctx, x, y, label, font_size, label_style, label_color);
+    crate::engine::render::clear_current_level_label();
 }
 
 /// The label plate's own bounding rectangle around a piece of text centered
@@ -636,7 +662,7 @@ pub mod signals;
 pub use traits::{
     Primitive, PrimitiveData, PrimitiveKind, Archetype, ClickBehavior,
     HitTestResult, ControlPointInfo, SyncMode, StyleReference,
-    draw_control_points,
+    draw_control_points, extend_mode_lr,
     PrimitiveExt,  // Extension trait with is_locked, set_locked, is_visible, set_visible
 };
 pub use types::{
@@ -653,6 +679,7 @@ pub use types::{
     ControlPointShape, ControlPointSize, ControlPointStyle,
     control_point_style, set_control_point_style,
     point_to_line_distance, point_to_ray_distance, extend_segment_to_edges,
+    snap_compass8, snap_square, snap_drawing_screen, shift_snaps_square, snap_drawing_data,
     Segment, nearest_segment_distance, hit_test_strokes,
     TextAnchor, normalize_text_rotation,
     LineTextParams, calculate_line_text_params,

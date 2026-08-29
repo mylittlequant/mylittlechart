@@ -859,6 +859,19 @@ impl ChartApp {
                 self.autosave_snapshot();
                 return;
             }
+            ChartOutEvent::ReorderFavoritePrimitive { from_index, to_index } => {
+                eprintln!(
+                    "[ChartApp] ReorderFavoritePrimitive: {} -> {}",
+                    from_index, to_index
+                );
+                let mut user_mut = self.core.user_mut();
+                let favs = &mut user_mut.profile_mut().ui.favorite_primitives;
+                move_within(favs, from_index, to_index);
+                drop(user_mut);
+                self.persist_profile();
+                self.autosave_snapshot();
+                return;
+            }
             ChartOutEvent::ToggleIndicatorStar { type_id } => {
                 eprintln!("[ChartApp] ToggleIndicatorStar: {}", type_id);
                 let mut user_mut = self.core.user_mut();
@@ -1633,6 +1646,24 @@ impl ChartApp {
                 eprintln!("[ChartApp] tooltip follow toggled (all windows)");
                 state_mutated = true;
             }
+            ChartOutEvent::FocusWatermarkText => {
+                let wid = uzor::WidgetId::from(crate::text_input::WATERMARK_TEXT);
+                let seed = {
+                    let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
+                    pid.and_then(|pid| self.panels_store.chart_panel.get(&pid))
+                        .and_then(|p| p.watermark.as_ref())
+                        .and_then(|w| w.lines.first().map(|l| l.text.clone()))
+                        .unwrap_or_default()
+                };
+                let mut coord = self.input_coordinator.borrow_mut();
+                let tf = coord.text_fields_mut();
+                tf.set_text(&wid, &seed);
+                tf.focus(wid.clone());
+                if let Some(fs) = tf.field_state_mut(&wid) {
+                    fs.selection_start = Some(0);
+                }
+                state_mutated = true;
+            }
             ChartOutEvent::SetWatermarkText(text) => {
                 let all_pids: Vec<_> = self.panel_app.panel_grid.containers().values().map(|w| w.chart_panel_id).collect();
                 for pid in all_pids {
@@ -2228,6 +2259,7 @@ impl ChartApp {
             ChartOutEvent::SetStyle(name) => {
                 if let Some(style) = UIStyle::from_name(name) {
                     self.panel_app.theme_manager.current_mut().set_style(style);
+                    self.profile_dirty = true;
                     eprintln!("[ChartApp] SetStyle: style={:?} (from name={})", style, name);
                 } else {
                     eprintln!("[ChartApp] SetStyle: unknown style name '{}'", name);

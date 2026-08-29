@@ -161,6 +161,12 @@ impl<'a> WatchlistsMut<'a> {
         *self.mgr = manager;
     }
 
+    /// Merge missing seed venues into the first list. See
+    /// [`WatchlistManager::apply_seed_migration`].
+    pub fn apply_seed_migration(&mut self) -> bool {
+        self.mgr.apply_seed_migration()
+    }
+
     /// Check if an instrument is in the given list.
     pub fn contains(&self, list_id: u64, address: &mlc_core::InstrumentAddress) -> bool {
         self.mgr.contains(list_id, address)

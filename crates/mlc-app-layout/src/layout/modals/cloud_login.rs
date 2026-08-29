@@ -76,7 +76,7 @@ pub fn render_cloud_login_modal(
     input_coordinator: &mut InputCoordinator,
 ) -> CloudLoginResult {
     let theme = ModalTheme::from_toolbar(
-        &frame_theme.toolbar_bg,
+        &frame_theme.modal_bg,
         &toolbar_theme.separator,
         toolbar_theme,
     );

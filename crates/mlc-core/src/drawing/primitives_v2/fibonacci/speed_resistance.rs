@@ -9,7 +9,7 @@ use super::super::{
     PrimitiveColor, LineStyle, TextAlign,
     HIT_TOLERANCE,
     RenderContext, crisp,
-    render_primitive_text_rotated, calculate_line_text_params, draw_label_plate, stagger_t, level_rank,
+    render_primitive_text_rotated, calculate_line_text_params, draw_level_label_plate, stagger_t, level_rank,
     config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
 use super::retracement::{default_level_configs, LEVEL_SET_PRESETS};
@@ -358,7 +358,7 @@ impl Primitive for FibSpeedResistance {
                 ctx.set_fill_color(label_color);
                 let label_x = x1 + dx * label_t;
                 let label_y = y1 + dy * label_t;
-                draw_label_plate(ctx, label_x, label_y, &lbl, self.label_style.font_size, &self.label_style, label_color);
+                draw_level_label_plate(ctx, label_x, label_y, &lbl, self.label_style.font_size, &self.label_style, label_color, cfg.level);
             }
         }
         ctx.set_line_dash(&[]);

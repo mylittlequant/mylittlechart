@@ -116,6 +116,7 @@ pub fn save_persistent_state(chart: &mut ChartApp) {
     // active theme preset so a reload restores it. `preset_name()` is the
     // base preset id ("dark"/"surf"/...), always non-empty.
     profile.ui.active_theme = chart.panel_app.theme_manager.preset_name().to_string();
+    profile.ui.active_ui_style = chart.panel_app.theme_manager.current().style.as_name().to_string();
     profile.domain.connector_enabled = chart.core.user().connector_enabled().clone();
     profile.domain.server_enabled = chart.core.user().server_enabled();
     profile.domain.server_port = chart.core.user().server_port();
@@ -143,6 +144,18 @@ pub fn save_persistent_state(chart: &mut ChartApp) {
         mlc_core::InlineDockEdge::Free => "Free".to_string(),
     });
     profile.ui.favorites_bar_visible = chart.panel_app.toolbar_state.favorites_bar_visible;
+    profile.ui.persist_toolbar_last_tools = chart.core.user().profile().ui.persist_toolbar_last_tools;
+    profile.ui.persist_toolbar_toggles = chart.core.user().profile().ui.persist_toolbar_toggles;
+    if profile.ui.persist_toolbar_last_tools {
+        profile.ui.toolbar_last_tools = chart.panel_app.toolbar_state.quick_select_memory
+            .iter()
+            .map(|(k, (t, _))| (k.clone(), t.clone()))
+            .collect();
+    }
+    if profile.ui.persist_toolbar_toggles {
+        profile.ui.drawings_locked = chart.panel_app.toolbar_state.drawings_locked;
+        profile.ui.drawings_visible = chart.panel_app.toolbar_state.drawings_visible;
+    }
     profile.domain.notification_settings =
         chart.panel_app.alert_settings_state.notification_settings.clone();
 

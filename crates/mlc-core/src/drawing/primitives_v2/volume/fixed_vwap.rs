@@ -41,6 +41,11 @@ pub struct FixedVwap {
     /// Standard-deviation multiplier for the outer band.
     #[serde(default = "default_sigma_2")]
     pub sigma_2: f64,
+    /// Full-height vertical fences at both span ends. Default on — that is
+    /// the historical look. Off = fences only across the VWAP/band price
+    /// span (a bounded range, not an infinite pair of lines).
+    #[serde(default = "default_true")]
+    pub extend_lines: bool,
     /// The VWAP curve computed from the current bars — see
     /// [`Primitive::refresh_bar_derived_cache`]'s own contract. Filled by
     /// that hook from the SAME [`super::vwap_calc::running_vwap`] call
@@ -78,6 +83,7 @@ impl FixedVwap {
             show_stddev_2: true,
             sigma_1: 1.0,
             sigma_2: 2.0,
+            extend_lines: true,
             cached_vwap: None,
         }
     }
@@ -112,16 +118,19 @@ impl Primitive for FixedVwap {
     fn hit_test(&self, sx: f64, sy: f64, bars: &[Bar], vp: &Viewport, ps: &PriceScale) -> HitTestResult {
         let x1 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.ts1));
         let x2 = vp.bar_to_x_f64(timestamp_ms_to_bar_f64(bars, self.ts2));
-        if (sx - x1).abs() < HIT_TOLERANCE { return HitTestResult::ControlPoint(ControlPointType::Point1); }
-        if (sx - x2).abs() < HIT_TOLERANCE { return HitTestResult::ControlPoint(ControlPointType::Point2); }
         if bars.is_empty() { return HitTestResult::Miss; }
-
-        let (min_x, max_x) = (x1.min(x2), x1.max(x2));
-        if sx < min_x || sx > max_x { return HitTestResult::Miss; }
 
         let Some((start_idx, end_idx)) = super::profile_render::window_indices(bars, self.ts1, self.ts2) else {
             return HitTestResult::Miss;
         };
+        let curve = running_vwap(bars, start_idx, end_idx);
+        let (fy0, fy1) = fence_ys(self, &curve, vp, ps, vp.chart_height);
+        let on_fence_y = sy >= fy0 - HIT_TOLERANCE && sy <= fy1 + HIT_TOLERANCE;
+        if (sx - x1).abs() < HIT_TOLERANCE && on_fence_y { return HitTestResult::ControlPoint(ControlPointType::Point1); }
+        if (sx - x2).abs() < HIT_TOLERANCE && on_fence_y { return HitTestResult::ControlPoint(ControlPointType::Point2); }
+
+        let (min_x, max_x) = (x1.min(x2), x1.max(x2));
+        if sx < min_x || sx > max_x { return HitTestResult::Miss; }
         let hover = vp.x_to_bar_f64(sx).round();
         if !hover.is_finite() { return HitTestResult::Miss; }
         let hover_idx = (hover as i64).clamp(start_idx as i64, end_idx as i64) as usize;
@@ -164,28 +173,46 @@ impl Primitive for FixedVwap {
         let (min_x, max_x) = (x1.min(x2), x1.max(x2));
         let chart_height = ctx.chart_height();
 
-        // Two solid boundary lines bracket the fixed span — the
-        // `FixedVolumeProfile` idiom, never the anchored sibling's single
-        // dashed anchor line + marker dot: both ends here are real,
-        // dragged points, not one anchor and an open end.
-        ctx.set_stroke_color(&self.data.color.stroke);
-        ctx.set_stroke_width(self.data.width);
-        ctx.set_line_dash(&[]);
-        ctx.begin_path();
-        ctx.move_to(crisp(min_x, dpr), 0.0);
-        ctx.line_to(crisp(min_x, dpr), chart_height);
-        ctx.stroke();
-        ctx.begin_path();
-        ctx.move_to(crisp(max_x, dpr), 0.0);
-        ctx.line_to(crisp(max_x, dpr), chart_height);
-        ctx.stroke();
-
         let bars = ctx.bars();
         let Some((start_idx, end_idx)) = super::profile_render::window_indices(bars, self.ts1, self.ts2) else {
             return;
         };
         let curve = running_vwap(bars, start_idx, end_idx);
         if curve.is_empty() { return; }
+
+        let (fy0, fy1) = {
+            let mut lo = f64::INFINITY;
+            let mut hi = f64::NEG_INFINITY;
+            for pt in &curve {
+                let mut prices = vec![pt.vwap];
+                if self.show_stddev_1 {
+                    prices.push(pt.vwap + self.sigma_1 * pt.stddev);
+                    prices.push(pt.vwap - self.sigma_1 * pt.stddev);
+                }
+                if self.show_stddev_2 {
+                    prices.push(pt.vwap + self.sigma_2 * pt.stddev);
+                    prices.push(pt.vwap - self.sigma_2 * pt.stddev);
+                }
+                for p in prices {
+                    let y = ctx.price_to_y(p);
+                    lo = lo.min(y);
+                    hi = hi.max(y);
+                }
+            }
+            if self.extend_lines { (0.0, chart_height) } else if lo.is_finite() { (lo, hi) } else { (0.0, chart_height) }
+        };
+
+        ctx.set_stroke_color(&self.data.color.stroke);
+        ctx.set_stroke_width(self.data.width);
+        ctx.set_line_dash(&[]);
+        ctx.begin_path();
+        ctx.move_to(crisp(min_x, dpr), fy0);
+        ctx.line_to(crisp(min_x, dpr), fy1);
+        ctx.stroke();
+        ctx.begin_path();
+        ctx.move_to(crisp(max_x, dpr), fy0);
+        ctx.line_to(crisp(max_x, dpr), fy1);
+        ctx.stroke();
 
         let n = curve.len();
         let mut vwap_points: Vec<(f64, f64)> = Vec::with_capacity(n);
@@ -241,6 +268,7 @@ impl Primitive for FixedVwap {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+    fn unbounded_in_price(&self) -> bool { self.extend_lines }
 
     /// Recompute [`Self::cached_vwap`] from `bars` through the SAME
     /// [`super::profile_render::window_indices`] +
@@ -262,6 +290,8 @@ impl Primitive for FixedVwap {
         // toggle paired with its own multiplier) matches these four rows,
         // same choice as the anchored sibling.
         vec![
+            ConfigProperty::extend_lines(self.extend_lines)
+                .with_order(8).in_group(PropertyGroup::Extend),
             ConfigProperty::boolean("show_stddev_1", ConfigKey::ShowStdDev1.get(lang), self.show_stddev_1)
                 .with_order(20).in_group(PropertyGroup::Sigmas),
             ConfigProperty::number("sigma_1", ConfigKey::SigmaMultiplier1.get(lang), self.sigma_1, Some(0.1), Some(5.0))
@@ -275,6 +305,7 @@ impl Primitive for FixedVwap {
 
     fn apply_style_property(&mut self, id: &str, value: &PropertyValue) -> bool {
         match id {
+            "extend_lines" => { if let Some(v) = value.as_bool() { self.extend_lines = v; return true; } }
             "show_stddev_1" => { if let Some(v) = value.as_bool() { self.show_stddev_1 = v; return true; } }
             "show_stddev_2" => { if let Some(v) = value.as_bool() { self.show_stddev_2 = v; return true; } }
             "sigma_1" => { if let Some(v) = value.as_number() { self.sigma_1 = v.clamp(0.1, 5.0); return true; } }
@@ -283,6 +314,38 @@ impl Primitive for FixedVwap {
         }
         false
     }
+}
+
+fn fence_ys(
+    this: &FixedVwap,
+    curve: &[VwapPoint],
+    vp: &Viewport,
+    ps: &PriceScale,
+    chart_height: f64,
+) -> (f64, f64) {
+    if this.extend_lines {
+        return (0.0, chart_height);
+    }
+    let mut lo = f64::INFINITY;
+    let mut hi = f64::NEG_INFINITY;
+    let y_of = |price: f64| vp.price_to_y(price, ps.price_min, ps.price_max);
+    for pt in curve {
+        let mut prices = vec![pt.vwap];
+        if this.show_stddev_1 {
+            prices.push(pt.vwap + this.sigma_1 * pt.stddev);
+            prices.push(pt.vwap - this.sigma_1 * pt.stddev);
+        }
+        if this.show_stddev_2 {
+            prices.push(pt.vwap + this.sigma_2 * pt.stddev);
+            prices.push(pt.vwap - this.sigma_2 * pt.stddev);
+        }
+        for p in prices {
+            let y = y_of(p);
+            lo = lo.min(y);
+            hi = hi.max(y);
+        }
+    }
+    if lo.is_finite() { (lo, hi) } else { (0.0, chart_height) }
 }
 
 pub fn metadata() -> PrimitiveMetadata {

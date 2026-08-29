@@ -402,6 +402,7 @@ impl Primitive for TrendLine {
             ExtendMode::Both => 3,
         }
     }
+    fn unbounded_in_price(&self) -> bool { self.extend != ExtendMode::None }
 }
 
 impl TrendLine {

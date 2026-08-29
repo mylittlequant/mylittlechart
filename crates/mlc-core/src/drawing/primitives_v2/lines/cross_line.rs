@@ -167,6 +167,8 @@ impl Primitive for CrossLine {
 
     fn to_json(&self) -> String { serde_json::to_string(self).unwrap_or_default() }
     fn clone_box(&self) -> Box<dyn Primitive> { Box::new(self.clone()) }
+    fn extend_mode_raw(&self) -> u8 { 3 }
+    fn unbounded_in_price(&self) -> bool { true }
 
     fn style_properties(&self) -> Vec<ConfigProperty> {
         let lang = current_language();

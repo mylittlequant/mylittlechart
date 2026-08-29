@@ -12,7 +12,7 @@ use super::super::{
     PrimitiveColor, LineStyle,
     HIT_TOLERANCE,
     RenderContext, crisp,
-    render_primitive_text, draw_label_plate, level_ramp_color, level_rank,
+    render_primitive_text, draw_level_label_plate, level_ramp_color, level_rank,
     config::{FibLevelConfig, LabelStyle, LevelSetPreset},
 };
 use super::super::types::{Segment, hit_test_strokes};
@@ -509,7 +509,7 @@ impl Primitive for GannSquareFixed {
                 ctx.set_text_baseline(crate::render::TextBaseline::Middle);
                 ctx.set_text_align(crate::render::TextAlign::Center);
                 ctx.set_fill_color(label_color);
-                draw_label_plate(ctx, cx, cy - half_h, &label, self.label_style.font_size, &self.label_style, label_color);
+                draw_level_label_plate(ctx, cx, cy - half_h, &label, self.label_style.font_size, &self.label_style, label_color, ratio);
             }
         }
 

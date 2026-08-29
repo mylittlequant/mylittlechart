@@ -762,6 +762,8 @@ impl Primitive for InsidePitchfork {
     fn clone_box(&self) -> Box<dyn Primitive> {
         Box::new(self.clone())
     }
+    fn extend_mode_raw(&self) -> u8 { if self.extend { 3 } else { 0 } }
+    fn unbounded_in_price(&self) -> bool { self.extend }
 }
 
 fn check_point_hit(sx: f64, sy: f64, px: f64, py: f64) -> bool {
