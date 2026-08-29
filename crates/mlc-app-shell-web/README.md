@@ -19,16 +19,28 @@ cargo check -p mylittlechart-app-shell-web --target wasm32-unknown-unknown
 
 ## Build
 
-```sh
-# From the crate directory:
-wasm-pack build --target web --out-dir ../../../dist/mlc-app-shell-web
-```
-
-Or from the workspace root:
+Run it from the workspace root (`nemo/mylittlechart/`). `--out-dir` is
+resolved relative to the CRATE directory, not the shell's cwd, so the
+production output lands in `mylittlechart/dist/` with two levels up:
 
 ```sh
-wasm-pack build crates/mlc-app-shell-web --target web --out-dir ../../dist/mlc-app-shell-web
+wasm-pack build crates/mlc-app-shell-web --target web --release --out-dir ../../dist/mlc-app-shell-web --features cloud
 ```
+
+Two traps, both hit for real (2026-08-30 and, per the landing handoff,
+2026-08-25):
+
+- `--out-dir` must come BEFORE `--features`. Placed after, wasm-pack
+  forwards it to `cargo build`, where it is an unstable flag and the
+  build dies with a bare "cargo build exited with code 1".
+- Three levels up (`../../../dist/...`) lands in `nemo/dist/`, which
+  `package-app.sh` does not read — it packages `mylittlechart/dist/`, so
+  a stale bundle gets shipped and the build looks like it did nothing.
+
+The DEV stand is the same command with `--dev` and no `--out-dir`; it
+writes `crates/mlc-app-shell-web/pkg/`, and `pkg/index.html` must be
+restored from the crate's own `index.html` afterwards because wasm-pack
+overwrites it with the bindgen default.
 
 This produces:
 ```
