@@ -176,11 +176,14 @@ impl ChartApp {
             if !allowed {
                 return;
             }
-            // Dimmer click — dismiss profile manager if user has a live profile
-            // and is NOT in skeleton mode (vault unlocked, not first run).
+            // Dimmer click — dismiss profile manager if a live profile exists
+            // and this isn't a mandatory step (migration/first-run skeleton
+            // with no chart underneath yet). A locked vault is no longer
+            // mandatory (owner's ruling 2026-08-31) — dismissing just leaves
+            // credentials unavailable, same as never opening the vault.
             if widget_id == "profile_manager:dimmer" {
-                let in_skeleton = self.panel_app.user_settings_state.needs_vault_unlock;
-                if !in_skeleton && !self.panel_app.user_settings_state.runtime_profile_id.is_empty() {
+                let mandatory = self.panel_app.user_settings_state.profile_manager_mandatory;
+                if !mandatory && !self.panel_app.user_settings_state.runtime_profile_id.is_empty() {
                     self.panel_app.user_settings_state.show_profile_manager = false;
                     self.panel_app.user_settings_state.profile_manager_page =
                         mlc_app_layout::ui::modal_settings::ProfileManagerPage::ProfileList;

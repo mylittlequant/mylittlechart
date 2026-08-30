@@ -202,8 +202,11 @@ fn render_page_profile_list(
     // Filter cloud profiles: exclude any that are already present locally.
     let _cloud_profiles_to_show: Vec<()> = Vec::new();
 
-    // Close button (×) — only when a live profile is running AND not in skeleton lock
-    if !state.runtime_profile_id.is_empty() && !state.needs_vault_unlock {
+    // Close button (×) — only when a live profile is running AND this isn't
+    // the mandatory migration/first-run step (no live chart behind it yet).
+    // A locked vault no longer withholds the close button — owner's ruling
+    // 2026-08-31.
+    if !state.runtime_profile_id.is_empty() && !state.profile_manager_mandatory {
         let close_size = 28.0;
         let close_x = right_col_x + right_col_w - right_pad - close_size + 4.0;
         let close_y = modal_y + 8.0;

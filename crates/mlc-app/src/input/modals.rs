@@ -2334,13 +2334,15 @@ impl ChartApp {
                     eprintln!("[ChartApp] close_topmost_modal_layer: markup_engine_settings closed");
                 }
                 "profile_manager" => {
-                    // In skeleton mode (vault unlock required), profile manager cannot be dismissed.
-                    if !self.panel_app.user_settings_state.needs_vault_unlock {
+                    // Only the mandatory migration/first-run step (no live chart
+                    // behind it yet) refuses to dismiss. A locked vault no longer
+                    // does — owner's ruling 2026-08-31, the app is not blocked on it.
+                    if !self.panel_app.user_settings_state.profile_manager_mandatory {
                         self.panel_app.user_settings_state.show_profile_manager = false;
                         self.panel_app.user_settings_state.profile_manager_page =
                             mlc_app_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
                     }
-                    eprintln!("[ChartApp] close_topmost_modal_layer: profile_manager (needs_vault_unlock={})", self.panel_app.user_settings_state.needs_vault_unlock);
+                    eprintln!("[ChartApp] close_topmost_modal_layer: profile_manager (mandatory={})", self.panel_app.user_settings_state.profile_manager_mandatory);
                 }
                 // Preset name input — close only this modal, not the search overlay underneath.
                 "preset_name_input" => {

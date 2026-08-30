@@ -3375,7 +3375,9 @@ pub struct UserSettingsState {
     /// True when the first-run welcome wizard should be shown (no profile.json on first launch).
     pub show_welcome_wizard: bool,
     /// True when the profile is encrypted (salt.hex exists) but no vault key has been derived
-    /// yet — the user must enter their passphrase to unlock their data before the app is usable.
+    /// yet this session — informational only (owner's ruling 2026-08-31: a locked vault
+    /// does not gate the app). Read by the profile-list row click to decide whether
+    /// selecting the current profile routes to `UnlockPassphrase` or just dismisses.
     pub needs_vault_unlock: bool,
     /// Error message shown on the vault unlock overlay when the passphrase is wrong.
     /// Cleared when the user starts typing a new passphrase.
@@ -3383,6 +3385,12 @@ pub struct UserSettingsState {
     /// Number of consecutive failed vault unlock attempts.
     /// After 3 failures the "Forgot passphrase? Create new profile" button is shown.
     pub vault_unlock_attempts: u32,
+    /// True only while the profile manager is showing a step with no live
+    /// chart behind it yet (migration: an existing plaintext profile setting
+    /// its first passphrase) — unlike `needs_vault_unlock`, this genuinely
+    /// blocks dismissal (close button, dimmer click, Esc) because there is
+    /// nothing usable to fall back to underneath.
+    pub profile_manager_mandatory: bool,
     // ── PROFILE MANAGER ───────────────────────────────────────────────────────
     /// True when the profile manager overlay is shown (replaces vault_unlock + profile picker).
     pub show_profile_manager: bool,
@@ -3527,6 +3535,7 @@ impl Default for UserSettingsState {
             needs_vault_unlock: false,
             vault_unlock_error: None,
             vault_unlock_attempts: 0,
+            profile_manager_mandatory: false,
             show_profile_manager: false,
             recovery_key_display: None,
             profile_manager_page: ProfileManagerPage::ProfileList,

@@ -1117,36 +1117,17 @@ impl App<'_> {
             attrs = attrs.with_undecorated_shadow(true);
         }
 
-        // Skeleton = loading screen shown while vault is being unlocked /
-        // wizard is run.
-        //
-        // - needs_vault_unlock: the user has a saved profile, we just need
-        //   the passphrase. Re-use the saved window geometry so the unlock
-        //   prompt appears exactly where the user left the app.
-        // - is_first_run / needs_migration: no saved geometry yet, center
-        //   a 1200x800 window on the primary monitor.
-        let skeleton = self.needs_vault_unlock || self.is_first_run || self.needs_migration;
+        // Skeleton = loading screen shown while the welcome wizard / migration
+        // passphrase setup runs, with no live chart behind it yet.
+        // Owner's ruling 2026-08-31 (docs/mlc/audits/2026-08-30-entry-lock-
+        // vault-and-user-persistence.md §10): a locked vault is no longer a
+        // reason to withhold the chart, so `needs_vault_unlock` does not
+        // enter this OR — only is_first_run / needs_migration have no saved
+        // profile geometry to restore, so both center a 1200x800 window on
+        // the primary monitor instead.
+        let skeleton = self.is_first_run || self.needs_migration;
         if skeleton {
-            // For an existing profile prefer the saved geometry over the
-            // centered placeholder.
-            let restored = if self.needs_vault_unlock {
-                self.saved_windows.first().and_then(|ws| {
-                    match (ws.x, ws.y, ws.width, ws.height) {
-                        (Some(x), Some(y), Some(w), Some(h)) => Some((x, y, w, h)),
-                        _ => None,
-                    }
-                })
-            } else {
-                None
-            };
-
-            if let Some((x, y, w, h)) = restored {
-                use winit::dpi::Position;
-                attrs = attrs.with_position(Position::Physical(
-                    winit::dpi::PhysicalPosition::new(x, y),
-                ));
-                attrs = attrs.with_inner_size(winit::dpi::PhysicalSize::new(w, h));
-            } else if let Some(monitor) = event_loop.primary_monitor().or_else(|| event_loop.available_monitors().next()) {
+            if let Some(monitor) = event_loop.primary_monitor().or_else(|| event_loop.available_monitors().next()) {
                 let screen = monitor.size();
                 let scale = monitor.scale_factor();
                 let win_w = (1200.0 * scale) as i32;
@@ -1401,37 +1382,27 @@ impl App<'_> {
             chart.panel_app.user_settings_state.show_welcome_wizard = true;
         }
 
-        // Show the profile list when vault needs unlocking (returning user with encrypted data).
-        // User picks their profile from the list, then gets the passphrase form.
-        if self.needs_vault_unlock {
-            use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
-            chart.panel_app.user_settings_state.needs_vault_unlock = true;
-            chart.panel_app.user_settings_state.show_profile_manager = true;
-            chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ProfileList;
-            chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.domain.profile_id.clone();
-            chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.ui.display_name.clone();
-            // Populate profile vault status list
-            if let Some(index) = mlc_core::load_profile_index() {
-                let profiles_dir = mlc_core::active_profile_data_dir()
-                    .parent()
-                    .map(|p| p.to_path_buf());
-                chart.panel_app.user_settings_state.profiles_with_vault_status = index.profiles.iter().map(|m| {
-                    let has_vault = if let Some(ref pd) = profiles_dir {
-                        pd.join(&m.id).join("vault.enc").exists()
-                    } else {
-                        false
-                    };
-                    (m.id.clone(), m.display_name.clone(), m.avatar.clone(), has_vault)
-                }).collect();
-            }
-        }
+        // Whether the active profile's vault is locked this session — no
+        // longer forces the profile manager open (owner's ruling 2026-08-31,
+        // docs/mlc/audits/2026-08-30-entry-lock-vault-and-user-persistence.md
+        // §10). Kept as truth so that when the user opens the profile
+        // manager themselves and clicks their own profile row, the click
+        // handler (`panel_click.rs`, "profile_mgr:select:") knows to route
+        // to the UnlockPassphrase page instead of treating the vault as
+        // already open. `profiles_with_vault_status` for the picker is
+        // already populated unconditionally above.
+        chart.panel_app.user_settings_state.needs_vault_unlock = self.needs_vault_unlock;
 
         // Migration: existing plaintext profile without salt.hex.
         // Show the profile manager create passphrase page so the user sets a passphrase.
         // Their existing data will be encrypted on completion via save_all().
+        // Unlike a locked vault this window genuinely has no live chart yet
+        // (skeleton mode, see `skeleton` above) — `profile_manager_mandatory`
+        // keeps this page non-dismissible until the passphrase is set,
+        // distinct from `needs_vault_unlock`'s now-informational meaning.
         if self.needs_migration {
             use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
-            chart.panel_app.user_settings_state.needs_vault_unlock = true;
+            chart.panel_app.user_settings_state.profile_manager_mandatory = true;
             chart.panel_app.user_settings_state.show_profile_manager = true;
             chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
             chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.domain.profile_id.clone();
@@ -2385,7 +2356,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             return;
         }
 
-        let skeleton = self.needs_vault_unlock || self.is_first_run || self.needs_migration;
+        // A locked vault no longer forces skeleton mode (owner's ruling
+        // 2026-08-31) — only first-run and migration have no live chart to
+        // show yet.
+        let skeleton = self.is_first_run || self.needs_migration;
         if skeleton {
             // Skeleton = one default-sized window centered by OS, no profile geometry.
             eprintln!("[App] Skeleton mode — creating single loading window");
@@ -5144,13 +5118,18 @@ fn main() {
 
     // Startup scenarios:
     // 1. First run: no profile.json → show full wizard (page 0)
-    // 2. vault.enc exists: profile.json readable, vault unlock overlay for credentials
+    // 2. vault.enc exists: profile.json readable, chart opens straight away
     // 3. No vault.enc, no salt: plaintext-only install or migration needed
     let is_first_run = !has_profile;
 
-    // Show vault unlock overlay when vault.enc exists (credentials need decryption).
-    // The app is fully functional without it (presets, tabs, watchlists are plaintext),
-    // but API keys and exchange credentials will be unavailable until unlocked.
+    // Whether the active profile's vault is currently locked (has a key
+    // container but no key derived yet this session). The app is fully
+    // functional without it — presets, tabs, watchlists are plaintext
+    // (`SyncTier::CloudSync`); only exchange credentials and bot tokens live
+    // behind it. Owner's ruling 2026-08-31 (docs/mlc/audits/2026-08-30-entry-
+    // lock-vault-and-user-persistence.md §10): this no longer gates entry —
+    // it is truth carried into `App` so the profile manager can route to the
+    // UnlockPassphrase page when the user opens it themselves.
     let needs_vault_unlock = has_vault && has_salt;
     // has_salt && !has_vault = incomplete profile (created but passphrase never set)
     // !has_salt && !has_vault = old plaintext profile (pre-ZT)
