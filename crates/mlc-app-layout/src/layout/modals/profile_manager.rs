@@ -1,18 +1,32 @@
-//! Unified Profile Manager overlay.
+//! Profile Manager modal — an ordinary dismissible modal over a live chart.
 //!
-//! A single full-screen modal that replaces the old vault_unlock overlay and
-//! vault_profile_picker with a coherent profile management flow.
+//! Owner's ruling 2026-08-31: full-screen was the old scheme, where the
+//! profile was an entry gate and the opaque fill hid the fact that data had
+//! not loaded yet. Data now loads independently of account and vault, so
+//! there is nothing left to hide — this is a standard [`begin_modal_shell`]
+//! dialog, dimmed backdrop included, same shell every other modal uses
+//! (`crate::layout::modals::alert_settings` is the tabbed reference,
+//! `crate::layout::modals::cloud_login` the closer one: no tabs, dim
+//! backdrop, per-phase body, dismissible).
+//!
+//! Dismissible by ×, dimmer click and Esc — EXCEPT while
+//! `UserSettingsState::profile_manager_mandatory` is set. That flag is only
+//! true for the migration path: an existing plaintext profile with no vault,
+//! on a window that genuinely has no chart yet. Every other page (the
+//! ordinary profile list, unlock, create, recovery) closes normally.
 //!
 //! Pages:
 //!   ProfileList       — List all profiles; select one to load or create a new one.
 //!   UnlockPassphrase  — Enter passphrase to unlock a profile with vault.enc.
 //!   CreatePassphrase  — Set a new passphrase for a profile that has no vault.
 //!   CreateNew         — Enter name for a brand-new profile (sync toggled in settings).
+//!   ShowRecoveryKey   — Display the recovery key once after vault creation.
+//!   UseRecoveryKey    — Enter a recovery key to restore access.
+//!   SetNewPassphrase  — Set a new passphrase after a recovery-key unlock.
 
-use mlc_core::engine::render::{RenderContext, draw_svg_icon, draw_svg_multicolor};
+use mlc_core::engine::render::{RenderContext, draw_svg_icon};
 use mlc_core::i18n::{current_language, TextKey, ProfileKey};
 
-const MASCOT_SVG: &str = include_str!("../../../../../assets/mascot/mascot.svg");
 use crate::ui::Icon;
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
@@ -21,28 +35,93 @@ use crate::ui::modal_settings::{UserSettingsState, ProfileManagerPage};
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::layout::render_frame::UserSettingsResult;
 use crate::ui::z_order::ZLayer;
-use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
+use crate::ui::widgets::{
+    begin_modal_shell, end_modal_shell, register_dimmer_zones, draw_input, draw_input_cursor,
+    InputConfig, InputType, ModalFooter, ModalPlacement, ModalShellSpec, ModalTheme,
+};
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
 
-/// Render the unified Profile Manager overlay.
+// =============================================================================
+// Layout constants
+// =============================================================================
+
+const MODAL_W: f64 = 520.0;
+
+const PROFILE_HEADER_H: f64 = 36.0;
+const PROFILE_ZT_ROW_H: f64 = 18.0;
+const PROFILE_ROW_H: f64 = 52.0;
+const PROFILE_ROW_GAP: f64 = 6.0;
+/// Ceiling on the profile list's own viewport — beyond this it scrolls,
+/// exactly like `alert_settings`' AlertsList tab.
+const PROFILE_LIST_MAX_H: f64 = 280.0;
+
+/// Content height per non-list page. First-pass estimates that mirror the
+/// vertical increments each page's render function actually walks (title
+/// dropped — the shell header carries it now — everything else kept), with
+/// a small margin so an optional error/hint line never clips the frame.
+/// Verify visually and adjust if a page's body still overflows or leaves an
+/// oversized gap at the bottom.
+fn page_content_height(state: &UserSettingsState) -> f64 {
+    match &state.profile_manager_page {
+        ProfileManagerPage::ProfileList => profile_list_content_height(state),
+        ProfileManagerPage::UnlockPassphrase => 230.0,
+        ProfileManagerPage::CreatePassphrase => 270.0,
+        ProfileManagerPage::CreateNew => 170.0,
+        ProfileManagerPage::ShowRecoveryKey => 200.0,
+        ProfileManagerPage::UseRecoveryKey => 190.0,
+        ProfileManagerPage::SetNewPassphrase => 260.0,
+    }
+}
+
+fn profile_list_content_height(state: &UserSettingsState) -> f64 {
+    let header = PROFILE_HEADER_H + 8.0 + PROFILE_ZT_ROW_H + 8.0;
+    let rows = state.profiles_with_vault_status.len().max(1) as f64;
+    let list_h =
+        (rows * (PROFILE_ROW_H + PROFILE_ROW_GAP) - PROFILE_ROW_GAP).min(PROFILE_LIST_MAX_H);
+    header + list_h
+}
+
+/// Title shown in the shell header for the active page.
+fn page_title(state: &UserSettingsState) -> String {
+    let lang = current_language();
+    match &state.profile_manager_page {
+        ProfileManagerPage::ProfileList => ProfileKey::Profiles.get(lang).to_string(),
+        ProfileManagerPage::UnlockPassphrase => {
+            if state.profile_manager_target_name.is_empty() {
+                "Unlock Profile".to_string()
+            } else {
+                format!("Unlock {}", state.profile_manager_target_name)
+            }
+        }
+        ProfileManagerPage::CreatePassphrase => {
+            if state.profile_manager_target_name.is_empty() {
+                "Set Up Encryption".to_string()
+            } else {
+                format!("Set Up Encryption for {}", state.profile_manager_target_name)
+            }
+        }
+        ProfileManagerPage::CreateNew => ProfileKey::NewProfile.get(lang).to_string(),
+        ProfileManagerPage::ShowRecoveryKey => ProfileKey::RecoveryKeyTitle.get(lang).to_string(),
+        ProfileManagerPage::UseRecoveryKey => ProfileKey::RecoverWithKey.get(lang).to_string(),
+        ProfileManagerPage::SetNewPassphrase => ProfileKey::SetNewPassphrase.get(lang).to_string(),
+    }
+}
+
+// =============================================================================
+// Main render entry point
+// =============================================================================
+
+/// Render the Profile Manager modal.
 ///
-/// This is a non-closeable overlay that handles all profile-related flows:
-/// listing profiles, unlocking encrypted profiles, setting up passphrase for
-/// new profiles, and creating new profiles.
-///
-/// `content_x/y` are the top-left origin of the content area (below the top
-/// toolbar, right of the left toolbar).  `content_w/h` are its dimensions.
-/// In skeleton mode these fill the area between all four toolbars; in
-/// non-skeleton mode the caller may pass the full window dimensions.
+/// `screen_w/screen_h` are the full window dimensions — the shell centers
+/// and clamps the frame within them, same as `alert_settings`/`cloud_login`.
 #[allow(clippy::too_many_arguments)]
 pub fn render_profile_manager(
     ctx: &mut dyn RenderContext,
-    content_x: f64,
-    content_y: f64,
-    content_w: f64,
-    content_h: f64,
+    screen_w: f64,
+    screen_h: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
@@ -51,60 +130,85 @@ pub fn render_profile_manager(
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
-    // Push a high-z modal layer so the profile manager absorbs all input
-    let layer_id = ZLayer::ModalOverlay.push_named(input_coordinator, "profile_manager");
+    let mandatory = state.profile_manager_mandatory;
+    let title = page_title(state);
+    let content_h = page_content_height(state);
 
-    // Block all clicks on the dimmer (profile manager is non-closeable)
-    input_coordinator.register_on_layer(
-        "profile_manager:dimmer",
-        WidgetRect::new(content_x, content_y, content_w, content_h),
-        Sense::CLICK,
-        &layer_id,
-    );
+    let theme = ModalTheme::from_toolbar(&frame_theme.modal_bg, &toolbar_theme.separator, toolbar_theme);
+    let spec = ModalShellSpec {
+        // Sign-in-shaped flow: answered or dismissed before the chart takes
+        // input again. The migration step additionally has no close button —
+        // set below — so the dimmer is its only other "exit", and that exit
+        // is refused in the click handler while `mandatory` holds.
+        dim_backdrop: true,
+        footer: ModalFooter::None,
+        show_close: !mandatory,
+        // No remembered position to drag to (none of the seven pages ever
+        // needed one) — centered like every non-draggable modal.
+        draggable: false,
+        placement: ModalPlacement::Center,
+        layer: ZLayer::ModalOverlay,
+        ..ModalShellSpec::new("profile_manager", &title, MODAL_W, content_h)
+    };
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &theme, (screen_w, screen_h));
+    register_dimmer_zones(input_coordinator, &layer_id, "profile_manager", shell.frame, (screen_w, screen_h));
+
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
+
+    let (x, y, w) = (shell.content.x, shell.content.y, shell.content.width);
 
     match &state.profile_manager_page {
         ProfileManagerPage::ProfileList => render_page_profile_list(
-            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
-            &layer_id, input_coordinator, result,
+            ctx, x, y, w, state, text_color, toolbar_theme, &layer_id, input_coordinator, result,
         ),
         ProfileManagerPage::UnlockPassphrase => render_page_unlock(
-            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
+            ctx, x, y, w, state, text_color, toolbar_theme,
             frame_theme, current_time_ms, &layer_id, input_coordinator, result,
         ),
         ProfileManagerPage::CreatePassphrase => render_page_create_passphrase(
-            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
+            ctx, x, y, w, state, text_color, toolbar_theme,
             frame_theme, current_time_ms, &layer_id, input_coordinator, result,
         ),
         ProfileManagerPage::CreateNew => render_page_create_new(
-            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
-            frame_theme, current_time_ms, &layer_id, input_coordinator, result,
+            ctx, x, y, w, state, text_color, toolbar_theme,
+            frame_theme, &layer_id, input_coordinator, result,
         ),
         ProfileManagerPage::ShowRecoveryKey => render_page_show_recovery_key(
-            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
-            frame_theme, current_time_ms, &layer_id, input_coordinator, result,
+            ctx, x, y, w, state, text_color, toolbar_theme,
+            frame_theme, &layer_id, input_coordinator, result,
         ),
         ProfileManagerPage::UseRecoveryKey => render_page_use_recovery_key(
-            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
-            frame_theme, current_time_ms, &layer_id, input_coordinator, result,
+            ctx, x, y, w, state, text_color, toolbar_theme,
+            frame_theme, &layer_id, input_coordinator, result,
         ),
         ProfileManagerPage::SetNewPassphrase => render_page_set_new_passphrase(
-            ctx, content_x, content_y, content_w, content_h, state, text_color, toolbar_theme,
-            frame_theme, current_time_ms, &layer_id, input_coordinator, result,
+            ctx, x, y, w, state, text_color, toolbar_theme,
+            frame_theme, &layer_id, input_coordinator, result,
         ),
     }
+
+    end_modal_shell(ctx, input_coordinator, &spec, &theme, &shell, &layer_id, &[]);
 }
 
 // =============================================================================
 // Page: ProfileList
 // =============================================================================
 
+/// Single-column list: the old two-column layout (240px account rail, mascot,
+/// zero-trust badge) assumed a full-bleed content area. At modal width there
+/// is no room for a second column, so this collapses to one — the picker
+/// itself (rows, create, delete, unlock) is untouched, only the account
+/// rail's decoration (mascot) is dropped and the zero-trust/version line
+/// moves under the header.
 #[allow(clippy::too_many_arguments)]
 fn render_page_profile_list(
     ctx: &mut dyn RenderContext,
-    content_x: f64,
-    content_y: f64,
-    content_w: f64,
-    content_h: f64,
+    x: f64,
+    y: f64,
+    w: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
@@ -113,141 +217,16 @@ fn render_page_profile_list(
     result: &mut UserSettingsResult,
 ) {
     let hovered = state.hovered_item_id.as_deref();
+    let mut cy = y;
 
-    // ── Full-area modal geometry ──────────────────────────────────────────────
-    let modal_x = content_x;
-    let modal_y = content_y;
-    let modal_w = content_w;
-    let modal_h = content_h;
-
-    // Modal background
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
-
-    // Absorb modal background clicks
-    input_coordinator.register_on_layer(
-        "profile_manager:modal_bg",
-        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
-        Sense::CLICK,
-        layer_id,
-    );
-
-    // ── Split layout ─────────────────────────────────────────────────────────
-    // Left column: account info, updates
-    // Right column: profile list, create button, cloud profiles
-    let left_col_w: f64 = 240.0;
-    let divider_x = modal_x + left_col_w;
-    let right_col_x = divider_x + 1.0;
-    let right_col_w = modal_w - left_col_w - 1.0;
-
-    // Vertical divider
-    ctx.set_stroke_color(toolbar_theme.separator.as_str());
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(divider_x, modal_y + 20.0);
-    ctx.line_to(divider_x, modal_y + modal_h - 20.0);
-    ctx.stroke();
-
-    // ── LEFT COLUMN: Account panel ────────────────────────────────────────────
-    let left_pad = 20.0;
-    let left_inner_x = modal_x + left_pad;
-    let left_inner_w = left_col_w - left_pad * 2.0;
-    let mut left_cy = modal_y + 28.0;
-
-    // ── Separator ─────────────────────────────────────────────────────────────
-    left_cy += 20.0;
-    ctx.set_stroke_color(toolbar_theme.separator.as_str());
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(left_inner_x, left_cy);
-    ctx.line_to(left_inner_x + left_inner_w, left_cy);
-    ctx.stroke();
-    left_cy += 16.0;
-
-    // ── Zero-trust badge + version (single row) ──────────────────────────────
-    {
-        let icon_size = 14.0;
-        let row_h = 18.0;
-        let mid_y = left_cy + row_h / 2.0;
-        draw_svg_icon(ctx, Icon::ShieldCheck.svg(), left_inner_x, mid_y - icon_size / 2.0, icon_size, icon_size, toolbar_theme.item_text.as_str());
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(toolbar_theme.item_text.as_str());
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(ProfileKey::ZeroTrust.get(current_language()), left_inner_x + icon_size + 4.0, mid_y);
-        // Version on the right edge of the left column.
-        ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-        ctx.set_text_align(TextAlign::Right);
-        ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), left_inner_x + left_inner_w, mid_y);
-        left_cy += row_h + 8.0;
-    }
-    let _left_cy = left_cy;
-
-    // Mascot at bottom of left panel — pre-rendered PNG, maintain aspect ratio
-    let mascot_w = 140.0;
-    let mascot_h = mascot_w * (251.0 / 197.0); // ~178px
-    let mascot_x = left_inner_x + (left_inner_w - mascot_w) / 2.0;
-    let mascot_y = modal_y + modal_h - mascot_h - 8.0;
-    draw_svg_multicolor(ctx, MASCOT_SVG, mascot_x, mascot_y, mascot_w, mascot_h);
-
-    // ── RIGHT COLUMN: Profile list ────────────────────────────────────────────
-    let right_pad = 24.0;
-    let inner_x = right_col_x + right_pad;
-    let inner_w = right_col_w - right_pad * 2.0;
-    let mut cy = modal_y + 28.0;
-
-    let profile_row_h: f64 = 52.0;
-    let cloud_row_h: f64 = 44.0;
-
-    // Filter cloud profiles: exclude any that are already present locally.
-    let _cloud_profiles_to_show: Vec<()> = Vec::new();
-
-    // Close button (×) — only when a live profile is running AND this isn't
-    // the mandatory migration/first-run step (no live chart behind it yet).
-    // A locked vault no longer withholds the close button — owner's ruling
-    // 2026-08-31.
-    if !state.runtime_profile_id.is_empty() && !state.profile_manager_mandatory {
-        let close_size = 28.0;
-        let close_x = right_col_x + right_col_w - right_pad - close_size + 4.0;
-        let close_y = modal_y + 8.0;
-        let close_id = "user_settings:profile_mgr:close";
-        let close_hovered = hovered == Some("profile_mgr:close");
-
-        if close_hovered {
-            ctx.set_fill_color(toolbar_theme.item_bg_hover.as_str());
-            ctx.fill_rounded_rect(close_x, close_y, close_size, close_size, 4.0);
-        }
-
-        draw_svg_icon(ctx, Icon::Close.svg(), close_x + 4.0, close_y + 4.0, 20.0, 20.0,
-            if close_hovered { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() });
-
-        let close_rect = WidgetRect::new(close_x, close_y, close_size, close_size);
-        result.content_items.push(("profile_mgr:close".to_string(), close_rect));
-        input_coordinator.register_on_layer(
-            close_id,
-            close_rect,
-            Sense::CLICK | Sense::HOVER,
-            layer_id,
-        );
-    }
-
-    // ── Header row: two halves ──────────────────────────────────────────────
-    // Left half:  "Profiles" title
-    // Right half: entire area is "+ Create New Profile" button
-    let header_h = 36.0;
-    let half_w = inner_w / 2.0;
-    let header_mid_y = cy + header_h / 2.0;
-
-    // ── Left half: "Profiles" ──
-    ctx.set_font("bold 20px sans-serif");
+    // ── Header row: "Profiles" title (left) + "+ Create New Profile" (right) ──
+    let create_w: f64 = 180.0;
+    ctx.set_font("bold 18px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(ProfileKey::Profiles.get(current_language()), inner_x, header_mid_y);
+    ctx.fill_text(ProfileKey::Profiles.get(current_language()), x, cy + PROFILE_HEADER_H / 2.0);
 
-    // ── Right half: "+ Create New Profile" button ──
-    let btn_x = inner_x + half_w + 8.0;
-    let btn_w = half_w - 8.0;
     let create_id = "profile_mgr:create_new";
     let is_create_hovered = hovered == Some(create_id);
     let create_bg = if is_create_hovered {
@@ -255,17 +234,17 @@ fn render_page_profile_list(
     } else {
         toolbar_theme.button_bg.as_str()
     };
+    let create_x = x + w - create_w;
     ctx.set_fill_color(create_bg);
-    ctx.fill_rounded_rect(btn_x, cy, btn_w, header_h, 4.0);
-
+    ctx.fill_rounded_rect(create_x, cy, create_w, PROFILE_HEADER_H, 4.0);
     ctx.set_font("bold 13px sans-serif");
     ctx.set_fill_color(if is_create_hovered { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(ProfileKey::CreateNewProfile.get(current_language()), btn_x + btn_w / 2.0, header_mid_y);
+    ctx.fill_text(ProfileKey::CreateNewProfile.get(current_language()), create_x + create_w / 2.0, cy + PROFILE_HEADER_H / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
-    let create_rect = WidgetRect::new(btn_x, cy, btn_w, header_h);
+    let create_rect = WidgetRect::new(create_x, cy, create_w, PROFILE_HEADER_H);
     result.content_items.push((create_id.to_string(), create_rect));
     input_coordinator.register_on_layer(
         format!("user_settings:{}", create_id).as_str(),
@@ -273,75 +252,68 @@ fn render_page_profile_list(
         Sense::CLICK | Sense::HOVER,
         layer_id,
     );
+    cy += PROFILE_HEADER_H + 8.0;
 
-    cy += header_h + 8.0;
-
-    // ── Scrollable viewport for profile rows + cloud section ──────────────────
-    // No bottom button — list fills all available space.
-    let scroll_viewport_y = cy;
-    let scroll_viewport_h = ((modal_y + modal_h) - scroll_viewport_y - 12.0)
-        .max(0.0);
-
-    // Measure total unclipped content height (profile rows + optional cloud section).
-    let mut total_content_h: f64 = 0.0;
-    for _ in &state.profiles_with_vault_status {
-        total_content_h += profile_row_h + 6.0;
+    // ── Zero-trust badge + version (single row) ──────────────────────────────
+    {
+        let icon_size = 14.0;
+        let mid_y = cy + PROFILE_ZT_ROW_H / 2.0;
+        draw_svg_icon(ctx, Icon::ShieldCheck.svg(), x, mid_y - icon_size / 2.0, icon_size, icon_size, toolbar_theme.item_text_muted.as_str());
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(ProfileKey::ZeroTrust.get(current_language()), x + icon_size + 4.0, mid_y);
+        ctx.set_text_align(TextAlign::Right);
+        ctx.fill_text(&format!("v{}", env!("CARGO_PKG_VERSION")), x + w, mid_y);
+        ctx.set_text_align(TextAlign::Left);
+        cy += PROFILE_ZT_ROW_H + 8.0;
     }
-    let _ = cloud_row_h;
 
-    // Clamp scroll offset against the actual max.
+    // ── Scrollable viewport for profile rows ──────────────────────────────────
+    let scroll_viewport_y = cy;
+    let total_content_h = (state.profiles_with_vault_status.len() as f64) * (PROFILE_ROW_H + PROFILE_ROW_GAP);
+    let scroll_viewport_h = total_content_h.max(PROFILE_ROW_H).min(PROFILE_LIST_MAX_H);
+
     let max_scroll = (total_content_h - scroll_viewport_h).max(0.0);
     let scroll_offset = state.profile_list_scroll.offset.min(max_scroll);
 
-    // Store viewport rect and total content height in result for the scroll handler.
-    result.profile_list_viewport_rect = WidgetRect::new(
-        inner_x,
-        scroll_viewport_y,
-        inner_w,
-        scroll_viewport_h,
-    );
+    result.profile_list_viewport_rect = WidgetRect::new(x, scroll_viewport_y, w, scroll_viewport_h);
     result.profile_list_total_content_h = total_content_h;
 
-    // Phase 6.1a: register scrollable profile list for coordinator dispatch
     input_coordinator.register_on_layer(
         "user_settings:profile_list_viewport",
-        WidgetRect::new(inner_x, scroll_viewport_y, inner_w, scroll_viewport_h),
+        WidgetRect::new(x, scroll_viewport_y, w, scroll_viewport_h),
         Sense::SCROLL,
         layer_id,
     );
 
-    // Apply clip rect — all profile rows and cloud section render inside.
     ctx.save();
-    ctx.clip_rect(inner_x, scroll_viewport_y, inner_w, scroll_viewport_h);
+    ctx.clip_rect(x, scroll_viewport_y, w, scroll_viewport_h);
 
-    // Shift starting y by the scroll offset.
     cy = scroll_viewport_y - scroll_offset;
 
-    // Profile rows
     for (id, display_name, _avatar, has_vault) in &state.profiles_with_vault_status {
         let widget_id = format!("profile_mgr:select:{}", id);
         let is_row_hovered = hovered == Some(widget_id.as_str());
         let is_active = *id == state.runtime_profile_id;
 
-        // Row background
         let row_bg = if is_row_hovered {
             toolbar_theme.button_bg_hover.as_str()
         } else {
             toolbar_theme.button_bg.as_str()
         };
         ctx.set_fill_color(row_bg);
-        ctx.fill_rounded_rect(inner_x, cy, inner_w, profile_row_h, 4.0);
+        ctx.fill_rounded_rect(x, cy, w, PROFILE_ROW_H, 4.0);
 
-        // Active profile: left accent border
         if is_active {
             ctx.set_fill_color(&toolbar_theme.accent);
-            ctx.fill_rounded_rect(inner_x, cy, 3.0, profile_row_h, 2.0);
+            ctx.fill_rounded_rect(x, cy, 3.0, PROFILE_ROW_H, 2.0);
         }
 
-        let row_mid_y = cy + profile_row_h / 2.0;
+        let row_mid_y = cy + PROFILE_ROW_H / 2.0;
 
-        // Display name (14px bold, left)
-        let name_x = if is_active { inner_x + 10.0 } else { inner_x + 8.0 };
+        let name_x = if is_active { x + 10.0 } else { x + 8.0 };
         ctx.set_font("bold 14px sans-serif");
         ctx.set_fill_color(text_color);
         ctx.set_text_align(TextAlign::Left);
@@ -349,23 +321,20 @@ fn render_page_profile_list(
         ctx.fill_text(display_name.as_str(), name_x, row_mid_y);
 
         if *has_vault {
-            // Encrypted profile: just the name, no right-side badges
-            let row_rect = WidgetRect::new(inner_x, cy, inner_w, profile_row_h);
+            let row_rect = WidgetRect::new(x, cy, w, PROFILE_ROW_H);
             result.content_items.push((widget_id.clone(), row_rect));
             let hit_id = format!("user_settings:{}", widget_id);
             input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK | Sense::HOVER, layer_id);
         } else {
-            // Unencrypted: show warning + delete button (no mode_label)
             ctx.set_font("10px sans-serif");
             ctx.set_text_align(TextAlign::Right);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.set_fill_color(toolbar_theme.danger.as_str());
-            ctx.fill_text(ProfileKey::Unprotected.get(current_language()), inner_x + inner_w - 70.0, row_mid_y);
+            ctx.fill_text(ProfileKey::Unprotected.get(current_language()), x + w - 70.0, row_mid_y);
 
-            // Delete button
             let del_w = 54.0;
             let del_h = 22.0;
-            let del_x = inner_x + inner_w - del_w - 6.0;
+            let del_x = x + w - del_w - 6.0;
             let del_y = row_mid_y - del_h / 2.0;
             let del_id = format!("profile_delete:{}", id);
             let is_del_hovered = hovered == Some(del_id.as_str());
@@ -378,13 +347,11 @@ fn render_page_profile_list(
             ctx.fill_text(TextKey::Delete.get(current_language()), del_x + del_w / 2.0, row_mid_y);
             ctx.set_text_align(TextAlign::Left);
 
-            // Register row hit area FIRST (lower priority)
-            let row_rect = WidgetRect::new(inner_x, cy, inner_w, profile_row_h);
+            let row_rect = WidgetRect::new(x, cy, w, PROFILE_ROW_H);
             result.content_items.push((widget_id.clone(), row_rect));
             let hit_id = format!("user_settings:{}", widget_id);
             input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK | Sense::HOVER, layer_id);
 
-            // Register delete button SECOND (higher priority — on top of row)
             let del_rect = WidgetRect::new(del_x, del_y, del_w, del_h);
             result.content_items.push((del_id.clone(), del_rect));
             input_coordinator.register_on_layer(
@@ -395,16 +362,14 @@ fn render_page_profile_list(
             );
         }
 
-        cy += profile_row_h + 6.0;
+        cy += PROFILE_ROW_H + PROFILE_ROW_GAP;
     }
 
-    // End clip — scrollbar and Create button are drawn outside.
     ctx.restore();
 
-    // ── Scrollbar thumb (drawn outside clip, over the viewport) ───────────────
     if total_content_h > scroll_viewport_h {
         let scrollbar_w = 4.0;
-        let track_x = inner_x + inner_w + 2.0;
+        let track_x = x + w + 2.0;
         let ratio = (scroll_viewport_h / total_content_h).min(1.0);
         let thumb_h = (scroll_viewport_h * ratio).max(24.0);
         let scroll_ratio = if max_scroll > 0.0 { scroll_offset / max_scroll } else { 0.0 };
@@ -412,14 +377,11 @@ fn render_page_profile_list(
         ctx.set_fill_color(toolbar_theme.separator.as_str());
         ctx.fill_rounded_rect(track_x, thumb_y, scrollbar_w, thumb_h, 2.0);
 
-        // Store rects for input handling (drag support)
         let track_rect = WidgetRect::new(track_x, scroll_viewport_y, scrollbar_w, scroll_viewport_h);
         let handle_rect = WidgetRect::new(track_x, thumb_y, scrollbar_w, thumb_h);
         result.profile_list_handle_rect = Some(handle_rect);
         result.profile_list_track_rect = Some(track_rect);
 
-        // Inflate hit zone generously (±10px x, ±2px y) so the 4px-wide thumb is
-        // comfortably grabbable even when cursor is slightly off the visual bar.
         let inflated = uzor::types::Rect::new(
             handle_rect.x - 10.0,
             handle_rect.y - 2.0,
@@ -439,7 +401,6 @@ fn render_page_profile_list(
             layer_id,
         );
     }
-
 }
 
 // =============================================================================
@@ -449,10 +410,9 @@ fn render_page_profile_list(
 #[allow(clippy::too_many_arguments)]
 fn render_page_unlock(
     ctx: &mut dyn RenderContext,
-    content_x: f64,
-    content_y: f64,
-    content_w: f64,
-    content_h: f64,
+    x: f64,
+    y: f64,
+    w: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
@@ -463,60 +423,25 @@ fn render_page_unlock(
     result: &mut UserSettingsResult,
 ) {
     let hovered = state.hovered_item_id.as_deref();
+    let mut cy = y;
 
-    let modal_x = content_x;
-    let modal_y = content_y;
-    let modal_w = content_w;
-    let modal_h = content_h;
-
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
-
-    input_coordinator.register_on_layer(
-        "profile_manager:unlock_bg",
-        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
-        Sense::CLICK,
-        layer_id,
-    );
-
-    let form_w: f64 = 460.0;
-    let inner_x = modal_x + (modal_w - form_w) / 2.0;
-    let inner_w = form_w;
-    let mut cy = modal_y + (modal_h / 2.0) - 130.0;
-
-    // Back button
-    render_back_button(ctx, inner_x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
+    render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
     cy += 10.0;
 
-    // Title
-    let title = if state.profile_manager_target_name.is_empty() {
-        "Unlock Profile".to_string()
-    } else {
-        format!("Unlock {}", state.profile_manager_target_name)
-    };
-    ctx.set_font("bold 18px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(title.as_str(), inner_x + inner_w / 2.0, cy);
-    cy += 26.0;
-
-    // Subtitle
+    // Subtitle (the title now lives in the shell header).
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(ProfileKey::EnterPassphraseToDecrypt.get(current_language()), inner_x + inner_w / 2.0, cy);
+    ctx.fill_text(ProfileKey::EnterPassphraseToDecrypt.get(current_language()), x + w / 2.0, cy);
     ctx.set_text_align(TextAlign::Left);
     cy += 22.0;
 
-    // Passphrase input
     render_passphrase_input(
-        ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme,
+        ctx, x, w, &mut cy, state, text_color, toolbar_theme,
         frame_theme, current_time_ms, layer_id, input_coordinator, result,
     );
 
-    // Unlock button
     let unlock_disabled = state.new_passphrase_render.text.is_empty();
     let is_unlock_hovered = !unlock_disabled && hovered == Some("profile_mgr:unlock");
     let btn_bg = if is_unlock_hovered {
@@ -526,35 +451,33 @@ fn render_page_unlock(
     };
     let btn_text_col = if unlock_disabled { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.item_text_active.as_str() };
     let btn_h = 32.0;
-    let btn_w = inner_w.min(180.0);
+    let btn_w = w.min(180.0);
     ctx.set_fill_color(btn_bg);
-    ctx.fill_rounded_rect(inner_x, cy, btn_w, btn_h, 4.0);
+    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
     ctx.set_font("bold 12px sans-serif");
     ctx.set_fill_color(btn_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(ProfileKey::BtnUnlock.get(current_language()), inner_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.fill_text(ProfileKey::BtnUnlock.get(current_language()), x + btn_w / 2.0, cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !unlock_disabled {
-        let btn_rect = WidgetRect::new(inner_x, cy, btn_w, btn_h);
+        let btn_rect = WidgetRect::new(x, cy, btn_w, btn_h);
         result.content_items.push(("profile_mgr:unlock".to_string(), btn_rect));
         input_coordinator.register_on_layer("user_settings:profile_mgr:unlock", btn_rect, Sense::CLICK | Sense::HOVER, layer_id);
     }
     cy += btn_h + 10.0;
 
-    // Error message
     if let Some(ref err_msg) = state.vault_unlock_error {
         ctx.set_font("12px sans-serif");
         ctx.set_fill_color(toolbar_theme.danger.as_str());
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(err_msg.as_str(), inner_x + inner_w / 2.0, cy);
+        ctx.fill_text(err_msg.as_str(), x + w / 2.0, cy);
         ctx.set_text_align(TextAlign::Left);
         cy += 18.0;
     }
 
-    // "Use recovery key" link
     let link_text = ProfileKey::LinkUseRecoveryKey.get(current_language());
     let is_link_hovered = hovered == Some("profile_mgr:use_recovery_key");
     ctx.set_font("12px sans-serif");
@@ -565,11 +488,11 @@ fn render_page_unlock(
     });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(link_text, inner_x + inner_w / 2.0, cy);
+    ctx.fill_text(link_text, x + w / 2.0, cy);
     ctx.set_text_align(TextAlign::Left);
     let link_w = 140.0;
     let link_h = 16.0;
-    let link_x = inner_x + (inner_w - link_w) / 2.0;
+    let link_x = x + (w - link_w) / 2.0;
     let link_rect = WidgetRect::new(link_x, cy, link_w, link_h);
     result.content_items.push(("profile_mgr:use_recovery_key".to_string(), link_rect));
     input_coordinator.register_on_layer(
@@ -584,10 +507,9 @@ fn render_page_unlock(
 #[allow(clippy::too_many_arguments)]
 fn render_page_create_passphrase(
     ctx: &mut dyn RenderContext,
-    content_x: f64,
-    content_y: f64,
-    content_w: f64,
-    content_h: f64,
+    x: f64,
+    y: f64,
+    w: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
@@ -598,54 +520,19 @@ fn render_page_create_passphrase(
     result: &mut UserSettingsResult,
 ) {
     let hovered = state.hovered_item_id.as_deref();
+    let mut cy = y;
 
-    let modal_x = content_x;
-    let modal_y = content_y;
-    let modal_w = content_w;
-    let modal_h = content_h;
-
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
-
-    input_coordinator.register_on_layer(
-        "profile_manager:create_pass_bg",
-        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
-        Sense::CLICK,
-        layer_id,
-    );
-
-    let form_w: f64 = 460.0;
-    let inner_x = modal_x + (modal_w - form_w) / 2.0;
-    let inner_w = form_w;
-    let mut cy = modal_y + (modal_h / 2.0) - 110.0;
-
-    // Back button
-    render_back_button(ctx, inner_x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
+    render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
     cy += 10.0;
 
-    // Title
-    let title = if state.profile_manager_target_name.is_empty() {
-        "Set Up Encryption".to_string()
-    } else {
-        format!("Set Up Encryption for {}", state.profile_manager_target_name)
-    };
-    ctx.set_font("bold 18px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(title.as_str(), inner_x + inner_w / 2.0, cy);
-    cy += 26.0;
-
-    // Subtitle
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(ProfileKey::CreatePassphraseForKeys.get(current_language()), inner_x + inner_w / 2.0, cy);
+    ctx.fill_text(ProfileKey::CreatePassphraseForKeys.get(current_language()), x + w / 2.0, cy);
     ctx.set_text_align(TextAlign::Left);
     cy += 22.0;
 
-    // Minimum length hint
     if state.new_passphrase_render.text.len() < mlc_core::MIN_PASSPHRASE_LENGTH {
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
@@ -653,32 +540,30 @@ fn render_page_create_passphrase(
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(
             &format!("Minimum {} characters", mlc_core::MIN_PASSPHRASE_LENGTH),
-            inner_x,
+            x,
             cy,
         );
         cy += 16.0;
     } else {
-        cy += 16.0; // keep spacing consistent
+        cy += 16.0;
     }
 
-    // Passphrase input
     render_passphrase_input(
-        ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme,
+        ctx, x, w, &mut cy, state, text_color, toolbar_theme,
         frame_theme, current_time_ms, layer_id, input_coordinator, result,
     );
 
-    // ── Confirm Passphrase input ──────────────────────────────────────────────
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
 
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text(ProfileKey::ConfirmPassphrase.get(current_language()), inner_x, cy);
+    ctx.fill_text(ProfileKey::ConfirmPassphrase.get(current_language()), x, cy);
     cy += 18.0;
 
     let confirm_h = 32.0;
-    let confirm_rect = WidgetRect::new(inner_x, cy, inner_w, confirm_h);
+    let confirm_rect = WidgetRect::new(x, cy, w, confirm_h);
     let conf_render = &state.confirm_passphrase_render;
     let (conf_sel_start, conf_sel_end) = if let Some((lo, hi)) = conf_render.selection_range() {
         (Some(lo), Some(hi))
@@ -715,7 +600,6 @@ fn render_page_create_passphrase(
 
     cy += confirm_h + 4.0;
 
-    // Mismatch error
     let passphrase_text = &state.new_passphrase_render.text;
     let confirm_text = &state.confirm_passphrase_render.text;
     if !confirm_text.is_empty() && !passphrase_text.is_empty() && confirm_text != passphrase_text {
@@ -723,13 +607,12 @@ fn render_page_create_passphrase(
         ctx.set_fill_color(toolbar_theme.danger.as_str());
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(ProfileKey::PassphrasesMismatch.get(current_language()), inner_x, cy);
+        ctx.fill_text(ProfileKey::PassphrasesMismatch.get(current_language()), x, cy);
         cy += 18.0;
     } else {
         cy += 18.0;
     }
 
-    // Encrypt button (disabled until passphrase meets minimum length AND confirm matches)
     let confirm_matches_create = state.confirm_passphrase_render.text == state.new_passphrase_render.text;
     let encrypt_disabled = state.new_passphrase_render.text.len() < mlc_core::MIN_PASSPHRASE_LENGTH
         || !confirm_matches_create;
@@ -741,18 +624,18 @@ fn render_page_create_passphrase(
     };
     let btn_text_col = if encrypt_disabled { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.item_text_active.as_str() };
     let btn_h = 32.0;
-    let btn_w = inner_w.min(180.0);
+    let btn_w = w.min(180.0);
     ctx.set_fill_color(btn_bg);
-    ctx.fill_rounded_rect(inner_x, cy, btn_w, btn_h, 4.0);
+    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
     ctx.set_font("bold 12px sans-serif");
     ctx.set_fill_color(btn_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(ProfileKey::BtnEncrypt.get(current_language()), inner_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.fill_text(ProfileKey::BtnEncrypt.get(current_language()), x + btn_w / 2.0, cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !encrypt_disabled {
-        let btn_rect = WidgetRect::new(inner_x, cy, btn_w, btn_h);
+        let btn_rect = WidgetRect::new(x, cy, btn_w, btn_h);
         result.content_items.push(("profile_mgr:create_passphrase".to_string(), btn_rect));
         input_coordinator.register_on_layer(
             "user_settings:profile_mgr:create_passphrase",
@@ -767,90 +650,55 @@ fn render_page_create_passphrase(
 // Page: ShowRecoveryKey
 // =============================================================================
 
-/// Render the recovery key display page.
-///
-/// Shown once after a successful vault creation.  The user must click
-/// "Я записал" ("I have written it down") to proceed.  Until they do,
-/// this overlay remains.
+/// Shown once after a successful vault creation. The user must click
+/// "Я записал" ("I have written it down") to proceed — that step, not the
+/// modal's own dismissibility, is what makes this page a one-way door; the ×
+/// and Esc still work like any other page here (the recovery key itself is
+/// never destroyed by closing early, only the forward flow is).
 #[allow(clippy::too_many_arguments)]
 fn render_page_show_recovery_key(
     ctx: &mut dyn RenderContext,
-    content_x: f64,
-    content_y: f64,
-    content_w: f64,
-    content_h: f64,
+    x: f64,
+    y: f64,
+    w: f64,
     state: &UserSettingsState,
-    text_color: &str,
+    _text_color: &str,
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
-    _current_time_ms: u64,
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
     let hovered = state.hovered_item_id.as_deref();
+    let mut cy = y;
 
-    let modal_x = content_x;
-    let modal_y = content_y;
-    let modal_w = content_w;
-    let modal_h = content_h;
-
-    // Modal background
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
-
-    // Absorb clicks on the modal background
-    input_coordinator.register_on_layer(
-        "profile_manager:recovery_key_bg",
-        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
-        Sense::CLICK,
-        layer_id,
-    );
-
-    let form_w: f64 = 500.0;
-    let inner_x = modal_x + (modal_w - form_w) / 2.0;
-    let inner_w = form_w;
-    let mut cy = modal_y + (modal_h / 2.0) - 140.0;
-
-    // Title
-    ctx.set_font("bold 18px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(ProfileKey::RecoveryKeyTitle.get(current_language()), inner_x + inner_w / 2.0, cy);
-    cy += 28.0;
-
-    // Warning subtitle
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(toolbar_theme.accent.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(
         ProfileKey::RecoveryKeyWriteDownWarning.get(current_language()),
-        inner_x + inner_w / 2.0,
+        x + w / 2.0,
         cy,
     );
     cy += 18.0;
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.fill_text(
         ProfileKey::RecoveryKeyPasswordLossNote.get(current_language()),
-        inner_x + inner_w / 2.0,
+        x + w / 2.0,
         cy,
     );
     ctx.set_text_align(TextAlign::Left);
     cy += 26.0;
 
-    // Recovery key display box — rendered as a selectable read-only text input so the
-    // user can click-to-cursor and drag-to-select the key text for manual copying.
     let key_text = state
         .recovery_key_display
         .as_deref()
         .unwrap_or("(key not available)");
 
     let key_box_h = 40.0;
-    let key_display_rect = WidgetRect::new(inner_x, cy, inner_w, key_box_h);
+    let key_display_rect = WidgetRect::new(x, cy, w, key_box_h);
 
-    // Build a WidgetTheme from toolbar_theme for consistent theming.
     let key_widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
 
     let rk_render = &state.recovery_key_display_render;
@@ -871,8 +719,6 @@ fn render_page_show_recovery_key(
 
     let key_display_result = draw_input(ctx, &key_display_config, crate::ui::widgets::types::WidgetState::Normal, key_display_rect, &key_widget_theme);
 
-    // Register the display box for click events (focus, cursor positioning) and
-    // hover so the mouse cursor changes.
     result.content_items.push(("profile_mgr:recovery_key_display".to_string(), key_display_rect));
     result.input_char_positions.push(("profile_mgr:recovery_key_display".to_string(), key_display_result.char_x_positions.clone()));
     input_coordinator.register_on_layer(
@@ -882,7 +728,6 @@ fn render_page_show_recovery_key(
         layer_id,
     );
 
-    // Draw blinking cursor if the display is focused.
     if display_focused && rk_render.cursor_visible {
         draw_input_cursor(
             ctx,
@@ -895,7 +740,6 @@ fn render_page_show_recovery_key(
 
     cy += key_box_h + 10.0;
 
-    // Copy button: copies the recovery key to clipboard
     let copy_btn_label = ProfileKey::BtnCopyKey.get(current_language());
     let is_copy_hovered = hovered == Some("profile_mgr:recovery_key_copy");
     let copy_btn_bg = if is_copy_hovered {
@@ -904,8 +748,8 @@ fn render_page_show_recovery_key(
         toolbar_theme.button_bg.as_str()
     };
     let copy_btn_h = 28.0;
-    let copy_btn_w = inner_w.min(200.0);
-    let copy_btn_x = inner_x + (inner_w - copy_btn_w) / 2.0;
+    let copy_btn_w = w.min(200.0);
+    let copy_btn_x = x + (w - copy_btn_w) / 2.0;
     ctx.set_fill_color(copy_btn_bg);
     ctx.fill_rounded_rect(copy_btn_x, cy, copy_btn_w, copy_btn_h, 4.0);
     ctx.set_font("11px sans-serif");
@@ -926,7 +770,6 @@ fn render_page_show_recovery_key(
 
     cy += copy_btn_h + 12.0;
 
-    // Confirm button: "Я записал"
     let btn_label = ProfileKey::BtnRecoveryConfirmed.get(current_language());
     let is_btn_hovered = hovered == Some("profile_mgr:recovery_key_confirm");
     let btn_bg = if is_btn_hovered {
@@ -936,8 +779,8 @@ fn render_page_show_recovery_key(
     };
     let btn_text_col = toolbar_theme.item_text_active.as_str();
     let btn_h = 34.0;
-    let btn_w = inner_w.min(260.0);
-    let btn_x = inner_x + (inner_w - btn_w) / 2.0;
+    let btn_w = w.min(260.0);
+    let btn_x = x + (w - btn_w) / 2.0;
     ctx.set_fill_color(btn_bg);
     ctx.fill_rounded_rect(btn_x, cy, btn_w, btn_h, 4.0);
     ctx.set_font("bold 12px sans-serif");
@@ -957,7 +800,6 @@ fn render_page_show_recovery_key(
     );
 }
 
-
 // =============================================================================
 // Page: CreateNew
 // =============================================================================
@@ -965,64 +807,31 @@ fn render_page_show_recovery_key(
 #[allow(clippy::too_many_arguments)]
 fn render_page_create_new(
     ctx: &mut dyn RenderContext,
-    content_x: f64,
-    content_y: f64,
-    content_w: f64,
-    content_h: f64,
+    x: f64,
+    y: f64,
+    w: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
-    _current_time_ms: u64,
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
     let hovered = state.hovered_item_id.as_deref();
+    let mut cy = y;
 
-    let modal_x = content_x;
-    let modal_y = content_y;
-    let modal_w = content_w;
-    let modal_h = content_h;
+    render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
+    cy += 12.0;
 
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
-
-    input_coordinator.register_on_layer(
-        "profile_manager:create_new_bg",
-        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
-        Sense::CLICK,
-        layer_id,
-    );
-
-    let form_w: f64 = 460.0;
-    let inner_x = modal_x + (modal_w - form_w) / 2.0;
-    let inner_w = form_w;
-    let mut cy = modal_y + (modal_h / 2.0) - 100.0;
-
-    // Back button
-    render_back_button(ctx, inner_x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
-    cy += 10.0;
-
-    // Title
-    ctx.set_font("bold 18px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(ProfileKey::NewProfile.get(current_language()), inner_x + inner_w / 2.0, cy);
-    ctx.set_text_align(TextAlign::Left);
-    cy += 28.0;
-
-    // Profile name label
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(ProfileKey::ProfileName.get(current_language()), inner_x, cy);
+    ctx.fill_text(ProfileKey::ProfileName.get(current_language()), x, cy);
     cy += 18.0;
 
-    // Profile name input
     let input_h = 32.0;
-    let name_rect = WidgetRect::new(inner_x, cy, inner_w, input_h);
+    let name_rect = WidgetRect::new(x, cy, w, input_h);
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
     let npn_render = &state.new_profile_name_render;
     let (sel_start, sel_end) = if let Some((lo, hi)) = npn_render.selection_range() {
@@ -1058,7 +867,6 @@ fn render_page_create_new(
     }
     cy += input_h + 16.0;
 
-    // Create button
     let name_is_empty = state.new_profile_name_render.text.trim().is_empty();
     let create_disabled = name_is_empty;
     let is_create_hovered = !create_disabled && hovered == Some("profile_mgr:create_confirm");
@@ -1069,18 +877,18 @@ fn render_page_create_new(
     };
     let create_text_col = if create_disabled { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.item_text_active.as_str() };
     let create_btn_h = 32.0;
-    let create_btn_w = inner_w.min(180.0);
+    let create_btn_w = w.min(180.0);
     ctx.set_fill_color(create_bg);
-    ctx.fill_rounded_rect(inner_x, cy, create_btn_w, create_btn_h, 4.0);
+    ctx.fill_rounded_rect(x, cy, create_btn_w, create_btn_h, 4.0);
     ctx.set_font("bold 12px sans-serif");
     ctx.set_fill_color(create_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(ProfileKey::BtnCreate.get(current_language()), inner_x + create_btn_w / 2.0, cy + create_btn_h / 2.0);
+    ctx.fill_text(ProfileKey::BtnCreate.get(current_language()), x + create_btn_w / 2.0, cy + create_btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !create_disabled {
-        let create_rect = WidgetRect::new(inner_x, cy, create_btn_w, create_btn_h);
+        let create_rect = WidgetRect::new(x, cy, create_btn_w, create_btn_h);
         result.content_items.push(("profile_mgr:create_confirm".to_string(), create_rect));
         input_coordinator.register_on_layer(
             "user_settings:profile_mgr:create_confirm",
@@ -1095,73 +903,40 @@ fn render_page_create_new(
 // Page: SetNewPassphrase
 // =============================================================================
 
-/// Render the "Set New Passphrase" page.
-///
-/// Shown after a successful recovery key unlock. The user MUST set a new
-/// passphrase before the vault re-key completes and the app becomes usable.
-/// There is no back button — this step is mandatory.
+/// Shown after a successful recovery key unlock. No back button — the same
+/// reasoning as `ShowRecoveryKey`: this step being one-way is a property of
+/// the recovery flow, not of the modal, so the × and Esc still dismiss it.
 #[allow(clippy::too_many_arguments)]
 fn render_page_set_new_passphrase(
     ctx: &mut dyn RenderContext,
-    content_x: f64,
-    content_y: f64,
-    content_w: f64,
-    content_h: f64,
+    x: f64,
+    y: f64,
+    w: f64,
     state: &UserSettingsState,
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
-    _current_time_ms: u64,
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
     let hovered = state.hovered_item_id.as_deref();
     let has_error = !state.set_passphrase_error.is_empty();
+    let mut cy = y;
 
-    let modal_x = content_x;
-    let modal_y = content_y;
-    let modal_w = content_w;
-    let modal_h = content_h;
-
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
-
-    // Absorb clicks on the modal background
-    input_coordinator.register_on_layer(
-        "profile_manager:set_new_pass_bg",
-        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
-        Sense::CLICK,
-        layer_id,
-    );
-
-    let form_w: f64 = 480.0;
-    let inner_x = modal_x + (modal_w - form_w) / 2.0;
-    let inner_w = form_w;
-    let mut cy = modal_y + (modal_h / 2.0) - 150.0;
-
-    // Title
-    ctx.set_font("bold 18px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(ProfileKey::SetNewPassphrase.get(current_language()), inner_x + inner_w / 2.0, cy);
-    cy += 28.0;
-
-    // Subtitle
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(
         ProfileKey::VaultUnlockedWithKey.get(current_language()),
-        inner_x + inner_w / 2.0,
+        x + w / 2.0,
         cy,
     );
     cy += 16.0;
     ctx.fill_text(
         ProfileKey::SetPassphraseToContinue.get(current_language()),
-        inner_x + inner_w / 2.0,
+        x + w / 2.0,
         cy,
     );
     ctx.set_text_align(TextAlign::Left);
@@ -1170,14 +945,13 @@ fn render_page_set_new_passphrase(
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
     let input_h = 32.0;
 
-    // ── New Passphrase ────────────────────────────────────────────────────────
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(ProfileKey::NewPassphrase.get(current_language()), inner_x, cy);
+    ctx.fill_text(ProfileKey::NewPassphrase.get(current_language()), x, cy);
     cy += 18.0;
 
-    let new_pass_rect = WidgetRect::new(inner_x, cy, inner_w, input_h);
+    let new_pass_rect = WidgetRect::new(x, cy, w, input_h);
     let np_render = &state.new_passphrase_render;
     let (sel_start, sel_end) = if let Some((lo, hi)) = np_render.selection_range() {
         (Some(lo), Some(hi))
@@ -1212,14 +986,13 @@ fn render_page_set_new_passphrase(
     }
     cy += input_h + 14.0;
 
-    // ── Confirm Passphrase ────────────────────────────────────────────────────
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(ProfileKey::ConfirmPassphrase.get(current_language()), inner_x, cy);
+    ctx.fill_text(ProfileKey::ConfirmPassphrase.get(current_language()), x, cy);
     cy += 18.0;
 
-    let confirm_pass_rect = WidgetRect::new(inner_x, cy, inner_w, input_h);
+    let confirm_pass_rect = WidgetRect::new(x, cy, w, input_h);
     let cp_render = &state.confirm_passphrase_render;
     let (sel_start2, sel_end2) = if let Some((lo, hi)) = cp_render.selection_range() {
         (Some(lo), Some(hi))
@@ -1254,18 +1027,16 @@ fn render_page_set_new_passphrase(
     }
     cy += input_h + 16.0;
 
-    // ── Error message ─────────────────────────────────────────────────────────
     if has_error {
         ctx.set_font("12px sans-serif");
         ctx.set_fill_color(toolbar_theme.danger.as_str());
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(state.set_passphrase_error.as_str(), inner_x + inner_w / 2.0, cy);
+        ctx.fill_text(state.set_passphrase_error.as_str(), x + w / 2.0, cy);
         ctx.set_text_align(TextAlign::Left);
         cy += 22.0;
     }
 
-    // ── Save button ───────────────────────────────────────────────────────────
     let new_text = &state.new_passphrase_render.text;
     let confirm_text = &state.confirm_passphrase_render.text;
     let save_disabled = new_text.len() < mlc_core::MIN_PASSPHRASE_LENGTH
@@ -1280,18 +1051,18 @@ fn render_page_set_new_passphrase(
     };
     let save_text_col = if save_disabled { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.item_text_active.as_str() };
     let btn_h = 32.0;
-    let btn_w = inner_w.min(180.0);
+    let btn_w = w.min(180.0);
     ctx.set_fill_color(save_bg);
-    ctx.fill_rounded_rect(inner_x, cy, btn_w, btn_h, 4.0);
+    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
     ctx.set_font("bold 12px sans-serif");
     ctx.set_fill_color(save_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(TextKey::Save.get(current_language()), inner_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.fill_text(TextKey::Save.get(current_language()), x + btn_w / 2.0, cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !save_disabled {
-        let btn_rect = WidgetRect::new(inner_x, cy, btn_w, btn_h);
+        let btn_rect = WidgetRect::new(x, cy, btn_w, btn_h);
         result.content_items.push(("profile_mgr:save_new_passphrase".to_string(), btn_rect));
         input_coordinator.register_on_layer(
             "user_settings:profile_mgr:save_new_passphrase",
@@ -1309,66 +1080,34 @@ fn render_page_set_new_passphrase(
 #[allow(clippy::too_many_arguments)]
 fn render_page_use_recovery_key(
     ctx: &mut dyn RenderContext,
-    content_x: f64,
-    content_y: f64,
-    content_w: f64,
-    content_h: f64,
+    x: f64,
+    y: f64,
+    w: f64,
     state: &UserSettingsState,
-    text_color: &str,
+    _text_color: &str,
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
-    _current_time_ms: u64,
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
     let hovered = state.hovered_item_id.as_deref();
+    let mut cy = y;
 
-    let modal_x = content_x;
-    let modal_y = content_y;
-    let modal_w = content_w;
-    let modal_h = content_h;
-
-    ctx.set_fill_color(&toolbar_theme.background);
-    ctx.fill_rect(modal_x, modal_y, modal_w, modal_h);
-
-    input_coordinator.register_on_layer(
-        "profile_manager:recovery_input_bg",
-        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
-        Sense::CLICK,
-        layer_id,
-    );
-
-    let form_w: f64 = 520.0;
-    let inner_x = modal_x + (modal_w - form_w) / 2.0;
-    let inner_w = form_w;
-    let mut cy = modal_y + (modal_h / 2.0) - 130.0;
-
-    // Back button
-    render_back_button(ctx, inner_x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
+    render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
     cy += 10.0;
 
-    // Title
-    ctx.set_font("bold 18px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(ProfileKey::RecoverWithKey.get(current_language()), inner_x + inner_w / 2.0, cy);
-    cy += 26.0;
-
-    // Subtitle
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(ProfileKey::EnterRecoveryKeyShown.get(current_language()), inner_x + inner_w / 2.0, cy);
+    ctx.fill_text(ProfileKey::EnterRecoveryKeyShown.get(current_language()), x + w / 2.0, cy);
     ctx.set_text_align(TextAlign::Left);
     cy += 22.0;
 
-    // Recovery key input (plain text, not password)
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
     let input_h = 32.0;
-    let input_rect = WidgetRect::new(inner_x, cy, inner_w, input_h);
+    let input_rect = WidgetRect::new(x, cy, w, input_h);
     let rk_input_render = &state.recovery_key_display_render;
     let (sel_start, sel_end) = if let Some((lo, hi)) = rk_input_render.selection_range() {
         (Some(lo), Some(hi))
@@ -1404,7 +1143,6 @@ fn render_page_use_recovery_key(
     }
     cy += input_h + 14.0;
 
-    // Recover button
     let recover_disabled = state.recovery_key_display_render.text.len() < 40;
     let is_recover_hovered = !recover_disabled && hovered == Some("profile_mgr:recovery_unlock");
     let btn_bg = if is_recover_hovered {
@@ -1414,18 +1152,18 @@ fn render_page_use_recovery_key(
     };
     let btn_text_col = if recover_disabled { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.item_text_active.as_str() };
     let btn_h = 32.0;
-    let btn_w = inner_w.min(180.0);
+    let btn_w = w.min(180.0);
     ctx.set_fill_color(btn_bg);
-    ctx.fill_rounded_rect(inner_x, cy, btn_w, btn_h, 4.0);
+    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
     ctx.set_font("bold 12px sans-serif");
     ctx.set_fill_color(btn_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(ProfileKey::BtnRecover.get(current_language()), inner_x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.fill_text(ProfileKey::BtnRecover.get(current_language()), x + btn_w / 2.0, cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !recover_disabled {
-        let btn_rect = WidgetRect::new(inner_x, cy, btn_w, btn_h);
+        let btn_rect = WidgetRect::new(x, cy, btn_w, btn_h);
         result.content_items.push(("profile_mgr:recovery_unlock".to_string(), btn_rect));
         input_coordinator.register_on_layer(
             "user_settings:profile_mgr:recovery_unlock", btn_rect, Sense::CLICK | Sense::HOVER, layer_id,
@@ -1433,13 +1171,12 @@ fn render_page_use_recovery_key(
     }
     cy += btn_h + 10.0;
 
-    // Error message
     if let Some(ref err_msg) = state.vault_unlock_error {
         ctx.set_font("12px sans-serif");
         ctx.set_fill_color(toolbar_theme.danger.as_str());
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(err_msg.as_str(), inner_x + inner_w / 2.0, cy);
+        ctx.fill_text(err_msg.as_str(), x + w / 2.0, cy);
         ctx.set_text_align(TextAlign::Left);
     }
 }
@@ -1469,7 +1206,6 @@ fn render_back_button(
     ctx.set_stroke_color(stroke_color);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
-    // Draw chevron-left icon (small, 14x14) at left of button
     draw_svg_icon(ctx, Icon::ChevronLeft.svg(), x + 4.0, *cy + (btn_h - 14.0) / 2.0, 14.0, 14.0, &toolbar_theme.item_text);
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text);
@@ -1504,14 +1240,12 @@ fn render_passphrase_input(
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
-    // Label
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(ProfileKey::Passphrase.get(current_language()), x, *cy);
     *cy += 18.0;
 
-    // Input box
     let input_h = 32.0;
     let input_rect = WidgetRect::new(x, *cy, w, input_h);
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);

@@ -153,6 +153,39 @@ impl ChartApp {
         }
     }
 
+    /// Hide the Profile Manager and reset it to the ordinary entry page.
+    /// Shared by the × button, the dimmer click and Esc
+    /// (`modals::close_topmost_known_modal_layer`) — callers already checked
+    /// `profile_manager_mandatory` before reaching here.
+    pub(super) fn dismiss_profile_manager(&mut self) {
+        self.panel_app.user_settings_state.show_profile_manager = false;
+        self.panel_app.user_settings_state.profile_manager_page =
+            mlc_app_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
+        self.panel_app.user_settings_state.vault_unlock_error = None;
+        let wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
+        self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+    }
+
+    /// Hide the Welcome Wizard and reset it to page 0. Shared by the ×
+    /// button, the dimmer click and Esc — always allowed, the wizard is a
+    /// first-run courtesy, not a gate.
+    pub(super) fn dismiss_welcome_wizard(&mut self) {
+        self.panel_app.user_settings_state.show_welcome_wizard = false;
+        self.panel_app.user_settings_state.wizard_page = 0;
+        let cp_wid = uzor::WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
+        let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
+        let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
+        let mut ic = self.input_coordinator.borrow_mut();
+        ic.text_fields_mut().clear(&cp_wid);
+        ic.text_fields_mut().clear(&np_wid);
+        ic.text_fields_mut().clear(&npn_wid);
+        ic.text_fields_mut().blur();
+        drop(ic);
+        self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+        self.panel_app.user_settings_state.new_passphrase_focused = false;
+        self.panel_app.user_settings_state.new_profile_name_focused = false;
+    }
+
     /// Dispatch a click that landed on a registered widget.
     ///
     /// Handles toolbar clicks and dropdown item selections by forwarding to
@@ -160,48 +193,6 @@ impl ChartApp {
     /// but not fully wired — modal input routing would require a handle_input()
     /// on ChartPanelApp which does not exist at this checkpoint.
     pub(crate) fn dispatch_panel_click(&mut self, widget_id: &str, x: f64, y: f64) {
-        // === Profile Manager lock guard — block everything while it is shown ===
-        // While `show_profile_manager` is true the ONLY interactive elements are
-        // those inside the profile manager overlay.  All other UI is silently
-        // swallowed so the user cannot reach the chart, toolbar, or settings until
-        // they select a profile or dismiss the manager.
-        if self.panel_app.user_settings_state.show_profile_manager {
-            let allowed = widget_id.starts_with("profile_manager:")
-                || widget_id.starts_with("user_settings:profile_mgr:")
-                || widget_id.starts_with("user_settings:profile_delete:")
-                || widget_id.starts_with("profile_mgr:device_")
-                || widget_id.starts_with("profile_mgr:channel_")
-                || widget_id == "user_settings:e2e_passphrase_input"
-                || widget_id == "user_settings:profile_mgr:recovery_key_display";
-            if !allowed {
-                return;
-            }
-            // Dimmer click — dismiss profile manager if a live profile exists
-            // and this isn't a mandatory step (migration/first-run skeleton
-            // with no chart underneath yet). A locked vault is no longer
-            // mandatory (owner's ruling 2026-08-31) — dismissing just leaves
-            // credentials unavailable, same as never opening the vault.
-            if widget_id == "profile_manager:dimmer" {
-                let mandatory = self.panel_app.user_settings_state.profile_manager_mandatory;
-                if !mandatory && !self.panel_app.user_settings_state.runtime_profile_id.is_empty() {
-                    self.panel_app.user_settings_state.show_profile_manager = false;
-                    self.panel_app.user_settings_state.profile_manager_page =
-                        mlc_app_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
-                    self.panel_app.user_settings_state.vault_unlock_error = None;
-                    {
-                        let wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
-                        self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
-                    }
-                    eprintln!("[ChartApp] profile_manager: dimmer clicked, dismissing (live profile exists)");
-                }
-                return;
-            }
-            // Absorb other profile_manager: background clicks
-            if widget_id.starts_with("profile_manager:") {
-                return;
-            }
-        }
-
         // Standalone panel-settings surface (overlay gear, 2026-07-28) is
         // transient — any click outside it (and not on a gear that would
         // reopen it) dismisses it; the click then proceeds normally.
@@ -5234,6 +5225,52 @@ impl ChartApp {
             return;
         }
 
+        // === Profile Manager modal chrome (frame/dimmer/close) ===
+        // Ordinary dismissible-modal chrome (owner's ruling 2026-08-31) —
+        // everything under "profile_mgr:" is page content and is handled
+        // further below, unchanged. Only the mandatory-migration page
+        // (an existing plaintext profile with no vault, on a window with no
+        // chart yet) refuses to dismiss.
+        if let Some(action) = widget_id.strip_prefix("profile_manager:") {
+            match action {
+                "modal_bg" | "header" => { /* absorb / drag handled elsewhere */ }
+                "close" => {
+                    if !self.panel_app.user_settings_state.profile_manager_mandatory {
+                        self.dismiss_profile_manager();
+                        eprintln!("[ChartApp] profile_manager: close clicked, dismissing");
+                    }
+                }
+                rest if rest.starts_with("dimmer") => {
+                    if !self.panel_app.user_settings_state.profile_manager_mandatory {
+                        self.dismiss_profile_manager();
+                        eprintln!("[ChartApp] profile_manager: dimmer clicked, dismissing");
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // === Welcome Wizard modal chrome (frame/dimmer/close) ===
+        // A first-run courtesy, not a gate (owner's ruling 2026-08-31) —
+        // always dismissible. Boot already created a profile silently, so
+        // closing early keeps it and just skips the guided tour.
+        if let Some(action) = widget_id.strip_prefix("welcome_wizard:") {
+            match action {
+                "modal_bg" | "header" => { /* absorb / drag handled elsewhere */ }
+                "close" => {
+                    self.dismiss_welcome_wizard();
+                    eprintln!("[ChartApp] welcome_wizard: close clicked, dismissing");
+                }
+                rest if rest.starts_with("dimmer") => {
+                    self.dismiss_welcome_wizard();
+                    eprintln!("[ChartApp] welcome_wizard: dimmer clicked, dismissing");
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // === Cloud sign-in / account overlay clicks (cloud builds only) ===
         #[cfg(feature = "cloud")]
         if let Some(action) = widget_id.strip_prefix("cloud_login:") {
@@ -5689,18 +5726,8 @@ impl ChartApp {
                     }
                 }
                 // ── Profile Manager handlers ───────────────────────────────────
-                "profile_mgr:close" => {
-                    // × button — dismiss profile manager, return to live chart
-                    self.panel_app.user_settings_state.show_profile_manager = false;
-                    self.panel_app.user_settings_state.profile_manager_page =
-                        mlc_app_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
-                    self.panel_app.user_settings_state.vault_unlock_error = None;
-                    {
-                        let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
-                        self.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
-                    }
-                    eprintln!("[ChartApp] profile_mgr: close button clicked, dismissing");
-                }
+                // The × button is the shell's now — see the "profile_manager:"
+                // chrome block above (`dismiss_profile_manager`).
                 "profile_mgr:back" => {
                     use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
                     // Only block Back on ShowRecoveryKey — user MUST acknowledge recovery key

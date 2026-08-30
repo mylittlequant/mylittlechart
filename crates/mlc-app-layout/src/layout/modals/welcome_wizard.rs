@@ -1,13 +1,17 @@
 //! First-run Welcome Wizard modal.
 //!
-//! Shown when the user launches the app for the first time (no `profile.json`
-//! found on disk).  The wizard is a full-screen dimmer + centered modal that
-//! cannot be dismissed except by completing the setup flow.
+//! An ordinary dismissible modal over a live chart — same [`begin_modal_shell`]
+//! every other modal uses. Owner's ruling 2026-08-31: the wizard is a
+//! first-run courtesy, not a gate — boot already created a profile silently,
+//! so a user who closes the wizard keeps that profile and just skips the
+//! guided tour. It is NOT paired with `profile_manager`'s mandatory-migration
+//! exception; every page here closes by ×, dimmer and Esc.
 //!
 //! Pages:
 //!   0 — Welcome + Language   (mascot, lang selection, Get Started)
 //!   1 — Theme                (5 presets)
 //!   2 — Profile + Passphrase (name input, passphrase, ZT info, Generate Recovery Phrase)
+//!   3 — Recovery Key         (display + copy + confirm)
 
 use mlc_core::engine::render::{draw_svg_icon, draw_svg_multicolor, RenderContext};
 use mlc_core::i18n::{Language, WizardKey, current_language, t_wizard};
@@ -18,7 +22,10 @@ use crate::ui::modal_settings::UserSettingsState;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::layout::render_frame::UserSettingsResult;
 use crate::ui::z_order::ZLayer;
-use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
+use crate::ui::widgets::{
+    begin_modal_shell, end_modal_shell, register_dimmer_zones, draw_input, draw_input_cursor,
+    InputConfig, InputType, ModalFooter, ModalPlacement, ModalShellSpec, ModalTheme,
+};
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
@@ -26,11 +33,42 @@ use crate::ui::icons::Icon;
 
 const MINI_MASCOT_SVG: &str = include_str!("../../../../../assets/mascot/mini_mascot.svg");
 
-/// Render the Welcome Wizard overlay.
+const MODAL_W: f64 = 580.0;
+
+/// Content height per page. The big in-body title each page used to draw is
+/// dropped — the shell header carries it now — everything else (subtitles,
+/// step indicators, rows, inputs, buttons) keeps its original size and order,
+/// just re-summed for a top-anchored body instead of one centered in a
+/// full-window frame.
+fn page_content_height(state: &UserSettingsState) -> f64 {
+    match state.wizard_page {
+        0 => {
+            let lang_count = Language::all().len() as f64;
+            let mascot = 80.0 + 20.0;
+            let langs = lang_count * (32.0 + 4.0) - 4.0;
+            mascot + langs + 12.0 + 38.0
+        }
+        1 => 340.0,
+        2 => 350.0,
+        3 => 188.0,
+        _ => 300.0,
+    }
+}
+
+fn page_title(state: &UserSettingsState) -> String {
+    match state.wizard_page {
+        0 => format!("{} mylittlechart", t_wizard(WizardKey::WelcomeTo)),
+        1 => t_wizard(WizardKey::Theme).to_string(),
+        2 => t_wizard(WizardKey::ProfileAndSecurity).to_string(),
+        3 => t_wizard(WizardKey::RecoveryKey).to_string(),
+        _ => t_wizard(WizardKey::WelcomeTo).to_string(),
+    }
+}
+
+/// Render the Welcome Wizard modal.
 ///
-/// This is rendered independently of the settings modal — it replaces the
-/// entire UI with a full-screen dimmer + centered modal until the user makes
-/// a mode choice.
+/// `window_w/window_h` are the full window dimensions — the shell centers
+/// and clamps the frame within them, same as every other modal.
 #[allow(clippy::too_many_arguments)]
 pub fn render_welcome_wizard(
     ctx: &mut dyn RenderContext,
@@ -44,54 +82,41 @@ pub fn render_welcome_wizard(
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
-    // Push a high-z modal layer so the wizard absorbs all input
-    let layer_id = ZLayer::ModalOverlay.push_named(input_coordinator, "welcome_wizard");
+    let title = page_title(state);
+    let content_h = page_content_height(state);
 
-    // Block all clicks on the dimmer (wizard is non-closeable)
-    input_coordinator.register_on_layer(
-        "welcome_wizard:dimmer",
-        WidgetRect::new(0.0, 0.0, window_w, window_h),
-        Sense::CLICK,
-        &layer_id,
-    );
-
-    // ── Modal dimensions ─────────────────────────────────────────────────────
-    let modal_w: f64 = 580.0;
-    let modal_h: f64 = match state.wizard_page {
-        // Page 0: 15 langs × 32px rows + mascot + title + button + padding ≈ 720px
-        0 => (window_h * 0.92).min(760.0).max(500.0),
-        1 => 420.0,  // theme
-        2 => 520.0,  // profile + passphrase + confirm passphrase
-        3 => 360.0,  // recovery key display
-        _ => 400.0,
+    let theme = ModalTheme::from_toolbar(&frame_theme.modal_bg, &toolbar_theme.separator, toolbar_theme);
+    let spec = ModalShellSpec {
+        dim_backdrop: true,
+        footer: ModalFooter::None,
+        // A first-run courtesy, not a gate — always dismissible, unlike
+        // `profile_manager`'s mandatory-migration exception.
+        show_close: true,
+        draggable: false,
+        placement: ModalPlacement::Center,
+        layer: ZLayer::ModalOverlay,
+        ..ModalShellSpec::new("welcome_wizard", &title, MODAL_W, content_h)
     };
-    let modal_x = (window_w - modal_w) / 2.0;
-    let modal_y = (window_h - modal_h) / 2.0;
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &theme, (window_w, window_h));
+    register_dimmer_zones(input_coordinator, &layer_id, "welcome_wizard", shell.frame, (window_w, window_h));
 
-    // Modal background
-    ctx.set_fill_color(toolbar_theme.background.as_str());
-    ctx.fill_rounded_rect(modal_x, modal_y, modal_w, modal_h, 8.0);
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
 
-    // Absorb modal background clicks
-    input_coordinator.register_on_layer(
-        "welcome_wizard:modal_bg",
-        WidgetRect::new(modal_x, modal_y, modal_w, modal_h),
-        Sense::CLICK,
-        &layer_id,
-    );
-
-    let padding = 32.0;
-    let inner_x = modal_x + padding;
-    let inner_w = modal_w - padding * 2.0;
-    let mut cy = modal_y + 32.0;
+    let (x, w) = (shell.content.x, shell.content.width);
+    let mut cy = shell.content.y;
 
     match state.wizard_page {
-        0 => render_page0(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
-        1 => render_page1_theme(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
-        2 => render_page2_profile(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, input_coordinator, &layer_id, result),
-        3 => render_page3_recovery(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, input_coordinator, &layer_id, result),
-        _ => render_page0(ctx, inner_x, inner_w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
+        0 => render_page0(ctx, x, w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
+        1 => render_page1_theme(ctx, x, w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
+        2 => render_page2_profile(ctx, x, w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, input_coordinator, &layer_id, result),
+        3 => render_page3_recovery(ctx, x, w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, input_coordinator, &layer_id, result),
+        _ => render_page0(ctx, x, w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
     }
+
+    end_modal_shell(ctx, input_coordinator, &spec, &theme, &shell, &layer_id, &[]);
 }
 
 // =============================================================================
@@ -105,7 +130,7 @@ fn render_page0(
     w: f64,
     cy: &mut f64,
     state: &UserSettingsState,
-    text_color: &str,
+    _text_color: &str,
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
@@ -114,16 +139,7 @@ fn render_page0(
     let hovered = state.hovered_item_id.as_deref();
     let active_lang = current_language();
 
-    // Title
-    ctx.set_font("bold 22px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    let title = format!("{} mylittlechart", t_wizard(WizardKey::WelcomeTo));
-    ctx.fill_text(&title, x + w / 2.0, *cy);
-    *cy += 28.0;
-
-    // Mini mascot centered
+    // Mini mascot centered (the title lives in the shell header now).
     let mascot_size = 80.0;
     let mascot_x = x + (w - mascot_size) / 2.0;
     draw_svg_multicolor(ctx, MINI_MASCOT_SVG, mascot_x, *cy, mascot_size, mascot_size);
@@ -149,13 +165,11 @@ fn render_page0(
         ctx.set_fill_color(row_bg);
         ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
 
-        // Active accent left border
         if is_active {
             ctx.set_fill_color(toolbar_theme.accent.as_str());
             ctx.fill_rounded_rect(x, *cy, 3.0, row_h, 2.0);
         }
 
-        // Language name
         let text_alpha = if is_active { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() };
         ctx.set_font("14px sans-serif");
         ctx.set_fill_color(text_alpha);
@@ -205,7 +219,7 @@ fn render_page1_theme(
     w: f64,
     cy: &mut f64,
     state: &UserSettingsState,
-    text_color: &str,
+    _text_color: &str,
     toolbar_theme: &ToolbarTheme,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
@@ -213,41 +227,31 @@ fn render_page1_theme(
 ) {
     let hovered = state.hovered_item_id.as_deref();
 
-    // Determine active theme — fallback to "dark" if not yet selected
     let active_theme = if state.wizard_selected_theme.is_empty() {
         "dark"
     } else {
         state.wizard_selected_theme.as_str()
     };
 
-    // Back button
     render_back_button(ctx, x, w, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
     *cy += 8.0;
 
-    // Step indicator (top-right)
+    // Step indicator (top-right — shares the back button's row).
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(t_wizard(WizardKey::Step2of4), x + w, *cy - 20.0);
 
-    // Title
-    ctx.set_font("bold 22px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::Theme), x + w / 2.0, *cy);
-    *cy += 34.0;
-
-    // Subtitle
+    // Subtitle (the title now lives in the shell header).
     ctx.set_font("14px sans-serif");
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(t_wizard(WizardKey::ChooseTheme), x + w / 2.0, *cy);
     ctx.set_text_align(TextAlign::Left);
     *cy += 28.0;
 
-    // Theme rows: (key, display label, widget_id)
     let themes: &[(&str, &str, &str)] = &[
         ("dark",                  "Dark",                "wizard_theme_dark"),
         ("light",                 "Light",               "wizard_theme_light"),
@@ -271,7 +275,6 @@ fn render_page1_theme(
         ctx.set_fill_color(row_bg);
         ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
 
-        // Active accent left border
         if is_active {
             ctx.set_fill_color(toolbar_theme.accent.as_str());
             ctx.fill_rounded_rect(x, *cy, 3.0, row_h, 2.0);
@@ -326,7 +329,7 @@ fn render_page2_profile(
     w: f64,
     cy: &mut f64,
     state: &UserSettingsState,
-    text_color: &str,
+    _text_color: &str,
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
     current_time_ms: u64,
@@ -336,25 +339,15 @@ fn render_page2_profile(
 ) {
     let hovered = state.hovered_item_id.as_deref();
 
-    // Back button
     render_back_button(ctx, x, w, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
     *cy += 8.0;
 
-    // Step indicator (top-right)
+    // Step indicator (top-right — shares the back button's row).
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(t_wizard(WizardKey::Step3of4), x + w, *cy - 20.0);
-
-    // Title
-    ctx.set_font("bold 20px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::ProfileAndSecurity), x + w / 2.0, *cy);
-    ctx.set_text_align(TextAlign::Left);
-    *cy += 30.0;
 
     // ── Profile Name input ────────────────────────────────────────────────────
     ctx.set_font("12px sans-serif");
@@ -399,7 +392,7 @@ fn render_page2_profile(
 
     // ── Passphrase input ──────────────────────────────────────────────────────
     *cy = render_passphrase_input(
-        ctx, x, w, cy, state, text_color, toolbar_theme, frame_theme,
+        ctx, x, w, cy, state, toolbar_theme, frame_theme,
         current_time_ms, layer_id, input_coordinator, result,
     );
 
@@ -526,7 +519,7 @@ fn render_page3_recovery(
     w: f64,
     cy: &mut f64,
     state: &UserSettingsState,
-    text_color: &str,
+    _text_color: &str,
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
     _current_time_ms: u64,
@@ -544,14 +537,6 @@ fn render_page3_recovery(
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(t_wizard(WizardKey::Step4of4), x + w, *cy);
     *cy += 20.0;
-
-    // Title
-    ctx.set_font("bold 20px sans-serif");
-    ctx.set_fill_color(text_color);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::RecoveryKey), x + w / 2.0, *cy);
-    *cy += 30.0;
 
     // Warning line 1
     ctx.set_font("12px sans-serif");
@@ -598,7 +583,6 @@ fn render_page3_recovery(
         layer_id,
     );
 
-    let _ = frame_theme;
     if state.recovery_key_display_focused && wz_rk_render.cursor_visible {
         draw_input_cursor(
             ctx,
@@ -736,7 +720,6 @@ fn render_passphrase_input(
     w: f64,
     cy: &mut f64,
     state: &UserSettingsState,
-    _text_color: &str,
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
     _current_time_ms: u64,

@@ -942,33 +942,10 @@ impl ChartPanelApp {
             ));
         }
 
-        // Skeleton overlay — opaque background fill that hides chart content
-        // while the vault unlock / welcome wizard is shown.  Drawn BEFORE the
-        // modal so the modal appears on top of the solid background.
-        //
-        // Fill only the chart content area (between the toolbars). The
-        // VelloGpu path composites toolbars on top of the chart scene after
-        // this overlay, so the old "fill the whole window" code worked there
-        // by accident; the VelloCpu path renders everything into a single
-        // pixel buffer in order (toolbars first, then chart + skeleton
-        // overlay), so a full-window fill blanked out the left/top/bottom
-        // toolbars that had already been drawn. Restricting the overlay to
-        // the content rect keeps the toolbars visible on every backend.
-        if self.user_settings_state.show_welcome_wizard
-            || self.user_settings_state.show_profile_manager
-        {
-            ctx.set_fill_color(&toolbar_theme.button_bg);
-            ctx.fill_rect(
-                modal_layout.chart_x,
-                modal_layout.chart_y,
-                modal_layout.content_w,
-                modal_layout.content_h,
-            );
-        }
-
-        // Welcome Wizard — rendered on top of everything when active.
-        // This is shown on first launch (no profile.json existed at startup).
-        // It is non-closeable: the user must pick a mode to proceed.
+        // Welcome Wizard — an ordinary dismissible modal over the live chart
+        // (owner's ruling 2026-08-31: boot already creates a profile
+        // silently, so there is nothing left for a full-screen fill to hide).
+        // Shown on first launch (no profile.json existed at startup).
         if self.user_settings_state.show_welcome_wizard {
             use mlc_app_layout::layout::modals::welcome_wizard::render_welcome_wizard;
             let text_color = &toolbar_theme.item_text.clone();
@@ -991,12 +968,11 @@ impl ChartPanelApp {
             }
         }
 
-        // Profile Manager overlay — unified modal for profile selection, vault unlock,
-        // passphrase creation, and new profile creation.
-        // Replaces the old vault_unlock overlay and vault_profile_picker.
-        //
-        // In skeleton mode the content area is passed so the manager can render
-        // as a full-area login screen rather than a small centered modal.
+        // Profile Manager — an ordinary dismissible modal over the live
+        // chart, unified across profile selection, vault unlock, passphrase
+        // creation and new profile creation. Only the mandatory-migration
+        // page (`UserSettingsState::profile_manager_mandatory`) refuses to
+        // dismiss — see `layout::modals::profile_manager`.
         if self.user_settings_state.show_profile_manager {
             use mlc_app_layout::layout::modals::profile_manager::render_profile_manager;
             let text_color = &toolbar_theme.item_text.clone();
@@ -1006,10 +982,8 @@ impl ChartPanelApp {
             if let Some(ref mut ws_result) = result.user_settings {
                 render_profile_manager(
                     ctx,
-                    modal_layout.chart_x,
-                    modal_layout.chart_y,
-                    modal_layout.content_w,
-                    modal_layout.content_h,
+                    modal_layout.prim_screen_w,
+                    modal_layout.prim_screen_h,
                     &self.user_settings_state,
                     text_color,
                     toolbar_theme,

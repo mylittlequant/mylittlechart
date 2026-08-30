@@ -6060,15 +6060,11 @@ impl ChartApp {
         // content (price scale) and the right toolbar.  The right toolbar stays
         // fixed at the window edge.  Only the chart content area shrinks.
         //
-        // In skeleton mode (profile manager / welcome wizard covering full screen),
-        // hide the sidebar completely so the login area fills the entire content area.
-        let sidebar_w = if self.panel_app.user_settings_state.show_profile_manager
-            || self.panel_app.user_settings_state.show_welcome_wizard
-        {
-            0.0
-        } else {
-            self.sidebar_state.right_width()
-        };
+        // The profile manager and welcome wizard are ordinary modals floating
+        // over a live chart now (owner's ruling 2026-08-31) — they no longer
+        // replace the content area, so the sidebar keeps its normal width
+        // under them, same as under any other modal.
+        let sidebar_w = self.sidebar_state.right_width();
 
         // 1. Begin frame — propagate current pointer position
         let input_state = InputState::default()
@@ -7849,10 +7845,8 @@ impl ChartApp {
         // sidebar_scene on top via Scene::append, visually covering these
         // pixels when the scene is unchanged.
 
-        let skeleton_active = self.panel_app.user_settings_state.show_profile_manager
-            || self.panel_app.user_settings_state.show_welcome_wizard;
         let mut out_trading_header_result: Option<mlc_core::ChartToolbarRenderResult> = None;
-        let out_last_sidebar_result: Option<mlc_app_sidebar_content::render::RightSidebarResult> = if self.sidebar_state.is_right_open() && !skeleton_active {
+        let out_last_sidebar_result: Option<mlc_app_sidebar_content::render::RightSidebarResult> = if self.sidebar_state.is_right_open() {
             let top_h = panel_layout.top_toolbar_rect.height;
             let bottom_h = panel_layout.bottom_toolbar_rect.height;
             let sidebar_x = content_rect.x + content_rect.width;
@@ -9458,14 +9452,10 @@ impl ChartApp {
 
         // Recompute layout locals that the modal blocks depend on.
         // This mirrors what render_to_scene computes; the cost is negligible
-        // (pure arithmetic, no allocation).
-        let sidebar_w = if self.panel_app.user_settings_state.show_profile_manager
-            || self.panel_app.user_settings_state.show_welcome_wizard
-        {
-            0.0
-        } else {
-            self.effective_modal_sidebar_w()
-        };
+        // (pure arithmetic, no allocation). The profile manager and welcome
+        // wizard are ordinary floating modals now (owner's ruling
+        // 2026-08-31) — no more sidebar_w=0 override for them.
+        let sidebar_w = self.effective_modal_sidebar_w();
         let window_rect = LayoutRect::new(0.0, 0.0, w, h);
         let panel_layout = ChartPanelLayout::compute(&window_rect, &self.panel_app.toolbar_config);
         let content_rect = {

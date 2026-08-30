@@ -708,8 +708,24 @@ fn run_render_loop(
                         // is created, which is still a vault/e2e command and
                         // out of scope here).
                         use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                        // Refresh the lists before showing anything: a profile
+                        // that exists on disk but not in these vectors is
+                        // invisible in both the settings panel and the
+                        // Profiles page. Measured on the stand — created
+                        // `mtest`, storage held three profiles, the modal
+                        // listed two. Rename and delete already refresh here;
+                        // create was the one path that did not.
+                        let profiles = st.profile_manager.available_profiles();
                         {
                             let uss = &mut st.chart.panel_app.user_settings_state;
+                            uss.available_profiles = profiles
+                                .iter()
+                                .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone()))
+                                .collect();
+                            uss.profiles_with_vault_status = profiles
+                                .iter()
+                                .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.has_vault))
+                                .collect();
                             uss.show_profile_manager = true;
                             uss.profile_manager_page = ProfileManagerPage::CreatePassphrase;
                             uss.profile_manager_target_id = id.clone();

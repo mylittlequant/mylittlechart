@@ -3282,7 +3282,8 @@ impl UserSettingsTab {
 /// Navigation pages for the unified Profile Manager overlay.
 ///
 /// Replaces the old vault_unlock overlay and profile picker with a single
-/// full-screen modal that handles all profile-related flows.
+/// ordinary dismissible modal (`crate::layout::modals::profile_manager`)
+/// that handles all profile-related flows.
 #[derive(Clone, Debug, PartialEq)]
 #[derive(Default)]
 pub enum ProfileManagerPage {
