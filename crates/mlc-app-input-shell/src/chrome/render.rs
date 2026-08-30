@@ -877,6 +877,11 @@ fn draw_rect_outline(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, h: f64
 /// `mlc_core::drawing::primitives_v2::contrasting_text_color`, kept local
 /// because that one is crate-private. Used for the "Sign in" CTA, whose
 /// fill is the theme accent (arbitrary per skin).
+///
+/// Gated exactly like its only caller: the CTA is a cloud-build control, so
+/// without the feature this helper is dead code and the mandatory
+/// `-D warnings` gate fails on it.
+#[cfg(feature = "cloud")]
 fn contrasting_text_color(bg_hex: &str) -> &'static str {
     let hex = bg_hex.trim_start_matches('#');
     if hex.len() < 6 {
