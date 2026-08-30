@@ -911,20 +911,11 @@ impl App<'_> {
         let updater_handle = mlc_updater::start(
             &live_data_handle,
             telemetry.clone(),
-            // `connected` decides whether this task touches the network at
-            // all. It follows the profile's own `cloud_enabled` rather than a
-            // hardcoded `true`: that flag is the only place the user has
-            // expressed a preference about network activity, it defaults to
-            // false and is false for every profile at creation, and forcing it
-            // on would silently overrule that for everyone. A user who opts in
-            // later is picked up at runtime through
-            // `UpdaterCommand::SetCloudEnabled(true)` — no restart needed.
-            //
-            // Consequence worth knowing: with the flag false by default, OTA
-            // does not run until a profile opts in. Whether that default should
-            // change is a product decision, and it is a one-line default here,
-            // not a redesign.
-            profile.domain.cloud_enabled,
+            // OTA reaches every install. Owner's ruling, 2026-08-31: an
+            // opt-out update channel is legacy — someone who does not want
+            // updates does not install the app. Deliberately NOT wired to the
+            // profile's `cloud_enabled`, which governs cloud sync.
+            true,
             // Cloud sync stays OFF: its routes verify build attestation (the
             // server runs BUILD_ATTEST_ENFORCE=true) and this shell's build.rs
             // produces none, so every sync request would 403 forever. OTA and
