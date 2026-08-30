@@ -3291,97 +3291,77 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     });
                 }
 
-                // ── Profile commands (all build configs) ─────────────────────
-                if let Some(rest) = cmd_str.strip_prefix("profile_rename:") {
-                    cmd_handled = true;
-                    // Format: "profile_rename:{id}:{new_name}"
-                    let (target_id, new_name) = if let Some(idx) = rest.find(':') {
-                        (rest[..idx].to_string(), rest[idx + 1..].to_string())
-                    } else {
-                        // Fallback for old format "profile_rename:{name}"
-                        (self.profile_manager.profile.domain.profile_id.clone(), rest.to_string())
-                    };
-                    let is_active = target_id == self.profile_manager.profile.domain.profile_id;
-                    match self.profile_manager.rename_profile(&target_id, &new_name) {
-                        Ok(()) => {
-                            if is_active {
-                                self.profile.ui.display_name = new_name.clone();
-                                for pw in self.windows.values_mut() {
-                                    pw.chart.panel_app.user_settings_state.profile_display_name =
-                                        new_name.clone();
-                                }
-                            }
-                            self.sync_profiles_to_windows();
-                            eprintln!("[App] profile renamed: id={} name={}", target_id, new_name);
-                        }
-                        Err(e) => eprintln!("[App] profile_rename failed: {}", e),
-                    }
-                } else if let Some(avatar) = cmd_str.strip_prefix("profile_set_avatar:") {
-                    cmd_handled = true;
-                    let active_id = self.profile_manager.profile.domain.profile_id.clone();
-                    match self.profile_manager.set_avatar(&active_id, avatar) {
-                        Ok(()) => {
-                            self.profile.ui.avatar = avatar.to_string();
-                            self.sync_profiles_to_windows();
+                // ── Profile commands: shared dispatcher (mlc-app) ────────────
+                // `ChartApp::dispatch_profile_command` owns the five commands'
+                // `ProfileManager` mutation only — every side effect below
+                // (AppState/window fanout, toast, pending_new_profile_id,
+                // deferred window rebuild) is unchanged from before this arc
+                // and stays here because it's shell-specific (multi-window on
+                // native; nothing this crate can express identically on web).
+                use mlc_app::user_manager::{ProfileCommandOutcome, ProfileEffect};
+                match mlc_app::ChartApp::dispatch_profile_command(cmd_str, &mut self.profile_manager) {
+                    ProfileCommandOutcome::Handled(ProfileEffect::Renamed { id, new_name, was_active }) => {
+                        cmd_handled = true;
+                        if was_active {
+                            self.profile.ui.display_name = new_name.clone();
                             for pw in self.windows.values_mut() {
-                                pw.chart.panel_app.user_settings_state.profile_avatar =
-                                    avatar.to_string();
-                            }
-                            eprintln!("[App] profile avatar set to: {}", avatar);
-                        }
-                        Err(e) => eprintln!("[App] profile_set_avatar failed: {}", e),
-                    }
-                } else if let Some(rest) = cmd_str.strip_prefix("profile_create:") {
-                    cmd_handled = true;
-                    // Format: "profile_create:{name}" — cloud_enabled is always false at creation.
-                    let name_opt = if rest.trim().is_empty() { None } else { Some(rest) };
-                    match self.profile_manager.create_profile(name_opt, "chart") {
-                        Ok(meta) => {
-                            eprintln!(
-                                "[App] profile created: {} ({})",
-                                meta.display_name, meta.id
-                            );
-                            self.sync_profiles_to_windows();
-                            // Show passphrase setup in the current window — no profile switch yet.
-                            // The switch happens only after the user successfully creates the vault.
-                            use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
-                            self.pending_new_profile_id = Some(meta.id.clone());
-                            for pw in self.windows.values_mut() {
-                                pw.chart.panel_app.user_settings_state.show_profile_manager = true;
-                                pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
-                                pw.chart.panel_app.user_settings_state.profile_manager_target_id = meta.id.clone();
-                                pw.chart.panel_app.user_settings_state.profile_manager_target_name = meta.display_name.clone();
-                                {
-                                    let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
-                                    pw.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
-                                }
-                                pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                                pw.chart.panel_app.user_settings_state.profile_display_name =
+                                    new_name.clone();
                             }
                         }
-                        Err(e) => eprintln!("[App] profile_create failed: {}", e),
+                        self.sync_profiles_to_windows();
+                        eprintln!("[App] profile renamed: id={} name={}", id, new_name);
                     }
-                } else if let Some(id) = cmd_str.strip_prefix("profile_switch:") {
-                    cmd_handled = true;
-                    // Guard: if the requested profile is already the running one, do nothing.
-                    if id == self.profile_manager.profile.domain.profile_id.as_str() {
+                    ProfileCommandOutcome::Handled(ProfileEffect::AvatarSet { avatar, .. }) => {
+                        cmd_handled = true;
+                        self.profile.ui.avatar = avatar.clone();
+                        self.sync_profiles_to_windows();
+                        for pw in self.windows.values_mut() {
+                            pw.chart.panel_app.user_settings_state.profile_avatar = avatar.clone();
+                        }
+                        eprintln!("[App] profile avatar set to: {}", avatar);
+                    }
+                    ProfileCommandOutcome::Handled(ProfileEffect::Created { id, display_name }) => {
+                        cmd_handled = true;
+                        eprintln!("[App] profile created: {} ({})", display_name, id);
+                        self.sync_profiles_to_windows();
+                        // Show passphrase setup in the current window — no profile switch yet.
+                        // The switch happens only after the user successfully creates the vault.
+                        use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                        self.pending_new_profile_id = Some(id.clone());
+                        for pw in self.windows.values_mut() {
+                            pw.chart.panel_app.user_settings_state.show_profile_manager = true;
+                            pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
+                            pw.chart.panel_app.user_settings_state.profile_manager_target_id = id.clone();
+                            pw.chart.panel_app.user_settings_state.profile_manager_target_name = display_name.clone();
+                            {
+                                let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
+                                pw.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
+                            }
+                            pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                        }
+                    }
+                    ProfileCommandOutcome::Handled(ProfileEffect::SwitchAlreadyActive) => {
+                        cmd_handled = true;
                         eprintln!("[App] profile_switch: already on this profile, ignoring");
-                    } else {
-                        let exists = self.profile_manager.available_profiles().iter().any(|p| p.id == id);
-                        if exists {
-                            eprintln!("[App] profile_switch: scheduling hot-reload for profile {}", id);
-                            self.pending_profile_switch = Some(id.to_string());
-                        } else {
-                            eprintln!("[App] profile_switch: profile {} not found", id);
-                        }
                     }
-                } else if let Some(id) = cmd_str.strip_prefix("profile_delete:") {
-                    cmd_handled = true;
-                    match self.profile_manager.delete_profile(id) {
-                        Ok(()) => {
-                            self.sync_profiles_to_windows();
-                            eprintln!("[App] profile deleted: {}", id);
-                        }
-                        Err(e) => eprintln!("[App] profile_delete failed: {}", e),
+                    ProfileCommandOutcome::Handled(ProfileEffect::SwitchRequested { id }) => {
+                        cmd_handled = true;
+                        eprintln!("[App] profile_switch: scheduling hot-reload for profile {}", id);
+                        self.pending_profile_switch = Some(id);
+                    }
+                    ProfileCommandOutcome::Handled(ProfileEffect::Deleted { id }) => {
+                        cmd_handled = true;
+                        self.sync_profiles_to_windows();
+                        eprintln!("[App] profile deleted: {}", id);
+                    }
+                    ProfileCommandOutcome::Failed(e) => {
+                        cmd_handled = true;
+                        eprintln!("[App] profile command failed: {} ({})", e, cmd_str);
+                    }
+                    ProfileCommandOutcome::NotForMe => {
+                        // Not a profile-family command — fall through to the
+                        // remaining arms below (wizard/e2e/vault/auth).
                     }
                 }
 

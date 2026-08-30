@@ -292,7 +292,7 @@ async fn run() -> Result<(), JsValue> {
         .map_err(|e| JsValue::from_str(&e))?;
 
     web_sys::console::log_1(&"[mlc-app-shell-web] render loop running".into());
-    run_render_loop(app, provider, bridge)
+    run_render_loop(app, provider, bridge, profile_manager)
 }
 
 /// Flush both persistence layers on tab close/hide.
@@ -426,6 +426,16 @@ struct WebAppState {
     /// DataBridge handle so the Monitoring/Performance tab can read live
     /// counts (ws_task_count_total, connector count) same as native.
     bridge:             Arc<mlc_backend_data_bridge::DataBridge>,
+    /// Owns the multi-profile index / vault-key bookkeeping for the profile
+    /// commands (`profile_create`/`profile_rename`/`profile_switch`/
+    /// `profile_delete`/`profile_set_avatar`) drained from
+    /// `chart.pending_updater_cmd` below. Native parity: the shell's own
+    /// `App::profile_manager` field (`mlc-app-shell-vello/src/main.rs`) —
+    /// `ChartApp` itself never owns one (see
+    /// `mlc_app::user_manager::dispatch`'s module doc comment). Loaded once
+    /// at boot in `run()` and threaded through here; there is no per-window
+    /// fanout to do on this shell since it hosts exactly one `ChartApp`.
+    profile_manager:    mlc_app::user_manager::ProfileManager,
     /// Cloud session driver (sign-in overlay + sync transport). Cloud builds only.
     #[cfg(feature = "cloud")]
     cloud:              cloud_session::CloudSession,
@@ -433,7 +443,12 @@ struct WebAppState {
 
 #[cfg(target_arch = "wasm32")]
 impl WebAppState {
-    fn new(chart: ChartApp, canvas_id: &str, bridge: Arc<mlc_backend_data_bridge::DataBridge>) -> Self {
+    fn new(
+        chart: ChartApp,
+        canvas_id: &str,
+        bridge: Arc<mlc_backend_data_bridge::DataBridge>,
+        profile_manager: mlc_app::user_manager::ProfileManager,
+    ) -> Self {
         let mut input = mlc_app_input_shell::InputState::default();
         // Web shell renders chrome — offset chart by chrome height.
         input.chrome_height = CHROME_HEIGHT;
@@ -458,6 +473,7 @@ impl WebAppState {
             last_frame_time_ms: 16.0,
             last_render_ms:     None,
             bridge,
+            profile_manager,
             #[cfg(feature = "cloud")]
             cloud: cloud_session::CloudSession::init(""),
         }
@@ -471,8 +487,9 @@ fn run_render_loop(
     app: ChartApp,
     provider: WebWindowProvider,
     bridge: Arc<mlc_backend_data_bridge::DataBridge>,
+    profile_manager: mlc_app::user_manager::ProfileManager,
 ) -> Result<(), JsValue> {
-    let state = Rc::new(RefCell::new(WebAppState::new(app, "chart", bridge.clone())));
+    let state = Rc::new(RefCell::new(WebAppState::new(app, "chart", bridge.clone(), profile_manager)));
 
     // Wire Ctrl+C / Ctrl+X to read the active selection out of TextFieldStore.
     // The closure runs synchronously inside the DOM `copy` / `cut` listener in
@@ -616,6 +633,125 @@ fn run_render_loop(
             let mut st = state_clone.borrow_mut();
             if st.chart.theme_changed.take().is_some() {
                 st.chart.profile_dirty = true;
+            }
+        }
+
+        // ── Drain profile-family commands ─────────────────────────────────────
+        // This shell had NO drain for `pending_updater_cmd` at all before this
+        // arc (`grep pending_updater_cmd crates/mlc-app-shell-web` returned
+        // zero hits) — every click on Create/Rename/Delete/Set-avatar profile,
+        // plus Sign In/Logout/wizard/vault commands, was taken from the
+        // `Option` by nobody and dropped in silence. The five profile-family
+        // commands now route through the shared dispatcher (mlc-app); each
+        // `ProfileManager` mutation is already durable when the dispatcher
+        // returns (its methods write straight to `global_storage()`) — the
+        // work below is this shell's own follow-up, the single-`ChartApp`
+        // equivalent of native's per-window fanout (`sync_profiles_to_windows`
+        // + `user_settings_state` mirror updates, `mlc-app-shell-vello/main.rs`).
+        // Every other command (vault/e2e, logout, start_device_auth, ...) is
+        // explicitly out of scope for this shell for now (see task doc) but
+        // MUST still be logged — a command reaching neither shell must never
+        // disappear without a trace again.
+        {
+            let mut st = state_clone.borrow_mut();
+            let cmd = st.chart.pending_updater_cmd.take();
+            if let Some(cmd) = cmd {
+                use mlc_app::user_manager::{ProfileCommandOutcome, ProfileEffect};
+                match ChartApp::dispatch_profile_command(&cmd, &mut st.profile_manager) {
+                    ProfileCommandOutcome::Handled(ProfileEffect::Renamed { id, new_name, was_active }) => {
+                        if was_active {
+                            st.chart.panel_app.user_settings_state.profile_display_name = new_name.clone();
+                        }
+                        let profiles = st.profile_manager.available_profiles();
+                        st.chart.panel_app.user_settings_state.available_profiles = profiles
+                            .iter()
+                            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone()))
+                            .collect();
+                        st.chart.panel_app.user_settings_state.profiles_with_vault_status = profiles
+                            .iter()
+                            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.has_vault))
+                            .collect();
+                        web_sys::console::log_1(
+                            &format!("[mlc-app-shell-web] profile renamed: id={} name={}", id, new_name).into(),
+                        );
+                    }
+                    ProfileCommandOutcome::Handled(ProfileEffect::AvatarSet { avatar, .. }) => {
+                        st.chart.panel_app.user_settings_state.profile_avatar = avatar.clone();
+                        web_sys::console::log_1(
+                            &format!("[mlc-app-shell-web] profile avatar set to: {}", avatar).into(),
+                        );
+                    }
+                    ProfileCommandOutcome::Handled(ProfileEffect::Created { id, display_name }) => {
+                        // Show passphrase setup — no profile switch yet (parity
+                        // with native: the switch happens only after the vault
+                        // is created, which is still a vault/e2e command and
+                        // out of scope here).
+                        use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                        {
+                            let uss = &mut st.chart.panel_app.user_settings_state;
+                            uss.show_profile_manager = true;
+                            uss.profile_manager_page = ProfileManagerPage::CreatePassphrase;
+                            uss.profile_manager_target_id = id.clone();
+                            uss.profile_manager_target_name = display_name.clone();
+                            uss.vault_unlock_error = None;
+                        }
+                        {
+                            let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
+                            st.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
+                        }
+                        web_sys::console::log_1(
+                            &format!("[mlc-app-shell-web] profile created: {} ({})", display_name, id).into(),
+                        );
+                    }
+                    ProfileCommandOutcome::Handled(ProfileEffect::Deleted { id }) => {
+                        let profiles = st.profile_manager.available_profiles();
+                        st.chart.panel_app.user_settings_state.available_profiles = profiles
+                            .iter()
+                            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone()))
+                            .collect();
+                        st.chart.panel_app.user_settings_state.profiles_with_vault_status = profiles
+                            .iter()
+                            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.has_vault))
+                            .collect();
+                        web_sys::console::log_1(
+                            &format!("[mlc-app-shell-web] profile deleted: {}", id).into(),
+                        );
+                    }
+                    ProfileCommandOutcome::Handled(ProfileEffect::SwitchAlreadyActive) => {
+                        web_sys::console::log_1(
+                            &"[mlc-app-shell-web] profile_switch: already on this profile, ignoring".into(),
+                        );
+                    }
+                    ProfileCommandOutcome::Handled(ProfileEffect::SwitchRequested { id }) => {
+                        // Native tears down/rebuilds OS windows for a hot-reload
+                        // (`App::execute_profile_switch`); this shell has one
+                        // canvas and no equivalent session-swap path. Log
+                        // loudly instead of silently no-opping — building that
+                        // swap (reload BackendCore + ChartApp for a different
+                        // profile) is a separate, larger arc, not something to
+                        // sneak into this drain.
+                        web_sys::console::warn_1(&format!(
+                            "[mlc-app-shell-web] profile_switch to {} validated but NOT executed — this shell has no multi-profile session swap yet",
+                            id
+                        ).into());
+                    }
+                    ProfileCommandOutcome::Failed(e) => {
+                        web_sys::console::error_1(
+                            &format!("[mlc-app-shell-web] profile command failed: {} ({})", e, cmd).into(),
+                        );
+                    }
+                    ProfileCommandOutcome::NotForMe => {
+                        // Vault/e2e (`e2e_setup`, `recovery_unlock`,
+                        // `set_new_passphrase`, `recovery_key_confirmed`,
+                        // `vault_skip_to_wizard`, `wizard_complete`) and
+                        // updater-only (`logout`, `start_device_auth`)
+                        // commands are explicitly out of scope for this shell
+                        // for now — logged, not dropped.
+                        web_sys::console::warn_1(
+                            &format!("[mlc-app-shell-web] unhandled updater command: {:?}", cmd).into(),
+                        );
+                    }
+                }
             }
         }
 

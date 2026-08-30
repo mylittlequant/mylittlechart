@@ -16,7 +16,9 @@
 //! multi-window path.
 
 pub mod bootstrap;
+pub mod dispatch;
 pub mod profile_manager;
 
 pub use bootstrap::load_user_state_from_disk;
+pub use dispatch::{ProfileCommandOutcome, ProfileEffect};
 pub use profile_manager::{ProfileInfo, ProfileManager, SwitchData, MIN_PASSPHRASE_LENGTH};
