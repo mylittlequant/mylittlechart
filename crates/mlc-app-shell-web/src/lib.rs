@@ -286,6 +286,27 @@ async fn run() -> Result<(), JsValue> {
     if let Some(style) = mlc_core::UIStyle::from_name(&profile.ui.active_ui_style) {
         app.panel_app.theme_manager.current_mut().set_style(style);
     }
+
+    // Shell duty (native parity: main.rs populates these when it creates a
+    // window). Without it the Profiles page renders an empty list however
+    // many profiles are on disk — measured on the stand: two profiles in
+    // localStorage, nothing listed. The dispatcher's rename/delete
+    // follow-ups refresh these, so the list would appear only after an
+    // unrelated edit, which is the sort of "works once you poke it" bug that
+    // hides for months.
+    {
+        let profiles = profile_manager.available_profiles();
+        let uss = &mut app.panel_app.user_settings_state;
+        uss.available_profiles = profiles
+            .iter()
+            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone()))
+            .collect();
+        uss.profiles_with_vault_status = profiles
+            .iter()
+            .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.has_vault))
+            .collect();
+    }
+
     web_sys::console::log_1(&"[mlc-app-shell-web] app ready".into());
 
     let provider = WebWindowProvider::from_id("chart")
