@@ -68,6 +68,21 @@ fn check_interval_for_channel(channel: &str) -> std::time::Duration {
     }
 }
 
+/// How often telemetry and the heartbeat are sent — the same on every channel,
+/// and deliberately not derived from [`check_interval_for_channel`].
+///
+/// Both used to ride the update-check tick. That coupling is why one
+/// development machine produced 26 992 of the 27 085 telemetry rows in
+/// production: on `dev` the check fires every two minutes, elsewhere every
+/// four hours, a factor of 120 between two machines running the same build.
+/// How often we look for a new version has nothing to do with how often we
+/// want a metric.
+///
+/// Not configurable, and that is the point — a knob here is exactly what the
+/// dev channel already was. The server enforces its own per-device daily cap
+/// regardless of what any client decides to send.
+const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
 /// Trait for providing telemetry data from the application.
 /// Implemented by the main app to feed live metrics to the updater.
 pub trait TelemetrySource: Send + Sync + 'static {
@@ -218,11 +233,16 @@ async fn updater_loop(
     let mut check_interval = tokio::time::interval(check_interval_for_channel(&channel));
     check_interval.tick().await; // consume first immediate tick
 
+    // Telemetry runs on its own clock — see TELEMETRY_INTERVAL.
+    let mut telemetry_interval = tokio::time::interval(TELEMETRY_INTERVAL);
+    telemetry_interval.tick().await; // consume first immediate tick
+
     // Do initial check + telemetry only in connected mode.
     if connected {
         let token = token_store::load_token();
         let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
-        do_check_and_telemetry(&status_tx, current_version, auth_header.as_deref(), &telemetry_source, &channel).await;
+        do_check(&status_tx, current_version, auth_header.as_deref(), &channel).await;
+        send_telemetry_sample(auth_header.as_deref(), &telemetry_source);
     } else {
         log::info!("[Updater] Standalone mode — skipping initial update check and telemetry");
     }
@@ -239,11 +259,19 @@ async fn updater_loop(
 
     loop {
         tokio::select! {
+            _ = telemetry_interval.tick() => {
+                if connected {
+                    let token = token_store::load_token();
+                    let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
+                    send_telemetry_sample(auth.as_deref(), &telemetry_source);
+                }
+            }
+
             _ = check_interval.tick() => {
                 if connected {
                     let token = token_store::load_token();
                     let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                    do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, &channel).await;
+                    do_check(&status_tx, current_version, auth.as_deref(), &channel).await;
 
                     // If we found an update, cache it and auto-install.
                     if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
@@ -265,7 +293,7 @@ async fn updater_loop(
                         if connected {
                             let token = token_store::load_token();
                             let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, &channel).await;
+                            do_check(&status_tx, current_version, auth.as_deref(), &channel).await;
                             if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
                                 pending_update = Some(info.clone());
                             }
@@ -332,7 +360,7 @@ async fn updater_loop(
                             log::info!("[Updater] Switched to connected mode — running immediate update check");
                             let token = token_store::load_token();
                             let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                            do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, &channel).await;
+                            do_check(&status_tx, current_version, auth.as_deref(), &channel).await;
                             if let UpdateStatus::UpdateAvailable(info) = &*status_tx.borrow() {
                                 pending_update = Some(info.clone());
                             }
@@ -761,7 +789,7 @@ async fn updater_loop(
                             if connected {
                                 let token = token_store::load_token();
                                 let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                                do_check_and_telemetry(&status_tx, current_version, auth.as_deref(), &telemetry_source, &channel).await;
+                                do_check(&status_tx, current_version, auth.as_deref(), &channel).await;
                             }
                         }
                     }
@@ -859,42 +887,46 @@ async fn run_sync_pipeline(
     }
 }
 
-async fn do_check_and_telemetry(
+/// Send one telemetry sample and one heartbeat, fire-and-forget.
+///
+/// Driven by [`TELEMETRY_INTERVAL`], never by the update-check tick — see that
+/// constant for why the two were separated.
+fn send_telemetry_sample(auth_header: Option<&str>, telemetry_source: &Arc<dyn TelemetrySource>) {
+    let payload = telemetry_source.collect();
+    let auth_clone = auth_header.map(String::from);
+
+    let heartbeat = telemetry::HeartbeatPayload {
+        device_id: payload.device_id.clone(),
+        app_version: payload.app_version.clone(),
+        uptime_seconds: payload.uptime_secs,
+        os: payload.os.clone(),
+        device_name: hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_default(),
+    };
+
+    tokio::spawn(async move {
+        if let Err(e) = telemetry::send_telemetry(&payload, auth_clone.as_deref()).await {
+            log::warn!("Telemetry send failed: {}", e);
+        }
+    });
+
+    tokio::spawn(async move {
+        if let Err(e) = telemetry::send_heartbeat(&heartbeat).await {
+            log::warn!("Heartbeat send failed: {}", e);
+        }
+    });
+}
+
+/// Check for a newer build on the current channel. Carries no telemetry —
+/// that moved to [`send_telemetry_sample`] on its own schedule.
+async fn do_check(
     status_tx: &watch::Sender<UpdateStatus>,
     current_version: &str,
     auth_header: Option<&str>,
-    telemetry_source: &Arc<dyn TelemetrySource>,
     channel: &str,
 ) {
-    // Send telemetry (fire-and-forget, don't block update check).
-    {
-        let payload = telemetry_source.collect();
-        let auth_clone = auth_header.map(String::from);
-
-        let heartbeat = telemetry::HeartbeatPayload {
-            device_id: payload.device_id.clone(),
-            app_version: payload.app_version.clone(),
-            uptime_seconds: payload.uptime_secs,
-            os: payload.os.clone(),
-            device_name: hostname::get()
-                .ok()
-                .and_then(|h| h.into_string().ok())
-                .unwrap_or_default(),
-        };
-
-        tokio::spawn(async move {
-            if let Err(e) = telemetry::send_telemetry(&payload, auth_clone.as_deref()).await {
-                log::warn!("Telemetry send failed: {}", e);
-            }
-        });
-
-        tokio::spawn(async move {
-            if let Err(e) = telemetry::send_heartbeat(&heartbeat).await {
-                log::warn!("Heartbeat send failed: {}", e);
-            }
-        });
-    }
-
     // Check for updates.
     let _ = status_tx.send(UpdateStatus::Checking);
     match check::fetch_latest(auth_header, channel).await {

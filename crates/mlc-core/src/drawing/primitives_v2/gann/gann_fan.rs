@@ -335,7 +335,7 @@ impl Primitive for GannFan {
             let end_x = viewport.bar_to_x_f64(end_b);
             let end_y = viewport.price_to_y(end_price, price_scale.price_min, price_scale.price_max);
 
-            let dist = if (self.extend_left || self.extend_right) {
+            let dist = if self.extend_left || self.extend_right {
                 point_to_ray_distance(screen_x, screen_y, x1, y1, end_x, end_y)
             } else {
                 point_to_line_distance(screen_x, screen_y, x1, y1, end_x, end_y)
@@ -413,7 +413,7 @@ impl Primitive for GannFan {
                 .or(config.color.as_deref())
                 .unwrap_or(&self.data.color.stroke);
 
-            let ext = if (self.extend_left || self.extend_right) {
+            let ext = if self.extend_left || self.extend_right {
                 (chart_width + chart_height) * 2.0
             } else {
                 ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt()
@@ -503,7 +503,7 @@ impl Primitive for GannFan {
             ctx.begin_path();
             ctx.move_to(crisp(x1, dpr), crisp(y1, dpr));
 
-            if (self.extend_left || self.extend_right) {
+            if self.extend_left || self.extend_right {
                 // Extend ray to chart edge
                 let dx = end_x - x1;
                 let dy = end_y - y1;
