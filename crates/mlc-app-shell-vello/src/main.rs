@@ -12,6 +12,7 @@ pub mod keychain;
 mod platform;
 mod render;
 mod screenshot;
+mod telemetry;
 mod tooltip;
 mod window;
 
@@ -366,6 +367,18 @@ struct App<'s> {
 
     /// Shared state for the internal Agent API server.
     agent_state: Option<std::sync::Arc<mlc_backend_shell_http::AgentState>>,
+
+    /// OTA / telemetry / auth background task, started once in `App::new`
+    /// after the `DataBridge` exists. `cmd_tx` forwards user-triggered
+    /// commands (logout, force-check, ...); `status_rx`/`auth_rx` are polled
+    /// by UI code that needs to react to update/auth state.
+    updater_handle: mlc_updater::UpdaterHandle,
+    /// Thread-safe telemetry snapshot handed to the updater as
+    /// `Arc<dyn TelemetrySource>` — see `telemetry.rs` for why `App` itself
+    /// cannot implement the trait. Refreshed once a second below and on
+    /// resize/GPU-init; read by the updater's background task on its own
+    /// hourly clock.
+    telemetry: std::sync::Arc<telemetry::AppTelemetry>,
     /// Wall-clock time of the last per-second maintenance pass (snapshots, sysinfo).
     last_indicator_snapshot: web_time::Instant,
     /// Round-robin cursor for agent snapshot rebuilds. The four snapshots
@@ -889,6 +902,49 @@ impl App<'_> {
             None
         };
 
+        // ── Start the OTA / telemetry / auth background task ──────────────────
+        // Runs on `live_data_handle` — the same multi-thread runtime `bridge`
+        // and the agent server above already use; no second runtime is built
+        // here. Must come after `core`/`bridge` exist (server_port, data_dir
+        // and profile_id below all read from them).
+        let telemetry = std::sync::Arc::new(telemetry::AppTelemetry::new(bridge.clone()));
+        let updater_handle = mlc_updater::start(
+            &live_data_handle,
+            telemetry.clone(),
+            // `connected` decides whether this task touches the network at
+            // all. It follows the profile's own `cloud_enabled` rather than a
+            // hardcoded `true`: that flag is the only place the user has
+            // expressed a preference about network activity, it defaults to
+            // false and is false for every profile at creation, and forcing it
+            // on would silently overrule that for everyone. A user who opts in
+            // later is picked up at runtime through
+            // `UpdaterCommand::SetCloudEnabled(true)` — no restart needed.
+            //
+            // Consequence worth knowing: with the flag false by default, OTA
+            // does not run until a profile opts in. Whether that default should
+            // change is a product decision, and it is a one-line default here,
+            // not a redesign.
+            profile.domain.cloud_enabled,
+            // Cloud sync stays OFF: its routes verify build attestation (the
+            // server runs BUILD_ATTEST_ENFORCE=true) and this shell's build.rs
+            // produces none, so every sync request would 403 forever. OTA and
+            // telemetry are not attested and already work; sync is the one
+            // capability that waits on build.rs signing.
+            false,
+            profile.domain.sync_state.synced_items.clone(),
+            profile.domain.sync_state.last_synced_checksums.clone(),
+            mlc_core::active_profile_data_dir(),
+            // A real attestation needs `build.rs` to sign
+            // `BUILD_ATTESTATION_V1:{version}:{timestamp}:{platform}` with the
+            // release signing key. This shell's build.rs does not do that yet
+            // (see `crates/mlc-app-shell-vello/build.rs`), so the default
+            // (empty) attestation is passed — fine for OTA/telemetry, and the
+            // reason cloud sync is hardcoded off above.
+            mlc_updater::BuildAttestation::default(),
+            profile.domain.profile_id.clone(),
+            core.user().server_port(),
+        );
+
         // Initialize alert delivery engine. AlertDelivery::new spawns a tokio
         // task, so we must enter the live-data runtime context first.
         let (alert_delivery_engine, toast_rx) = {
@@ -976,6 +1032,8 @@ impl App<'_> {
             app_connector_ready_rx,
             _phantom: std::marker::PhantomData,
             agent_state: Some(agent_state),
+            updater_handle,
+            telemetry,
             last_indicator_snapshot: web_time::Instant::now(),
             agent_snapshot_phase: 0,
             mlc_alert_delivery: Some(alert_delivery_engine),
@@ -1136,6 +1194,10 @@ impl App<'_> {
         );
 
         let size = window.inner_size();
+        // Telemetry's screen_width/screen_height: seeded here at creation,
+        // kept current by the same Resized handler that already drives GPU
+        // resize (see `window/event_handler.rs`) — no separate event path.
+        self.telemetry.set_screen_size(size.width, size.height);
 
         let mut surface = pollster::block_on(self.render_cx.create_surface(
             window.clone(),
@@ -1153,6 +1215,7 @@ impl App<'_> {
             let info = self.render_cx.devices[dev_id].adapter().get_info();
             self.gpu_name = info.name.clone();
             self.gpu_driver = info.driver_info.clone();
+            self.telemetry.set_gpu_name(&self.gpu_name);
             eprintln!("[App] GPU: {} ({})", self.gpu_name, self.gpu_driver);
 
             // Auto-detect backend based on GPU capabilities (first launch only)
@@ -3219,8 +3282,53 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // set_connected/set_standalone only affect the updater's sync behavior,
                 // NOT the profile's mode.
 
+                // Flipped `true` by every recognized arm below (including the
+                // two auth arms just added). A command nobody recognizes
+                // falls through to the final `else` and gets logged instead
+                // of vanishing silently, which is what happened to `logout`/
+                // `start_device_auth` before this arc.
+                let mut cmd_handled = false;
+
+                // ── Auth commands ──────────────────────────────────────────
+                // Emitted by `mlc-app/src/input/panel_click.rs` (profile_mgr
+                // sign_in / logout buttons). Both routes through the OTA/auth
+                // background task started in `App::new`.
+                if cmd_str == "logout" {
+                    cmd_handled = true;
+                    let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Logout);
+                    // `updater_handle.auth_rx` flips to `NotLoggedIn` once the
+                    // background task processes the command. There is no
+                    // ChartApp/BackendCore auth-status field to write here
+                    // (shell contract forbids writing those directly anyway)
+                    // — App-owned toast overlay is the confirmation surface.
+                    self.active_toasts.push(mlc_alert_delivery::ToastNotification {
+                        title: "Signed out".to_string(),
+                        message: "You have been logged out.".to_string(),
+                        timestamp: screenshot::now_ms(),
+                        duration_ms: 4000,
+                    });
+                    eprintln!("[App] logout requested — forwarded to updater");
+                } else if cmd_str == "start_device_auth" {
+                    cmd_handled = true;
+                    // The device-code flow (`/api/auth/device-code`,
+                    // `/api/auth/poll`) both verify build attestation
+                    // server-side; this shell's build.rs signs none (see the
+                    // `mlc_updater::start()` call in `App::new`), so starting
+                    // it would 403 forever. Do NOT start the flow — surface
+                    // the block instead of leaving the Sign In button a
+                    // silent no-op.
+                    eprintln!("[Updater] start_device_auth blocked — this build has no attestation (build.rs does not sign)");
+                    self.active_toasts.push(mlc_alert_delivery::ToastNotification {
+                        title: "Sign-in unavailable".to_string(),
+                        message: "Cloud sign-in needs a signed release build.".to_string(),
+                        timestamp: screenshot::now_ms(),
+                        duration_ms: 5000,
+                    });
+                }
+
                 // ── Profile commands (all build configs) ─────────────────────
                 if let Some(rest) = cmd_str.strip_prefix("profile_rename:") {
+                    cmd_handled = true;
                     // Format: "profile_rename:{id}:{new_name}"
                     let (target_id, new_name) = if let Some(idx) = rest.find(':') {
                         (rest[..idx].to_string(), rest[idx + 1..].to_string())
@@ -3244,6 +3352,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         Err(e) => eprintln!("[App] profile_rename failed: {}", e),
                     }
                 } else if let Some(avatar) = cmd_str.strip_prefix("profile_set_avatar:") {
+                    cmd_handled = true;
                     let active_id = self.profile_manager.profile.domain.profile_id.clone();
                     match self.profile_manager.set_avatar(&active_id, avatar) {
                         Ok(()) => {
@@ -3258,6 +3367,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         Err(e) => eprintln!("[App] profile_set_avatar failed: {}", e),
                     }
                 } else if let Some(rest) = cmd_str.strip_prefix("profile_create:") {
+                    cmd_handled = true;
                     // Format: "profile_create:{name}" — cloud_enabled is always false at creation.
                     let name_opt = if rest.trim().is_empty() { None } else { Some(rest) };
                     match self.profile_manager.create_profile(name_opt, "chart") {
@@ -3286,6 +3396,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         Err(e) => eprintln!("[App] profile_create failed: {}", e),
                     }
                 } else if let Some(id) = cmd_str.strip_prefix("profile_switch:") {
+                    cmd_handled = true;
                     // Guard: if the requested profile is already the running one, do nothing.
                     if id == self.profile_manager.profile.domain.profile_id.as_str() {
                         eprintln!("[App] profile_switch: already on this profile, ignoring");
@@ -3299,6 +3410,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         }
                     }
                 } else if let Some(id) = cmd_str.strip_prefix("profile_delete:") {
+                    cmd_handled = true;
                     match self.profile_manager.delete_profile(id) {
                         Ok(()) => {
                             self.sync_profiles_to_windows();
@@ -3311,6 +3423,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // ── Wizard complete: name + passphrase in a single command ──
                 // Format: "wizard_complete:{name}:{passphrase}"
                 if let Some(rest) = cmd_str.strip_prefix("wizard_complete:") {
+                    cmd_handled = true;
                     let (wizard_profile_name, passphrase) = if let Some(colon) = rest.find(':') {
                         (rest[..colon].to_string(), &rest[colon + 1..])
                     } else {
@@ -3414,6 +3527,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
 
                 // ── Local vault key derivation (e2e_setup) ──
                 if let Some(passphrase) = cmd_str.strip_prefix("e2e_setup:") {
+                    cmd_handled = true;
                     // ── New profile vault creation ──
                     // When the user just created a new profile, we show the CreatePassphrase
                     // modal without switching profiles first.  Once the vault is created we
@@ -3656,6 +3770,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // ── Recovery key unlock ──────────────────────────────────────────────────────
                 // Emitted when the user enters a recovery key to restore vault access.
                 if let Some(recovery_key_text) = cmd_str.strip_prefix("recovery_unlock:") {
+                    cmd_handled = true;
                     let target_id = self.windows.values().next()
                         .map(|pw| pw.chart.panel_app.user_settings_state.profile_manager_target_id.clone())
                         .unwrap_or_default();
@@ -3799,6 +3914,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // Emitted when the user clicks "I have written it down" on the ShowRecoveryKey page.
                 // Clears the pending recovery key from memory and completes the profile switch.
                 if cmd_str == "recovery_key_confirmed" {
+                    cmd_handled = true;
                     self.profile_manager.clear_pending_recovery_key();
                     if let Some((profile_id, vault_key)) = self.pending_switch_after_recovery.take() {
                         // Recovery key was shown for a NEW profile — complete the switch immediately.
@@ -3825,6 +3941,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // Re-keys the vault: new passphrase + same salt → new master_key + vault_key,
                 // re-encrypts vault.enc, generates a fresh recovery key, then shows ShowRecoveryKey.
                 if let Some(new_passphrase) = cmd_str.strip_prefix("set_new_passphrase:") {
+                    cmd_handled = true;
                     use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
 
                     match self.pending_recovery_master_key.take() {
@@ -3909,6 +4026,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // Dismiss the vault lock overlay and show the welcome wizard so the user can
                 // create a fresh profile from scratch.
                 if cmd_str == "vault_skip_to_wizard" {
+                    cmd_handled = true;
                     // Create a brand-new profile so the wizard operates on fresh data,
                     // not the old encrypted profile the user can no longer unlock.
                     match self.profile_manager.create_profile(None, "chart") {
@@ -3967,6 +4085,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     // created profile in-place instead of creating a second duplicate.
                     self.is_first_run = true;
                     eprintln!("[App] vault_skip_to_wizard: dismissed vault lock, showing wizard on fresh profile");
+                }
+
+                // A command nobody above recognized used to be taken from
+                // `pending_updater_cmd` and dropped with no trace at all —
+                // that silence is exactly what let `logout`/`start_device_auth`
+                // go unnoticed. Never let that happen again.
+                if !cmd_handled {
+                    eprintln!("[App] unhandled updater command: {:?}", cmd_str);
                 }
             } // if let Some(ref cmd_str) = cmd
         } // drain updater command requests
@@ -4414,6 +4540,34 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             {
                 let metrics = self.core.agent_metrics_snapshot();
                 self.cached_connector_count = metrics.len();
+            }
+
+            // Refresh the telemetry snapshot from App's own single-threaded
+            // state — unconditional (unlike `PerformanceData` below, which
+            // only updates while the monitoring panel is open and would
+            // otherwise send telemetry full of zeros). `total_bars` sums the
+            // same per-window bubble count the perf panel computes, just
+            // aggregated across every open window instead of one.
+            {
+                let total_bars: u64 = self
+                    .windows
+                    .values()
+                    .map(|pw| {
+                        pw.chart
+                            .panel_app
+                            .panel_grid
+                            .containers()
+                            .values()
+                            .map(|w| pw.chart.core.bubbles().bars(w.current_tag_id).len() as u64)
+                            .sum::<u64>()
+                    })
+                    .sum();
+                self.telemetry.update_periodic(
+                    self.fps_ema,
+                    self.cached_connector_count,
+                    self.windows.len(),
+                    total_bars,
+                );
             }
 
             // CPU/RAM metrics are now refreshed by the background perf-sys-sampler

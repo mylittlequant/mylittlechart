@@ -28,7 +28,12 @@ png = "0.17"
 arboard = "3"
 tokio = { version = "1", features = ["sync"] }
 serde_json = "1"
-reqwest = { version = "0.12", features = ["json", "multipart"] }
+# default-features off: every other crate in the graph (mlc-updater,
+# mlc-alert-delivery, mlc-shell-diagnostics, ...) pins rustls-tls with
+# default-features=false. Leaving this on pulls in native-tls (reqwest's
+# "default-tls" default feature) alongside rustls in the same binary.
+reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls"] }
+mlc-updater = { path = "../mlc-updater", package = "mylittlechart-updater" }
 mlc-backend-shell-http = { path = "../mlc-backend-shell-http", package = "mylittlechart-backend-shell-http" }
 mlc-app-agent-api = { path = "../mlc-app-agent-api", package = "mylittlechart-app-agent-api" }
 mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }

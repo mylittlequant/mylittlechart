@@ -52,6 +52,10 @@ impl App<'_> {
                     .resize_surface(&mut pw.surface, size.width, size.height);
                 let device = &self.render_cx.devices[pw.surface.dev_id].device;
                 screenshot::add_copy_src_to_target_texture(&mut pw.surface, device);
+                // Telemetry's screen_width/screen_height — last-resized window
+                // wins, same "one deterministic value across N windows" choice
+                // already made for other single-scalar snapshots (see App::telemetry).
+                self.telemetry.set_screen_size(size.width, size.height);
             }
         }
 
