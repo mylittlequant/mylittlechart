@@ -6,6 +6,7 @@ pub mod popup;
 pub mod color_picker;
 pub mod button;
 pub mod radio_group;
+pub mod theme_sample;
 
 pub use types::{WidgetState, WidgetTheme};
 pub use button::{ButtonConfig, ButtonResult, draw_button, auto_btn_width, fit_text_to_width, layout_btn_row, SETTINGS_BUTTON_RADIUS};
@@ -43,6 +44,7 @@ pub use popup::{
     draw_popup, popup_hit_test, PopupConfig, PopupResult, PopupTheme,
 };
 pub use radio_group::{RadioGroupResult, RadioOption, draw_radio_group};
+pub use theme_sample::{theme_sample_tokens, draw_theme_sample};
 pub use color_picker::{
     draw_color_picker_l1, color_picker_l1_hit_test,
     draw_color_picker_l2, color_picker_l2_hit_test,

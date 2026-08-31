@@ -696,10 +696,16 @@ pub enum WizardKey {
     UnlockYourData        = 25,
     UnlockSubtitle        = 26,
     ForgotPassphrase      = 27,
+
+    // Appended 2026-08-31 (theme-first reorder, passphrase page dropped —
+    // the wizard is now 3 pages, not 4). Frozen-order rule: appended at the
+    // end, never renumbered into the block above.
+    Step2of3              = 28,
+    Step3of3              = 29,
 }
 
 impl WizardKey {
-    pub const COUNT: usize = 28;
+    pub const COUNT: usize = 30;
 
     /// Get translation for this key
     #[inline]

@@ -5490,12 +5490,10 @@ impl ChartApp {
                     eprintln!("[ChartApp] server_enabled = {}", self.panel_app.user_settings_state.server_enabled);
                 }
                 // ── Welcome Wizard handlers ───────────────────────────────────
-                // Page order: 0=Welcome+Lang, 1=Theme, 2=Profile+Passphrase
-                "wizard_get_started" => {
-                    // Page 0: user clicked Get Started — go to page 1 (Theme)
-                    self.panel_app.user_settings_state.wizard_page = 1;
-                    eprintln!("[ChartApp] wizard: Get Started clicked, going to page 1 (theme)");
-                }
+                // Page order: 0=Theme, 1=Language, 2=Profile Name (last page —
+                // picking a name ends the wizard). Owner's ruling 2026-08-31:
+                // no passphrase page — the vault opens later, at the point of
+                // use, via the profile manager.
                 "wizard_back" => {
                     // Back arrow — go to previous page
                     let current_page = self.panel_app.user_settings_state.wizard_page;
@@ -5508,6 +5506,18 @@ impl ChartApp {
                     // Start device auth link flow (same as sign_in button)
                     self.pending_updater_cmd = Some("start_device_auth".to_string());
                     eprintln!("[ChartApp] wizard: starting device auth link flow");
+                }
+                // NOTE: this guard shadows every `wizard_lang_*` id, including
+                // the page's own `wizard_lang_next` button — match arms are
+                // tried in order, so a specific id declared further down never
+                // gets a look in. Measured on the stand: Next highlighted on
+                // hover and did nothing on click, because "next" was being
+                // handed to `Language::from_code` as if it were a language.
+                // Any new `wizard_lang_<verb>` control must be matched ABOVE
+                // this arm, not below it.
+                "wizard_lang_next" => {
+                    // Page 1 (Language) → page 2 (Profile Name).
+                    self.panel_app.user_settings_state.wizard_page = 2;
                 }
                 id if id.starts_with("wizard_lang_") => {
                     let code = &id["wizard_lang_".len()..];
@@ -5548,10 +5558,20 @@ impl ChartApp {
                     self.theme_changed = Some("mascot".to_string());
                     eprintln!("[ChartApp] wizard: theme selected → mascot");
                 }
+                // `surf` is the one skin preset that stays in
+                // `RuntimeTheme::PRESETS_SHORTLIST` (owner: keep it visible
+                // everywhere) — `vaporwave`/`terminal` are dropped from the
+                // wizard's row list entirely, so they get no click id here.
+                "wizard_theme_surf" => {
+                    self.panel_app.user_settings_state.wizard_selected_theme = "surf".to_string();
+                    self.panel_app.theme_manager.set_preset("surf");
+                    self.theme_changed = Some("surf".to_string());
+                    eprintln!("[ChartApp] wizard: theme selected → surf");
+                }
                 "wizard_theme_next" => {
-                    // Page 1 (Theme): go to page 2 (Profile + Passphrase)
-                    self.panel_app.user_settings_state.wizard_page = 2;
-                    eprintln!("[ChartApp] wizard: theme done, going to page 2 (profile + passphrase)");
+                    // Page 0 (Theme): go to page 1 (Language)
+                    self.panel_app.user_settings_state.wizard_page = 1;
+                    eprintln!("[ChartApp] wizard: theme done, going to page 1 (language)");
                 }
                 "wizard_profile_name_input" => {
                     // Focus the profile name input on the profile page
@@ -5583,113 +5603,25 @@ impl ChartApp {
                     }
                     eprintln!("[ChartApp] wizard: profile name input focused");
                 }
-                "wizard_passphrase_input" => {
-                    // Focus the passphrase input on the profile page
-                    self.panel_app.user_settings_state.new_passphrase_focused = true;
-                    self.panel_app.user_settings_state.new_profile_name_focused = false;
-                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                    let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
-                    let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
-                    let cp_wid = uzor::WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
-                    self.input_coordinator.borrow_mut().text_fields_mut().focus(np_wid.clone());
-                    // Clear selections on other fields
-                    {
-                        let mut ic = self.input_coordinator.borrow_mut();
-                        if let Some(fs) = ic.text_fields_mut().field_state_mut(&npn_wid) { fs.selection_start = None; }
-                        if let Some(fs) = ic.text_fields_mut().field_state_mut(&cp_wid) { fs.selection_start = None; }
-                    }
-                    // Position cursor at click point using pre-computed char positions.
-                    let char_positions: Vec<f64> = self.frame_result.as_ref()
-                        .and_then(|r| r.user_settings.as_ref())
-                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "wizard_passphrase_input"))
-                        .map(|(_, v)| v.clone())
-                        .unwrap_or_default();
-                    if !char_positions.is_empty() {
-                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
-                        if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&np_wid) {
-                            fs.cursor = new_cursor;
-                            fs.selection_start = None;
-                        }
-                    }
-                    eprintln!("[ChartApp] wizard: passphrase input focused");
-                }
-                "wizard_confirm_passphrase_input" => {
-                    // Focus the confirm passphrase input on wizard page 2.
-                    self.panel_app.user_settings_state.confirm_passphrase_focused = true;
-                    self.panel_app.user_settings_state.new_passphrase_focused = false;
-                    self.panel_app.user_settings_state.new_profile_name_focused = false;
-                    let cp_wid = uzor::WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
-                    let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
-                    let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
-                    self.input_coordinator.borrow_mut().text_fields_mut().focus(cp_wid.clone());
-                    // Clear selections on other fields
-                    {
-                        let mut ic = self.input_coordinator.borrow_mut();
-                        if let Some(fs) = ic.text_fields_mut().field_state_mut(&np_wid) { fs.selection_start = None; }
-                        if let Some(fs) = ic.text_fields_mut().field_state_mut(&npn_wid) { fs.selection_start = None; }
-                    }
-                    let char_positions: Vec<f64> = self.frame_result.as_ref()
-                        .and_then(|r| r.user_settings.as_ref())
-                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "wizard_confirm_passphrase_input"))
-                        .map(|(_, v)| v.clone())
-                        .unwrap_or_default();
-                    if !char_positions.is_empty() {
-                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
-                        if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&cp_wid) {
-                            fs.cursor = new_cursor;
-                            fs.selection_start = None;
-                        }
-                    }
-                    eprintln!("[ChartApp] wizard: confirm_passphrase_input focused");
-                }
                 "wizard_finish" => {
-                    // Page 2: submit passphrase (and log profile name) then close wizard.
-                    let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
+                    // Page 2: pick a name, hand it to the shell to create/name
+                    // the profile, then close the wizard. No passphrase
+                    // collected here — the vault opens later, at the point of
+                    // use, via the profile manager (owner's ruling 2026-08-31).
                     let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
-                    let cp_wid = uzor::WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
-                    let passphrase = self.input_coordinator.borrow().text_fields().text(&np_wid).to_string();
                     let profile_name = self.input_coordinator.borrow().text_fields().text(&npn_wid).trim().to_string();
-                    if passphrase.len() >= crate::user_manager::MIN_PASSPHRASE_LENGTH && !profile_name.is_empty() {
+                    if !profile_name.is_empty() {
                         eprintln!("[ChartApp] wizard: profile name = {:?}", profile_name);
-                        let profile_name_final = if profile_name.is_empty() { "Default".to_string() } else { profile_name.clone() };
-                        self.pending_updater_cmd = Some(format!("wizard_complete:{}:{}", profile_name_final, passphrase));
+                        self.pending_updater_cmd = Some(format!("wizard_complete:{}", profile_name));
                         self.panel_app.user_settings_state.show_welcome_wizard = false;
-                        self.panel_app.user_settings_state.needs_vault_unlock = false;
                         {
                             let mut ic = self.input_coordinator.borrow_mut();
-                            ic.text_fields_mut().clear(&np_wid);
-                            ic.text_fields_mut().clear(&cp_wid);
+                            ic.text_fields_mut().clear(&npn_wid);
                             ic.text_fields_mut().blur();
                         }
-                        self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                        self.panel_app.user_settings_state.new_profile_name_focused = false;
                         eprintln!("[ChartApp] wizard: setup complete");
                     }
-                }
-                "wizard_copy_key" => {
-                    // Page 3: copy recovery key to clipboard
-                    if let Some(ref key) = self.panel_app.user_settings_state.recovery_key_display {
-                        self.clipboard_text = Some(key.clone());
-                        self.panel_app.user_settings_state.recovery_key_copied_at =
-                            web_time::SystemTime::now()
-                                .duration_since(web_time::UNIX_EPOCH)
-                                .map(|d| d.as_millis() as u64)
-                                .unwrap_or(0);
-                        eprintln!("[ChartApp] wizard: recovery key copied to clipboard");
-                    }
-                }
-                "wizard_recovery_confirm" => {
-                    // Page 3: user confirmed they saved the recovery key — close wizard and promote
-                    self.pending_updater_cmd = Some("recovery_key_confirmed".to_string());
-                    self.panel_app.user_settings_state.show_welcome_wizard = false;
-                    self.panel_app.user_settings_state.wizard_page = 0;
-                    self.panel_app.user_settings_state.recovery_key_display = None;
-                    {
-                        let rk_wid = uzor::WidgetId::from(crate::text_input::RECOVERY_KEY);
-                        self.input_coordinator.borrow_mut().text_fields_mut().clear(&rk_wid);
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    }
-                    self.panel_app.user_settings_state.recovery_key_display_focused = false;
-                    eprintln!("[ChartApp] wizard: recovery key confirmed, closing wizard");
                 }
                 "profile_mgr:run_wizard" => {
                     self.panel_app.user_settings_state.show_welcome_wizard = true;

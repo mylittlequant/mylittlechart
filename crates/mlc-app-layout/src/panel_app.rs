@@ -22,6 +22,7 @@ use crate::layout::ExtendedFrameLayout;
 use mlc_core::scale_settings::ScaleSettings;
 use mlc_core::state::toolbar_geometry::{ToolbarRect, ToolbarRenderResult};
 use crate::ui::dropdown::{DropdownItem, DropdownConfig, DropdownTheme, draw_dropdown, GridDropdownConfig, draw_grid_dropdown};
+use crate::ui::widgets::theme_sample_tokens;
 use crate::ui::toolbar_core::{
     WidgetRect, IconId,
     ToolbarConfig as TcConfig, ToolbarSection, ToolbarItem as TcToolbarItem,
@@ -3546,6 +3547,12 @@ fn convert_dropdown_item(item: &DropdownItemDef) -> DropdownItem {
             let mut di = DropdownItem::item(id, label);
             if let Some(icon_id) = icon {
                 di = di.with_icon(IconId::new(icon_id.name()));
+            } else if let Some(preset_id) = id.strip_prefix("theme_") {
+                // Theme dropdown rows carry no icon — a colour sample goes
+                // in that same leading slot instead (`toolbar.rs`'s
+                // `theme_submenu_items` is the only producer of `theme_*`
+                // action ids, all of them real preset ids).
+                di = di.with_swatch(theme_sample_tokens(preset_id));
             }
             if let Some(sc) = shortcut {
                 di = di.with_shortcut(sc);

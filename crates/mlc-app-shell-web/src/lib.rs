@@ -18,7 +18,8 @@
 //!
 //! ```text
 //! DataBridge::new().await               → Arc<DataBridge>
-//! persistence::bootstrap_first_run()    ← default profile if localStorage is empty
+//! persistence::bootstrap_first_run()    ← default profile if localStorage is empty;
+//!                                          true return raises the welcome wizard
 //! ProfileManager::load(None)            ← profile + templates + presets + snapshots
 //! BackendCore::new(bridge, None)        → Arc<BackendCore>   (no trading mgr on wasm)
 //! ChartApp::new_window(core, ..)        → ChartApp  (seeds core from profile_manager,
@@ -205,6 +206,37 @@ fn apply_dev_proxy_gate_from_url() {
     );
 }
 
+// ─── Boot-time theme helpers ────────────────────────────────────────────────
+
+/// Resolve the starting theme from the browser's own colour-scheme
+/// preference — used ONLY when the profile carries no saved theme yet (a
+/// genuine first visit). Owner's ruling 2026-08-31: keep this to the two
+/// base themes; `high_contrast`, `mascot`/wizard_hat, `surf`, `vaporwave`
+/// and `terminal` are deliberate picks, never inferred.
+#[cfg(target_arch = "wasm32")]
+fn preferred_theme_from_browser() -> &'static str {
+    let Some(window) = web_sys::window() else { return "dark"; };
+    match window.match_media("(prefers-color-scheme: light)") {
+        Ok(Some(mql)) if mql.matches() => "light",
+        _ => "dark",
+    }
+}
+
+/// Mirror the resolved chart background into a single plain-text
+/// localStorage key so the boot placeholder — pure HTML/CSS, painted before
+/// any wasm runs — can match the session's theme instead of hardcoding one.
+/// Call this everywhere the theme is actually applied (boot restore AND the
+/// per-frame `theme_changed` drain) so the key can never drift from what the
+/// app renders. `index.html` reads it back with `#131722`/dark-media-query
+/// as the fallback for a key that was never written (owner's ruling
+/// 2026-08-31).
+#[cfg(target_arch = "wasm32")]
+fn write_boot_bg(bg: &str) {
+    let Some(window) = web_sys::window() else { return; };
+    let Some(storage) = window.local_storage().ok().flatten() else { return; };
+    let _ = storage.set_item("mlc.boot.bg", bg);
+}
+
 // ─── Async boot sequence ───────────────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
@@ -225,9 +257,11 @@ async fn run() -> Result<(), JsValue> {
     // ProfileManager::load / record_launch / save_profile boot sequence,
     // ~4928-4990) ────────────────────────────────────────────────────────────
     // First-run: no profile in localStorage yet — create a single "default"
-    // profile (non-UI equivalent of the welcome wizard). Returning visits are
-    // a no-op here; `ProfileManager::load` below resolves the existing one.
-    persistence::bootstrap_first_run();
+    // profile so the app is never profile-less, and remember whether this
+    // just happened so the welcome wizard can be raised below once `app`
+    // exists. Returning visits are a no-op here; `ProfileManager::load`
+    // below resolves the existing profile either way.
+    let is_first_run = persistence::bootstrap_first_run();
 
     let mut profile_manager = mlc_app::user_manager::ProfileManager::load(None);
     profile_manager.profile.record_launch(env!("CARGO_PKG_VERSION"));
@@ -279,12 +313,41 @@ async fn run() -> Result<(), JsValue> {
     );
     // Shell duty (native parity: main.rs:1258 applies AppState.theme_preset
     // to every fresh window): restore the profile's saved theme preset —
-    // without this a reload always came back on the default dark theme.
-    if !profile.ui.active_theme.is_empty() {
+    // without this a reload always came back on the default dark theme. A
+    // genuinely empty `active_theme` (true first visit — no session, no
+    // saved profile theme) follows the browser's own colour-scheme
+    // preference instead of silently defaulting to dark (owner's ruling
+    // 2026-08-31) — this is also what the wizard's Theme page opens on.
+    let applied_theme_preset: String = if !profile.ui.active_theme.is_empty() {
         app.panel_app.theme_manager.set_preset(&profile.ui.active_theme);
-    }
+        profile.ui.active_theme.clone()
+    } else {
+        let preset = preferred_theme_from_browser();
+        app.panel_app.theme_manager.set_preset(preset);
+        preset.to_string()
+    };
     if let Some(style) = mlc_core::UIStyle::from_name(&profile.ui.active_ui_style) {
         app.panel_app.theme_manager.current_mut().set_style(style);
+    }
+    // Boot-placeholder parity: the plain HTML/CSS splash that painted before
+    // this wasm module even loaded needs to know this session's resolved
+    // background for the NEXT load — write it now so a reload never flashes
+    // the wrong theme.
+    write_boot_bg(&app.panel_app.theme_manager.current().chart.background);
+
+    // First-run courtesy (owner's ruling 2026-08-31): `bootstrap_first_run`
+    // above had to create a profile from nothing — raise the wizard
+    // (theme → language → name) instead of staying silent. A returning
+    // visitor with a stored profile never sees this; dismissing keeps the
+    // profile bootstrap already created.
+    if is_first_run {
+        app.panel_app.user_settings_state.show_welcome_wizard = true;
+        // The Theme page's "active" row highlight reads
+        // `wizard_selected_theme`, which is otherwise only set by clicking
+        // a row — seed it with what boot just applied (the browser-matched
+        // choice) so the wizard opens on that choice already selected
+        // instead of a hardcoded "dark" fallback.
+        app.panel_app.user_settings_state.wizard_selected_theme = applied_theme_preset;
     }
 
     // Shell duty (native parity: main.rs populates these when it creates a
@@ -654,6 +717,10 @@ fn run_render_loop(
             let mut st = state_clone.borrow_mut();
             if st.chart.theme_changed.take().is_some() {
                 st.chart.profile_dirty = true;
+                // Keep the boot-placeholder's localStorage mirror current —
+                // see `write_boot_bg`'s doc comment for why this write lives
+                // at both theme-application sites.
+                write_boot_bg(&st.chart.panel_app.theme_manager.current().chart.background);
             }
         }
 
@@ -678,6 +745,23 @@ fn run_render_loop(
             let cmd = st.chart.pending_updater_cmd.take();
             if let Some(cmd) = cmd {
                 use mlc_app::user_manager::{ProfileCommandOutcome, ProfileEffect};
+                // "wizard_complete:{name}" — native creates a fresh profile
+                // directory and renames it in one step; on web there is
+                // nothing left to create. `bootstrap_first_run` already
+                // guaranteed a profile exists before the wizard could ever
+                // show (the app must never be profile-less), so completing
+                // the wizard here only renames that already-existing
+                // profile to what the user picked. Rewritten into
+                // `profile_rename:` so it rides the same dispatcher + this
+                // block's own rename follow-up below, instead of a second
+                // parallel path.
+                let cmd = match cmd.strip_prefix("wizard_complete:") {
+                    Some(name) => {
+                        let active_id = st.profile_manager.profile.domain.profile_id.clone();
+                        format!("profile_rename:{}:{}", active_id, name)
+                    }
+                    None => cmd,
+                };
                 match ChartApp::dispatch_profile_command(&cmd, &mut st.profile_manager) {
                     ProfileCommandOutcome::Handled(ProfileEffect::Renamed { id, new_name, was_active }) => {
                         if was_active {
@@ -780,10 +864,11 @@ fn run_render_loop(
                     ProfileCommandOutcome::NotForMe => {
                         // Vault/e2e (`e2e_setup`, `recovery_unlock`,
                         // `set_new_passphrase`, `recovery_key_confirmed`,
-                        // `vault_skip_to_wizard`, `wizard_complete`) and
-                        // updater-only (`logout`, `start_device_auth`)
-                        // commands are explicitly out of scope for this shell
-                        // for now — logged, not dropped.
+                        // `vault_skip_to_wizard`) and updater-only (`logout`,
+                        // `start_device_auth`) commands are explicitly out of
+                        // scope for this shell for now — logged, not dropped.
+                        // `wizard_complete` is NOT one of these — it is
+                        // rewritten into `profile_rename:` above and handled.
                         web_sys::console::warn_1(
                             &format!("[mlc-app-shell-web] unhandled updater command: {:?}", cmd).into(),
                         );

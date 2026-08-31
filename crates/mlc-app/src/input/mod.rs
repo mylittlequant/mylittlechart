@@ -2452,8 +2452,7 @@ impl ChartApp {
                         // Also update the *_focused booleans that drive proxy population.
                         let uss = &mut self.panel_app.user_settings_state;
                         let focused_wid: Option<WidgetId> = match field_id.as_str() {
-                            "e2e_passphrase_input" | "wizard_passphrase_input"
-                            | "profile_mgr:new_passphrase_input" => {
+                            "e2e_passphrase_input" | "profile_mgr:new_passphrase_input" => {
                                 uss.new_passphrase_focused = true;
                                 uss.new_profile_name_focused = false;
                                 uss.confirm_passphrase_focused = false;
@@ -2475,7 +2474,6 @@ impl ChartApp {
                                 Some(WidgetId::from(crate::text_input::RECOVERY_KEY))
                             }
                             "profile_mgr:confirm_passphrase_input"
-                            | "wizard_confirm_passphrase_input"
                             | "profile_mgr:create_confirm_passphrase_input" => {
                                 uss.confirm_passphrase_focused = true;
                                 uss.new_passphrase_focused = false;
@@ -3983,8 +3981,7 @@ impl ChartApp {
             if !char_positions.is_empty() {
                 let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
                 let drag_wid: Option<WidgetId> = match field_id.as_str() {
-                    "e2e_passphrase_input" | "wizard_passphrase_input"
-                    | "profile_mgr:new_passphrase_input" => {
+                    "e2e_passphrase_input" | "profile_mgr:new_passphrase_input" => {
                         Some(WidgetId::from(crate::text_input::NEW_PASSPHRASE))
                     }
                     "wizard_profile_name_input" | "profile_mgr:name_input" => {
@@ -3994,7 +3991,6 @@ impl ChartApp {
                         Some(WidgetId::from(crate::text_input::RECOVERY_KEY))
                     }
                     "profile_mgr:confirm_passphrase_input"
-                    | "wizard_confirm_passphrase_input"
                     | "profile_mgr:create_confirm_passphrase_input" => {
                         Some(WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE))
                     }
@@ -5006,8 +5002,7 @@ impl ChartApp {
             let field_id = self.panel_app.user_settings_state.profile_mgr_text_select_dragging.take().unwrap_or_default();
             // Finalize: if anchor == cursor (plain click jitter), clear the selection.
             let end_wid: Option<WidgetId> = match field_id.as_str() {
-                "e2e_passphrase_input" | "wizard_passphrase_input"
-                | "profile_mgr:new_passphrase_input" => {
+                "e2e_passphrase_input" | "profile_mgr:new_passphrase_input" => {
                     Some(WidgetId::from(crate::text_input::NEW_PASSPHRASE))
                 }
                 "wizard_profile_name_input" | "profile_mgr:name_input" => {
@@ -5017,7 +5012,6 @@ impl ChartApp {
                     Some(WidgetId::from(crate::text_input::RECOVERY_KEY))
                 }
                 "profile_mgr:confirm_passphrase_input"
-                | "wizard_confirm_passphrase_input"
                 | "profile_mgr:create_confirm_passphrase_input" => {
                     Some(WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE))
                 }

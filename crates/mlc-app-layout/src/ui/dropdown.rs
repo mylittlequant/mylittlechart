@@ -91,6 +91,11 @@ pub enum DropdownItem {
         /// own hit zone; the row's main click rect is shrunk to make room
         /// (see `draw_dropdown`).
         trailing_icons: Vec<TrailingIcon>,
+        /// Background/accent/text colour sample drawn in the row's leading
+        /// icon slot (theme-preset rows only — the toolbar's Theme submenu
+        /// has no icon, so this reuses that reserved zone instead of adding
+        /// a new one). `None` on every other row.
+        swatch: Option<[String; 3]>,
     },
     /// Separator line
     Separator,
@@ -120,6 +125,7 @@ impl DropdownItem {
             toggle: None,
             param_field: None,
             trailing_icons: Vec::new(),
+            swatch: None,
         }
     }
 
@@ -184,6 +190,15 @@ impl DropdownItem {
     pub fn with_accent_color(mut self, color: impl Into<String>) -> Self {
         if let Self::Item { accent_color: ref mut c, .. } = self {
             *c = Some(color.into());
+        }
+        self
+    }
+
+    /// Attach a background/accent/text colour sample, drawn in the row's
+    /// leading icon slot (see the `swatch` field doc comment).
+    pub fn with_swatch(mut self, tokens: [String; 3]) -> Self {
+        if let Self::Item { swatch: ref mut s, .. } = self {
+            *s = Some(tokens);
         }
         self
     }
@@ -433,13 +448,16 @@ where
 
     for item in &config.items {
         match item {
-            DropdownItem::Item { id: _, label, icon, shortcut, disabled: _, danger: _, subtitle, accent_color: _, toggle, param_field: _, trailing_icons } => {
+            DropdownItem::Item { id: _, label, icon, shortcut, disabled: _, danger: _, subtitle, accent_color: _, toggle, param_field: _, trailing_icons, swatch } => {
                 // Measure label text
                 let label_width = ctx.measure_text(label);
                 let mut item_width = label_width;
 
-                // Add icon space if present
-                if icon.is_some() {
+                // Add icon space if present — a swatch draws in the same
+                // leading slot when there's no icon (theme rows have
+                // neither icon nor toggle, so this is the only reserve they
+                // need).
+                if icon.is_some() || swatch.is_some() {
                     item_width += config.icon_size + 8.0; // icon + spacing
                 }
 
@@ -604,7 +622,7 @@ where
     // Draw items — rects precomputed by the layout pass above.
     for (idx, item) in config.items.iter().enumerate() {
         match item {
-            DropdownItem::Item { id, icon, label, shortcut, disabled, danger, subtitle, accent_color, toggle, param_field, trailing_icons } => {
+            DropdownItem::Item { id, icon, label, shortcut, disabled, danger, subtitle, accent_color, toggle, param_field, trailing_icons, swatch } => {
                 let item_rect = rects[idx];
                 // Trailing-icon zone: reserved on the RIGHT edge of the row,
                 // right-to-left draw order (first `trailing_icons` entry =
@@ -654,7 +672,10 @@ where
                     );
                 }
 
-                // Draw icon
+                // Draw icon, or the theme-preset colour sample when there's
+                // no icon — both occupy the same leading slot and advance
+                // `text_x` by the same amount, so no other geometry in this
+                // function needs to know which one a given row carries.
                 let mut text_x = item_rect.x + config.item_padding_x;
                 if let Some(icon) = icon {
                     let icon_rect = WidgetRect::new(
@@ -664,6 +685,15 @@ where
                         config.icon_size,
                     );
                     draw_icon(ctx, icon, icon_rect, text_color);
+                    text_x += config.icon_size + 8.0;
+                } else if let Some(tokens) = swatch {
+                    crate::ui::widgets::draw_theme_sample(
+                        ctx,
+                        text_x,
+                        item_rect.center_y() - config.icon_size / 2.0,
+                        config.icon_size,
+                        tokens,
+                    );
                     text_x += config.icon_size + 8.0;
                 }
 

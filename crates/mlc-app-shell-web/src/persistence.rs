@@ -42,15 +42,21 @@ use mlc_app::ChartApp;
 /// First-run bootstrap: create a default profile + index entry if none
 /// exists in storage yet.
 ///
-/// Mirrors the vello `is_first_run` probe (`main.rs:4928-4953`) but skips
-/// the welcome-wizard UI entirely — wasm v1 is single-user, so a fresh
-/// browser profile always gets one profile named "default" with no
-/// interactive setup. `ChartApp::new_window`'s fresh-state path (no saved
-/// presets) then creates the first "Untitled 1" chart + preset on its own,
-/// which is what makes `active_preset_id` non-empty and turns on autosave.
+/// Mirrors the vello `is_first_run` probe (`main.rs:4928-4953`), but unlike
+/// native this shell has no "skeleton" state to defer profile creation
+/// through — it always creates a real "default" profile immediately so the
+/// app is never profile-less. `ChartApp::new_window`'s fresh-state path (no
+/// saved presets) then creates the first "Untitled 1" chart + preset on its
+/// own, which is what makes `active_preset_id` non-empty and turns on
+/// autosave.
+///
+/// Owner's ruling 2026-08-31: the caller uses the `true` return (a profile
+/// was just created from nothing) to raise the welcome wizard (theme →
+/// language → name) instead of staying silent about it — dismissing the
+/// wizard is a courtesy and keeps the "default" profile created here.
 ///
 /// No-op (returns `false`) if a profile index with at least one profile
-/// already exists — the returning-visitor path.
+/// already exists — the returning-visitor path, which never sees the wizard.
 pub fn bootstrap_first_run() -> bool {
     let is_first_run = match mlc_core::load_profile_index() {
         Some(index) => index.profiles.is_empty(),

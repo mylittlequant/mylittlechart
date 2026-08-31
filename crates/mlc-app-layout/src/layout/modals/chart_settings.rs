@@ -20,6 +20,7 @@ use crate::ui::widgets::{
     ModalTheme, FOOTER_H, HEADER_H, TAB_RAIL_W,
     WidgetState, WidgetTheme,
     ButtonConfig, draw_button,
+    theme_sample_tokens, draw_theme_sample,
 };
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig};
 use crate::ui::dropdown::{render_dropdown, DropdownConfig, DropdownItem, DropdownTheme};
@@ -1743,22 +1744,26 @@ fn render_appearance_settings(
     ctx.fill_text(t_settings(SettingsKey::SectionPresets), x, row_y + row_height / 2.0);
     row_y += row_height;
 
+    // Full catalogue — all 8 presets stay listed here even though the
+    // toolbar dropdown and welcome wizard trim to `RuntimeTheme::
+    // PRESETS_SHORTLIST` (owner review 2026-08-31: `vaporwave`/`terminal`
+    // are ugly, dropped from those two surfaces but still pickable here).
     let themes = [
-        ("dark", t_settings(SettingsKey::ThemeDark), "#1e222d"),
-        ("light", t_settings(SettingsKey::ThemeLight), "#ffffff"),
-        ("high_contrast", t_settings(SettingsKey::ThemeHighContrast), "#000000"),
-        ("high_contrast_mono", t_settings(SettingsKey::ThemeHighContrastMono), "#000000"),
-        ("mascot", t_settings(SettingsKey::ThemeWizardHat), "#0a0f1a"),
+        ("dark", t_settings(SettingsKey::ThemeDark)),
+        ("light", t_settings(SettingsKey::ThemeLight)),
+        ("high_contrast", t_settings(SettingsKey::ThemeHighContrast)),
+        ("high_contrast_mono", t_settings(SettingsKey::ThemeHighContrastMono)),
+        ("mascot", t_settings(SettingsKey::ThemeWizardHat)),
         // 8-token skin presets (TapeSurf doctrine 2026-07-31) — proper
         // nouns, not translated.
-        ("surf", "Surf", "#121215"),
-        ("vaporwave", "Vaporwave", "#13042c"),
-        ("terminal", "Terminal", "#000000"),
+        ("surf", "Surf"),
+        ("vaporwave", "Vaporwave"),
+        ("terminal", "Terminal"),
     ];
     let current_theme = theme_manager.preset_name();
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
 
-    for (id, name, preview_color) in themes.iter() {
+    for (id, name) in themes.iter() {
         let button_rect = WidgetRect::new(x, row_y, width, button_height);
         let is_active = current_theme == *id;
 
@@ -1777,8 +1782,10 @@ fn render_appearance_settings(
         };
         draw_button(ctx, &config, WidgetState::Normal, button_rect, &widget_theme, |_, _, _, _| {});
 
-        ctx.set_fill_color(preview_color);
-        ctx.fill_rect(button_rect.x + 6.0, button_rect.y + 4.0, 18.0, 18.0);
+        // Background / accent / text sample, pulled from the preset itself
+        // (not a hand-picked hex) so it actually tells presets apart.
+        let sample_tokens = theme_sample_tokens(id);
+        draw_theme_sample(ctx, button_rect.x + 6.0, button_rect.y + 4.0, 18.0, &sample_tokens);
         ctx.set_stroke_color(muted_color);
         ctx.set_stroke_width(1.0);
         ctx.stroke_rect(button_rect.x + 6.0, button_rect.y + 4.0, 18.0, 18.0);

@@ -1,20 +1,29 @@
 //! First-run Welcome Wizard modal.
 //!
 //! An ordinary dismissible modal over a live chart — same [`begin_modal_shell`]
-//! every other modal uses. Owner's ruling 2026-08-31: the wizard is a
-//! first-run courtesy, not a gate — boot already created a profile silently,
-//! so a user who closes the wizard keeps that profile and just skips the
-//! guided tour. It is NOT paired with `profile_manager`'s mandatory-migration
-//! exception; every page here closes by ×, dimmer and Esc.
+//! every other modal uses. Owner's ruling 2026-08-31: theme first, then
+//! language, then a name — the wizard is a first-run courtesy, not a gate.
+//! Dismissing keeps whatever profile boot already created; it just skips the
+//! guided tour. A tutorial is planned for this same slot later.
+//!
+//! Owner's ruling 2026-08-31 (second pass, same day): the passphrase page is
+//! dropped from this flow entirely — the passphrase belongs to the vault,
+//! which is opened later at the point of use (profile manager), not at
+//! first-run setup. The wizard now ends the moment a name is picked; that is
+//! the whole flow. `profile_manager.rs` owns the vault/passphrase/recovery-key
+//! UI on its own, separate render path — nothing here reaches into it, and
+//! nothing there reached into this file either (each had its own private
+//! `render_back_button`/`render_passphrase_input`), so dropping this file's
+//! copies does not touch the profile manager's passphrase flow at all.
 //!
 //! Pages:
-//!   0 — Welcome + Language   (mascot, lang selection, Get Started)
-//!   1 — Theme                (5 presets)
-//!   2 — Profile + Passphrase (name input, passphrase, ZT info, Generate Recovery Phrase)
-//!   3 — Recovery Key         (display + copy + confirm)
+//!   0 — Theme         (`RuntimeTheme::PRESETS_SHORTLIST` — 6 presets)
+//!   1 — Language       (mascot, lang selection)
+//!   2 — Profile Name   (name input only — ends the wizard)
 
 use mlc_core::engine::render::{draw_svg_icon, draw_svg_multicolor, RenderContext};
 use mlc_core::i18n::{Language, WizardKey, current_language, t_wizard};
+use mlc_core::theme::RuntimeTheme;
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
@@ -25,6 +34,7 @@ use crate::ui::z_order::ZLayer;
 use crate::ui::widgets::{
     begin_modal_shell, end_modal_shell, register_dimmer_zones, draw_input, draw_input_cursor,
     InputConfig, InputType, ModalFooter, ModalPlacement, ModalShellSpec, ModalTheme,
+    theme_sample_tokens, draw_theme_sample,
 };
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_ui::toolbar_to_widget_theme;
@@ -36,32 +46,41 @@ const MINI_MASCOT_SVG: &str = include_str!("../../../../../assets/mascot/mini_ma
 const MODAL_W: f64 = 580.0;
 
 /// Content height per page. The big in-body title each page used to draw is
-/// dropped — the shell header carries it now — everything else (subtitles,
-/// step indicators, rows, inputs, buttons) keeps its original size and order,
-/// just re-summed for a top-anchored body instead of one centered in a
-/// full-window frame.
+/// dropped — the shell header carries it now. Each arm sums the exact cy
+/// deltas the matching render fn below produces, so the modal frame is sized
+/// to its content instead of guessed.
 fn page_content_height(state: &UserSettingsState) -> f64 {
     match state.wizard_page {
-        0 => {
+        // Theme: subtitle(28) + N rows*(40+6) + gap(16) + button(38), N =
+        // `RuntimeTheme::PRESETS_SHORTLIST.len()`.
+        0 => theme_page_content_height(),
+        // Language: back+gap(34) + mascot(100) + N lang rows + gap(12) + button(38).
+        1 => {
             let lang_count = Language::all().len() as f64;
+            let header = 26.0 + 8.0;
             let mascot = 80.0 + 20.0;
-            let langs = lang_count * (32.0 + 4.0) - 4.0;
-            mascot + langs + 12.0 + 38.0
+            let langs = lang_count * (32.0 + 4.0);
+            header + mascot + langs + 12.0 + 38.0
         }
-        1 => 340.0,
-        2 => 350.0,
-        3 => 188.0,
-        _ => 300.0,
+        // Profile Name: back+gap(34) + pre-input gap(12) + input(32) + gap(24) + button(38).
+        2 => 140.0,
+        _ => theme_page_content_height(),
     }
+}
+
+/// Content height of the theme page (0), shared with the `_` fallback arm
+/// above (which also renders the theme page — see `render_welcome_wizard`).
+fn theme_page_content_height() -> f64 {
+    let theme_count = RuntimeTheme::PRESETS_SHORTLIST.len() as f64;
+    28.0 + theme_count * (40.0 + 6.0) + 16.0 + 38.0
 }
 
 fn page_title(state: &UserSettingsState) -> String {
     match state.wizard_page {
-        0 => format!("{} mylittlechart", t_wizard(WizardKey::WelcomeTo)),
-        1 => t_wizard(WizardKey::Theme).to_string(),
-        2 => t_wizard(WizardKey::ProfileAndSecurity).to_string(),
-        3 => t_wizard(WizardKey::RecoveryKey).to_string(),
-        _ => t_wizard(WizardKey::WelcomeTo).to_string(),
+        0 => t_wizard(WizardKey::Theme).to_string(),
+        1 => format!("{} mylittlechart", t_wizard(WizardKey::WelcomeTo)),
+        2 => t_wizard(WizardKey::ProfileName).to_string(),
+        _ => t_wizard(WizardKey::Theme).to_string(),
     }
 }
 
@@ -78,7 +97,11 @@ pub fn render_welcome_wizard(
     text_color: &str,
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
-    current_time_ms: u64,
+    // Unused since the passphrase/recovery pages (the only ones with a
+    // blinking-cursor timing need) left this file — kept in the signature
+    // because this is a `pub fn` called from `chart_panel_app.rs` alongside
+    // every other modal on a uniform argument list.
+    _current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
 ) {
@@ -109,22 +132,152 @@ pub fn render_welcome_wizard(
     let mut cy = shell.content.y;
 
     match state.wizard_page {
-        0 => render_page0(ctx, x, w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
-        1 => render_page1_theme(ctx, x, w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
-        2 => render_page2_profile(ctx, x, w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, input_coordinator, &layer_id, result),
-        3 => render_page3_recovery(ctx, x, w, &mut cy, state, text_color, toolbar_theme, frame_theme, current_time_ms, input_coordinator, &layer_id, result),
-        _ => render_page0(ctx, x, w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
+        0 => render_page_theme(ctx, x, w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
+        1 => render_page_language(ctx, x, w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
+        2 => render_page_profile_name(ctx, x, w, &mut cy, state, text_color, toolbar_theme, frame_theme, input_coordinator, &layer_id, result),
+        _ => render_page_theme(ctx, x, w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
     }
 
     end_modal_shell(ctx, input_coordinator, &spec, &theme, &shell, &layer_id, &[]);
 }
 
 // =============================================================================
-// Page 0 — Welcome + Language (merged)
+// Page 0 — Theme (first page: no back button, no step indicator)
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
-fn render_page0(
+fn render_page_theme(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    w: f64,
+    cy: &mut f64,
+    state: &UserSettingsState,
+    _text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    let hovered = state.hovered_item_id.as_deref();
+
+    let active_theme = if state.wizard_selected_theme.is_empty() {
+        "dark"
+    } else {
+        state.wizard_selected_theme.as_str()
+    };
+
+    // Subtitle (the title lives in the shell header now). First page — no
+    // back button, no step indicator, matching the wizard's own convention
+    // that the entry page never shows either.
+    ctx.set_font("14px sans-serif");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(t_wizard(WizardKey::ChooseTheme), x + w / 2.0, *cy);
+    ctx.set_text_align(TextAlign::Left);
+    *cy += 28.0;
+
+    // Reads the shared shortlist (`RuntimeTheme::PRESETS_SHORTLIST`) instead
+    // of a hand-written id list — owner review 2026-08-31: `vaporwave`/
+    // `terminal` are ugly and must not show here (or in the toolbar's Theme
+    // dropdown), but `surf` stays visible everywhere, so both surfaces read
+    // from the same source instead of drifting.
+    let row_h = 40.0;
+    let row_gap = 6.0;
+    let swatch_size = 16.0;
+
+    for key in RuntimeTheme::PRESETS_SHORTLIST {
+        let label = wizard_theme_label(key);
+        let widget_id = format!("wizard_theme_{key}");
+        let is_active = active_theme == *key;
+        let is_row_hovered = hovered == Some(widget_id.as_str());
+
+        let row_bg = if is_row_hovered {
+            toolbar_theme.button_bg_hover.as_str()
+        } else {
+            toolbar_theme.button_bg.as_str()
+        };
+        ctx.set_fill_color(row_bg);
+        ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
+
+        if is_active {
+            ctx.set_fill_color(toolbar_theme.accent.as_str());
+            ctx.fill_rounded_rect(x, *cy, 3.0, row_h, 2.0);
+        }
+
+        // Background / accent / text sample, pulled from the preset itself
+        // so it actually tells presets apart before clicking.
+        let swatch_x = x + 12.0;
+        let swatch_y = *cy + (row_h - swatch_size) / 2.0;
+        let sample_tokens = theme_sample_tokens(key);
+        draw_theme_sample(ctx, swatch_x, swatch_y, swatch_size, &sample_tokens);
+
+        let text_alpha = if is_active { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() };
+        ctx.set_font("14px sans-serif");
+        ctx.set_fill_color(text_alpha);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, swatch_x + swatch_size + 10.0, *cy + row_h / 2.0);
+
+        let row_rect = WidgetRect::new(x, *cy, w, row_h);
+        result.content_items.push((widget_id.clone(), row_rect));
+        let hit_id = format!("user_settings:{}", widget_id);
+        input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK | Sense::HOVER, layer_id);
+
+        *cy += row_h + row_gap;
+    }
+
+    *cy += 16.0;
+
+    // "Next" button (goes to the language page)
+    let btn_h = 38.0;
+    let btn_w = w.min(200.0);
+    let btn_x = x + (w - btn_w) / 2.0;
+    let is_btn_hovered = hovered == Some("wizard_theme_next");
+    let btn_bg = if is_btn_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
+    let btn_text = if is_btn_hovered { toolbar_theme.item_text_hover.as_str() } else { toolbar_theme.item_text.as_str() };
+    ctx.set_fill_color(btn_bg);
+    ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 4.0);
+    ctx.set_font("bold 13px sans-serif");
+    ctx.set_fill_color(btn_text);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(t_wizard(WizardKey::Next), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
+    result.content_items.push(("wizard_theme_next".to_string(), btn_rect));
+    input_coordinator.register_on_layer("user_settings:wizard_theme_next", btn_rect, Sense::CLICK, layer_id);
+}
+
+/// Display label for a `RuntimeTheme::PRESETS_SHORTLIST` entry on the
+/// wizard's theme page. English literals, matching this page's pre-existing
+/// convention (unlike the rest of the wizard, this page never routed its
+/// theme names through `t_wizard`/`t_settings`) — not something this change
+/// widens the scope of.
+fn wizard_theme_label(preset_id: &str) -> &'static str {
+    match preset_id {
+        "dark" => "Dark",
+        "light" => "Light",
+        "high_contrast" => "High Contrast",
+        "high_contrast_mono" => "High Contrast Mono",
+        "mascot" => "Wizard Hat",
+        // 8-token skin preset — proper noun, not translated.
+        "surf" => "Surf",
+        // Defensive: PRESETS_SHORTLIST only ever names the ids above.
+        other => {
+            debug_assert!(false, "wizard_theme_label: no label for preset id {other:?}");
+            "Theme"
+        }
+    }
+}
+
+// =============================================================================
+// Page 1 — Language (mascot + language list)
+// =============================================================================
+
+#[allow(clippy::too_many_arguments)]
+fn render_page_language(
     ctx: &mut dyn RenderContext,
     x: f64,
     w: f64,
@@ -139,7 +292,18 @@ fn render_page0(
     let hovered = state.hovered_item_id.as_deref();
     let active_lang = current_language();
 
-    // Mini mascot centered (the title lives in the shell header now).
+    render_back_button(ctx, x, w, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
+    *cy += 8.0;
+
+    // Step indicator (top-right — shares the back button's row).
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
+    ctx.set_text_align(TextAlign::Right);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(t_wizard(WizardKey::Step2of3), x + w, *cy - 20.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    // Mini mascot centered.
     let mascot_size = 80.0;
     let mascot_x = x + (w - mascot_size) / 2.0;
     draw_svg_multicolor(ctx, MINI_MASCOT_SVG, mascot_x, *cy, mascot_size, mascot_size);
@@ -187,121 +351,11 @@ fn render_page0(
 
     *cy += 12.0;
 
-    // "Get Started" button
+    // "Next" button (goes to the profile-name page)
     let btn_h = 38.0;
     let btn_w = w.min(200.0);
     let btn_x = x + (w - btn_w) / 2.0;
-    let is_btn_hovered = hovered == Some("wizard_get_started");
-    let btn_bg = if is_btn_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
-    let btn_text = if is_btn_hovered { toolbar_theme.item_text_hover.as_str() } else { toolbar_theme.item_text.as_str() };
-    ctx.set_fill_color(btn_bg);
-    ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 4.0);
-    ctx.set_font("bold 13px sans-serif");
-    ctx.set_fill_color(btn_text);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_wizard(WizardKey::GetStarted), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
-    ctx.set_text_align(TextAlign::Left);
-
-    let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
-    result.content_items.push(("wizard_get_started".to_string(), btn_rect));
-    input_coordinator.register_on_layer("user_settings:wizard_get_started", btn_rect, Sense::CLICK, layer_id);
-}
-
-// =============================================================================
-// Page 1 — Theme Selection
-// =============================================================================
-
-#[allow(clippy::too_many_arguments)]
-fn render_page1_theme(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    w: f64,
-    cy: &mut f64,
-    state: &UserSettingsState,
-    _text_color: &str,
-    toolbar_theme: &ToolbarTheme,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
-    result: &mut UserSettingsResult,
-) {
-    let hovered = state.hovered_item_id.as_deref();
-
-    let active_theme = if state.wizard_selected_theme.is_empty() {
-        "dark"
-    } else {
-        state.wizard_selected_theme.as_str()
-    };
-
-    render_back_button(ctx, x, w, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
-    *cy += 8.0;
-
-    // Step indicator (top-right — shares the back button's row).
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_align(TextAlign::Right);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::Step2of4), x + w, *cy - 20.0);
-
-    // Subtitle (the title now lives in the shell header).
-    ctx.set_font("14px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::ChooseTheme), x + w / 2.0, *cy);
-    ctx.set_text_align(TextAlign::Left);
-    *cy += 28.0;
-
-    let themes: &[(&str, &str, &str)] = &[
-        ("dark",                  "Dark",                "wizard_theme_dark"),
-        ("light",                 "Light",               "wizard_theme_light"),
-        ("high_contrast",         "High Contrast",       "wizard_theme_high_contrast"),
-        ("high_contrast_mono",    "High Contrast Mono",  "wizard_theme_high_contrast_mono"),
-        ("mascot",                "Wizard Hat",          "wizard_theme_mascot"),
-    ];
-
-    let row_h = 40.0;
-    let row_gap = 6.0;
-
-    for (key, label, widget_id) in themes {
-        let is_active = active_theme == *key;
-        let is_row_hovered = hovered == Some(widget_id);
-
-        let row_bg = if is_row_hovered {
-            toolbar_theme.button_bg_hover.as_str()
-        } else {
-            toolbar_theme.button_bg.as_str()
-        };
-        ctx.set_fill_color(row_bg);
-        ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
-
-        if is_active {
-            ctx.set_fill_color(toolbar_theme.accent.as_str());
-            ctx.fill_rounded_rect(x, *cy, 3.0, row_h, 2.0);
-        }
-
-        let text_alpha = if is_active { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() };
-        ctx.set_font("14px sans-serif");
-        ctx.set_fill_color(text_alpha);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(label, x + 16.0, *cy + row_h / 2.0);
-
-        let row_rect = WidgetRect::new(x, *cy, w, row_h);
-        result.content_items.push((widget_id.to_string(), row_rect));
-        let hit_id = format!("user_settings:{}", widget_id);
-        input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK | Sense::HOVER, layer_id);
-
-        *cy += row_h + row_gap;
-    }
-
-    *cy += 16.0;
-
-    // "Next" button (goes to profile+passphrase page)
-    let btn_h = 38.0;
-    let btn_w = w.min(200.0);
-    let btn_x = x + (w - btn_w) / 2.0;
-    let is_btn_hovered = hovered == Some("wizard_theme_next");
+    let is_btn_hovered = hovered == Some("wizard_lang_next");
     let btn_bg = if is_btn_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
     let btn_text = if is_btn_hovered { toolbar_theme.item_text_hover.as_str() } else { toolbar_theme.item_text.as_str() };
     ctx.set_fill_color(btn_bg);
@@ -314,16 +368,16 @@ fn render_page1_theme(
     ctx.set_text_align(TextAlign::Left);
 
     let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
-    result.content_items.push(("wizard_theme_next".to_string(), btn_rect));
-    input_coordinator.register_on_layer("user_settings:wizard_theme_next", btn_rect, Sense::CLICK, layer_id);
+    result.content_items.push(("wizard_lang_next".to_string(), btn_rect));
+    input_coordinator.register_on_layer("user_settings:wizard_lang_next", btn_rect, Sense::CLICK, layer_id);
 }
 
 // =============================================================================
-// Page 2 — Profile + Passphrase (last page)
+// Page 2 — Profile Name (last page — picking a name ends the wizard)
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
-fn render_page2_profile(
+fn render_page_profile_name(
     ctx: &mut dyn RenderContext,
     x: f64,
     w: f64,
@@ -332,7 +386,6 @@ fn render_page2_profile(
     _text_color: &str,
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
-    current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
@@ -347,15 +400,12 @@ fn render_page2_profile(
     ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::Step3of4), x + w, *cy - 20.0);
+    ctx.fill_text(t_wizard(WizardKey::Step3of3), x + w, *cy - 20.0);
+    ctx.set_text_align(TextAlign::Left);
+    *cy += 12.0;
 
-    // ── Profile Name input ────────────────────────────────────────────────────
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::ProfileName), x, *cy);
-    *cy += 18.0;
-
+    // Profile Name input — the shell header already reads "Profile Name",
+    // so the field itself carries no separate label, only the placeholder.
     let input_h = 32.0;
     let name_rect = WidgetRect::new(x, *cy, w, input_h);
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
@@ -388,99 +438,16 @@ fn render_page2_profile(
         );
     }
 
-    *cy += input_h + 14.0;
+    *cy += input_h + 24.0;
 
-    // ── Passphrase input ──────────────────────────────────────────────────────
-    *cy = render_passphrase_input(
-        ctx, x, w, cy, state, toolbar_theme, frame_theme,
-        current_time_ms, layer_id, input_coordinator, result,
-    );
-
-    // ── Confirm Passphrase input ──────────────────────────────────────────────
-    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text(t_wizard(WizardKey::ConfirmPassphrase), x, *cy);
-    *cy += 18.0;
-
-    let confirm_h = 32.0;
-    let confirm_rect = WidgetRect::new(x, *cy, w, confirm_h);
-    let wz_cp_render = &state.confirm_passphrase_render;
-    let (conf_sel_start, conf_sel_end) = if let Some((lo, hi)) = wz_cp_render.selection_range() {
-        (Some(lo), Some(hi))
-    } else {
-        (None, None)
-    };
-    let confirm_config = InputConfig::new(&wz_cp_render.text)
-        .with_focused(state.confirm_passphrase_focused)
-        .with_cursor(wz_cp_render.cursor)
-        .with_placeholder(t_wizard(WizardKey::PassphrasePlaceholder))
-        .with_type(InputType::Password)
-        .with_selection(conf_sel_start, conf_sel_end);
-
-    let confirm_result = draw_input(ctx, &confirm_config, WidgetState::Normal, confirm_rect, &widget_theme);
-
-    result.content_items.push(("wizard_confirm_passphrase_input".to_string(), confirm_rect));
-    result.input_char_positions.push(("wizard_confirm_passphrase_input".to_string(), confirm_result.char_x_positions.clone()));
-    input_coordinator.register_on_layer("user_settings:wizard_confirm_passphrase_input", confirm_rect, Sense::CLICK, layer_id);
-
-    if state.confirm_passphrase_focused && wz_cp_render.cursor_visible {
-        draw_input_cursor(
-            ctx,
-            confirm_result.cursor_x,
-            confirm_result.cursor_y,
-            confirm_result.cursor_height,
-            &toolbar_theme.item_text,
-        );
-    }
-
-    *cy += confirm_h + 4.0;
-
-    // Mismatch error
-    let passphrase_text = &state.new_passphrase_render.text;
-    let confirm_text = &state.confirm_passphrase_render.text;
-    if !confirm_text.is_empty() && !passphrase_text.is_empty() && confirm_text != passphrase_text {
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(toolbar_theme.danger.as_str());
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(t_wizard(WizardKey::PassphraseMismatch), x, *cy);
-        *cy += 18.0;
-    } else {
-        *cy += 18.0;
-    }
-
-    // ── ZT container info plashka ─────────────────────────────────────────────
-    let note_h = 58.0;
-    ctx.set_fill_color(toolbar_theme.button_bg.as_str());
-    ctx.fill_rounded_rect(x, *cy, w, note_h, 4.0);
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::ZtInfo1), x + 12.0, *cy + 8.0);
-    ctx.fill_text(t_wizard(WizardKey::ZtInfo2), x + 12.0, *cy + 24.0);
-    ctx.fill_text(t_wizard(WizardKey::ZtInfo3), x + 12.0, *cy + 40.0);
-    *cy += note_h + 14.0;
-
-    // ── Complete Setup button ─────────────────────────────────────────────────
+    // "Get Started" button — the whole flow: name the profile and start
+    // using the app. No passphrase step here (owner's ruling 2026-08-31):
+    // the vault opens later, at the point of use, via the profile manager.
     let profile_name = state.new_profile_name_render.text.trim().to_string();
-    let profile_name_ok = !profile_name.is_empty();
-    let passphrase_ok = state.new_passphrase_render.text.len() >= mlc_core::MIN_PASSPHRASE_LENGTH;
-    let confirm_matches = state.confirm_passphrase_render.text == state.new_passphrase_render.text;
-    let finish_disabled = !passphrase_ok || !profile_name_ok || !confirm_matches;
+    let finish_disabled = profile_name.is_empty();
 
     let is_finish_hovered = !finish_disabled && hovered == Some("wizard_finish");
-    let finish_bg = if finish_disabled {
-        toolbar_theme.button_bg.as_str()
-    } else if is_finish_hovered {
-        toolbar_theme.button_bg_hover.as_str()
-    } else {
-        toolbar_theme.button_bg.as_str()
-    };
+    let finish_bg = if is_finish_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
     let finish_text_col = if finish_disabled {
         toolbar_theme.item_text_muted.as_str()
     } else if is_finish_hovered {
@@ -489,8 +456,8 @@ fn render_page2_profile(
         toolbar_theme.item_text.as_str()
     };
 
-    let btn_h = 36.0;
-    let btn_w = w.min(220.0);
+    let btn_h = 38.0;
+    let btn_w = w.min(200.0);
     let btn_x = x + (w - btn_w) / 2.0;
     ctx.set_fill_color(finish_bg);
     ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 4.0);
@@ -498,7 +465,7 @@ fn render_page2_profile(
     ctx.set_fill_color(finish_text_col);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_wizard(WizardKey::GenerateRecoveryPhrase), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
+    ctx.fill_text(t_wizard(WizardKey::GetStarted), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     if !finish_disabled {
@@ -506,164 +473,6 @@ fn render_page2_profile(
         result.content_items.push(("wizard_finish".to_string(), btn_rect));
         input_coordinator.register_on_layer("user_settings:wizard_finish", btn_rect, Sense::CLICK, layer_id);
     }
-}
-
-// =============================================================================
-// Page 3 — Recovery Key (shown inside the wizard after key generation)
-// =============================================================================
-
-#[allow(clippy::too_many_arguments)]
-fn render_page3_recovery(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    w: f64,
-    cy: &mut f64,
-    state: &UserSettingsState,
-    _text_color: &str,
-    toolbar_theme: &ToolbarTheme,
-    frame_theme: &FrameTheme,
-    _current_time_ms: u64,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
-    result: &mut UserSettingsResult,
-) {
-    let hovered = state.hovered_item_id.as_deref();
-    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-
-    // Step indicator (top-right — no back button on this page)
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_align(TextAlign::Right);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::Step4of4), x + w, *cy);
-    *cy += 20.0;
-
-    // Warning line 1
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(toolbar_theme.accent.as_str());
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::RecoveryWarning1), x + w / 2.0, *cy);
-    *cy += 18.0;
-
-    // Warning line 2 (muted)
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.fill_text(t_wizard(WizardKey::RecoveryWarning2), x + w / 2.0, *cy);
-    ctx.set_text_align(TextAlign::Left);
-    *cy += 26.0;
-
-    // Recovery key display box — uses standard widget theme (same as other inputs)
-    let key_text = state.recovery_key_display.as_deref().unwrap_or("(key not available)");
-
-    let key_box_h = 40.0;
-    let key_display_rect = WidgetRect::new(x, *cy, w, key_box_h);
-    let wz_rk_render = &state.recovery_key_display_render;
-    let (sel_start, sel_end) = if let Some((lo, hi)) = wz_rk_render.selection_range() {
-        (Some(lo), Some(hi))
-    } else {
-        (None, None)
-    };
-    let key_display_config = InputConfig::new(key_text)
-        .with_focused(state.recovery_key_display_focused)
-        .with_cursor(wz_rk_render.cursor)
-        .with_type(InputType::Text)
-        .with_font_size(13.0)
-        .with_padding(10.0)
-        .with_radius(4.0)
-        .with_selection(sel_start, sel_end);
-
-    let key_display_result = draw_input(ctx, &key_display_config, WidgetState::Normal, key_display_rect, &widget_theme);
-
-    result.content_items.push(("profile_mgr:recovery_key_display".to_string(), key_display_rect));
-    result.input_char_positions.push(("profile_mgr:recovery_key_display".to_string(), key_display_result.char_x_positions.clone()));
-    input_coordinator.register_on_layer(
-        "user_settings:profile_mgr:recovery_key_display",
-        key_display_rect,
-        Sense::CLICK | Sense::HOVER,
-        layer_id,
-    );
-
-    if state.recovery_key_display_focused && wz_rk_render.cursor_visible {
-        draw_input_cursor(
-            ctx,
-            key_display_result.cursor_x,
-            key_display_result.cursor_y,
-            key_display_result.cursor_height,
-            toolbar_theme.accent.as_str(),
-        );
-    }
-
-    *cy += key_box_h + 10.0;
-
-    // Copy Key button — shows "Copied!" feedback for 2 seconds after click
-    let is_copy_hovered = hovered == Some("wizard_copy_key");
-    let now_ms = web_time::SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-    let just_copied = state.recovery_key_copied_at > 0 && now_ms.saturating_sub(state.recovery_key_copied_at) < 2000;
-    let copy_btn_bg = if just_copied {
-        toolbar_theme.item_bg_active.as_str()
-    } else if is_copy_hovered {
-        toolbar_theme.button_bg_hover.as_str()
-    } else {
-        toolbar_theme.button_bg.as_str()
-    };
-    let copy_btn_text = if just_copied {
-        toolbar_theme.item_text_active.as_str()
-    } else if is_copy_hovered {
-        toolbar_theme.item_text_hover.as_str()
-    } else {
-        toolbar_theme.item_text.as_str()
-    };
-    let copy_label = if just_copied { "Copied!" } else { t_wizard(WizardKey::CopyKey) };
-    let copy_btn_h = 28.0;
-    let copy_btn_w = w.min(200.0);
-    let copy_btn_x = x + (w - copy_btn_w) / 2.0;
-    ctx.set_fill_color(copy_btn_bg);
-    ctx.fill_rounded_rect(copy_btn_x, *cy, copy_btn_w, copy_btn_h, 4.0);
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(copy_btn_text);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(copy_label, copy_btn_x + copy_btn_w / 2.0, *cy + copy_btn_h / 2.0);
-    ctx.set_text_align(TextAlign::Left);
-
-    let copy_btn_rect = WidgetRect::new(copy_btn_x, *cy, copy_btn_w, copy_btn_h);
-    result.content_items.push(("wizard_copy_key".to_string(), copy_btn_rect));
-    input_coordinator.register_on_layer(
-        "user_settings:wizard_copy_key",
-        copy_btn_rect,
-        Sense::CLICK | Sense::HOVER,
-        layer_id,
-    );
-
-    *cy += copy_btn_h + 12.0;
-
-    // "I've saved it — continue" button — same style as other wizard buttons
-    let is_confirm_hovered = hovered == Some("wizard_recovery_confirm");
-    let confirm_bg = if is_confirm_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
-    let confirm_text = if is_confirm_hovered { toolbar_theme.item_text_hover.as_str() } else { toolbar_theme.item_text.as_str() };
-    let confirm_btn_h = 34.0;
-    let confirm_btn_w = w.min(260.0);
-    let confirm_btn_x = x + (w - confirm_btn_w) / 2.0;
-    ctx.set_fill_color(confirm_bg);
-    ctx.fill_rounded_rect(confirm_btn_x, *cy, confirm_btn_w, confirm_btn_h, 4.0);
-    ctx.set_font("bold 12px sans-serif");
-    ctx.set_fill_color(confirm_text);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_wizard(WizardKey::SavedAndContinue), confirm_btn_x + confirm_btn_w / 2.0, *cy + confirm_btn_h / 2.0);
-    ctx.set_text_align(TextAlign::Left);
-
-    let confirm_btn_rect = WidgetRect::new(confirm_btn_x, *cy, confirm_btn_w, confirm_btn_h);
-    result.content_items.push(("wizard_recovery_confirm".to_string(), confirm_btn_rect));
-    input_coordinator.register_on_layer(
-        "user_settings:wizard_recovery_confirm",
-        confirm_btn_rect,
-        Sense::CLICK | Sense::HOVER,
-        layer_id,
-    );
 }
 
 // =============================================================================
@@ -710,75 +519,4 @@ fn render_back_button(
     result.content_items.push(("wizard_back".to_string(), back_rect));
     input_coordinator.register_on_layer("user_settings:wizard_back", back_rect, Sense::CLICK, layer_id);
     *cy += btn_h;
-}
-
-/// Render the passphrase input box using the canonical `draw_input` widget. Returns new cy after the input.
-#[allow(clippy::too_many_arguments)]
-fn render_passphrase_input(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    w: f64,
-    cy: &mut f64,
-    state: &UserSettingsState,
-    toolbar_theme: &ToolbarTheme,
-    frame_theme: &FrameTheme,
-    _current_time_ms: u64,
-    layer_id: &uzor::input::LayerId,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    result: &mut UserSettingsResult,
-) -> f64 {
-    // Label
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::Passphrase), x, *cy);
-    *cy += 18.0;
-
-    // Input box using canonical draw_input
-    let input_h = 32.0;
-    let input_rect = WidgetRect::new(x, *cy, w, input_h);
-
-    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let wz_pw_render = &state.new_passphrase_render;
-    let (sel_start, sel_end) = if let Some((lo, hi)) = wz_pw_render.selection_range() {
-        (Some(lo), Some(hi))
-    } else {
-        (None, None)
-    };
-    let input_config = InputConfig::new(&wz_pw_render.text)
-        .with_focused(state.new_passphrase_focused)
-        .with_cursor(wz_pw_render.cursor)
-        .with_placeholder(t_wizard(WizardKey::PassphrasePlaceholder))
-        .with_type(InputType::Password)
-        .with_selection(sel_start, sel_end);
-
-    let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
-
-    // Register for click-to-focus (wizard-specific id to distinguish from settings modal)
-    result.content_items.push(("wizard_passphrase_input".to_string(), input_rect));
-    result.input_char_positions.push(("wizard_passphrase_input".to_string(), input_result.char_x_positions.clone()));
-    input_coordinator.register_on_layer("user_settings:wizard_passphrase_input", input_rect, Sense::CLICK, layer_id);
-
-    // Blinking cursor (only when focused)
-    if state.new_passphrase_focused && wz_pw_render.cursor_visible {
-        draw_input_cursor(
-            ctx,
-            input_result.cursor_x,
-            input_result.cursor_y,
-            input_result.cursor_height,
-            &toolbar_theme.item_text,
-        );
-    }
-
-    *cy += input_h + 4.0;
-
-    // Passphrase length hint
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::MinPassphraseHint), x, *cy);
-
-    *cy += 18.0;
-    *cy
 }

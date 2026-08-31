@@ -11,8 +11,9 @@ use crate::i18n::{
     ToolbarTooltipKey as TK, t_toolbar,
     ToolbarMenuKey as MK, t_toolbar_menu,
     PrimitiveNameKey as PN,
-    current_language,
+    current_language, Language,
 };
+use crate::theme::RuntimeTheme;
 
 // Re-export orientation type for callers
 pub use uzor::panel_api::ToolbarOrientation;
@@ -1069,6 +1070,31 @@ fn projection_section() -> ToolbarSectionDef {
     ])
 }
 
+/// Theme rows for the toolbar's Theme submenu.
+///
+/// Iterates `RuntimeTheme::PRESETS_SHORTLIST` (the one place that decides
+/// which presets are shown by default) instead of listing ids by hand, so
+/// this dropdown and the welcome wizard's theme page can never drift from
+/// each other or silently pick up a new preset added to `RuntimeTheme::PRESETS`.
+fn theme_submenu_items(lang: Language) -> Vec<DropdownItemDef> {
+    RuntimeTheme::PRESETS_SHORTLIST.iter().map(|id| {
+        let label = match *id {
+            "dark" => MK::ThemeDark.get(lang).to_string(),
+            "light" => MK::ThemeLight.get(lang).to_string(),
+            "high_contrast" => MK::ThemeHighContrast.get(lang).to_string(),
+            "high_contrast_mono" => MK::ThemeHcMono.get(lang).to_string(),
+            "mascot" => MK::ThemeWizardHat.get(lang).to_string(),
+            // 8-token skin preset — proper noun, not translated.
+            "surf" => "Surf".to_string(),
+            // Defensive: PRESETS_SHORTLIST only ever names the ids above;
+            // this arm exists so adding a preset id there without a label
+            // here degrades to the raw id instead of failing to compile.
+            other => other.to_string(),
+        };
+        DropdownItemDef::action(format!("theme_{id}"), label)
+    }).collect()
+}
+
 /// Build the full settings_menu dropdown items, matching the terminal's settings_menu content.
 ///
 /// Sections: Chart Settings, Grid, Crosshair, Legend, Tooltip, Watermark, Theme, UI Style.
@@ -1156,23 +1182,15 @@ pub fn settings_menu_items() -> Vec<DropdownItemDef> {
 
         DropdownItemDef::Separator,
 
-        // Theme submenu
+        // Theme submenu — reads `RuntimeTheme::PRESETS_SHORTLIST` (owner
+        // review 2026-08-31: `vaporwave`/`terminal` are ugly, dropped from
+        // every shortlist surface but still reachable from the full
+        // settings catalogue). See `theme_submenu_items` below.
         DropdownItemDef::Submenu {
             id: "theme_submenu".to_string(),
             label: MK::SubTheme.get(lang).to_string(),
             icon: None,
-            items: vec![
-                DropdownItemDef::action("theme_dark", MK::ThemeDark.get(lang)),
-                DropdownItemDef::action("theme_light", MK::ThemeLight.get(lang)),
-                DropdownItemDef::action("theme_high_contrast", MK::ThemeHighContrast.get(lang)),
-                DropdownItemDef::action("theme_high_contrast_mono", MK::ThemeHcMono.get(lang)),
-                DropdownItemDef::action("theme_mascot", MK::ThemeWizardHat.get(lang)),
-                DropdownItemDef::Separator,
-                // 8-token skin presets (proper nouns, not translated).
-                DropdownItemDef::action("theme_surf", "Surf"),
-                DropdownItemDef::action("theme_vaporwave", "Vaporwave"),
-                DropdownItemDef::action("theme_terminal", "Terminal"),
-            ],
+            items: theme_submenu_items(lang),
             grid_columns: None,
         },
 

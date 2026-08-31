@@ -3365,16 +3365,15 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                 }
 
-                // ── Wizard complete: name + passphrase in a single command ──
-                // Format: "wizard_complete:{name}:{passphrase}"
+                // ── Wizard complete: profile name only ──
+                // Format: "wizard_complete:{name}". Owner's ruling 2026-08-31:
+                // the wizard ends the moment a name is picked — no passphrase
+                // is collected here anymore. The vault opens later, at the
+                // point of use, via the profile manager's own (unrelated)
+                // passphrase/recovery-key flow.
                 if let Some(rest) = cmd_str.strip_prefix("wizard_complete:") {
                     cmd_handled = true;
-                    let (wizard_profile_name, passphrase) = if let Some(colon) = rest.find(':') {
-                        (rest[..colon].to_string(), &rest[colon + 1..])
-                    } else {
-                        // Legacy format without name — treat entire remainder as passphrase.
-                        ("Default".to_string(), rest)
-                    };
+                    let wizard_profile_name = if rest.is_empty() { "Default".to_string() } else { rest.to_string() };
                     // Always create a real profile directory on wizard completion.
                     // On first-run the profile_manager is backed by a `_pending`
                     // placeholder (no directory on disk), so we must materialise
@@ -3417,57 +3416,16 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             wizard_profile_name.clone();
                     }
 
-                    // Derive vault key via ProfileManager and sync to the shared core's
-                    // user manager + template manager. One write reaches every window
-                    // immediately (Phase A/B/C: shared Arc<BackendCore>, no per-window
-                    // replica left to go stale).
-                    match self.profile_manager.derive_and_set_vault_key(passphrase) {
-                        Ok(key) => {
-                            self.core.user_mut().set_vault_key(Some(key));
-                            self.profile_manager.vault_key = Some(key);
-                            self.core.templates_mut().set_vault_key(Some(key));
-                            eprintln!("[App] wizard_complete: vault key derived, saving");
-                        }
-                        Err(e) => {
-                            eprintln!("[App] wizard_complete: failed to derive vault key: {}", e);
-                        }
-                    }
-
-                    // Save profile + vault.
+                    // No vault key to derive — the profile stays plaintext
+                    // until the user opens the vault themselves later
+                    // (profile manager). Save the named profile and promote
+                    // the skeleton straight to live.
                     self.save_all(&[]);
                     self.is_first_run = false;
                     self.needs_vault_unlock = false;
                     self.needs_migration = false;
-
-                    // If a recovery key was generated, show it inside the wizard (page 3).
-                    let recovery_key = self.profile_manager.pending_recovery_key.clone();
-                    if recovery_key.is_some() {
-                        // Stay in the wizard at page 3 so the user sees the key before closing.
-                        for pw in self.windows.values_mut() {
-                            pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
-                            pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                            pw.chart.panel_app.user_settings_state.recovery_key_display =
-                                recovery_key.clone();
-                            // Sync TextFieldStore recovery key display so it can be selected/copied.
-                            let key_str = recovery_key.as_deref().unwrap_or("");
-                            {
-                                let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
-                                let klen = key_str.chars().count();
-                                pw.chart.input_coordinator.borrow_mut().text_fields_mut().set_text(&rk_wid, key_str);
-                                if let Some(fs) = pw.chart.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&rk_wid) {
-                                    fs.cursor = klen;
-                                    fs.selection_start = None;
-                                }
-                            }
-                            // Navigate to wizard page 3 (recovery key) — wizard stays open
-                            pw.chart.panel_app.user_settings_state.wizard_page = 3;
-                            pw.chart.panel_app.user_settings_state.show_welcome_wizard = true;
-                        }
-                    } else {
-                        // No recovery key — promote immediately.
-                        eprintln!("[App] wizard_complete — promoting skeleton to live");
-                        self.pending_skeleton_promote = true;
-                    }
+                    eprintln!("[App] wizard_complete — promoting skeleton to live");
+                    self.pending_skeleton_promote = true;
                 }
 
                 // ── Local vault key derivation (e2e_setup) ──

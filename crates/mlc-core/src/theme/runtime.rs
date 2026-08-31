@@ -642,6 +642,19 @@ impl RuntimeTheme {
         "surf", "vaporwave", "terminal",
     ];
 
+    /// The subset of [`Self::PRESETS`] judged good enough to show by
+    /// default (owner review 2026-08-31: `vaporwave`/`terminal` are ugly).
+    /// The toolbar's Theme dropdown and the welcome wizard's theme page
+    /// both read THIS list instead of enumerating presets themselves, so a
+    /// later addition to `PRESETS` never appears in front of users just by
+    /// existing — it has to be added here explicitly. Both dropped presets
+    /// stay reachable from the full settings catalogue via `PRESETS`; so
+    /// does `surf`, which is also kept here because the owner wants it
+    /// visible everywhere, not just in the catalogue.
+    pub const PRESETS_SHORTLIST: &'static [&'static str] = &[
+        "dark", "light", "high_contrast", "high_contrast_mono", "mascot", "surf",
+    ];
+
     /// Create from a preset name
     pub fn from_preset(name: &str) -> Self {
         // Skin presets: dark base + the 8-token derivation over every
