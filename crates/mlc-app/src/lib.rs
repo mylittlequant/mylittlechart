@@ -4964,18 +4964,34 @@ impl ChartApp {
             self.panel_app.toolbar_state.drawings_visible = profile.ui.drawings_visible;
         }
 
-        // Notification settings — load from profile into alert settings state.
+        // Notification settings — load from profile into alert settings
+        // state. Preferences (this struct) are plaintext and always
+        // available. Secrets (bot token, subscribers, webhook URL) only
+        // exist in `profile.domain.notification_secrets` once the vault has
+        // actually been decrypted this session — `vault_key()` is that same
+        // truth `save_profile`/`load_profile` already gate on, so reading it
+        // here needs no new bookkeeping.
+        let secrets_available = self.core.user().vault_key().is_some();
         dlog!(
-            "[ChartApp] apply_profile_state: tg_enabled={} token_len={} subscribers={}",
+            "[ChartApp] apply_profile_state: tg_enabled={} secrets_available={} token_len={} subscribers={}",
             profile.domain.notification_settings.telegram.enabled,
-            profile.domain.notification_settings.telegram.bot_token.len(),
-            profile.domain.notification_settings.telegram.subscribers.len(),
+            secrets_available,
+            profile.domain.notification_secrets.telegram.bot_token.len(),
+            profile.domain.notification_secrets.telegram.subscribers.len(),
         );
         self.panel_app.alert_settings_state.notification_settings = profile.domain.notification_settings.clone();
-        {
+        self.panel_app.alert_settings_state.secrets_available = secrets_available;
+        if secrets_available {
+            self.panel_app.alert_settings_state.notification_secrets = profile.domain.notification_secrets.clone();
             let tg_wid = uzor::WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
             self.input_coordinator.borrow_mut().text_fields_mut()
-                .set_text(&tg_wid, &profile.domain.notification_settings.telegram.bot_token);
+                .set_text(&tg_wid, &profile.domain.notification_secrets.telegram.bot_token);
+        } else {
+            // Vault locked — no secrets to show. Leave the render layer to
+            // display "unavailable" (see `secrets_available`) rather than an
+            // empty, invitingly-editable token field.
+            self.panel_app.alert_settings_state.notification_secrets =
+                mlc_alert_delivery::NotificationSecrets::default();
         }
 
         // Agents docking container restore — per-window profile state.

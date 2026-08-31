@@ -938,9 +938,15 @@ impl App<'_> {
 
         // Initialize alert delivery engine. AlertDelivery::new spawns a tokio
         // task, so we must enter the live-data runtime context first.
+        // `notification_secrets` is whatever the vault yielded at load time —
+        // empty if the vault was still locked when `profile` was built, which
+        // is fine: delivery already no-ops on an empty bot token/URL.
         let (alert_delivery_engine, toast_rx) = {
             let _guard = live_data_handle.enter();
-            mlc_alert_delivery::AlertDelivery::new(profile.domain.notification_settings.clone())
+            mlc_alert_delivery::AlertDelivery::new(
+                profile.domain.notification_settings.clone(),
+                profile.domain.notification_secrets.clone(),
+            )
         };
 
 
@@ -2262,9 +2268,19 @@ impl App<'_> {
         profile.domain.server_port = self.core.user().server_port();
 
         // Persist notification settings from the first window's alert settings state.
+        // Secrets only follow when the vault was unlocked this session — a
+        // locked window's `notification_secrets` is an empty snapshot, and
+        // writing it unconditionally would wipe `profile.domain
+        // .notification_secrets` in RAM for the rest of the session (moot for
+        // the on-disk `vault.enc`, since `save_profile` never touches it
+        // without a key — but the in-memory copy matters if the vault gets
+        // unlocked later without a full profile reload).
         if let Some(pw) = self.windows.values().next() {
-            profile.domain.notification_settings =
-                pw.chart.panel_app.alert_settings_state.notification_settings.clone();
+            let s = &pw.chart.panel_app.alert_settings_state;
+            profile.domain.notification_settings = s.notification_settings.clone();
+            if s.secrets_available {
+                profile.domain.notification_secrets = s.notification_secrets.clone();
+            }
         }
 
         // 5. Save profile.json once.
@@ -4009,19 +4025,19 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 let s = &mut pw.chart.panel_app.alert_settings_state;
                 if s.tg_test_pending {
                     s.tg_test_pending = false;
-                    let active_ids = s.notification_settings.telegram.active_chat_ids()
+                    let active_ids = s.notification_secrets.telegram.active_chat_ids()
                         .into_iter()
                         .map(|id| id.to_owned())
                         .collect();
                     test_req = Some((
-                        s.notification_settings.telegram.bot_token.clone(),
+                        s.notification_secrets.telegram.bot_token.clone(),
                         active_ids,
                     ));
                     break;
                 }
                 if s.tg_detect_pending {
                     s.tg_detect_pending = false;
-                    detect_req = Some(s.notification_settings.telegram.bot_token.clone());
+                    detect_req = Some(s.notification_secrets.telegram.bot_token.clone());
                     break;
                 }
             }
@@ -4101,13 +4117,27 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 .any(|pw| pw.chart.panel_app.alert_settings_state.notification_settings_dirty);
             if notif_dirty {
                 if let Some(pw) = self.windows.values().next() {
-                    let ns = pw.chart.panel_app.alert_settings_state.notification_settings.clone();
-                    // Push to live delivery engine
+                    let s = &pw.chart.panel_app.alert_settings_state;
+                    let prefs = s.notification_settings.clone();
+                    let secrets_available = s.secrets_available;
+                    let secrets = s.notification_secrets.clone();
+                    // Push to live delivery engine — both halves always;
+                    // `secrets` is an empty snapshot while locked, which
+                    // matches AlertDelivery's own no-op-on-empty contract.
                     if let Some(ref delivery) = self.mlc_alert_delivery {
-                        delivery.update_settings(ns.clone());
+                        delivery.update_settings(prefs.clone(), secrets.clone());
                     }
-                    // Persist to profile on disk
-                    self.profile.domain.notification_settings = ns;
+                    // Persist to profile on disk. Preferences always follow
+                    // the edit. Secrets only follow when the vault is
+                    // unlocked this session — otherwise `secrets` is an
+                    // empty snapshot and writing it would wipe whatever is
+                    // already held in RAM from a prior unlock; save_profile
+                    // never touches vault.enc without a key anyway, so the
+                    // on-disk file is safe either way.
+                    self.profile.domain.notification_settings = prefs;
+                    if secrets_available {
+                        self.profile.domain.notification_secrets = secrets;
+                    }
                     let vault_key = self.core.user().vault_key();
                     if let Err(e) = mlc_core::save_profile(&self.profile, vault_key.as_ref()) {
                         eprintln!("[App] Failed to persist notification settings: {}", e);

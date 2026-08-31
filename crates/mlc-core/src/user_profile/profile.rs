@@ -388,11 +388,24 @@ pub struct ProfileDomainSettings {
     #[serde(default)]
     pub connector_enabled: std::collections::HashMap<String, bool>,
 
-    /// Alert notification delivery settings (Telegram bot, toasts, sound,
-    /// webhook). Functional — a daemon needs this to deliver alerts
-    /// correctly, not just to show a settings form.
+    /// Alert notification delivery PREFERENCES (toast/sound/enabled flags,
+    /// `send_screenshots`). Functional — a daemon needs this to know whether
+    /// to deliver alerts at all, not just to show a settings form. Plaintext:
+    /// disclosing any of these does not let anyone act as the user or reach
+    /// a third party, so they stay readable with the vault locked (vault
+    /// classification rule, `docs/mlc/plans/identity-vault-and-shells-
+    /// 2026-08-31.md` §6).
     #[serde(default)]
     pub notification_settings: mlc_alert_delivery::NotificationSettings,
+
+    /// Alert notification delivery SECRETS (Telegram bot token, subscriber
+    /// chat ids, webhook URL). Lives here only transiently in RAM —
+    /// `VaultSecrets::extract_from` takes this out before every plaintext
+    /// write, so `profile.json` never carries a populated value (same
+    /// contract as `exchange_keys` above). Populated only when the vault is
+    /// unlocked; see `mlc-app`'s `AlertSettingsState::secrets_available`.
+    #[serde(default)]
+    pub notification_secrets: mlc_alert_delivery::NotificationSecrets,
 
     /// Unique profile identifier (UUID v4). Empty on legacy profiles.
     ///
@@ -455,6 +468,7 @@ impl ProfileDomainSettings {
             exchange_keys: Vec::new(),
             connector_enabled: std::collections::HashMap::new(),
             notification_settings: mlc_alert_delivery::NotificationSettings::default(),
+            notification_secrets: mlc_alert_delivery::NotificationSecrets::default(),
             profile_id: String::new(),
             data_load: DataLoadSettings::default(),
             granularity_favorites: GranularityFavorites::default(),
@@ -1094,19 +1108,43 @@ pub struct ProfileIndex {
 /// the in-memory `UserProfile`.
 ///
 /// A vault key is always required — set during the welcome wizard.
+///
+/// # Migration (2026-08-31 vault-classification fix)
+///
+/// Before this change `VaultSecrets` swallowed the WHOLE
+/// `mlc_alert_delivery::NotificationSettings` — secrets (`bot_token`,
+/// `subscribers`, `webhook.url`) tangled with plaintext-safe preferences
+/// (`toast_enabled`, `sound_enabled`, every `enabled` flag,
+/// `send_screenshots`). That is why a locked vault used to take away a
+/// user's toast-popup setting. The struct now stores only
+/// [`mlc_alert_delivery::NotificationSecrets`] under the key
+/// `notification_secrets`; `legacy_notifications` is a read-only seam that
+/// only ever receives data when `serde` decrypts an OLD `vault.enc` still
+/// carrying the pre-split shape under the old key `notification_settings`.
+/// `merge_into` drains it: preferences land in the plaintext profile (so the
+/// very next save persists them there, locked or not), secrets land in the
+/// split `notification_secrets`. A fresh save never re-emits the old key, so
+/// this path fires at most once per profile.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct VaultSecrets {
     /// Exchange API key entries (contains `api_secret` and `passphrase`).
     #[serde(default)]
     pub exchange_keys: Vec<StoredExchangeKey>,
 
-    /// Alert notification delivery settings.
-    ///
-    /// Stored here because it contains `telegram.bot_token`,
-    /// `telegram.subscribers` (PII — chat IDs), and `webhook.url`
-    /// (may embed auth tokens).
+    /// Alert notification delivery SECRETS — bot token, subscriber chat ids
+    /// (PII), and the webhook URL (may embed an auth token). Preferences
+    /// (`toast_enabled`, every `enabled` flag, `send_screenshots`) are
+    /// plaintext profile content now and never appear here.
     #[serde(default)]
-    pub notification_settings: mlc_alert_delivery::NotificationSettings,
+    pub notification_secrets: mlc_alert_delivery::NotificationSecrets,
+
+    /// One-time migration seam — see the struct doc above. Never populated
+    /// by a save written after this change; only `serde` can set it, when
+    /// decrypting an old `vault.enc`. `skip_serializing` because this field
+    /// only ever needs to be READ (a fresh save never re-emits the old
+    /// key) — `LegacyNotificationSettings` derives `Deserialize` only.
+    #[serde(default, rename = "notification_settings", skip_serializing)]
+    legacy_notifications: Option<LegacyNotificationSettings>,
 }
 
 impl VaultSecrets {
@@ -1116,16 +1154,76 @@ impl VaultSecrets {
     pub fn extract_from(profile: &mut UserProfile) -> Self {
         Self {
             exchange_keys: std::mem::take(&mut profile.domain.exchange_keys),
-            notification_settings: std::mem::take(&mut profile.domain.notification_settings),
+            notification_secrets: std::mem::take(&mut profile.domain.notification_secrets),
+            legacy_notifications: None,
         }
     }
 
     /// Merge secrets back into a [`UserProfile`] after decrypting from vault.
     pub fn merge_into(self, profile: &mut UserProfile) {
         profile.domain.exchange_keys = self.exchange_keys;
-        profile.domain.notification_settings = self.notification_settings;
-        profile.domain.notification_settings.telegram.migrate_legacy();
+        match self.legacy_notifications {
+            Some(legacy) => {
+                // Old vault.enc, pre-split: preferences win here because
+                // they are what the user actually last set, and this is the
+                // only place they still exist — profile.json never carried
+                // real values for them (extract_from always stripped the
+                // whole struct before every write, so on-disk plaintext was
+                // permanently the default). Land them in the plaintext
+                // profile so the next save persists them there for good.
+                profile.domain.notification_settings.toast_enabled = legacy.toast_enabled;
+                profile.domain.notification_settings.sound_enabled = legacy.sound_enabled;
+                profile.domain.notification_settings.telegram.enabled = legacy.telegram.enabled;
+                profile.domain.notification_settings.telegram.send_screenshots =
+                    legacy.telegram.send_screenshots;
+                profile.domain.notification_settings.webhook.enabled = legacy.webhook.enabled;
+                profile.domain.notification_secrets.telegram.bot_token = legacy.telegram.bot_token;
+                profile.domain.notification_secrets.telegram.subscribers = legacy.telegram.subscribers;
+                profile.domain.notification_secrets.webhook.url = legacy.webhook.url;
+            }
+            None => {
+                profile.domain.notification_secrets = self.notification_secrets;
+            }
+        }
+        profile.domain.notification_secrets.telegram.migrate_legacy();
     }
+}
+
+/// Pre-split (before 2026-08-31) on-disk shape of `vault.enc`'s notification
+/// block — secrets and preferences tangled together under one key. Exists
+/// ONLY as a one-time migration target for [`VaultSecrets::merge_into`];
+/// never constructed by this crate, never re-serialized. See
+/// [`VaultSecrets`]'s doc for the full migration story.
+#[derive(Clone, Debug, Default, Deserialize)]
+struct LegacyNotificationSettings {
+    #[serde(default)]
+    toast_enabled: bool,
+    #[serde(default)]
+    sound_enabled: bool,
+    #[serde(default)]
+    telegram: LegacyTelegramSettings,
+    #[serde(default)]
+    webhook: LegacyWebhookSettings,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct LegacyTelegramSettings {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    bot_token: String,
+    #[serde(default)]
+    subscribers: Vec<mlc_alert_delivery::TelegramSubscriber>,
+    #[serde(default)]
+    send_screenshots: bool,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+struct LegacyWebhookSettings {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    url: String,
 }
 
 // =============================================================================

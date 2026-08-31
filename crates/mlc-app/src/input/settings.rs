@@ -3181,68 +3181,94 @@ impl ChartApp {
                 let s = &mut self.panel_app.alert_settings_state;
                 s.notification_settings.telegram.enabled = !s.notification_settings.telegram.enabled;
                 s.notification_settings_dirty = true;
-                // Sync saved token into TextFieldStore when enabling
-                if s.notification_settings.telegram.enabled {
-                    let token = s.notification_settings.telegram.bot_token.clone();
+                // Sync saved token into TextFieldStore when enabling — only
+                // meaningful with the vault unlocked; while locked
+                // `notification_secrets` holds no real token to sync.
+                if s.notification_settings.telegram.enabled && s.secrets_available {
+                    let token = s.notification_secrets.telegram.bot_token.clone();
                     let tg_wid = uzor::WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
                     self.input_coordinator.borrow_mut().text_fields_mut().set_text(&tg_wid, &token);
                 }
             }
             "notif:tg_token" => {
-                let tg_wid = uzor::WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
-                self.input_coordinator.borrow_mut().text_fields_mut().focus(tg_wid);
+                // The render layer never registers this hit zone while the
+                // vault is locked (secret-bearing fields render as an
+                // "unlock the vault" notice instead), so reaching here
+                // implies secrets_available — guard anyway for defense in
+                // depth against a stray click id.
+                if self.panel_app.alert_settings_state.secrets_available {
+                    let tg_wid = uzor::WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(tg_wid);
+                }
             }
             "notif:tg_screenshot" => {
+                // A preference (no secret) — stays editable regardless of
+                // vault lock state.
                 let s = &mut self.panel_app.alert_settings_state;
                 s.notification_settings.telegram.send_screenshots =
                     !s.notification_settings.telegram.send_screenshots;
                 s.notification_settings_dirty = true;
             }
             "notif:tg_test" => {
+                if !self.panel_app.alert_settings_state.secrets_available {
+                    return;
+                }
                 let tg_wid = uzor::WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
                 let token = self.input_coordinator.borrow().text_fields().text(&tg_wid).trim().to_string();
                 let s = &mut self.panel_app.alert_settings_state;
-                s.notification_settings.telegram.bot_token = token;
+                s.notification_secrets.telegram.bot_token = token;
                 s.tg_test_pending = true;
                 s.notification_settings_dirty = true;
                 s.tg_status_message = "Sending test...".to_string();
                 eprintln!("[AlertSettings] Telegram test requested");
             }
             "notif:tg_detect" => {
+                if !self.panel_app.alert_settings_state.secrets_available {
+                    return;
+                }
                 let tg_wid = uzor::WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
                 let token = self.input_coordinator.borrow().text_fields().text(&tg_wid).trim().to_string();
                 let s = &mut self.panel_app.alert_settings_state;
-                s.notification_settings.telegram.bot_token = token;
+                s.notification_secrets.telegram.bot_token = token;
                 s.tg_detect_pending = true;
                 s.notification_settings_dirty = true;
                 s.tg_status_message = "Detecting users...".to_string();
                 eprintln!("[AlertSettings] Telegram detect users requested");
             }
             _ if rest.starts_with("notif:tg_sub_toggle:") => {
+                if !self.panel_app.alert_settings_state.secrets_available {
+                    return;
+                }
                 if let Ok(idx) = rest.strip_prefix("notif:tg_sub_toggle:").unwrap_or_default().parse::<usize>() {
                     let s = &mut self.panel_app.alert_settings_state;
-                    if let Some(sub) = s.notification_settings.telegram.subscribers.get_mut(idx) {
+                    if let Some(sub) = s.notification_secrets.telegram.subscribers.get_mut(idx) {
                         sub.active = !sub.active;
                         s.notification_settings_dirty = true;
                     }
                 }
             }
             _ if rest.starts_with("notif:tg_sub_remove:") => {
+                if !self.panel_app.alert_settings_state.secrets_available {
+                    return;
+                }
                 if let Ok(idx) = rest.strip_prefix("notif:tg_sub_remove:").unwrap_or_default().parse::<usize>() {
                     let s = &mut self.panel_app.alert_settings_state;
-                    if idx < s.notification_settings.telegram.subscribers.len() {
-                        s.notification_settings.telegram.subscribers.remove(idx);
+                    if idx < s.notification_secrets.telegram.subscribers.len() {
+                        s.notification_secrets.telegram.subscribers.remove(idx);
                         s.notification_settings_dirty = true;
                     }
                 }
             }
             _ if rest.starts_with("notif:tg_add_detected:") => {
+                if !self.panel_app.alert_settings_state.secrets_available {
+                    return;
+                }
                 if let Ok(idx) = rest.strip_prefix("notif:tg_add_detected:").unwrap_or_default().parse::<usize>() {
                     let s = &mut self.panel_app.alert_settings_state;
                     if let Some((cid, name, uname)) = s.tg_detected_users.get(idx).cloned() {
                         // Only add if not already present
-                        if !s.notification_settings.telegram.subscribers.iter().any(|sub| sub.chat_id == cid) {
-                            s.notification_settings.telegram.subscribers.push(
+                        if !s.notification_secrets.telegram.subscribers.iter().any(|sub| sub.chat_id == cid) {
+                            s.notification_secrets.telegram.subscribers.push(
                                 mlc_alert_delivery::TelegramSubscriber {
                                     chat_id: cid,
                                     display_name: name,

@@ -164,6 +164,15 @@ pub fn save_persistent_state(chart: &mut ChartApp) {
     }
     profile.domain.notification_settings =
         chart.panel_app.alert_settings_state.notification_settings.clone();
+    // Secrets only follow when the vault was unlocked this session — see
+    // the native shell's `save_all` for the full reasoning (mirrored here
+    // for shell-duty parity: native/wasm must agree on notification
+    // persistence, same rule as every other shell-duty carried in
+    // `apply_profile_state`).
+    if chart.panel_app.alert_settings_state.secrets_available {
+        profile.domain.notification_secrets =
+            chart.panel_app.alert_settings_state.notification_secrets.clone();
+    }
 
     // 3. Save profile.json — always plaintext, no vault key required.
     let vault_key = chart.core.user().vault_key();

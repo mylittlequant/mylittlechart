@@ -15,7 +15,7 @@ use mlc_core::state::smc_engine::SmcEngineConfig;
 use mlc_core::state::orderflow_engine::OrderFlowEngineConfig;
 use mlc_core::state::candle_pattern_engine::CandlePatternEngineConfig;
 use uzor::app_context::TextInputState;
-use mlc_alert_delivery::NotificationSettings;
+use mlc_alert_delivery::{NotificationSecrets, NotificationSettings};
 
 /// A resize drag in flight: which edge has hold, where the pointer was when it
 /// took hold, and where and how big the frame was at that moment. Both are
@@ -2376,8 +2376,18 @@ pub struct AlertSettingsState {
     pub hovered_item_id: Option<String>,
     /// Which condition dropdown is open (if any).
     pub condition_dropdown_open: bool,
-    /// Notification settings (mirrors profile, edited in modal).
+    /// Notification PREFERENCES (mirrors the plaintext profile, edited in
+    /// modal). Always available — vault-independent.
     pub notification_settings: NotificationSettings,
+    /// Notification SECRETS (bot token, subscriber chat ids, webhook URL).
+    /// Populated only when `secrets_available` is true; otherwise holds
+    /// [`NotificationSecrets::default`] and the render layer must show the
+    /// secret-bearing fields as unavailable rather than empty-and-editable.
+    pub notification_secrets: NotificationSecrets,
+    /// Whether `notification_secrets` holds live data this frame — mirrors
+    /// whether the profile vault is unlocked this session. Set by
+    /// `ChartApp::apply_profile_state`.
+    pub secrets_available: bool,
     /// Render-time snapshot of the Telegram bot token input (populated from TextFieldStore by ChartApp).
     pub tg_token_render: ActiveFieldRender,
     /// Detected users from getUpdates: (chat_id, display_name, username).
@@ -2436,6 +2446,8 @@ impl Default for AlertSettingsState {
             hovered_item_id: None,
             condition_dropdown_open: false,
             notification_settings: NotificationSettings::default(),
+            notification_secrets: NotificationSecrets::default(),
+            secrets_available: false,
             tg_token_render: ActiveFieldRender::default(),
             tg_detected_users: Vec::new(),
             tg_status_message: String::new(),

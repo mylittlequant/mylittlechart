@@ -768,11 +768,18 @@ impl ChartApp {
     }
 
     fn text_action_alert_token(&mut self, ch: char, action: TextAction) {
-        // Enter/Escape (char-level): commit text to notification settings.
+        // The token field cannot be focused while the vault is locked (the
+        // render layer never registers its hit zone then), so this is
+        // defense in depth against a stray focus/key event reaching here.
+        if !self.panel_app.alert_settings_state.secrets_available {
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            return;
+        }
+        // Enter/Escape (char-level): commit text to notification secrets.
         if ch == '\r' || ch == '\n' || ch == '\x1b' {
             let tg_wid = WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
             let token = self.input_coordinator.borrow().text_fields().text(&tg_wid).trim().to_string();
-            self.panel_app.alert_settings_state.notification_settings.telegram.bot_token = token;
+            self.panel_app.alert_settings_state.notification_secrets.telegram.bot_token = token;
             self.panel_app.alert_settings_state.notification_settings_dirty = true;
             self.input_coordinator.borrow_mut().text_fields_mut().blur();
             return;
@@ -782,7 +789,7 @@ impl ChartApp {
             TextAction::Commit(_) | TextAction::Cancel => {
                 let tg_wid = WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
                 let token = self.input_coordinator.borrow().text_fields().text(&tg_wid).trim().to_string();
-                self.panel_app.alert_settings_state.notification_settings.telegram.bot_token = token;
+                self.panel_app.alert_settings_state.notification_secrets.telegram.bot_token = token;
                 self.panel_app.alert_settings_state.notification_settings_dirty = true;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }

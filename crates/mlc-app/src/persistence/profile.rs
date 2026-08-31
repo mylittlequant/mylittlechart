@@ -42,6 +42,11 @@ impl ChartApp {
                 exchange_keys: existing.domain.exchange_keys.clone(),
                 connector_enabled: self.sidebar_state.connector_enabled.clone(),
                 notification_settings: existing.domain.notification_settings.clone(),
+                // Secrets aren't touched by this snapshot builder either —
+                // same preserve-live-value pattern as `notification_settings`
+                // and `exchange_keys` above (this function never reads
+                // `AlertSettingsState`, so there is nothing fresher to pull).
+                notification_secrets: existing.domain.notification_secrets.clone(),
                 // Preserve profile identity fields managed by the profile system
                 profile_id: existing.domain.profile_id.clone(),
                 // Granularity favorites (kusok 1): mutated in-place via

@@ -271,21 +271,27 @@ fn rows_height(rows: usize) -> f64 {
 }
 
 fn compute_notifications_tab_height(state: &AlertSettingsState) -> f64 {
-    // Rows: toast, sound, telegram-header, [token, subscribers..., detect, detected..., screenshot, test+status], webhook-header, [url]
+    // Rows: toast, sound, telegram-header, [token, subscribers..., detect, detected..., screenshot, test+status]
+    // OR [locked-notice, screenshot] when the vault is locked, webhook-header, [url | locked-notice]
     let mut rows = 3usize; // toast, sound, telegram-toggle
     if state.notification_settings.telegram.enabled {
-        let sub_count = state.notification_settings.telegram.subscribers.len();
-        let det_count = state.tg_detected_users.len();
-        rows += 1; // bot token
-        rows += sub_count.max(1); // subscriber rows (at least 1 for "none" label or label row)
-        rows += 1; // detect button
-        rows += det_count; // detected user rows
-        rows += 1; // send screenshots
-        rows += 1; // test button + status
+        if state.secrets_available {
+            let sub_count = state.notification_secrets.telegram.subscribers.len();
+            let det_count = state.tg_detected_users.len();
+            rows += 1; // bot token
+            rows += sub_count.max(1); // subscriber rows (at least 1 for "none" label or label row)
+            rows += 1; // detect button
+            rows += det_count; // detected user rows
+            rows += 1; // send screenshots
+            rows += 1; // test button + status
+        } else {
+            rows += 1; // "unlock the vault" notice
+            rows += 1; // send screenshots — still a preference, still shown
+        }
     }
     rows += 1; // webhook toggle
     if state.notification_settings.webhook.enabled {
-        rows += 1; // webhook url field
+        rows += 1; // webhook url field (or its "unavailable" notice — one row either way)
     }
     rows_height(rows)
 }
@@ -730,6 +736,20 @@ fn render_notifications_tab(
         input_coordinator.register_on_layer(widget_id, r, Sense::CLICK, layer_id);
     };
 
+    // ------------------------------------------------------------------
+    // Local helper: draw a muted "vault locked" notice — no hit zone.
+    // An empty-but-editable secret field invites retyping a secret the
+    // user already entered once; this replaces that field entirely
+    // while the vault cannot supply the real value.
+    // ------------------------------------------------------------------
+    let draw_locked_notice = |ctx: &mut dyn RenderContext, text: &str, row_y: f64| {
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_font("11px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(text, content_x, row_y + ROW_H / 2.0);
+    };
+
     // === 1. Toast Notifications toggle ===
     draw_toggle(
         ctx, result, input_coordinator,
@@ -754,7 +774,25 @@ fn render_notifications_tab(
     );
     y += ROW_H + ITEM_PADDING;
 
-    if ns.telegram.enabled {
+    if ns.telegram.enabled && !state.secrets_available {
+        // Vault locked — the bot token and subscriber list live in the
+        // vault and cannot be shown. `send_screenshots` is a plain
+        // preference (no secret in it) so it still renders and edits
+        // normally regardless of lock state.
+        draw_locked_notice(
+            ctx,
+            "Unlock the vault to manage the bot token and subscribers.",
+            y,
+        );
+        y += ROW_H + ITEM_PADDING;
+        draw_toggle(
+            ctx, result, input_coordinator,
+            "Send screenshots", "alert_set:notif:tg_screenshot",
+            ns.telegram.send_screenshots, y,
+        );
+        y += ROW_H + ITEM_PADDING;
+    } else if ns.telegram.enabled {
+        let secrets = &state.notification_secrets;
         // -- Bot Token field --
         // Show masked value: if non-empty and not focused, show "****...last4".
         // When focused, show the real token from the render proxy.
@@ -842,7 +880,7 @@ fn render_notifications_tab(
 
         // -- Subscriber rows --
         {
-            let subscribers = ns.telegram.subscribers.clone();
+            let subscribers = secrets.telegram.subscribers.clone();
             if subscribers.is_empty() {
                 ctx.set_fill_color(&toolbar_theme.separator);
                 ctx.set_font("11px sans-serif");
@@ -937,7 +975,7 @@ fn render_notifications_tab(
 
         // -- Detected users (not yet subscribed) --
         {
-            let existing_ids: std::collections::HashSet<&str> = ns
+            let existing_ids: std::collections::HashSet<&str> = secrets
                 .telegram
                 .subscribers
                 .iter()
@@ -1044,14 +1082,19 @@ fn render_notifications_tab(
     y += ROW_H + ITEM_PADDING;
 
     // Webhook URL field (shown only when webhook is enabled)
-    if ns.webhook.enabled {
+    if ns.webhook.enabled && !state.secrets_available {
+        // Vault locked — the URL (which may embed its own auth token) lives
+        // in the vault. No hit zone: nothing to click into.
+        draw_locked_notice(ctx, "Unlock the vault to view the webhook URL.", y);
+    } else if ns.webhook.enabled {
         let field_x = content_x + LABEL_W;
         let field_w = content_w - LABEL_W;
         let is_focused = state.hovered_item_id.as_deref() == Some("alert_set:item:webhook_url");
-        let (url_display, text_color) = if ns.webhook.url.is_empty() {
+        let url = &state.notification_secrets.webhook.url;
+        let (url_display, text_color) = if url.is_empty() {
             ("https://...", toolbar_theme.item_text_muted.as_str())
         } else {
-            (ns.webhook.url.as_str(), toolbar_theme.item_text.as_str())
+            (url.as_str(), toolbar_theme.item_text.as_str())
         };
 
         // Label
