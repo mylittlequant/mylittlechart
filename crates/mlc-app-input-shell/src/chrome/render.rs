@@ -23,6 +23,13 @@ use crate::tooltip::calculate_tooltip_position;
 const BUTTON_WIDTH: f64 = 46.0;
 const BUTTON_HEIGHT: f64 = CHROME_HEIGHT;
 const CLOSE_WINDOW_BUTTON_WIDTH: f64 = 36.0;
+/// Width of the rightmost cluster that mirrors the OS window controls —
+/// minimise, maximise, close — each `BUTTON_WIDTH` wide (see "Window-control
+/// buttons" below). `render_backdrop_dim` leaves exactly this strip out of
+/// the chrome dim on `ChromeFlavor::Native` (owner's ruling 2026-08-31);
+/// derived from `BUTTON_WIDTH` rather than hand-copied so the two can never
+/// drift apart.
+pub const SYSTEM_BUTTONS_WIDTH: f64 = BUTTON_WIDTH * 3.0;
 const MASCOT_BUTTON_WIDTH: f64 = 0.0;
 const MENU_BUTTON_WIDTH: f64 = 36.0;
 const NEW_WINDOW_BUTTON_WIDTH: f64 = 36.0;
@@ -691,6 +698,40 @@ pub fn render(
     // Bottom separator line.
     ctx.set_fill_color(&c.separator);
     ctx.fill_rect(0.0, CHROME_HEIGHT - 1.0, width, 1.0);
+}
+
+// ── render_backdrop_dim ──────────────────────────────────────────────────────
+
+/// Dim the chrome strip to match an open `dim_backdrop` modal.
+///
+/// `render_modal_layer`'s own backdrop fill stops at the top of the chart
+/// content — `ChartApp` never sees the chrome strip at all, since the shell
+/// subtracts `CHROME_HEIGHT` from the window size before handing it resize
+/// events. Call this AFTER [`render`] each frame a `dim_backdrop` modal is
+/// open (`ChartPanelApp::dim_backdrop_color`) so the fill lands on top of the
+/// freshly-painted chrome, same as the modal's own veil lands on top of the
+/// chart beneath it.
+///
+/// `ChromeFlavor::Native` leaves [`SYSTEM_BUTTONS_WIDTH`] undimmed at the
+/// right edge — minimise, maximise, close (owner's ruling 2026-08-31: those
+/// stay live even while the rest of the window is dimmed). `ChromeFlavor::Web`
+/// has no such cluster (a browser tab owns its own window chrome), so it
+/// dims edge to edge.
+pub fn render_backdrop_dim(
+    ctx: &mut dyn MlcRenderContext,
+    width: f64,
+    flavor: ChromeFlavor,
+    backdrop_color: &str,
+) {
+    let dim_w = match flavor {
+        ChromeFlavor::Native => (width - SYSTEM_BUTTONS_WIDTH).max(0.0),
+        ChromeFlavor::Web => width,
+    };
+    if dim_w <= 0.0 {
+        return;
+    }
+    ctx.set_fill_color(backdrop_color);
+    ctx.fill_rect(0.0, 0.0, dim_w, CHROME_HEIGHT);
 }
 
 // ── render_tooltip ────────────────────────────────────────────────────────────

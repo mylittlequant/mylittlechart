@@ -102,12 +102,19 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
 
         // Render chrome strip
         {
-            let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
-                || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+            // Only the migration page (no live chart behind it yet) still
+            // suppresses tabs/buttons — an ordinary profile-manager/welcome
+            // modal dims instead (see the backdrop-dim block below) and
+            // leaves the chrome interactive, same as every other modal
+            // (owner's ruling 2026-08-31).
+            let skeleton_active = pw.chart.panel_app.user_settings_state.profile_manager_mandatory;
             let mut chrome_ctx =
                 VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
             chrome::update_tab_widths(&mut chrome_ctx, &mut pw.chrome_state, width as f64, &pw.chart.input_coordinator);
             chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64, skeleton_active, &pw.chart.input_coordinator);
+            if let Some(backdrop) = pw.chart.panel_app.dim_backdrop_color() {
+                chrome::render_backdrop_dim(&mut chrome_ctx, width as f64, pw.chrome_state.flavor, &backdrop);
+            }
         }
 
         // Toolbar dirty-cache
@@ -165,10 +172,13 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
 
         let sidebar_is_open = pw.chart.sidebar_state.is_right_open();
 
-        // In skeleton mode (profile manager / welcome wizard active) the sidebar
-        // and overlay are hidden — skip compositing both so no stale pixels appear.
-        let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
-            || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+        // In skeleton mode (the mandatory migration page, which has no live
+        // chart behind it) the sidebar and overlay are hidden — skip
+        // compositing both so no stale pixels appear. An ordinary
+        // profile-manager/welcome modal no longer counts: it dims instead of
+        // hiding, and the chart underneath keeps rendering normally (owner's
+        // ruling 2026-08-31).
+        let skeleton_active = pw.chart.panel_app.user_settings_state.profile_manager_mandatory;
 
         // Overlay layer (crosshair / cursor labels / tooltip / drawing preview).
         // Rebuilt when chart geometry changed this frame OR overlay_dirty is set.
@@ -354,9 +364,14 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 );
                 chrome::update_tab_widths(&mut chrome_ctx, &mut pw.chrome_state, width as f64, &pw.chart.input_coordinator);
                 {
-                    let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
-                        || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                    // See the VelloGpu branch above for why this is
+                    // `profile_manager_mandatory` and not the old
+                    // show_profile_manager||show_welcome_wizard pair.
+                    let skeleton_active = pw.chart.panel_app.user_settings_state.profile_manager_mandatory;
                     chrome::render(&mut chrome_ctx, &pw.chrome_state, width as f64, skeleton_active, &pw.chart.input_coordinator);
+                    if let Some(backdrop) = pw.chart.panel_app.dim_backdrop_color() {
+                        chrome::render_backdrop_dim(&mut chrome_ctx, width as f64, pw.chrome_state.flavor, &backdrop);
+                    }
                 }
 
                 // Render chart + toolbar + sidebar at y_offset=CHROME_HEIGHT.
@@ -486,9 +501,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // Render chrome at y=0 (no offset).
                 chrome::update_tab_widths(&mut cpu_ctx, &mut pw.chrome_state, width as f64, &pw.chart.input_coordinator);
                 {
-                    let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
-                        || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                    let skeleton_active = pw.chart.panel_app.user_settings_state.profile_manager_mandatory;
                     chrome::render(&mut cpu_ctx, &pw.chrome_state, width as f64, skeleton_active, &pw.chart.input_coordinator);
+                    if let Some(backdrop) = pw.chart.panel_app.dim_backdrop_color() {
+                        chrome::render_backdrop_dim(&mut cpu_ctx, width as f64, pw.chrome_state.flavor, &backdrop);
+                    }
                 }
                 // Render chart + toolbar + sidebar offset by CHROME_HEIGHT.
                 cpu_ctx.save();
@@ -568,9 +585,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // Render chrome at y=0.
                 chrome::update_tab_widths(&mut skia_ctx, &mut pw.chrome_state, width as f64, &pw.chart.input_coordinator);
                 {
-                    let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
-                        || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                    let skeleton_active = pw.chart.panel_app.user_settings_state.profile_manager_mandatory;
                     chrome::render(&mut skia_ctx, &pw.chrome_state, width as f64, skeleton_active, &pw.chart.input_coordinator);
+                    if let Some(backdrop) = pw.chart.panel_app.dim_backdrop_color() {
+                        chrome::render_backdrop_dim(&mut skia_ctx, width as f64, pw.chrome_state.flavor, &backdrop);
+                    }
                 }
                 skia_ctx.save();
                 skia_ctx.translate(0.0, chrome::CHROME_HEIGHT);
@@ -640,9 +659,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 // Render chrome at y=0.
                 chrome::update_tab_widths(&mut hybrid_ctx, &mut pw.chrome_state, width as f64, &pw.chart.input_coordinator);
                 {
-                    let skeleton_active = pw.chart.panel_app.user_settings_state.show_profile_manager
-                        || pw.chart.panel_app.user_settings_state.show_welcome_wizard;
+                    let skeleton_active = pw.chart.panel_app.user_settings_state.profile_manager_mandatory;
                     chrome::render(&mut hybrid_ctx, &pw.chrome_state, width as f64, skeleton_active, &pw.chart.input_coordinator);
+                    if let Some(backdrop) = pw.chart.panel_app.dim_backdrop_color() {
+                        chrome::render_backdrop_dim(&mut hybrid_ctx, width as f64, pw.chrome_state.flavor, &backdrop);
+                    }
                 }
                 hybrid_ctx.translate(0.0, chrome::CHROME_HEIGHT);
                 pw.chart.render(&mut hybrid_ctx, frame_time, false);

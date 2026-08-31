@@ -173,8 +173,13 @@ pub fn process_event(
             let (win_w, win_h) = platform.window_size();
             let hit = chrome::hit_test(x, y, win_w as f64, win_h as f64, chrome_st);
 
-            let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
-                || chart.panel_app.user_settings_state.show_welcome_wizard;
+            // Only the migration page (no live chart behind it yet) still
+            // takes over the chrome's own hover/click routing below — an
+            // ordinary profile-manager/welcome modal dims instead of hiding
+            // and leaves the chrome live, same as every other modal (owner's
+            // ruling 2026-08-31); its own z-order (InputCoordinator) is what
+            // decides whether a click reaches it or the chart beneath.
+            let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
             let prev_hovered = chrome_st.hovered;
             chrome_st.hovered = if skeleton_active {
                 match hit {
@@ -548,8 +553,7 @@ pub fn process_event(
                         return;
                     }
                     ChromeHit::Tab(idx) => {
-                        let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
-                            || chart.panel_app.user_settings_state.show_welcome_wizard;
+                        let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
                         if !skeleton_active {
                             // Arm the drag&drop reorder — it activates past a
                             // 4 px move and applies on release (CursorMoved /
@@ -591,8 +595,7 @@ pub fn process_event(
                         return;
                     }
                     ChromeHit::TabRename(idx) => {
-                        let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
-                            || chart.panel_app.user_settings_state.show_welcome_wizard;
+                        let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
                         if !skeleton_active {
                             open_tab_rename(chart, chrome_st, idx);
                             dirty.chart_dirty = true;
@@ -601,8 +604,7 @@ pub fn process_event(
                         return;
                     }
                     ChromeHit::TabClose(idx) => {
-                        let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
-                            || chart.panel_app.user_settings_state.show_welcome_wizard;
+                        let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
                         if !skeleton_active {
                             if let Some(tab) = chrome_st.tabs.get(idx).cloned() {
                                 chart.close_tab(&tab.id);
@@ -611,8 +613,7 @@ pub fn process_event(
                         return;
                     }
                     ChromeHit::NewTabButton => {
-                        let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
-                            || chart.panel_app.user_settings_state.show_welcome_wizard;
+                        let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
                         if !skeleton_active {
                             let ts = &mut chart.panel_app.toolbar_state;
                             if ts.open_dropdown_id.as_deref() == Some("new_tab_menu") {
@@ -641,8 +642,7 @@ pub fn process_event(
                         return;
                     }
                     ChromeHit::MenuButton => {
-                        let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
-                            || chart.panel_app.user_settings_state.show_welcome_wizard;
+                        let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
                         if !skeleton_active {
                             chart.open_user_settings();
                         }
@@ -651,8 +651,7 @@ pub fn process_event(
                     ChromeHit::LoginButton => {
                         #[cfg(feature = "cloud")]
                         {
-                            let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
-                                || chart.panel_app.user_settings_state.show_welcome_wizard;
+                            let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
                             if !skeleton_active {
                                 chart.panel_app.cloud_login_state.toggle();
                                 chart.panel_app.cloud_overlay_state.close();
@@ -666,8 +665,7 @@ pub fn process_event(
                         #[cfg(feature = "cloud")]
                         {
                             use mlc_app_layout::ui::modal_settings::CloudOverlayKind;
-                            let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
-                                || chart.panel_app.user_settings_state.show_welcome_wizard;
+                            let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
                             if !skeleton_active {
                                 let kind = match hit {
                                     ChromeHit::NewsButton => CloudOverlayKind::News,
@@ -691,8 +689,7 @@ pub fn process_event(
                         return;
                     }
                     ChromeHit::NewWindowButton => {
-                        let skeleton_active = chart.panel_app.user_settings_state.show_profile_manager
-                            || chart.panel_app.user_settings_state.show_welcome_wizard;
+                        let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
                         if !skeleton_active {
                             out.spawn_new_window = true;
                         }

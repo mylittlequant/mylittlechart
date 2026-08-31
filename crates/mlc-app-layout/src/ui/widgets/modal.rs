@@ -67,7 +67,14 @@ impl Default for ModalTheme {
 
 /// Dimmer behind a modal. Solid chrome keeps the old 0.6 veil; Glass
 /// (`rgba(...)` fill) only tints so the chart still reads around the frame.
-fn overlay_backdrop(bg: &str) -> String {
+///
+/// `pub`: the shell also uses this to dim the chrome strip (tab bar) when a
+/// `dim_backdrop` modal is open — `begin_modal_shell`'s own fill never
+/// reaches the chrome strip (it paints within `ChartApp`'s own coordinate
+/// space, which excludes it), so the shell repaints the SAME colour over the
+/// strip separately. Reusing this function is what keeps that second fill
+/// from stacking a second veil on top of Glass's already-tinted modal panel.
+pub fn overlay_backdrop(bg: &str) -> String {
     if bg.starts_with("rgba(") {
         "rgba(0,0,0,0.12)".to_string()
     } else {

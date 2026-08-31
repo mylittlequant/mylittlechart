@@ -998,6 +998,41 @@ impl ChartPanelApp {
         result
     }
 
+    /// The colour a shell should dim the chrome strip with, when one of the
+    /// modals rendered above with `ModalShellSpec::dim_backdrop: true` is
+    /// open — `None` when none is.
+    ///
+    /// `render_modals`' own backdrop fill never reaches the chrome strip: the
+    /// shell subtracts `CHROME_HEIGHT` from the window size before `ChartApp`
+    /// ever sees it (`dispatch.rs`'s `Resized` handler), so `screen_h` here
+    /// is already chart-content-only. Owner's ruling 2026-08-31: the dim must
+    /// cover the chrome too (native keeps its three system window buttons —
+    /// minimise/maximise/close — undimmed; wasm has none, so it dims edge to
+    /// edge). The colour comes from the same [`overlay_backdrop`] every modal
+    /// backdrop already uses, so Glass's lighter tint does not stack into a
+    /// second, heavier veil where the two might ever overlap.
+    ///
+    /// One flag per `dim_backdrop: true` call site in `render_modals` above —
+    /// keep this list in sync with that one.
+    ///
+    /// [`overlay_backdrop`]: mlc_app_layout::ui::widgets::overlay_backdrop
+    pub fn dim_backdrop_color(&self) -> Option<String> {
+        #[cfg(feature = "cloud")]
+        let cloud_open = self.cloud_login_state.is_open || self.cloud_overlay_state.is_open;
+        #[cfg(not(feature = "cloud"))]
+        let cloud_open = false;
+        let open = cloud_open
+            || self.user_settings_state.show_welcome_wizard
+            || self.user_settings_state.show_profile_manager
+            || self.primitive_settings_state.save_template_mode
+            || self.indicator_settings_state.save_template_mode
+            || self.compare_settings_state.save_template_mode
+            || self.chart_settings_state.save_template_mode;
+        open.then(|| {
+            mlc_app_layout::ui::widgets::overlay_backdrop(&self.frame_theme_for_render().modal_bg)
+        })
+    }
+
     /// Renders color picker popups and the sync color grid popup.
     ///
     /// Must be called AFTER the sidebar is rendered so that these popups

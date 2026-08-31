@@ -2004,6 +2004,17 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
     {
         let st = state.borrow();
         mlc_app_input_shell::render(&mut ctx, &st.chrome, css_w as f64, false, &st.chart.input_coordinator);
+        // Dim the chrome strip to match an open `dim_backdrop` modal — its own
+        // backdrop fill stops at the top of the chart content (ChartApp never
+        // sees the chrome strip; the shell subtracts CHROME_HEIGHT from the
+        // window size before it gets there). Web has no system window-control
+        // cluster to spare (owner's ruling 2026-08-31: native leaves
+        // minimise/maximise/close undimmed, web has none of those), so this
+        // dims the strip edge to edge — mirrors the native shell's own call in
+        // `mlc-app-shell-vello/src/render/scene_builder.rs`.
+        if let Some(backdrop) = st.chart.panel_app.dim_backdrop_color() {
+            mlc_app_input_shell::chrome::render_backdrop_dim(&mut ctx, css_w as f64, st.chrome.flavor, &backdrop);
+        }
         mlc_app_input_shell::render_tab_list(&mut ctx, &st.chrome, css_w as f64);
         mlc_app_input_shell::render_tooltip(&mut ctx, &st.chrome, css_w as f64, css_h as f64);
         // Toolbar/sidebar-item tooltips (left/top/right/bottom toolbar strips,
