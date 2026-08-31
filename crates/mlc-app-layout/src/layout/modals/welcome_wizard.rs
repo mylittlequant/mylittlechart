@@ -17,11 +17,12 @@
 //! copies does not touch the profile manager's passphrase flow at all.
 //!
 //! Pages:
-//!   0 — Theme         (`RuntimeTheme::PRESETS_SHORTLIST` — 6 presets)
-//!   1 — Language       (mascot, lang selection)
+//!   0 — Theme         (`RuntimeTheme::PRESETS_SHORTLIST` — 6 presets, grid)
+//!   1 — Language       (`Language::all()` — 15 languages, grid; no mascot —
+//!                       dropped 2026-08-31, owner: it only ate space)
 //!   2 — Profile Name   (name input only — ends the wizard)
 
-use mlc_core::engine::render::{draw_svg_icon, draw_svg_multicolor, RenderContext};
+use mlc_core::engine::render::{draw_svg_icon, RenderContext};
 use mlc_core::i18n::{Language, WizardKey, current_language, t_wizard};
 use mlc_core::theme::RuntimeTheme;
 use uzor::render::{TextAlign, TextBaseline};
@@ -41,9 +42,24 @@ use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::icons::Icon;
 
-const MINI_MASCOT_SVG: &str = include_str!("../../../../../assets/mascot/mini_mascot.svg");
-
 const MODAL_W: f64 = 580.0;
+
+/// Columns in the theme page's preset grid (page 0). `RuntimeTheme::
+/// PRESETS_SHORTLIST` is 6 entries long — 2 columns keeps each cell wide
+/// enough for the longest label ("High Contrast Mono") without measuring
+/// text width at layout time, at 3 rows instead of 6.
+const THEME_GRID_COLS: usize = 2;
+const THEME_ROW_H: f64 = 40.0;
+const THEME_ROW_GAP: f64 = 6.0;
+const THEME_COL_GAP: f64 = 16.0;
+
+/// Columns in the language page's grid (page 1). `Language::all()` is 15
+/// entries, all single native-script words — 3 columns fits comfortably and
+/// cuts 15 stacked rows down to 5.
+const LANG_GRID_COLS: usize = 3;
+const LANG_ROW_H: f64 = 32.0;
+const LANG_ROW_GAP: f64 = 4.0;
+const LANG_COL_GAP: f64 = 16.0;
 
 /// Content height per page. The big in-body title each page used to draw is
 /// dropped — the shell header carries it now. Each arm sums the exact cy
@@ -51,16 +67,19 @@ const MODAL_W: f64 = 580.0;
 /// to its content instead of guessed.
 fn page_content_height(state: &UserSettingsState) -> f64 {
     match state.wizard_page {
-        // Theme: subtitle(28) + N rows*(40+6) + gap(16) + button(38), N =
-        // `RuntimeTheme::PRESETS_SHORTLIST.len()`.
+        // Theme: subtitle(28) + rows*(40+6) + gap(16) + button(38), rows =
+        // ceil(`RuntimeTheme::PRESETS_SHORTLIST.len()` / `THEME_GRID_COLS`).
         0 => theme_page_content_height(),
-        // Language: back+gap(34) + mascot(100) + N lang rows + gap(12) + button(38).
+        // Language: back+gap(34) + rows*(32+4) + gap(12) + button(38), rows =
+        // ceil(`Language::all().len()` / `LANG_GRID_COLS`). No mascot term —
+        // the mascot was dropped from this page (owner 2026-08-31: it only
+        // ate space; the boot splash keeps its own, separate mascot).
         1 => {
-            let lang_count = Language::all().len() as f64;
+            let lang_count = Language::all().len();
+            let rows = lang_count.div_ceil(LANG_GRID_COLS) as f64;
             let header = 26.0 + 8.0;
-            let mascot = 80.0 + 20.0;
-            let langs = lang_count * (32.0 + 4.0);
-            header + mascot + langs + 12.0 + 38.0
+            let langs = rows * (LANG_ROW_H + LANG_ROW_GAP);
+            header + langs + 12.0 + 38.0
         }
         // Profile Name: back+gap(34) + pre-input gap(12) + input(32) + gap(24) + button(38).
         2 => 140.0,
@@ -71,8 +90,9 @@ fn page_content_height(state: &UserSettingsState) -> f64 {
 /// Content height of the theme page (0), shared with the `_` fallback arm
 /// above (which also renders the theme page — see `render_welcome_wizard`).
 fn theme_page_content_height() -> f64 {
-    let theme_count = RuntimeTheme::PRESETS_SHORTLIST.len() as f64;
-    28.0 + theme_count * (40.0 + 6.0) + 16.0 + 38.0
+    let theme_count = RuntimeTheme::PRESETS_SHORTLIST.len();
+    let rows = theme_count.div_ceil(THEME_GRID_COLS) as f64;
+    28.0 + rows * (THEME_ROW_H + THEME_ROW_GAP) + 16.0 + 38.0
 }
 
 fn page_title(state: &UserSettingsState) -> String {
@@ -182,11 +202,25 @@ fn render_page_theme(
     // `terminal` are ugly and must not show here (or in the toolbar's Theme
     // dropdown), but `surf` stays visible everywhere, so both surfaces read
     // from the same source instead of drifting.
-    let row_h = 40.0;
-    let row_gap = 6.0;
-    let swatch_size = 16.0;
+    //
+    // Grid, not a single stacked column (owner 2026-08-31: "themes read fine
+    // as a compact grid") — `THEME_GRID_COLS` columns, filled row-major.
+    // Swatch bumped 16→20 and squared up (see `theme_sample.rs`) per the
+    // same review: the old 3-vertical-bar sample read as "narrow bars", not
+    // a color sample.
+    let row_h = THEME_ROW_H;
+    let row_gap = THEME_ROW_GAP;
+    let swatch_size = 20.0;
+    let col_gap = THEME_COL_GAP;
+    let col_w = (w - col_gap * (THEME_GRID_COLS - 1) as f64) / THEME_GRID_COLS as f64;
+    let grid_top = *cy;
 
-    for key in RuntimeTheme::PRESETS_SHORTLIST {
+    for (i, key) in RuntimeTheme::PRESETS_SHORTLIST.iter().enumerate() {
+        let col = i % THEME_GRID_COLS;
+        let row = i / THEME_GRID_COLS;
+        let cell_x = x + col as f64 * (col_w + col_gap);
+        let cell_y = grid_top + row as f64 * (row_h + row_gap);
+
         let label = wizard_theme_label(key);
         let widget_id = format!("wizard_theme_{key}");
         let is_active = active_theme == *key;
@@ -198,17 +232,17 @@ fn render_page_theme(
             toolbar_theme.button_bg.as_str()
         };
         ctx.set_fill_color(row_bg);
-        ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
+        ctx.fill_rounded_rect(cell_x, cell_y, col_w, row_h, 4.0);
 
         if is_active {
             ctx.set_fill_color(toolbar_theme.accent.as_str());
-            ctx.fill_rounded_rect(x, *cy, 3.0, row_h, 2.0);
+            ctx.fill_rounded_rect(cell_x, cell_y, 3.0, row_h, 2.0);
         }
 
         // Background / accent / text sample, pulled from the preset itself
         // so it actually tells presets apart before clicking.
-        let swatch_x = x + 12.0;
-        let swatch_y = *cy + (row_h - swatch_size) / 2.0;
+        let swatch_x = cell_x + 12.0;
+        let swatch_y = cell_y + (row_h - swatch_size) / 2.0;
         let sample_tokens = theme_sample_tokens(key);
         draw_theme_sample(ctx, swatch_x, swatch_y, swatch_size, &sample_tokens);
 
@@ -217,17 +251,16 @@ fn render_page_theme(
         ctx.set_fill_color(text_alpha);
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(label, swatch_x + swatch_size + 10.0, *cy + row_h / 2.0);
+        ctx.fill_text(label, swatch_x + swatch_size + 10.0, cell_y + row_h / 2.0);
 
-        let row_rect = WidgetRect::new(x, *cy, w, row_h);
+        let row_rect = WidgetRect::new(cell_x, cell_y, col_w, row_h);
         result.content_items.push((widget_id.clone(), row_rect));
         let hit_id = format!("user_settings:{}", widget_id);
         input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK | Sense::HOVER, layer_id);
-
-        *cy += row_h + row_gap;
     }
 
-    *cy += 16.0;
+    let grid_rows = RuntimeTheme::PRESETS_SHORTLIST.len().div_ceil(THEME_GRID_COLS) as f64;
+    *cy = grid_top + grid_rows * (row_h + row_gap) + 16.0;
 
     // "Next" button (goes to the language page)
     let btn_h = 38.0;
@@ -273,7 +306,7 @@ fn wizard_theme_label(preset_id: &str) -> &'static str {
 }
 
 // =============================================================================
-// Page 1 — Language (mascot + language list)
+// Page 1 — Language (language grid, no mascot)
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
@@ -303,21 +336,29 @@ fn render_page_language(
     ctx.fill_text(t_wizard(WizardKey::Step2of3), x + w, *cy - 20.0);
     ctx.set_text_align(TextAlign::Left);
 
-    // Mini mascot centered.
-    let mascot_size = 80.0;
-    let mascot_x = x + (w - mascot_size) / 2.0;
-    draw_svg_multicolor(ctx, MINI_MASCOT_SVG, mascot_x, *cy, mascot_size, mascot_size);
-    *cy += mascot_size + 20.0;
-
-    // Language selection rows
+    // No mascot on this page (owner 2026-08-31: it only ate space — the boot
+    // splash keeps its own, separate mascot; this page never reused that
+    // asset, so dropping it here does not touch the splash).
+    //
+    // Language selection grid — `LANG_GRID_COLS` columns, filled row-major.
+    // 15 single-word native names is the bulk of this page's height when
+    // stacked one per row (owner 2026-08-31); a grid cuts it to 5 rows.
     let langs: Vec<(Language, String)> = Language::all().iter()
         .map(|l| (*l, format!("wizard_lang_{}", l.code())))
         .collect();
 
-    let row_h = 32.0;
-    let row_gap = 4.0;
+    let row_h = LANG_ROW_H;
+    let row_gap = LANG_ROW_GAP;
+    let col_gap = LANG_COL_GAP;
+    let col_w = (w - col_gap * (LANG_GRID_COLS - 1) as f64) / LANG_GRID_COLS as f64;
+    let grid_top = *cy;
 
-    for (lang, widget_id) in &langs {
+    for (i, (lang, widget_id)) in langs.iter().enumerate() {
+        let col = i % LANG_GRID_COLS;
+        let row = i / LANG_GRID_COLS;
+        let cell_x = x + col as f64 * (col_w + col_gap);
+        let cell_y = grid_top + row as f64 * (row_h + row_gap);
+
         let is_active = active_lang == *lang;
         let is_row_hovered = hovered == Some(widget_id.as_str());
 
@@ -327,11 +368,11 @@ fn render_page_language(
             toolbar_theme.button_bg.as_str()
         };
         ctx.set_fill_color(row_bg);
-        ctx.fill_rounded_rect(x, *cy, w, row_h, 4.0);
+        ctx.fill_rounded_rect(cell_x, cell_y, col_w, row_h, 4.0);
 
         if is_active {
             ctx.set_fill_color(toolbar_theme.accent.as_str());
-            ctx.fill_rounded_rect(x, *cy, 3.0, row_h, 2.0);
+            ctx.fill_rounded_rect(cell_x, cell_y, 3.0, row_h, 2.0);
         }
 
         let text_alpha = if is_active { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() };
@@ -339,17 +380,16 @@ fn render_page_language(
         ctx.set_fill_color(text_alpha);
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(lang.native_name(), x + 16.0, *cy + row_h / 2.0);
+        ctx.fill_text(lang.native_name(), cell_x + 16.0, cell_y + row_h / 2.0);
 
-        let row_rect = WidgetRect::new(x, *cy, w, row_h);
+        let row_rect = WidgetRect::new(cell_x, cell_y, col_w, row_h);
         result.content_items.push((widget_id.to_string(), row_rect));
         let hit_id = format!("user_settings:{}", widget_id);
         input_coordinator.register_on_layer(hit_id.as_str(), row_rect, Sense::CLICK | Sense::HOVER, layer_id);
-
-        *cy += row_h + row_gap;
     }
 
-    *cy += 12.0;
+    let grid_rows = langs.len().div_ceil(LANG_GRID_COLS) as f64;
+    *cy = grid_top + grid_rows * (row_h + row_gap) + 12.0;
 
     // "Next" button (goes to the profile-name page)
     let btn_h = 38.0;

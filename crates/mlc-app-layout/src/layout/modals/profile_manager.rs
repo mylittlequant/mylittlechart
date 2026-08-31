@@ -57,21 +57,44 @@ const PROFILE_ROW_GAP: f64 = 6.0;
 /// exactly like `alert_settings`' AlertsList tab.
 const PROFILE_LIST_MAX_H: f64 = 280.0;
 
-/// Content height per non-list page. First-pass estimates that mirror the
-/// vertical increments each page's render function actually walks (title
-/// dropped — the shell header carries it now — everything else kept), with
-/// a small margin so an optional error/hint line never clips the frame.
-/// Verify visually and adjust if a page's body still overflows or leaves an
-/// oversized gap at the bottom.
+/// Content height per non-list page. Each constant is the exact bottom edge
+/// (title dropped — the shell header carries it now) traced by hand through
+/// its render function's `cy` deltas below — not an estimate summed from the
+/// page's original vertical increments (that was the prior pass; it ran 28
+/// to 36px over what the render function actually draws, on every page here,
+/// which is what left visible dead space below each page's last button).
+/// Three pages (`UnlockPassphrase`, `UseRecoveryKey`, `SetNewPassphrase`)
+/// carry an optional error/hint line reserved unconditionally in the render
+/// function on two symmetric branches (always +N regardless of the
+/// condition) — those already fold into the trace below with no special
+/// case. The exception is each page's OWN optional trailing error line
+/// (`vault_unlock_error` / `set_passphrase_error`), which the render
+/// function draws only when `Some`/non-empty with no `cy` bump either way;
+/// the constant below reserves room for that worst case so the frame never
+/// clips when the error is present, at the cost of a small (~18-22px) gap
+/// when it is not.
 fn page_content_height(state: &UserSettingsState) -> f64 {
     match &state.profile_manager_page {
         ProfileManagerPage::ProfileList => profile_list_content_height(state),
-        ProfileManagerPage::UnlockPassphrase => 230.0,
-        ProfileManagerPage::CreatePassphrase => 270.0,
-        ProfileManagerPage::CreateNew => 170.0,
-        ProfileManagerPage::ShowRecoveryKey => 200.0,
-        ProfileManagerPage::UseRecoveryKey => 190.0,
-        ProfileManagerPage::SetNewPassphrase => 260.0,
+        // back(24) + gap(10) + subtitle(22) + passphrase_input(18+48) +
+        // button+gap(32+10) + error(18, worst case) + link(16) = 198.
+        ProfileManagerPage::UnlockPassphrase => 198.0,
+        // back(24) + gap(10) + subtitle(22) + hint(16) + passphrase_input
+        // (18+48) + confirm_label(18) + confirm_input+gap(32+4) +
+        // mismatch_line(18) + button(32) = 242.
+        ProfileManagerPage::CreatePassphrase => 242.0,
+        // back(24) + gap(12) + label(18) + input+gap(32+16) + button(32) = 134.
+        ProfileManagerPage::CreateNew => 134.0,
+        // warning_line1(18) + warning_line2(26) + key_box+gap(40+10) +
+        // copy_btn+gap(28+12) + confirm_btn(34) = 168.
+        ProfileManagerPage::ShowRecoveryKey => 168.0,
+        // back(24) + gap(10) + subtitle(22) + input+gap(32+14) +
+        // button+gap(32+10) + error(18, worst case) = 162.
+        ProfileManagerPage::UseRecoveryKey => 162.0,
+        // line1(16) + line2(26) + new_label(18) + new_input+gap(32+14) +
+        // confirm_label(18) + confirm_input+gap(32+16) + error(22, worst
+        // case) + button(32) = 226.
+        ProfileManagerPage::SetNewPassphrase => 226.0,
     }
 }
 

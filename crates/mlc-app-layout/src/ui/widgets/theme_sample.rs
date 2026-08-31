@@ -31,14 +31,37 @@ pub fn theme_sample_tokens(preset_id: &str) -> [String; 3] {
     [rt.colors.toolbar_bg, rt.colors.accent, rt.colors.text_primary]
 }
 
-/// Draw the 3-token sample as three small squares side by side, filling a
-/// `size` x `size` box at `(x, y)` — background / accent / text, left to
-/// right. Callers reserve the same footprint a single-color swatch used to
-/// occupy, so row layout/text position does not need to change to fit it.
+/// Draw the 3-token sample as one rounded-square block at `(x, y)`, filling
+/// a `size` x `size` footprint — the same footprint the old three-vertical-
+/// bar version occupied, so callers (`chart_settings`'s Appearance tab,
+/// `dropdown`'s Theme list) do not need to change their layout to fit it.
+///
+/// Owner review 2026-08-31: the old version split the box into three equal
+/// vertical strips (background / accent / text left to right), each
+/// `size/3` wide by `size` tall — a 1:3 aspect per strip that read as "narrow
+/// vertical bars" rather than a color sample. This version reads as
+/// "circles or squares" instead: the background token fills the whole
+/// rounded square (the square), the accent token sits as an inset circle at
+/// the bottom-right corner (the circle — also the strongest differentiator
+/// between presets, more so than background alone), and the text token
+/// becomes a thin outline ring around the square (costs no extra footprint,
+/// reads as contrast).
 pub fn draw_theme_sample(ctx: &mut dyn RenderContext, x: f64, y: f64, size: f64, tokens: &[String; 3]) {
-    let band_w = size / tokens.len() as f64;
-    for (i, color) in tokens.iter().enumerate() {
-        ctx.set_fill_color(color);
-        ctx.fill_rect(x + band_w * i as f64, y, band_w, size);
-    }
+    let radius = size * 0.22;
+    ctx.set_fill_color(&tokens[0]);
+    ctx.fill_rounded_rect(x, y, size, size, radius);
+
+    let dot_r = size * 0.28;
+    let dot_inset = size * 0.06;
+    let dot_cx = x + size - dot_r - dot_inset;
+    let dot_cy = y + size - dot_r - dot_inset;
+    ctx.set_fill_color(&tokens[1]);
+    ctx.begin_path();
+    ctx.arc(dot_cx, dot_cy, dot_r, 0.0, std::f64::consts::TAU);
+    ctx.close_path();
+    ctx.fill();
+
+    ctx.set_stroke_color(&tokens[2]);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x, y, size, size, radius);
 }
