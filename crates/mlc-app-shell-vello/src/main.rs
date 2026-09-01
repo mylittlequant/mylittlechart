@@ -4773,12 +4773,29 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     // show them immediately (the loading screen IS their content).
                     // Live windows wait for bars (or a 4s timeout) to avoid the
                     // empty-chart flash.
+                    //
+                    // The bars test was `.map(|_w| false)` from 7fc33a90
+                    // (2026-06-19) until 2026-09-02 — the Phase X0/C5c
+                    // refactor moved per-Kind series storage out of
+                    // `ChartContainer` into `DataBubble`, `has_data()` went
+                    // with it, and the call site was stubbed to a constant
+                    // rather than rewritten. A constant `false` cannot ever
+                    // satisfy the middle arm, so for two and a half months
+                    // EVERY non-skeleton window was gated on nothing but the
+                    // 4s timeout: a returning user's main window sat
+                    // invisible for four seconds with its bars already in
+                    // hand. The promote path never showed the symptom
+                    // because it sets `visible_set` itself.
+                    //
+                    // `bubbles().bars(current_tag_id)` is how the rest of
+                    // this file has asked the same question since that
+                    // refactor (see the perf panel's `total_bars` sum).
                     let ready = pw.skeleton
                         || pw.chart
                             .panel_app
                             .panel_grid
                             .active_container()
-                            .map(|_w| false)
+                            .map(|w| !pw.chart.core.bubbles().bars(w.current_tag_id).is_empty())
                             .unwrap_or(false)
                         || pw.created_at.elapsed() >= std::time::Duration::from_secs(4);
                     if ready {
