@@ -137,6 +137,65 @@ pub fn generate_recovery_key() -> [u8; 32] {
     key
 }
 
+/// Alphabet for [`generate_passphrase`]: lower-case letters and digits with
+/// every look-alike pair removed (`i`/`l`/`1`, `o`/`0`). 31 symbols.
+///
+/// The suggested passphrase is meant to be COPIED, not memorised — but it is
+/// also read back off a screen and typed by hand when the clipboard has moved
+/// on, and a passphrase that cannot be transcribed without ambiguity is a
+/// passphrase that locks its owner out.
+const PASSPHRASE_ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
+
+/// Groups of characters in a generated passphrase, and characters per group.
+/// 4 x 5 = 20 symbols over a 31-symbol alphabet is ~99 bits — far above what
+/// the PBKDF2 work factor needs to hold, and short enough to read aloud.
+const PASSPHRASE_GROUPS: usize = 4;
+const PASSPHRASE_GROUP_LEN: usize = 5;
+
+/// Generate a strong passphrase to suggest to the user, in `xxxxx-xxxxx-
+/// xxxxx-xxxxx` form.
+///
+/// Drawn from the same `rand::thread_rng()` CSPRNG as [`generate_recovery_key`]
+/// — which is the OS generator natively and `crypto.getRandomValues` in the
+/// browser (the crate pulls `getrandom` with the `js` feature for exactly
+/// that). It is NOT a `%` of a random byte: 256 is not a multiple of 31, so
+/// modulo would make the first four letters of the alphabet measurably more
+/// likely than the rest. Bytes at or above the largest multiple of the
+/// alphabet length are rejected and redrawn instead, which costs a handful of
+/// extra bytes and buys a uniform draw.
+///
+/// The dashes are part of the passphrase, not decoration — they are what the
+/// user sees, copies and types back.
+pub fn generate_passphrase() -> String {
+    let n = PASSPHRASE_ALPHABET.len() as u32;
+    // Largest multiple of `n` that fits in a byte; anything at or above it
+    // would bias the draw and is redrawn.
+    let limit = (256u32 / n) * n;
+
+    let mut out = String::with_capacity(
+        PASSPHRASE_GROUPS * PASSPHRASE_GROUP_LEN + (PASSPHRASE_GROUPS - 1),
+    );
+    let mut rng = rand::thread_rng();
+    let mut buf = [0u8; 1];
+
+    for group in 0..PASSPHRASE_GROUPS {
+        if group > 0 {
+            out.push('-');
+        }
+        for _ in 0..PASSPHRASE_GROUP_LEN {
+            let idx = loop {
+                rng.fill_bytes(&mut buf);
+                let v = buf[0] as u32;
+                if v < limit {
+                    break (v % n) as usize;
+                }
+            };
+            out.push(PASSPHRASE_ALPHABET[idx] as char);
+        }
+    }
+    out
+}
+
 /// Format a 32-byte recovery key as a human-readable string.
 ///
 /// Output: 16 groups of 4 hex characters separated by dashes.
@@ -389,5 +448,35 @@ mod tests {
         assert_eq!(hex_str.len(), 32);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod passphrase_tests {
+    use super::*;
+
+    #[test]
+    fn generated_passphrase_has_the_documented_shape() {
+        for _ in 0..200 {
+            let p = generate_passphrase();
+            let groups: Vec<&str> = p.split('-').collect();
+            assert_eq!(groups.len(), PASSPHRASE_GROUPS, "group count: {p}");
+            for g in &groups {
+                assert_eq!(g.len(), PASSPHRASE_GROUP_LEN, "group length: {p}");
+                assert!(
+                    g.bytes().all(|b| PASSPHRASE_ALPHABET.contains(&b)),
+                    "symbol outside the alphabet: {p}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn generated_passphrases_do_not_repeat() {
+        // 99 bits: a collision in 500 draws would mean the RNG is not one.
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..500 {
+            assert!(seen.insert(generate_passphrase()), "repeated passphrase");
+        }
     }
 }

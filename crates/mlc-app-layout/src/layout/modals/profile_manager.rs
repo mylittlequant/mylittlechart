@@ -523,7 +523,7 @@ pub(crate) fn render_page_unlock(
 
     render_passphrase_input(
         ctx, x, w, &mut cy, state, text_color, toolbar_theme,
-        frame_theme, current_time_ms, layer_id, input_coordinator, result,
+        frame_theme, current_time_ms, layer_id, input_coordinator, result, false,
     );
 
     let unlock_disabled = state.new_passphrase_render.text.is_empty();
@@ -620,6 +620,7 @@ pub(crate) fn render_page_create_passphrase(
     ctx.set_text_align(TextAlign::Left);
     cy += 22.0;
 
+    let hint_row_y = cy;
     if state.new_passphrase_render.text.len() < mlc_core::MIN_PASSPHRASE_LENGTH {
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
@@ -630,14 +631,13 @@ pub(crate) fn render_page_create_passphrase(
             x,
             cy,
         );
-        cy += 16.0;
-    } else {
-        cy += 16.0;
     }
+    draw_passphrase_suggest_button(ctx, x, w, hint_row_y, 16.0, hovered, toolbar_theme, layer_id, input_coordinator, result);
+    cy += 16.0;
 
     render_passphrase_input(
         ctx, x, w, &mut cy, state, text_color, toolbar_theme,
-        frame_theme, current_time_ms, layer_id, input_coordinator, result,
+        frame_theme, current_time_ms, layer_id, input_coordinator, result, true,
     );
 
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
@@ -687,7 +687,7 @@ pub(crate) fn render_page_create_passphrase(
         );
     }
 
-    draw_passphrase_reveal_toggle(ctx, confirm_rect, confirm_revealed, state, toolbar_theme, layer_id, input_coordinator, result);
+    draw_passphrase_reveal_toggle(ctx, confirm_rect, confirm_revealed, state, toolbar_theme, layer_id, input_coordinator, result, false);
 
     cy += confirm_h + 4.0;
 
@@ -1054,6 +1054,7 @@ pub(crate) fn render_page_set_new_passphrase(
     ctx.set_fill_color(text_color);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(ProfileKey::NewPassphrase.get(current_language()), x, cy);
+    draw_passphrase_suggest_button(ctx, x, w, cy, 18.0, hovered, toolbar_theme, layer_id, input_coordinator, result);
     cy += 18.0;
 
     let new_pass_rect = WidgetRect::new(x, cy, w, input_h);
@@ -1069,7 +1070,7 @@ pub(crate) fn render_page_set_new_passphrase(
         .with_cursor(np_render.cursor)
         .with_placeholder("New passphrase\u{2026}")
         .with_type(if new_pass_revealed { InputType::Text } else { InputType::Password })
-        .with_padding_right(28.0)
+        .with_padding_right(PASSPHRASE_INPUT_PADDING_RIGHT_WITH_COPY)
         .with_selection(sel_start, sel_end);
     let new_pass_result = draw_input(ctx, &new_pass_config, WidgetState::Normal, new_pass_rect, &widget_theme);
 
@@ -1091,7 +1092,8 @@ pub(crate) fn render_page_set_new_passphrase(
             &toolbar_theme.item_text,
         );
     }
-    draw_passphrase_reveal_toggle(ctx, new_pass_rect, new_pass_revealed, state, toolbar_theme, layer_id, input_coordinator, result);
+    draw_passphrase_reveal_toggle(ctx, new_pass_rect, new_pass_revealed, state, toolbar_theme, layer_id, input_coordinator, result, true);
+    draw_passphrase_copy_button(ctx, new_pass_rect, state, toolbar_theme, layer_id, input_coordinator, result);
     cy += input_h + 14.0;
 
     ctx.set_font("12px sans-serif");
@@ -1135,7 +1137,7 @@ pub(crate) fn render_page_set_new_passphrase(
             &toolbar_theme.item_text,
         );
     }
-    draw_passphrase_reveal_toggle(ctx, confirm_pass_rect, confirm_pass_revealed, state, toolbar_theme, layer_id, input_coordinator, result);
+    draw_passphrase_reveal_toggle(ctx, confirm_pass_rect, confirm_pass_revealed, state, toolbar_theme, layer_id, input_coordinator, result, false);
     cy += input_h + 16.0;
 
     if has_error {
@@ -1371,6 +1373,13 @@ fn render_back_button(
 }
 
 /// Render the passphrase input box. Advances `cy` past the input field.
+///
+/// `show_copy_button` gates the copy-to-clipboard gutter icon (slot 1, next
+/// to the reveal toggle): true when this call draws the field on a page
+/// where the user is CHOOSING a new passphrase (`CreatePassphrase`), false
+/// on `render_page_unlock`, which enters an EXISTING secret — there is
+/// nothing to copy-from-generation there, and offering it would just be a
+/// leak surface with no purpose.
 #[allow(clippy::too_many_arguments)]
 fn render_passphrase_input(
     ctx: &mut dyn RenderContext,
@@ -1385,6 +1394,7 @@ fn render_passphrase_input(
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
+    show_copy_button: bool,
 ) {
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(text_color);
@@ -1401,16 +1411,22 @@ fn render_passphrase_input(
     } else {
         (None, None)
     };
-    // Widened right padding leaves room for the reveal toggle drawn below —
-    // same knob the search box uses for its own leading icon
-    // (`search_overlay.rs`), just on the trailing side here.
+    // Widened right padding leaves room for the reveal toggle (and, on the
+    // pages that show one, the copy button) drawn below — same knob the
+    // search box uses for its own leading icon (`search_overlay.rs`), just
+    // on the trailing side here.
     let revealed = state.passphrase_revealed;
+    let padding_right = if show_copy_button {
+        PASSPHRASE_INPUT_PADDING_RIGHT_WITH_COPY
+    } else {
+        PASSPHRASE_INPUT_PADDING_RIGHT
+    };
     let input_config = InputConfig::new(&pw_render.text)
         .with_focused(state.new_passphrase_focused)
         .with_cursor(pw_render.cursor)
         .with_placeholder("Click to type passphrase\u{2026}")
         .with_type(if revealed { InputType::Text } else { InputType::Password })
-        .with_padding_right(28.0)
+        .with_padding_right(padding_right)
         .with_selection(sel_start, sel_end);
 
     let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
@@ -1434,9 +1450,44 @@ fn render_passphrase_input(
         );
     }
 
-    draw_passphrase_reveal_toggle(ctx, input_rect, revealed, state, toolbar_theme, layer_id, input_coordinator, result);
+    draw_passphrase_reveal_toggle(ctx, input_rect, revealed, state, toolbar_theme, layer_id, input_coordinator, result, show_copy_button);
+    if show_copy_button {
+        draw_passphrase_copy_button(ctx, input_rect, state, toolbar_theme, layer_id, input_coordinator, result);
+    }
 
     *cy += input_h + 16.0;
+}
+
+// =============================================================================
+// Passphrase input gutter icons (reveal toggle, copy button)
+// =============================================================================
+//
+// Both icons share one slot geometry so they can never draw on top of each
+// other: slot 0 is rightmost (the reveal toggle's position on every
+// passphrase field in this module, unchanged from before the copy button
+// existed), slot 1 sits one icon+gap further left and is only ever occupied
+// by the copy button.
+
+const GUTTER_ICON_SIZE: f64 = 14.0;
+const GUTTER_RIGHT_INSET: f64 = 8.0;
+const GUTTER_ICON_GAP: f64 = 4.0;
+
+/// Passphrase input right padding with only the reveal toggle in the
+/// gutter (slot 0 only) — unchanged from before the copy button existed.
+const PASSPHRASE_INPUT_PADDING_RIGHT: f64 = 28.0;
+
+/// Passphrase input right padding with both the reveal toggle and the copy
+/// button in the gutter (slots 0 and 1) — wide enough that typed text never
+/// runs under either icon.
+const PASSPHRASE_INPUT_PADDING_RIGHT_WITH_COPY: f64 = 46.0;
+
+/// X position of the icon glyph for gutter `slot` of `input_rect` (0 =
+/// rightmost, each higher slot one icon+gap further left).
+fn gutter_icon_x(input_rect: WidgetRect, slot: u32) -> f64 {
+    input_rect.x + input_rect.width
+        - GUTTER_RIGHT_INSET
+        - GUTTER_ICON_SIZE
+        - slot as f64 * (GUTTER_ICON_SIZE + GUTTER_ICON_GAP)
 }
 
 /// Draw the eye/eye-off reveal toggle inside the right edge of a passphrase
@@ -1444,6 +1495,10 @@ fn render_passphrase_input(
 /// covers every passphrase field on the profile-manager pages — see
 /// `UserSettingsState::passphrase_revealed`'s own doc for why a pair of
 /// fields (passphrase + confirm) reveals together.
+///
+/// `has_copy_button` is true when a copy button also shares this gutter
+/// (slot 1, immediately to the left) — the hit rect then stops at the gap
+/// midpoint instead of eating into slot 1's territory.
 #[allow(clippy::too_many_arguments)]
 fn draw_passphrase_reveal_toggle(
     ctx: &mut dyn RenderContext,
@@ -1454,11 +1509,10 @@ fn draw_passphrase_reveal_toggle(
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
+    has_copy_button: bool,
 ) {
-    const ICON_SIZE: f64 = 14.0;
-    const RIGHT_INSET: f64 = 8.0;
-    let icon_x = input_rect.x + input_rect.width - RIGHT_INSET - ICON_SIZE;
-    let icon_y = input_rect.y + (input_rect.height - ICON_SIZE) / 2.0;
+    let icon_x = gutter_icon_x(input_rect, 0);
+    let icon_y = input_rect.y + (input_rect.height - GUTTER_ICON_SIZE) / 2.0;
     let is_hovered = state.hovered_item_id.as_deref() == Some("profile_mgr:reveal_passphrase");
     let icon_color = if is_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
     // The icon names the STATE, not the action: a closed/crossed eye means
@@ -1466,21 +1520,100 @@ fn draw_passphrase_reveal_toggle(
     draw_svg_icon(
         ctx,
         if revealed { Icon::Eye.svg() } else { Icon::EyeOff.svg() },
-        icon_x, icon_y, ICON_SIZE, ICON_SIZE, icon_color,
+        icon_x, icon_y, GUTTER_ICON_SIZE, GUTTER_ICON_SIZE, icon_color,
     );
 
-    // The hit target is the whole right-hand gutter, not the 14px glyph. A
-    // 14×14 target is a miss waiting to happen, and the gutter belongs to
-    // nothing else.
+    // The hit target is the whole right-hand gutter slot, not the 14px
+    // glyph. A 14×14 target is a miss waiting to happen.
+    let left_pad = if has_copy_button { GUTTER_ICON_GAP / 2.0 } else { GUTTER_RIGHT_INSET };
     let hit_rect = WidgetRect::new(
-        icon_x - RIGHT_INSET,
+        icon_x - left_pad,
         input_rect.y,
-        ICON_SIZE + RIGHT_INSET * 2.0,
+        GUTTER_ICON_SIZE + left_pad + GUTTER_RIGHT_INSET,
         input_rect.height,
     );
     result.content_items.push(("profile_mgr:reveal_passphrase".to_string(), hit_rect));
     input_coordinator.register_on_layer(
         "user_settings:profile_mgr:reveal_passphrase",
+        hit_rect,
+        Sense::CLICK | Sense::HOVER,
+        layer_id,
+    );
+}
+
+/// Draw the copy-to-clipboard icon in gutter slot 1 of a passphrase input
+/// (immediately left of the reveal toggle), and register its hit rect.
+/// Sibling to `draw_passphrase_reveal_toggle` rather than folded into it —
+/// the eye is drawn on every passphrase field in this module, the copy
+/// button only on the `new_passphrase` field of the two pages where the
+/// user is CHOOSING a passphrase (owner ruling 2026-09-02).
+#[allow(clippy::too_many_arguments)]
+fn draw_passphrase_copy_button(
+    ctx: &mut dyn RenderContext,
+    input_rect: WidgetRect,
+    state: &UserSettingsState,
+    toolbar_theme: &ToolbarTheme,
+    layer_id: &uzor::input::LayerId,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    result: &mut UserSettingsResult,
+) {
+    let icon_x = gutter_icon_x(input_rect, 1);
+    let icon_y = input_rect.y + (input_rect.height - GUTTER_ICON_SIZE) / 2.0;
+    let is_hovered = state.hovered_item_id.as_deref() == Some("profile_mgr:passphrase_copy");
+    let icon_color = if is_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
+    draw_svg_icon(ctx, Icon::Copy.svg(), icon_x, icon_y, GUTTER_ICON_SIZE, GUTTER_ICON_SIZE, icon_color);
+
+    // Right edge stops at the gap midpoint — slot 0's own hit rect owns
+    // the territory beyond that — left edge keeps the full inset since
+    // nothing else occupies the gutter further left.
+    let hit_rect = WidgetRect::new(
+        icon_x - GUTTER_RIGHT_INSET,
+        input_rect.y,
+        GUTTER_ICON_SIZE + GUTTER_RIGHT_INSET + GUTTER_ICON_GAP / 2.0,
+        input_rect.height,
+    );
+    result.content_items.push(("profile_mgr:passphrase_copy".to_string(), hit_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:passphrase_copy",
+        hit_rect,
+        Sense::CLICK | Sense::HOVER,
+        layer_id,
+    );
+}
+
+/// Draw the "Suggest" text button that fills the passphrase field with a
+/// freshly generated strong passphrase (and copies it to the clipboard),
+/// right-aligned on `row_y`/`row_h`. Shared by both pages where the user
+/// CHOOSES a passphrase (`CreatePassphrase`, `SetNewPassphrase`) — never
+/// drawn on `render_page_unlock`, which enters an existing one.
+#[allow(clippy::too_many_arguments)]
+fn draw_passphrase_suggest_button(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    w: f64,
+    row_y: f64,
+    row_h: f64,
+    hovered: Option<&str>,
+    toolbar_theme: &ToolbarTheme,
+    layer_id: &uzor::input::LayerId,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    result: &mut UserSettingsResult,
+) {
+    let label = ProfileKey::BtnSuggestPassphrase.get(current_language());
+    let is_hovered = hovered == Some("profile_mgr:passphrase_suggest");
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(if is_hovered { toolbar_theme.accent.as_str() } else { toolbar_theme.item_text_muted.as_str() });
+    let label_w = ctx.measure_text(label);
+    ctx.set_text_align(TextAlign::Right);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(label, x + w, row_y);
+    ctx.set_text_align(TextAlign::Left);
+
+    const HIT_PAD_X: f64 = 6.0;
+    let hit_rect = WidgetRect::new(x + w - label_w - HIT_PAD_X, row_y, label_w + HIT_PAD_X * 2.0, row_h);
+    result.content_items.push(("profile_mgr:passphrase_suggest".to_string(), hit_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:passphrase_suggest",
         hit_rect,
         Sense::CLICK | Sense::HOVER,
         layer_id,

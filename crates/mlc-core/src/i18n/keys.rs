@@ -1132,10 +1132,15 @@ pub enum ProfileKey {
     RecoveryKeyPasswordLossNote  = 25,
     BtnCopyKey                   = 26,
     BtnRecoveryConfirmed         = 27,
+
+    // CreatePassphrase / SetNewPassphrase pages — "Suggest" button that
+    // fills the new-passphrase field with a generated one (owner ruling
+    // 2026-09-02).
+    BtnSuggestPassphrase         = 28,
 }
 
 impl ProfileKey {
-    pub const COUNT: usize = 28;
+    pub const COUNT: usize = 29;
 
     /// Get translation for this key.
     #[inline]

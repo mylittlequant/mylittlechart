@@ -15,7 +15,7 @@ pub mod storage;
 pub mod store;
 pub mod vault;
 
-pub use crypto::{MasterKey, derive_master_key, load_or_create_salt};
+pub use crypto::{MasterKey, derive_master_key, load_or_create_salt, generate_passphrase};
 pub use storage::{Storage, global_storage, set_global_storage, FilesystemStorage};
 pub use store::{SecretStore, Sealed, ABSOLUTE_TTL, IDLE_TTL};
 pub use vault::{VaultKey, VaultError, derive_key, encrypt_json, decrypt_json,
