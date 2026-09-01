@@ -500,10 +500,6 @@ struct App<'s> {
     /// Causes the Vault Unlock overlay to appear on the first window created.
     needs_vault_unlock: bool,
 
-    /// True when a plaintext profile exists without `salt.hex` — user must set a passphrase
-    /// to migrate to encrypted storage.  Shows wizard at page 1 (passphrase).
-    needs_migration: bool,
-
     /// Profile ID to switch to at the end of the current `about_to_wait` pass.
     ///
     /// Set by the `profile_switch` command handler; consumed once by
@@ -731,7 +727,6 @@ impl App<'_> {
         app_connector_ready_rx: mlc_backend_data_bridge::ConnectorReadyReceiver,
         is_first_run: bool,
         needs_vault_unlock: bool,
-        needs_migration: bool,
     ) -> Self {
         let app_state = AppState::from_profile(&profile);
 
@@ -1082,7 +1077,6 @@ impl App<'_> {
             promote_pending: false,
             is_first_run,
             needs_vault_unlock,
-            needs_migration,
             pending_profile_switch: None,
             pending_switch_vault_key: None,
             pending_new_profile_id: None,
@@ -1128,10 +1122,11 @@ impl App<'_> {
         // Owner's ruling 2026-08-31 (docs/mlc/audits/2026-08-30-entry-lock-
         // vault-and-user-persistence.md §10): a locked vault is no longer a
         // reason to withhold the chart, so `needs_vault_unlock` does not
-        // enter this OR — only is_first_run / needs_migration have no saved
-        // profile geometry to restore, so both center a 1200x800 window on
-        // the primary monitor instead.
-        let skeleton = self.is_first_run || self.needs_migration;
+        // enter this. Owner's ruling 2026-09-02: neither does a MISSING
+        // vault — `needs_migration` is gone entirely (see `main()`), so
+        // first-run is the only case left with no saved profile geometry to
+        // restore, and it centers a 1200x800 window on the primary monitor.
+        let skeleton = self.is_first_run;
         if skeleton {
             if let Some(monitor) = event_loop.primary_monitor().or_else(|| event_loop.available_monitors().next()) {
                 let screen = monitor.size();
@@ -1399,22 +1394,6 @@ impl App<'_> {
         // already populated unconditionally above.
         chart.panel_app.user_settings_state.needs_vault_unlock = self.needs_vault_unlock;
 
-        // Migration: existing plaintext profile without salt.hex.
-        // Show the profile manager create passphrase page so the user sets a passphrase.
-        // Their existing data will be encrypted on completion via save_all().
-        // Unlike a locked vault this window genuinely has no live chart yet
-        // (skeleton mode, see `skeleton` above) — `profile_manager_mandatory`
-        // keeps this page non-dismissible until the passphrase is set,
-        // distinct from `needs_vault_unlock`'s now-informational meaning.
-        if self.needs_migration {
-            use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
-            chart.panel_app.user_settings_state.profile_manager_mandatory = true;
-            chart.panel_app.user_settings_state.show_profile_manager = true;
-            chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
-            chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.domain.profile_id.clone();
-            chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.ui.display_name.clone();
-        }
-
         let chrome_px = (chrome::CHROME_HEIGHT * window.scale_factor()) as u32;
         chart.resize(size.width, size.height.saturating_sub(chrome_px));
 
@@ -1623,20 +1602,15 @@ impl App<'_> {
                 pw.chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.domain.profile_id.clone();
                 pw.chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.ui.display_name.clone();
             }
-        } else if !has_vault && !self.is_first_run {
-            // Existing profile with no encryption — offer to set up
-            use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
-            self.needs_vault_unlock = true;
-            for pw in self.windows.values_mut() {
-                pw.chart.panel_app.user_settings_state.show_profile_manager = true;
-                pw.chart.panel_app.user_settings_state.needs_vault_unlock = true;
-                pw.chart.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
-                pw.chart.panel_app.user_settings_state.profile_manager_target_id = self.profile.domain.profile_id.clone();
-                pw.chart.panel_app.user_settings_state.profile_manager_target_name = self.profile.ui.display_name.clone();
-                pw.chart.panel_app.user_settings_state.is_open = false;
-            }
-            eprintln!("[App] hot-reload: profile has no vault — showing passphrase creation");
         }
+        // A switched-to profile with no vault used to land here and get the
+        // profile manager forced open on CreatePassphrase — the same fossil
+        // as `needs_migration` (see `main()`), one layer down. Switching to a
+        // profile that has never been given a vault is not an error and not a
+        // migration: it has no secrets, and if the user wants one they open
+        // the Vault tab and press Set up. Owner's ruling 2026-09-02: the
+        // vault is opened where a secret is used, never in front of the
+        // chart.
 
         eprintln!(
             "[App] hot-reload: profile switch complete — {} window(s) created",
@@ -2372,10 +2346,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             return;
         }
 
-        // A locked vault no longer forces skeleton mode (owner's ruling
-        // 2026-08-31) — only first-run and migration have no live chart to
-        // show yet.
-        let skeleton = self.is_first_run || self.needs_migration;
+        // Neither a locked vault (owner 2026-08-31) nor a missing one
+        // (owner 2026-09-02) forces skeleton mode — only a true first run,
+        // where there is no profile on disk to draw a chart from yet.
+        let skeleton = self.is_first_run;
         if skeleton {
             // Skeleton = one default-sized window centered by OS, no profile geometry.
             eprintln!("[App] Skeleton mode — creating single loading window");
@@ -3440,7 +3414,6 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     self.save_all(&[]);
                     self.is_first_run = false;
                     self.needs_vault_unlock = false;
-                    self.needs_migration = false;
                     eprintln!("[App] wizard_complete — promoting skeleton to live");
                     self.pending_skeleton_promote = true;
                 }
@@ -3627,7 +3600,6 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 // First-time vault creation — show the recovery key before promoting.
                                 eprintln!("[App] vault key derived and set — showing recovery key");
                                 self.needs_vault_unlock = false;
-                                self.needs_migration = false;
                                 for pw in self.windows.values_mut() {
                                     use mlc_app_layout::ui::modal_settings::{
                                         CredentialsView, ProfileManagerPage, UserSettingsTab,
@@ -3671,7 +3643,6 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 eprintln!("[App] vault passphrase validated OK — promoting skeleton");
                                 self.profile = self.profile_manager.profile.clone();
                                 self.needs_vault_unlock = false;
-                                self.needs_migration = false;
                                 // Drop skeleton windows and recreate with live data.
                                 self.pending_skeleton_promote = true;
                             }
@@ -5237,15 +5208,24 @@ fn main() {
     // it is truth carried into `App` so the profile manager can route to the
     // UnlockPassphrase page when the user opens it themselves.
     let needs_vault_unlock = has_vault && has_salt;
-    // has_salt && !has_vault = incomplete profile (created but passphrase never set)
-    // !has_salt && !has_vault = old plaintext profile (pre-ZT)
-    let needs_migration = has_profile && !has_vault;
+    // There is deliberately no `needs_migration` here any more (owner's
+    // ruling 2026-09-02). It used to be `has_profile && !has_vault`, and it
+    // both forced skeleton mode and opened a NON-DISMISSIBLE CreatePassphrase
+    // page in front of the chart.
+    //
+    // Two things were wrong with it. `vault.enc` is the only place a
+    // credential has ever lived — `profile.json` is written plaintext and
+    // carries none by construction — so a profile without a vault holds no
+    // secrets and has nothing whatsoever to migrate; the screen demanded a
+    // passphrase to encrypt an empty set. And since a vault is now created
+    // only when the user asks for one, `!has_vault` is the NORMAL state, so
+    // the gate fired for ordinary users on every single launch. That is the
+    // fossil of the era when the vault was mandatory at entry, and the
+    // reason every profile on this machine has a `vault.enc`: the gate made
+    // them.
 
     if is_first_run {
         eprintln!("[App] first-run detected — welcome wizard will be shown");
-    }
-    if needs_migration {
-        eprintln!("[App] plaintext profile detected — migration wizard will be shown");
     }
 
     // Load ProfileManager (profile + templates + presets + snapshots) once at startup.
@@ -5268,7 +5248,7 @@ fn main() {
     let profile = profile_manager.profile.clone();
     let saved_windows = profile.ui.windows.clone();
 
-    let mut app = App::new(bridge, live_data_rt, live_data_handle, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock, needs_migration);
+    let mut app = App::new(bridge, live_data_rt, live_data_handle, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock);
     // Store the event-loop proxy so the promote worker can send PromoteReady
     // back to the main thread without polling.
     app.promote_proxy = Some(event_loop.create_proxy());
