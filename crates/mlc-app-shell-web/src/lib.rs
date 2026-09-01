@@ -732,6 +732,18 @@ fn run_render_loop(
             }
         }
 
+        // ── Drain clipboard requests ──────────────────────────────────────────
+        // Native parity (`main.rs`, "Drain clipboard requests"): the app sets
+        // `clipboard_text` when something asks to be copied — today that is
+        // the recovery key's "Copy key" button — and the shell is what
+        // actually reaches the clipboard. This shell took it from nobody.
+        {
+            let text = state_clone.borrow_mut().chart.clipboard_text.take();
+            if let Some(text) = text {
+                clipboard_write_text(&text);
+            }
+        }
+
         // ── Drain profile-family commands ─────────────────────────────────────
         // This shell had NO drain for `pending_updater_cmd` at all before this
         // arc (`grep pending_updater_cmd crates/mlc-app-shell-web` returned
@@ -827,7 +839,9 @@ fn run_render_loop(
                         let state = &mut *st;
                         match state.chart.apply_vault_setup(passphrase, &mut state.profile_manager) {
                             mlc_app::VaultSetupOutcome::Ready { recovery_key: Some(rk) } => {
-                                use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                                use mlc_app_layout::ui::modal_settings::{
+                                    CredentialsView, ProfileManagerPage, UserSettingsTab,
+                                };
                                 {
                                     let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
                                     let klen = rk.chars().count();
@@ -838,11 +852,24 @@ fn run_render_loop(
                                         fs.selection_start = None;
                                     }
                                 }
-                                let uss = &mut state.chart.panel_app.user_settings_state;
-                                uss.recovery_key_display = Some(rk);
-                                uss.profile_manager_page = ProfileManagerPage::ShowRecoveryKey;
-                                uss.show_profile_manager = true;
-                                uss.vault_unlock_error = None;
+                                state.chart.panel_app.user_settings_state.recovery_key_display = Some(rk);
+                                state.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                                // Which page-selector enum advances is decided
+                                // by which host is already up — the standalone
+                                // modal (native-boot-equivalent / new-profile
+                                // wizard flow) or the Vault tab (mid-session
+                                // "Set up"). Forcing the modal open
+                                // unconditionally here, as before, is exactly
+                                // the modal-on-modal bug this arc closes.
+                                if state.chart.panel_app.user_settings_state.show_profile_manager {
+                                    state.chart.panel_app.user_settings_state.profile_manager_page =
+                                        ProfileManagerPage::ShowRecoveryKey;
+                                } else {
+                                    state.chart.panel_app.credentials_state.view =
+                                        CredentialsView::ShowRecoveryKey;
+                                    state.chart.panel_app.user_settings_state.active_tab = UserSettingsTab::Vault;
+                                    state.chart.panel_app.user_settings_state.is_open = true;
+                                }
                                 web_sys::console::log_1(
                                     &"[mlc-app-shell-web] vault created — showing recovery key".into(),
                                 );
@@ -888,7 +915,9 @@ fn run_render_loop(
                         let state = &mut *st;
                         match state.chart.apply_recovery_unlock(recovery_key_text, &mut state.profile_manager) {
                             Ok(()) => {
-                                use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                                use mlc_app_layout::ui::modal_settings::{
+                                    CredentialsView, ProfileManagerPage, UserSettingsTab,
+                                };
                                 {
                                     let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
                                     let cp_wid = uzor::WidgetId::from(mlc_app::text_input::CONFIRM_PASSPHRASE);
@@ -897,12 +926,24 @@ fn run_render_loop(
                                     ic.text_fields_mut().clear(&cp_wid);
                                     ic.text_fields_mut().blur();
                                 }
-                                let uss = &mut state.chart.panel_app.user_settings_state;
-                                uss.vault_unlock_error = None;
-                                uss.set_passphrase_error.clear();
-                                uss.new_passphrase_focused = false;
-                                uss.confirm_passphrase_focused = false;
-                                uss.profile_manager_page = ProfileManagerPage::SetNewPassphrase;
+                                {
+                                    let uss = &mut state.chart.panel_app.user_settings_state;
+                                    uss.vault_unlock_error = None;
+                                    uss.set_passphrase_error.clear();
+                                    uss.new_passphrase_focused = false;
+                                    uss.confirm_passphrase_focused = false;
+                                }
+                                // Same host test as the `e2e_setup:` arm's own
+                                // ShowRecoveryKey navigation above.
+                                if state.chart.panel_app.user_settings_state.show_profile_manager {
+                                    state.chart.panel_app.user_settings_state.profile_manager_page =
+                                        ProfileManagerPage::SetNewPassphrase;
+                                } else {
+                                    state.chart.panel_app.credentials_state.view =
+                                        CredentialsView::SetNewPassphrase;
+                                    state.chart.panel_app.user_settings_state.active_tab = UserSettingsTab::Vault;
+                                    state.chart.panel_app.user_settings_state.is_open = true;
+                                }
                                 web_sys::console::log_1(
                                     &"[mlc-app-shell-web] recovery key accepted — set a new passphrase".into(),
                                 );
@@ -926,7 +967,9 @@ fn run_render_loop(
                     let state = &mut *st;
                     match state.chart.apply_new_passphrase(new_passphrase, &mut state.profile_manager) {
                         Ok(new_recovery_key_fmt) => {
-                            use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                            use mlc_app_layout::ui::modal_settings::{
+                                CredentialsView, ProfileManagerPage, UserSettingsTab,
+                            };
                             {
                                 let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
                                 let klen = new_recovery_key_fmt.chars().count();
@@ -945,12 +988,23 @@ fn run_render_loop(
                                 ic.text_fields_mut().clear(&cp_wid);
                                 ic.text_fields_mut().blur();
                             }
-                            let uss = &mut state.chart.panel_app.user_settings_state;
-                            uss.recovery_key_display = Some(new_recovery_key_fmt);
-                            uss.new_passphrase_focused = false;
-                            uss.confirm_passphrase_focused = false;
-                            uss.set_passphrase_error.clear();
-                            uss.profile_manager_page = ProfileManagerPage::ShowRecoveryKey;
+                            {
+                                let uss = &mut state.chart.panel_app.user_settings_state;
+                                uss.recovery_key_display = Some(new_recovery_key_fmt);
+                                uss.new_passphrase_focused = false;
+                                uss.confirm_passphrase_focused = false;
+                                uss.set_passphrase_error.clear();
+                            }
+                            // Same host test as this file's other two vault
+                            // page navigations above.
+                            if state.chart.panel_app.user_settings_state.show_profile_manager {
+                                state.chart.panel_app.user_settings_state.profile_manager_page =
+                                    ProfileManagerPage::ShowRecoveryKey;
+                            } else {
+                                state.chart.panel_app.credentials_state.view = CredentialsView::ShowRecoveryKey;
+                                state.chart.panel_app.user_settings_state.active_tab = UserSettingsTab::Vault;
+                                state.chart.panel_app.user_settings_state.is_open = true;
+                            }
                             web_sys::console::log_1(
                                 &"[mlc-app-shell-web] vault re-keyed — showing new recovery key".into(),
                             );
@@ -1797,8 +1851,8 @@ impl mlc_app_input_shell::Platform for WebPlatform<'_> {
             .unwrap_or((800, 600))
     }
 
-    fn clipboard_write(&self, _text: &str) {
-        // Async clipboard API — stub until wasm clipboard PR.
+    fn clipboard_write(&self, text: &str) {
+        clipboard_write_text(text);
     }
 
     fn clipboard_read(&self) -> Option<String> {
@@ -2268,6 +2322,35 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
     }
 
     Ok(())
+}
+
+/// Write `text` to the OS clipboard through the async Clipboard API.
+///
+/// Both copy paths on this shell were dead before this: the platform hook
+/// below was a stub, so Ctrl+C in any text field copied nothing, and
+/// `ChartApp::clipboard_text` — the explicit copy request behind the recovery
+/// key's "Copy key" button — had no drain at all (native drains it in
+/// `main.rs`). That second one matters most: it is the single moment the app
+/// hands the user a secret it will never show again and asks them to keep it,
+/// and the button did nothing at all.
+///
+/// Fire-and-forget: the promise is not awaited, only its rejection is logged.
+/// A browser that refuses the write (no permission, no user gesture, an
+/// insecure origin) must say so in the console rather than fail silently, but
+/// nothing in the app waits on the answer.
+#[cfg(target_arch = "wasm32")]
+fn clipboard_write_text(text: &str) {
+    let Some(win) = web_sys::window() else {
+        return;
+    };
+    let promise = win.navigator().clipboard().write_text(text);
+    // Driven to completion in a detached microtask, the same way the
+    // screenshot copy below does it.
+    wasm_bindgen_futures::spawn_local(async move {
+        if let Err(e) = wasm_bindgen_futures::JsFuture::from(promise).await {
+            web_sys::console::error_1(&format!("[clipboard] writeText failed: {:?}", e).into());
+        }
+    });
 }
 
 // ─── Screenshot via canvas.toBlob → navigator.clipboard.write ────────────────

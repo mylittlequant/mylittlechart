@@ -5686,34 +5686,39 @@ impl ChartApp {
                 // The × button is the shell's now — see the "profile_manager:"
                 // chrome block above (`dismiss_profile_manager`).
                 "profile_mgr:back" => {
-                    use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
-                    // Only block Back on ShowRecoveryKey — user MUST acknowledge recovery key
-                    if matches!(self.panel_app.user_settings_state.profile_manager_page, ProfileManagerPage::ShowRecoveryKey) {
-                        eprintln!("[ChartApp] profile_mgr: back blocked — must acknowledge recovery key");
-                    } else if matches!(self.panel_app.user_settings_state.profile_manager_page, ProfileManagerPage::ProfileList) {
-                        // Already on ProfileList — "Back" means dismiss if we have a live profile
-                        if !self.panel_app.user_settings_state.runtime_profile_id.is_empty() {
-                            self.panel_app.user_settings_state.show_profile_manager = false;
-                            eprintln!("[ChartApp] profile_mgr: back from profile list — dismissing (live profile exists)");
+                    use mlc_app_layout::ui::modal_settings::{CredentialsView, ProfileManagerPage};
+                    // Same widget id in both hosts (`layout::modals::
+                    // profile_manager`'s module doc) — which one is up
+                    // decides what "back" means, per the owner's ruling
+                    // 2026-09-01: the standalone modal's own profile list
+                    // is not part of the Vault tab, so inside the tab
+                    // "back" can only ever mean the vault's own list page.
+                    if self.panel_app.user_settings_state.show_profile_manager {
+                        // Standalone modal (native boot prompt) — unchanged.
+                        // Only block Back on ShowRecoveryKey — user MUST acknowledge recovery key
+                        if matches!(self.panel_app.user_settings_state.profile_manager_page, ProfileManagerPage::ShowRecoveryKey) {
+                            eprintln!("[ChartApp] profile_mgr: back blocked — must acknowledge recovery key");
+                        } else if matches!(self.panel_app.user_settings_state.profile_manager_page, ProfileManagerPage::ProfileList) {
+                            // Already on ProfileList — "Back" means dismiss if we have a live profile
+                            if !self.panel_app.user_settings_state.runtime_profile_id.is_empty() {
+                                self.panel_app.user_settings_state.show_profile_manager = false;
+                                eprintln!("[ChartApp] profile_mgr: back from profile list — dismissing (live profile exists)");
+                            }
+                        } else {
+                            self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ProfileList;
+                            self.abandon_vault_page_entry();
+                            eprintln!("[ChartApp] profile_mgr: back to profile list");
                         }
                     } else {
-                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ProfileList;
-                        self.panel_app.user_settings_state.vault_unlock_error = None;
-                        self.panel_app.user_settings_state.vault_unlock_attempts = 0;
-                        {
-                            let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
-                            self.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
-                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                        }
-                        self.panel_app.user_settings_state.new_passphrase_focused = false;
-                        // Leaving a passphrase page abandons a revealed
-                        // secret too — same reasoning as `dismiss_profile_manager`.
-                        self.panel_app.user_settings_state.passphrase_revealed = false;
-                        // Navigating away from Unlock abandons a pending
-                        // credentials-reseal return — see the matching
-                        // comment in `dismiss_profile_manager`.
-                        self.panel_app.credentials_state.pending_unlock_return = None;
-                        eprintln!("[ChartApp] profile_mgr: back to profile list");
+                        // Vault tab — only UnlockPassphrase/CreatePassphrase/
+                        // UseRecoveryKey ever draw this button (ShowRecoveryKey
+                        // and SetNewPassphrase render none, in either host);
+                        // back always returns to the vault's own list page,
+                        // the same target `cred:add:back` already uses from
+                        // the add-key form.
+                        self.panel_app.credentials_state.view = CredentialsView::List;
+                        self.abandon_vault_page_entry();
+                        eprintln!("[ChartApp] profile_mgr: back to vault list");
                     }
                 }
                 "profile_mgr:create_new" => {
@@ -5796,8 +5801,17 @@ impl ChartApp {
                     eprintln!("[ChartApp] profile_mgr: name input focused");
                 }
                 "profile_mgr:use_recovery_key" => {
-                    use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
-                    self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UseRecoveryKey;
+                    use mlc_app_layout::ui::modal_settings::{CredentialsView, ProfileManagerPage};
+                    // Which page-selector enum advances is decided by which
+                    // host drew the link that was just clicked — the
+                    // standalone modal (native boot prompt) or the Vault
+                    // tab. Both render this same widget id (see
+                    // `layout::modals::profile_manager`'s module doc).
+                    if self.panel_app.user_settings_state.show_profile_manager {
+                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UseRecoveryKey;
+                    } else {
+                        self.panel_app.credentials_state.view = CredentialsView::UseRecoveryKey;
+                    }
                     {
                         let rk_wid = uzor::WidgetId::from(crate::text_input::RECOVERY_KEY);
                         self.input_coordinator.borrow_mut().text_fields_mut().clear(&rk_wid);

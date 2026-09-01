@@ -23,6 +23,30 @@
 //!   ShowRecoveryKey   — Display the recovery key once after vault creation.
 //!   UseRecoveryKey    — Enter a recovery key to restore access.
 //!   SetNewPassphrase  — Set a new passphrase after a recovery-key unlock.
+//!
+//! # Two hosts for five of the seven pages
+//!
+//! `ProfileList` and `CreateNew` are PROFILE pages — genuinely modal-only,
+//! since the profile list is not part of the Vault tab and will not exist at
+//! all for accounts below the paid tier. The other five (`UnlockPassphrase`,
+//! `CreatePassphrase`, `ShowRecoveryKey`, `UseRecoveryKey`,
+//! `SetNewPassphrase`) are VAULT pages: their bodies (`render_page_unlock`
+//! and friends, below) are called from HERE (this modal, for the native
+//! boot prompt in `mlc-app-shell-vello/src/main.rs`'s `needs_vault_unlock`
+//! path, where no chart or settings window exists yet) and from the Vault
+//! tab (`layout::modals::user_settings::render_vault_tab`, for every other
+//! entry point — see `route_credentials_to_unlock` in
+//! `mlc-app/src/input/credentials.rs`). One implementation, two callers: the
+//! function bodies never duplicate, only the content rect (this modal's
+//! `shell.content` vs. the tab's scrollable viewport) and the
+//! [`VaultPageHost`] passed in differ. State stays on `UserSettingsState`
+//! either way (target name, passphrase renders, error strings, ...) — only
+//! the PAGE SELECTOR differs: `UserSettingsState::profile_manager_page`
+//! here, `CredentialsState::view` in the tab. Widget ids are identical in
+//! both hosts (`"profile_mgr:unlock"`, `"profile_mgr:back"`, ...) — the
+//! shared `panel_click.rs` arms that handle them decide which enum to
+//! advance by reading `UserSettingsState::show_profile_manager`, not by
+//! asking which host rendered the click.
 
 use mlc_core::engine::render::{RenderContext, draw_svg_icon};
 use mlc_core::i18n::{current_language, TextKey, ProfileKey};
@@ -48,6 +72,24 @@ use crate::layout::render_chart::FrameTheme;
 // =============================================================================
 
 const MODAL_W: f64 = 520.0;
+
+/// Which host is rendering one of the five shared vault pages — the only
+/// thing that differs between the two callers (see the module doc). Threaded
+/// only into the three pages that draw a "back" affordance
+/// (`render_page_unlock`, `render_page_create_passphrase`,
+/// `render_page_use_recovery_key`); `ShowRecoveryKey`/`SetNewPassphrase`
+/// render no back button in either host, so they take no host parameter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VaultPageHost {
+    /// The standalone profile-manager modal (this file's own shell) — "back"
+    /// keeps its current meaning: return to `ProfileManagerPage::ProfileList`.
+    Modal,
+    /// The Vault tab of the User Settings modal — the profile list this
+    /// button used to reach is not part of this tab, so "back" instead
+    /// returns to `CredentialsView::List`, the same target the add-key
+    /// form's own "< Back" already uses.
+    Tab,
+}
 
 const PROFILE_HEADER_H: f64 = 36.0;
 const PROFILE_ZT_ROW_H: f64 = 18.0;
@@ -187,30 +229,48 @@ pub fn render_profile_manager(
         ProfileManagerPage::ProfileList => render_page_profile_list(
             ctx, x, y, w, state, text_color, toolbar_theme, &layer_id, input_coordinator, result,
         ),
-        ProfileManagerPage::UnlockPassphrase => render_page_unlock(
-            ctx, x, y, w, state, text_color, toolbar_theme,
-            frame_theme, current_time_ms, &layer_id, input_coordinator, result,
-        ),
-        ProfileManagerPage::CreatePassphrase => render_page_create_passphrase(
-            ctx, x, y, w, state, text_color, toolbar_theme,
-            frame_theme, current_time_ms, &layer_id, input_coordinator, result,
-        ),
+        // The five shared vault pages return the content's final `cy` (the
+        // tab's own scroll container needs it — see `render_vault_tab`) —
+        // discarded here via the block's trailing `;`, this modal still
+        // sizes itself from the hand-traced constants in
+        // `page_content_height` above.
+        ProfileManagerPage::UnlockPassphrase => {
+            render_page_unlock(
+                ctx, x, y, w, state, text_color, toolbar_theme,
+                frame_theme, current_time_ms, &layer_id, input_coordinator, result,
+                VaultPageHost::Modal,
+            );
+        }
+        ProfileManagerPage::CreatePassphrase => {
+            render_page_create_passphrase(
+                ctx, x, y, w, state, text_color, toolbar_theme,
+                frame_theme, current_time_ms, &layer_id, input_coordinator, result,
+                VaultPageHost::Modal,
+            );
+        }
         ProfileManagerPage::CreateNew => render_page_create_new(
             ctx, x, y, w, state, text_color, toolbar_theme,
             frame_theme, &layer_id, input_coordinator, result,
         ),
-        ProfileManagerPage::ShowRecoveryKey => render_page_show_recovery_key(
-            ctx, x, y, w, state, text_color, toolbar_theme,
-            frame_theme, &layer_id, input_coordinator, result,
-        ),
-        ProfileManagerPage::UseRecoveryKey => render_page_use_recovery_key(
-            ctx, x, y, w, state, text_color, toolbar_theme,
-            frame_theme, &layer_id, input_coordinator, result,
-        ),
-        ProfileManagerPage::SetNewPassphrase => render_page_set_new_passphrase(
-            ctx, x, y, w, state, text_color, toolbar_theme,
-            frame_theme, &layer_id, input_coordinator, result,
-        ),
+        ProfileManagerPage::ShowRecoveryKey => {
+            render_page_show_recovery_key(
+                ctx, x, y, w, state, text_color, toolbar_theme,
+                frame_theme, &layer_id, input_coordinator, result,
+            );
+        }
+        ProfileManagerPage::UseRecoveryKey => {
+            render_page_use_recovery_key(
+                ctx, x, y, w, state, text_color, toolbar_theme,
+                frame_theme, &layer_id, input_coordinator, result,
+                VaultPageHost::Modal,
+            );
+        }
+        ProfileManagerPage::SetNewPassphrase => {
+            render_page_set_new_passphrase(
+                ctx, x, y, w, state, text_color, toolbar_theme,
+                frame_theme, &layer_id, input_coordinator, result,
+            );
+        }
     }
 
     end_modal_shell(ctx, input_coordinator, &spec, &theme, &shell, &layer_id, &[]);
@@ -431,7 +491,7 @@ fn render_page_profile_list(
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
-fn render_page_unlock(
+pub(crate) fn render_page_unlock(
     ctx: &mut dyn RenderContext,
     x: f64,
     y: f64,
@@ -444,11 +504,12 @@ fn render_page_unlock(
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
-) {
+    host: VaultPageHost,
+) -> f64 {
     let hovered = state.hovered_item_id.as_deref();
     let mut cy = y;
 
-    render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
+    render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered, host);
     cy += 10.0;
 
     // Subtitle (the title now lives in the shell header).
@@ -521,6 +582,8 @@ fn render_page_unlock(
     input_coordinator.register_on_layer(
         "user_settings:profile_mgr:use_recovery_key", link_rect, Sense::CLICK | Sense::HOVER, layer_id,
     );
+    cy += link_h;
+    cy
 }
 
 // =============================================================================
@@ -528,7 +591,7 @@ fn render_page_unlock(
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
-fn render_page_create_passphrase(
+pub(crate) fn render_page_create_passphrase(
     ctx: &mut dyn RenderContext,
     x: f64,
     y: f64,
@@ -541,11 +604,12 @@ fn render_page_create_passphrase(
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
-) {
+    host: VaultPageHost,
+) -> f64 {
     let hovered = state.hovered_item_id.as_deref();
     let mut cy = y;
 
-    render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
+    render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered, host);
     cy += 10.0;
 
     ctx.set_font("12px sans-serif");
@@ -671,6 +735,8 @@ fn render_page_create_passphrase(
             layer_id,
         );
     }
+    cy += btn_h;
+    cy
 }
 
 // =============================================================================
@@ -682,8 +748,23 @@ fn render_page_create_passphrase(
 /// modal's own dismissibility, is what makes this page a one-way door; the ×
 /// and Esc still work like any other page here (the recovery key itself is
 /// never destroyed by closing early, only the forward flow is).
+/// Split a formatted recovery key onto two lines at the group boundary
+/// nearest the middle, so both halves are about as long.
+///
+/// A key with no separators (or a short placeholder like "(key not
+/// available)") comes back as one line and an empty second — the caller
+/// centres a single line in that case.
+fn split_recovery_key_for_display(key: &str) -> (String, String) {
+    let groups: Vec<&str> = key.split('-').collect();
+    if groups.len() < 4 {
+        return (key.to_string(), String::new());
+    }
+    let half = groups.len() / 2;
+    (groups[..half].join("-"), groups[half..].join("-"))
+}
+
 #[allow(clippy::too_many_arguments)]
-fn render_page_show_recovery_key(
+pub(crate) fn render_page_show_recovery_key(
     ctx: &mut dyn RenderContext,
     x: f64,
     y: f64,
@@ -691,11 +772,11 @@ fn render_page_show_recovery_key(
     state: &UserSettingsState,
     _text_color: &str,
     toolbar_theme: &ToolbarTheme,
-    frame_theme: &FrameTheme,
+    _frame_theme: &FrameTheme,
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
-) {
+) -> f64 {
     let hovered = state.hovered_item_id.as_deref();
     let mut cy = y;
 
@@ -723,47 +804,40 @@ fn render_page_show_recovery_key(
         .as_deref()
         .unwrap_or("(key not available)");
 
-    let key_box_h = 40.0;
+    // The key is 16 groups of four hex digits — 79 characters. A single-line
+    // input box this wide fits about seventy of them at a readable size, so
+    // the box scrolled and showed the TAIL: measured on the stand, the first
+    // three groups were off-screen with no indication they existed. On the
+    // one page whose entire job is "write this down", showing part of the key
+    // is worse than showing it small, and worse still because it looks
+    // complete. Two lines, split on a group boundary, and every character is
+    // on screen.
+    //
+    // Monospace, because the reader is transcribing it by hand and the
+    // grouping is the only structure they have to keep their place.
+    let key_box_h = 52.0;
     let key_display_rect = WidgetRect::new(x, cy, w, key_box_h);
 
-    let key_widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+    let (line_one, line_two) = split_recovery_key_for_display(key_text);
 
-    let rk_render = &state.recovery_key_display_render;
-    let (sel_start, sel_end) = if let Some((lo, hi)) = rk_render.selection_range() {
-        (Some(lo), Some(hi))
+    ctx.set_fill_color(&toolbar_theme.dropdown_bg);
+    ctx.fill_rounded_rect(key_display_rect.x, key_display_rect.y, key_display_rect.width, key_display_rect.height, 4.0);
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(key_display_rect.x, key_display_rect.y, key_display_rect.width, key_display_rect.height, 4.0);
+
+    ctx.set_font("13px monospace");
+    ctx.set_fill_color(&toolbar_theme.item_text);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    let centre_x = key_display_rect.x + key_display_rect.width / 2.0;
+    if line_two.is_empty() {
+        ctx.fill_text(&line_one, centre_x, key_display_rect.y + key_box_h / 2.0);
     } else {
-        (None, None)
-    };
-    let display_focused = state.recovery_key_display_focused;
-    let key_display_config = InputConfig::new(key_text)
-        .with_focused(display_focused)
-        .with_cursor(rk_render.cursor)
-        .with_type(InputType::Text)
-        .with_font_size(13.0)
-        .with_padding(10.0)
-        .with_radius(4.0)
-        .with_selection(sel_start, sel_end);
-
-    let key_display_result = draw_input(ctx, &key_display_config, crate::ui::widgets::types::WidgetState::Normal, key_display_rect, &key_widget_theme);
-
-    result.content_items.push(("profile_mgr:recovery_key_display".to_string(), key_display_rect));
-    result.input_char_positions.push(("profile_mgr:recovery_key_display".to_string(), key_display_result.char_x_positions.clone()));
-    input_coordinator.register_on_layer(
-        "user_settings:profile_mgr:recovery_key_display",
-        key_display_rect,
-        Sense::CLICK | Sense::HOVER,
-        layer_id,
-    );
-
-    if display_focused && rk_render.cursor_visible {
-        draw_input_cursor(
-            ctx,
-            key_display_result.cursor_x,
-            key_display_result.cursor_y,
-            key_display_result.cursor_height,
-            toolbar_theme.accent.as_str(),
-        );
+        ctx.fill_text(&line_one, centre_x, key_display_rect.y + key_box_h * 0.32);
+        ctx.fill_text(&line_two, centre_x, key_display_rect.y + key_box_h * 0.68);
     }
+    ctx.set_text_align(TextAlign::Left);
 
     cy += key_box_h + 10.0;
 
@@ -825,6 +899,8 @@ fn render_page_show_recovery_key(
         Sense::CLICK | Sense::HOVER,
         layer_id,
     );
+    cy += btn_h;
+    cy
 }
 
 // =============================================================================
@@ -848,7 +924,9 @@ fn render_page_create_new(
     let hovered = state.hovered_item_id.as_deref();
     let mut cy = y;
 
-    render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
+    // A PROFILE page (see the module doc) — never rendered from the Vault
+    // tab, so its own back button is always the modal's.
+    render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered, VaultPageHost::Modal);
     cy += 12.0;
 
     ctx.set_font("12px sans-serif");
@@ -934,7 +1012,7 @@ fn render_page_create_new(
 /// reasoning as `ShowRecoveryKey`: this step being one-way is a property of
 /// the recovery flow, not of the modal, so the × and Esc still dismiss it.
 #[allow(clippy::too_many_arguments)]
-fn render_page_set_new_passphrase(
+pub(crate) fn render_page_set_new_passphrase(
     ctx: &mut dyn RenderContext,
     x: f64,
     y: f64,
@@ -946,7 +1024,7 @@ fn render_page_set_new_passphrase(
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
-) {
+) -> f64 {
     let hovered = state.hovered_item_id.as_deref();
     let has_error = !state.set_passphrase_error.is_empty();
     let mut cy = y;
@@ -1104,6 +1182,8 @@ fn render_page_set_new_passphrase(
             layer_id,
         );
     }
+    cy += btn_h;
+    cy
 }
 
 // =============================================================================
@@ -1111,7 +1191,7 @@ fn render_page_set_new_passphrase(
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
-fn render_page_use_recovery_key(
+pub(crate) fn render_page_use_recovery_key(
     ctx: &mut dyn RenderContext,
     x: f64,
     y: f64,
@@ -1123,11 +1203,12 @@ fn render_page_use_recovery_key(
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
-) {
+    host: VaultPageHost,
+) -> f64 {
     let hovered = state.hovered_item_id.as_deref();
     let mut cy = y;
 
-    render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
+    render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered, host);
     cy += 10.0;
 
     ctx.set_font("12px sans-serif");
@@ -1211,14 +1292,24 @@ fn render_page_use_recovery_key(
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(err_msg.as_str(), x + w / 2.0, cy);
         ctx.set_text_align(TextAlign::Left);
+        cy += 18.0;
     }
+    cy
 }
 
 // =============================================================================
 // Shared helpers
 // =============================================================================
 
-/// Render a "← Back to profiles" button. Advances `cy` by button height.
+/// Render the "back" affordance for one of the three vault pages that have
+/// one. Advances `cy` by the affordance's own height (the caller adds its
+/// usual gap afterward, same in both hosts — see the module doc).
+///
+/// The widget id is `"profile_mgr:back"` in EITHER host — only the paint
+/// differs. Behaviour is decided once, in `panel_click.rs`'s single
+/// `"profile_mgr:back"` arm, by reading `UserSettingsState::
+/// show_profile_manager`; duplicating that decision into a second id here
+/// would let the two drift.
 fn render_back_button(
     ctx: &mut dyn RenderContext,
     x: f64,
@@ -1228,25 +1319,47 @@ fn render_back_button(
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
     hovered_item_id: Option<&str>,
+    host: VaultPageHost,
 ) {
-    let btn_w = 120.0;
-    let btn_h = 24.0;
     let is_hovered = hovered_item_id == Some("profile_mgr:back");
-    let btn_bg = if is_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
-    ctx.set_fill_color(btn_bg);
-    ctx.fill_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
-    let stroke_color = if is_hovered { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.separator.as_str() };
-    ctx.set_stroke_color(stroke_color);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
-    draw_svg_icon(ctx, Icon::ChevronLeft.svg(), x + 4.0, *cy + (btn_h - 14.0) / 2.0, 14.0, 14.0, &toolbar_theme.item_text);
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(ProfileKey::BackToProfiles.get(current_language()), x + 22.0, *cy + btn_h / 2.0);
+    let back_rect = match host {
+        VaultPageHost::Modal => {
+            // "← Back to profiles" — a bordered pill with a chevron icon,
+            // unchanged from before this page moved into the Vault tab.
+            let btn_w = 120.0;
+            let btn_h = 24.0;
+            let btn_bg = if is_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
+            ctx.set_fill_color(btn_bg);
+            ctx.fill_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
+            let stroke_color = if is_hovered { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.separator.as_str() };
+            ctx.set_stroke_color(stroke_color);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(x, *cy, btn_w, btn_h, 4.0);
+            draw_svg_icon(ctx, Icon::ChevronLeft.svg(), x + 4.0, *cy + (btn_h - 14.0) / 2.0, 14.0, 14.0, &toolbar_theme.item_text);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&toolbar_theme.item_text);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(ProfileKey::BackToProfiles.get(current_language()), x + 22.0, *cy + btn_h / 2.0);
 
-    let back_rect = WidgetRect::new(x, *cy, btn_w, btn_h);
+            WidgetRect::new(x, *cy, btn_w, btn_h)
+        }
+        VaultPageHost::Tab => {
+            // "< Back" — the same plain text-link affordance the add-key
+            // form's own "cred:add:back" already draws, so the vault tab
+            // reads as one surface rather than switching styles mid-tab.
+            let btn_h = 24.0;
+            ctx.set_fill_color(if is_hovered { &toolbar_theme.accent } else { &toolbar_theme.item_text_muted });
+            ctx.set_font("12px sans-serif");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("< Back", x, *cy + btn_h / 2.0);
+            ctx.set_text_align(TextAlign::Left);
+
+            WidgetRect::new(x, *cy, 60.0, btn_h)
+        }
+    };
+
     result.content_items.push(("profile_mgr:back".to_string(), back_rect));
     input_coordinator.register_on_layer(
         "user_settings:profile_mgr:back",
@@ -1254,7 +1367,7 @@ fn render_back_button(
         Sense::CLICK | Sense::HOVER,
         layer_id,
     );
-    *cy += btn_h;
+    *cy += back_rect.height;
 }
 
 /// Render the passphrase input box. Advances `cy` past the input field.

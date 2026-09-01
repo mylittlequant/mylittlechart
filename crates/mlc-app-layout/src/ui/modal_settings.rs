@@ -2663,6 +2663,18 @@ impl AlertSettingsState {
 // for a modal's own chrome.
 
 /// Which page of the Vault tab is showing.
+///
+/// The five `*Passphrase*`/`*RecoveryKey*` variants mirror
+/// `ProfileManagerPage`'s own — they render via the SAME functions in
+/// `layout::modals::profile_manager` (`render_page_unlock` and friends),
+/// parameterized by `VaultPageHost::Tab` instead of `VaultPageHost::Modal`.
+/// `ProfileManagerPage` still owns `ProfileList`/`CreateNew`, which have no
+/// counterpart here: the profile list is not part of this tab, and will not
+/// exist at all for accounts below the paid tier (owner's ruling
+/// 2026-09-01) — see `route_credentials_to_unlock`'s module doc in
+/// `mlc-app/src/input/credentials.rs` for the entry point that picks between
+/// these two variants, and `panel_click.rs`'s `"profile_mgr:back"` arm for
+/// how the shared pages tell which enum to drive (`show_profile_manager`).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CredentialsView {
     /// The list of issued exchange keys + the webhook URL field. Default —
@@ -2674,6 +2686,21 @@ pub enum CredentialsView {
     /// `ChartApp::handle_credentials_click`'s "add_key" arm, which routes to
     /// unlock instead of switching here while sealed.
     AddKey,
+    /// Enter passphrase to unlock this profile's `vault.enc`.
+    UnlockPassphrase,
+    /// Set a new passphrase for a profile that has no vault yet.
+    CreatePassphrase,
+    /// Display the recovery key once after vault creation. Shown immediately
+    /// after `CreatePassphrase` succeeds; no back button in either host —
+    /// the user must acknowledge it, not navigate away.
+    ShowRecoveryKey,
+    /// Enter a recovery key to restore access when the passphrase is
+    /// forgotten.
+    UseRecoveryKey,
+    /// After a recovery-key unlock — a new passphrase is mandatory before
+    /// the vault is considered settled. No back button, same reasoning as
+    /// `ShowRecoveryKey`.
+    SetNewPassphrase,
 }
 
 /// State for the Vault tab — the vault-gated surface for exchange API keys

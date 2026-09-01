@@ -3628,7 +3628,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 self.needs_vault_unlock = false;
                                 self.needs_migration = false;
                                 for pw in self.windows.values_mut() {
-                                    use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                                    use mlc_app_layout::ui::modal_settings::{
+                                        CredentialsView, ProfileManagerPage, UserSettingsTab,
+                                    };
                                     pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
                                     pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                                     pw.chart.panel_app.user_settings_state.recovery_key_display =
@@ -3643,9 +3645,23 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             fs.selection_start = None;
                                         }
                                     }
-                                    pw.chart.panel_app.user_settings_state.profile_manager_page =
-                                        ProfileManagerPage::ShowRecoveryKey;
-                                    pw.chart.panel_app.user_settings_state.show_profile_manager = true;
+                                    // Which page-selector enum advances is
+                                    // decided by which host is already up —
+                                    // the standalone modal (native boot) or
+                                    // the Vault tab (mid-session "Set up").
+                                    // Forcing the modal open unconditionally
+                                    // here, as before, is exactly the
+                                    // modal-on-modal bug this arc closes.
+                                    if pw.chart.panel_app.user_settings_state.show_profile_manager {
+                                        pw.chart.panel_app.user_settings_state.profile_manager_page =
+                                            ProfileManagerPage::ShowRecoveryKey;
+                                    } else {
+                                        pw.chart.panel_app.credentials_state.view =
+                                            CredentialsView::ShowRecoveryKey;
+                                        pw.chart.panel_app.user_settings_state.active_tab =
+                                            UserSettingsTab::Vault;
+                                        pw.chart.panel_app.user_settings_state.is_open = true;
+                                    }
                                 }
                             }
                             Some(mlc_app::VaultSetupOutcome::Ready { recovery_key: None }) => {
@@ -3712,8 +3728,26 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         .unwrap_or_default();
                     let current_id = self.profile_manager.profile.domain.profile_id.clone();
 
+                    // Which profile's vault this recovery key is being spent
+                    // on. Computed ONCE and reused by the navigation decision
+                    // below, because the two must not be able to disagree:
+                    // whichever directory we decrypt is the profile whose
+                    // follow-up page the user has to land on.
+                    //
+                    // The navigation used to test `self.needs_vault_unlock`
+                    // instead — a boot-time flag. Sealing the vault mid-session
+                    // with the Lock button does not set it, so a recovery
+                    // unlock from the Vault tab took the "different profile"
+                    // branch with `target_id == current_id`, scheduled a window
+                    // rebuild onto the profile already loaded, and never showed
+                    // the mandatory new-passphrase page. The vault was open and
+                    // the passphrase that could no longer be remembered was
+                    // still the only one that worked.
+                    let unlocking_other_profile =
+                        !target_id.is_empty() && target_id != current_id && !self.needs_vault_unlock;
+
                     // Determine which profile dir to use
-                    let profile_dir = if !target_id.is_empty() && target_id != current_id && !self.needs_vault_unlock {
+                    let profile_dir = if unlocking_other_profile {
                         // Unlocking a different profile
                         let profiles_dir = mlc_core::active_profile_data_dir()
                             .parent()
@@ -3754,7 +3788,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                     let vault_key = mlc_vault::crypto::derive_vault_key(&master_key, &salt);
                                                     eprintln!("[App] recovery_unlock: master key recovered — vault key derived");
 
-                                                    if self.needs_vault_unlock {
+                                                    if !unlocking_other_profile {
                                                         // Active profile unlock via recovery — vault is
                                                         // now readable but the user must set a new
                                                         // passphrase before we promote the skeleton.
@@ -3771,8 +3805,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                         // Store master_key so set_new_passphrase: can re-key the vault.
                                                         self.pending_recovery_master_key = Some(master_key);
 
-                                                        // Navigate to the mandatory SetNewPassphrase page.
-                                                        use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                                                        // Navigate to the mandatory SetNewPassphrase page —
+                                                        // in whichever host is already up (see the
+                                                        // `e2e_setup:` handler's own comment on this same
+                                                        // `show_profile_manager` test above).
+                                                        use mlc_app_layout::ui::modal_settings::{
+                                                            CredentialsView, ProfileManagerPage, UserSettingsTab,
+                                                        };
                                                         for pw in self.windows.values_mut() {
                                                             pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
                                                             pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
@@ -3787,8 +3826,16 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                             }
                                                             pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                                             pw.chart.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                                                            pw.chart.panel_app.user_settings_state.profile_manager_page =
-                                                                ProfileManagerPage::SetNewPassphrase;
+                                                            if pw.chart.panel_app.user_settings_state.show_profile_manager {
+                                                                pw.chart.panel_app.user_settings_state.profile_manager_page =
+                                                                    ProfileManagerPage::SetNewPassphrase;
+                                                            } else {
+                                                                pw.chart.panel_app.credentials_state.view =
+                                                                    CredentialsView::SetNewPassphrase;
+                                                                pw.chart.panel_app.user_settings_state.active_tab =
+                                                                    UserSettingsTab::Vault;
+                                                                pw.chart.panel_app.user_settings_state.is_open = true;
+                                                            }
                                                         }
                                                         eprintln!("[App] recovery_unlock: navigating to SetNewPassphrase");
                                                     } else {
@@ -3878,7 +3925,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // re-encrypts vault.enc, generates a fresh recovery key, then shows ShowRecoveryKey.
                 if let Some(new_passphrase) = cmd_str.strip_prefix("set_new_passphrase:") {
                     cmd_handled = true;
-                    use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                    use mlc_app_layout::ui::modal_settings::{
+                        CredentialsView, ProfileManagerPage, UserSettingsTab,
+                    };
 
                     match self.pending_recovery_master_key.take() {
                         None => {
@@ -3941,8 +3990,18 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                         pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                         pw.chart.panel_app.user_settings_state.confirm_passphrase_focused = false;
                                         pw.chart.panel_app.user_settings_state.set_passphrase_error.clear();
-                                        pw.chart.panel_app.user_settings_state.profile_manager_page =
-                                            ProfileManagerPage::ShowRecoveryKey;
+                                        // Same host test as `e2e_setup:`'s own ShowRecoveryKey
+                                        // navigation above.
+                                        if pw.chart.panel_app.user_settings_state.show_profile_manager {
+                                            pw.chart.panel_app.user_settings_state.profile_manager_page =
+                                                ProfileManagerPage::ShowRecoveryKey;
+                                        } else {
+                                            pw.chart.panel_app.credentials_state.view =
+                                                CredentialsView::ShowRecoveryKey;
+                                            pw.chart.panel_app.user_settings_state.active_tab =
+                                                UserSettingsTab::Vault;
+                                            pw.chart.panel_app.user_settings_state.is_open = true;
+                                        }
                                     }
 
                                 }

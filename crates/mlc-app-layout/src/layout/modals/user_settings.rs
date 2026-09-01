@@ -26,6 +26,10 @@ use crate::layout::render_frame::UserSettingsResult;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::Icon;
 use crate::ui::scroll_widget::ScrollableContainer;
+use crate::layout::modals::profile_manager::{
+    render_page_create_passphrase, render_page_set_new_passphrase, render_page_show_recovery_key,
+    render_page_unlock, render_page_use_recovery_key, VaultPageHost,
+};
 
 /// Row height for the Vault tab's own rows (status/key/webhook/add-key
 /// fields) — carried over unchanged from the standalone credentials modal
@@ -185,6 +189,7 @@ pub fn render_user_settings_modal(
                 toolbar_theme,
                 frame_theme,
                 &scroll_widget_theme,
+                current_time_ms,
                 input_coordinator,
                 &layer_id,
                 &mut result,
@@ -375,6 +380,13 @@ fn persist_checkbox_row(
 // does. Nothing here should ever "tidy" one of these ids.
 
 /// Render the Vault tab body — dispatches on `credentials.view`.
+///
+/// Five of the seven variants (everything but `List`/`AddKey`) are the
+/// vault pages shared with the standalone profile-manager modal — see
+/// `layout::modals::profile_manager`'s module doc for why the SAME render
+/// functions are called from both places (`VaultPageHost::Tab` here,
+/// `VaultPageHost::Modal` there), each given this tab's viewport
+/// coordinates instead of the modal's `shell.content`.
 #[allow(clippy::too_many_arguments)]
 fn render_vault_tab(
     ctx: &mut dyn RenderContext,
@@ -384,6 +396,7 @@ fn render_vault_tab(
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
     scroll_widget_theme: &WidgetTheme,
+    current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
@@ -393,6 +406,7 @@ fn render_vault_tab(
     let x = viewport_rect.x;
     let available_w = container.content_width();
     let cy = container.content_y();
+    let text_color = &toolbar_theme.item_text;
 
     let final_cy = match credentials.view {
         CredentialsView::List => render_list_view(
@@ -402,6 +416,26 @@ fn render_vault_tab(
         CredentialsView::AddKey => render_add_key_view(
             ctx, credentials, toolbar_theme, frame_theme, input_coordinator, layer_id, result,
             x, cy, available_w,
+        ),
+        CredentialsView::UnlockPassphrase => render_page_unlock(
+            ctx, x, cy, available_w, state, text_color, toolbar_theme, frame_theme,
+            current_time_ms, layer_id, input_coordinator, result, VaultPageHost::Tab,
+        ),
+        CredentialsView::CreatePassphrase => render_page_create_passphrase(
+            ctx, x, cy, available_w, state, text_color, toolbar_theme, frame_theme,
+            current_time_ms, layer_id, input_coordinator, result, VaultPageHost::Tab,
+        ),
+        CredentialsView::ShowRecoveryKey => render_page_show_recovery_key(
+            ctx, x, cy, available_w, state, text_color, toolbar_theme, frame_theme,
+            layer_id, input_coordinator, result,
+        ),
+        CredentialsView::UseRecoveryKey => render_page_use_recovery_key(
+            ctx, x, cy, available_w, state, text_color, toolbar_theme, frame_theme,
+            layer_id, input_coordinator, result, VaultPageHost::Tab,
+        ),
+        CredentialsView::SetNewPassphrase => render_page_set_new_passphrase(
+            ctx, x, cy, available_w, state, text_color, toolbar_theme, frame_theme,
+            layer_id, input_coordinator, result,
         ),
     };
 

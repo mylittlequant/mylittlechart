@@ -27,8 +27,9 @@
 //! `profile.domain.exchange_keys` wholesale from whatever is on disk) — a
 //! sealed-state edit would sit in RAM only and be silently discarded the
 //! next time the vault unlocks. So neither is offered while sealed:
-//! "+ Add key" instead routes to `ProfileManagerPage::UnlockPassphrase` (the
-//! existing page, not a new prompt — see `panel_click.rs`'s
+//! "+ Add key" instead routes to `CredentialsView::UnlockPassphrase` (the
+//! same shared vault page the standalone profile-manager modal draws for
+//! native boot, just hosted in this tab — see `panel_click.rs`'s
 //! `"profile_mgr:unlock"` arm for how it tells this case apart from an
 //! ordinary boot-time/profile-switch unlock) and remembers to switch back to
 //! the add form once the unlock actually succeeds (`pending_unlock_return`).
@@ -37,7 +38,7 @@
 //! surface.
 
 use mlc_core::user_profile::profile::StoredExchangeKey;
-use mlc_app_layout::ui::modal_settings::{CredentialsView, ProfileManagerPage, UserSettingsTab};
+use mlc_app_layout::ui::modal_settings::{CredentialsView, UserSettingsTab};
 
 use crate::ChartApp;
 use crate::text_input;
@@ -178,15 +179,23 @@ impl ChartApp {
     }
 
     /// Route to the existing vault page, remembering to come back to
-    /// `return_to` on this modal once it succeeds. See the module doc for why
-    /// this reuses the profile manager's pages rather than growing a second
-    /// prompt of its own.
+    /// `return_to` on this same tab once it succeeds. See the module doc for
+    /// why this reuses the profile manager's page BODIES rather than growing
+    /// a second prompt of its own.
     ///
     /// Which page depends on whether the profile has a vault at all. A profile
     /// that has none must land on `CreatePassphrase` — two fields, a
     /// confirmation, and the recovery key that follows it. Sending it to
     /// `UnlockPassphrase` asks a single field for a passphrase that protects
     /// nothing, and no vault is ever created.
+    ///
+    /// This ALWAYS lands on the Vault tab's own page (`CredentialsState::
+    /// view`), never on the standalone profile-manager modal
+    /// (`show_profile_manager`) — every caller here is already inside that
+    /// tab (the "Unlock"/"Set up" status button, or "+ Add key" while
+    /// sealed), so popping the standalone modal on top of it would be
+    /// exactly the modal-on-modal navigation dead end the tab move exists to
+    /// close.
     fn route_credentials_to_unlock(&mut self, return_to: CredentialsView) {
         self.panel_app.credentials_state.pending_unlock_return = Some(return_to);
 
@@ -200,18 +209,20 @@ impl ChartApp {
             .map(|(_, name, _, has_vault)| (*has_vault, name.clone()))
             .unwrap_or((false, String::new()));
 
-        let uss = &mut self.panel_app.user_settings_state;
-        uss.profile_manager_page = if has_vault {
-            ProfileManagerPage::UnlockPassphrase
+        self.panel_app.credentials_state.view = if has_vault {
+            CredentialsView::UnlockPassphrase
         } else {
-            ProfileManagerPage::CreatePassphrase
+            CredentialsView::CreatePassphrase
         };
+
+        let uss = &mut self.panel_app.user_settings_state;
         uss.profile_manager_target_id = target_id;
         uss.profile_manager_target_name = target_name;
         uss.vault_unlock_error = None;
         uss.vault_unlock_attempts = 0;
         uss.set_passphrase_error = String::new();
-        uss.show_profile_manager = true;
+        uss.active_tab = UserSettingsTab::Vault;
+        uss.is_open = true;
         uss.show_welcome_wizard = false;
         uss.new_passphrase_focused = false;
         uss.confirm_passphrase_focused = false;
@@ -381,6 +392,28 @@ impl ChartApp {
         }
     }
 
+    /// Abandon whatever passphrase-entry page is showing — shared cleanup
+    /// for `panel_click.rs`'s `"profile_mgr:back"` arm, run identically
+    /// whichever of the two page-selector enums (`ProfileManagerPage` in
+    /// the standalone modal, `CredentialsView` on the Vault tab) that arm
+    /// is about to move away from. Mirrors `dismiss_profile_manager`'s own
+    /// cleanup for the same reasons: a revealed passphrase must not survive
+    /// navigating away, and a pending credentials-reseal return
+    /// (`pending_unlock_return`) must not silently redirect some LATER,
+    /// unrelated unlock.
+    pub(crate) fn abandon_vault_page_entry(&mut self) {
+        self.panel_app.user_settings_state.vault_unlock_error = None;
+        self.panel_app.user_settings_state.vault_unlock_attempts = 0;
+        {
+            let np_wid = uzor::WidgetId::from(text_input::NEW_PASSPHRASE);
+            self.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+        }
+        self.panel_app.user_settings_state.new_passphrase_focused = false;
+        self.panel_app.user_settings_state.passphrase_revealed = false;
+        self.panel_app.credentials_state.pending_unlock_return = None;
+    }
+
     /// Blur whatever "add key" field is focused and clear its focus flags —
     /// shared by the Back button and a successful Add submit.
     fn blur_credentials_add_fields(&mut self) {
@@ -441,7 +474,9 @@ pub enum VaultSetupOutcome {
     /// / `core.templates()` already carry the new key, the caller must not
     /// re-derive or re-set it. `recovery_key` is `Some` only on first-time
     /// vault creation (a fresh recovery key was just generated): the caller
-    /// MUST show it once (`ProfileManagerPage::ShowRecoveryKey`) before
+    /// MUST show it once — `ProfileManagerPage::ShowRecoveryKey` if the
+    /// standalone modal is up (`UserSettingsState::show_profile_manager`),
+    /// `CredentialsView::ShowRecoveryKey` on the Vault tab otherwise — before
     /// treating setup as complete.
     Ready { recovery_key: Option<String> },
     /// Existing-vault re-validation only: the passphrase did not decrypt
@@ -534,7 +569,9 @@ impl ChartApp {
     ///
     /// A recovered vault always requires a new passphrase before it is
     /// considered settled — on success the caller must route to
-    /// `ProfileManagerPage::SetNewPassphrase`, mirroring native.
+    /// `ProfileManagerPage::SetNewPassphrase` (standalone modal) or
+    /// `CredentialsView::SetNewPassphrase` (Vault tab), by the same
+    /// `show_profile_manager` test as [`Self::apply_vault_setup`]'s doc.
     pub fn apply_recovery_unlock(
         &mut self,
         recovery_key_text: &str,
@@ -591,7 +628,8 @@ impl ChartApp {
     /// it).
     ///
     /// Returns the new formatted recovery key on success — the caller must
-    /// show it once (`ProfileManagerPage::ShowRecoveryKey`).
+    /// show it once (`ProfileManagerPage::ShowRecoveryKey` or
+    /// `CredentialsView::ShowRecoveryKey`, same host test as above).
     pub fn apply_new_passphrase(
         &mut self,
         new_passphrase: &str,
