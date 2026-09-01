@@ -22,11 +22,23 @@ use wasm_bindgen_futures::spawn_local;
 
 use mlc_app::ChartApp;
 use mlc_app_layout::ui::modal_settings::{CloudLoginPhase, CloudNewsPost, CloudOverlayData, CloudOverlayKind};
-use mlc_cloud::{BuildAttestation, BlogPost, CloudConfig, DeviceAuthPoll, FetchTransport, StoredToken, VersionManifest};
+use mlc_cloud::{
+    BuildAttestation, BlogPost, CloudConfig, DeviceAuthPoll, EntitlementsResponse, FetchTransport,
+    StoredToken, VersionManifest,
+};
 
 const TOKEN_KEY: &str = "mlc.cloud.token.v1";
 const DEVICE_KEY: &str = "mlc.cloud.device_id.v1";
 const POLL_INTERVAL_MS: f64 = 2500.0;
+/// Backoff before retrying a failed entitlements fetch — short enough that a
+/// transient network blip self-heals within a session, long enough that a
+/// server outage does not turn into a fetch-every-frame loop.
+const ENTITLEMENTS_RETRY_MS: f64 = 30_000.0;
+/// Floor on the re-ask interval even if the server's own `expires_at` comes
+/// back unreasonably soon (or in the past) — the endpoint answers the same
+/// caller identity on every call, so there is nothing to gain from asking
+/// more often than this regardless of what the server said.
+const ENTITLEMENTS_MIN_REASK_MS: f64 = 60_000.0;
 
 /// Completed async step, written by spawn_local futures and applied to the
 /// chart state by the next `drive()` call (mailbox pattern).
@@ -47,6 +59,21 @@ struct Inner {
     /// Previous frame's overlay open flag (edge detection).
     was_open: bool,
     result: Option<FlowResult>,
+
+    // ── Entitlements ────────────────────────────────────────────────────
+    // Runs on its own schedule, independent of the login/overlay phase
+    // machine above: `multi_profile` gates the always-visible General tab,
+    // not just the login overlay, so this keeps refreshing in the
+    // background whether or not the overlay is even open.
+    /// A fetch is already in flight — separate from `in_flight` above so an
+    /// open login overlay never blocks (or gets blocked by) this refresh.
+    entitlements_in_flight: bool,
+    /// Wall-clock ms (same clock as `now_ms`) after which the next fetch is
+    /// due. `0.0` (the `init()` default) means "ask on the first frame".
+    next_entitlements_ms: f64,
+    /// Mailbox for the entitlements fetch — separate from `result` above so
+    /// a concurrent login/logout/overlay fetch can never overwrite it.
+    entitlements_result: Option<Result<EntitlementsResponse, String>>,
 }
 
 pub struct CloudSession {
@@ -80,8 +107,19 @@ impl CloudSession {
                 next_poll_ms: 0.0,
                 was_open: false,
                 result: None,
+                entitlements_in_flight: false,
+                next_entitlements_ms: 0.0,
+                entitlements_result: None,
             })),
         }
+    }
+
+    /// Whether this install holds a stored token — the `account_signed_in`
+    /// source of truth for this shell (`UserSettingsState::
+    /// account_signed_in`'s own doc: never inferred from the entitlements
+    /// answer). Read at boot and right after a login/logout flips it.
+    pub fn is_signed_in(&self) -> bool {
+        self.inner.borrow().token.is_some()
     }
 
     /// Per-frame driver. Reads the overlay's phase + one-shot flags, advances
@@ -94,6 +132,62 @@ impl CloudSession {
             let cfg = &mut inner.transport.config_mut().profile_id;
             if *cfg != profile_id {
                 *cfg = profile_id;
+            }
+        }
+
+        // `account_signed_in` tracks the stored token directly — covers the
+        // boot frame and the frame right after a login/logout resolves
+        // below without needing a separate write at each call site. Cheap
+        // (a bool copy), unlike the entitlements fetch this is not an
+        // endpoint call, so there is no reason to gate it to "moments".
+        chart.panel_app.user_settings_state.account_signed_in = self.is_signed_in();
+
+        // ── Entitlements: boot + periodic background re-ask ────────────────
+        // Deliberately its own block, ahead of and independent from the
+        // login/overlay phase machine below — `UserSettingsState::
+        // multi_profile` gates the always-visible General tab, so this must
+        // keep refreshing whether or not the login overlay is even open.
+        {
+            let finished = self.inner.borrow_mut().entitlements_result.take();
+            if let Some(r) = finished {
+                let mut inner = self.inner.borrow_mut();
+                inner.entitlements_in_flight = false;
+                match r {
+                    Ok(resp) => {
+                        chart.panel_app.user_settings_state.multi_profile = resp.has_multi_profile();
+                        // `expires_at` is unix-ms, the same clock as
+                        // `now_ms` here — floor it so a server answer that
+                        // is already stale (or asks to be re-checked
+                        // immediately) cannot turn into a fetch-every-frame
+                        // loop.
+                        inner.next_entitlements_ms =
+                            (resp.expires_at as f64).max(now_ms + ENTITLEMENTS_MIN_REASK_MS);
+                    }
+                    Err(e) => {
+                        // A failed or unanswered fetch degrades to the free
+                        // set — never to the paid set, and never leaves the
+                        // General tab locked on a stale answer either.
+                        chart.panel_app.user_settings_state.multi_profile = false;
+                        web_sys::console::warn_1(
+                            &format!("[cloud] entitlements fetch failed: {}", e).into(),
+                        );
+                        inner.next_entitlements_ms = now_ms + ENTITLEMENTS_RETRY_MS;
+                    }
+                }
+            }
+
+            let due = {
+                let inner = self.inner.borrow();
+                !inner.entitlements_in_flight && now_ms >= inner.next_entitlements_ms
+            };
+            if due {
+                self.inner.borrow_mut().entitlements_in_flight = true;
+                let inner = self.inner.clone();
+                let transport = self.inner.borrow().transport.snapshot();
+                spawn_local(async move {
+                    let r = transport.entitlements().await.map_err(|e| e.to_string());
+                    inner.borrow_mut().entitlements_result = Some(r);
+                });
             }
         }
 
@@ -137,6 +231,10 @@ impl CloudSession {
                     let mut inner = self.inner.borrow_mut();
                     inner.transport.set_token(Some(stored.token.clone()));
                     inner.token = Some(stored);
+                    // A different identity now answers the entitlements
+                    // question — re-ask right away rather than waiting out
+                    // the previous (usually anonymous/free) answer's TTL.
+                    inner.next_entitlements_ms = 0.0;
                     drop(inner);
                     // Link the account on the profile (persisted by the
                     // shell's per-frame dirty drain).
@@ -198,7 +296,14 @@ impl CloudSession {
                     let mut inner = self.inner.borrow_mut();
                     inner.transport.set_token(None);
                     inner.token = None;
+                    // Drop straight to the free default rather than leaving
+                    // last identity's (possibly paid) answer on screen until
+                    // the next scheduled re-ask — and re-ask right away so
+                    // it reflects "no credential" rather than staying stuck
+                    // on a stale cached TTL.
+                    inner.next_entitlements_ms = 0.0;
                     drop(inner);
+                    chart.panel_app.user_settings_state.multi_profile = false;
                     {
                         let mut user = chart.core.user_mut();
                         let p = user.profile_mut();

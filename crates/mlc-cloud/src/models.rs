@@ -200,6 +200,37 @@ pub struct MeResponse {
 }
 
 // =============================================================================
+// /api/entitlements shape (feature gates)
+// =============================================================================
+
+/// Response body from `GET /api/entitlements`.
+///
+/// Answers for an anonymous caller too — the server treats "no credential"
+/// as a supported caller (the free feature set), not a 401. Because of that,
+/// `account_signed_in` (whether THIS install actually holds a credential) is
+/// never derived from this response — each shell already knows it from its
+/// own token store, and reads it separately
+/// (`mlc_app_layout::ui::modal_settings::UserSettingsState::
+/// account_signed_in`'s own doc has the full reasoning). `expires_at` is a
+/// unix-ms timestamp: the caller re-asks once it passes rather than on every
+/// frame or every modal open.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntitlementsResponse {
+    pub features: Vec<String>,
+    pub expires_at: i64,
+}
+
+impl EntitlementsResponse {
+    /// Wire name of the multi-profile feature gate.
+    pub const MULTI_PROFILE: &'static str = "multi_profile";
+
+    /// Whether the resolved feature set contains [`Self::MULTI_PROFILE`].
+    pub fn has_multi_profile(&self) -> bool {
+        self.features.iter().any(|f| f == Self::MULTI_PROFILE)
+    }
+}
+
+// =============================================================================
 // /api/updates/* shapes (anonymous release manifest)
 // =============================================================================
 

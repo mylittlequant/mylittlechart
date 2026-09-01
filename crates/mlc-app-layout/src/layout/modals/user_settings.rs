@@ -1322,6 +1322,312 @@ fn draw_avatar_dot(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color:
     ctx.fill();
 }
 
+/// PROFILE row for an identity that cannot have more than one profile
+/// (`UserSettingsState::multi_profile == false`) — draws exactly the active
+/// profile's avatar dot and name, and nothing else: no radio dot (nothing to
+/// switch to), no Avatar-picker button, no Delete button, no "+ New Profile"
+/// row. Per the owner's ruling, a tier that cannot use a control does not
+/// get a disabled copy of it either — the widget id is simply never
+/// registered, so a stale or forged click for it cannot reach a handler
+/// (`crate::layout::modals::user_settings`'s own module is the render side
+/// of that; `mlc-app/src/input/panel_click.rs`'s matching handler guards are
+/// the other half).
+///
+/// A Rename button is the one exception, and only when
+/// `UserSettingsState::account_signed_in` — an anonymous identity has a
+/// fixed name (nothing to rename), a signed-in free identity IS its profile
+/// with an editable nickname at most (`UserSettingsKey::BtnNickname`, not
+/// `BtnRename` — "Rename" reads as "one of several", which does not exist
+/// here).
+#[allow(clippy::too_many_arguments)]
+fn render_single_profile_row(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    available_w: f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) -> f64 {
+    let profile_row_h = 32.0;
+    let btn_h = 22.0;
+    let btn_gap = 6.0;
+    let btn_padding_x = 8.0;
+    let btn_min_w = 40.0;
+    let row_cy = y + profile_row_h / 2.0;
+    let id = state.profile_id.as_str();
+
+    // ── Avatar dot only — no radio dot, there is nothing to switch to. ──
+    let dot_r = 5.0;
+    let dot_cx = x + dot_r;
+    draw_avatar_dot(ctx, dot_cx, row_cy, dot_r, avatar_color(&state.profile_avatar));
+
+    let name_x = dot_cx + dot_r + 8.0;
+    let right_edge = x + available_w;
+    let is_renaming = state.account_signed_in
+        && state.profile_rename_mode
+        && state.profile_rename_target_id.as_deref() == Some(id);
+
+    if is_renaming {
+        // Inline rename input + Save/Cancel — same idiom as the multi-profile
+        // row's own rename mode, minus the Avatar/Delete columns that never
+        // exist at this tier.
+        let save_label   = TextKey::Save.get(current_language());
+        let cancel_label = TextKey::Cancel.get(current_language());
+
+        ctx.set_font("11px sans-serif");
+        let save_w   = auto_btn_width(ctx, save_label,   "11px sans-serif", btn_padding_x, btn_min_w);
+        let cancel_w = auto_btn_width(ctx, cancel_label, "11px sans-serif", btn_padding_x, btn_min_w);
+        let avail_btns = (right_edge - name_x).max(0.0);
+        let (save_w, cancel_w) = {
+            let total = save_w + cancel_w + btn_gap;
+            if total > avail_btns && total > 0.0 {
+                let scale = avail_btns / total;
+                (save_w * scale, cancel_w * scale)
+            } else {
+                (save_w, cancel_w)
+            }
+        };
+        let cancel_btn_x = right_edge - cancel_w;
+        let confirm_btn_x = cancel_btn_x - save_w - btn_gap;
+
+        let input_w = (confirm_btn_x - name_x - btn_gap).max(0.0);
+        let input_h = 22.0;
+        let input_y = y + (profile_row_h - input_h) / 2.0;
+        let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+
+        let pr_render = &state.profile_rename_render;
+        let (sel_start, sel_end) = if let Some((lo, hi)) = pr_render.selection_range() {
+            (Some(lo), Some(hi))
+        } else {
+            (None, None)
+        };
+        let rename_input_config = InputConfig::new(&pr_render.text)
+            .with_focused(state.profile_rename_focused)
+            .with_cursor(pr_render.cursor)
+            .with_placeholder("Profile name...")
+            .with_selection(sel_start, sel_end);
+        let rename_input_result = draw_input(
+            ctx, &rename_input_config, WidgetState::Normal,
+            WidgetRect::new(name_x, input_y, input_w, input_h), &widget_theme,
+        );
+
+        result.content_items.push((
+            "user_settings:profile_rename_input".to_string(),
+            WidgetRect::new(name_x, input_y, input_w, input_h),
+        ));
+        result.input_char_positions.push((
+            "user_settings:profile_rename_input".to_string(),
+            rename_input_result.char_x_positions.clone(),
+        ));
+        input_coordinator.register_on_layer(
+            "user_settings:profile_rename_input",
+            uzor::types::Rect::new(name_x, input_y, input_w, input_h),
+            Sense::CLICK,
+            layer_id,
+        );
+
+        if state.profile_rename_focused && pr_render.cursor_visible {
+            draw_input_cursor(
+                ctx,
+                rename_input_result.cursor_x,
+                rename_input_result.cursor_y,
+                rename_input_result.cursor_height,
+                text_color,
+            );
+        }
+
+        let btn_y = y + (profile_row_h - btn_h) / 2.0;
+
+        // Save button (green tint)
+        ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.success, 0.2));
+        ctx.fill_rounded_rect(confirm_btn_x, btn_y, save_w, btn_h, 3.0);
+        ctx.set_stroke_color(&mlc_core::apply_opacity(&toolbar_theme.success, 0.6));
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(confirm_btn_x, btn_y, save_w, btn_h, 3.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.success);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(fit_text_to_width(ctx, save_label, save_w - btn_padding_x).as_str(), confirm_btn_x + save_w / 2.0, btn_y + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("profile_rename_confirm".to_string(), WidgetRect::new(confirm_btn_x, btn_y, save_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:profile_rename_confirm",
+            uzor::types::Rect::new(confirm_btn_x, btn_y, save_w, btn_h),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+
+        // Cancel button
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(cancel_btn_x, btn_y, cancel_w, btn_h, 3.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(cancel_btn_x, btn_y, cancel_w, btn_h, 3.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.7));
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(fit_text_to_width(ctx, cancel_label, cancel_w - btn_padding_x).as_str(), cancel_btn_x + cancel_w / 2.0, btn_y + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("profile_rename_cancel".to_string(), WidgetRect::new(cancel_btn_x, btn_y, cancel_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:profile_rename_cancel",
+            uzor::types::Rect::new(cancel_btn_x, btn_y, cancel_w, btn_h),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+    } else {
+        // Normal display: name, plus the two identity controls a real
+        // signed-in account gets — a nickname and an avatar. An anonymous
+        // identity has neither: its name is fixed and there is nothing to
+        // personalise, so no buttons, no hit ids, nothing for a stray click
+        // to reach.
+        //
+        // Avatar sits here rather than with the profile-management controls
+        // because it is identity, not management: it says who this is, not
+        // how many of them there may be.
+        let avail_btns = (right_edge - name_x).max(0.0);
+        let rename = state.account_signed_in.then(|| {
+            let label = UserSettingsKey::BtnNickname.get(current_language());
+            ctx.set_font("11px sans-serif");
+            let w = auto_btn_width(ctx, label, "11px sans-serif", btn_padding_x, btn_min_w).min(avail_btns.max(btn_min_w));
+            (label, w)
+        });
+        let avatar = state.account_signed_in.then(|| {
+            let label = UserSettingsKey::BtnAvatar.get(current_language());
+            ctx.set_font("11px sans-serif");
+            let w = auto_btn_width(ctx, label, "11px sans-serif", btn_padding_x, btn_min_w).min(avail_btns.max(btn_min_w));
+            (label, w)
+        });
+
+        ctx.set_font("600 13px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(&state.profile_display_name, name_x, row_cy);
+
+        // Right-aligned, avatar outermost: [ nickname ][ avatar ]
+        let avatar_w = avatar.map(|(_, w)| w).unwrap_or(0.0);
+        let avatar_btn_x = right_edge - avatar_w;
+        let btn_y = y + (profile_row_h - btn_h) / 2.0;
+        if let Some((rename_label, rename_w)) = rename {
+            let rename_btn_x = if avatar.is_some() {
+                (avatar_btn_x - btn_gap - rename_w).max(name_x)
+            } else {
+                right_edge - rename_w
+            };
+
+            let rename_hover_id = format!("profile_rename:{}", id);
+            let is_rename_hovered = state.hovered_item_id.as_deref() == Some(rename_hover_id.as_str());
+            let rename_bg = if is_rename_hovered {
+                mlc_core::apply_opacity(&toolbar_theme.item_text, 0.12)
+            } else {
+                toolbar_theme.item_bg_hover.clone()
+            };
+            ctx.set_fill_color(&rename_bg);
+            ctx.fill_rounded_rect(rename_btn_x, btn_y, rename_w, btn_h, 3.0);
+            ctx.set_stroke_color(&toolbar_theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(rename_btn_x, btn_y, rename_w, btn_h, 3.0);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, if is_rename_hovered { 0.95 } else { 0.7 }));
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(fit_text_to_width(ctx, rename_label, rename_w - btn_padding_x).as_str(), rename_btn_x + rename_w / 2.0, btn_y + btn_h / 2.0);
+            ctx.set_text_align(TextAlign::Left);
+
+            let rename_hit_id = format!("user_settings:profile_rename:{}", id);
+            result.content_items.push((format!("profile_rename:{}", id), WidgetRect::new(rename_btn_x, btn_y, rename_w, btn_h)));
+            input_coordinator.register_on_layer(
+                rename_hit_id.as_str(),
+                uzor::types::Rect::new(rename_btn_x, btn_y, rename_w, btn_h),
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+        }
+
+        if let Some((avatar_label, avatar_w)) = avatar {
+            let toggle_hover_id = format!("profile_avatar_toggle:{}", id);
+            let is_hovered = state.hovered_item_id.as_deref() == Some(toggle_hover_id.as_str());
+            let bg = if is_hovered {
+                mlc_core::apply_opacity(&toolbar_theme.item_text, 0.12)
+            } else {
+                toolbar_theme.item_bg_hover.clone()
+            };
+            ctx.set_fill_color(&bg);
+            ctx.fill_rounded_rect(avatar_btn_x, btn_y, avatar_w, btn_h, 3.0);
+            ctx.set_stroke_color(&toolbar_theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(avatar_btn_x, btn_y, avatar_w, btn_h, 3.0);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, if is_hovered { 0.95 } else { 0.7 }));
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(fit_text_to_width(ctx, avatar_label, avatar_w - btn_padding_x).as_str(), avatar_btn_x + avatar_w / 2.0, btn_y + btn_h / 2.0);
+            ctx.set_text_align(TextAlign::Left);
+
+            result.content_items.push((toggle_hover_id.clone(), WidgetRect::new(avatar_btn_x, btn_y, avatar_w, btn_h)));
+            input_coordinator.register_on_layer(
+                format!("user_settings:{}", toggle_hover_id).as_str(),
+                uzor::types::Rect::new(avatar_btn_x, btn_y, avatar_w, btn_h),
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+        }
+    }
+
+    // The picker drops below the row when the toggle above opened it. Same
+    // eight avatars and the same `profile_avatar:{name}` ids the multi-profile
+    // list uses — one avatar vocabulary, not two.
+    let picker_open = state.account_signed_in
+        && state.show_avatar_picker
+        && state.profile_avatar_target_id.as_deref().map(|t| t == id).unwrap_or(true);
+    if !picker_open {
+        return y + profile_row_h;
+    }
+
+    let avatars = [
+        "chart", "rocket", "shield", "fire",
+        "star",  "moon",   "sun",    "ghost",
+    ];
+    let cell_size = 28.0;
+    let picker_w = cell_size * avatars.len() as f64;
+    let picker_h = cell_size + 8.0;
+    let picker_y = y + profile_row_h;
+
+    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+    ctx.fill_rounded_rect(x, picker_y, picker_w, picker_h, 4.0);
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x, picker_y, picker_w, picker_h, 4.0);
+
+    for (i, av) in avatars.iter().enumerate() {
+        let cell_x = x + i as f64 * cell_size;
+        if *av == state.profile_avatar.as_str() {
+            ctx.set_fill_color(&toolbar_theme.item_bg_active);
+            ctx.fill_rounded_rect(cell_x + 2.0, picker_y + 2.0, cell_size - 4.0, picker_h - 4.0, 3.0);
+        }
+        draw_avatar_dot(ctx, cell_x + cell_size / 2.0, picker_y + picker_h / 2.0, 7.0, avatar_color(av));
+        result.content_items.push((format!("profile_avatar:{}", av), WidgetRect::new(cell_x, picker_y, cell_size, picker_h)));
+        input_coordinator.register_on_layer(
+            format!("user_settings:profile_avatar:{}", av).as_str(),
+            uzor::types::Rect::new(cell_x, picker_y, cell_size, picker_h),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+    }
+
+    y + profile_row_h + picker_h + 4.0
+}
+
 #[allow(clippy::too_many_arguments)]
 fn render_profile_section(
     ctx: &mut dyn RenderContext,
@@ -1337,6 +1643,18 @@ fn render_profile_section(
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
 ) -> f64 {
+    // Below the paid tier there is no profile LIST at all — just the one
+    // active identity (owner's ruling, `UserSettingsState::multi_profile`'s
+    // own doc). `render_single_profile_row` is the entire section in that
+    // case; the loop below (unabridged multi-profile surface) only ever
+    // runs when the feature is actually entitled.
+    if !state.multi_profile {
+        return render_single_profile_row(
+            ctx, x, y, available_w, state, text_color, toolbar_theme, frame_theme,
+            input_coordinator, layer_id, result,
+        );
+    }
+
     let mut cy = y;
 
     // ── Unified profile list ───────────────────────────────────────────────────

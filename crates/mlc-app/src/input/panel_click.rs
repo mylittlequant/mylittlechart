@@ -5722,14 +5722,23 @@ impl ChartApp {
                     }
                 }
                 "profile_mgr:create_new" => {
-                    use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
-                    self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreateNew;
-                    {
-                        let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
-                        self.input_coordinator.borrow_mut().text_fields_mut().clear(&npn_wid);
+                    // A second profile is a paid capability — this surface
+                    // is not drawn below that tier (`render_profile_section`,
+                    // `mlc-app-layout`), and a command reaching here from
+                    // anywhere else (agent API, stale click) gets refused,
+                    // not acted on.
+                    if !self.panel_app.user_settings_state.multi_profile {
+                        eprintln!("[ChartApp] profile_mgr:create_new refused: multi_profile=false");
+                    } else {
+                        use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreateNew;
+                        {
+                            let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
+                            self.input_coordinator.borrow_mut().text_fields_mut().clear(&npn_wid);
+                        }
+                        self.panel_app.user_settings_state.new_profile_name_focused = false;
+                        eprintln!("[ChartApp] profile_mgr: create new profile page");
                     }
-                    self.panel_app.user_settings_state.new_profile_name_focused = false;
-                    eprintln!("[ChartApp] profile_mgr: create new profile page");
                 }
                 "profile_mgr:unlock" => {
                     let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
@@ -6007,19 +6016,28 @@ impl ChartApp {
                 }
                 // ── Profile handlers ───────────────────────────────────────────
                 "profile_rename_confirm" => {
-                    let pr_wid = uzor::WidgetId::from(crate::text_input::PROFILE_RENAME);
-                    let new_name = self.input_coordinator.borrow().text_fields().text(&pr_wid).trim().to_string();
-                    let target_id = self.panel_app.user_settings_state.profile_rename_target_id.clone();
-                    if !new_name.is_empty() {
-                        if target_id.as_deref() == Some(&self.panel_app.user_settings_state.profile_id) {
-                            self.panel_app.user_settings_state.profile_display_name = new_name.clone();
+                    // An anonymous identity has a fixed name — the Rename
+                    // (nickname) button is not drawn for it
+                    // (`render_single_profile_row`), so this arm refuses
+                    // rather than committing a name for an account that was
+                    // never asked for one.
+                    if !self.panel_app.user_settings_state.account_signed_in {
+                        eprintln!("[ChartApp] profile_rename_confirm refused: account_signed_in=false");
+                    } else {
+                        let pr_wid = uzor::WidgetId::from(crate::text_input::PROFILE_RENAME);
+                        let new_name = self.input_coordinator.borrow().text_fields().text(&pr_wid).trim().to_string();
+                        let target_id = self.panel_app.user_settings_state.profile_rename_target_id.clone();
+                        if !new_name.is_empty() {
+                            if target_id.as_deref() == Some(&self.panel_app.user_settings_state.profile_id) {
+                                self.panel_app.user_settings_state.profile_display_name = new_name.clone();
+                            }
+                            self.panel_app.user_settings_state.profile_rename_mode = false;
+                            self.panel_app.user_settings_state.profile_rename_focused = false;
+                            let tid = target_id.unwrap_or_else(|| self.panel_app.user_settings_state.profile_id.clone());
+                            self.panel_app.user_settings_state.profile_rename_target_id = None;
+                            self.pending_updater_cmd = Some(format!("profile_rename:{}:{}", tid, new_name));
+                            eprintln!("[ChartApp] profile_rename_confirm: id={} new name = {}", tid, new_name);
                         }
-                        self.panel_app.user_settings_state.profile_rename_mode = false;
-                        self.panel_app.user_settings_state.profile_rename_focused = false;
-                        let tid = target_id.unwrap_or_else(|| self.panel_app.user_settings_state.profile_id.clone());
-                        self.panel_app.user_settings_state.profile_rename_target_id = None;
-                        self.pending_updater_cmd = Some(format!("profile_rename:{}:{}", tid, new_name));
-                        eprintln!("[ChartApp] profile_rename_confirm: id={} new name = {}", tid, new_name);
                     }
                 }
                 "profile_rename_cancel" => {
@@ -6034,23 +6052,34 @@ impl ChartApp {
                     eprintln!("[ChartApp] profile_rename_cancel");
                 }
                 "profile_new" => {
-                    self.panel_app.user_settings_state.show_new_profile_dialog = true;
-                    self.panel_app.user_settings_state.new_profile_name_focused = true;
-                    let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
-                    self.input_coordinator.borrow_mut().text_fields_mut().clear(&npn_wid);
-                    self.input_coordinator.borrow_mut().text_fields_mut().focus(npn_wid);
-                    eprintln!("[ChartApp] profile_new: opening dialog");
+                    // "+ New Profile" is not drawn below the paid tier
+                    // (`render_profile_section`) — refuse a command reaching
+                    // this arm any other way rather than opening the dialog.
+                    if !self.panel_app.user_settings_state.multi_profile {
+                        eprintln!("[ChartApp] profile_new refused: multi_profile=false");
+                    } else {
+                        self.panel_app.user_settings_state.show_new_profile_dialog = true;
+                        self.panel_app.user_settings_state.new_profile_name_focused = true;
+                        let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
+                        self.input_coordinator.borrow_mut().text_fields_mut().clear(&npn_wid);
+                        self.input_coordinator.borrow_mut().text_fields_mut().focus(npn_wid);
+                        eprintln!("[ChartApp] profile_new: opening dialog");
+                    }
                 }
                 "profile_new_confirm" => {
-                    let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
-                    let name = self.input_coordinator.borrow().text_fields().text(&npn_wid).trim().to_string();
-                    if !name.is_empty() {
-                        self.pending_updater_cmd = Some(format!("profile_create:{}", name));
-                        self.panel_app.user_settings_state.show_new_profile_dialog = false;
-                        self.panel_app.user_settings_state.new_profile_name_focused = false;
-                        self.input_coordinator.borrow_mut().text_fields_mut().clear(&npn_wid);
-                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                        eprintln!("[ChartApp] profile_new_confirm: creating profile '{}'", name);
+                    if !self.panel_app.user_settings_state.multi_profile {
+                        eprintln!("[ChartApp] profile_new_confirm refused: multi_profile=false");
+                    } else {
+                        let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
+                        let name = self.input_coordinator.borrow().text_fields().text(&npn_wid).trim().to_string();
+                        if !name.is_empty() {
+                            self.pending_updater_cmd = Some(format!("profile_create:{}", name));
+                            self.panel_app.user_settings_state.show_new_profile_dialog = false;
+                            self.panel_app.user_settings_state.new_profile_name_focused = false;
+                            self.input_coordinator.borrow_mut().text_fields_mut().clear(&npn_wid);
+                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                            eprintln!("[ChartApp] profile_new_confirm: creating profile '{}'", name);
+                        }
                     }
                 }
                 "profile_new_cancel" => {
@@ -6106,78 +6135,104 @@ impl ChartApp {
                     self.panel_app.user_settings_state.new_passphrase_focused = false;
                 }
                 rest if rest.starts_with("profile_mgr:select:") => {
-                    use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
-                    let profile_id = &rest["profile_mgr:select:".len()..];
-                    // Check if target profile has vault (encrypted)
-                    let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
-                        .iter()
-                        .find(|(id, _, _, _)| id == profile_id)
-                        .map(|(_, _, _, has_vault)| *has_vault)
-                        .unwrap_or(false);
-                    let target_name = self.panel_app.user_settings_state.profiles_with_vault_status
-                        .iter()
-                        .find(|(id, _, _, _)| id == profile_id)
-                        .map(|(_, name, _, _)| name.clone())
-                        .unwrap_or_default();
-                    let np_wid_sel = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
-                    if !target_has_vault {
-                        // Unencrypted profile — show CreatePassphrase inline (NO hot-reload)
-                        // After passphrase is set, main.rs will create vault in target dir then switch
-                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
-                        self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
-                        self.panel_app.user_settings_state.profile_manager_target_name = target_name;
-                        self.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid_sel);
-                        eprintln!("[ChartApp] profile_mgr: showing passphrase setup for unencrypted profile {}", profile_id);
-                    } else if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
-                        if self.panel_app.user_settings_state.needs_vault_unlock {
-                            // Current profile, vault locked — show unlock passphrase page
+                    // The profile LIST this row lives on is not drawn below
+                    // the paid tier (`profile_manager.rs`'s own module doc:
+                    // "will not exist at all for accounts below the paid
+                    // tier") — refuse rather than switch/select on a command
+                    // reaching this arm any other way.
+                    if !self.panel_app.user_settings_state.multi_profile {
+                        eprintln!("[ChartApp] profile_mgr:select refused: multi_profile=false");
+                    } else {
+                        use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                        let profile_id = &rest["profile_mgr:select:".len()..];
+                        // Check if target profile has vault (encrypted)
+                        let target_has_vault = self.panel_app.user_settings_state.profiles_with_vault_status
+                            .iter()
+                            .find(|(id, _, _, _)| id == profile_id)
+                            .map(|(_, _, _, has_vault)| *has_vault)
+                            .unwrap_or(false);
+                        let target_name = self.panel_app.user_settings_state.profiles_with_vault_status
+                            .iter()
+                            .find(|(id, _, _, _)| id == profile_id)
+                            .map(|(_, name, _, _)| name.clone())
+                            .unwrap_or_default();
+                        let np_wid_sel = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
+                        if !target_has_vault {
+                            // Unencrypted profile — show CreatePassphrase inline (NO hot-reload)
+                            // After passphrase is set, main.rs will create vault in target dir then switch
+                            self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
+                            self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
+                            self.panel_app.user_settings_state.profile_manager_target_name = target_name;
+                            self.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid_sel);
+                            eprintln!("[ChartApp] profile_mgr: showing passphrase setup for unencrypted profile {}", profile_id);
+                        } else if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
+                            if self.panel_app.user_settings_state.needs_vault_unlock {
+                                // Current profile, vault locked — show unlock passphrase page
+                                self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
+                                self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
+                                self.panel_app.user_settings_state.profile_manager_target_name = target_name;
+                                self.panel_app.user_settings_state.vault_unlock_error = None;
+                                self.panel_app.user_settings_state.vault_unlock_attempts = 0;
+                                self.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid_sel);
+                                eprintln!("[ChartApp] profile_mgr: showing unlock for current profile {}", profile_id);
+                            } else {
+                                // Already on this profile, vault OK — dismiss
+                                self.panel_app.user_settings_state.show_profile_manager = false;
+                                eprintln!("[ChartApp] profile_mgr: selected current profile, dismissing");
+                            }
+                        } else {
+                            // Show passphrase prompt BEFORE switching — no hot-reload until validated
                             self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
                             self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
                             self.panel_app.user_settings_state.profile_manager_target_name = target_name;
                             self.panel_app.user_settings_state.vault_unlock_error = None;
                             self.panel_app.user_settings_state.vault_unlock_attempts = 0;
                             self.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid_sel);
-                            eprintln!("[ChartApp] profile_mgr: showing unlock for current profile {}", profile_id);
-                        } else {
-                            // Already on this profile, vault OK — dismiss
-                            self.panel_app.user_settings_state.show_profile_manager = false;
-                            eprintln!("[ChartApp] profile_mgr: selected current profile, dismissing");
+                            eprintln!("[ChartApp] profile_mgr: showing passphrase prompt for profile {}", profile_id);
                         }
-                    } else {
-                        // Show passphrase prompt BEFORE switching — no hot-reload until validated
-                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
-                        self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
-                        self.panel_app.user_settings_state.profile_manager_target_name = target_name;
-                        self.panel_app.user_settings_state.vault_unlock_error = None;
-                        self.panel_app.user_settings_state.vault_unlock_attempts = 0;
-                        self.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid_sel);
-                        eprintln!("[ChartApp] profile_mgr: showing passphrase prompt for profile {}", profile_id);
                     }
                 }
                 rest if rest.starts_with("profile_rename:") => {
-                    let id = &rest["profile_rename:".len()..];
-                    let current_name = {
-                        let uss = &self.panel_app.user_settings_state;
-                        uss.available_profiles.iter()
-                            .find(|(pid, _, _)| pid == id)
-                            .map(|(_, name, _)| name.clone())
-                            .unwrap_or_else(|| uss.profile_display_name.clone())
-                    };
-                    self.panel_app.user_settings_state.profile_rename_mode = true;
-                    self.panel_app.user_settings_state.profile_rename_focused = true;
-                    self.panel_app.user_settings_state.profile_rename_target_id = Some(id.to_string());
-                    let pr_wid = uzor::WidgetId::from(crate::text_input::PROFILE_RENAME);
-                    self.input_coordinator.borrow_mut().text_fields_mut().set_text(&pr_wid, &current_name);
-                    self.input_coordinator.borrow_mut().text_fields_mut().focus(pr_wid.clone());
-                    // Position cursor at end
-                    let char_count = current_name.chars().count();
-                    if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&pr_wid) {
-                        fs.cursor = char_count;
-                        fs.selection_start = None;
+                    // An anonymous identity has a fixed name — the
+                    // Rename (nickname) button is not drawn for it
+                    // (`render_single_profile_row`) — refuse rather than
+                    // entering rename mode on a command reaching this
+                    // arm any other way.
+                    if !self.panel_app.user_settings_state.account_signed_in {
+                        eprintln!("[ChartApp] profile_rename refused: account_signed_in=false");
+                    } else {
+                        let id = &rest["profile_rename:".len()..];
+                        let current_name = {
+                            let uss = &self.panel_app.user_settings_state;
+                            uss.available_profiles.iter()
+                                .find(|(pid, _, _)| pid == id)
+                                .map(|(_, name, _)| name.clone())
+                                .unwrap_or_else(|| uss.profile_display_name.clone())
+                        };
+                        self.panel_app.user_settings_state.profile_rename_mode = true;
+                        self.panel_app.user_settings_state.profile_rename_focused = true;
+                        self.panel_app.user_settings_state.profile_rename_target_id = Some(id.to_string());
+                        let pr_wid = uzor::WidgetId::from(crate::text_input::PROFILE_RENAME);
+                        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&pr_wid, &current_name);
+                        self.input_coordinator.borrow_mut().text_fields_mut().focus(pr_wid.clone());
+                        // Position cursor at end
+                        let char_count = current_name.chars().count();
+                        if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&pr_wid) {
+                            fs.cursor = char_count;
+                            fs.selection_start = None;
+                        }
+                        eprintln!("[ChartApp] profile_rename:{}: entering rename mode", id);
                     }
-                    eprintln!("[ChartApp] profile_rename:{}: entering rename mode", id);
                 }
                 rest if rest.starts_with("profile_avatar_toggle:") => {
+                    // An avatar is identity, and an anonymous identity has
+                    // none to edit — the control is not drawn there, and a
+                    // command arriving from anywhere else is refused rather
+                    // than acted on, same rule as the nickname beside it.
+                    if !self.panel_app.user_settings_state.account_signed_in {
+                        eprintln!("[ChartApp] profile_avatar_toggle refused: account_signed_in=false");
+                        return;
+                    }
                     let id = &rest["profile_avatar_toggle:".len()..];
                     let uss = &mut self.panel_app.user_settings_state;
                     let already_open = uss.show_avatar_picker
@@ -6237,6 +6292,10 @@ impl ChartApp {
                     }
                 }
                 rest if rest.starts_with("profile_avatar:") => {
+                    if !self.panel_app.user_settings_state.account_signed_in {
+                        eprintln!("[ChartApp] profile_avatar refused: account_signed_in=false");
+                        return;
+                    }
                     let avatar = &rest["profile_avatar:".len()..];
                     let uss = &mut self.panel_app.user_settings_state;
                     let target_id = uss.profile_avatar_target_id.clone();
@@ -6253,9 +6312,17 @@ impl ChartApp {
                     uss.profile_avatar_target_id = None;
                 }
                 rest if rest.starts_with("profile_delete:") => {
-                    let id = &rest["profile_delete:".len()..];
-                    self.pending_updater_cmd = Some(format!("profile_delete:{}", id));
-                    eprintln!("[ChartApp] profile_delete: deleting profile id = {}", id);
+                    // Delete only ever exists on an inactive row in the
+                    // multi-profile list, which is not drawn below the paid
+                    // tier — refuse rather than delete on a command reaching
+                    // this arm any other way.
+                    if !self.panel_app.user_settings_state.multi_profile {
+                        eprintln!("[ChartApp] profile_delete refused: multi_profile=false");
+                    } else {
+                        let id = &rest["profile_delete:".len()..];
+                        self.pending_updater_cmd = Some(format!("profile_delete:{}", id));
+                        eprintln!("[ChartApp] profile_delete: deleting profile id = {}", id);
+                    }
                 }
                 "profile_mgr:sign_in" => {
                     self.pending_updater_cmd = Some("start_device_auth".to_string());

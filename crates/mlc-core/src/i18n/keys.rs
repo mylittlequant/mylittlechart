@@ -1048,10 +1048,19 @@ pub enum UserSettingsKey {
     PersistToolbarLastToolsHint    = 40,
     PersistToolbarToggles          = 41,
     PersistToolbarTogglesHint      = 42,
+
+    // General tab — PROFILE row's Rename button, worded for the tier that
+    // has an editable identity but no profile list (`account_signed_in &&
+    // !multi_profile` — `UserSettingsState`'s own doc has the full table).
+    // A registered free account IS its profile, with a nickname at most —
+    // "Rename" reads as "rename one of several profiles", which does not
+    // exist at this tier, so the row's own button gets its own word instead
+    // of the multi-profile one (2026-09-02).
+    BtnNickname                    = 43,
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 43;
+    pub const COUNT: usize = 44;
 
     /// Get translation for this key.
     #[inline]

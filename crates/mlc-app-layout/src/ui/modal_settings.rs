@@ -3515,6 +3515,33 @@ pub enum ProfileManagerPage {
 pub struct UserSettingsState {
     /// Whether the modal is currently open.
     pub is_open: bool,
+
+    // ── Entitlements (server-provided, `GET /api/entitlements`) ──────────────
+    // Two booleans, not a tier enum, because the PROFILE section only ever
+    // asks two independent questions: "may this identity be edited" and "may
+    // there be more than one of it". A closed tier enum would still need to
+    // answer both from the same value every time a new gate is added — these
+    // stay orthogonal instead, the way the wire answer itself is a feature
+    // set, not a plan name. Both default `false`: that is the FREE set, and
+    // it is also the honest state before the shell's first entitlements
+    // fetch has answered — see each shell's `cloud_session`/boot wiring,
+    // which fills these in and never leaves the UI reading a locked-paid or
+    // empty surface while a fetch is in flight or has failed.
+    /// A credential exists for this install (native: token store/keychain;
+    /// web: stored token) — NOT derived from the entitlements answer, which
+    /// only ever describes what an already-known caller is allowed. An
+    /// anonymous caller and a signed-in free caller can both resolve to the
+    /// same (empty) feature set; this flag is the only thing that tells the
+    /// PROFILE section which of the two it is actually drawing (fixed name
+    /// vs. an editable nickname).
+    pub account_signed_in: bool,
+    /// The resolved feature set contains `"multi_profile"`. Gates the whole
+    /// profile-list surface (radio dot, Avatar/Delete buttons, "+ New
+    /// Profile") — see `render_profile_section`
+    /// (`crate::layout::modals::user_settings`) for what each combination
+    /// with `account_signed_in` draws.
+    pub multi_profile: bool,
+
     /// Modal position (None = centered on screen).
     pub position: Option<(f64, f64)>,
     /// Whether the modal is being dragged by its header.
@@ -3723,6 +3750,8 @@ impl Default for UserSettingsState {
     fn default() -> Self {
         Self {
             is_open: false,
+            account_signed_in: false,
+            multi_profile: false,
             position: None,
             is_dragging: false,
             drag_offset: None,

@@ -4255,6 +4255,34 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 pw.chart.sidebar_state.connector_enabled = connector_enabled.clone();
             }
 
+            // `UserSettingsState::account_signed_in` — this shell's token
+            // store is `mlc_updater::token_store` (via the OAuth flow;
+            // device-code is blocked on an unsigned build, see the
+            // `start_device_auth` arm above), never the entitlements
+            // answer. A `watch::Receiver::borrow()` peek is a channel read,
+            // not network IO, so it costs nothing to keep exact every frame
+            // rather than only at boot and at the login/logout instant.
+            let account_signed_in = matches!(
+                *self.updater_handle.auth_rx.borrow(),
+                mlc_updater::AuthStatus::LoggedIn { .. }
+            );
+            for pw in self.windows.values_mut() {
+                pw.chart.panel_app.user_settings_state.account_signed_in = account_signed_in;
+            }
+            // `UserSettingsState::multi_profile` stays at its safe `false`
+            // default on this shell: it has no cloud transport at all
+            // (`mlc-cloud`'s native side is `mlc-app-shell-web`-only, wasm
+            // fetch — see that crate's own module doc, "native transport
+            // lands with updater phase 2") and no `GET /api/entitlements`
+            // caller exists in `mlc_updater` either. A signed-in native
+            // user therefore always sees the free-tier PROFILE row even if
+            // their account is paid — the safe side of the failure rule
+            // ("degrade to free, never to paid"), but a real gap, not a
+            // deliberate design: wiring a live answer needs either a native
+            // `mlc-cloud` transport or an entitlements call added to
+            // `mlc_updater`'s own reqwest client, which is outside this
+            // change's scope.
+
             // Global scale_mode persistence channel removed entirely
             // (viewport SWC arc, 2026-07-03) — `core.user()` no longer
             // carries a scale_mode at all; every window seeds Auto on

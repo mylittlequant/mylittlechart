@@ -268,6 +268,15 @@ impl FetchTransport {
         self.decode_success(status, &body).map(|_: serde_json::Value| ())
     }
 
+    /// `GET /api/entitlements` — the resolved feature set for the current
+    /// caller. Answers for an anonymous caller too (no token attached =
+    /// the free set, not a 401), so this never needs a login gate the way
+    /// `auth_me` does.
+    pub async fn entitlements(&self) -> Result<EntitlementsResponse, CloudError> {
+        let (status, body) = self.exchange("GET", "/api/entitlements", None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
     // ── /api/updates/* (anonymous) ────────────────────────────────────────
 
     /// `GET /api/updates/latest?platform=…` — release manifest for the
