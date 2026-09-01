@@ -118,6 +118,25 @@ pub fn load_encrypted<T: serde::de::DeserializeOwned>(
     decrypt_json(key, &blob)
 }
 
+/// Read an encrypted file and decrypt it to raw bytes, without deserializing.
+///
+/// Identical I/O and crypto path to [`load_encrypted`] — same storage-key
+/// conversion, same [`decrypt`] call — but stops short of the final
+/// `serde_json::from_slice` step. Callers that hold the decrypted payload as
+/// opaque bytes rather than eagerly parsing it into a concrete type (e.g.
+/// `SecretStore`, which must not depend on the crate that defines the
+/// payload's shape) use this instead of `load_encrypted::<T>`.
+pub fn load_encrypted_raw(
+    key: &[u8; 32],
+    path: &std::path::Path,
+) -> Result<Vec<u8>, VaultError> {
+    let storage_key = path_to_storage_key(path);
+    let blob = crate::storage::global_storage()
+        .read(&storage_key)?
+        .ok_or_else(|| VaultError::Io(std::io::Error::from(std::io::ErrorKind::NotFound)))?;
+    decrypt(key, &blob)
+}
+
 /// Serialize a value, encrypt it, and persist it.
 ///
 /// The write is performed through [`crate::storage::global_storage()`].

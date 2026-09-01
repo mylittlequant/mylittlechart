@@ -75,6 +75,20 @@ impl FilesystemStorage {
     }
 
     fn key_to_path(&self, key: &str) -> PathBuf {
+        // `path_to_storage_key` (crypto/mod.rs, vault/mod.rs) hands back the
+        // full original path, forward-slash normalised, verbatim — not a
+        // root-relative key — whenever that path lies outside the app-data
+        // root (its own doc comment: "the full path is used verbatim").
+        // That happens for every caller passing a path outside app_data_dir
+        // (e.g. a test using a temp directory). Detect that case and use it
+        // as-is: joining it onto `root` below would push a component like
+        // `C:` (Windows drive prefix) as a literal subdirectory name — `:`
+        // is not a valid filename character, so the write/read silently
+        // targets a bogus path instead of the real one.
+        let verbatim = PathBuf::from(key);
+        if verbatim.is_absolute() {
+            return verbatim;
+        }
         // Split on '/' and join onto root so this works on Windows too.
         let mut p = self.root.clone();
         for component in key.split('/') {
