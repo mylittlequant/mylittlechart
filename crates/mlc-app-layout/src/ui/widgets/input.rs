@@ -27,6 +27,13 @@ pub struct InputConfig {
     pub font_size: f64,
     /// Padding
     pub padding: f64,
+    /// Right-hand padding, when it must differ from [`padding`](Self::padding).
+    /// `None` (default) means the box is symmetric, which is what every plain
+    /// field wants. A field with an affordance sitting inside its right edge
+    /// — a reveal toggle on a password, say — needs the text to stop short of
+    /// it WITHOUT the left edge indenting to match, which raising `padding`
+    /// alone would do to both sides at once.
+    pub padding_right: Option<f64>,
     /// Corner radius
     pub radius: f64,
     /// Input type (for visual style)
@@ -64,6 +71,7 @@ impl Default for InputConfig {
             selection_end: None,
             font_size: 13.0,
             padding: 8.0,
+            padding_right: None,
             radius: 4.0,
             input_type: InputType::Text,
             chrome: true,
@@ -113,6 +121,13 @@ impl InputConfig {
 
     pub fn with_font_size(mut self, size: f64) -> Self {
         self.font_size = size;
+        self
+    }
+
+    /// Reserve `padding` on the right only — see
+    /// [`padding_right`](Self::padding_right).
+    pub fn with_padding_right(mut self, padding_right: f64) -> Self {
+        self.padding_right = Some(padding_right);
         self
     }
 
@@ -242,7 +257,18 @@ pub fn draw_input(
     // `text_rect.y` / `text_rect.height` are only valid for symmetric padding (like 8px).
     // For large asymmetric padding (e.g. 28px) the inset height would go to zero, so
     // all vertical extents use the original `rect` dimensions instead.
-    let text_rect = rect.inset(config.padding);
+    let text_rect = {
+        let inset = rect.inset(config.padding);
+        match config.padding_right {
+            None => inset,
+            Some(right) => WidgetRect::new(
+                inset.x,
+                inset.y,
+                (rect.width - config.padding - right).max(0.0),
+                inset.height,
+            ),
+        }
+    };
 
     // Set font
     ctx.set_font(&format!("{}px sans-serif", config.font_size));

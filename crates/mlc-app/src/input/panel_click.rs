@@ -162,6 +162,8 @@ impl ChartApp {
         self.panel_app.user_settings_state.profile_manager_page =
             mlc_app_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
         self.panel_app.user_settings_state.vault_unlock_error = None;
+        // A revealed passphrase must not survive the surface closing.
+        self.panel_app.user_settings_state.passphrase_revealed = false;
         let wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
         self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
         // Abandoning the unlock page abandons the "return to the credentials
@@ -5693,6 +5695,9 @@ impl ChartApp {
                             self.input_coordinator.borrow_mut().text_fields_mut().blur();
                         }
                         self.panel_app.user_settings_state.new_passphrase_focused = false;
+                        // Leaving a passphrase page abandons a revealed
+                        // secret too — same reasoning as `dismiss_profile_manager`.
+                        self.panel_app.user_settings_state.passphrase_revealed = false;
                         // Navigating away from Unlock abandons a pending
                         // credentials-reseal return — see the matching
                         // comment in `dismiss_profile_manager`.
@@ -5950,6 +5955,13 @@ impl ChartApp {
                     // dismisses the ShowRecoveryKey page.
                     self.pending_updater_cmd = Some("recovery_key_confirmed".to_string());
                     eprintln!("[ChartApp] profile_mgr: recovery key confirmed by user");
+                }
+                // Shared by every passphrase field on the current page — see
+                // `UserSettingsState::passphrase_revealed`'s own doc for why
+                // a pair (passphrase + confirm) reveals together.
+                "profile_mgr:reveal_passphrase" => {
+                    self.panel_app.user_settings_state.passphrase_revealed =
+                        !self.panel_app.user_settings_state.passphrase_revealed;
                 }
                 // Legacy handler — kept for backwards compat
                 "wizard_e2e" => {

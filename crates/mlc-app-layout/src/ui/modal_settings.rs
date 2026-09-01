@@ -2691,6 +2691,12 @@ pub struct CredentialsState {
     /// Mirrors whether the vault is unlocked this session — same meaning as
     /// `AlertSettingsState::secrets_available`, refreshed the same way.
     pub secrets_available: bool,
+    /// Whether this profile has a `vault.enc` at all. Distinct from
+    /// `secrets_available`: a profile that never had a vault is not "sealed",
+    /// and offering it "Unlock" asks for a passphrase that protects nothing.
+    /// Sourced from `profiles_with_vault_status`, the same list the profile
+    /// manager reads.
+    pub vault_exists: bool,
     /// Cached exchange keys. While sealed, entries still carry
     /// `exchange_id`/`label`/`api_key` (redacted `api_secret`/`passphrase`)
     /// — see `UserProfileManager::seal_vault`'s doc for why that is honest
@@ -2722,6 +2728,11 @@ pub struct CredentialsState {
     pub add_passphrase_focused: bool,
     /// Sandbox/testnet toggle for the entry being added.
     pub add_testnet: bool,
+    /// Whether the "add key" form's API-secret and passphrase fields
+    /// currently show plain text instead of bullets — one flag for both
+    /// fields, reset whenever the form is cleared or left
+    /// (`clear_add_form`, which every closing/leaving path already calls).
+    pub secret_revealed: bool,
     /// Validation error from the last "add" attempt (e.g. missing
     /// exchange/api key), shown under the form. Cleared on next attempt.
     pub error_message: Option<String>,
@@ -2757,7 +2768,9 @@ impl Default for CredentialsState {
             add_api_secret_focused: false,
             add_passphrase_focused: false,
             add_testnet: false,
+            secret_revealed: false,
             error_message: None,
+            vault_exists: false,
             pending_unlock_return: None,
         }
     }
@@ -2807,6 +2820,7 @@ impl CredentialsState {
         self.add_api_secret_focused = false;
         self.add_passphrase_focused = false;
         self.add_testnet = false;
+        self.secret_revealed = false;
     }
 
     /// Start dragging the modal.
@@ -3693,6 +3707,16 @@ pub struct UserSettingsState {
     /// Empty string means no explicit selection yet — renderer falls back to "vello_gpu".
     pub wizard_selected_backend: String,
 
+    /// Whether the profile-manager's passphrase fields currently show plain
+    /// text instead of bullets — one flag for the unlock field, the create +
+    /// confirm pair, and the set-new + confirm pair alike, since a pair is
+    /// always revealed together (comparing a passphrase against its
+    /// confirmation is the main reason to look). Reset whenever the surface
+    /// is dismissed or its page changes away from a passphrase page (see
+    /// `ChartApp::dismiss_profile_manager` and the `"profile_mgr:back"`
+    /// click arm).
+    pub passphrase_revealed: bool,
+
 }
 
 impl Default for UserSettingsState {
@@ -3765,6 +3789,7 @@ impl Default for UserSettingsState {
             data_slider_drag: None,
             wizard_selected_theme: String::new(),
             wizard_selected_backend: String::new(),
+            passphrase_revealed: false,
         }
     }
 }

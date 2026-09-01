@@ -965,7 +965,7 @@ fn run_render_loop(
                     // nothing left to promote on a shell with one always-
                     // live `ChartApp`).
                     st.profile_manager.clear_pending_recovery_key();
-                    st.chart.panel_app.user_settings_state.show_profile_manager = false;
+                    st.chart.finish_vault_setup();
                     web_sys::console::log_1(&"[mlc-app-shell-web] recovery key confirmed".into());
                 } else if cmd == "vault_skip_to_wizard" {
                     // Vault-family command #5 of 5 — "Forgot passphrase?

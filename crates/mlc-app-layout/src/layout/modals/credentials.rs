@@ -173,10 +173,15 @@ fn render_list_view(
 
     // --- Vault status row: "Vault: Unlocked/Sealed" + Lock/Unlock button ---
     {
+        // Three states, not two: a profile with no vault is not a sealed
+        // one, and telling it to "Unlock" is what sent the user to a
+        // single-field prompt that created nothing.
         let (status_text, icon, btn_id, btn_label) = if state.secrets_available {
             ("Vault: Unlocked", Icon::Unlock, "cred:lock", "Lock")
-        } else {
+        } else if state.vault_exists {
             ("Vault: Sealed", Icon::Lock, "cred:unlock", "Unlock")
+        } else {
+            ("No vault yet", Icon::Lock, "cred:unlock", "Set up")
         };
         draw_svg_icon(ctx, icon.svg(), content_x, y + (ROW_H - 14.0) / 2.0, 14.0, 14.0, &toolbar_theme.item_text_muted);
         ctx.set_fill_color(&toolbar_theme.item_text);
@@ -217,7 +222,7 @@ fn render_list_view(
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        let empty_label = if state.secrets_available {
+        let empty_label = if state.secrets_available || !state.vault_exists {
             "No exchange keys yet."
         } else {
             "Sealed — contents unknown until unlocked."
@@ -302,7 +307,15 @@ fn render_list_view(
         ctx.set_font("11px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Unlock the vault to view the webhook URL.", content_x, y + ROW_H / 2.0);
+        // Same three-state honesty as the status row above: with no vault
+        // there is nothing to unlock, and telling the user to unlock one
+        // points at a door that does not exist.
+        let notice = if state.vault_exists {
+            "Unlock the vault to view the webhook URL."
+        } else {
+            "Set up the vault to store a webhook URL."
+        };
+        ctx.fill_text(notice, content_x, y + ROW_H / 2.0);
     } else {
         let field_x = content_x + LABEL_W;
         let field_w = content_w - LABEL_W;
@@ -398,13 +411,24 @@ fn render_add_key_view(
         } else {
             (None, None)
         };
-        let config = InputConfig::new(&render.text)
+        // API secret / passphrase draw a reveal toggle inside their own
+        // right edge — widen the input's own padding so masked/typed text
+        // never runs under the icon (same knob the search box uses for its
+        // own leading icon, `search_overlay.rs`), and swap the effective
+        // type to plain text while revealed.
+        let is_secret = input_type == InputType::Password;
+        let revealed = is_secret && state.secret_revealed;
+        let effective_type = if revealed { InputType::Text } else { input_type };
+        let mut config = InputConfig::new(&render.text)
             .with_placeholder(placeholder)
             .with_focused(focused)
             .with_cursor(render.cursor)
             .with_selection(sel_start, sel_end)
-            .with_type(input_type)
+            .with_type(effective_type)
             .with_font_size(12.0);
+        if is_secret {
+            config = config.with_padding_right(28.0);
+        }
         let input_result = draw_input(
             ctx, &config, crate::ui::widgets::types::WidgetState::Normal, field_rect, &widget_theme,
         );
@@ -415,6 +439,30 @@ fn render_add_key_view(
         result.content_items.push((local_id, field_rect));
         result.input_char_positions.push((widget_id.to_string(), input_result.char_x_positions));
         input_coordinator.register_on_layer(widget_id, field_rect, Sense::CLICK, layer_id);
+
+        if is_secret {
+            const ICON_SIZE: f64 = 14.0;
+            const RIGHT_INSET: f64 = 8.0;
+            let icon_x = field_rect.x + field_rect.width - RIGHT_INSET - ICON_SIZE;
+            let icon_y = field_rect.y + (field_rect.height - ICON_SIZE) / 2.0;
+            let icon_hovered = state.hovered_item_id.as_deref() == Some("cred:add:reveal");
+            let icon_color = if icon_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
+            draw_svg_icon(
+                ctx,
+                if revealed { Icon::EyeOff.svg() } else { Icon::Eye.svg() },
+                icon_x, icon_y, ICON_SIZE, ICON_SIZE, icon_color,
+            );
+            // Hit the gutter, not the glyph — a 14px target inside a field
+            // that itself takes clicks is a coin toss.
+            let hit_rect = WidgetRect::new(
+                icon_x - RIGHT_INSET,
+                field_rect.y,
+                ICON_SIZE + RIGHT_INSET * 2.0,
+                field_rect.height,
+            );
+            result.content_items.push(("add:reveal".to_string(), hit_rect));
+            input_coordinator.register_on_layer("cred:add:reveal", hit_rect, Sense::CLICK | Sense::HOVER, layer_id);
+        }
     };
 
     draw_field_row(ctx, input_coordinator, result, "Exchange", "e.g. binance", InputType::Text, &state.add_exchange_render, state.add_exchange_focused, "cred:add:exchange", y);

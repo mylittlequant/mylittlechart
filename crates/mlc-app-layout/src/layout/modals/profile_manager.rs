@@ -593,11 +593,13 @@ fn render_page_create_passphrase(
     } else {
         (None, None)
     };
+    let confirm_revealed = state.passphrase_revealed;
     let confirm_config = InputConfig::new(&conf_render.text)
         .with_focused(state.confirm_passphrase_focused)
         .with_cursor(conf_render.cursor)
         .with_placeholder("Confirm passphrase\u{2026}")
-        .with_type(InputType::Password)
+        .with_type(if confirm_revealed { InputType::Text } else { InputType::Password })
+        .with_padding_right(28.0)
         .with_selection(conf_sel_start, conf_sel_end);
 
     let confirm_result = draw_input(ctx, &confirm_config, WidgetState::Normal, confirm_rect, &widget_theme);
@@ -620,6 +622,8 @@ fn render_page_create_passphrase(
             &toolbar_theme.item_text,
         );
     }
+
+    draw_passphrase_reveal_toggle(ctx, confirm_rect, confirm_revealed, state, toolbar_theme, layer_id, input_coordinator, result);
 
     cy += confirm_h + 4.0;
 
@@ -981,11 +985,13 @@ fn render_page_set_new_passphrase(
     } else {
         (None, None)
     };
+    let new_pass_revealed = state.passphrase_revealed;
     let new_pass_config = InputConfig::new(&np_render.text)
         .with_focused(state.new_passphrase_focused)
         .with_cursor(np_render.cursor)
         .with_placeholder("New passphrase\u{2026}")
-        .with_type(InputType::Password)
+        .with_type(if new_pass_revealed { InputType::Text } else { InputType::Password })
+        .with_padding_right(28.0)
         .with_selection(sel_start, sel_end);
     let new_pass_result = draw_input(ctx, &new_pass_config, WidgetState::Normal, new_pass_rect, &widget_theme);
 
@@ -1007,6 +1013,7 @@ fn render_page_set_new_passphrase(
             &toolbar_theme.item_text,
         );
     }
+    draw_passphrase_reveal_toggle(ctx, new_pass_rect, new_pass_revealed, state, toolbar_theme, layer_id, input_coordinator, result);
     cy += input_h + 14.0;
 
     ctx.set_font("12px sans-serif");
@@ -1022,11 +1029,13 @@ fn render_page_set_new_passphrase(
     } else {
         (None, None)
     };
+    let confirm_pass_revealed = state.passphrase_revealed;
     let confirm_pass_config = InputConfig::new(&cp_render.text)
         .with_focused(state.confirm_passphrase_focused)
         .with_cursor(cp_render.cursor)
         .with_placeholder("Confirm passphrase\u{2026}")
-        .with_type(InputType::Password)
+        .with_type(if confirm_pass_revealed { InputType::Text } else { InputType::Password })
+        .with_padding_right(28.0)
         .with_selection(sel_start2, sel_end2);
     let confirm_pass_result = draw_input(ctx, &confirm_pass_config, WidgetState::Normal, confirm_pass_rect, &widget_theme);
 
@@ -1048,6 +1057,7 @@ fn render_page_set_new_passphrase(
             &toolbar_theme.item_text,
         );
     }
+    draw_passphrase_reveal_toggle(ctx, confirm_pass_rect, confirm_pass_revealed, state, toolbar_theme, layer_id, input_coordinator, result);
     cy += input_h + 16.0;
 
     if has_error {
@@ -1278,11 +1288,16 @@ fn render_passphrase_input(
     } else {
         (None, None)
     };
+    // Widened right padding leaves room for the reveal toggle drawn below —
+    // same knob the search box uses for its own leading icon
+    // (`search_overlay.rs`), just on the trailing side here.
+    let revealed = state.passphrase_revealed;
     let input_config = InputConfig::new(&pw_render.text)
         .with_focused(state.new_passphrase_focused)
         .with_cursor(pw_render.cursor)
         .with_placeholder("Click to type passphrase\u{2026}")
-        .with_type(InputType::Password)
+        .with_type(if revealed { InputType::Text } else { InputType::Password })
+        .with_padding_right(28.0)
         .with_selection(sel_start, sel_end);
 
     let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
@@ -1306,5 +1321,53 @@ fn render_passphrase_input(
         );
     }
 
+    draw_passphrase_reveal_toggle(ctx, input_rect, revealed, state, toolbar_theme, layer_id, input_coordinator, result);
+
     *cy += input_h + 16.0;
+}
+
+/// Draw the eye/eye-off reveal toggle inside the right edge of a passphrase
+/// input, and register its (shared, per-surface) hit rect. One widget ID
+/// covers every passphrase field on the profile-manager pages — see
+/// `UserSettingsState::passphrase_revealed`'s own doc for why a pair of
+/// fields (passphrase + confirm) reveals together.
+#[allow(clippy::too_many_arguments)]
+fn draw_passphrase_reveal_toggle(
+    ctx: &mut dyn RenderContext,
+    input_rect: WidgetRect,
+    revealed: bool,
+    state: &UserSettingsState,
+    toolbar_theme: &ToolbarTheme,
+    layer_id: &uzor::input::LayerId,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    result: &mut UserSettingsResult,
+) {
+    const ICON_SIZE: f64 = 14.0;
+    const RIGHT_INSET: f64 = 8.0;
+    let icon_x = input_rect.x + input_rect.width - RIGHT_INSET - ICON_SIZE;
+    let icon_y = input_rect.y + (input_rect.height - ICON_SIZE) / 2.0;
+    let is_hovered = state.hovered_item_id.as_deref() == Some("profile_mgr:reveal_passphrase");
+    let icon_color = if is_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
+    draw_svg_icon(
+        ctx,
+        if revealed { Icon::EyeOff.svg() } else { Icon::Eye.svg() },
+        icon_x, icon_y, ICON_SIZE, ICON_SIZE, icon_color,
+    );
+
+    // The hit target is the whole right-hand gutter, not the 14px glyph. A
+    // 14×14 target is a miss waiting to happen, and the gutter belongs to
+    // nothing else.
+    let hit_rect = WidgetRect::new(
+        icon_x - RIGHT_INSET,
+        input_rect.y,
+        ICON_SIZE + RIGHT_INSET * 2.0,
+        input_rect.height,
+    );
+    result.content_items.push(("profile_mgr:reveal_passphrase".to_string(), hit_rect));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:reveal_passphrase",
+        hit_rect,
+        Sense::CLICK | Sense::HOVER,
+        layer_id,
+    );
 }

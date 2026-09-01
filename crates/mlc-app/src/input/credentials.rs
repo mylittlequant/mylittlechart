@@ -87,6 +87,11 @@ impl ChartApp {
             "add:testnet" => {
                 self.panel_app.credentials_state.add_testnet = !self.panel_app.credentials_state.add_testnet;
             }
+            // Shared by the API-secret and passphrase fields on this form.
+            "add:reveal" => {
+                self.panel_app.credentials_state.secret_revealed =
+                    !self.panel_app.credentials_state.secret_revealed;
+            }
             "create" => self.try_add_exchange_key(),
             _ => {
                 eprintln!("[ChartApp] credentials unhandled: {}", rest);
@@ -110,7 +115,17 @@ impl ChartApp {
     pub(crate) fn sync_credentials_from_core(&mut self) {
         let secrets_available = self.core.user().vault_key().is_some();
         let exchange_keys = self.core.user().profile().domain.exchange_keys.clone();
+        let runtime_id = self.panel_app.user_settings_state.runtime_profile_id.clone();
+        let vault_exists = self
+            .panel_app
+            .user_settings_state
+            .profiles_with_vault_status
+            .iter()
+            .find(|(id, _, _, _)| *id == runtime_id)
+            .map(|(_, _, _, has_vault)| *has_vault)
+            .unwrap_or(false);
         self.panel_app.credentials_state.secrets_available = secrets_available;
+        self.panel_app.credentials_state.vault_exists = vault_exists;
         self.panel_app.credentials_state.exchange_keys = exchange_keys;
 
         // Seed the webhook URL field from the same live buffer
@@ -152,27 +167,60 @@ impl ChartApp {
         eprintln!("[ChartApp] credentials: vault sealed");
     }
 
-    /// Route to the existing unlock page, remembering to come back to
-    /// `return_to` on this modal once the unlock actually succeeds. See the
-    /// module doc for why this reuses `ProfileManagerPage::UnlockPassphrase`
-    /// rather than a second prompt.
+    /// Route to the existing vault page, remembering to come back to
+    /// `return_to` on this modal once it succeeds. See the module doc for why
+    /// this reuses the profile manager's pages rather than growing a second
+    /// prompt of its own.
+    ///
+    /// Which page depends on whether the profile has a vault at all. A profile
+    /// that has none must land on `CreatePassphrase` — two fields, a
+    /// confirmation, and the recovery key that follows it. Sending it to
+    /// `UnlockPassphrase` asks a single field for a passphrase that protects
+    /// nothing, and no vault is ever created.
     fn route_credentials_to_unlock(&mut self, return_to: CredentialsView) {
         self.panel_app.credentials_state.pending_unlock_return = Some(return_to);
         self.panel_app.credentials_state.is_open = false;
 
         let target_id = self.panel_app.user_settings_state.runtime_profile_id.clone();
+        let (has_vault, target_name) = self
+            .panel_app
+            .user_settings_state
+            .profiles_with_vault_status
+            .iter()
+            .find(|(id, _, _, _)| *id == target_id)
+            .map(|(_, name, _, has_vault)| (*has_vault, name.clone()))
+            .unwrap_or((false, String::new()));
+
         let uss = &mut self.panel_app.user_settings_state;
-        uss.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
+        uss.profile_manager_page = if has_vault {
+            ProfileManagerPage::UnlockPassphrase
+        } else {
+            ProfileManagerPage::CreatePassphrase
+        };
         uss.profile_manager_target_id = target_id;
-        uss.profile_manager_target_name = String::new();
+        uss.profile_manager_target_name = target_name;
         uss.vault_unlock_error = None;
         uss.vault_unlock_attempts = 0;
+        uss.set_passphrase_error = String::new();
         uss.show_profile_manager = true;
         uss.show_welcome_wizard = false;
         uss.new_passphrase_focused = false;
-        let np_wid = uzor::WidgetId::from(text_input::NEW_PASSPHRASE);
-        self.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
-        eprintln!("[ChartApp] credentials: routing to unlock, will return to {:?}", return_to);
+        uss.confirm_passphrase_focused = false;
+        // A leftover reveal from a previous visit to this page must not
+        // greet the next passphrase typed into it.
+        uss.passphrase_revealed = false;
+        {
+            let mut ic = self.input_coordinator.borrow_mut();
+            let tf = ic.text_fields_mut();
+            tf.clear(&uzor::WidgetId::from(text_input::NEW_PASSPHRASE));
+            tf.clear(&uzor::WidgetId::from(text_input::CONFIRM_PASSPHRASE));
+            tf.blur();
+        }
+        eprintln!(
+            "[ChartApp] credentials: routing to {}, will return to {:?}",
+            if has_vault { "unlock" } else { "vault setup" },
+            return_to
+        );
     }
 
     /// Remove one exchange key by index — mutates the live profile directly
@@ -286,6 +334,40 @@ impl ChartApp {
             self.panel_app.credentials_state.view = view;
         }
         eprintln!("[ChartApp] credentials: vault unlocked mid-session");
+    }
+
+    /// Close out a vault-setup flow that ran to its end (the user
+    /// acknowledged the recovery key).
+    ///
+    /// Two things have to happen here that nothing else does. The vault now
+    /// exists, but `profiles_with_vault_status` is a snapshot the shells
+    /// refresh on profile-list operations only — leaving it stale would make
+    /// the credentials modal keep offering "Set up" for a vault that is
+    /// already there, and route the next click back to the setup page.
+    /// And if the setup was started from the credentials modal, that modal
+    /// asked to be returned to; without this it just closes and the user is
+    /// left on a bare chart wondering whether anything happened.
+    pub fn finish_vault_setup(&mut self) {
+        let runtime_id = self.panel_app.user_settings_state.runtime_profile_id.clone();
+        for entry in self
+            .panel_app
+            .user_settings_state
+            .profiles_with_vault_status
+            .iter_mut()
+        {
+            if entry.0 == runtime_id {
+                entry.3 = true;
+            }
+        }
+        self.panel_app.user_settings_state.show_profile_manager = false;
+        self.panel_app.user_settings_state.vault_unlock_error = None;
+        self.sync_credentials_from_core();
+
+        if let Some(view) = self.panel_app.credentials_state.pending_unlock_return.take() {
+            self.panel_app.credentials_state.is_open = true;
+            self.panel_app.credentials_state.view = view;
+            eprintln!("[ChartApp] credentials: vault created, returning to {:?}", view);
+        }
     }
 
     /// Blur whatever "add key" field is focused and clear its focus flags —
