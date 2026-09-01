@@ -20,7 +20,7 @@ use crate::ui::widgets::{
     ModalTheme, FOOTER_H, HEADER_H, TAB_RAIL_W,
     WidgetState, WidgetTheme,
     ButtonConfig, draw_button,
-    theme_sample_tokens, draw_theme_sample,
+    theme_palette_tokens, theme_palette_width, draw_theme_palette,
 };
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig};
 use crate::ui::dropdown::{render_dropdown, DropdownConfig, DropdownItem, DropdownTheme};
@@ -1782,17 +1782,36 @@ fn render_appearance_settings(
         };
         draw_button(ctx, &config, WidgetState::Normal, button_rect, &widget_theme, |_, _, _, _| {});
 
-        // Background / accent / text sample, pulled from the preset itself
-        // (not a hand-picked hex) so it actually tells presets apart.
-        let sample_tokens = theme_sample_tokens(id);
-        draw_theme_sample(ctx, button_rect.x + 6.0, button_rect.y + 4.0, 18.0, &sample_tokens);
-        ctx.set_stroke_color(muted_color);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rect(button_rect.x + 6.0, button_rect.y + 4.0, 18.0, 18.0);
+        // The preset's own palette, right-aligned on the row — same strip
+        // and same token choice as the welcome wizard's theme page, so the
+        // two surfaces that exist to COMPARE presets show the same thing.
+        // (The toolbar's Theme dropdown keeps the compact single-square
+        // sample: a menu row is picked from, not compared across.)
+        //
+        // Owner review 2026-09-02: the single square with an accent dot
+        // inset in it read as "a checkbox with a ball inside" and said only
+        // that two presets differ, never how.
+        const CHIP: f64 = 10.0;
+        const CHIP_GAP: f64 = 3.0;
+        let strip_w = theme_palette_width(CHIP, CHIP_GAP);
+        let palette = theme_palette_tokens(id);
+        draw_theme_palette(
+            ctx,
+            // `button_rect` spans the full row INCLUDING the scroll gutter, so
+            // right-aligning on its edge alone puts the last chip under the
+            // scrollbar. `swatch_x` is the pre-existing "rightmost thing on a
+            // row" anchor in this function and already subtracts the gutter.
+            swatch_x + swatch_size - strip_w,
+            button_rect.center_y() - CHIP / 2.0,
+            CHIP,
+            CHIP_GAP,
+            muted_color,
+            &palette,
+        );
 
         ctx.set_font("12px sans-serif");
         ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { text_color });
-        ctx.fill_text(name, button_rect.x + 30.0, button_rect.center_y());
+        ctx.fill_text(name, button_rect.x + 8.0, button_rect.center_y());
 
         result.content_items.push((format!("appearance:theme_{}", id), button_rect));
         row_y += button_height + button_spacing;

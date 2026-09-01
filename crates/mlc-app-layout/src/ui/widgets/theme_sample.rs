@@ -65,3 +65,69 @@ pub fn draw_theme_sample(ctx: &mut dyn RenderContext, x: f64, y: f64, size: f64,
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(x, y, size, size, radius);
 }
+
+/// Number of chips in the palette strip. Five reads as a palette without
+/// crowding the longest preset label ("High Contrast Mono") out of a grid
+/// cell; see `THEME_PALETTE_W` for the footprint that follows from it.
+pub const THEME_PALETTE_LEN: usize = 5;
+
+/// The five tokens the palette strip shows, in draw order.
+///
+/// Owner review 2026-09-02: the single square-with-a-dot sample read as "a
+/// checkbox with a ball inside" — it says a preset is *different* but not
+/// *how*. A strip of the preset's own load-bearing colours says it directly.
+///
+/// The five are picked to be the ones a trader actually judges a theme by,
+/// not the five that happen to be first in the struct: the canvas the chart
+/// is drawn on, both candle bodies (the only colours on screen in every
+/// single frame), the accent that marks selection everywhere, and the
+/// primary text. Two presets that differ only in, say, `sidebar_bg` are not
+/// worth telling apart here.
+///
+/// Same accessor as [`theme_sample_tokens`] — `RuntimeTheme::from_preset`
+/// — so skins (`surf`) resolve through their `SkinTokens::apply` path and
+/// need no special case.
+pub fn theme_palette_tokens(preset_id: &str) -> [String; THEME_PALETTE_LEN] {
+    let rt = RuntimeTheme::from_preset(preset_id);
+    [
+        rt.chart.background,
+        rt.series.candle_up_body,
+        rt.series.candle_down_body,
+        rt.colors.accent,
+        rt.colors.text_primary,
+    ]
+}
+
+/// Footprint of a palette strip drawn with `chip`-sized chips and `gap`
+/// between them. Callers lay out against this instead of recomputing the
+/// same arithmetic and drifting from it.
+pub fn theme_palette_width(chip: f64, gap: f64) -> f64 {
+    chip * THEME_PALETTE_LEN as f64 + gap * (THEME_PALETTE_LEN - 1) as f64
+}
+
+/// Draw the palette strip left-to-right from `(x, y)`.
+///
+/// Every chip carries a hairline border in `border`: a preset's background
+/// token is frequently within a hair of the row background it is drawn on
+/// (dark's `#131722` on a dark row), and without the outline that chip
+/// simply disappears — the strip would then read as four chips for some
+/// presets and five for others.
+pub fn draw_theme_palette(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    chip: f64,
+    gap: f64,
+    border: &str,
+    tokens: &[String; THEME_PALETTE_LEN],
+) {
+    let radius = chip * 0.25;
+    for (i, token) in tokens.iter().enumerate() {
+        let cx = x + i as f64 * (chip + gap);
+        ctx.set_fill_color(token);
+        ctx.fill_rounded_rect(cx, y, chip, chip, radius);
+        ctx.set_stroke_color(border);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(cx, y, chip, chip, radius);
+    }
+}
