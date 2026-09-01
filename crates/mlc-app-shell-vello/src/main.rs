@@ -3381,25 +3381,34 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                 }
 
-                // ── Wizard complete: profile name only ──
-                // Format: "wizard_complete:{name}". Owner's ruling 2026-08-31:
-                // the wizard ends the moment a name is picked — no passphrase
-                // is collected here anymore. The vault opens later, at the
-                // point of use, via the profile manager's own (unrelated)
-                // passphrase/recovery-key flow.
-                if let Some(rest) = cmd_str.strip_prefix("wizard_complete:") {
+                // ── Wizard complete ──
+                // Format: bare "wizard_complete" — no name attached. Owner's
+                // identity ruling 2026-09-02: a profile's identity is its
+                // UUID; an anonymous profile carries no user-facing name at
+                // all, so the wizard's Profile Name page (and this command's
+                // former "wizard_complete:{name}" payload / rename step) is
+                // gone. The wizard ends the moment the language page's
+                // forward button is pressed — no passphrase is collected
+                // here either. The vault opens later, at the point of use,
+                // via the profile manager's own (unrelated) passphrase/
+                // recovery-key flow.
+                if cmd_str == "wizard_complete" {
                     cmd_handled = true;
-                    let wizard_profile_name = if rest.is_empty() { "Default".to_string() } else { rest.to_string() };
                     // Always create a real profile directory on wizard completion.
                     // On first-run the profile_manager is backed by a `_pending`
                     // placeholder (no directory on disk), so we must materialise
-                    // a real profile before rename / vault-derive try to write files.
+                    // a real profile before vault-derive tries to write files.
                     // On non-first-run (adding a second profile) we do the same.
-                    match self.profile_manager.create_profile(None, "chart") {
+                    // `Some("")`, not `None` — an explicitly nameless profile.
+                    // `None` would fall through to `auto_generate_name()` and
+                    // silently hand this anonymous profile a "New Profile"
+                    // label nobody asked for; that label is reserved for the
+                    // paid tier's explicit "add another profile" action.
+                    match self.profile_manager.create_profile(Some(""), "chart") {
                         Ok(meta) => {
                             eprintln!(
-                                "[App] wizard_complete: created profile directory '{}' ({})",
-                                wizard_profile_name, meta.id
+                                "[App] wizard_complete: created profile directory ({})",
+                                meta.id
                             );
                             // Switch active profile to the new one before reload.
                             if let Some(mut index) = mlc_core::load_profile_index() {
@@ -3420,22 +3429,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         }
                         Err(e) => {
                             eprintln!("[App] wizard_complete: failed to create profile: {}", e);
-                            // Fall through — attempt rename/vault on whatever dir we have.
+                            // Fall through — attempt vault on whatever dir we have.
                         }
-                    }
-                    // Apply the user-chosen profile name.
-                    let active_id = self.profile_manager.profile.domain.profile_id.clone();
-                    let _ = self.profile_manager.rename_profile(&active_id, &wizard_profile_name);
-                    self.profile.ui.display_name = wizard_profile_name.clone();
-                    for pw in self.windows.values_mut() {
-                        pw.chart.panel_app.user_settings_state.profile_display_name =
-                            wizard_profile_name.clone();
                     }
 
                     // No vault key to derive — the profile stays plaintext
                     // until the user opens the vault themselves later
-                    // (profile manager). Save the named profile and promote
-                    // the skeleton straight to live.
+                    // (profile manager). Save and promote the skeleton
+                    // straight to live.
                     self.save_all(&[]);
                     self.is_first_run = false;
                     self.needs_vault_unlock = false;
@@ -4028,11 +4029,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     cmd_handled = true;
                     // Create a brand-new profile so the wizard operates on fresh data,
                     // not the old encrypted profile the user can no longer unlock.
-                    match self.profile_manager.create_profile(None, "chart") {
+                    // `Some("")`, not `None` — this profile is headed into the
+                    // wizard, same anonymous-first-run category as
+                    // `wizard_complete`'s own creation; `None` would fall
+                    // through to `auto_generate_name()` and hand it a "New
+                    // Profile" label, which matters if wizard completion's
+                    // own create fails and this profile is what persists.
+                    match self.profile_manager.create_profile(Some(""), "chart") {
                         Ok(meta) => {
                             eprintln!(
-                                "[App] vault_skip_to_wizard: created new profile {} ({})",
-                                meta.display_name, meta.id
+                                "[App] vault_skip_to_wizard: created new profile ({})",
+                                meta.id
                             );
                             // Switch the active profile in the index so that
                             // active_profile_data_dir() resolves to the new empty directory.

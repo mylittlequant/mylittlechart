@@ -930,21 +930,29 @@ fn render_general_tab(
     let mut cy = container.content_y();
 
     // ── Section: PROFILE ─────────────────────────────────────────────────────
-    ctx.set_font("600 11px sans-serif");
-    // A section heading is an accented label, not a warning. The gold it
-    // used to be hardcoded to is the mascot theme's `warning` token, which
-    // is how one theme's palette ended up painted into every other one.
-    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.85));
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(UserSettingsKey::SectionProfile.get(current_language()), x, cy);
-    cy += 20.0;
+    // Owner's identity ruling 2026-09-02: a profile's identity is its UUID;
+    // an anonymous, single-profile user needs no user-facing name at all —
+    // not even a default one. Below the paid tier (`multi_profile`) and
+    // signed out (`account_signed_in`), there is nothing to show here at
+    // all: no heading, no radio dot, no name. Signed-in-free and
+    // multi-profile keep this section exactly as before.
+    if state.account_signed_in || state.multi_profile {
+        ctx.set_font("600 11px sans-serif");
+        // A section heading is an accented label, not a warning. The gold it
+        // used to be hardcoded to is the mascot theme's `warning` token, which
+        // is how one theme's palette ended up painted into every other one.
+        ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.85));
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(UserSettingsKey::SectionProfile.get(current_language()), x, cy);
+        cy += 20.0;
 
-    cy = render_profile_section(
-        ctx, x, cy, available_w, state, text_color, toolbar_theme, frame_theme,
-        current_time_ms, input_coordinator, layer_id, result,
-    );
-    cy += 16.0;
+        cy = render_profile_section(
+            ctx, x, cy, available_w, state, text_color, toolbar_theme, frame_theme,
+            current_time_ms, input_coordinator, layer_id, result,
+        );
+        cy += 16.0;
+    }
 
     // The "Credentials / Manage Exchange Keys & Webhook" row that used to
     // live here was a pointer to a modal stacked on top of this one — the

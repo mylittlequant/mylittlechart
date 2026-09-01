@@ -784,7 +784,11 @@ impl ProfileUiSettings {
             device_name: String::new(),
             language: default_language(),
             windows: Vec::new(),
-            display_name: "Default".to_string(),
+            // An anonymous profile's identity is its UUID (`profile_id`);
+            // it carries no user-facing name at all (owner's identity ruling
+            // 2026-09-02). A nickname is an ACCOUNT attribute obtained
+            // through OAuth, never a profile name.
+            display_name: String::new(),
             avatar: "chart".to_string(),
             profile_created_at: 0,
             pin_granularity_favorites: false,
@@ -1259,8 +1263,11 @@ fn default_server_port() -> u16 {
     17420
 }
 
+/// Serde default for a profile record missing `display_name` on disk (older
+/// save, pre-2026-09-02). An anonymous profile's identity is its UUID; it
+/// carries no user-facing name at all (owner's identity ruling 2026-09-02).
 fn default_profile_name() -> String {
-    "Default".to_string()
+    String::new()
 }
 
 fn default_avatar() -> String {

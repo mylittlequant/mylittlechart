@@ -259,18 +259,28 @@ impl ProfileManager {
 
     /// Create a new profile.
     ///
-    /// If `name` is `None` or empty, an auto-generated name ("New Profile",
-    /// "New Profile 2", …) is used.  The new profile is NOT made active.
-    /// Cloud sync is always disabled at creation (toggle it in settings later).
-    /// Returns the newly created [`ProfileMeta`].
+    /// `name` distinguishes three intents:
+    /// - `None` — auto-generate ("New Profile", "New Profile 2", …); the
+    ///   paid tier's explicit "add another profile" action uses this.
+    /// - `Some("")` (or whitespace-only) — an explicitly nameless profile;
+    ///   the first-run wizard uses this. Owner's identity ruling
+    ///   2026-09-02: an anonymous profile's identity is its UUID and it
+    ///   carries no user-facing name — `auto_generate_name()` must never
+    ///   run for it, or it would silently pick up a "New Profile" label
+    ///   that was never asked for.
+    /// - `Some(n)` non-empty — the caller's own chosen name, used as-is.
+    ///
+    /// The new profile is NOT made active. Cloud sync is always disabled at
+    /// creation (toggle it in settings later). Returns the newly created
+    /// [`ProfileMeta`].
     pub fn create_profile(
         &mut self,
         name: Option<&str>,
         avatar: &str,
     ) -> Result<ProfileMeta, String> {
         let final_name = match name {
-            Some(n) if !n.trim().is_empty() => n.trim().to_string(),
-            _ => self.auto_generate_name(),
+            None => self.auto_generate_name(),
+            Some(n) => n.trim().to_string(),
         };
 
         let meta = create_profile(&final_name, avatar)?;

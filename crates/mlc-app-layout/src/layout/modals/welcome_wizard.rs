@@ -2,25 +2,31 @@
 //!
 //! An ordinary dismissible modal over a live chart — same [`begin_modal_shell`]
 //! every other modal uses. Owner's ruling 2026-08-31: theme first, then
-//! language, then a name — the wizard is a first-run courtesy, not a gate.
-//! Dismissing keeps whatever profile boot already created; it just skips the
-//! guided tour. A tutorial is planned for this same slot later.
+//! language — the wizard is a first-run courtesy, not a gate. Dismissing
+//! keeps whatever profile boot already created; it just skips the guided
+//! tour. A tutorial is planned for this same slot later.
 //!
 //! Owner's ruling 2026-08-31 (second pass, same day): the passphrase page is
 //! dropped from this flow entirely — the passphrase belongs to the vault,
 //! which is opened later at the point of use (profile manager), not at
-//! first-run setup. The wizard now ends the moment a name is picked; that is
-//! the whole flow. `profile_manager.rs` owns the vault/passphrase/recovery-key
+//! first-run setup. `profile_manager.rs` owns the vault/passphrase/recovery-key
 //! UI on its own, separate render path — nothing here reaches into it, and
 //! nothing there reached into this file either (each had its own private
 //! `render_back_button`/`render_passphrase_input`), so dropping this file's
 //! copies does not touch the profile manager's passphrase flow at all.
 //!
+//! Owner's identity ruling 2026-09-02: a profile is a local workspace whose
+//! identity is its UUID, and an anonymous profile needs no user-facing name
+//! — not even a default one. A nickname is an ACCOUNT attribute obtained
+//! through OAuth, never a profile name. So the wizard's Profile Name page is
+//! gone — there is nothing left to name at first run. The Language page is
+//! now the last page; its forward button ends the wizard directly.
+//!
 //! Pages:
 //!   0 — Theme         (`RuntimeTheme::PRESETS_SHORTLIST` — 6 presets, grid)
 //!   1 — Language       (`Language::all()` — 15 languages, grid; no mascot —
-//!                       dropped 2026-08-31, owner: it only ate space)
-//!   2 — Profile Name   (name input only — ends the wizard)
+//!                       dropped 2026-08-31, owner: it only ate space; last
+//!                       page — its forward button ends the wizard)
 
 use mlc_core::engine::render::{draw_svg_icon, RenderContext};
 use mlc_core::i18n::{Language, WizardKey, current_language, t_wizard};
@@ -33,16 +39,18 @@ use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::layout::render_frame::UserSettingsResult;
 use crate::ui::z_order::ZLayer;
 use crate::ui::widgets::{
-    begin_modal_shell, end_modal_shell, register_dimmer_zones, draw_input, draw_input_cursor,
-    InputConfig, InputType, ModalFooter, ModalPlacement, ModalShellSpec, ModalTheme,
-    theme_sample_tokens, draw_theme_sample,
+    begin_modal_shell, end_modal_shell, register_dimmer_zones,
+    ModalFooter, ModalPlacement, ModalShellSpec, ModalTheme,
+    theme_palette_tokens, theme_palette_width, draw_theme_palette,
 };
-use crate::ui::widgets::types::WidgetState;
-use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::icons::Icon;
 
-const MODAL_W: f64 = 580.0;
+/// Widened 580→640 on 2026-09-02: each theme row now carries a
+/// five-chip palette strip on its right edge (`THEME_PALETTE_*`), and at
+/// 580 the strip and the longest label ("High Contrast Mono") fought for
+/// the same pixels in a two-column cell.
+const MODAL_W: f64 = 640.0;
 
 /// Columns in the theme page's preset grid (page 0). `RuntimeTheme::
 /// PRESETS_SHORTLIST` is 6 entries long — 2 columns keeps each cell wide
@@ -52,6 +60,16 @@ const THEME_GRID_COLS: usize = 2;
 const THEME_ROW_H: f64 = 40.0;
 const THEME_ROW_GAP: f64 = 6.0;
 const THEME_COL_GAP: f64 = 16.0;
+
+/// Palette strip geometry for a theme row. The strip is right-aligned in the
+/// cell, so the label keeps everything between the radio and the strip and
+/// rows stay aligned with each other regardless of label length.
+const THEME_CHIP: f64 = 12.0;
+const THEME_CHIP_GAP: f64 = 4.0;
+/// Radius of the selection radio drawn at the head of a theme row.
+const THEME_RADIO_R: f64 = 7.0;
+/// Left inset shared by the radio and the right-hand palette strip.
+const THEME_ROW_PAD: f64 = 12.0;
 
 /// Columns in the language page's grid (page 1). `Language::all()` is 15
 /// entries, all single native-script words — 3 columns fits comfortably and
@@ -70,7 +88,8 @@ fn page_content_height(state: &UserSettingsState) -> f64 {
         // Theme: subtitle(28) + rows*(40+6) + gap(16) + button(38), rows =
         // ceil(`RuntimeTheme::PRESETS_SHORTLIST.len()` / `THEME_GRID_COLS`).
         0 => theme_page_content_height(),
-        // Language: back+gap(34) + rows*(32+4) + gap(12) + button(38), rows =
+        // Language (last page — its button ends the wizard): back+gap(34) +
+        // rows*(32+4) + gap(12) + button(38), rows =
         // ceil(`Language::all().len()` / `LANG_GRID_COLS`). No mascot term —
         // the mascot was dropped from this page (owner 2026-08-31: it only
         // ate space; the boot splash keeps its own, separate mascot).
@@ -81,8 +100,6 @@ fn page_content_height(state: &UserSettingsState) -> f64 {
             let langs = rows * (LANG_ROW_H + LANG_ROW_GAP);
             header + langs + 12.0 + 38.0
         }
-        // Profile Name: back+gap(34) + pre-input gap(12) + input(32) + gap(24) + button(38).
-        2 => 140.0,
         _ => theme_page_content_height(),
     }
 }
@@ -99,7 +116,6 @@ fn page_title(state: &UserSettingsState) -> String {
     match state.wizard_page {
         0 => t_wizard(WizardKey::Theme).to_string(),
         1 => format!("{} mylittlechart", t_wizard(WizardKey::WelcomeTo)),
-        2 => t_wizard(WizardKey::ProfileName).to_string(),
         _ => t_wizard(WizardKey::Theme).to_string(),
     }
 }
@@ -154,7 +170,6 @@ pub fn render_welcome_wizard(
     match state.wizard_page {
         0 => render_page_theme(ctx, x, w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
         1 => render_page_language(ctx, x, w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
-        2 => render_page_profile_name(ctx, x, w, &mut cy, state, text_color, toolbar_theme, frame_theme, input_coordinator, &layer_id, result),
         _ => render_page_theme(ctx, x, w, &mut cy, state, text_color, toolbar_theme, input_coordinator, &layer_id, result),
     }
 
@@ -210,7 +225,6 @@ fn render_page_theme(
     // a color sample.
     let row_h = THEME_ROW_H;
     let row_gap = THEME_ROW_GAP;
-    let swatch_size = 20.0;
     let col_gap = THEME_COL_GAP;
     let col_w = (w - col_gap * (THEME_GRID_COLS - 1) as f64) / THEME_GRID_COLS as f64;
     let grid_top = *cy;
@@ -239,19 +253,54 @@ fn render_page_theme(
             ctx.fill_rounded_rect(cell_x, cell_y, 3.0, row_h, 2.0);
         }
 
-        // Background / accent / text sample, pulled from the preset itself
-        // so it actually tells presets apart before clicking.
-        let swatch_x = cell_x + 12.0;
-        let swatch_y = cell_y + (row_h - swatch_size) / 2.0;
-        let sample_tokens = theme_sample_tokens(key);
-        draw_theme_sample(ctx, swatch_x, swatch_y, swatch_size, &sample_tokens);
+        // Selection radio. Owner review 2026-09-02: the old head-of-row mark
+        // was the colour sample itself — a rounded square with an accent dot
+        // inset in it, which read as "a checkbox with a ball inside" and left
+        // the row with no honest selected/unselected control at all (only an
+        // accent stripe and slightly brighter text said which one was picked).
+        // Same ring-plus-inner-dot shape `draw_radio_group` uses, so a
+        // single-choice list looks like a single-choice list everywhere.
+        let radio_cx = cell_x + THEME_ROW_PAD + THEME_RADIO_R;
+        let radio_cy = cell_y + row_h / 2.0;
+        ctx.begin_path();
+        ctx.arc(radio_cx, radio_cy, THEME_RADIO_R, 0.0, std::f64::consts::TAU);
+        ctx.set_stroke_color(if is_active {
+            toolbar_theme.accent.as_str()
+        } else {
+            toolbar_theme.separator.as_str()
+        });
+        ctx.set_stroke_width(1.5);
+        ctx.stroke();
+        if is_active {
+            ctx.begin_path();
+            ctx.arc(radio_cx, radio_cy, THEME_RADIO_R - 3.5, 0.0, std::f64::consts::TAU);
+            ctx.set_fill_color(toolbar_theme.accent.as_str());
+            ctx.fill();
+        }
+
+        // The preset's own palette, right-aligned so the strips line up in a
+        // column and can be compared down the list rather than read one row
+        // at a time.
+        let strip_w = theme_palette_width(THEME_CHIP, THEME_CHIP_GAP);
+        let strip_x = cell_x + col_w - THEME_ROW_PAD - strip_w;
+        let strip_y = cell_y + (row_h - THEME_CHIP) / 2.0;
+        let palette = theme_palette_tokens(key);
+        draw_theme_palette(
+            ctx,
+            strip_x,
+            strip_y,
+            THEME_CHIP,
+            THEME_CHIP_GAP,
+            toolbar_theme.separator.as_str(),
+            &palette,
+        );
 
         let text_alpha = if is_active { toolbar_theme.item_text.as_str() } else { toolbar_theme.item_text_muted.as_str() };
         ctx.set_font("14px sans-serif");
         ctx.set_fill_color(text_alpha);
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(label, swatch_x + swatch_size + 10.0, cell_y + row_h / 2.0);
+        ctx.fill_text(label, radio_cx + THEME_RADIO_R + 10.0, cell_y + row_h / 2.0);
 
         let row_rect = WidgetRect::new(cell_x, cell_y, col_w, row_h);
         result.content_items.push((widget_id.clone(), row_rect));
@@ -306,7 +355,8 @@ fn wizard_theme_label(preset_id: &str) -> &'static str {
 }
 
 // =============================================================================
-// Page 1 — Language (language grid, no mascot)
+// Page 1 — Language (language grid, no mascot; last page — the forward
+// button ends the wizard, see the identity ruling in the module doc above)
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
@@ -327,14 +377,6 @@ fn render_page_language(
 
     render_back_button(ctx, x, w, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
     *cy += 8.0;
-
-    // Step indicator (top-right — shares the back button's row).
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_align(TextAlign::Right);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::Step2of3), x + w, *cy - 20.0);
-    ctx.set_text_align(TextAlign::Left);
 
     // No mascot on this page (owner 2026-08-31: it only ate space — the boot
     // splash keeps its own, separate mascot; this page never reused that
@@ -391,7 +433,9 @@ fn render_page_language(
     let grid_rows = langs.len().div_ceil(LANG_GRID_COLS) as f64;
     *cy = grid_top + grid_rows * (row_h + row_gap) + 12.0;
 
-    // "Next" button (goes to the profile-name page)
+    // "Get Started" button — last page now, so this is the finish action
+    // the dropped Profile Name page's own finish button used to perform:
+    // ends the wizard (theme + language stay applied, setup marked done).
     let btn_h = 38.0;
     let btn_w = w.min(200.0);
     let btn_x = x + (w - btn_w) / 2.0;
@@ -404,115 +448,12 @@ fn render_page_language(
     ctx.set_fill_color(btn_text);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_wizard(WizardKey::Next), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
+    ctx.fill_text(t_wizard(WizardKey::GetStarted), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
     result.content_items.push(("wizard_lang_next".to_string(), btn_rect));
     input_coordinator.register_on_layer("user_settings:wizard_lang_next", btn_rect, Sense::CLICK, layer_id);
-}
-
-// =============================================================================
-// Page 2 — Profile Name (last page — picking a name ends the wizard)
-// =============================================================================
-
-#[allow(clippy::too_many_arguments)]
-fn render_page_profile_name(
-    ctx: &mut dyn RenderContext,
-    x: f64,
-    w: f64,
-    cy: &mut f64,
-    state: &UserSettingsState,
-    _text_color: &str,
-    toolbar_theme: &ToolbarTheme,
-    frame_theme: &FrameTheme,
-    input_coordinator: &mut uzor::input::InputCoordinator,
-    layer_id: &uzor::input::LayerId,
-    result: &mut UserSettingsResult,
-) {
-    let hovered = state.hovered_item_id.as_deref();
-
-    render_back_button(ctx, x, w, cy, toolbar_theme, layer_id, input_coordinator, result, hovered);
-    *cy += 8.0;
-
-    // Step indicator (top-right — shares the back button's row).
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
-    ctx.set_text_align(TextAlign::Right);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(t_wizard(WizardKey::Step3of3), x + w, *cy - 20.0);
-    ctx.set_text_align(TextAlign::Left);
-    *cy += 12.0;
-
-    // Profile Name input — the shell header already reads "Profile Name",
-    // so the field itself carries no separate label, only the placeholder.
-    let input_h = 32.0;
-    let name_rect = WidgetRect::new(x, *cy, w, input_h);
-    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
-    let wz_npn_render = &state.new_profile_name_render;
-    let (name_sel_start, name_sel_end) = if let Some((lo, hi)) = wz_npn_render.selection_range() {
-        (Some(lo), Some(hi))
-    } else {
-        (None, None)
-    };
-    let name_config = InputConfig::new(&wz_npn_render.text)
-        .with_focused(state.new_profile_name_focused)
-        .with_cursor(wz_npn_render.cursor)
-        .with_placeholder("Default")
-        .with_type(InputType::Text)
-        .with_selection(name_sel_start, name_sel_end);
-
-    let name_input_result = draw_input(ctx, &name_config, WidgetState::Normal, name_rect, &widget_theme);
-
-    result.content_items.push(("wizard_profile_name_input".to_string(), name_rect));
-    result.input_char_positions.push(("wizard_profile_name_input".to_string(), name_input_result.char_x_positions.clone()));
-    input_coordinator.register_on_layer("user_settings:wizard_profile_name_input", name_rect, Sense::CLICK, layer_id);
-
-    if state.new_profile_name_focused && wz_npn_render.cursor_visible {
-        draw_input_cursor(
-            ctx,
-            name_input_result.cursor_x,
-            name_input_result.cursor_y,
-            name_input_result.cursor_height,
-            &toolbar_theme.item_text,
-        );
-    }
-
-    *cy += input_h + 24.0;
-
-    // "Get Started" button — the whole flow: name the profile and start
-    // using the app. No passphrase step here (owner's ruling 2026-08-31):
-    // the vault opens later, at the point of use, via the profile manager.
-    let profile_name = state.new_profile_name_render.text.trim().to_string();
-    let finish_disabled = profile_name.is_empty();
-
-    let is_finish_hovered = !finish_disabled && hovered == Some("wizard_finish");
-    let finish_bg = if is_finish_hovered { toolbar_theme.button_bg_hover.as_str() } else { toolbar_theme.button_bg.as_str() };
-    let finish_text_col = if finish_disabled {
-        toolbar_theme.item_text_muted.as_str()
-    } else if is_finish_hovered {
-        toolbar_theme.item_text_hover.as_str()
-    } else {
-        toolbar_theme.item_text.as_str()
-    };
-
-    let btn_h = 38.0;
-    let btn_w = w.min(200.0);
-    let btn_x = x + (w - btn_w) / 2.0;
-    ctx.set_fill_color(finish_bg);
-    ctx.fill_rounded_rect(btn_x, *cy, btn_w, btn_h, 4.0);
-    ctx.set_font("bold 13px sans-serif");
-    ctx.set_fill_color(finish_text_col);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(t_wizard(WizardKey::GetStarted), btn_x + btn_w / 2.0, *cy + btn_h / 2.0);
-    ctx.set_text_align(TextAlign::Left);
-
-    if !finish_disabled {
-        let btn_rect = WidgetRect::new(btn_x, *cy, btn_w, btn_h);
-        result.content_items.push(("wizard_finish".to_string(), btn_rect));
-        input_coordinator.register_on_layer("user_settings:wizard_finish", btn_rect, Sense::CLICK, layer_id);
-    }
 }
 
 // =============================================================================

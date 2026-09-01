@@ -5491,6 +5491,41 @@ impl ChartApp {
                     }
                     eprintln!("[ChartApp] e2e_passphrase_input: focused");
                 }
+                // ── Passphrase suggest / copy (owner ruling 2026-09-02) ────────
+                // Drawn only on the two pages where the user CHOOSES a
+                // passphrase (`CreatePassphrase`, `SetNewPassphrase`) — never
+                // on the unlock page, which enters an existing secret.
+                "profile_mgr:passphrase_suggest" => {
+                    use mlc_app_layout::ui::modal_settings::ActiveFieldRender;
+                    let pass = mlc_vault::generate_passphrase();
+                    let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
+                    {
+                        let mut ic = self.input_coordinator.borrow_mut();
+                        let tf = ic.text_fields_mut();
+                        tf.set_text(&np_wid, &pass);
+                        tf.focus(np_wid.clone());
+                    }
+                    self.panel_app.user_settings_state.new_passphrase_focused = true;
+                    self.panel_app.user_settings_state.new_passphrase_render = ActiveFieldRender {
+                        text: pass.clone(),
+                        cursor: pass.chars().count(),
+                        selection_start: None,
+                        cursor_visible: true,
+                    };
+                    // Does NOT touch CONFIRM_PASSPHRASE — the user pastes the
+                    // suggestion there themselves, and that round trip is
+                    // what makes the confirm field a real check.
+                    self.clipboard_text = Some(pass);
+                    eprintln!("[ChartApp] profile_mgr: passphrase suggested and copied to clipboard");
+                }
+                "profile_mgr:passphrase_copy" => {
+                    let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
+                    let pass = self.input_coordinator.borrow().text_fields().text(&np_wid).to_string();
+                    if !pass.is_empty() {
+                        self.clipboard_text = Some(pass);
+                        eprintln!("[ChartApp] profile_mgr: passphrase copied to clipboard");
+                    }
+                }
                 "show_wizard" => {
                     self.panel_app.user_settings_state.show_welcome_wizard = true;
                     self.panel_app.user_settings_state.wizard_page = 0;
@@ -5515,10 +5550,13 @@ impl ChartApp {
                     eprintln!("[ChartApp] server_enabled = {}", self.panel_app.user_settings_state.server_enabled);
                 }
                 // ── Welcome Wizard handlers ───────────────────────────────────
-                // Page order: 0=Theme, 1=Language, 2=Profile Name (last page —
-                // picking a name ends the wizard). Owner's ruling 2026-08-31:
-                // no passphrase page — the vault opens later, at the point of
-                // use, via the profile manager.
+                // Page order: 0=Theme, 1=Language (last page — its forward
+                // button ends the wizard directly). Owner's identity ruling
+                // 2026-09-02: an anonymous profile carries no user-facing
+                // name, so the former Profile Name page (and its "pick a
+                // name to finish" gate) is gone. Owner's ruling 2026-08-31:
+                // no passphrase page either — the vault opens later, at the
+                // point of use, via the profile manager.
                 "wizard_back" => {
                     // Back arrow — go to previous page
                     let current_page = self.panel_app.user_settings_state.wizard_page;
@@ -5541,8 +5579,17 @@ impl ChartApp {
                 // Any new `wizard_lang_<verb>` control must be matched ABOVE
                 // this arm, not below it.
                 "wizard_lang_next" => {
-                    // Page 1 (Language) → page 2 (Profile Name).
-                    self.panel_app.user_settings_state.wizard_page = 2;
+                    // Page 1 (Language) is now the last page — this button
+                    // ends the wizard directly (owner's identity ruling
+                    // 2026-09-02: an anonymous profile carries no
+                    // user-facing name, so the former Profile Name page and
+                    // its name capture are gone). No passphrase collected
+                    // here either — the vault opens later, at the point of
+                    // use, via the profile manager (owner's ruling
+                    // 2026-08-31).
+                    self.pending_updater_cmd = Some("wizard_complete".to_string());
+                    self.panel_app.user_settings_state.show_welcome_wizard = false;
+                    eprintln!("[ChartApp] wizard: setup complete");
                 }
                 id if id.starts_with("wizard_lang_") => {
                     let code = &id["wizard_lang_".len()..];
@@ -5597,56 +5644,6 @@ impl ChartApp {
                     // Page 0 (Theme): go to page 1 (Language)
                     self.panel_app.user_settings_state.wizard_page = 1;
                     eprintln!("[ChartApp] wizard: theme done, going to page 1 (language)");
-                }
-                "wizard_profile_name_input" => {
-                    // Focus the profile name input on the profile page
-                    self.panel_app.user_settings_state.new_profile_name_focused = true;
-                    self.panel_app.user_settings_state.new_passphrase_focused = false;
-                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
-                    let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
-                    let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
-                    let cp_wid = uzor::WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
-                    self.input_coordinator.borrow_mut().text_fields_mut().focus(npn_wid.clone());
-                    // Clear selections on other fields
-                    {
-                        let mut ic = self.input_coordinator.borrow_mut();
-                        if let Some(fs) = ic.text_fields_mut().field_state_mut(&np_wid) { fs.selection_start = None; }
-                        if let Some(fs) = ic.text_fields_mut().field_state_mut(&cp_wid) { fs.selection_start = None; }
-                    }
-                    // Position cursor at click point using pre-computed char positions.
-                    let char_positions: Vec<f64> = self.frame_result.as_ref()
-                        .and_then(|r| r.user_settings.as_ref())
-                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "wizard_profile_name_input"))
-                        .map(|(_, v)| v.clone())
-                        .unwrap_or_default();
-                    if !char_positions.is_empty() {
-                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
-                        if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&npn_wid) {
-                            fs.cursor = new_cursor;
-                            fs.selection_start = None;
-                        }
-                    }
-                    eprintln!("[ChartApp] wizard: profile name input focused");
-                }
-                "wizard_finish" => {
-                    // Page 2: pick a name, hand it to the shell to create/name
-                    // the profile, then close the wizard. No passphrase
-                    // collected here — the vault opens later, at the point of
-                    // use, via the profile manager (owner's ruling 2026-08-31).
-                    let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
-                    let profile_name = self.input_coordinator.borrow().text_fields().text(&npn_wid).trim().to_string();
-                    if !profile_name.is_empty() {
-                        eprintln!("[ChartApp] wizard: profile name = {:?}", profile_name);
-                        self.pending_updater_cmd = Some(format!("wizard_complete:{}", profile_name));
-                        self.panel_app.user_settings_state.show_welcome_wizard = false;
-                        {
-                            let mut ic = self.input_coordinator.borrow_mut();
-                            ic.text_fields_mut().clear(&npn_wid);
-                            ic.text_fields_mut().blur();
-                        }
-                        self.panel_app.user_settings_state.new_profile_name_focused = false;
-                        eprintln!("[ChartApp] wizard: setup complete");
-                    }
                 }
                 "profile_mgr:run_wizard" => {
                     self.panel_app.user_settings_state.show_welcome_wizard = true;

@@ -765,23 +765,6 @@ fn run_render_loop(
             let cmd = st.chart.pending_updater_cmd.take();
             if let Some(cmd) = cmd {
                 use mlc_app::user_manager::{ProfileCommandOutcome, ProfileEffect};
-                // "wizard_complete:{name}" — native creates a fresh profile
-                // directory and renames it in one step; on web there is
-                // nothing left to create. `bootstrap_first_run` already
-                // guaranteed a profile exists before the wizard could ever
-                // show (the app must never be profile-less), so completing
-                // the wizard here only renames that already-existing
-                // profile to what the user picked. Rewritten into
-                // `profile_rename:` so it rides the same dispatcher + this
-                // block's own rename follow-up below, instead of a second
-                // parallel path.
-                let cmd = match cmd.strip_prefix("wizard_complete:") {
-                    Some(name) => {
-                        let active_id = st.profile_manager.profile.domain.profile_id.clone();
-                        format!("profile_rename:{}:{}", active_id, name)
-                    }
-                    None => cmd,
-                };
                 // Credentials modal mid-session re-unlock — NOT one of the
                 // five profile-family commands the shared dispatcher below
                 // owns (it would report `NotForMe` and get logged as an
@@ -1048,6 +1031,17 @@ fn run_render_loop(
                     web_sys::console::warn_1(
                         &"[mlc-app-shell-web] vault_skip_to_wizard declined — no multi-profile session swap on this shell yet".into(),
                     );
+                } else if cmd == "wizard_complete" {
+                    // Bare "wizard_complete" — no name attached. Owner's
+                    // identity ruling 2026-09-02: an anonymous profile
+                    // carries no user-facing name, so there is nothing left
+                    // to rename. `bootstrap_first_run` already guaranteed a
+                    // profile exists before the wizard could ever show (the
+                    // app must never be profile-less), and the shared
+                    // dispatcher in `mlc-app` already hid the wizard
+                    // (`show_welcome_wizard = false`) before this command
+                    // was queued — nothing left for this shell to do.
+                    web_sys::console::log_1(&"[mlc-app-shell-web] wizard_complete".into());
                 } else {
                 match ChartApp::dispatch_profile_command(&cmd, &mut st.profile_manager) {
                     ProfileCommandOutcome::Handled(ProfileEffect::Renamed { id, new_name, was_active }) => {
@@ -1154,8 +1148,9 @@ fn run_render_loop(
                         // `vault_skip_to_wizard`) and updater-only (`logout`,
                         // `start_device_auth`) commands are explicitly out of
                         // scope for this shell for now — logged, not dropped.
-                        // `wizard_complete` is NOT one of these — it is
-                        // rewritten into `profile_rename:` above and handled.
+                        // `wizard_complete` is NOT one of these — it has its
+                        // own arm above (no name to rename to since the
+                        // wizard's Profile Name page is gone).
                         web_sys::console::warn_1(
                             &format!("[mlc-app-shell-web] unhandled updater command: {:?}", cmd).into(),
                         );

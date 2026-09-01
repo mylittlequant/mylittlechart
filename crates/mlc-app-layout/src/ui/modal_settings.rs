@@ -3788,7 +3788,13 @@ impl Default for UserSettingsState {
             profiles_with_vault_status: Vec::new(),
             wizard_page: 0,
             wizard_e2e_chosen: false,
-            profile_display_name: "Default".to_string(),
+            // Empty, not "Default" (owner's identity ruling 2026-09-02: an
+            // anonymous profile has no user-facing name at all). This is a
+            // pre-sync placeholder that a real profile load overwrites within
+            // a frame — but it was the last place in the tree still spelling
+            // the old default out, and a stale literal here would reappear on
+            // any path that renders before that sync lands.
+            profile_display_name: String::new(),
             profile_avatar: "chart".to_string(),
             profile_id: String::new(),
             runtime_profile_id: String::new(),

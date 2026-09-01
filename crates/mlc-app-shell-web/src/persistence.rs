@@ -11,7 +11,7 @@
 //! # Boot path (mirrors `main.rs:4928-4990`)
 //!
 //! 1. [`bootstrap_first_run`] — probe the profile index; if empty, create a
-//!    "default" profile via `mlc_core::create_profile` (same non-UI call the
+//!    nameless profile via `mlc_core::create_profile` (same non-UI call the
 //!    welcome wizard's command handlers use).
 //! 2. `ProfileManager::load(None)` (caller, `lib.rs`) — now resolves to the
 //!    profile just created (or an existing one on a returning visit).
@@ -44,16 +44,24 @@ use mlc_app::ChartApp;
 ///
 /// Mirrors the vello `is_first_run` probe (`main.rs:4928-4953`), but unlike
 /// native this shell has no "skeleton" state to defer profile creation
-/// through — it always creates a real "default" profile immediately so the
-/// app is never profile-less. `ChartApp::new_window`'s fresh-state path (no
-/// saved presets) then creates the first "Untitled 1" chart + preset on its
-/// own, which is what makes `active_preset_id` non-empty and turns on
-/// autosave.
+/// through — it always creates a real profile immediately so the app is
+/// never profile-less. `ChartApp::new_window`'s fresh-state path (no saved
+/// presets) then creates the first "Untitled 1" chart + preset on its own,
+/// which is what makes `active_preset_id` non-empty and turns on autosave.
+///
+/// The profile is created **nameless** (owner's identity ruling 2026-09-02):
+/// a profile is a local workspace whose identity is its UUID, and an
+/// anonymous user has exactly one of them and needs no user-facing name for
+/// it. A nickname is an ACCOUNT attribute that arrives with OAuth. This used
+/// to pass the literal `"default"` — a lower-case second copy of the
+/// `"Default"` that `ProfileUiSettings` carried, which is why clearing the
+/// one in `mlc-core` left the web shell still stamping a name on every
+/// first-run profile.
 ///
 /// Owner's ruling 2026-08-31: the caller uses the `true` return (a profile
 /// was just created from nothing) to raise the welcome wizard (theme →
-/// language → name) instead of staying silent about it — dismissing the
-/// wizard is a courtesy and keeps the "default" profile created here.
+/// language) instead of staying silent about it — dismissing the wizard is a
+/// courtesy and keeps the profile created here.
 ///
 /// No-op (returns `false`) if a profile index with at least one profile
 /// already exists — the returning-visitor path, which never sees the wizard.
@@ -65,7 +73,7 @@ pub fn bootstrap_first_run() -> bool {
     if !is_first_run {
         return false;
     }
-    match mlc_core::create_profile("default", "chart") {
+    match mlc_core::create_profile("", "chart") {
         Ok(meta) => {
             web_sys::console::log_1(
                 &format!("[mlc-app-shell-web] first-run bootstrap: created profile '{}' ({})",
