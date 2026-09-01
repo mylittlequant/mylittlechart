@@ -4269,19 +4269,25 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.account_signed_in = account_signed_in;
             }
-            // `UserSettingsState::multi_profile` stays at its safe `false`
-            // default on this shell: it has no cloud transport at all
-            // (`mlc-cloud`'s native side is `mlc-app-shell-web`-only, wasm
-            // fetch — see that crate's own module doc, "native transport
-            // lands with updater phase 2") and no `GET /api/entitlements`
-            // caller exists in `mlc_updater` either. A signed-in native
-            // user therefore always sees the free-tier PROFILE row even if
-            // their account is paid — the safe side of the failure rule
-            // ("degrade to free, never to paid"), but a real gap, not a
-            // deliberate design: wiring a live answer needs either a native
-            // `mlc-cloud` transport or an entitlements call added to
-            // `mlc_updater`'s own reqwest client, which is outside this
-            // change's scope.
+            // `UserSettingsState::multi_profile` — this shell has no
+            // `mlc-cloud` transport (native side does not exist, see that
+            // crate's own module doc), but `mlc_updater` now carries its
+            // own `GET /api/entitlements` caller, since it already owns
+            // the reqwest client, the token store, and this watch-channel
+            // publishing pattern. Same peek-cost reasoning as
+            // `account_signed_in` above: a `borrow()` is a channel read,
+            // not network IO. `Entitlements::default()` (no fetch yet, or
+            // last fetch failed) reads as `false` here, matching the
+            // "degrade to free, never to paid" rule enforced on the
+            // publish side in `mlc_updater::do_entitlements_check`.
+            let multi_profile = self
+                .updater_handle
+                .entitlements_rx
+                .borrow()
+                .has("multi_profile");
+            for pw in self.windows.values_mut() {
+                pw.chart.panel_app.user_settings_state.multi_profile = multi_profile;
+            }
 
             // Global scale_mode persistence channel removed entirely
             // (viewport SWC arc, 2026-07-03) — `core.user()` no longer

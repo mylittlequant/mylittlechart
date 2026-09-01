@@ -76,6 +76,31 @@ pub enum AuthStatus {
     },
 }
 
+/// Resolved feature-gate set from `GET /api/entitlements` on the update
+/// server, broadcast via a watch channel so the UI can react.
+///
+/// Mirrors `mlc_cloud::EntitlementsResponse` (the wasm shell's own copy of
+/// this shape) field-for-field, but this crate does not depend on
+/// `mlc-cloud` — its native transport does not exist (see that crate's own
+/// module doc) — so the type is duplicated here rather than shared.
+///
+/// The `Default` is the free set: no features, `expires_at = 0` so it
+/// reads as already-expired. That default is also what a failed or
+/// not-yet-attempted fetch must degrade to — never a fabricated paid set.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Entitlements {
+    pub features: Vec<String>,
+    /// Millisecond Unix timestamp from the server; re-ask after it passes.
+    pub expires_at: i64,
+}
+
+impl Entitlements {
+    /// Whether `feature` is present in the resolved set.
+    pub fn has(&self, feature: &str) -> bool {
+        self.features.iter().any(|f| f == feature)
+    }
+}
+
 /// Information about an available update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateInfo {
@@ -256,6 +281,14 @@ pub struct UpdaterHandle {
     pub cmd_tx: mpsc::UnboundedSender<UpdaterCommand>,
     /// Current authentication status — watch channel updated on login/logout.
     pub auth_rx: watch::Receiver<AuthStatus>,
+    /// Current resolved feature-gate set from `GET /api/entitlements`.
+    ///
+    /// The UI polls this each frame (a channel read, not network IO) to
+    /// decide whether to draw paid-tier surfaces such as the profile list.
+    /// Starts at [`Entitlements::default`] (the free set) and only ever
+    /// advances via a successful fetch — see that type's own doc for why a
+    /// failed fetch must never publish anything else.
+    pub entitlements_rx: watch::Receiver<Entitlements>,
     /// Current cloud sync status.
     ///
     /// The UI polls `has_changed()` each frame and displays progress

@@ -16,8 +16,9 @@ pub mod cloud_sync;
 pub mod vault_params;
 pub mod verify;
 pub mod attest;
+pub mod entitlements;
 
-pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution};
+pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements};
 
 /// Format current time as `HH:MM:SS` for log lines.
 pub fn now_ts() -> String {
@@ -31,6 +32,15 @@ pub fn now_ts() -> String {
     let m = (day_secs % 3600) / 60;
     let s = day_secs % 60;
     format!("{:02}:{:02}:{:02}", h, m, s)
+}
+
+/// Current wall-clock time as milliseconds since the Unix epoch — the same
+/// clock the server's entitlements `expires_at` is stamped in.
+fn now_unix_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 use tokio::sync::{mpsc, watch};
@@ -82,6 +92,29 @@ fn check_interval_for_channel(channel: &str) -> std::time::Duration {
 /// dev channel already was. The server enforces its own per-device daily cap
 /// regardless of what any client decides to send.
 const TELEMETRY_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60 * 60);
+
+/// How often the loop wakes to check whether an entitlements re-ask is due.
+///
+/// The wake itself is cheap — a timestamp compare against
+/// `next_entitlements_at_ms` — the `GET /api/entitlements` call only fires
+/// once that deadline has passed (see [`do_entitlements_check`]).
+/// Deliberately its own clock rather than riding `check_interval` or
+/// [`TELEMETRY_INTERVAL`]: same reasoning as that constant's own doc —
+/// what one tick is for has nothing to do with another.
+const ENTITLEMENTS_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// Backoff before retrying a failed entitlements fetch — mirrors
+/// `mlc-app-shell-web`'s `cloud_session::ENTITLEMENTS_RETRY_MS`; see that
+/// module's doc for the reasoning (self-heal a network blip without
+/// hammering a real outage).
+const ENTITLEMENTS_RETRY_SECS: u64 = 30;
+
+/// Floor on the re-ask interval even if the server's own `expires_at`
+/// comes back unreasonably soon (or already in the past) — mirrors
+/// `cloud_session::ENTITLEMENTS_MIN_REASK_MS`. The endpoint answers the
+/// same caller identity on every call, so there is nothing to gain from
+/// asking more often than this regardless of what the server said.
+const ENTITLEMENTS_MIN_REASK_SECS: u64 = 60;
 
 /// Trait for providing telemetry data from the application.
 /// Implemented by the main app to feed live metrics to the updater.
@@ -140,6 +173,12 @@ pub fn start(
         .unwrap_or(AuthStatus::NotLoggedIn);
     let (auth_tx, auth_rx) = watch::channel(initial_auth);
 
+    // Channel for entitlements (feature gates) — starts at the free
+    // default and only ever advances via a successful fetch; see
+    // `Entitlements`'s own doc for why a failed fetch must never publish
+    // anything else.
+    let (entitlements_tx, entitlements_rx) = watch::channel(state::Entitlements::default());
+
     // Channel for cloud sync status — starts Idle, updated by the updater loop.
     let (sync_status_tx, sync_status_rx) = watch::channel(state::SyncStatus::Idle);
 
@@ -153,11 +192,12 @@ pub fn start(
         status_rx,
         cmd_tx,
         auth_rx,
+        entitlements_rx,
         sync_status_rx,
         sync_checksums_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, sync_enabled, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
+    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, sync_enabled, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
 
     handle
 }
@@ -172,6 +212,7 @@ pub fn wait_for_parent_exit_if_needed() {
 async fn updater_loop(
     status_tx: watch::Sender<UpdateStatus>,
     auth_tx: watch::Sender<state::AuthStatus>,
+    entitlements_tx: watch::Sender<state::Entitlements>,
     sync_status_tx: watch::Sender<state::SyncStatus>,
     sync_checksums_tx: watch::Sender<std::collections::HashMap<String, String>>,
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
@@ -237,12 +278,22 @@ async fn updater_loop(
     let mut telemetry_interval = tokio::time::interval(TELEMETRY_INTERVAL);
     telemetry_interval.tick().await; // consume first immediate tick
 
-    // Do initial check + telemetry only in connected mode.
+    // Entitlements re-ask also runs on its own clock — see
+    // ENTITLEMENTS_POLL_INTERVAL. `next_entitlements_at_ms = 0` means
+    // "due immediately", which is how the very first fetch (below, in the
+    // initial connected-mode check) gets scheduled.
+    let mut entitlements_poll_interval = tokio::time::interval(ENTITLEMENTS_POLL_INTERVAL);
+    entitlements_poll_interval.tick().await; // consume first immediate tick
+    let mut next_entitlements_at_ms: i64 = 0;
+
+    // Do initial check + telemetry + entitlements only in connected mode —
+    // standalone mode makes no HTTP calls at all until SetCloudEnabled(true).
     if connected {
         let token = token_store::load_token();
         let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
         do_check(&status_tx, current_version, auth_header.as_deref(), &channel).await;
         send_telemetry_sample(auth_header.as_deref(), &telemetry_source);
+        next_entitlements_at_ms = do_entitlements_check(&http_client, &entitlements_tx, auth_header.as_deref()).await;
     } else {
         log::info!("[Updater] Standalone mode — skipping initial update check and telemetry");
     }
@@ -265,6 +316,15 @@ async fn updater_loop(
                     let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
                     send_telemetry_sample(auth.as_deref(), &telemetry_source);
                 }
+            }
+
+            _ = entitlements_poll_interval.tick() => {
+                if connected && now_unix_ms() >= next_entitlements_at_ms {
+                    let token = token_store::load_token();
+                    let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
+                    next_entitlements_at_ms = do_entitlements_check(&http_client, &entitlements_tx, auth.as_deref()).await;
+                }
+                // In standalone mode, or before the deadline: tick fires but we do nothing.
             }
 
             _ = check_interval.tick() => {
@@ -367,6 +427,10 @@ async fn updater_loop(
                             if let Some(ref info) = pending_update {
                                 do_install(&status_tx, info, server_port).await;
                             }
+                            // Entitlements immediately after switching to connected —
+                            // standalone mode made no HTTP calls, so this may be the
+                            // first opportunity to ask.
+                            next_entitlements_at_ms = do_entitlements_check(&http_client, &entitlements_tx, auth.as_deref()).await;
                             // Cloud sync immediately after switching to connected.
                             if let Some(ref td) = token {
                                 if sync_state.enabled {
@@ -951,6 +1015,38 @@ async fn do_check(
             eprintln!("[{} Updater] OTA check failed: {}", now_ts(), e);
             log::warn!("Update check failed: {}", e);
             let _ = status_tx.send(UpdateStatus::Idle);
+        }
+    }
+}
+
+/// Fetch the feature-gate set and publish it — on success only.
+///
+/// Mirrors the failure contract `cloud_session.rs` settled on for the web
+/// shell: any failure (network, non-200, unparseable body) leaves the
+/// previously published value untouched — this function simply does not
+/// send on `entitlements_tx` in that case — and schedules a retry on a
+/// backoff. It must never publish an empty set over a good one, and never
+/// publish a paid one it did not receive. If nothing has ever been
+/// fetched successfully, the channel stays at [`state::Entitlements::default`].
+///
+/// Returns the unix-ms deadline after which the next fetch is due.
+async fn do_entitlements_check(
+    client: &reqwest::Client,
+    entitlements_tx: &watch::Sender<state::Entitlements>,
+    auth_header: Option<&str>,
+) -> i64 {
+    match entitlements::fetch(client, auth_header).await {
+        Ok(ent) => {
+            let expires_at = ent.expires_at;
+            let _ = entitlements_tx.send(ent);
+            // Floor so a server answer that is already stale (or asks to
+            // be re-checked immediately) cannot turn the poll interval
+            // into an effective fetch-every-tick loop.
+            expires_at.max(now_unix_ms() + (ENTITLEMENTS_MIN_REASK_SECS * 1000) as i64)
+        }
+        Err(e) => {
+            log::warn!("[Updater] entitlements fetch failed: {}", e);
+            now_unix_ms() + (ENTITLEMENTS_RETRY_SECS * 1000) as i64
         }
     }
 }
