@@ -4,13 +4,13 @@
 //!   - General    : placeholder for future general settings
 //!   - Performance: RecalcMode radio group selector
 
-use mlc_core::engine::render::RenderContext;
+use mlc_core::engine::render::{draw_svg_icon, RenderContext};
 use uzor::render::{TextAlign, TextBaseline};
 use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
 use mlc_core::i18n::{current_language, Language, TextKey, UserSettingsKey};
 use mlc_core::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
-use crate::ui::modal_settings::{UserSettingsState, UserSettingsTab};
+use crate::ui::modal_settings::{CredentialsState, CredentialsView, UserSettingsState, UserSettingsTab};
 use crate::ui::scroll_state::ScrollState;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{ModalTheme, WidgetTheme, RadioOption, draw_radio_group, auto_btn_width, fit_text_to_width};
@@ -18,7 +18,7 @@ use crate::ui::widgets::{
     begin_modal_shell, end_modal_shell, ModalPlacement, ModalShellSpec, ModalTab,
     ModalTabs, FOOTER_H, HEADER_H, TAB_RAIL_W,
 };
-use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig};
+use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, InputType};
 use crate::ui::widgets::{render_single_slider, SliderConfig, SliderTrackInfo};
 use crate::ui::widgets::types::WidgetState;
 use crate::layout::render_chart::FrameTheme;
@@ -27,12 +27,22 @@ use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::Icon;
 use crate::ui::scroll_widget::ScrollableContainer;
 
+/// Row height for the Vault tab's own rows (status/key/webhook/add-key
+/// fields) — carried over unchanged from the standalone credentials modal
+/// this tab replaced.
+const CRED_ROW_H: f64 = 32.0;
+/// Vertical gap between Vault tab rows.
+const CRED_ITEM_PADDING: f64 = 8.0;
+/// Label column width in the Vault tab's add-key form / webhook row.
+const CRED_LABEL_W: f64 = 90.0;
+
 /// Render the User Settings modal dialog.
 pub fn render_user_settings_modal(
     ctx: &mut dyn RenderContext,
     screen_w: f64,
     screen_h: f64,
     state: &UserSettingsState,
+    credentials: &CredentialsState,
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
     current_time_ms: u64,
@@ -53,6 +63,7 @@ pub fn render_user_settings_modal(
             let icon = match tab {
                 UserSettingsTab::General => Icon::Settings,
                 UserSettingsTab::Sync => Icon::Lock,
+                UserSettingsTab::Vault => Icon::Lock,
                 UserSettingsTab::Persistence => Icon::Pin,
                 UserSettingsTab::Performance => Icon::Grid,
                 UserSettingsTab::Server => Icon::Layers,
@@ -159,6 +170,26 @@ pub fn render_user_settings_modal(
             );
         }
         UserSettingsTab::Sync => {}
+        UserSettingsTab::Vault => {
+            let viewport_rect = WidgetRect::new(
+                content_x + padding,
+                settings_y,
+                content_w - padding * 2.0,
+                scroll_viewport_h,
+            );
+            render_vault_tab(
+                ctx,
+                viewport_rect,
+                state,
+                credentials,
+                toolbar_theme,
+                frame_theme,
+                &scroll_widget_theme,
+                input_coordinator,
+                &layer_id,
+                &mut result,
+            );
+        }
         UserSettingsTab::Persistence => {
             let viewport_rect = WidgetRect::new(
                 content_x + padding,
@@ -324,6 +355,479 @@ fn persist_checkbox_row(
     desc_y + hint_h + 12.0
 }
 
+// =============================================================================
+// Vault tab (exchange API keys + the alert webhook URL)
+// =============================================================================
+//
+// Moved in from the standalone credentials modal (`crate::layout::modals::
+// credentials`, retired) — opening it used to CLOSE this settings modal
+// (a modal stacked on a modal has no honest back button), so the vault
+// surface is a tab here instead. `render_list_view` / `render_add_key_view`
+// are the two pages `CredentialsState::view` switches between; unchanged
+// from the modal version except: (1) they paint into the tab's own
+// `ScrollableContainer` viewport instead of a fixed-size modal body, and
+// (2) their hit rects land in `UserSettingsResult` instead of the retired
+// `CredentialsResult`. Every widget id stays byte-identical to what the
+// modal used (`cred:lock`, `cred:add:exchange`, `cred:create`, ...) —
+// `handle_credentials_click` (mlc-app) dispatches on the `cred:` prefix
+// regardless of which surface drew the widget, and hover comparisons
+// against `hovered_item_id` test the WHOLE id the same way `alert_set:`
+// does. Nothing here should ever "tidy" one of these ids.
+
+/// Render the Vault tab body — dispatches on `credentials.view`.
+#[allow(clippy::too_many_arguments)]
+fn render_vault_tab(
+    ctx: &mut dyn RenderContext,
+    viewport_rect: WidgetRect,
+    state: &UserSettingsState,
+    credentials: &CredentialsState,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    scroll_widget_theme: &WidgetTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    let container = ScrollableContainer::new(viewport_rect, &state.vault_tab_scroll, None);
+    container.begin(ctx);
+    let x = viewport_rect.x;
+    let available_w = container.content_width();
+    let cy = container.content_y();
+
+    let final_cy = match credentials.view {
+        CredentialsView::List => render_list_view(
+            ctx, credentials, toolbar_theme, frame_theme, input_coordinator, layer_id, result,
+            x, cy, available_w,
+        ),
+        CredentialsView::AddKey => render_add_key_view(
+            ctx, credentials, toolbar_theme, frame_theme, input_coordinator, layer_id, result,
+            x, cy, available_w,
+        ),
+    };
+
+    let total_content_h = final_cy - container.content_y();
+    let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
+    result.scroll_viewport_rect = Some(viewport_rect);
+    result.scroll_content_height = scroll_result.content_height;
+    result.scrollbar_handle_rect = scroll_result.handle_rect;
+    result.scrollbar_track_rect = scroll_result.track_rect;
+    result.scroll_viewport_height = scroll_result.viewport_height;
+
+    if let Some(ref hr) = result.scrollbar_handle_rect {
+        let inflated = uzor::types::Rect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_handle",
+            inflated,
+            uzor::input::Sense::DRAG,
+            layer_id,
+        );
+    }
+    if let Some(ref tr) = result.scrollbar_track_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_track",
+            uzor::types::Rect::new(tr.x, tr.y, tr.width, tr.height),
+            uzor::input::Sense::CLICK,
+            layer_id,
+        );
+    }
+    if let Some(ref vp) = result.scroll_viewport_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scroll_viewport",
+            uzor::types::Rect::new(vp.x, vp.y, vp.width, vp.height),
+            uzor::input::Sense::SCROLL,
+            layer_id,
+        );
+    }
+}
+
+/// The vault status row (Lock/Unlock/Set up), the exchange-key list (or its
+/// empty notice), the "+ Add key" row, and the webhook section. Returns the
+/// `y` past the last row so the caller can size the scroll content.
+#[allow(clippy::too_many_arguments)]
+fn render_list_view(
+    ctx: &mut dyn RenderContext,
+    state: &CredentialsState,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+) -> f64 {
+    let mut y = content_y;
+
+    // --- Vault status row: "Vault: Unlocked/Sealed" + Lock/Unlock button ---
+    {
+        // Three states, not two: a profile with no vault is not a sealed
+        // one, and telling it to "Unlock" is what sent the user to a
+        // single-field prompt that created nothing.
+        let (status_text, icon, btn_id, btn_label) = if state.secrets_available {
+            ("Vault: Unlocked", Icon::Unlock, "cred:lock", "Lock")
+        } else if state.vault_exists {
+            ("Vault: Sealed", Icon::Lock, "cred:unlock", "Unlock")
+        } else {
+            ("No vault yet", Icon::Lock, "cred:unlock", "Set up")
+        };
+        draw_svg_icon(ctx, icon.svg(), content_x, y + (CRED_ROW_H - 14.0) / 2.0, 14.0, 14.0, &toolbar_theme.item_text_muted);
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(status_text, content_x + 20.0, y + CRED_ROW_H / 2.0);
+
+        let btn_w = 64.0;
+        let btn_x = content_x + content_w - btn_w;
+        let is_hovered = state.hovered_item_id.as_deref() == Some(btn_id);
+        let bg = if is_hovered { &toolbar_theme.item_bg_hover } else { &toolbar_theme.dropdown_bg };
+        ctx.set_fill_color(bg);
+        ctx.fill_rounded_rect(btn_x, y + 2.0, btn_w, CRED_ROW_H - 4.0, 4.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(btn_x, y + 2.0, btn_w, CRED_ROW_H - 4.0, 4.0);
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.fill_text(btn_label, btn_x + btn_w / 2.0, y + CRED_ROW_H / 2.0);
+        let r = WidgetRect::new(btn_x, y, btn_w, CRED_ROW_H);
+        result.content_items.push((btn_id.to_string(), r));
+        input_coordinator.register_on_layer(btn_id, r, Sense::CLICK, layer_id);
+        y += CRED_ROW_H + CRED_ITEM_PADDING;
+    }
+
+    // --- Exchange key rows ---
+    if state.exchange_keys.is_empty() {
+        // Empty is not the same fact while sealed. `state.exchange_keys`
+        // mirrors whatever is currently in RAM: for an unlocked (or never-
+        // encrypted) profile that IS the true count, but for a vault that
+        // exists on disk and was never unlocked this session, RAM holds
+        // nothing regardless of what `vault.enc` actually contains — saying
+        // "No exchange keys yet." there would assert a count nobody has
+        // measured. Say the honest thing instead; unlocking is what turns
+        // this into a real answer.
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        let empty_label = if state.secrets_available || !state.vault_exists {
+            "No exchange keys yet."
+        } else {
+            "Sealed — contents unknown until unlocked."
+        };
+        ctx.fill_text(empty_label, content_x, y + CRED_ROW_H / 2.0);
+        y += CRED_ROW_H + CRED_ITEM_PADDING;
+    } else {
+        for (idx, key) in state.exchange_keys.iter().enumerate() {
+            let remove_id = format!("cred:remove:{idx}");
+            // Remove is a mutation that needs the vault key to persist
+            // correctly (see the module doc on why sealed removal would be
+            // silently undone by the next unlock's vault.enc merge) — while
+            // sealed it is simply not offered, same principle as "no
+            // editable fields while locked".
+            let remove_w = if state.secrets_available { 24.0 } else { 0.0 };
+
+            let title = if key.label.is_empty() {
+                key.exchange_id.clone()
+            } else {
+                format!("{} · {}", key.exchange_id, key.label)
+            };
+            ctx.set_fill_color(&toolbar_theme.item_text);
+            ctx.set_font("12px sans-serif");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(&title, content_x, y + CRED_ROW_H / 2.0);
+
+            ctx.set_fill_color(&toolbar_theme.item_text_muted);
+            ctx.set_font("11px sans-serif");
+            ctx.set_text_align(TextAlign::Right);
+            ctx.fill_text(&key.api_key, content_x + content_w - remove_w - 8.0, y + CRED_ROW_H / 2.0);
+            ctx.set_text_align(TextAlign::Left);
+
+            if state.secrets_available {
+                let rm_x = content_x + content_w - remove_w;
+                let rm_hovered = state.hovered_item_id.as_deref() == Some(remove_id.as_str());
+                if rm_hovered {
+                    ctx.set_fill_color(&toolbar_theme.danger);
+                    ctx.fill_rounded_rect(rm_x, y + 4.0, remove_w, CRED_ROW_H - 8.0, 3.0);
+                }
+                draw_svg_icon(ctx, Icon::Close.svg(), rm_x + 4.0, y + (CRED_ROW_H - 16.0) / 2.0, 16.0, 16.0, &toolbar_theme.item_text_muted);
+                let rm_r = WidgetRect::new(rm_x, y, remove_w, CRED_ROW_H);
+                result.content_items.push((remove_id.clone(), rm_r));
+                input_coordinator.register_on_layer(remove_id.as_str(), rm_r, Sense::CLICK, layer_id);
+            }
+
+            y += CRED_ROW_H + CRED_ITEM_PADDING;
+        }
+    }
+
+    // --- "+ Add key" row — always reachable, even sealed (see module doc). ---
+    {
+        let is_hovered = state.hovered_item_id.as_deref() == Some("cred:add_key");
+        let bg = if is_hovered { &toolbar_theme.item_bg_hover } else { &toolbar_theme.dropdown_bg };
+        ctx.set_fill_color(bg);
+        ctx.fill_rounded_rect(content_x, y, content_w, CRED_ROW_H, 4.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(content_x, y, content_w, CRED_ROW_H, 4.0);
+        draw_svg_icon(ctx, Icon::Plus.svg(), content_x + 8.0, y + (CRED_ROW_H - 14.0) / 2.0, 14.0, 14.0, &toolbar_theme.item_text);
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Add key", content_x + 28.0, y + CRED_ROW_H / 2.0);
+        let r = WidgetRect::new(content_x, y, content_w, CRED_ROW_H);
+        result.content_items.push(("cred:add_key".to_string(), r));
+        input_coordinator.register_on_layer("cred:add_key", r, Sense::CLICK, layer_id);
+        y += CRED_ROW_H + CRED_ITEM_PADDING;
+    }
+
+    // --- Webhook section ---
+    ctx.set_font("600 11px sans-serif");
+    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.85));
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Webhook", content_x, y);
+    y += 20.0;
+
+    if !state.secrets_available {
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_font("11px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        // Same three-state honesty as the status row above: with no vault
+        // there is nothing to unlock, and telling the user to unlock one
+        // points at a door that does not exist.
+        let notice = if state.vault_exists {
+            "Unlock the vault to view the webhook URL."
+        } else {
+            "Set up the vault to store a webhook URL."
+        };
+        ctx.fill_text(notice, content_x, y + CRED_ROW_H / 2.0);
+        y += CRED_ROW_H;
+    } else {
+        let field_x = content_x + CRED_LABEL_W;
+        let field_w = content_w - CRED_LABEL_W;
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("URL", content_x, y + CRED_ROW_H / 2.0);
+
+        let render = &state.webhook_url_render;
+        let (sel_start, sel_end) = if let Some((lo, hi)) = render.selection_range() {
+            (Some(lo), Some(hi))
+        } else {
+            (None, None)
+        };
+        let field_rect = WidgetRect::new(field_x, y, field_w, CRED_ROW_H);
+        let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+        let config = InputConfig::new(&render.text)
+            .with_placeholder("https://...")
+            .with_focused(state.webhook_url_focused)
+            .with_cursor(render.cursor)
+            .with_selection(sel_start, sel_end)
+            .with_font_size(12.0);
+        let input_result = draw_input(
+            ctx, &config, crate::ui::widgets::types::WidgetState::Normal, field_rect, &widget_theme,
+        );
+        if state.webhook_url_focused && render.cursor_visible {
+            draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &toolbar_theme.item_text);
+        }
+
+        result.content_items.push(("cred:webhook_url".to_string(), field_rect));
+        result.input_char_positions.push(("cred:webhook_url".to_string(), input_result.char_x_positions));
+        input_coordinator.register_on_layer("cred:webhook_url", field_rect, Sense::CLICK, layer_id);
+        y += CRED_ROW_H;
+    }
+
+    y
+}
+
+/// The "Add Exchange Key" form: exchange / label / API key / API secret /
+/// passphrase / testnet, plus the "Add" submit row. Returns the `y` past
+/// the last row so the caller can size the scroll content.
+#[allow(clippy::too_many_arguments)]
+fn render_add_key_view(
+    ctx: &mut dyn RenderContext,
+    state: &CredentialsState,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+    content_x: f64,
+    content_y: f64,
+    content_w: f64,
+) -> f64 {
+    let mut y = content_y;
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+
+    // --- Back to the list ---
+    {
+        let is_hovered = state.hovered_item_id.as_deref() == Some("cred:add:back");
+        ctx.set_fill_color(if is_hovered { &toolbar_theme.accent } else { &toolbar_theme.item_text_muted });
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("< Back", content_x, y + 12.0);
+        let r = WidgetRect::new(content_x, y, 60.0, 24.0);
+        result.content_items.push(("cred:add:back".to_string(), r));
+        input_coordinator.register_on_layer("cred:add:back", r, Sense::CLICK, layer_id);
+        y += 24.0 + 10.0;
+    }
+
+    let field_x = content_x + CRED_LABEL_W;
+    let field_w = content_w - CRED_LABEL_W;
+
+    let draw_field_row = |ctx: &mut dyn RenderContext,
+                              input_coordinator: &mut uzor::input::InputCoordinator,
+                              result: &mut UserSettingsResult,
+                              label: &str,
+                              placeholder: &str,
+                              input_type: InputType,
+                              render: &crate::ui::modal_settings::ActiveFieldRender,
+                              focused: bool,
+                              widget_id: &str,
+                              row_y: f64| {
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, content_x, row_y + CRED_ROW_H / 2.0);
+
+        let field_rect = WidgetRect::new(field_x, row_y, field_w, CRED_ROW_H);
+        let (sel_start, sel_end) = if let Some((lo, hi)) = render.selection_range() {
+            (Some(lo), Some(hi))
+        } else {
+            (None, None)
+        };
+        // API secret / passphrase draw a reveal toggle inside their own
+        // right edge — widen the input's own padding so masked/typed text
+        // never runs under the icon (same knob the search box uses for its
+        // own leading icon), and swap the effective type to plain text
+        // while revealed.
+        let is_secret = input_type == InputType::Password;
+        let revealed = is_secret && state.secret_revealed;
+        let effective_type = if revealed { InputType::Text } else { input_type };
+        let mut config = InputConfig::new(&render.text)
+            .with_placeholder(placeholder)
+            .with_focused(focused)
+            .with_cursor(render.cursor)
+            .with_selection(sel_start, sel_end)
+            .with_type(effective_type)
+            .with_font_size(12.0);
+        if is_secret {
+            config = config.with_padding_right(28.0);
+        }
+        let input_result = draw_input(
+            ctx, &config, crate::ui::widgets::types::WidgetState::Normal, field_rect, &widget_theme,
+        );
+        if focused && render.cursor_visible {
+            draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &toolbar_theme.item_text);
+        }
+        result.content_items.push((widget_id.to_string(), field_rect));
+        result.input_char_positions.push((widget_id.to_string(), input_result.char_x_positions));
+        input_coordinator.register_on_layer(widget_id, field_rect, Sense::CLICK, layer_id);
+
+        if is_secret {
+            const ICON_SIZE: f64 = 14.0;
+            const RIGHT_INSET: f64 = 8.0;
+            let icon_x = field_rect.x + field_rect.width - RIGHT_INSET - ICON_SIZE;
+            let icon_y = field_rect.y + (field_rect.height - ICON_SIZE) / 2.0;
+            let icon_hovered = state.hovered_item_id.as_deref() == Some("cred:add:reveal");
+            let icon_color = if icon_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
+            // The icon names the STATE, not the action: a closed/crossed eye
+            // means the text is dots, an open eye means it is plaintext —
+            // same rule `profile_manager.rs`'s own reveal toggle follows.
+            draw_svg_icon(
+                ctx,
+                if revealed { Icon::Eye.svg() } else { Icon::EyeOff.svg() },
+                icon_x, icon_y, ICON_SIZE, ICON_SIZE, icon_color,
+            );
+            // Hit the gutter, not the glyph — a 14px target inside a field
+            // that itself takes clicks is a coin toss.
+            let hit_rect = WidgetRect::new(
+                icon_x - RIGHT_INSET,
+                field_rect.y,
+                ICON_SIZE + RIGHT_INSET * 2.0,
+                field_rect.height,
+            );
+            result.content_items.push(("cred:add:reveal".to_string(), hit_rect));
+            input_coordinator.register_on_layer("cred:add:reveal", hit_rect, Sense::CLICK | Sense::HOVER, layer_id);
+        }
+    };
+
+    draw_field_row(ctx, input_coordinator, result, "Exchange", "e.g. binance", InputType::Text, &state.add_exchange_render, state.add_exchange_focused, "cred:add:exchange", y);
+    y += CRED_ROW_H + CRED_ITEM_PADDING;
+    draw_field_row(ctx, input_coordinator, result, "Label", "main account", InputType::Text, &state.add_label_render, state.add_label_focused, "cred:add:label", y);
+    y += CRED_ROW_H + CRED_ITEM_PADDING;
+    draw_field_row(ctx, input_coordinator, result, "API Key", "public key", InputType::Text, &state.add_api_key_render, state.add_api_key_focused, "cred:add:api_key", y);
+    y += CRED_ROW_H + CRED_ITEM_PADDING;
+    draw_field_row(ctx, input_coordinator, result, "API Secret", "secret", InputType::Password, &state.add_api_secret_render, state.add_api_secret_focused, "cred:add:api_secret", y);
+    y += CRED_ROW_H + CRED_ITEM_PADDING;
+    draw_field_row(ctx, input_coordinator, result, "Passphrase", "optional", InputType::Password, &state.add_passphrase_render, state.add_passphrase_focused, "cred:add:passphrase", y);
+    y += CRED_ROW_H + CRED_ITEM_PADDING;
+
+    // --- Testnet checkbox ---
+    {
+        let cb_size = 16.0;
+        let cb_x = content_x + CRED_LABEL_W;
+        let cb_y = y + (CRED_ROW_H - cb_size) / 2.0;
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(cb_x, cb_y, cb_size, cb_size, 2.0);
+        if state.add_testnet {
+            ctx.set_fill_color(&toolbar_theme.item_text_active);
+            ctx.fill_rounded_rect(cb_x + 3.0, cb_y + 3.0, cb_size - 6.0, cb_size - 6.0, 1.0);
+        }
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Testnet", content_x, y + CRED_ROW_H / 2.0);
+        let r = WidgetRect::new(cb_x, y, content_w - CRED_LABEL_W, CRED_ROW_H);
+        result.content_items.push(("cred:add:testnet".to_string(), r));
+        input_coordinator.register_on_layer("cred:add:testnet", r, Sense::CLICK, layer_id);
+        y += CRED_ROW_H;
+    }
+
+    if let Some(ref msg) = state.error_message {
+        y += CRED_ITEM_PADDING;
+        ctx.set_fill_color(&toolbar_theme.danger);
+        ctx.set_font("11px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(msg, content_x, y + CRED_ROW_H / 2.0);
+        y += CRED_ROW_H;
+    }
+
+    // --- "Add" — this used to be the standalone modal shell's own Creator
+    // footer button (id `cred:create`, drawn by `end_modal_shell`); the tab
+    // has no shell footer of its own, so the same click id is drawn as an
+    // ordinary accent row here instead. Keeping the literal id is what lets
+    // `handle_credentials_click`'s `"create"` arm stay unaware this moved.
+    y += 6.0;
+    {
+        let btn_h = 32.0;
+        let is_hovered = state.hovered_item_id.as_deref() == Some("cred:create");
+        let bg = if is_hovered { &toolbar_theme.accent_hover } else { &toolbar_theme.accent };
+        ctx.set_fill_color(bg);
+        ctx.fill_rounded_rect(content_x, y, content_w, btn_h, 4.0);
+        ctx.set_fill_color(&toolbar_theme.item_text_active);
+        ctx.set_font("13px sans-serif");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Add", content_x + content_w / 2.0, y + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+        let r = WidgetRect::new(content_x, y, content_w, btn_h);
+        result.content_items.push(("cred:create".to_string(), r));
+        input_coordinator.register_on_layer("cred:create", r, Sense::CLICK | Sense::HOVER, layer_id);
+        y += btn_h;
+    }
+
+    y
+}
+
 fn render_persistence_tab(
     ctx: &mut dyn RenderContext,
     viewport_rect: WidgetRect,
@@ -408,37 +912,11 @@ fn render_general_tab(
     );
     cy += 16.0;
 
-    // ── Section: CREDENTIALS ─────────────────────────────────────────────────
-    // Opens its own modal (`crate::layout::modals::credentials`) rather than
-    // living inline here — exchange keys and the webhook URL are vault-gated
-    // secrets, not settings-modal-tier preferences, and that modal needs its
-    // own locked/unlocked body shape this tab has no room for.
-    ctx.set_font("600 11px sans-serif");
-    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.85));
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("Credentials", x, cy);
-    cy += 20.0;
-    {
-        let row_h = 32.0;
-        let is_hovered = state.hovered_item_id.as_deref() == Some("open_credentials");
-        let bg = if is_hovered { &toolbar_theme.item_bg_hover } else { &toolbar_theme.dropdown_bg };
-        ctx.set_fill_color(bg);
-        ctx.fill_rounded_rect(x, cy, available_w, row_h, 4.0);
-        ctx.set_stroke_color(&toolbar_theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(x, cy, available_w, row_h, 4.0);
-        ctx.set_fill_color(&toolbar_theme.item_text);
-        ctx.set_font("12px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("Manage Exchange Keys & Webhook", x + 10.0, cy + row_h / 2.0);
-        let r = WidgetRect::new(x, cy, available_w, row_h);
-        result.content_items.push(("open_credentials".to_string(), r));
-        input_coordinator.register_on_layer("user_settings:open_credentials", r, Sense::CLICK, layer_id);
-        cy += row_h;
-    }
-    cy += 16.0;
+    // The "Credentials / Manage Exchange Keys & Webhook" row that used to
+    // live here was a pointer to a modal stacked on top of this one — the
+    // navigation dead end this whole tab move exists to close. The vault
+    // surface is now the `Vault` tab, one click away in the same window;
+    // there is nothing left to point at from in here.
 
     // ── Section: LANGUAGE ────────────────────────────────────────────────────
     ctx.set_font("600 11px sans-serif");

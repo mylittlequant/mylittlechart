@@ -3678,9 +3678,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     } // end else (not a new-profile vault creation)
                 }
 
-                // ── Credentials modal mid-session re-unlock ───────────────────────────────────
+                // ── Vault tab mid-session re-unlock ───────────────────────────────────────────
                 // Emitted by `"profile_mgr:unlock"` instead of `e2e_setup:` when the passphrase
-                // page was reached via the credentials modal's "Unlock" (see that arm's comment
+                // page was reached via the Vault tab's "Unlock" button (see that arm's comment
                 // for why `e2e_setup:`'s own branches are all wrong for this case). Deliberately
                 // does NOT touch `pending_skeleton_promote` / rebuild any window — this profile
                 // is already fully live, only its secret state was sealed.

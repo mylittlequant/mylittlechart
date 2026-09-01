@@ -698,19 +698,6 @@ impl ChartPanelApp {
             ));
         }
 
-        // Credentials modal
-        if self.credentials_state.is_open() {
-            result.credentials = Some(mlc_app_layout::layout::modals::credentials::render_credentials_modal(
-                ctx,
-                modal_layout.prim_screen_w,
-                modal_layout.prim_screen_h,
-                &self.credentials_state,
-                frame_theme,
-                toolbar_theme,
-                input_coordinator,
-            ));
-        }
-
         // Indicator settings modal
         if self.indicator_settings_state.is_open() {
             if let Some(indicator_id) = self.indicator_settings_state.indicator_id {
@@ -895,6 +882,7 @@ impl ChartPanelApp {
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
                 &self.user_settings_state,
+                &self.credentials_state,
                 frame_theme,
                 toolbar_theme,
                 current_time_ms,

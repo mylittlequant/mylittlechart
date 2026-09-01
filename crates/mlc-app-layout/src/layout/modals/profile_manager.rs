@@ -1348,9 +1348,11 @@ fn draw_passphrase_reveal_toggle(
     let icon_y = input_rect.y + (input_rect.height - ICON_SIZE) / 2.0;
     let is_hovered = state.hovered_item_id.as_deref() == Some("profile_mgr:reveal_passphrase");
     let icon_color = if is_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
+    // The icon names the STATE, not the action: a closed/crossed eye means
+    // the text is dots, an open eye means the passphrase is plaintext.
     draw_svg_icon(
         ctx,
-        if revealed { Icon::EyeOff.svg() } else { Icon::Eye.svg() },
+        if revealed { Icon::Eye.svg() } else { Icon::EyeOff.svg() },
         icon_x, icon_y, ICON_SIZE, ICON_SIZE, icon_color,
     );
 

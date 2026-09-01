@@ -1089,10 +1089,11 @@ fn render_notifications_tab(
     // literal no-op with a comment promising an editor that was never
     // written — clicking it highlighted on hover and did nothing, same
     // failure shape as the `wizard_lang_next` bug. The real, working editor
-    // now lives in the credentials modal (`layout::modals::credentials`),
-    // which this row points to; this row honestly displays the current
-    // value and nothing more; a locked vault still shows nothing but the
-    // notice, matching the credentials modal's own locked-state contract.
+    // now lives on the User Settings modal's Vault tab (`layout::modals::
+    // user_settings`), which this row points to; this row honestly displays
+    // the current value and nothing more; a locked vault still shows
+    // nothing but the notice, matching the Vault tab's own locked-state
+    // contract.
     if ns.webhook.enabled && !state.secrets_available {
         draw_locked_notice(ctx, "Unlock the vault to view the webhook URL.", y);
     } else if ns.webhook.enabled {

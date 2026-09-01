@@ -583,7 +583,6 @@ impl ChartApp {
             || self.panel_app.primitive_settings_state.is_open()
             || self.panel_app.indicator_settings_state.is_open()
             || self.panel_app.alert_settings_state.is_open()
-            || self.panel_app.credentials_state.is_open()
             || self.panel_app.compare_settings_state.is_open()
             || self.panel_app.chart_settings_state.is_open
             || self.panel_app.preset_name_input.is_open
@@ -2153,12 +2152,6 @@ impl ChartApp {
                             true
                         } else { false }
                     }
-                    "cred" => {
-                        if let Some(ref cr) = self.frame_result.as_ref().and_then(|r| r.credentials.as_ref()) {
-                            self.panel_app.credentials_state.start_drag(x, y, cr.header_rect.x, cr.header_rect.y);
-                            true
-                        } else { false }
-                    }
                     // `cmp_settings`, matching the modal's widget-id namespace:
                     // the shell names the header after it, where this modal
                     // used to register its own header under the layer name.
@@ -2268,6 +2261,7 @@ impl ChartApp {
                     let scroll = match self.panel_app.user_settings_state.active_tab {
                         UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                         UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                        UserSettingsTab::Vault => &mut self.panel_app.user_settings_state.vault_tab_scroll,
                         UserSettingsTab::Persistence => &mut self.panel_app.user_settings_state.persistence_tab_scroll,
                         UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
@@ -2532,6 +2526,42 @@ impl ChartApp {
                 if br.search_input_rect.contains(x, y) && self.panel_app.chart_browser.is_open {
                     self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                     return false;
+                }
+            }
+            // Vault tab (User Settings) — text select drag on one of its own
+            // text fields (webhook URL, or one of the add-key form's five
+            // fields). `on_drag_start` does the real hit-test and cursor
+            // placement, via each field's own `last_rect`/`last_char_positions`
+            // (populated every frame in `lib.rs`'s per-frame text-field-geometry
+            // pass from these same `content_items`/`input_char_positions`
+            // entries) — this block only decides which `CredentialsState::
+            // *_focused` bool the render side should show as active, since that
+            // bool and the store's own focus concept are two separate flags
+            // (same split every other settings-modal field already has).
+            if self.panel_app.user_settings_state.is_open {
+                if let Some(ref us) = result.user_settings {
+                    const VAULT_TEXT_FIELDS: [&str; 6] = [
+                        "cred:webhook_url",
+                        "cred:add:exchange",
+                        "cred:add:label",
+                        "cred:add:api_key",
+                        "cred:add:api_secret",
+                        "cred:add:passphrase",
+                    ];
+                    let hit_field = us.content_items.iter()
+                        .find(|(id, rect)| VAULT_TEXT_FIELDS.contains(&id.as_str()) && rect.contains(x, y))
+                        .map(|(id, _)| id.clone());
+                    if let Some(field_id) = hit_field {
+                        let cs = &mut self.panel_app.credentials_state;
+                        cs.webhook_url_focused    = field_id == "cred:webhook_url";
+                        cs.add_exchange_focused   = field_id == "cred:add:exchange";
+                        cs.add_label_focused      = field_id == "cred:add:label";
+                        cs.add_api_key_focused    = field_id == "cred:add:api_key";
+                        cs.add_api_secret_focused = field_id == "cred:add:api_secret";
+                        cs.add_passphrase_focused = field_id == "cred:add:passphrase";
+                        self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                        return false;
+                    }
                 }
             }
             // Primitive settings — text select drag on the active sub-field (TextFieldStore).
@@ -2813,6 +2843,7 @@ impl ChartApp {
                     let scroll_state = match self.panel_app.user_settings_state.active_tab {
                         UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                         UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                        UserSettingsTab::Vault => &mut self.panel_app.user_settings_state.vault_tab_scroll,
                         UserSettingsTab::Persistence => &mut self.panel_app.user_settings_state.persistence_tab_scroll,
                         UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
@@ -3958,10 +3989,6 @@ impl ChartApp {
             self.panel_app.alert_settings_state.update_drag(x, y);
             return;
         }
-        if self.panel_app.credentials_state.is_dragging {
-            self.panel_app.credentials_state.update_drag(x, y);
-            return;
-        }
         if self.panel_app.compare_settings_state.is_dragging {
             self.panel_app.compare_settings_state.update_drag(x, y);
             return;
@@ -4260,6 +4287,7 @@ impl ChartApp {
                     let scroll_state = match self.panel_app.user_settings_state.active_tab {
                         UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                         UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                        UserSettingsTab::Vault => &mut self.panel_app.user_settings_state.vault_tab_scroll,
                         UserSettingsTab::Persistence => &mut self.panel_app.user_settings_state.persistence_tab_scroll,
                         UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
@@ -4983,11 +5011,6 @@ impl ChartApp {
         if self.panel_app.alert_settings_state.is_dragging {
             self.panel_app.alert_settings_state.end_drag();
             eprintln!("[ChartApp] alert_settings modal drag ended");
-            return;
-        }
-        if self.panel_app.credentials_state.is_dragging {
-            self.panel_app.credentials_state.end_drag();
-            eprintln!("[ChartApp] credentials modal drag ended");
             return;
         }
         if self.panel_app.compare_settings_state.is_dragging {
@@ -6694,6 +6717,7 @@ impl ChartApp {
                                 let scroll_state = match self.panel_app.user_settings_state.active_tab {
                                     UserSettingsTab::General => &mut self.panel_app.user_settings_state.general_tab_scroll,
                                     UserSettingsTab::Sync => &mut self.panel_app.user_settings_state.sync_tab_scroll,
+                                    UserSettingsTab::Vault => &mut self.panel_app.user_settings_state.vault_tab_scroll,
                                     UserSettingsTab::Persistence => &mut self.panel_app.user_settings_state.persistence_tab_scroll,
                                     UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                                     UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
@@ -7500,10 +7524,6 @@ impl ChartApp {
         }
         if self.panel_app.alert_settings_state.is_open() {
             self.panel_app.alert_settings_state.close();
-            return;
-        }
-        if self.panel_app.credentials_state.is_open() {
-            self.panel_app.credentials_state.close();
             return;
         }
         if self.panel_app.compare_settings_state.is_open() {

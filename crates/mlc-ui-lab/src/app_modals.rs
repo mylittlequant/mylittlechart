@@ -60,10 +60,10 @@ use mlc_app_layout::ui::context_menu::{ContextMenuItemState, ContextMenuState, C
 use mlc_app_layout::ui::dropdown::DropdownTheme;
 use mlc_app_layout::ui::modal_settings::{
     AlertSettingsState, AlertSettingsTab, ChartBrowserState, ChartScreenArea, ChartSettingsState,
-    ChartSettingsTab, CompareSettingsState, CompareSettingsTab, IndicatorOverlayState,
-    IndicatorSettingsState, IndicatorSettingsTab, OverlaySettingsState, PresetNameInputMode,
-    PresetNameInputState, TagsTabsSidebar, TagsTabsState, UserSettingsState, UserSettingsTab,
-    WatchlistModalState, WatchlistModalTab,
+    ChartSettingsTab, CompareSettingsState, CompareSettingsTab, CredentialsState,
+    IndicatorOverlayState, IndicatorSettingsState, IndicatorSettingsTab, OverlaySettingsState,
+    PresetNameInputMode, PresetNameInputState, TagsTabsSidebar, TagsTabsState, UserSettingsState,
+    UserSettingsTab, WatchlistModalState, WatchlistModalTab,
 };
 use mlc_app_layout::ui::modal_state::{ModalState, OpenModal};
 use mlc_app_layout::ui::toolbar_theme::ToolbarTheme;
@@ -270,6 +270,11 @@ pub struct AppModalsState {
     alerts: AlertSettingsState,
 
     user_settings: UserSettingsState,
+    /// The Vault tab's own state — this lab has no vault-gated data plane
+    /// to speak of, so a bare default (sealed, no keys) is honest here;
+    /// it exists only so `render_user_settings_modal`'s Vault tab has
+    /// something to draw.
+    credentials: CredentialsState,
 
     tags_tabs: TagsTabsState,
     /// `render_tags_tabs_modal`'s own separate TABS-section state (the
@@ -327,6 +332,7 @@ impl AppModalsState {
             watchlist_groups: stub_watchlist_groups(),
             alerts: AlertSettingsState::default(),
             user_settings: UserSettingsState::default(),
+            credentials: CredentialsState::default(),
             tags_tabs: TagsTabsState::default(),
             tags_tabs_overlay: OverlaySettingsState::default(),
             docking: DockState::new(),
@@ -479,7 +485,7 @@ impl AppModalsState {
             }
             AppModalKind::UserSettings => {
                 let result = render_user_settings_modal(
-                    ctx, screen_w, screen_h, &self.user_settings, frame_theme, toolbar_theme, now_ms, coord,
+                    ctx, screen_w, screen_h, &self.user_settings, &self.credentials, frame_theme, toolbar_theme, now_ms, coord,
                 );
                 self.last_rect = Some(result.modal_rect);
             }

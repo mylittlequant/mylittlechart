@@ -60,8 +60,6 @@ pub mod clock_popup;
 pub use clock_popup::{render_clock_popup, ClockPopupResult};
 pub mod alert_settings;
 pub use alert_settings::*;
-pub mod credentials;
-pub use credentials::{render_credentials_modal, CredentialsResult};
 pub mod compare_settings;
 pub use compare_settings::{render_compare_settings_modal, CompareSettingsResult};
 pub mod template_name_modal;

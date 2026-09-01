@@ -1,16 +1,23 @@
-//! Credentials modal — click handling + the vault lock/unlock actions it
-//! drives.
+//! Vault tab — click handling + the vault lock/unlock actions it drives.
 //!
-//! # Which vault-key source this modal drives off
+//! The vault surface (exchange API keys + the alert webhook URL) used to be
+//! a standalone modal; it is the `Vault` tab of the User Settings modal now
+//! (`mlc-app-layout`'s `layout::modals::user_settings::render_vault_tab`) —
+//! opening it used to CLOSE user settings, a modal stacked on a modal with
+//! no honest back button. `CredentialsState` (the tab's own state) kept its
+//! name across the move; only its former modal-chrome fields (`is_open`,
+//! `position`, `is_dragging`, `drag_offset`) are gone.
+//!
+//! # Which vault-key source this tab drives off
 //!
 //! `mlc-vault::store::SecretStore` is the newer, TTL-bounded, zeroize-on-seal
 //! design — but nothing in this app constructs one yet, and swapping
 //! `BackendCore::UserProfileManager::vault_key` for it is its own piece of
-//! work, out of scope here. This modal drives off the vault key that IS
+//! work, out of scope here. This tab drives off the vault key that IS
 //! already wired end to end: `self.core.user().vault_key()` (the same
 //! `Option<VaultKey>` `AlertSettingsState::secrets_available` already
 //! mirrors from `ChartApp::apply_profile_state`). There is therefore no TTL
-//! to show — see `credentials.rs` (the render side, in `mlc-app-layout`)
+//! to show — see `render_vault_tab` (the render side, in `mlc-app-layout`)
 //! for why that is a deliberate absence, not an oversight.
 //!
 //! # Issuing (or removing) a key while sealed
@@ -23,31 +30,26 @@
 //! "+ Add key" instead routes to `ProfileManagerPage::UnlockPassphrase` (the
 //! existing page, not a new prompt — see `panel_click.rs`'s
 //! `"profile_mgr:unlock"` arm for how it tells this case apart from an
-//! ordinary boot-time/profile-switch unlock) and remembers to reopen this
-//! modal on the add form once the unlock actually succeeds
-//! (`pending_unlock_return`). Remove is simply not offered while sealed —
-//! same hazard, no explicit requirement to route it through unlock too, so
-//! it stays the smaller surface.
+//! ordinary boot-time/profile-switch unlock) and remembers to switch back to
+//! the add form once the unlock actually succeeds (`pending_unlock_return`).
+//! Remove is simply not offered while sealed — same hazard, no explicit
+//! requirement to route it through unlock too, so it stays the smaller
+//! surface.
 
 use mlc_core::user_profile::profile::StoredExchangeKey;
-use mlc_app_layout::ui::modal_settings::{CredentialsView, ProfileManagerPage};
+use mlc_app_layout::ui::modal_settings::{CredentialsView, ProfileManagerPage, UserSettingsTab};
 
 use crate::ChartApp;
 use crate::text_input;
 
 impl ChartApp {
-    /// Handle clicks on widgets registered with the "cred:" prefix.
+    /// Handle clicks on widgets registered with the "cred:" prefix. The
+    /// vault surface has no modal chrome of its own anymore (it is the
+    /// Vault tab of the User Settings modal) — there is no `"close"`,
+    /// `"modal_bg"`, `"header"` or `"dimmer"` here to catch; those all
+    /// belong to `"user_settings:"`'s own arms now.
     pub(super) fn handle_credentials_click(&mut self, rest: &str) {
         match rest {
-            "close" => {
-                self.panel_app.credentials_state.close();
-            }
-            "modal_bg" | "header" => {
-                // No-op (catch-all, drag handled separately)
-            }
-            rest if rest.starts_with("dimmer") => {
-                self.panel_app.credentials_state.close();
-            }
             "lock" => self.lock_vault(),
             "unlock" => self.route_credentials_to_unlock(CredentialsView::List),
             "add_key" => {
@@ -66,24 +68,29 @@ impl ChartApp {
                     }
                 }
             }
-            "webhook_url" => {
-                if self.panel_app.credentials_state.secrets_available {
-                    let wid = uzor::WidgetId::from(text_input::CRED_WEBHOOK_URL);
-                    self.input_coordinator.borrow_mut().text_fields_mut().focus(wid);
-                    self.panel_app.credentials_state.webhook_url_focused = true;
-                }
-            }
+            // A plain click on any of these six text fields already reached
+            // `ChartApp::on_drag_start` (mouse-down fires before this click
+            // dispatch, which only runs on mouse-up) — that is what places
+            // the caret AND sets the matching `CredentialsState::*_focused`
+            // bool, from the field's own click-x, not a canned "focus at
+            // whatever the cursor already was" call. Routing this arm to
+            // `focus_credentials_add_field`/`.focus()` the way it used to
+            // would call `TextFieldStore::focus` a SECOND time on a field
+            // that is already the focused one, which silently un-engages it
+            // (`TextFieldState::engaged` — see its own doc) and takes the
+            // caret and the reveal ring away right after they appeared.
+            // `focus_credentials_add_field` itself is still very much alive
+            // for the two paths that have no click position to place a
+            // caret from: Tab-chaining between fields (`CredAddField::next`)
+            // and "Add key" seeding the Exchange field on a fresh open.
+            "webhook_url" | "add:exchange" | "add:label" | "add:api_key"
+            | "add:api_secret" | "add:passphrase" => {}
             "add:back" => {
                 self.panel_app.credentials_state.view = CredentialsView::List;
                 self.panel_app.credentials_state.error_message = None;
                 self.panel_app.credentials_state.clear_add_form();
                 self.blur_credentials_add_fields();
             }
-            "add:exchange" => self.focus_credentials_add_field(CredAddField::Exchange),
-            "add:label" => self.focus_credentials_add_field(CredAddField::Label),
-            "add:api_key" => self.focus_credentials_add_field(CredAddField::ApiKey),
-            "add:api_secret" => self.focus_credentials_add_field(CredAddField::ApiSecret),
-            "add:passphrase" => self.focus_credentials_add_field(CredAddField::Passphrase),
             "add:testnet" => {
                 self.panel_app.credentials_state.add_testnet = !self.panel_app.credentials_state.add_testnet;
             }
@@ -99,12 +106,15 @@ impl ChartApp {
         }
     }
 
-    /// Open the credentials modal — called from the settings modal's
-    /// "Manage Exchange Keys & Webhook" row.
-    pub(super) fn open_credentials_modal(&mut self) {
+    /// Open the User Settings modal on its Vault tab — the vault surface's
+    /// entry point now that it is a tab rather than a modal stacked on top
+    /// of this one (the "navigation hell" the owner called out: opening the
+    /// credentials modal used to CLOSE user settings, with no way back).
+    pub(super) fn open_vault_tab(&mut self) {
         self.sync_credentials_from_core();
         self.panel_app.credentials_state.open();
-        self.panel_app.user_settings_state.is_open = false;
+        self.panel_app.user_settings_state.active_tab = UserSettingsTab::Vault;
+        self.panel_app.user_settings_state.is_open = true;
     }
 
     /// Refresh the credentials modal's cache from `BackendCore` — the same
@@ -179,7 +189,6 @@ impl ChartApp {
     /// nothing, and no vault is ever created.
     fn route_credentials_to_unlock(&mut self, return_to: CredentialsView) {
         self.panel_app.credentials_state.pending_unlock_return = Some(return_to);
-        self.panel_app.credentials_state.is_open = false;
 
         let target_id = self.panel_app.user_settings_state.runtime_profile_id.clone();
         let (has_vault, target_name) = self
@@ -306,8 +315,8 @@ impl ChartApp {
     /// Apply a successful [`Self::try_unlock_credentials`]: set the key,
     /// merge the decrypted secrets into the live profile, refresh every
     /// cache that mirrors them, dismiss the unlock page, and — the whole
-    /// point of `pending_unlock_return` — reopen the credentials modal on
-    /// whichever view asked for the unlock.
+    /// point of `pending_unlock_return` — return to the Vault tab page
+    /// (`List` or `AddKey`) that asked for the unlock.
     fn finish_credentials_unlock(&mut self, key: mlc_vault::vault::VaultKey, secrets: mlc_core::user_profile::VaultSecrets) {
         self.core.user_mut().unseal_vault(key, secrets);
 
@@ -330,7 +339,8 @@ impl ChartApp {
         self.panel_app.user_settings_state.vault_unlock_error = None;
 
         if let Some(view) = self.panel_app.credentials_state.pending_unlock_return.take() {
-            self.panel_app.credentials_state.is_open = true;
+            self.panel_app.user_settings_state.active_tab = UserSettingsTab::Vault;
+            self.panel_app.user_settings_state.is_open = true;
             self.panel_app.credentials_state.view = view;
         }
         eprintln!("[ChartApp] credentials: vault unlocked mid-session");
@@ -342,11 +352,11 @@ impl ChartApp {
     /// Two things have to happen here that nothing else does. The vault now
     /// exists, but `profiles_with_vault_status` is a snapshot the shells
     /// refresh on profile-list operations only — leaving it stale would make
-    /// the credentials modal keep offering "Set up" for a vault that is
-    /// already there, and route the next click back to the setup page.
-    /// And if the setup was started from the credentials modal, that modal
-    /// asked to be returned to; without this it just closes and the user is
-    /// left on a bare chart wondering whether anything happened.
+    /// the Vault tab keep offering "Set up" for a vault that is already
+    /// there, and route the next click back to the setup page. And if the
+    /// setup was started from the Vault tab, that tab asked to be returned
+    /// to; without this it just closes and the user is left on a bare chart
+    /// wondering whether anything happened.
     pub fn finish_vault_setup(&mut self) {
         let runtime_id = self.panel_app.user_settings_state.runtime_profile_id.clone();
         for entry in self
@@ -364,7 +374,8 @@ impl ChartApp {
         self.sync_credentials_from_core();
 
         if let Some(view) = self.panel_app.credentials_state.pending_unlock_return.take() {
-            self.panel_app.credentials_state.is_open = true;
+            self.panel_app.user_settings_state.active_tab = UserSettingsTab::Vault;
+            self.panel_app.user_settings_state.is_open = true;
             self.panel_app.credentials_state.view = view;
             eprintln!("[ChartApp] credentials: vault created, returning to {:?}", view);
         }

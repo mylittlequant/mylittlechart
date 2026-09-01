@@ -10525,6 +10525,41 @@ impl ChartApp {
                     pni.char_x_positions.clone(),
                 );
             }
+            // Vault tab (User Settings) fields — webhook URL + the five
+            // add-key form fields. `render_vault_tab` (mlc-app-layout) keys
+            // both `content_items` and `input_char_positions` by the SAME
+            // click-dispatch id (`cred:webhook_url`, `cred:add:exchange`,
+            // ...), which is what lets this stay one small table instead of
+            // six near-identical `update_field` calls. Without this, none
+            // of the six fields' `last_rect` is ever populated and
+            // `on_drag_start`'s hit-test never finds them — exactly the
+            // "no drag-selection, no click-to-position" the vault fields
+            // shipped with when they only ever went through TextFieldStore
+            // via a plain `.focus()` call.
+            if let Some(ref us) = fr.user_settings {
+                const VAULT_FIELDS: &[(&str, &str)] = &[
+                    (text_input::CRED_WEBHOOK_URL, "cred:webhook_url"),
+                    (text_input::CRED_ADD_EXCHANGE, "cred:add:exchange"),
+                    (text_input::CRED_ADD_LABEL, "cred:add:label"),
+                    (text_input::CRED_ADD_API_KEY, "cred:add:api_key"),
+                    (text_input::CRED_ADD_API_SECRET, "cred:add:api_secret"),
+                    (text_input::CRED_ADD_PASSPHRASE, "cred:add:passphrase"),
+                ];
+                for &(store_id, ui_id) in VAULT_FIELDS {
+                    if let Some((_, rect)) = us.content_items.iter().find(|(k, _)| k.as_str() == ui_id) {
+                        let char_positions = us.input_char_positions.iter()
+                            .find(|(k, _)| k.as_str() == ui_id)
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_default();
+                        let wid = WidgetId::from(store_id);
+                        self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                            &wid,
+                            (rect.x, rect.y, rect.width, rect.height),
+                            char_positions,
+                        );
+                    }
+                }
+            }
             // Template name overlay modal (save-as dialog) — one instance per
             // settings modal it can be opened from. Without this, the field's
             // `last_rect` is never populated and `on_drag_start`'s hit-test

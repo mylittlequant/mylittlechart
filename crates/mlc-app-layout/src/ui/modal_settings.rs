@@ -2652,14 +2652,21 @@ impl AlertSettingsState {
 }
 
 // =============================================================================
-// Credentials modal (exchange API keys + webhook URL)
+// Vault tab state (exchange API keys + webhook URL)
 // =============================================================================
+//
+// Used to be a standalone modal (`crate::layout::modals::credentials`,
+// retired) — opening it closed the User Settings modal underneath it, with
+// no way back. The vault surface is the `Vault` tab of `UserSettingsState`
+// now; this type is unchanged except for the four fields (`is_open`,
+// `position`, `is_dragging`, `drag_offset`) that only ever meant something
+// for a modal's own chrome.
 
-/// Which page of the credentials modal is showing.
+/// Which page of the Vault tab is showing.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CredentialsView {
     /// The list of issued exchange keys + the webhook URL field. Default —
-    /// sealed or unlocked, this is always what opening the modal shows.
+    /// sealed or unlocked, this is always what switching to the tab shows.
     #[default]
     List,
     /// The "add a key" form (exchange, label, api_key, api_secret,
@@ -2669,8 +2676,8 @@ pub enum CredentialsView {
     AddKey,
 }
 
-/// State for the credentials modal — the vault-gated surface for exchange
-/// API keys and the alert webhook URL.
+/// State for the Vault tab — the vault-gated surface for exchange API keys
+/// and the alert webhook URL.
 ///
 /// Deliberately does NOT own the secrets directly: `exchange_keys` here is a
 /// cache refreshed by `ChartApp` (via `sync_credentials_from_core`) from
@@ -2678,14 +2685,12 @@ pub enum CredentialsView {
 /// app-layer pattern `AlertSettingsState::notification_secrets` already
 /// uses, and for the same reason: this struct lives in `mlc-app-layout`,
 /// which the shared-BackendCore arc does not let touch `core` directly.
-/// `webhook_url`/`webhook_enabled` are NOT duplicated here — the modal reads
+/// `webhook_url`/`webhook_enabled` are NOT duplicated here — the tab reads
 /// them from `AlertSettingsState` at render time (single source, no second
 /// copy to drift) since editing the webhook URL here writes into that same
 /// `notification_secrets.webhook.url` and rides its existing persist path.
 #[derive(Clone, Debug)]
 pub struct CredentialsState {
-    /// Whether the modal is open.
-    pub is_open: bool,
     /// Which page is showing.
     pub view: CredentialsView,
     /// Mirrors whether the vault is unlocked this session — same meaning as
@@ -2702,12 +2707,6 @@ pub struct CredentialsState {
     /// — see `UserProfileManager::seal_vault`'s doc for why that is honest
     /// rather than a leak. While unlocked, entries are the real thing.
     pub exchange_keys: Vec<mlc_core::user_profile::profile::StoredExchangeKey>,
-    /// Modal position on screen (None = centered).
-    pub position: Option<(f64, f64)>,
-    /// Whether the modal header is being dragged.
-    pub is_dragging: bool,
-    /// Drag offset from modal top-left corner to mouse.
-    pub drag_offset: Option<(f64, f64)>,
     /// Currently hovered item for highlight effects.
     pub hovered_item_id: Option<String>,
     /// Render-time snapshot of the webhook URL input (populated from
@@ -2738,8 +2737,8 @@ pub struct CredentialsState {
     pub error_message: Option<String>,
     /// Set when "add" (or "remove") was clicked while sealed: the click
     /// routes to `ProfileManagerPage::UnlockPassphrase` instead of acting,
-    /// and this remembers to reopen the credentials modal on `AddKey`
-    /// (or `List`) once the unlock succeeds — see the module doc on
+    /// and this remembers to switch back to the Vault tab page (`List` or
+    /// `AddKey`) once the unlock succeeds — see the module doc on
     /// `ChartApp::handle_credentials_click`.
     pub pending_unlock_return: Option<CredentialsView>,
 }
@@ -2747,13 +2746,9 @@ pub struct CredentialsState {
 impl Default for CredentialsState {
     fn default() -> Self {
         Self {
-            is_open: false,
             view: CredentialsView::default(),
             secrets_available: false,
             exchange_keys: Vec::new(),
-            position: None,
-            is_dragging: false,
-            drag_offset: None,
             hovered_item_id: None,
             webhook_url_render: ActiveFieldRender::default(),
             webhook_url_focused: false,
@@ -2781,28 +2776,15 @@ impl CredentialsState {
         Self::default()
     }
 
-    pub fn is_open(&self) -> bool {
-        self.is_open
-    }
-
-    /// Open the modal on the list view. Caller (`ChartApp`) is responsible
-    /// for refreshing `secrets_available`/`exchange_keys` beforehand.
+    /// Reset to the list view. Caller (`ChartApp`) is responsible for
+    /// refreshing `secrets_available`/`exchange_keys` beforehand. Named
+    /// `open` from the surface's former life as a standalone modal — kept
+    /// as the entry point for "show the Vault tab from scratch" even though
+    /// there is no `is_open` of its own to flip anymore (the tab's
+    /// visibility is `UserSettingsState::is_open` + `active_tab`).
     pub fn open(&mut self) {
-        self.is_open = true;
         self.view = CredentialsView::List;
         self.error_message = None;
-    }
-
-    /// Close the modal and drop any in-progress "add key" form state — a
-    /// half-typed secret must not linger for the next time this reopens.
-    pub fn close(&mut self) {
-        self.is_open = false;
-        self.is_dragging = false;
-        self.drag_offset = None;
-        self.hovered_item_id = None;
-        self.view = CredentialsView::List;
-        self.error_message = None;
-        self.clear_add_form();
     }
 
     /// Reset the "add key" form fields (values live in `TextFieldStore`,
@@ -2821,24 +2803,6 @@ impl CredentialsState {
         self.add_passphrase_focused = false;
         self.add_testnet = false;
         self.secret_revealed = false;
-    }
-
-    /// Start dragging the modal.
-    pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {
-        self.is_dragging = true;
-        self.drag_offset = Some((mouse_x - modal_x, mouse_y - modal_y));
-    }
-
-    /// Update drag position.
-    pub fn update_drag(&mut self, mouse_x: f64, mouse_y: f64) {
-        if let Some((dx, dy)) = self.drag_offset {
-            self.position = Some((mouse_x - dx, mouse_y - dy));
-        }
-    }
-
-    /// End dragging.
-    pub fn end_drag(&mut self) {
-        self.is_dragging = false;
     }
 }
 
@@ -3430,6 +3394,7 @@ pub enum UserSettingsTab {
     #[default]
     General,
     Sync,
+    Vault,
     Persistence,
     Performance,
     Server,
@@ -3440,6 +3405,7 @@ impl UserSettingsTab {
         match self {
             Self::General => "general",
             Self::Sync => "sync",
+            Self::Vault => "vault",
             Self::Persistence => "persistence",
             Self::Performance => "performance",
             Self::Server => "server",
@@ -3452,6 +3418,7 @@ impl UserSettingsTab {
         match self {
             Self::General => UserSettingsKey::TabGeneral.get(lang),
             Self::Sync => "Sync",
+            Self::Vault => "Vault",
             Self::Persistence => UserSettingsKey::TabPersistence.get(lang),
             Self::Performance => UserSettingsKey::TabPerformance.get(lang),
             Self::Server => UserSettingsKey::TabServer.get(lang),
@@ -3462,13 +3429,14 @@ impl UserSettingsTab {
         // `Sync` retained as a variant for serde back-compat but hidden
         // from the tab strip — cloud sync is a paid server feature, not
         // local persist (Persistence tab below).
-        &[Self::General, Self::Persistence, Self::Performance, Self::Server]
+        &[Self::General, Self::Vault, Self::Persistence, Self::Performance, Self::Server]
     }
 
     pub fn from_id(s: &str) -> Option<Self> {
         match s {
             "general" => Some(Self::General),
             "sync" => Some(Self::Sync),
+            "vault" => Some(Self::Vault),
             "persistence" => Some(Self::Persistence),
             "performance" => Some(Self::Performance),
             "server" => Some(Self::Server),
@@ -3568,6 +3536,11 @@ pub struct UserSettingsState {
     pub general_tab_scroll: ScrollState,
     /// Scroll state for the Sync tab content.
     pub sync_tab_scroll: ScrollState,
+    /// Scroll state for the Vault tab content — modelled exactly on
+    /// `general_tab_scroll`; the vault surface used to be its own modal
+    /// (which had no scrolling) and is now a tab body long enough to need
+    /// it (status row + key list + webhook section, or the add-key form).
+    pub vault_tab_scroll: ScrollState,
     /// Scroll state for the Persistence tab content.
     pub persistence_tab_scroll: ScrollState,
     /// Scroll state for the Server tab content.
@@ -3742,6 +3715,7 @@ impl Default for UserSettingsState {
             server_status: "running".to_string(),
             general_tab_scroll: ScrollState::default(),
             sync_tab_scroll: ScrollState::default(),
+            vault_tab_scroll: ScrollState::default(),
             persistence_tab_scroll: ScrollState::default(),
             server_tab_scroll: ScrollState::default(),
             performance_tab_scroll: ScrollState::default(),

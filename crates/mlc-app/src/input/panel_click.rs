@@ -166,9 +166,9 @@ impl ChartApp {
         self.panel_app.user_settings_state.passphrase_revealed = false;
         let wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
         self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
-        // Abandoning the unlock page abandons the "return to the credentials
-        // modal's add form afterward" contract too — otherwise the NEXT
-        // unrelated unlock (e.g. a profile switch) would reopen it.
+        // Abandoning the unlock page abandons the "return to the Vault
+        // tab's add-key form afterward" contract too — otherwise the NEXT
+        // unrelated unlock (e.g. a profile switch) would jump there.
         self.panel_app.credentials_state.pending_unlock_return = None;
     }
 
@@ -5374,6 +5374,12 @@ impl ChartApp {
                     let tab_id = &rest[4..];
                     if let Some(tab) = UserSettingsTab::from_id(tab_id) {
                         self.panel_app.user_settings_state.set_tab(tab);
+                        // See the same call in `OpenUserSettings`: the vault
+                        // surface is a cache, and switching to it is the
+                        // other moment that can put it on screen.
+                        if tab == UserSettingsTab::Vault {
+                            self.sync_credentials_from_core();
+                        }
                         eprintln!("[ChartApp] user_settings tab switched to: {}", tab_id);
                     }
                 }
@@ -5417,9 +5423,14 @@ impl ChartApp {
                     self.panel_app.user_settings_state.diagnostics_enabled = self.diagnostics_enabled;
                     eprintln!("[ChartApp] diagnostics_enabled = {}", self.diagnostics_enabled);
                 }
+                // No widget currently registers this id (the General tab's
+                // old "Manage Exchange Keys & Webhook" row was retired along
+                // with the standalone credentials modal — the Vault tab is
+                // one click away on the rail instead) — kept reachable for
+                // any other surface that still names this action.
                 "open_credentials" => {
-                    self.open_credentials_modal();
-                    eprintln!("[ChartApp] user_settings: opening credentials modal");
+                    self.open_vault_tab();
+                    eprintln!("[ChartApp] user_settings: switching to Vault tab");
                 }
                 "trading_panel_topbar_takeover" => {
                     self.toggle_trading_panel_topbar_takeover();
@@ -5721,7 +5732,7 @@ impl ChartApp {
                     if !passphrase.is_empty() {
                         self.panel_app.user_settings_state.vault_unlock_error = None;
                         // Same page, same prompt, same button — but a
-                        // mid-session reseal (credentials modal's "Lock")
+                        // mid-session reseal (the Vault tab's "Lock" button)
                         // reached here wanting the CURRENT profile's key
                         // re-derived in place, not the boot-time /
                         // profile-switch flow `e2e_setup:` runs. Reusing

@@ -1277,6 +1277,18 @@ impl ChartApp {
             // User settings modal  -  opened by the chrome gear button.
             ChartOutEvent::OpenUserSettings => {
                 self.panel_app.user_settings_state.toggle();
+                // The Vault tab reads a cached snapshot of the vault's state
+                // (whether one exists, whether it is unlocked, what keys it
+                // holds). While it was a modal of its own, opening it did the
+                // refresh; as a tab it is drawn whether or not anyone asked
+                // for it, so the refresh belongs to the transitions that can
+                // reveal it — this one and the tab switch below. A stale
+                // snapshot here is not a cosmetic problem: `vault_exists`
+                // defaulting to false makes a profile that HAS a vault be
+                // offered "Set up".
+                if self.panel_app.user_settings_state.is_open {
+                    self.sync_credentials_from_core();
+                }
                 eprintln!("[ChartApp] user_settings modal toggled: {}", self.panel_app.user_settings_state.is_open);
             }
 

@@ -368,6 +368,14 @@ async fn run() -> Result<(), JsValue> {
             .iter()
             .map(|p| (p.id.clone(), p.display_name.clone(), p.avatar.clone(), p.has_vault))
             .collect();
+        // Which of those profiles is the live one. Native sets this when it
+        // creates a window (`main.rs`); this shell never did, so it stayed
+        // the empty string — and every lookup keyed on it silently missed.
+        // Measured on the stand: a profile with `vault.enc`, `salt.hex` and
+        // `recovery_key.enc` all present in storage, and the vault surface
+        // announcing "No vault yet", because the row it looks for is found
+        // by this id and no row has an empty one.
+        uss.runtime_profile_id = profile_manager.profile.domain.profile_id.clone();
     }
 
     web_sys::console::log_1(&"[mlc-app-shell-web] app ready".into());
