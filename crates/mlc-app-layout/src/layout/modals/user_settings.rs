@@ -408,6 +408,38 @@ fn render_general_tab(
     );
     cy += 16.0;
 
+    // ── Section: CREDENTIALS ─────────────────────────────────────────────────
+    // Opens its own modal (`crate::layout::modals::credentials`) rather than
+    // living inline here — exchange keys and the webhook URL are vault-gated
+    // secrets, not settings-modal-tier preferences, and that modal needs its
+    // own locked/unlocked body shape this tab has no room for.
+    ctx.set_font("600 11px sans-serif");
+    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.85));
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Credentials", x, cy);
+    cy += 20.0;
+    {
+        let row_h = 32.0;
+        let is_hovered = state.hovered_item_id.as_deref() == Some("open_credentials");
+        let bg = if is_hovered { &toolbar_theme.item_bg_hover } else { &toolbar_theme.dropdown_bg };
+        ctx.set_fill_color(bg);
+        ctx.fill_rounded_rect(x, cy, available_w, row_h, 4.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, available_w, row_h, 4.0);
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Manage Exchange Keys & Webhook", x + 10.0, cy + row_h / 2.0);
+        let r = WidgetRect::new(x, cy, available_w, row_h);
+        result.content_items.push(("open_credentials".to_string(), r));
+        input_coordinator.register_on_layer("user_settings:open_credentials", r, Sense::CLICK, layer_id);
+        cy += row_h;
+    }
+    cy += 16.0;
+
     // ── Section: LANGUAGE ────────────────────────────────────────────────────
     ctx.set_font("600 11px sans-serif");
     // A section heading is an accented label, not a warning. The gold it

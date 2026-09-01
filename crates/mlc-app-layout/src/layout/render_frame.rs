@@ -595,6 +595,8 @@ pub struct ChartModalRenderResult {
     pub chart_browser: Option<crate::layout::modals::chart_browser::ChartBrowserResult>,
     /// Alert settings modal result (if open).
     pub alert_settings: Option<AlertSettingsResult>,
+    /// Credentials modal result (if open).
+    pub credentials: Option<crate::layout::modals::credentials::CredentialsResult>,
     /// Compare settings modal result (if open).
     pub compare_settings: Option<crate::layout::modals::compare_settings::CompareSettingsResult>,
     /// Template name overlay modal result for primitive settings (if open).

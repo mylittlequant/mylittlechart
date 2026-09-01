@@ -3606,27 +3606,59 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 }
                             }
                         }
-                    } else if self.needs_vault_unlock {
-                        match self.profile_manager.validate_passphrase(passphrase) {
-                            Ok(key) => {
-                                eprintln!("[App] vault passphrase validated OK — promoting skeleton");
-                                self.profile_manager.set_vault_key(key);
-                                if let Err(e) = self.profile_manager.load_vault_secrets() {
-                                    eprintln!("[App] failed to load vault secrets: {}", e);
+                    } else {
+                        // Validate an existing vault (locked at boot) or derive
+                        // a fresh one (first-time setup) for the ACTIVE
+                        // profile — shared with the web shell
+                        // (`ChartApp::apply_vault_setup`,
+                        // `mlc-app/src/input/credentials.rs`), which is also
+                        // what the browser's own "Set Up Encryption" defect
+                        // this method was written to fix now calls. Which of
+                        // the two branches runs is decided INSIDE that method
+                        // by the window's own `needs_vault_unlock` mirror,
+                        // which this shell already keeps in lockstep with
+                        // `self.needs_vault_unlock` at every mutation site.
+                        let outcome = self.windows.values_mut().next().map(|pw| {
+                            pw.chart.apply_vault_setup(passphrase, &mut self.profile_manager)
+                        });
+                        match outcome {
+                            Some(mlc_app::VaultSetupOutcome::Ready { recovery_key: Some(rk) }) => {
+                                // First-time vault creation — show the recovery key before promoting.
+                                eprintln!("[App] vault key derived and set — showing recovery key");
+                                self.needs_vault_unlock = false;
+                                self.needs_migration = false;
+                                for pw in self.windows.values_mut() {
+                                    use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                                    pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
+                                    pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
+                                    pw.chart.panel_app.user_settings_state.recovery_key_display =
+                                        Some(rk.clone());
+                                    // Sync TextFieldStore recovery key display so it can be selected/copied.
+                                    {
+                                        let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
+                                        let klen = rk.chars().count();
+                                        pw.chart.input_coordinator.borrow_mut().text_fields_mut().set_text(&rk_wid, &rk);
+                                        if let Some(fs) = pw.chart.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&rk_wid) {
+                                            fs.cursor = klen;
+                                            fs.selection_start = None;
+                                        }
+                                    }
+                                    pw.chart.panel_app.user_settings_state.profile_manager_page =
+                                        ProfileManagerPage::ShowRecoveryKey;
+                                    pw.chart.panel_app.user_settings_state.show_profile_manager = true;
                                 }
-                                self.core.user_mut().set_vault_key(Some(key));
-                                // Phase D fix: this unlock path previously never wrote
-                                // templates_mut().vault_key at all — encrypted template
-                                // saves silently used a stale/missing key until the
-                                // later skeleton-promote rebuild picked it up by luck.
-                                self.core.templates_mut().set_vault_key(Some(key));
-                                self.profile_manager.vault_key = Some(key);
+                            }
+                            Some(mlc_app::VaultSetupOutcome::Ready { recovery_key: None }) => {
+                                // Existing vault, correctly validated (no new
+                                // recovery key to show) — promote immediately.
+                                eprintln!("[App] vault passphrase validated OK — promoting skeleton");
                                 self.profile = self.profile_manager.profile.clone();
                                 self.needs_vault_unlock = false;
+                                self.needs_migration = false;
                                 // Drop skeleton windows and recreate with live data.
                                 self.pending_skeleton_promote = true;
                             }
-                            Err(e) => {
+                            Some(mlc_app::VaultSetupOutcome::WrongPassphrase(e)) => {
                                 eprintln!("[App] vault unlock REJECTED: wrong passphrase ({})", e);
                                 for pw in self.windows.values_mut() {
                                     pw.chart.panel_app.user_settings_state.needs_vault_unlock = true;
@@ -3635,55 +3667,40 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                     pw.chart.panel_app.user_settings_state.vault_unlock_attempts += 1;
                                 }
                             }
-                        }
-                    } else {
-                        // Fresh E2E setup — derive and store the vault key.
-                        match self.profile_manager.derive_and_set_vault_key(passphrase) {
-                            Ok(key) => {
-                                self.core.user_mut().set_vault_key(Some(key));
-                                self.profile_manager.vault_key = Some(key);
-                                // Shared core (Phase A/B/C): one write reaches every
-                                // open window immediately — no per-window replica
-                                // left to go stale before the later skeleton-promote
-                                // rebuild.
-                                self.core.templates_mut().set_vault_key(Some(key));
-                                eprintln!("[App] vault key derived and set — promoting skeleton");
-                                self.needs_vault_unlock = false;
-                                self.needs_migration = false;
-
-                                let recovery_key = self.profile_manager.pending_recovery_key.clone();
-                                if recovery_key.is_some() {
-                                    // Show recovery key on skeleton first; promote after user confirms.
-                                    for pw in self.windows.values_mut() {
-                                        use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
-                                        pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
-                                        pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
-                                        pw.chart.panel_app.user_settings_state.recovery_key_display =
-                                            recovery_key.clone();
-                                        // Sync TextFieldStore recovery key display so it can be selected/copied.
-                                        let key_str = recovery_key.as_deref().unwrap_or("");
-                                        {
-                                            let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
-                                            let klen = key_str.chars().count();
-                                            pw.chart.input_coordinator.borrow_mut().text_fields_mut().set_text(&rk_wid, key_str);
-                                            if let Some(fs) = pw.chart.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&rk_wid) {
-                                                fs.cursor = klen;
-                                                fs.selection_start = None;
-                                            }
-                                        }
-                                        pw.chart.panel_app.user_settings_state.profile_manager_page =
-                                            ProfileManagerPage::ShowRecoveryKey;
-                                        pw.chart.panel_app.user_settings_state.show_profile_manager = true;
-                                    }
-                                } else {
-                                    // No recovery key — promote immediately.
-                                    self.pending_skeleton_promote = true;
-                                }
+                            Some(mlc_app::VaultSetupOutcome::Error(e)) => {
+                                eprintln!("[App] vault salt error: {}", e);
                             }
-                            Err(e) => eprintln!("[App] vault salt error: {}", e),
+                            None => {
+                                eprintln!("[App] e2e_setup: no window to apply vault setup to");
+                            }
                         }
                     }
                     } // end else (not a new-profile vault creation)
+                }
+
+                // ── Credentials modal mid-session re-unlock ───────────────────────────────────
+                // Emitted by `"profile_mgr:unlock"` instead of `e2e_setup:` when the passphrase
+                // page was reached via the credentials modal's "Unlock" (see that arm's comment
+                // for why `e2e_setup:`'s own branches are all wrong for this case). Deliberately
+                // does NOT touch `pending_skeleton_promote` / rebuild any window — this profile
+                // is already fully live, only its secret state was sealed.
+                if let Some(passphrase) = cmd_str.strip_prefix("cred_unlock:") {
+                    cmd_handled = true;
+                    let mut last_err: Option<String> = None;
+                    for pw in self.windows.values_mut() {
+                        if let Err(e) = pw.chart.try_unlock_credentials(passphrase) {
+                            last_err = Some(e);
+                        }
+                    }
+                    if let Some(e) = last_err {
+                        for pw in self.windows.values_mut() {
+                            pw.chart.panel_app.user_settings_state.vault_unlock_error = Some(e.clone());
+                            pw.chart.panel_app.user_settings_state.vault_unlock_attempts += 1;
+                        }
+                        eprintln!("[App] credentials: unlock failed: {}", e);
+                    } else {
+                        eprintln!("[App] credentials: vault unlocked mid-session");
+                    }
                 }
 
                 // ── Recovery key unlock ──────────────────────────────────────────────────────
@@ -3873,27 +3890,28 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             }
                         }
                         Some(_old_master_key) => {
-                            // Re-key the vault using the profile_manager helper.
-                            match self.profile_manager.rekey_vault(new_passphrase) {
-                                Ok(new_recovery_key_fmt) => {
+                            // Re-key the vault + sync the new key into `core` —
+                            // shared with the web shell
+                            // (`ChartApp::apply_new_passphrase`,
+                            // `mlc-app/src/input/credentials.rs`) so the
+                            // "forgot `core.templates_mut()`" bug class this
+                            // path already had to learn about once cannot
+                            // silently reopen in only one shell.
+                            let outcome = self.windows.values_mut().next().map(|pw| {
+                                pw.chart.apply_new_passphrase(new_passphrase, &mut self.profile_manager)
+                            });
+                            match outcome {
+                                Some(Ok(new_recovery_key_fmt)) => {
                                     eprintln!("[App] set_new_passphrase: vault re-keyed successfully");
 
-                                    // Update the shared core's vault key reference. Phase D
-                                    // fix: this rekey path previously never wrote
-                                    // templates_mut().vault_key at all — same bug class as
-                                    // the validate_passphrase path above.
-                                    if let Some(new_vk) = self.profile_manager.vault_key {
-                                        self.core.user_mut().set_vault_key(Some(new_vk));
-                                        self.core.templates_mut().set_vault_key(Some(new_vk));
-                                        // Templates on disk are still encrypted under the OLD
-                                        // key until rewritten — force an immediate (debounce
-                                        // bypassed below via disk_dirty + last_write_at reset)
-                                        // re-encrypt so `templates/*` never sits stale relative
-                                        // to `vault.enc`, which `rekey_vault` above already
-                                        // re-encrypted synchronously.
-                                        self.templates_disk_dirty = true;
-                                        self.templates_last_write_at = None;
-                                    }
+                                    // Templates on disk are still encrypted under the OLD
+                                    // key until rewritten — force an immediate (debounce
+                                    // bypassed below via disk_dirty + last_write_at reset)
+                                    // re-encrypt so `templates/*` never sits stale relative
+                                    // to `vault.enc`, which `apply_new_passphrase` above
+                                    // already re-encrypted synchronously.
+                                    self.templates_disk_dirty = true;
+                                    self.templates_last_write_at = None;
 
                                     // Mark that skeleton promote should happen after recovery key is confirmed.
                                     self.pending_promote_after_recovery_key = true;
@@ -3928,12 +3946,15 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                     }
 
                                 }
-                                Err(e) => {
+                                Some(Err(e)) => {
                                     eprintln!("[App] set_new_passphrase: rekey_vault failed: {}", e);
                                     for pw in self.windows.values_mut() {
                                         pw.chart.panel_app.user_settings_state.set_passphrase_error =
                                             format!("Failed to re-key vault: {}", e);
                                     }
+                                }
+                                None => {
+                                    eprintln!("[App] set_new_passphrase: no window to re-key against");
                                 }
                             }
                         }

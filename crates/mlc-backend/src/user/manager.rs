@@ -21,7 +21,7 @@
 use std::collections::HashMap;
 
 use mlc_backend_indicator_engine::RecalcMode;
-use mlc_core::user_profile::{SettingsSnapshots, UserProfile};
+use mlc_core::user_profile::{SettingsSnapshots, UserProfile, VaultSecrets};
 use mlc_vault::vault::VaultKey;
 
 /// Profile metadata + settings snapshots + vault key for one active user
@@ -99,6 +99,45 @@ impl UserProfileManager {
 
     pub fn set_vault_key(&mut self, key: Option<VaultKey>) {
         self.vault_key = key;
+    }
+
+    /// Deliberately seal the vault mid-session: drop the key and wipe the
+    /// secret sub-fields of every live in-memory secret-bearing struct.
+    ///
+    /// Dropping `vault_key` alone is not a real seal — it only gates the
+    /// read side (`secrets_available`-style checks); the plaintext secret
+    /// bytes would still sit in `self.profile` in RAM regardless, readable
+    /// by anything that skipped the gate. This wipes them for real.
+    ///
+    /// `exchange_keys` entries keep `exchange_id`/`label`/`api_key`/
+    /// `testnet`/`created_at` — [`crate::user_profile::profile::
+    /// StoredExchangeKey`]'s own doc calls `api_key` "not a secret; safe to
+    /// store in profile.json", and identity fields are exactly what a
+    /// sealed credentials list still shows by name. Only `api_secret` and
+    /// `passphrase` are redacted. `keychain_ref`/`passphrase_keychain_ref`
+    /// are untouched — a [`crate::user_profile::profile::CredentialRef`] is
+    /// a keychain lookup pointer (service + account strings), never the
+    /// secret itself.
+    pub fn seal_vault(&mut self) {
+        self.vault_key = None;
+        for key in &mut self.profile.domain.exchange_keys {
+            key.api_secret.clear();
+            key.passphrase = None;
+        }
+        self.profile.domain.notification_secrets = Default::default();
+    }
+
+    /// Re-derive live secret state after a mid-session unlock: set the key
+    /// and merge the freshly-decrypted `vault.enc` payload back into the
+    /// live profile.
+    ///
+    /// Counterpart to [`Self::seal_vault`]. Deliberately does NOT touch
+    /// anything else (windows, presets, panel state) — the caller already
+    /// has a fully live session; re-deriving the key must not rebuild it,
+    /// only restore what sealing redacted.
+    pub fn unseal_vault(&mut self, key: VaultKey, secrets: VaultSecrets) {
+        self.vault_key = Some(key);
+        secrets.merge_into(&mut self.profile);
     }
 
     /// Persist the profile to disk using the current vault key.
@@ -191,6 +230,66 @@ mod tests {
         };
         mgr.set_snapshots(snaps);
         assert!(mgr.snapshots().chart_settings.is_some());
+    }
+
+    #[test]
+    fn seal_vault_drops_key_and_redacts_secrets() {
+        use mlc_core::user_profile::profile::StoredExchangeKey;
+
+        let mut mgr = UserProfileManager::new();
+        mgr.set_vault_key(Some([7u8; 32]));
+        mgr.profile_mut().domain.exchange_keys.push(StoredExchangeKey {
+            exchange_id: "binance".to_string(),
+            label: "main".to_string(),
+            api_key: "pub-key".to_string(),
+            api_secret: "shh".to_string(),
+            passphrase: Some("also-shh".to_string()),
+            keychain_ref: None,
+            passphrase_keychain_ref: None,
+            testnet: false,
+            created_at: 1,
+        });
+        mgr.profile_mut().domain.notification_secrets.telegram.bot_token = "tg-secret".to_string();
+
+        mgr.seal_vault();
+
+        assert!(mgr.vault_key().is_none());
+        let key = &mgr.profile().domain.exchange_keys[0];
+        assert_eq!(key.exchange_id, "binance", "identity fields survive sealing");
+        assert_eq!(key.api_key, "pub-key", "api_key is not a secret — survives sealing");
+        assert!(key.api_secret.is_empty(), "api_secret must be wiped on seal");
+        assert!(key.passphrase.is_none(), "passphrase must be wiped on seal");
+        assert!(mgr.profile().domain.notification_secrets.telegram.bot_token.is_empty());
+    }
+
+    #[test]
+    fn unseal_vault_restores_key_and_merges_secrets() {
+        use mlc_core::user_profile::profile::StoredExchangeKey;
+        use mlc_core::user_profile::VaultSecrets;
+
+        let mut mgr = UserProfileManager::new();
+        // `VaultSecrets` carries a crate-private field (`legacy_notifications`,
+        // mlc-core-internal migration seam) — struct-update syntax needs every
+        // field visible at the use site, so build from `default()` and set the
+        // one `pub` field this test needs instead of a struct literal.
+        let mut secrets = VaultSecrets::default();
+        secrets.exchange_keys = vec![StoredExchangeKey {
+            exchange_id: "bybit".to_string(),
+            label: "".to_string(),
+            api_key: "k".to_string(),
+            api_secret: "s".to_string(),
+            passphrase: None,
+            keychain_ref: None,
+            passphrase_keychain_ref: None,
+            testnet: false,
+            created_at: 2,
+        }];
+
+        mgr.unseal_vault([9u8; 32], secrets);
+
+        assert_eq!(mgr.vault_key(), Some([9u8; 32]));
+        assert_eq!(mgr.profile().domain.exchange_keys.len(), 1);
+        assert_eq!(mgr.profile().domain.exchange_keys[0].api_secret, "s");
     }
 
     #[test]

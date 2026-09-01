@@ -126,6 +126,32 @@ pub const RECOVERY_KEY: &str = "recovery_key";
 /// Telegram bot token input (alert settings notifications tab).
 pub const ALERT_TG_TOKEN: &str = "alert_tg_token";
 
+/// Webhook URL input (credentials modal). Replaces the decorative field of
+/// the same name that used to live in the alert-settings Notifications tab
+/// (`alert_set:item:webhook_url`, whose click handler was a literal no-op) —
+/// the value may embed its own auth token, so it is vault-gated exactly
+/// like `ALERT_TG_TOKEN`.
+pub const CRED_WEBHOOK_URL: &str = "cred_webhook_url";
+
+/// Exchange id input in the credentials modal's "add key" form. Free-form
+/// lowercase string (e.g. `"binance"`) — there is no canonical exchange
+/// registry in this crate to draw a dropdown from, and `StoredExchangeKey::
+/// exchange_id` is itself a free string.
+pub const CRED_ADD_EXCHANGE: &str = "cred_add_exchange";
+
+/// Label input in the credentials modal's "add key" form.
+pub const CRED_ADD_LABEL: &str = "cred_add_label";
+
+/// Public API key input in the credentials modal's "add key" form.
+pub const CRED_ADD_API_KEY: &str = "cred_add_api_key";
+
+/// API secret input in the credentials modal's "add key" form.
+pub const CRED_ADD_API_SECRET: &str = "cred_add_api_secret";
+
+/// Passphrase input in the credentials modal's "add key" form (OKX/KuCoin
+/// style venues only — optional).
+pub const CRED_ADD_PASSPHRASE: &str = "cred_add_passphrase";
+
 /// Visible inline custom-timeframe editor field, shown in the "+ Add" row
 /// slot of the `timeframe_selector` dropdown (user-granularity-templates-
 /// inner arc, кусок 2 — owner spec 2026-07-16 replaced the invisible

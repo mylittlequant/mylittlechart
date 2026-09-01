@@ -52,6 +52,7 @@ pub mod workspace;
 pub use panels_store::TradingPanelsStore;
 
 pub use input::KeyPress;
+pub use input::VaultSetupOutcome;
 pub use digdigdig3::ExchangeId;
 pub use mlc_backend::watchlist::WatchlistManager;
 pub use mlc_backend::template::TemplateManager;
@@ -3579,6 +3580,13 @@ impl ChartApp {
             tf.register(text_input::CONFIRM_PASSPHRASE, TextFieldConfig::password());
             tf.register(text_input::RECOVERY_KEY, TextFieldConfig::text());
             tf.register(text_input::ALERT_TG_TOKEN, TextFieldConfig::text());
+            // Credentials modal: webhook URL edit + "add key" form fields.
+            tf.register(text_input::CRED_WEBHOOK_URL, TextFieldConfig::text());
+            tf.register(text_input::CRED_ADD_EXCHANGE, TextFieldConfig::text());
+            tf.register(text_input::CRED_ADD_LABEL, TextFieldConfig::text());
+            tf.register(text_input::CRED_ADD_API_KEY, TextFieldConfig::text());
+            tf.register(text_input::CRED_ADD_API_SECRET, TextFieldConfig::password());
+            tf.register(text_input::CRED_ADD_PASSPHRASE, TextFieldConfig::password());
         }
 
         // Populate sub_panes from the real indicator_manager.
@@ -3848,6 +3856,13 @@ impl ChartApp {
             tf.register(text_input::CONFIRM_PASSPHRASE, TextFieldConfig::password());
             tf.register(text_input::RECOVERY_KEY, TextFieldConfig::text());
             tf.register(text_input::ALERT_TG_TOKEN, TextFieldConfig::text());
+            // Credentials modal: webhook URL edit + "add key" form fields.
+            tf.register(text_input::CRED_WEBHOOK_URL, TextFieldConfig::text());
+            tf.register(text_input::CRED_ADD_EXCHANGE, TextFieldConfig::text());
+            tf.register(text_input::CRED_ADD_LABEL, TextFieldConfig::text());
+            tf.register(text_input::CRED_ADD_API_KEY, TextFieldConfig::text());
+            tf.register(text_input::CRED_ADD_API_SECRET, TextFieldConfig::password());
+            tf.register(text_input::CRED_ADD_PASSPHRASE, TextFieldConfig::password());
         }
 
         app.needs_initial_viewport_fit = true;
@@ -4804,6 +4819,13 @@ impl ChartApp {
             tf.register(text_input::CONFIRM_PASSPHRASE, TextFieldConfig::password());
             tf.register(text_input::RECOVERY_KEY, TextFieldConfig::text());
             tf.register(text_input::ALERT_TG_TOKEN, TextFieldConfig::text());
+            // Credentials modal: webhook URL edit + "add key" form fields.
+            tf.register(text_input::CRED_WEBHOOK_URL, TextFieldConfig::text());
+            tf.register(text_input::CRED_ADD_EXCHANGE, TextFieldConfig::text());
+            tf.register(text_input::CRED_ADD_LABEL, TextFieldConfig::text());
+            tf.register(text_input::CRED_ADD_API_KEY, TextFieldConfig::text());
+            tf.register(text_input::CRED_ADD_API_SECRET, TextFieldConfig::password());
+            tf.register(text_input::CRED_ADD_PASSPHRASE, TextFieldConfig::password());
         }
 
         app.sync_sub_panes_from_manager();
@@ -9637,6 +9659,40 @@ impl ChartApp {
                     selection_start: tg_sel,
                     cursor_visible: cursor_blink && tg_focused,
                 };
+            }
+
+            // Wave 4 — credentials modal fields (webhook URL edit + the
+            // "add key" form). Same `populate_proxy` shape as Wave 3 above,
+            // local to this block since Wave 3's own closure is already out
+            // of scope by here.
+            {
+                let populate = |id: &str, focused: bool| -> ActiveFieldRender {
+                    let wid = uzor::WidgetId::from(id);
+                    ActiveFieldRender {
+                        text: tf.text(&wid).to_string(),
+                        cursor: tf.cursor(&wid),
+                        selection_start: tf.selection_range(&wid).map(|(s, _)| s),
+                        cursor_visible: cursor_blink && focused,
+                    }
+                };
+                let (webhook_url, add_exchange, add_label, add_api_key, add_api_secret, add_passphrase) = {
+                    let cs = &self.panel_app.credentials_state;
+                    (
+                        populate(text_input::CRED_WEBHOOK_URL, cs.webhook_url_focused),
+                        populate(text_input::CRED_ADD_EXCHANGE, cs.add_exchange_focused),
+                        populate(text_input::CRED_ADD_LABEL, cs.add_label_focused),
+                        populate(text_input::CRED_ADD_API_KEY, cs.add_api_key_focused),
+                        populate(text_input::CRED_ADD_API_SECRET, cs.add_api_secret_focused),
+                        populate(text_input::CRED_ADD_PASSPHRASE, cs.add_passphrase_focused),
+                    )
+                };
+                let cs_mut = &mut self.panel_app.credentials_state;
+                cs_mut.webhook_url_render = webhook_url;
+                cs_mut.add_exchange_render = add_exchange;
+                cs_mut.add_label_render = add_label;
+                cs_mut.add_api_key_render = add_api_key;
+                cs_mut.add_api_secret_render = add_api_secret;
+                cs_mut.add_passphrase_render = add_passphrase;
             }
         }
 

@@ -3285,10 +3285,11 @@ impl ChartApp {
                 let s = &mut self.panel_app.alert_settings_state;
                 s.notification_settings.webhook.enabled = !s.notification_settings.webhook.enabled;
             }
-            "item:webhook_url" => {
-                // Focus webhook URL — handled via char input routing when webhook focused
-                // (placeholder: actual URL editing uses the existing webhook_url field)
-            }
+            // `"item:webhook_url"` used to live here as a no-op — the row no
+            // longer registers a hit zone (it is read-only now; see
+            // `alert_settings.rs`'s webhook section), so there is nothing
+            // left to dispatch. Editing the URL happens in the credentials
+            // modal (`handle_credentials_click`'s `"webhook_url"` arm).
             // --- Alerts list filter ---
             _ if rest.starts_with("filter:") => {
                 use mlc_app_layout::ui::modal_settings::AlertListFilter;

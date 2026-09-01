@@ -762,6 +762,231 @@ fn run_render_loop(
                     }
                     None => cmd,
                 };
+                // Credentials modal mid-session re-unlock — NOT one of the
+                // five profile-family commands the shared dispatcher below
+                // owns (it would report `NotForMe` and get logged as an
+                // unhandled command), and deliberately not routed through
+                // `e2e_setup:` either — see that command's native-shell arm
+                // and `ChartApp::try_unlock_credentials`'s own doc for why.
+                // Shell duty parity (`mylittlechart/CLAUDE.md`): this is the
+                // same command the native shell's `main.rs` handles, wired
+                // here in the same change rather than left for wasm to grow
+                // silently missing (the failure mode this rule was written
+                // to catch, per history: render_overlay, log-bridge, ...).
+                if let Some(passphrase) = cmd.strip_prefix("cred_unlock:") {
+                    match st.chart.try_unlock_credentials(passphrase) {
+                        Ok(()) => {
+                            web_sys::console::log_1(
+                                &"[mlc-app-shell-web] credentials: vault unlocked mid-session".into(),
+                            );
+                        }
+                        Err(e) => {
+                            st.chart.panel_app.user_settings_state.vault_unlock_error = Some(e.clone());
+                            st.chart.panel_app.user_settings_state.vault_unlock_attempts += 1;
+                            web_sys::console::error_1(
+                                &format!("[mlc-app-shell-web] credentials: unlock failed: {}", e).into(),
+                            );
+                        }
+                    }
+                } else if let Some(passphrase) = cmd.strip_prefix("e2e_setup:") {
+                    // Vault-family command #1 of 5 — see this arm's siblings
+                    // below for `recovery_unlock:` / `set_new_passphrase:` /
+                    // `recovery_key_confirmed` / `vault_skip_to_wizard`.
+                    // This is THE defect this arc exists to fix: this shell
+                    // had no handler for `e2e_setup:` at all, so Settings →
+                    // "Set Up Encryption" could never create a vault in the
+                    // browser (confirm field cleared, nothing else
+                    // happened). `ChartApp::apply_vault_setup` is the shared
+                    // body — same crypto/`core` key-sync sequence native
+                    // uses for its own same-profile branches — this arm only
+                    // owns the page-navigation follow-up, the single-
+                    // `ChartApp` equivalent of native's per-window fanout.
+                    let target_id = st.chart.panel_app.user_settings_state.profile_manager_target_id.clone();
+                    let current_id = st.profile_manager.profile.domain.profile_id.clone();
+                    if !target_id.is_empty() && target_id != current_id {
+                        // Setting up a DIFFERENT, not-yet-active profile's
+                        // vault — native validates/creates it then tears
+                        // down/rebuilds windows to switch in. Same missing
+                        // capability as `ProfileEffect::SwitchRequested`
+                        // (no multi-profile session swap on this shell yet)
+                        // — decline visibly rather than silently applying
+                        // the derived key to the wrong profile's `core`.
+                        web_sys::console::warn_1(&format!(
+                            "[mlc-app-shell-web] e2e_setup for profile {} declined — no multi-profile session swap on this shell yet",
+                            target_id
+                        ).into());
+                    } else {
+                        let state = &mut *st;
+                        match state.chart.apply_vault_setup(passphrase, &mut state.profile_manager) {
+                            mlc_app::VaultSetupOutcome::Ready { recovery_key: Some(rk) } => {
+                                use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                                {
+                                    let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
+                                    let klen = rk.chars().count();
+                                    let mut ic = state.chart.input_coordinator.borrow_mut();
+                                    ic.text_fields_mut().set_text(&rk_wid, &rk);
+                                    if let Some(fs) = ic.text_fields_mut().field_state_mut(&rk_wid) {
+                                        fs.cursor = klen;
+                                        fs.selection_start = None;
+                                    }
+                                }
+                                let uss = &mut state.chart.panel_app.user_settings_state;
+                                uss.recovery_key_display = Some(rk);
+                                uss.profile_manager_page = ProfileManagerPage::ShowRecoveryKey;
+                                uss.show_profile_manager = true;
+                                uss.vault_unlock_error = None;
+                                web_sys::console::log_1(
+                                    &"[mlc-app-shell-web] vault created — showing recovery key".into(),
+                                );
+                            }
+                            mlc_app::VaultSetupOutcome::Ready { recovery_key: None } => {
+                                let uss = &mut state.chart.panel_app.user_settings_state;
+                                uss.show_profile_manager = false;
+                                uss.vault_unlock_error = None;
+                                web_sys::console::log_1(&"[mlc-app-shell-web] vault unlocked".into());
+                            }
+                            mlc_app::VaultSetupOutcome::WrongPassphrase(e) => {
+                                let uss = &mut state.chart.panel_app.user_settings_state;
+                                uss.vault_unlock_error = Some(e.clone());
+                                uss.vault_unlock_attempts += 1;
+                                web_sys::console::error_1(
+                                    &format!("[mlc-app-shell-web] e2e_setup: {}", e).into(),
+                                );
+                            }
+                            mlc_app::VaultSetupOutcome::Error(e) => {
+                                state.chart.panel_app.user_settings_state.vault_unlock_error =
+                                    Some(format!("Failed to create vault: {}", e));
+                                web_sys::console::error_1(
+                                    &format!("[mlc-app-shell-web] e2e_setup: {}", e).into(),
+                                );
+                            }
+                        }
+                    }
+                } else if let Some(recovery_key_text) = cmd.strip_prefix("recovery_unlock:") {
+                    // Vault-family command #2 of 5 — recover the ACTIVE
+                    // profile's vault via its recovery key. See
+                    // `ChartApp::apply_recovery_unlock`'s doc for why this
+                    // unseals `core` directly instead of native's
+                    // "set the key, rely on a later window rebuild to merge
+                    // secrets" shape: this shell has no rebuild step.
+                    let target_id = st.chart.panel_app.user_settings_state.profile_manager_target_id.clone();
+                    let current_id = st.profile_manager.profile.domain.profile_id.clone();
+                    if !target_id.is_empty() && target_id != current_id {
+                        web_sys::console::warn_1(&format!(
+                            "[mlc-app-shell-web] recovery_unlock for profile {} declined — no multi-profile session swap on this shell yet",
+                            target_id
+                        ).into());
+                    } else {
+                        let state = &mut *st;
+                        match state.chart.apply_recovery_unlock(recovery_key_text, &mut state.profile_manager) {
+                            Ok(()) => {
+                                use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                                {
+                                    let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
+                                    let cp_wid = uzor::WidgetId::from(mlc_app::text_input::CONFIRM_PASSPHRASE);
+                                    let mut ic = state.chart.input_coordinator.borrow_mut();
+                                    ic.text_fields_mut().clear(&np_wid);
+                                    ic.text_fields_mut().clear(&cp_wid);
+                                    ic.text_fields_mut().blur();
+                                }
+                                let uss = &mut state.chart.panel_app.user_settings_state;
+                                uss.vault_unlock_error = None;
+                                uss.set_passphrase_error.clear();
+                                uss.new_passphrase_focused = false;
+                                uss.confirm_passphrase_focused = false;
+                                uss.profile_manager_page = ProfileManagerPage::SetNewPassphrase;
+                                web_sys::console::log_1(
+                                    &"[mlc-app-shell-web] recovery key accepted — set a new passphrase".into(),
+                                );
+                            }
+                            Err(e) => {
+                                let uss = &mut state.chart.panel_app.user_settings_state;
+                                uss.vault_unlock_error = Some(e.clone());
+                                uss.vault_unlock_attempts += 1;
+                                web_sys::console::error_1(
+                                    &format!("[mlc-app-shell-web] recovery_unlock: {}", e).into(),
+                                );
+                            }
+                        }
+                    }
+                } else if let Some(new_passphrase) = cmd.strip_prefix("set_new_passphrase:") {
+                    // Vault-family command #3 of 5 — mandatory re-key after
+                    // a recovery-key unlock. `ChartApp::apply_new_passphrase`
+                    // is the shared body (`ProfileManager::rekey_vault` +
+                    // the `core.templates_mut()` key-sync this codebase
+                    // already had to learn once not to skip).
+                    let state = &mut *st;
+                    match state.chart.apply_new_passphrase(new_passphrase, &mut state.profile_manager) {
+                        Ok(new_recovery_key_fmt) => {
+                            use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
+                            {
+                                let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
+                                let klen = new_recovery_key_fmt.chars().count();
+                                let mut ic = state.chart.input_coordinator.borrow_mut();
+                                ic.text_fields_mut().set_text(&rk_wid, &new_recovery_key_fmt);
+                                if let Some(fs) = ic.text_fields_mut().field_state_mut(&rk_wid) {
+                                    fs.cursor = klen;
+                                    fs.selection_start = None;
+                                }
+                            }
+                            {
+                                let np_wid = uzor::WidgetId::from(mlc_app::text_input::NEW_PASSPHRASE);
+                                let cp_wid = uzor::WidgetId::from(mlc_app::text_input::CONFIRM_PASSPHRASE);
+                                let mut ic = state.chart.input_coordinator.borrow_mut();
+                                ic.text_fields_mut().clear(&np_wid);
+                                ic.text_fields_mut().clear(&cp_wid);
+                                ic.text_fields_mut().blur();
+                            }
+                            let uss = &mut state.chart.panel_app.user_settings_state;
+                            uss.recovery_key_display = Some(new_recovery_key_fmt);
+                            uss.new_passphrase_focused = false;
+                            uss.confirm_passphrase_focused = false;
+                            uss.set_passphrase_error.clear();
+                            uss.profile_manager_page = ProfileManagerPage::ShowRecoveryKey;
+                            web_sys::console::log_1(
+                                &"[mlc-app-shell-web] vault re-keyed — showing new recovery key".into(),
+                            );
+                        }
+                        Err(e) => {
+                            state.chart.panel_app.user_settings_state.set_passphrase_error =
+                                format!("Failed to re-key vault: {}", e);
+                            web_sys::console::error_1(
+                                &format!("[mlc-app-shell-web] set_new_passphrase: {}", e).into(),
+                            );
+                        }
+                    }
+                } else if cmd == "recovery_key_confirmed" {
+                    // Vault-family command #4 of 5 — user acknowledged
+                    // having written down a recovery key (first-time setup
+                    // or post-recovery re-key; both funnel here since
+                    // neither native branch this could also mean — "just-
+                    // created-profile switch" / "post-rekey skeleton
+                    // promote" — has a web equivalent to defer to; there is
+                    // nothing left to promote on a shell with one always-
+                    // live `ChartApp`).
+                    st.profile_manager.clear_pending_recovery_key();
+                    st.chart.panel_app.user_settings_state.show_profile_manager = false;
+                    web_sys::console::log_1(&"[mlc-app-shell-web] recovery key confirmed".into());
+                } else if cmd == "vault_skip_to_wizard" {
+                    // Vault-family command #5 of 5 — "Forgot passphrase?
+                    // Create new profile". Native creates a brand-new
+                    // profile, switches the active-profile index to it, and
+                    // reseeds `core`/`profile_manager` for it — a real
+                    // profile switch, same missing capability as
+                    // `profile_switch:` → `ProfileEffect::SwitchRequested`
+                    // (no multi-profile session swap on this shell yet).
+                    // Not reachable from either shell's UI today — no
+                    // "Forgot passphrase?" button is actually wired up
+                    // anywhere (`vault_unlock_attempts`'s doc comment
+                    // describes the intent, nothing renders it) — so this is
+                    // not a regression, just the same honest decline as the
+                    // profile-switch case rather than a half-correct swap
+                    // that would leave `core` showing a mix of the old and
+                    // new profile.
+                    web_sys::console::warn_1(
+                        &"[mlc-app-shell-web] vault_skip_to_wizard declined — no multi-profile session swap on this shell yet".into(),
+                    );
+                } else {
                 match ChartApp::dispatch_profile_command(&cmd, &mut st.profile_manager) {
                     ProfileCommandOutcome::Handled(ProfileEffect::Renamed { id, new_name, was_active }) => {
                         if was_active {
@@ -874,6 +1099,7 @@ fn run_render_loop(
                         );
                     }
                 }
+                } // end else (not a credentials re-unlock)
             }
         }
 

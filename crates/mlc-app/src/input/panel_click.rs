@@ -164,6 +164,10 @@ impl ChartApp {
         self.panel_app.user_settings_state.vault_unlock_error = None;
         let wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
         self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+        // Abandoning the unlock page abandons the "return to the credentials
+        // modal's add form afterward" contract too — otherwise the NEXT
+        // unrelated unlock (e.g. a profile switch) would reopen it.
+        self.panel_app.credentials_state.pending_unlock_return = None;
     }
 
     /// Hide the Welcome Wizard and reset it to page 0. Shared by the ×
@@ -3978,6 +3982,10 @@ impl ChartApp {
             self.handle_alert_settings_click(rest);
             return;
         }
+        if let Some(rest) = widget_id.strip_prefix("cred:") {
+            self.handle_credentials_click(rest);
+            return;
+        }
         if let Some(rest) = widget_id.strip_prefix("ind_overlay:") {
             self.handle_ind_overlay_click(rest, x, y);
             return;
@@ -5407,6 +5415,10 @@ impl ChartApp {
                     self.panel_app.user_settings_state.diagnostics_enabled = self.diagnostics_enabled;
                     eprintln!("[ChartApp] diagnostics_enabled = {}", self.diagnostics_enabled);
                 }
+                "open_credentials" => {
+                    self.open_credentials_modal();
+                    eprintln!("[ChartApp] user_settings: opening credentials modal");
+                }
                 "trading_panel_topbar_takeover" => {
                     self.toggle_trading_panel_topbar_takeover();
                 }
@@ -5681,6 +5693,10 @@ impl ChartApp {
                             self.input_coordinator.borrow_mut().text_fields_mut().blur();
                         }
                         self.panel_app.user_settings_state.new_passphrase_focused = false;
+                        // Navigating away from Unlock abandons a pending
+                        // credentials-reseal return — see the matching
+                        // comment in `dismiss_profile_manager`.
+                        self.panel_app.credentials_state.pending_unlock_return = None;
                         eprintln!("[ChartApp] profile_mgr: back to profile list");
                     }
                 }
@@ -5699,8 +5715,27 @@ impl ChartApp {
                     let passphrase = self.input_coordinator.borrow().text_fields().text(&np_wid).to_string();
                     if !passphrase.is_empty() {
                         self.panel_app.user_settings_state.vault_unlock_error = None;
-                        self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
-                        eprintln!("[ChartApp] profile_mgr: unlock passphrase submitted");
+                        // Same page, same prompt, same button — but a
+                        // mid-session reseal (credentials modal's "Lock")
+                        // reached here wanting the CURRENT profile's key
+                        // re-derived in place, not the boot-time /
+                        // profile-switch flow `e2e_setup:` runs. Reusing
+                        // that command here would hit its "Fresh E2E setup"
+                        // fallback branch, which derives a key without ever
+                        // validating it against the existing `vault.enc` —
+                        // wrong passphrase would "succeed" silently. Route
+                        // to the dedicated `cred_unlock:` command instead,
+                        // which validates for real and does not rebuild any
+                        // window (`ChartApp::dispatch_profile_command`'s doc
+                        // has the fuller "why a shell command, not a facade
+                        // call" reasoning).
+                        if self.panel_app.credentials_state.pending_unlock_return.is_some() {
+                            self.pending_updater_cmd = Some(format!("cred_unlock:{}", passphrase));
+                            eprintln!("[ChartApp] profile_mgr: unlock passphrase submitted (credentials reseal)");
+                        } else {
+                            self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
+                            eprintln!("[ChartApp] profile_mgr: unlock passphrase submitted");
+                        }
                     }
                 }
                 "profile_mgr:create_passphrase" => {

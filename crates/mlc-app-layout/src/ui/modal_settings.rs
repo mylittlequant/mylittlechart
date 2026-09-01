@@ -2651,6 +2651,183 @@ impl AlertSettingsState {
     }
 }
 
+// =============================================================================
+// Credentials modal (exchange API keys + webhook URL)
+// =============================================================================
+
+/// Which page of the credentials modal is showing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CredentialsView {
+    /// The list of issued exchange keys + the webhook URL field. Default —
+    /// sealed or unlocked, this is always what opening the modal shows.
+    #[default]
+    List,
+    /// The "add a key" form (exchange, label, api_key, api_secret,
+    /// passphrase). Only reachable while unlocked — see
+    /// `ChartApp::handle_credentials_click`'s "add_key" arm, which routes to
+    /// unlock instead of switching here while sealed.
+    AddKey,
+}
+
+/// State for the credentials modal — the vault-gated surface for exchange
+/// API keys and the alert webhook URL.
+///
+/// Deliberately does NOT own the secrets directly: `exchange_keys` here is a
+/// cache refreshed by `ChartApp` (via `sync_credentials_from_core`) from
+/// `BackendCore`'s `UserProfileManager` — the same cache-refreshed-by-the-
+/// app-layer pattern `AlertSettingsState::notification_secrets` already
+/// uses, and for the same reason: this struct lives in `mlc-app-layout`,
+/// which the shared-BackendCore arc does not let touch `core` directly.
+/// `webhook_url`/`webhook_enabled` are NOT duplicated here — the modal reads
+/// them from `AlertSettingsState` at render time (single source, no second
+/// copy to drift) since editing the webhook URL here writes into that same
+/// `notification_secrets.webhook.url` and rides its existing persist path.
+#[derive(Clone, Debug)]
+pub struct CredentialsState {
+    /// Whether the modal is open.
+    pub is_open: bool,
+    /// Which page is showing.
+    pub view: CredentialsView,
+    /// Mirrors whether the vault is unlocked this session — same meaning as
+    /// `AlertSettingsState::secrets_available`, refreshed the same way.
+    pub secrets_available: bool,
+    /// Cached exchange keys. While sealed, entries still carry
+    /// `exchange_id`/`label`/`api_key` (redacted `api_secret`/`passphrase`)
+    /// — see `UserProfileManager::seal_vault`'s doc for why that is honest
+    /// rather than a leak. While unlocked, entries are the real thing.
+    pub exchange_keys: Vec<mlc_core::user_profile::profile::StoredExchangeKey>,
+    /// Modal position on screen (None = centered).
+    pub position: Option<(f64, f64)>,
+    /// Whether the modal header is being dragged.
+    pub is_dragging: bool,
+    /// Drag offset from modal top-left corner to mouse.
+    pub drag_offset: Option<(f64, f64)>,
+    /// Currently hovered item for highlight effects.
+    pub hovered_item_id: Option<String>,
+    /// Render-time snapshot of the webhook URL input (populated from
+    /// TextFieldStore by `ChartApp`).
+    pub webhook_url_render: ActiveFieldRender,
+    /// Whether the webhook URL field is focused.
+    pub webhook_url_focused: bool,
+    /// Render-time snapshots of the "add key" form fields.
+    pub add_exchange_render: ActiveFieldRender,
+    pub add_label_render: ActiveFieldRender,
+    pub add_api_key_render: ActiveFieldRender,
+    pub add_api_secret_render: ActiveFieldRender,
+    pub add_passphrase_render: ActiveFieldRender,
+    pub add_exchange_focused: bool,
+    pub add_label_focused: bool,
+    pub add_api_key_focused: bool,
+    pub add_api_secret_focused: bool,
+    pub add_passphrase_focused: bool,
+    /// Sandbox/testnet toggle for the entry being added.
+    pub add_testnet: bool,
+    /// Validation error from the last "add" attempt (e.g. missing
+    /// exchange/api key), shown under the form. Cleared on next attempt.
+    pub error_message: Option<String>,
+    /// Set when "add" (or "remove") was clicked while sealed: the click
+    /// routes to `ProfileManagerPage::UnlockPassphrase` instead of acting,
+    /// and this remembers to reopen the credentials modal on `AddKey`
+    /// (or `List`) once the unlock succeeds — see the module doc on
+    /// `ChartApp::handle_credentials_click`.
+    pub pending_unlock_return: Option<CredentialsView>,
+}
+
+impl Default for CredentialsState {
+    fn default() -> Self {
+        Self {
+            is_open: false,
+            view: CredentialsView::default(),
+            secrets_available: false,
+            exchange_keys: Vec::new(),
+            position: None,
+            is_dragging: false,
+            drag_offset: None,
+            hovered_item_id: None,
+            webhook_url_render: ActiveFieldRender::default(),
+            webhook_url_focused: false,
+            add_exchange_render: ActiveFieldRender::default(),
+            add_label_render: ActiveFieldRender::default(),
+            add_api_key_render: ActiveFieldRender::default(),
+            add_api_secret_render: ActiveFieldRender::default(),
+            add_passphrase_render: ActiveFieldRender::default(),
+            add_exchange_focused: false,
+            add_label_focused: false,
+            add_api_key_focused: false,
+            add_api_secret_focused: false,
+            add_passphrase_focused: false,
+            add_testnet: false,
+            error_message: None,
+            pending_unlock_return: None,
+        }
+    }
+}
+
+impl CredentialsState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn is_open(&self) -> bool {
+        self.is_open
+    }
+
+    /// Open the modal on the list view. Caller (`ChartApp`) is responsible
+    /// for refreshing `secrets_available`/`exchange_keys` beforehand.
+    pub fn open(&mut self) {
+        self.is_open = true;
+        self.view = CredentialsView::List;
+        self.error_message = None;
+    }
+
+    /// Close the modal and drop any in-progress "add key" form state — a
+    /// half-typed secret must not linger for the next time this reopens.
+    pub fn close(&mut self) {
+        self.is_open = false;
+        self.is_dragging = false;
+        self.drag_offset = None;
+        self.hovered_item_id = None;
+        self.view = CredentialsView::List;
+        self.error_message = None;
+        self.clear_add_form();
+    }
+
+    /// Reset the "add key" form fields (values live in `TextFieldStore`,
+    /// not here — this only clears the render-proxy cache and focus flags
+    /// so the next open shows a fresh form rather than the last render).
+    pub fn clear_add_form(&mut self) {
+        self.add_exchange_render = ActiveFieldRender::default();
+        self.add_label_render = ActiveFieldRender::default();
+        self.add_api_key_render = ActiveFieldRender::default();
+        self.add_api_secret_render = ActiveFieldRender::default();
+        self.add_passphrase_render = ActiveFieldRender::default();
+        self.add_exchange_focused = false;
+        self.add_label_focused = false;
+        self.add_api_key_focused = false;
+        self.add_api_secret_focused = false;
+        self.add_passphrase_focused = false;
+        self.add_testnet = false;
+    }
+
+    /// Start dragging the modal.
+    pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {
+        self.is_dragging = true;
+        self.drag_offset = Some((mouse_x - modal_x, mouse_y - modal_y));
+    }
+
+    /// Update drag position.
+    pub fn update_drag(&mut self, mouse_x: f64, mouse_y: f64) {
+        if let Some((dx, dy)) = self.drag_offset {
+            self.position = Some((mouse_x - dx, mouse_y - dy));
+        }
+    }
+
+    /// End dragging.
+    pub fn end_drag(&mut self) {
+        self.is_dragging = false;
+    }
+}
+
 // Indicator display types relocated to mlc-core::state::modal_data.
 // Re-exported at the top of this file via `pub use mlc_core::state::modal_data::...`.
 

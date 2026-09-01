@@ -1081,46 +1081,24 @@ fn render_notifications_tab(
     );
     y += ROW_H + ITEM_PADDING;
 
-    // Webhook URL field (shown only when webhook is enabled)
+    // Webhook URL — read-only display (shown only when webhook is enabled).
+    //
+    // This used to be a fake editable-looking field: a bordered box with a
+    // hover recolor and a registered click zone whose handler
+    // (`mlc-app/src/input/settings.rs`'s `"item:webhook_url"` arm) was a
+    // literal no-op with a comment promising an editor that was never
+    // written — clicking it highlighted on hover and did nothing, same
+    // failure shape as the `wizard_lang_next` bug. The real, working editor
+    // now lives in the credentials modal (`layout::modals::credentials`),
+    // which this row points to; this row honestly displays the current
+    // value and nothing more; a locked vault still shows nothing but the
+    // notice, matching the credentials modal's own locked-state contract.
     if ns.webhook.enabled && !state.secrets_available {
-        // Vault locked — the URL (which may embed its own auth token) lives
-        // in the vault. No hit zone: nothing to click into.
         draw_locked_notice(ctx, "Unlock the vault to view the webhook URL.", y);
     } else if ns.webhook.enabled {
-        let field_x = content_x + LABEL_W;
-        let field_w = content_w - LABEL_W;
-        let is_focused = state.hovered_item_id.as_deref() == Some("alert_set:item:webhook_url");
         let url = &state.notification_secrets.webhook.url;
-        let (url_display, text_color) = if url.is_empty() {
-            ("https://...", toolbar_theme.item_text_muted.as_str())
-        } else {
-            (url.as_str(), toolbar_theme.item_text.as_str())
-        };
-
-        // Label
-        ctx.set_fill_color(&toolbar_theme.item_text_muted);
-        ctx.set_font("12px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(t_modal(ModalKey::Url), content_x, y + ROW_H / 2.0);
-
-        // Field background
-        let bg = if is_focused { &toolbar_theme.item_bg_hover } else { &toolbar_theme.dropdown_bg };
-        ctx.set_fill_color(bg);
-        ctx.fill_rounded_rect(field_x, y, field_w, ROW_H, 4.0);
-        ctx.set_stroke_color(&toolbar_theme.separator);
-        ctx.set_stroke_width(1.0);
-        ctx.stroke_rounded_rect(field_x, y, field_w, ROW_H, 4.0);
-
-        ctx.set_fill_color(text_color);
-        ctx.set_font("12px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(url_display, field_x + 8.0, y + ROW_H / 2.0);
-
-        let r = WidgetRect::new(field_x, y, field_w, ROW_H);
-        result.content_items.push(("alert_set:item:webhook_url".to_string(), r));
-        input_coordinator.register_on_layer("alert_set:item:webhook_url", r, Sense::CLICK, layer_id);
+        let display = if url.is_empty() { "Set in Credentials \u{2192}" } else { url.as_str() };
+        draw_readonly_row(ctx, t_modal(ModalKey::Url), display, content_x, y, ROW_H, LABEL_W, toolbar_theme);
     }
 }
 

@@ -64,9 +64,12 @@ impl ChartApp {
     /// Returns true if the key was routed to a text field (caller should return early
     /// to prevent the key from reaching global shortcuts).
     ///
-    /// Covers (in order): ALERT_TG_TOKEN, PROFILE_RENAME, NEW_PASSPHRASE,
-    /// NEW_PROFILE_NAME, RECOVERY_KEY, CONFIRM_PASSPHRASE, BAR_MODE_PARAM,
-    /// TF_FAVORITE_INPUT, PARAM_FAVORITE_INPUT, HEX_COLOR, AGENT_PTY, AGENT_CHAT.
+    /// Covers (in order): ALERT_TG_TOKEN, CRED_WEBHOOK_URL,
+    /// CRED_ADD_EXCHANGE, CRED_ADD_LABEL, CRED_ADD_API_KEY,
+    /// CRED_ADD_API_SECRET, CRED_ADD_PASSPHRASE, PROFILE_RENAME,
+    /// NEW_PASSPHRASE, NEW_PROFILE_NAME, RECOVERY_KEY, CONFIRM_PASSPHRASE,
+    /// BAR_MODE_PARAM, TF_FAVORITE_INPUT, PARAM_FAVORITE_INPUT, HEX_COLOR,
+    /// AGENT_PTY, AGENT_CHAT.
     pub(crate) fn dispatch_text_key_early(&mut self, key: &KeyPress) -> bool {
         use crate::text_input::*;
 
@@ -87,6 +90,12 @@ impl ChartApp {
         let is_early_field = matches!(
             focused_id.as_str(),
             ALERT_TG_TOKEN
+                | CRED_WEBHOOK_URL
+                | CRED_ADD_EXCHANGE
+                | CRED_ADD_LABEL
+                | CRED_ADD_API_KEY
+                | CRED_ADD_API_SECRET
+                | CRED_ADD_PASSPHRASE
                 | PROFILE_RENAME
                 | NEW_PASSPHRASE
                 | NEW_PROFILE_NAME
@@ -241,6 +250,12 @@ impl ChartApp {
             AGENT_CHAT                       => self.text_action_agent_chat(ch, action),
             AGENT_PTY                        => self.text_action_agent_pty(action),
             ALERT_TG_TOKEN                   => self.text_action_alert_token(ch, action),
+            CRED_WEBHOOK_URL                 => self.text_action_cred_webhook_url(ch, action),
+            CRED_ADD_EXCHANGE                => self.text_action_cred_add_field(crate::input::credentials::CredAddField::Exchange, ch, action),
+            CRED_ADD_LABEL                   => self.text_action_cred_add_field(crate::input::credentials::CredAddField::Label, ch, action),
+            CRED_ADD_API_KEY                 => self.text_action_cred_add_field(crate::input::credentials::CredAddField::ApiKey, ch, action),
+            CRED_ADD_API_SECRET              => self.text_action_cred_add_field(crate::input::credentials::CredAddField::ApiSecret, ch, action),
+            CRED_ADD_PASSPHRASE              => self.text_action_cred_add_field(crate::input::credentials::CredAddField::Passphrase, ch, action),
             BAR_MODE_PARAM                   => self.text_action_bar_mode_param(action),
             WATERMARK_TEXT                   => self.text_action_watermark_text(action),
             TF_FAVORITE_INPUT                => self.text_action_tf_favorite_input(action),
@@ -794,6 +809,62 @@ impl ChartApp {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             _ => {}
+        }
+    }
+
+    /// The credentials modal's webhook URL field. Commits into the SAME
+    /// `AlertSettingsState::notification_secrets.webhook.url` the alert
+    /// settings modal's own (now read-only) webhook row displays — one
+    /// value, edited from either surface, riding the existing
+    /// `notification_settings_dirty` persist path rather than a second one.
+    fn text_action_cred_webhook_url(&mut self, ch: char, action: TextAction) {
+        // The field cannot be focused while the vault is locked (the render
+        // layer never registers its hit zone then) — defense in depth
+        // against a stray focus/key event, same as `text_action_alert_token`.
+        if !self.panel_app.credentials_state.secrets_available {
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            return;
+        }
+        let commit = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::CRED_WEBHOOK_URL);
+            let url = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+            chart.panel_app.alert_settings_state.notification_secrets.webhook.url = url;
+            chart.panel_app.alert_settings_state.notification_settings_dirty = true;
+            chart.input_coordinator.borrow_mut().text_fields_mut().blur();
+            chart.panel_app.credentials_state.webhook_url_focused = false;
+        };
+        if ch == '\r' || ch == '\n' || ch == '\x1b' {
+            commit(self);
+            return;
+        }
+        if matches!(action, TextAction::Commit(_) | TextAction::Cancel) {
+            commit(self);
+        }
+    }
+
+    /// One of the credentials modal's "add key" form fields. Tab chains to
+    /// the next field (wrapping), Escape abandons the form back to the
+    /// list, and Enter attempts to submit — same `try_add_exchange_key` the
+    /// "Add" button calls, so Enter-from-any-field and click-Add behave
+    /// identically.
+    fn text_action_cred_add_field(&mut self, field: crate::input::credentials::CredAddField, ch: char, action: TextAction) {
+        match ch {
+            '\x09' => {
+                self.focus_credentials_add_field(field.next());
+                return;
+            }
+            '\x1b' => {
+                self.panel_app.credentials_state.view =
+                    mlc_app_layout::ui::modal_settings::CredentialsView::List;
+                self.panel_app.credentials_state.error_message = None;
+                self.panel_app.credentials_state.clear_add_form();
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                return;
+            }
+            _ => {}
+        }
+        if let TextAction::Commit(_) = action {
+            self.try_add_exchange_key();
         }
     }
 

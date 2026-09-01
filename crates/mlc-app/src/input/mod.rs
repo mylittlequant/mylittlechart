@@ -24,6 +24,14 @@ mod panel_click;
 mod sync_group;
 mod modals;
 mod settings;
+pub(crate) mod credentials;
+// `credentials` itself is `pub(crate)` (its click-handling internals are not
+// shell API) but the vault-family command outcome type IS shell API — both
+// shells need to name it to match on `ChartApp::apply_vault_setup`'s return
+// value, so it needs a path that reaches outside this crate. Re-exported
+// again at the crate root below (`pub use input::VaultSetupOutcome;`), same
+// two-hop shape as `KeyPress`.
+pub use credentials::VaultSetupOutcome;
 mod inline_text;
 pub(crate) mod drawing_session;
 mod trading_container_bind;
@@ -575,6 +583,7 @@ impl ChartApp {
             || self.panel_app.primitive_settings_state.is_open()
             || self.panel_app.indicator_settings_state.is_open()
             || self.panel_app.alert_settings_state.is_open()
+            || self.panel_app.credentials_state.is_open()
             || self.panel_app.compare_settings_state.is_open()
             || self.panel_app.chart_settings_state.is_open
             || self.panel_app.preset_name_input.is_open
@@ -2141,6 +2150,12 @@ impl ChartApp {
                     "alert_settings" | "alert_set" => {
                         if let Some(ref ar) = self.frame_result.as_ref().and_then(|r| r.alert_settings.as_ref()) {
                             self.panel_app.alert_settings_state.start_drag(x, y, ar.header_rect.x, ar.header_rect.y);
+                            true
+                        } else { false }
+                    }
+                    "cred" => {
+                        if let Some(ref cr) = self.frame_result.as_ref().and_then(|r| r.credentials.as_ref()) {
+                            self.panel_app.credentials_state.start_drag(x, y, cr.header_rect.x, cr.header_rect.y);
                             true
                         } else { false }
                     }
@@ -3943,6 +3958,10 @@ impl ChartApp {
             self.panel_app.alert_settings_state.update_drag(x, y);
             return;
         }
+        if self.panel_app.credentials_state.is_dragging {
+            self.panel_app.credentials_state.update_drag(x, y);
+            return;
+        }
         if self.panel_app.compare_settings_state.is_dragging {
             self.panel_app.compare_settings_state.update_drag(x, y);
             return;
@@ -4966,6 +4985,11 @@ impl ChartApp {
             eprintln!("[ChartApp] alert_settings modal drag ended");
             return;
         }
+        if self.panel_app.credentials_state.is_dragging {
+            self.panel_app.credentials_state.end_drag();
+            eprintln!("[ChartApp] credentials modal drag ended");
+            return;
+        }
         if self.panel_app.compare_settings_state.is_dragging {
             self.panel_app.compare_settings_state.end_drag();
             eprintln!("[ChartApp] compare_settings modal drag ended");
@@ -5581,6 +5605,7 @@ impl ChartApp {
         self.panel_app.indicator_settings_state.hovered_footer_button = None;
         self.panel_app.user_settings_state.hovered_item_id = None;
         self.panel_app.alert_settings_state.hovered_item_id = None;
+        self.panel_app.credentials_state.hovered_item_id = None;
         self.panel_app.chart_browser.hovered_preset_id = None;
         self.standalone_panels.watchlist_modal.hovered_item_id = None;
         self.panel_app.overlay_settings_state.hovered_item_id = None;
@@ -5627,6 +5652,16 @@ impl ChartApp {
                     // set this field at all until 2026-08-06, so every hover
                     // in that dialog was dead — the dropdown rows included.
                     self.panel_app.alert_settings_state.hovered_item_id = Some(id_str.clone());
+                } else if id.starts_with("cred:") {
+                    // Whole id, not the local part — same convention as
+                    // `alert_set:` above, and what `credentials.rs`'s own
+                    // render compares `hovered_item_id` against (`"cred:
+                    // lock"`, `"cred:remove:{idx}"`, ...). Getting this
+                    // backwards (storing the stripped local part while the
+                    // render side compares the full id, or vice versa) is
+                    // exactly the class of bug that left `wizard_lang_next`
+                    // dead — hovering highlights nothing, matches nothing.
+                    self.panel_app.credentials_state.hovered_item_id = Some(id_str.clone());
                 } else if let Some(local) = id.strip_prefix("chart_browser:item:") {
                     self.panel_app.chart_browser.hovered_preset_id = Some(local.to_string());
                 } else if let Some(local) = id.strip_prefix("chart_browser:rename:") {
@@ -7465,6 +7500,10 @@ impl ChartApp {
         }
         if self.panel_app.alert_settings_state.is_open() {
             self.panel_app.alert_settings_state.close();
+            return;
+        }
+        if self.panel_app.credentials_state.is_open() {
+            self.panel_app.credentials_state.close();
             return;
         }
         if self.panel_app.compare_settings_state.is_open() {

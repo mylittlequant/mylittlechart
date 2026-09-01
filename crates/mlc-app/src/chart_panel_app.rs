@@ -26,7 +26,7 @@ use mlc_app_layout::ui::modal_settings::{
     PrimitiveSettingsState, IndicatorSettingsState, ChartSettingsState,
     IndicatorOverlayState, OverlaySettingsState, TagsTabsState,
     PresetNameInputState, ChartBrowserState, AlertSettingsState,
-    CompareSettingsState,
+    CompareSettingsState, CredentialsState,
 };
 use mlc_app_layout::ui::context_menu::ContextMenuState;
 use mlc_app_layout::layout::render_frame::{ChartModalRenderResult, ChartModalLayout};
@@ -86,6 +86,8 @@ pub struct ChartPanelApp {
     pub tags_tabs_state: TagsTabsState,
     /// Alert settings modal state.
     pub alert_settings_state: AlertSettingsState,
+    /// Credentials modal state (exchange API keys + webhook URL).
+    pub credentials_state: CredentialsState,
     /// Compare settings modal state.
     pub compare_settings_state: CompareSettingsState,
     /// User settings modal state.
@@ -154,6 +156,7 @@ impl ChartPanelApp {
             overlay_settings_state: OverlaySettingsState::new(),
             tags_tabs_state: TagsTabsState::default(),
             alert_settings_state: AlertSettingsState::new(),
+            credentials_state: CredentialsState::new(),
             compare_settings_state: CompareSettingsState::new(),
             user_settings_state: mlc_app_layout::ui::modal_settings::UserSettingsState::default(),
             #[cfg(feature = "cloud")]
@@ -689,6 +692,19 @@ impl ChartPanelApp {
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
                 &self.alert_settings_state,
+                frame_theme,
+                toolbar_theme,
+                input_coordinator,
+            ));
+        }
+
+        // Credentials modal
+        if self.credentials_state.is_open() {
+            result.credentials = Some(mlc_app_layout::layout::modals::credentials::render_credentials_modal(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                &self.credentials_state,
                 frame_theme,
                 toolbar_theme,
                 input_coordinator,

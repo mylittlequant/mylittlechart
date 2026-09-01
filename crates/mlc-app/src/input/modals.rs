@@ -2299,6 +2299,10 @@ impl ChartApp {
                 "alert_settings" => {
                     self.panel_app.alert_settings_state.close();
                 }
+                "cred" => {
+                    self.panel_app.credentials_state.close();
+                    eprintln!("[ChartApp] close_topmost_modal_layer: credentials closed");
+                }
                 "compare_settings" => {
                     self.panel_app.compare_settings_state.close();
                 }

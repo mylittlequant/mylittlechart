@@ -104,6 +104,18 @@ impl<'a> UserMut<'a> {
         self.mgr.set_vault_key(key);
     }
 
+    /// Deliberately seal the vault mid-session — see
+    /// [`super::manager::UserProfileManager::seal_vault`].
+    pub fn seal_vault(&mut self) {
+        self.mgr.seal_vault();
+    }
+
+    /// Re-derive live secret state after a mid-session unlock — see
+    /// [`super::manager::UserProfileManager::unseal_vault`].
+    pub fn unseal_vault(&mut self, key: VaultKey, secrets: mlc_core::user_profile::VaultSecrets) {
+        self.mgr.unseal_vault(key, secrets);
+    }
+
     pub fn save_profile(&self) -> Result<(), mlc_core::user_profile::storage::ProfileError> {
         self.mgr.save_profile()
     }

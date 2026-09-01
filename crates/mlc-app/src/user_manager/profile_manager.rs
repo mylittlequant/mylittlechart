@@ -21,7 +21,12 @@ use mlc_core::user_profile::storage::{
 use mlc_vault::vault::{self, VaultKey};
 
 /// Convert an absolute path to a storage key relative to app_data_dir.
-fn path_key(path: &Path) -> String {
+///
+/// `pub(crate)` so `input/credentials.rs`'s vault-family command helpers can
+/// read/check the same on-disk (native) / `localStorage` (wasm) entries this
+/// module writes — see that module's `apply_recovery_unlock` for the one
+/// external caller.
+pub(crate) fn path_key(path: &Path) -> String {
     let root = app_data_dir();
     if let Ok(rel) = path.strip_prefix(&root) {
         rel.to_string_lossy().replace('\\', "/")
@@ -359,7 +364,14 @@ impl ProfileManager {
         let profile_dir = self.active_profile_dir();
         let salt_path = profile_dir.join("salt.hex");
         let vault_path = profile_dir.join("vault.enc");
-        let is_first_setup = !vault_path.exists();
+        // `Path::exists()` is a raw OS syscall — on wasm32 there is no OS
+        // filesystem behind it at all (the real data lives in
+        // `localStorage`, reached only through `global_storage()`), so it
+        // always reports `false` there regardless of what was actually
+        // written. Route through the same `Storage` trait every read/write
+        // in this file already uses, so "first-time setup" is answered
+        // correctly on both targets instead of unconditionally on wasm.
+        let is_first_setup = !global_storage().exists(&path_key(&vault_path));
 
         let salt = vault::load_or_create_salt(&salt_path).map_err(|e| e.to_string())?;
 
@@ -411,7 +423,9 @@ impl ProfileManager {
     ) -> Result<VaultKey, String> {
         let salt_path = dir.join("salt.hex");
         let vault_path = dir.join("vault.enc");
-        let is_first_setup = !vault_path.exists();
+        // See the identical comment in `derive_and_set_vault_key` — raw
+        // `Path::exists()` never sees the wasm `localStorage` backend.
+        let is_first_setup = !global_storage().exists(&path_key(&vault_path));
 
         let salt = vault::load_or_create_salt(&salt_path).map_err(|e| e.to_string())?;
         let master_key = crypto::derive_master_key(passphrase, &salt);
@@ -483,8 +497,10 @@ impl ProfileManager {
         let recovery_path = profile_dir.join("recovery_key.enc");
 
         // 1. Load existing vault secrets with the current vault key.
+        // (see `derive_and_set_vault_key`'s comment on why this goes through
+        // `global_storage()` rather than raw `Path::exists()`)
         let old_key = self.vault_key.ok_or("Vault is not unlocked — cannot re-key")?;
-        let secrets = if vault_path.exists() {
+        let secrets = if global_storage().exists(&path_key(&vault_path)) {
             vault::load_encrypted::<VaultSecrets>(&old_key, &vault_path)
                 .map_err(|e| format!("Failed to read vault for re-key: {}", e))?
         } else {
@@ -531,7 +547,7 @@ impl ProfileManager {
         let salt_path = profile_dir.join("salt.hex");
         let vault_path = profile_dir.join("vault.enc");
 
-        if !salt_path.exists() {
+        if !global_storage().exists(&path_key(&salt_path)) {
             return Err("No salt file found — vault has not been set up".to_string());
         }
 
@@ -563,7 +579,7 @@ impl ProfileManager {
         };
 
         let vault_path = self.active_profile_dir().join("vault.enc");
-        if !vault_path.exists() {
+        if !global_storage().exists(&path_key(&vault_path)) {
             return Ok(());
         }
 
@@ -644,7 +660,9 @@ impl ProfileManager {
             .iter()
             .map(|m| {
                 let dir = pdir.join(&m.dir_name);
-                let has_vault = dir.join("vault.enc").exists();
+                // See `derive_and_set_vault_key`'s comment: raw `Path::exists()`
+                // is blind to the wasm `localStorage` backend.
+                let has_vault = global_storage().exists(&path_key(&dir.join("vault.enc")));
                 let is_active = m.id == self.index.active_profile_id;
                 ProfileInfo {
                     id: m.id.clone(),
@@ -667,7 +685,9 @@ impl ProfileManager {
             return false;
         }
         let dir = self.active_profile_dir();
-        dir.join("vault.enc").exists() && dir.join("salt.hex").exists()
+        let storage = global_storage();
+        storage.exists(&path_key(&dir.join("vault.enc")))
+            && storage.exists(&path_key(&dir.join("salt.hex")))
     }
 
     /// Whether the active profile exists but has never had encryption set up.
@@ -676,9 +696,10 @@ impl ProfileManager {
     /// nor `salt.hex` exist.
     pub fn needs_encryption_setup(&self) -> bool {
         let dir = self.active_profile_dir();
-        dir.join("profile.json").exists()
-            && !dir.join("vault.enc").exists()
-            && !dir.join("salt.hex").exists()
+        let storage = global_storage();
+        storage.exists(&path_key(&dir.join("profile.json")))
+            && !storage.exists(&path_key(&dir.join("vault.enc")))
+            && !storage.exists(&path_key(&dir.join("salt.hex")))
     }
 
     /// Returns the data directory for the currently active profile.
