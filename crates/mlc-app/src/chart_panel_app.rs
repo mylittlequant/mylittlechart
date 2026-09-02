@@ -462,6 +462,12 @@ impl ChartPanelApp {
         active_exchange: Option<&str>,
         active_account_type: Option<&str>,
         suppress_chart_controls: bool,
+        // Toolbar clock hover animation (ascii cell-shader engine demo,
+        // owner spec 2026-09-02) — pointer position in window coordinates
+        // and a real elapsed-time value, forwarded to
+        // `chart_toolbar_render_toolbars` unchanged.
+        mouse_pos: Option<(f64, f64)>,
+        anim_time_s: f64,
     ) -> ChartToolbarRenderResult {
         let toolbar_theme = self.toolbar_theme_for_render();
         let dropdown_theme = self.dropdown_theme_for_render();
@@ -469,7 +475,7 @@ impl ChartPanelApp {
         let preset_summaries: Vec<mlc_core::PresetSummary> = presets
             .map(preset_to_summary)
             .collect();
-        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &preset_summaries, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, favorite_primitives, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, favorites_drag_render, split_symbol_compare, symbol_quick_search_render, symbol_quick_search, active_exchange, active_account_type, suppress_chart_controls, false)
+        chart_toolbar_render_toolbars(&self.toolbar_state, ctx, layout, &self.toolbar_config, selected_primitive, Some(&toolbar_theme), Some(&dropdown_theme), clock_time, &preset_summaries, &self.active_preset_id, self.autosave_enabled, active_sync_flags, is_expanded, split_without_group, active_is_mono_group, active_symbol, active_timeframe, sidebar_w, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, favorite_primitives, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, favorites_drag_render, split_symbol_compare, symbol_quick_search_render, symbol_quick_search, active_exchange, active_account_type, suppress_chart_controls, false, mouse_pos, anim_time_s)
     }
 
     /// Render the trading container's EMBEDDED header toolbar (owner spec
@@ -541,6 +547,8 @@ impl ChartPanelApp {
             Some(active_account_type),
             false,                     // suppress_chart_controls
             true,                      // quicksearch_minimal (results only)
+            None,                      // mouse_pos (no clock in this toolbar)
+            0.0,                       // anim_time_s (no clock in this toolbar)
         )
     }
 
@@ -603,6 +611,8 @@ impl ChartPanelApp {
             Some(active_account_type),
             false,                     // suppress_chart_controls
             true,                      // quicksearch_minimal (results only)
+            None,                      // mouse_pos (no clock in this toolbar)
+            0.0,                       // anim_time_s (no clock in this toolbar)
         )
     }
 

@@ -419,6 +419,14 @@ pub fn chart_toolbar_render_toolbars(
     // topbar concerns that must not leak or be flipped from the container)
     // and no compare "+" icons (compare is chart-only; one symbol key).
     quicksearch_minimal: bool,
+    // Toolbar clock hover animation (ascii cell-shader engine demo, owner
+    // spec 2026-09-02): pointer position in the same window-coordinate
+    // space as `layout`'s rects, and a real elapsed-time value, both
+    // threaded from the caller that already knows the mouse
+    // (`ChartApp::last_mouse_pos`) — `None`/`0.0` from callers that never
+    // host a `Clock` item (e.g. embedded header toolbars).
+    mouse_pos: Option<(f64, f64)>,
+    anim_time_s: f64,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -488,6 +496,8 @@ pub fn chart_toolbar_render_toolbars(
                 padding: 4.0,
                 separator_size: 1.0,
                 scroll_offset: tb.left_scroll_offset,
+                cursor: None,
+                anim_time_s: 0.0,
             };
 
             let drawing_rect = WidgetRect::new(
@@ -790,6 +800,11 @@ pub fn chart_toolbar_render_toolbars(
                 padding: 4.0,
                 separator_size: 1.0,
                 scroll_offset: tb.top_scroll_offset,
+                // No Clock item lives in the top control strip (see
+                // `mlc_core::toolbar::bottom_toolbar` vs `top_toolbar`) —
+                // nothing here reads `cursor`/`anim_time_s` today.
+                cursor: None,
+                anim_time_s: 0.0,
             };
 
             let control_rect = WidgetRect::new(
@@ -855,6 +870,8 @@ pub fn chart_toolbar_render_toolbars(
                 padding: 4.0,
                 separator_size: 1.0,
                 scroll_offset: tb.right_scroll_offset,
+                cursor: None,
+                anim_time_s: 0.0,
             };
 
             let right_rect = WidgetRect::new(
@@ -916,6 +933,13 @@ pub fn chart_toolbar_render_toolbars(
                 padding: 4.0,
                 separator_size: 1.0,
                 scroll_offset: tb.bottom_scroll_offset,
+                // The Clock item lives here (`mlc_core::toolbar::
+                // bottom_toolbar`) — hover-glitch ascii demo needs the live
+                // pointer + a real elapsed-time value, both threaded in from
+                // the caller that already knows the mouse (owner spec
+                // 2026-09-02).
+                cursor: mouse_pos,
+                anim_time_s,
             };
 
             let bottom_rect = WidgetRect::new(
@@ -1063,6 +1087,8 @@ pub fn chart_toolbar_render_toolbars(
                 padding: 4.0,
                 separator_size: 1.0,
                 scroll_offset: 0.0, // Inline bar never overflows (sized to fit)
+                cursor: None,
+                anim_time_s: 0.0,
             };
 
             // Pre-compute exact bar width from section items (single-pass, no measurement draw).
@@ -1154,6 +1180,8 @@ pub fn chart_toolbar_render_toolbars(
                 padding: 4.0,
                 separator_size: 1.0,
                 scroll_offset: 0.0, // Favorites bar never overflows (sized to fit)
+                cursor: None,
+                anim_time_s: 0.0,
             };
 
             // Pre-compute exact bar width from section items (single-pass, no measurement draw).

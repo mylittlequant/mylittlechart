@@ -6144,7 +6144,7 @@ impl ChartApp {
     /// When `skip_toolbar_draw` is `true`, the toolbar vector graphics are NOT
     /// re-emitted into `ctx`.  Instead, hit zones are re-registered from the
     /// cached `self.last_toolbar_result` so input routing remains correct.
-    pub fn render_to_scene(&mut self, ctx: &mut dyn RenderContext, _current_time_ms: u64, skip_toolbar_draw: bool) -> RenderOutput {
+    pub fn render_to_scene(&mut self, ctx: &mut dyn RenderContext, current_time_ms: u64, skip_toolbar_draw: bool) -> RenderOutput {
         let _rt0 = web_time::Instant::now();
         let w = self.width as f64;
         let h = self.height as f64;
@@ -7695,6 +7695,8 @@ impl ChartApp {
                 Some(active_exch_str.as_str()),
                 Some(active_at_str.as_str()),
                 suppress_chart_controls,
+                Some(self.last_mouse_pos),
+                current_time_ms as f64 / 1000.0,
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -8902,6 +8904,16 @@ impl ChartApp {
             _ => None,
         };
         let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
+        // `render_toolbar_only` has no threaded `current_time_ms` (see
+        // `granularity_edit_render`'s own doc comment above for why that
+        // param was never added here) — a coarse wall-clock read, same
+        // idiom this method already uses a few lines above
+        // (`allowed_tfs`'s own `now_ms`), is precise enough for the clock
+        // hover-glitch shimmer cadence.
+        let toolbar_anim_time_s = web_time::SystemTime::now()
+            .duration_since(web_time::UNIX_EPOCH)
+            .map(|d| d.as_secs_f64())
+            .unwrap_or(0.0);
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -8932,6 +8944,8 @@ impl ChartApp {
             Some(active_exch_str.as_str()),
             Some(active_at_str.as_str()),
             suppress_chart_controls,
+            Some(self.last_mouse_pos),
+            toolbar_anim_time_s,
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);

@@ -722,6 +722,19 @@ pub struct ToolbarConfig {
     /// Current scroll offset in pixels for start-aligned content (0.0 = no scroll).
     /// Only start-aligned sections scroll; end-aligned sections stay pinned.
     pub scroll_offset: f64,
+    /// Pointer position in the same window-coordinate space as the toolbar's
+    /// own draw rect, when known. `None` when the caller building this
+    /// config has no pointer to report (e.g. an embedded header toolbar that
+    /// never hosts a `Clock` item) — items that would otherwise animate on
+    /// hover fall back to their plain draw path in that case. Currently only
+    /// `ToolbarItem::Clock` reads this (ascii cell-shader hover demo, owner
+    /// spec 2026-09-02).
+    pub cursor: Option<(f64, f64)>,
+    /// Real, monotonically increasing elapsed time in seconds, threaded in
+    /// by the caller from the same `current_time_ms` the render path already
+    /// carries — never sourced from `SystemTime::now()` inside a painter.
+    /// Only meaningful together with `cursor`; `0.0` when unused.
+    pub anim_time_s: f64,
 }
 
 impl Default for ToolbarConfig {
@@ -736,6 +749,8 @@ impl Default for ToolbarConfig {
             padding: 4.0,
             separator_size: 1.0,
             scroll_offset: 0.0,
+            cursor: None,
+            anim_time_s: 0.0,
         }
     }
 }
@@ -1386,11 +1401,30 @@ pub fn draw_toolbar_with_icons(
                     ctx.fill_rounded_rect(item_rect.x, item_rect.y + 2.0, item_rect.width, item_rect.height - 4.0, 4.0);
                 }
 
-                ctx.set_font("13px monospace");
-                ctx.set_fill_color(&theme.item_text);
-                ctx.set_text_align(TextAlign::Right);
-                ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(time, item_rect.right() - 8.0, item_rect.center_y());
+                // Hovered + a known pointer: run the clock through uzor-text's
+                // ASCII cell-shader engine (owner spec 2026-09-02 — a genuine
+                // demo of the shared engine on this one element, not a
+                // hand-rolled lookalike). Every other case is exactly today's
+                // single `fill_text` call, unchanged.
+                match (is_hovered, config.cursor) {
+                    (true, Some(pointer)) => {
+                        super::clock_glitch::draw_clock_glitch(
+                            ctx,
+                            time,
+                            item_rect,
+                            &theme.item_text,
+                            pointer,
+                            config.anim_time_s,
+                        );
+                    }
+                    _ => {
+                        ctx.set_font("13px monospace");
+                        ctx.set_fill_color(&theme.item_text);
+                        ctx.set_text_align(TextAlign::Right);
+                        ctx.set_text_baseline(TextBaseline::Middle);
+                        ctx.fill_text(time, item_rect.right() - 8.0, item_rect.center_y());
+                    }
+                }
 
                 result.item_rects.push((id.clone(), item_rect));
                 if is_hovered {
