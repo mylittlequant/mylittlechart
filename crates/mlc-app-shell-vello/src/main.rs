@@ -5086,7 +5086,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         //     the last drawn frame. The "scene-ready" transition flips this
         //     flag to empty the moment bars land, and the next frame draws
         //     the real chart without a spinner — no extra retire timer.
-        for pw in self.windows.values() {
+        for pw in self.windows.values_mut() {
             // Anytime the startup spinner is up, KEEP REDRAWING so the ring
             // keeps spinning. Previously this was gated on
             // `(promote_pending || awaiting_first_live_frame)` — both can
@@ -5100,7 +5100,27 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // skeleton frame appears before `about_to_wait` drains the
             // stash and runs the synchronous cold body.
             let cold_apply_stashed = pw.chart.pending_cold_apply.is_some();
-            if spinner_up || per_chart_loading || cold_apply_stashed {
+            // The clock's hover animation is a real animation and needs the
+            // same treatment as the spinners above. Native only repaints on
+            // events, so with the pointer resting on the clock and not
+            // moving there is no next frame at all — measured on the built
+            // binary, three consecutive captures came back byte-identical
+            // while the web stand (which repaints continuously) animated
+            // fine. Without this the effect only advances while the mouse is
+            // in motion, which reads as broken rather than as still.
+            let clock_hovered = pw
+                .chart
+                .panel_app
+                .toolbar_state
+                .hovered_bottom_toolbar_id
+                .as_deref()
+                == Some("clock");
+            if clock_hovered {
+                // The glitch is painted by the toolbar pass, so the chart
+                // alone being clean is not enough to skip it.
+                pw.toolbar_dirty = true;
+            }
+            if spinner_up || per_chart_loading || cold_apply_stashed || clock_hovered {
                 pw.window.request_redraw();
             }
         }
