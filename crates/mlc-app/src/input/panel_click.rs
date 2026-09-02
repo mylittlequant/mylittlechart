@@ -6226,6 +6226,9 @@ impl ChartApp {
                     // Switch to profile_manager modal to show the passphrase page
                     self.panel_app.user_settings_state.show_profile_manager = true;
                     self.panel_app.user_settings_state.show_welcome_wizard = false;
+                    // The wizard is being left, not postponed — same rule as
+                    // `dismiss_welcome_wizard`, which this path bypasses.
+                    self.mark_welcome_wizard_seen();
                     // Clear leaked state from wizard
                     {
                         let cp_wid = uzor::WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);

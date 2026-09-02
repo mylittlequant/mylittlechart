@@ -215,6 +215,15 @@ impl ChartApp {
             CredentialsView::CreatePassphrase
         };
 
+        // Leaving the wizard counts as having seen it, even when what closes
+        // it is the flow moving on to the vault page rather than the user
+        // dismissing it. Without this the flag stays false for the life of
+        // the profile and the wizard greets every launch — which is exactly
+        // what it did (owner, 2026-09-03: "а нахуй мне постоянно открывают
+        // меню выбора темы?"). Called before the `uss` borrow below because
+        // it needs `self`.
+        self.mark_welcome_wizard_seen();
+
         let uss = &mut self.panel_app.user_settings_state;
         uss.profile_manager_target_id = target_id;
         uss.profile_manager_target_name = target_name;
