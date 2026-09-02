@@ -2243,6 +2243,25 @@ impl App<'_> {
         // as `favorite_primitives` above (mutated in-place on the shared core
         // profile by `ToggleIndicatorStar`).
         profile.ui.favorite_indicators = self.core.user().profile().ui.favorite_indicators.clone();
+        // The welcome wizard's own "seen" flag — the fourth field to need this
+        // carry, and the one that proves the shape is wrong rather than the
+        // list incomplete.
+        //
+        // `mark_welcome_wizard_seen` sets it on the core copy. Every save
+        // starts from `self.profile`, which does not have it, so finishing the
+        // wizard wrote `false` back over the `true` it had just set — the
+        // wizard's completion triggers a save on itself. That is why the owner
+        // saw the theme picker on every launch of a profile with 55 presets and
+        // a linked account, and why marking it seen on the two bypass paths
+        // (57b0be78) could not have helped: the loud path was being undone too.
+        //
+        // The real defect is above this line: two live copies of one profile,
+        // each authoritative for different fields, reconciled by a list a human
+        // has to remember to extend. Inverting the base does not fix it —
+        // language, display name, avatar, active preset and open tabs are
+        // written on `self.profile` and would become the next victims. One
+        // owner per field is the fix, and it is a refactor, not a carry.
+        profile.ui.welcome_wizard_seen = self.core.user().profile().ui.welcome_wizard_seen;
         let core_ui = self.core.user().profile().ui.clone();
         profile.ui.persist_toolbar_last_tools = core_ui.persist_toolbar_last_tools;
         profile.ui.persist_toolbar_toggles = core_ui.persist_toolbar_toggles;
