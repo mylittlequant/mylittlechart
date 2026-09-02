@@ -68,6 +68,17 @@ pub(super) enum ClockShaderKind {
 /// The active one. Flip to compare; `Engine` is the default.
 const SHADER_KIND: ClockShaderKind = ClockShaderKind::Engine;
 
+/// Rendered frames per animation step.
+///
+/// The step still rides the render cadence rather than a clock of its own,
+/// but one step per FRAME is 60 steps a second and reads as noise rather
+/// than as glitching (owner, 2026-09-02: "слишком быструю"). Six frames is
+/// about ten steps a second at 60fps — fast enough to feel alive, slow
+/// enough that the eye resolves each state. A divider keeps the property
+/// that matters: an FPS-limited app slows the animation with everything
+/// else instead of the two rates drifting apart.
+const FRAMES_PER_STEP: u64 = 6;
+
 /// Brush radius in grid cells for [`ClockShaderKind::Engine`].
 ///
 /// Roughly a mouse cursor's own footprint, which is what the effect is
@@ -78,6 +89,13 @@ const SHADER_KIND: ClockShaderKind = ClockShaderKind::Engine;
 /// сразу всё начинает перерисовываться"). Three cells is about twenty
 /// pixels at this font size: a local smudge that moves with the cursor.
 const BRUSH_RADIUS: f64 = 3.0;
+
+/// Radius around the pointer that swaps with certainty, in grid cells.
+///
+/// Slightly over one cell, so whichever character the cursor is actually on
+/// — and its immediate neighbour when the cursor sits on a boundary — never
+/// shows itself while the mouse is there.
+const BRUSH_CORE: f64 = 1.3;
 
 /// gate4agent uses 2.25 CELLS in a terminal grid, where a cell is a whole
 /// character box — kept verbatim for the comparison arm so the difference
@@ -126,7 +144,10 @@ fn cell_roll(index: usize, tick: u64) -> u64 {
 }
 
 impl CellShader for ClockGlitchShader<'_> {
-    fn main(&self, coord: Coord, ctx: &GridContext, cursor: &Cursor) -> Cell {
+    // `ctx` carries the engine's frame/time/grid context; this shader is
+    // driven entirely by the frame-derived tick on `self` and the cursor,
+    // so it reads nothing from it.
+    fn main(&self, coord: Coord, _ctx: &GridContext, cursor: &Cursor) -> Cell {
         let ch = self.chars.get(coord.x).copied().unwrap_or(' ');
 
         // Separators are the clock's skeleton, not its content: the brackets,
@@ -144,30 +165,65 @@ impl CellShader for ClockGlitchShader<'_> {
         let dx = coord.x as f64 + 0.5 - cursor.x;
         let dy = 0.5 - cursor.y;
         let sd = sd_circle(dx, dy, BRUSH_RADIUS);
-        let brush = (-sd / BRUSH_RADIUS).clamp(0.0, 1.0);
+        // A CORE of full intensity around the pointer, then a falloff to the
+        // brush edge. Falling off straight from the centre meant a cell half
+        // a cell away from the cursor already had a real chance of showing
+        // itself — and since the pointer is almost never dead-centre in a
+        // cell, "the character under the mouse" was exactly the case that
+        // kept flickering back to the original. Inside the core the swap is
+        // certain.
+        let dist = BRUSH_RADIUS + sd;
+        let brush = if dist <= BRUSH_CORE {
+            1.0
+        } else {
+            ((BRUSH_RADIUS - dist) / (BRUSH_RADIUS - BRUSH_CORE)).clamp(0.0, 1.0)
+        };
         let intensity = (cursor.intensity * brush).clamp(0.0, 1.0);
 
         if intensity <= 0.001 {
             return Cell { ch, color: self.color, alpha: 1.0, scale: 1.0 };
         }
 
-        // Real-time shimmer: a per-cell phase-shifted pulse riding on top of
-        // the distance falloff, so the glitch visibly breathes instead of
-        // sitting at one fixed swap probability every frame.
-        let pulse = 0.8 + 0.2 * (ctx.time * 6.0 + coord.x as f64 * 0.9).sin();
-        let swap_p = (0.65 * intensity * pulse).clamp(0.0, 1.0);
+        // Whether a cell participates falls off with distance — that is what
+        // gives the brush a soft edge. At the pointer itself `intensity` is
+        // 1.0, so the cell under the mouse ALWAYS swaps: a character that
+        // keeps reappearing under the cursor is the one thing the effect
+        // must never do (owner, 2026-09-02: "там постоянно проглядывают
+        // оригинальные символы пока на них мышка — что супер тупо, когда
+        // мышка, должны быть какие угодно кроме оригинальных"). No pulse in
+        // this decision either; it used to hold the centre at 0.8 and let
+        // the original through a fifth of the time.
         let roll = cell_roll(coord.x, self.tick);
-        // Top 32 bits decide whether this cell swaps at all this tick, the
-        // low bits pick which glyph — one hash, two independent-enough draws.
+        // Top 32 bits decide participation, the low bits pick the glyph —
+        // one hash, two independent-enough draws.
         let swap = (roll >> 32) as f64 / u32::MAX as f64;
-        let out_ch = if swap < swap_p {
-            GLITCH_CHARS[(roll as usize) % GLITCH_CHARS.len()]
-        } else {
-            ch
-        };
+        if swap >= intensity {
+            return Cell { ch, color: self.color, alpha: 1.0, scale: 1.0 };
+        }
+        // ...and when it does swap, never back to itself. Picking from the
+        // whole set and hoping is how a digit lands on the same digit and
+        // the glitch silently skips a beat.
+        let out_ch = pick_other(ch, roll);
 
         Cell { ch: out_ch, color: self.color, alpha: 1.0, scale: 1.0 }
     }
+}
+
+/// Pick a glyph from `GLITCH_CHARS` that is NOT `ch`.
+///
+/// Walks forward from the hashed index rather than re-rolling, so the answer
+/// stays a pure function of (cell, tick) — a retry loop on a fresh roll
+/// would reintroduce the per-frame instability the hash exists to remove.
+fn pick_other(ch: char, roll: u64) -> char {
+    let n = GLITCH_CHARS.len();
+    let start = (roll as usize) % n;
+    for k in 0..n {
+        let c = GLITCH_CHARS[(start + k) % n];
+        if c != ch {
+            return c;
+        }
+    }
+    ch
 }
 
 /// gate4agent's own 30-glyph set, verbatim from
@@ -254,7 +310,7 @@ pub(super) fn draw_clock_glitch(
     // One step per rendered frame — see the note on `anim_frame`. `ctx.time`
     // inside the shader still gets real elapsed seconds for its pulse, which
     // only shifts probability rather than picking glyphs.
-    let tick = anim_frame;
+    let tick = anim_frame / FRAMES_PER_STEP;
     let mut grid = AsciiGrid::new(cols, 1);
     let gx = (pointer.0 - ox) / cell_w;
     let gy = (pointer.1 - oy) / cell_h;
