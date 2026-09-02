@@ -5380,11 +5380,23 @@ impl ChartApp {
                 // code so the server confirms this device after the OAuth dance.
                 rest if rest.starts_with("oauth:") => {
                     let provider = &rest["oauth:".len()..];
-                    if let mlc_app_layout::ui::modal_settings::CloudLoginPhase::AwaitingConfirm { code } = &st.phase {
-                        st.open_url_requested = Some(format!(
-                            "/api/oauth/{}/authorize?device_code={}",
-                            provider, code
-                        ));
+                    use mlc_app_layout::ui::modal_settings::CloudLoginPhase;
+                    match &st.phase {
+                        // Device-code flow: the browser trip is the CONFIRM
+                        // step, so the authorize URL carries the code.
+                        CloudLoginPhase::AwaitingConfirm { code } => {
+                            st.open_url_requested = Some(format!(
+                                "/api/oauth/{}/authorize?device_code={}",
+                                provider, code
+                            ));
+                        }
+                        // Loopback flow: the browser trip IS the sign-in, and
+                        // the shell owns the callback listener, so all that
+                        // travels from here is which provider was picked.
+                        CloudLoginPhase::ChooseProvider => {
+                            st.oauth_login_requested = Some(provider.to_string());
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}

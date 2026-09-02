@@ -668,7 +668,26 @@ pub fn process_event(
                         {
                             let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
                             if !skeleton_active {
+                                use mlc_app_layout::ui::modal_settings::CloudLoginPhase;
                                 chart.panel_app.cloud_login_state.toggle();
+                                // Which flow the modal opens into is a
+                                // property of the shell, not of the click.
+                                // Native signs in through a loopback redirect
+                                // and has no device-code driver at all, so
+                                // opening on `RequestCode` would sit at
+                                // "Requesting sign-in code…" forever.
+                                if chrome_st.flavor == crate::ChromeFlavor::Native
+                                    && chart.panel_app.cloud_login_state.is_open
+                                {
+                                    chart.panel_app.cloud_login_state.phase =
+                                        match chrome_st.account_label.clone() {
+                                            Some(display_name) => CloudLoginPhase::SignedIn {
+                                                display_name,
+                                                provider: String::new(),
+                                            },
+                                            None => CloudLoginPhase::ChooseProvider,
+                                        };
+                                }
                                 chart.panel_app.cloud_overlay_state.close();
                                 dirty.chart_dirty = true;
                                 platform.request_redraw();

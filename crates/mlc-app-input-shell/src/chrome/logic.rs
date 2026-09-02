@@ -89,7 +89,11 @@ impl ButtonPositions {
                 let ne = li - CLOUD_ICON_BUTTON_WIDTH;
                 (login, dl, li, ne)
             }
-            ChromeFlavor::Native => (0.0, 0.0, 0.0, 0.0),
+            // Native carries only the sign-in / account button, immediately
+            // left of "new window" (owner's placement, 2026-09-02). The other
+            // three cloud buttons are a web-page concern — a desktop app has
+            // its own updater and its own links.
+            ChromeFlavor::Native => (new_window_left - LOGIN_BUTTON_WIDTH, 0.0, 0.0, 0.0),
         };
         Self {
             close_x, maximize_x, minimize_x, close_window_left, mascot_left,
@@ -233,6 +237,10 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
                 if x >= bp.mascot_left       && x < bp.close_window_left { return ChromeHit::MascotButton; }
                 if x >= bp.menu_left         && x < bp.mascot_left       { return ChromeHit::MenuButton; }
                 if x >= bp.new_window_left   && x < bp.menu_left         { return ChromeHit::NewWindowButton; }
+                #[cfg(feature = "cloud")]
+                {
+                    if x >= bp.login_left && x < bp.new_window_left { return ChromeHit::LoginButton; }
+                }
             }
             ChromeFlavor::Web => {
                 // Web: gear is rightmost; cloud builds add the cloud buttons.

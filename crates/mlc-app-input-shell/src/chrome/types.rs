@@ -201,6 +201,13 @@ pub fn is_veiled_hit(hit: ChromeHit) -> bool {
 /// Mutable rendering state for the chrome strip.
 pub struct ChromeState {
     pub hovered: ChromeHit,
+    /// Display name of the signed-in account, or `None` when nobody is.
+    ///
+    /// Drives one button: `None` draws "Sign in", `Some(name)` draws the
+    /// account. The chrome does not own auth — the shell pushes this from
+    /// whatever it already watches (`mlc_updater`'s `auth_rx` on native) —
+    /// so there is one source of truth and the strip just reflects it.
+    pub account_label: Option<String>,
     pub is_maximized: bool,
     pub title: String,
     pub colors: ChromeColors,
@@ -235,6 +242,7 @@ impl ChromeState {
     pub fn new(title: impl Into<String>) -> Self {
         Self {
             hovered:      ChromeHit::None,
+            account_label: None,
             is_maximized: false,
             title:        title.into(),
             colors:       ChromeColors::default(),

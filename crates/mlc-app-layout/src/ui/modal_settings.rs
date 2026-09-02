@@ -4217,6 +4217,15 @@ impl EwaEngineSettingsState {
 #[cfg(feature = "cloud")]
 #[derive(Clone, Debug, PartialEq)]
 pub enum CloudLoginPhase {
+    /// Offer the OAuth providers directly, with no device code in play.
+    ///
+    /// The native shell signs in through a loopback redirect
+    /// (`mlc-updater`'s `oauth::start_oauth_flow`: browser → localhost
+    /// callback → token), which needs nothing but a provider choice. The
+    /// device-code phases below exist for a client that cannot receive a
+    /// redirect; a desktop app can, so making it show a code and ask the
+    /// user to type it somewhere is ceremony with no purpose.
+    ChooseProvider,
     /// Just opened; the shell should request a device code.
     RequestCode,
     /// Waiting for the code-creation request to finish.
@@ -4239,6 +4248,13 @@ pub struct CloudLoginState {
     pub is_open: bool,
     /// Current flow phase (owned by the shell's cloud driver).
     pub phase: CloudLoginPhase,
+    /// A provider the user picked in [`CloudLoginPhase::ChooseProvider`],
+    /// waiting for the shell to act on it.
+    ///
+    /// What "act on it" means is the shell's business and differs between
+    /// them — native runs the loopback flow in-process, web navigates — so
+    /// the layout crate records the choice and stays out of it.
+    pub oauth_login_requested: Option<String>,
     /// One-shot mailbox: a URL the shell must open in a new tab (sign-in
     /// page, OAuth provider authorize URL). Set by modal buttons, cleared
     /// by the driver after the window.open call.
@@ -4260,6 +4276,7 @@ impl Default for CloudLoginState {
         Self {
             is_open: false,
             phase: CloudLoginPhase::RequestCode,
+            oauth_login_requested: None,
             open_url_requested: None,
             sign_out_requested: false,
             position: None,

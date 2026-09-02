@@ -57,6 +57,10 @@ pub struct CloudLoginResult {
 /// Body height per phase — the shell sizes the frame from this.
 fn content_height(state: &CloudLoginState) -> f64 {
     match &state.phase {
+        // Providers only — no code block, no polling hint.
+        CloudLoginPhase::ChooseProvider => {
+            24.0 + OAUTH_PROVIDERS.len() as f64 * (BTN_H + BTN_GAP)
+        }
         CloudLoginPhase::AwaitingConfirm { .. } => 312.0,
         CloudLoginPhase::SignedIn { .. } => 122.0,
         CloudLoginPhase::Success { .. } => 78.0,
@@ -133,6 +137,33 @@ fn draw_body(
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text("Requesting sign-in code…", cx, y + 26.0);
+        }
+
+        // Providers and nothing else. The shell that shows this one signs in
+        // through a loopback redirect, so there is no code to display and
+        // nothing to poll — the browser comes back to us.
+        CloudLoginPhase::ChooseProvider => {
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            ctx.set_font("13px sans-serif");
+            ctx.set_fill_color(&tt.item_text);
+            ctx.fill_text("No passwords. Pick a provider —", x, y);
+            ctx.fill_text("we only read your handle.", x, y + 20.0);
+
+            let mut btn_y = y + 42.0;
+            for (id, label) in OAUTH_PROVIDERS {
+                draw_button(
+                    ctx,
+                    coord,
+                    layer_id,
+                    &format!("cloud_login:oauth:{}", id),
+                    WidgetRect::new(x, btn_y, w, BTN_H),
+                    label,
+                    BtnStyle::Secondary,
+                    tt,
+                );
+                btn_y += BTN_H + BTN_GAP;
+            }
         }
 
         CloudLoginPhase::AwaitingConfirm { code } => {

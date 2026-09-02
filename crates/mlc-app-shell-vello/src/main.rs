@@ -3263,6 +3263,34 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
+        // ── Drain a picked OAuth provider ────────────────────────────────
+        // The modal records WHICH provider the user chose and stops there —
+        // what to do with it is the shell's, and the two shells differ. Here
+        // it runs in-process: `start_oauth_flow` opens the browser, holds a
+        // localhost callback listener, exchanges the code and stores the
+        // token, then `auth_rx` broadcasts `LoggedIn` and the UI follows on
+        // its own. No device code, no polling.
+        #[cfg(feature = "cloud")]
+        {
+            let picked: Option<String> = self
+                .windows
+                .values_mut()
+                .find_map(|pw| pw.chart.panel_app.cloud_login_state.oauth_login_requested.take());
+            if let Some(provider) = picked {
+                eprintln!("[Updater] sign-in: starting loopback OAuth with '{provider}'");
+                let _ = self
+                    .updater_handle
+                    .cmd_tx
+                    .send(mlc_updater::UpdaterCommand::StartOAuth(provider));
+                for pw in self.windows.values_mut() {
+                    pw.chart.panel_app.cloud_login_state.is_open = false;
+                    pw.chart_dirty = true;
+                    pw.overlay_dirty = true;
+                    pw.window.request_redraw();
+                }
+            }
+        }
+
         // ── Drain updater command requests ───────────────────────────────
         {
             let cmd: Option<String> = self.windows.values_mut()
@@ -3300,20 +3328,36 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     eprintln!("[App] logout requested — forwarded to updater");
                 } else if cmd_str == "start_device_auth" {
                     cmd_handled = true;
-                    // The device-code flow (`/api/auth/device-code`,
-                    // `/api/auth/poll`) both verify build attestation
-                    // server-side; this shell's build.rs signs none (see the
-                    // `mlc_updater::start()` call in `App::new`), so starting
-                    // it would 403 forever. Do NOT start the flow — surface
-                    // the block instead of leaving the Sign In button a
-                    // silent no-op.
-                    eprintln!("[Updater] start_device_auth blocked — this build has no attestation (build.rs does not sign)");
-                    self.active_toasts.push(mlc_alert_delivery::ToastNotification {
-                        title: "Sign-in unavailable".to_string(),
-                        message: "Cloud sign-in needs a signed release build.".to_string(),
-                        timestamp: screenshot::now_ms(),
-                        duration_ms: 5000,
-                    });
+                    // Native does not use the device-code flow at all. It has
+                    // a loopback OAuth flow already — `mlc_updater`'s
+                    // `oauth::start_oauth_flow` opens the browser, listens on
+                    // a localhost callback port and exchanges the code for a
+                    // token — which is the other standard answer for a
+                    // desktop client and the one that fits an app that CAN
+                    // receive a redirect. Device codes exist for clients that
+                    // cannot; showing one here would be ceremony.
+                    //
+                    // This used to refuse outright, on the grounds that the
+                    // server enforced build attestation and this shell's
+                    // build.rs signs none. Measured against production
+                    // 2026-09-02: `POST /api/auth/device-code` with no
+                    // attestation header answers 200. `BUILD_ATTEST_ENFORCE`
+                    // defaults to false and is not set on the box, so an
+                    // unsigned client is allowed through the grace path. The
+                    // refusal outlived its reason.
+                    #[cfg(feature = "cloud")]
+                    {
+                        use mlc_app_layout::ui::modal_settings::CloudLoginPhase;
+                        for pw in self.windows.values_mut() {
+                            let st = &mut pw.chart.panel_app.cloud_login_state;
+                            st.is_open = true;
+                            st.phase = CloudLoginPhase::ChooseProvider;
+                            pw.chart_dirty = true;
+                            pw.overlay_dirty = true;
+                            pw.window.request_redraw();
+                        }
+                    }
+                    eprintln!("[Updater] sign-in: offering OAuth providers (loopback flow)");
                 }
 
                 // ── Profile commands: shared dispatcher (mlc-app) ────────────
@@ -4276,18 +4320,31 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
 
             // `UserSettingsState::account_signed_in` — this shell's token
-            // store is `mlc_updater::token_store` (via the OAuth flow;
-            // device-code is blocked on an unsigned build, see the
-            // `start_device_auth` arm above), never the entitlements
-            // answer. A `watch::Receiver::borrow()` peek is a channel read,
+            // store is `mlc_updater::token_store`, filled by the loopback
+            // OAuth flow (see the `start_device_auth` arm above; native does
+            // not use device codes), never the entitlements answer. A `watch::Receiver::borrow()` peek is a channel read,
             // not network IO, so it costs nothing to keep exact every frame
             // rather than only at boot and at the login/logout instant.
             let account_signed_in = matches!(
                 *self.updater_handle.auth_rx.borrow(),
                 mlc_updater::AuthStatus::LoggedIn { .. }
             );
+            // The chrome's sign-in button reads the same channel, so the
+            // strip cannot disagree with the settings modal about who is
+            // signed in — one source, two readers.
+            let account_label: Option<String> = match &*self.updater_handle.auth_rx.borrow() {
+                mlc_updater::AuthStatus::LoggedIn { display_name, .. } => {
+                    Some(display_name.clone())
+                }
+                _ => None,
+            };
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.account_signed_in = account_signed_in;
+                if pw.chrome_state.account_label != account_label {
+                    pw.chrome_state.account_label = account_label.clone();
+                    pw.toolbar_dirty = true;
+                    pw.window.request_redraw();
+                }
             }
             // `UserSettingsState::multi_profile` — this shell has no
             // `mlc-cloud` transport (native side does not exist, see that

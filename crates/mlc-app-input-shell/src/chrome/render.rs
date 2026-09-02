@@ -94,8 +94,10 @@ impl ButtonPositions {
                 let new_window_left   = menu_left - NEW_WINDOW_BUTTON_WIDTH;
                 Self {
                     close_x, maximize_x, minimize_x, close_window_left, menu_left, new_window_left,
+                    // Left of "new window" — see the same computation in
+                    // `logic.rs`, which the hit test reads.
                     #[cfg(feature = "cloud")]
-                    login_left: 0.0,
+                    login_left: new_window_left - LOGIN_BUTTON_WIDTH,
                     #[cfg(feature = "cloud")]
                     download_left: 0.0,
                     #[cfg(feature = "cloud")]
@@ -531,6 +533,53 @@ pub fn render(
                     if let Some(svg) = icon_svg("settings") {
                         draw_svg_icon(ctx, svg, icon_x, icon_y, 18.0, 18.0, icon_color);
                     }
+                }
+
+                // Sign-in / account button. One control with two readings:
+                // "Sign in" while nobody is, the account's own name once
+                // somebody is — the same button the user pressed is the one
+                // that now says who they are, so there is nothing new to find.
+                #[cfg(feature = "cloud")]
+                {
+                    let signed_in = state.account_label.is_some();
+                    let hovered = state.hovered == ChromeHit::LoginButton;
+                    let inset_x = 2.0;
+                    let inset_y = 4.0;
+                    // Signed out it is the one accent action in the strip.
+                    // Signed in it is an ordinary control — the call to action
+                    // has been answered, and leaving it shouting is noise.
+                    if signed_in {
+                        if hovered {
+                            ctx.set_fill_color(&c.button_hover);
+                            ctx.fill_rounded_rect(
+                                bp.login_left + inset_x, inset_y,
+                                LOGIN_BUTTON_WIDTH - inset_x * 2.0,
+                                CHROME_HEIGHT - inset_y * 2.0, 7.0,
+                            );
+                        }
+                        // Same token every other chrome glyph uses, so a
+                        // signed-in account reads as part of the strip.
+                        let ink = if hovered { &c.icon_hover } else { &c.icon_normal };
+                        ctx.set_fill_color(ink);
+                    } else {
+                        let cta = if hovered { &c.cta_bg_hover } else { &c.cta_bg };
+                        ctx.set_fill_color(cta);
+                        ctx.fill_rounded_rect(
+                            bp.login_left + inset_x, inset_y,
+                            LOGIN_BUTTON_WIDTH - inset_x * 2.0,
+                            CHROME_HEIGHT - inset_y * 2.0, 7.0,
+                        );
+                        ctx.set_fill_color(contrasting_text_color(cta));
+                    }
+                    let label = state.account_label.as_deref().unwrap_or("Sign in");
+                    ctx.set_font("600 12px sans-serif");
+                    ctx.set_text_align(TextAlign::Center);
+                    ctx.set_text_baseline(TextBaseline::Middle);
+                    ctx.fill_text(
+                        label,
+                        bp.login_left + LOGIN_BUTTON_WIDTH / 2.0,
+                        CHROME_HEIGHT / 2.0,
+                    );
                 }
             }
             ChromeFlavor::Web => {
