@@ -510,6 +510,24 @@ pub struct ProfileUiSettings {
     #[serde(default)]
     pub open_tabs: Vec<String>,
 
+    /// Whether this profile has already been shown the first-run welcome
+    /// wizard.
+    ///
+    /// The wizard appears exactly once in a profile's life — when its user
+    /// data is first created — and never again, whichever way it ended:
+    /// finished, or dismissed with the ×, the dimmer or Esc. Owner's ruling
+    /// 2026-09-02. It used to be decided by the shell's in-memory
+    /// `is_first_run`, which is per-process and per-window, so a second
+    /// window opened during that same first session raised the wizard all
+    /// over again in the new window.
+    ///
+    /// `serde(default)` = false, so profiles written before this field
+    /// existed see the wizard once more and then settle. That is the right
+    /// way round: a spurious extra showing is a courtesy, a missed one on a
+    /// genuinely new profile is not.
+    #[serde(default)]
+    pub welcome_wizard_seen: bool,
+
     /// Name of the active theme (e.g. `"dark"`, `"light"`). Pure rendering
     /// cosmetics.
     #[serde(default = "default_theme")]
@@ -767,6 +785,7 @@ impl ProfileUiSettings {
         Self {
             active_preset_id: String::new(),
             open_tabs: Vec::new(),
+            welcome_wizard_seen: false,
             active_theme: default_theme(),
             active_ui_style: String::new(),
             sidebar_visible: false,

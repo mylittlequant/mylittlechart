@@ -172,6 +172,20 @@ impl ChartApp {
         self.panel_app.credentials_state.pending_unlock_return = None;
     }
 
+    /// Record on the profile that the welcome wizard has been shown, and
+    /// mark the profile dirty so the shell flushes it.
+    ///
+    /// Idempotent and cheap: the common case is the flag already being set,
+    /// which skips both the borrow and the write.
+    pub(super) fn mark_welcome_wizard_seen(&mut self) {
+        if self.core.user().profile().ui.welcome_wizard_seen {
+            return;
+        }
+        self.core.user_mut().profile_mut().ui.welcome_wizard_seen = true;
+        self.profile_dirty = true;
+        eprintln!("[ChartApp] welcome wizard marked seen for this profile");
+    }
+
     /// Close whichever backdrop-dimming modal is currently open.
     ///
     /// Owner's ruling 2026-09-02: a click that lands on chrome the veil
@@ -235,6 +249,11 @@ impl ChartApp {
         // Back to centred. A wizard reopened later must not surface wherever
         // a previous run's drag happened to leave it.
         self.panel_app.user_settings_state.reset_wizard_position();
+        // Seen is seen. Dismissing counts exactly as much as finishing —
+        // the wizard shows once in a profile's life (owner 2026-09-02), and
+        // "I closed it" is a decision, not a postponement. Persisted, so a
+        // second window in this same session does not raise it again.
+        self.mark_welcome_wizard_seen();
         let cp_wid = uzor::WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
         let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
         let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
@@ -5646,7 +5665,11 @@ impl ChartApp {
                     // use, via the profile manager (owner's ruling
                     // 2026-08-31).
                     self.pending_updater_cmd = Some("wizard_complete".to_string());
-                    self.panel_app.user_settings_state.show_welcome_wizard = false;
+                    // Through the shared dismissal, not a bare flag flip: it
+                    // is what resets the page and the dragged position and
+                    // records the wizard as seen on the profile. Finishing
+                    // and closing must leave identical state behind.
+                    self.dismiss_welcome_wizard();
                     eprintln!("[ChartApp] wizard: setup complete");
                 }
                 id if id.starts_with("wizard_lang_") => {

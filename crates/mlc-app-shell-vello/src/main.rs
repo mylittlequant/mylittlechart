@@ -1379,9 +1379,19 @@ impl App<'_> {
                 )];
             }
         }
-        // Show the welcome wizard on the first window when this is a first-run launch.
-        // The wizard is non-closeable until the user makes a mode choice.
-        if self.is_first_run {
+        // The wizard shows once in a profile's LIFE, not once per process
+        // and not once per window (owner's ruling 2026-09-02). The flag is
+        // persisted on the profile and set by any ending — finished or
+        // dismissed — so a second window opened during that same first
+        // session does not raise it again, which is exactly what keying off
+        // the in-memory `is_first_run` used to do.
+        //
+        // Read through `core`, NOT `self.profile`: the latter is a snapshot
+        // cloned at startup, while `mark_welcome_wizard_seen` writes to the
+        // shared `BackendCore` user profile. Off the snapshot, a second
+        // window opened after the wizard was closed would still see `false`
+        // and raise it again — the exact bug this is fixing.
+        if !self.core.user().profile().ui.welcome_wizard_seen {
             chart.panel_app.user_settings_state.show_welcome_wizard = true;
         }
 

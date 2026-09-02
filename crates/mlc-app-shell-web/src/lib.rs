@@ -340,7 +340,13 @@ async fn run() -> Result<(), JsValue> {
     // (theme → language → name) instead of staying silent. A returning
     // visitor with a stored profile never sees this; dismissing keeps the
     // profile bootstrap already created.
-    if is_first_run {
+    // Gated on the profile's own persisted `welcome_wizard_seen`, not on
+    // `is_first_run` (owner's ruling 2026-09-02: the wizard shows once in a
+    // profile's life, and afterwards the answer comes from user data). On a
+    // true first run the flag is false on the profile just bootstrapped, so
+    // this still fires; `is_first_run` stays in the condition because the
+    // seeding below is specifically about what boot just applied.
+    if is_first_run && !app.core.user().profile().ui.welcome_wizard_seen {
         app.panel_app.user_settings_state.show_welcome_wizard = true;
         // The Theme page's "active" row highlight reads
         // `wizard_selected_theme`, which is otherwise only set by clicking

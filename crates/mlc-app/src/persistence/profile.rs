@@ -64,6 +64,12 @@ impl ChartApp {
             ui: mlc_core::user_profile::profile::ProfileUiSettings {
                 active_preset_id: self.panel_app.active_preset_id.clone(),
                 open_tabs: self.panel_app.open_tabs.clone(),
+                // Carried from the loaded profile, never recomputed: this
+                // snapshot is built from live UI state, and "has the wizard
+                // been shown" is not UI state — it is a fact about the
+                // profile's history that only `mark_welcome_wizard_seen`
+                // ever sets.
+                welcome_wizard_seen: existing.ui.welcome_wizard_seen,
                 active_theme: self.panel_app.theme_manager.preset_name().to_string(),
                 active_ui_style: self.panel_app.theme_manager.current().style.as_name().to_string(),
                 sidebar_visible: self.sidebar_state.is_right_open(),
