@@ -4484,10 +4484,45 @@ impl ChartApp {
             // series, dead legend, no data. Route it through the fresh-state
             // path instead — that path adopts the existing active_preset_id
             // and collects the real default chart into it.
-            let has_saved_preset = app.core.presets()
+            let preset_has_content = app.core.presets()
                 .get(&app.panel_app.active_preset_id)
                 .map(|p| !p.bubbles.is_empty() || !p.windows.is_empty())
                 .unwrap_or(false);
+
+            // §5.3.5: a preset is live in at most one window. Claim it here
+            // (idempotent for this same window id — the cold branch's own
+            // later claim below is then just a no-op re-claim) so the
+            // branch choice reflects reality. A second window spawned while
+            // its source window still shows this preset used to route into
+            // LoadPreset anyway, get silently refused in
+            // chart_out_events.rs, and dead-end on the container's
+            // construction sentinel (BubbleId(0), never patched because
+            // apply_preset_cold never ran): empty symbol, filtered out of
+            // window_data below, request_bars never fires. Refusing the
+            // claim here instead falls through to the fresh-state branch.
+            let has_saved_preset = preset_has_content
+                && app.core.try_claim_preset(&app.panel_app.active_preset_id, &app.window_id);
+
+            // Claim refused → seed the fresh-state branch from the preset's
+            // own first bubble, so the new window opens on the SAME
+            // instrument as the window it was spawned from — in its own
+            // auto-bubble, never the source window's (N charts -> N bubbles
+            // -> 1 instrument; a shared bubble would tie the two windows'
+            // timeframes together). Old presets without exchange/account_type
+            // fall back to the branch's own defaults below.
+            let new_window_seed: Option<(String, String, String, mlc_core::state::Timeframe)> =
+                if preset_has_content && !has_saved_preset {
+                    app.core.presets()
+                        .get(&app.panel_app.active_preset_id)
+                        .and_then(|p| p.bubbles.first())
+                        .map(|b| {
+                            let exch = if b.exchange.is_empty() { exchange_name.clone() } else { b.exchange.clone() };
+                            let at = if b.account_type.is_empty() { "S".to_string() } else { b.account_type.clone() };
+                            (b.symbol.clone(), exch, at, b.timeframe.clone())
+                        })
+                } else {
+                    None
+                };
 
             if has_saved_preset {
                 // ── new_window COLD PATH timer anchor ─────────────────────
@@ -4616,20 +4651,40 @@ impl ChartApp {
                 // series per frame), so the cache still heats without blocking
                 // the promote-to-chart transition.
             } else {
-                // Fresh state — Binance default.
+                // Fresh state — seeded from the preset this window couldn't
+                // claim (new_window_seed, computed above) so a spawned
+                // window opens on the same instrument as its source window;
+                // Binance/BTCUSDT/1h/Spot when there is no such preset
+                // (genuinely fresh profile).
                 let _t_nw_fresh = web_time::Instant::now();
+                let (seed_symbol, seed_exchange_name, seed_account_type_label, seed_timeframe) =
+                    new_window_seed.clone().unwrap_or_else(|| {
+                        ("BTCUSDT".to_string(), exchange_name.clone(), "S".to_string(), mlc_core::state::Timeframe::h1())
+                    });
+                let seed_exchange_id = digdigdig3::ExchangeId::from_str(&seed_exchange_name)
+                    .unwrap_or(digdigdig3::ExchangeId::Binance);
+                let seed_account_type = mlc_backend_data_bridge::account_type_from_short_label(&seed_account_type_label);
+                // Own provider bound to the seeded exchange/account — the
+                // shared top-of-function `data_provider` is always Binance
+                // Spot, and DataProvider::get_bars() re-fetches backfill
+                // through the provider's OWN exchange/account (provider.rs),
+                // so reusing it here would silently backfill history from
+                // the wrong market once the seed differs from Binance Spot.
+                let seed_data_provider: SharedDataProvider = std::sync::Arc::new(
+                    LiveDataProvider::new(seed_exchange_id, seed_exchange_name.clone(), seed_account_type, bridge.clone()),
+                );
                 // Phase 4 B: capture chart_id BEFORE the mutating block.
                 let active_chart_id = app.panel_app.panel_grid.active_container_id();
                 if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
-                    window.data_provider = data_provider.clone();
+                    window.data_provider = seed_data_provider;
                     window.toolbar_config = ToolbarConfig::standalone();
                 }
                 // Create auto-bubble for the initial chart and assign instrument.
                 if let Some(chart_id) = active_chart_id {
                     let auto_bid = app.create_auto_bubble(
                         [0.0, 0.0, 0.0, 0.0],
-                        "BTCUSDT".to_string(),
-                        mlc_core::state::Timeframe::h1(),
+                        seed_symbol.clone(),
+                        seed_timeframe.clone(),
                     );
                     app.attach_chart_to_tag(chart_id, auto_bid);
                     if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
@@ -4638,10 +4693,10 @@ impl ChartApp {
                     }
                     app.core.bubbles_mut().set_bid_instrument_full(
                         auto_bid,
-                        "BTCUSDT".to_string(),
-                        exchange_name.clone(),
-                        "S".to_string(),
-                        mlc_core::state::Timeframe::h1(),
+                        seed_symbol.clone(),
+                        seed_exchange_name.clone(),
+                        seed_account_type_label.clone(),
+                        seed_timeframe.clone(),
                     );
                 }
                 app.panel_app.toolbar_config = ToolbarConfig::standalone();
@@ -4718,12 +4773,12 @@ impl ChartApp {
                 // oldest loaded bars after the initial backfill lands.
                 app.needs_initial_viewport_fit = true;
 
-                bridge.ensure_connector(exchange_id);
+                bridge.ensure_connector(seed_exchange_id);
                 bridge.request_bars(
-                    exchange_id,
-                    "BTCUSDT",
-                    &mlc_core::state::Timeframe::h1(),
-                    digdigdig3::AccountType::Spot,
+                    seed_exchange_id,
+                    &seed_symbol,
+                    &seed_timeframe,
+                    seed_account_type,
                     None,
                     Some(app.core.user().profile().domain.bar_count as usize),
                     false,
