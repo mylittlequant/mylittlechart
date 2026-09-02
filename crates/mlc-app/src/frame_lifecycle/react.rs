@@ -256,76 +256,26 @@ impl ChartApp {
                     self.core.request_background_backfill(*exchange_id, &sym, &tf, at, bg_target);
                 }
 
-                // Parked preset delivery.
-                {
-                    let matching_parked: Vec<(String, Vec<mlc_core::state::ChartId>)> =
-                        self.live_preset_cache
-                            .iter()
-                            // A preset whose bars were released for idleness
-                            // does not take them back on a live tick. It is
-                            // parked, off-screen and deliberately empty; the
-                            // cure path refills it in full when the user
-                            // actually returns to it. Without this the
-                            // release lasts until the next `BarsLoaded` for
-                            // any instrument it holds — seconds, on anything
-                            // still streaming — and the sweep would spend
-                            // forever re-emptying tabs that keep refilling
-                            // themselves behind the user's back.
-                            .filter(|(_, parked)| !parked.bars_released)
-                            .map(|(preset_key, parked)| {
-                                let cids: Vec<mlc_core::state::ChartId> = parked
-                                    .panel_grid
-                                    .containers()
-                                    .keys()
-                                    .filter(|cid| {
-                                        let Some(bid) = parked.tag_manager.tag_for_chart(**cid) else { return false };
-                                        parked.bubble_store.symbol(bid).map_or(false, |s| s == *symbol)
-                                            && parked.bubble_store.exchange(bid).map_or(false, |e| e == exchange_id.as_str())
-                                            && parked.bubble_store.timeframe(bid).map_or(false, |tf| tf.name == *tf_name)
-                                            && parked.bubble_store.account_type(bid).map_or(false, |at| at == account_type.as_str())
-                                    })
-                                    .copied()
-                                    .collect();
-                                (preset_key.clone(), cids)
-                            })
-                            .filter(|(_, cids)| !cids.is_empty())
-                            .collect();
-
-                    for (preset_key, cids) in matching_parked {
-                        if let Some(parked) = self.live_preset_cache.get_mut(&preset_key) {
-                            let parked_bubble_ids: Vec<mlc_core::ids::BubbleId> = cids.iter()
-                                .filter_map(|cid| parked.tag_manager.tag_for_chart(*cid))
-                                .collect::<std::collections::HashSet<_>>()
-                                .into_iter()
-                                .collect();
-                            for bid_p in &parked_bubble_ids {
-                                parked.bubble_store.set_bars(*bid_p, new_bars.clone());
-                            }
-                            for cid in cids {
-                                // Audit D8: resolve this parked window's OWN
-                                // chart_type against the parked BubbleStore
-                                // (not always the just-replaced kline array).
-                                let bid_for_series = parked.tag_manager.tag_for_chart(cid);
-                                let chart_type = bid_for_series
-                                    .and_then(|b| parked.bubble_store.chart_type(b))
-                                    .unwrap_or("candles");
-                                let series_owned = bid_for_series.map(|b| crate::active_series::resolve_active_series_owned_from_store(
-                                    chart_type, &parked.bubble_store, b,
-                                )).unwrap_or_default();
-                                if let Some(window) = parked.panel_grid.containers_mut().get_mut(&cid) {
-                                    let is_backfill = !window.pending_symbol_load
-                                        && window.viewport().bar_count > 0;
-                                    if is_backfill {
-                                        window.reconcile_view_keep_anchor(new_bars, series_owned.as_active_series(), None);
-                                    } else {
-                                        window.reconcile_view_fresh(new_bars, series_owned.as_active_series());
-                                        window.pending_symbol_load = false;
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                // A parked preset is not fed. It keeps whatever it held when
+                // it was parked, nothing tops it up, and the cure path
+                // refreshes it on the way back — `chart_out_events.rs` pushes
+                // a request for every window on a cache load and forces it
+                // outright when the rings are empty.
+                //
+                // What stood here walked the whole cache on EVERY BarsLoaded
+                // and, for each parked preset holding the instrument, cloned
+                // the full bar vector into its store, re-resolved its derived
+                // series (footprint, renko, the rest) and reconciled the
+                // viewport of a window nobody was looking at. Forever, for
+                // every open tab. It is a large part of how twelve parked
+                // presets reached 2 097 MB of private memory, and it is why
+                // releasing a ring did not hold: the next tick refilled it.
+                //
+                // Nothing depended on it. Alerts are evaluated over
+                // `panel_app.panel_grid.containers()` — the ACTIVE window's
+                // containers — so a parked preset's alerts were never firing
+                // from this data either way (that they do not fire at all is
+                // a separate defect, recorded on the arc map).
 
                 // data_provider cache.
                 if any_matched {
