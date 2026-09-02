@@ -41,7 +41,10 @@ const LOGIN_BUTTON_WIDTH: f64 = 68.0;
 #[cfg(feature = "cloud")]
 const CLOUD_ICON_BUTTON_WIDTH: f64 = 30.0;
 const TAB_LEFT_MARGIN: f64 = 4.0;
-const TAB_GAP: f64 = 1.0;
+// Real separation between tabs so compressed neighbors never appear to
+// touch (owner report 2026-09: tabs "collide" when many are open). Mirrored
+// in logic.rs, which budgets for it in `fit_tab_widths`'s `reserved`.
+const TAB_GAP: f64 = 4.0;
 const TAB_PADDING_H: f64 = 6.0;
 const TAB_CLOSE_SIZE: f64 = 16.0;
 /// Width of the "⋯" overflow button shown left of "+" when tabs overflow.
@@ -360,29 +363,33 @@ pub fn render(
                     result.char_x_positions,
                 );
             } else {
+            // Needed before the name is laid out (below) as well as by the
+            // close patch itself: while any of these is true the × shows,
+            // and the name must give up the space the × sits in.
+            let tab_hovered = state.hovered == ChromeHit::Tab(i)
+                || state.hovered == ChromeHit::TabClose(i)
+                || state.hovered == ChromeHit::TabRename(i);
             {
-                // The tab name is CENTERED in the full tab body and never
-                // moves: the close × paints its own rounded patch on top of
-                // it when it appears.
+                // The tab name centers in the tab body — but while the × is
+                // showing it centers in the space LEFT of the × instead, so
+                // a long name is clipped there and never slides underneath
+                // it (name and × must never share pixels).
                 ctx.set_font("12px sans-serif");
                 let text_w = ctx.measure_text(&tab.name);
-                let text_x = tab_left + (tw - text_w).max(0.0) / 2.0;
+                let name_w = if tab_hovered { (tw - TAB_CLOSE_SIZE).max(0.0) } else { tw };
+                let text_x = tab_left + (name_w - text_w).max(0.0) / 2.0;
                 ctx.set_fill_color(&c.icon_normal);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
                 ctx.save();
-                ctx.clip_rect(tab_left, 0.0, tw, CHROME_HEIGHT);
+                ctx.clip_rect(tab_left, 0.0, name_w, CHROME_HEIGHT);
                 ctx.fill_text(&tab.name, text_x, CHROME_HEIGHT / 2.0);
                 ctx.restore();
             }
 
-            // Close × at the RIGHT edge, drawn only while the tab is hovered
-            // at all; paints over the name beneath it like the pencil does.
-            // Same rounded patch, kept clear of the underline strip; the
-            // button-hover face only lights when the × itself is hovered.
-            let tab_hovered = state.hovered == ChromeHit::Tab(i)
-                || state.hovered == ChromeHit::TabClose(i)
-                || state.hovered == ChromeHit::TabRename(i);
+            // Close × at the RIGHT edge. Same rounded patch, kept clear of
+            // the underline strip; the button-hover face only lights when
+            // the × itself is hovered.
             if tab_hovered {
                 let close_rect_left = tab_right - TAB_CLOSE_SIZE;
                 let icon_size = 14.0;
@@ -395,6 +402,14 @@ pub fn render(
                 if close_hovered {
                     ctx.set_fill_color(&c.button_hover);
                 } else {
+                    // The strip background IS this tab's body: a tab has no
+                    // body fill at all, only a 2px underline at its bottom
+                    // edge, so `tab_accent`/`button_hover` are underline
+                    // colours and painting the patch with either would put a
+                    // coloured block on a flat body. What made a neighbour
+                    // seem to show through was never this fill — it was the
+                    // name centred across the whole body and sliding under
+                    // the ×, fixed above.
                     ctx.set_fill_color(&c.background);
                 }
                 ctx.fill_rounded_rect(
@@ -469,11 +484,10 @@ pub fn render(
             ctx.fill_rect(new_tab_x + 1.0, 0.0, NEW_TAB_BUTTON_WIDTH - 1.0, BUTTON_HEIGHT);
         }
 
-        let plus_color = if state.hovered == ChromeHit::NewTabButton {
-            &c.icon_hover
-        } else {
-            &c.icon_normal
-        };
+        // Hover lights the background patch only — the icon itself never
+        // recolors (owner's rule; the window-control cluster below is the
+        // sole exception).
+        let plus_color = &c.icon_normal;
         let plus_cx = (new_tab_x + NEW_TAB_BUTTON_WIDTH / 2.0).floor() + 0.5;
         let plus_cy = (CHROME_HEIGHT / 2.0).floor() + 0.5;
         let arm = 5.0;
@@ -499,7 +513,7 @@ pub fn render(
             let ov_hovered = state.hovered == ChromeHit::TabOverflow;
             ctx.set_fill_color(if ov_hovered { &c.button_hover } else { &c.background });
             ctx.fill_rounded_rect(ov_left, 3.0, TAB_OVERFLOW_WIDTH, CHROME_HEIGHT - 9.0, 6.0);
-            ctx.set_fill_color(if ov_hovered { &c.icon_hover } else { &c.icon_normal });
+            ctx.set_fill_color(&c.icon_normal);
             ctx.set_font("12px sans-serif");
             ctx.set_text_align(TextAlign::Center);
             ctx.set_text_baseline(TextBaseline::Middle);
@@ -515,11 +529,7 @@ pub fn render(
                         ctx.set_fill_color(&c.button_hover);
                         ctx.fill_rect(bp.new_window_left, 0.0, NEW_WINDOW_BUTTON_WIDTH, BUTTON_HEIGHT);
                     }
-                    let icon_color = if state.hovered == ChromeHit::NewWindowButton {
-                        &c.icon_hover
-                    } else {
-                        &c.icon_normal
-                    };
+                    let icon_color = &c.icon_normal;
                     let icon_x = bp.new_window_left + (NEW_WINDOW_BUTTON_WIDTH - 18.0) / 2.0;
                     let icon_y = (CHROME_HEIGHT - 18.0) / 2.0;
                     if let Some(svg) = icon_svg("new_window") {
@@ -533,11 +543,7 @@ pub fn render(
                         ctx.set_fill_color(&c.button_hover);
                         ctx.fill_rect(bp.menu_left, 0.0, MENU_BUTTON_WIDTH, BUTTON_HEIGHT);
                     }
-                    let icon_color = if state.hovered == ChromeHit::MenuButton {
-                        &c.icon_hover
-                    } else {
-                        &c.icon_normal
-                    };
+                    let icon_color = &c.icon_normal;
                     let icon_x = bp.menu_left + (MENU_BUTTON_WIDTH - 18.0) / 2.0;
                     let icon_y = (CHROME_HEIGHT - 18.0) / 2.0;
                     if let Some(svg) = icon_svg("settings") {
@@ -569,8 +575,7 @@ pub fn render(
                         }
                         // Same token every other chrome glyph uses, so a
                         // signed-in account reads as part of the strip.
-                        let ink = if hovered { &c.icon_hover } else { &c.icon_normal };
-                        ctx.set_fill_color(ink);
+                        ctx.set_fill_color(&c.icon_normal);
                     } else {
                         let cta = if hovered { &c.cta_bg_hover } else { &c.cta_bg };
                         ctx.set_fill_color(cta);

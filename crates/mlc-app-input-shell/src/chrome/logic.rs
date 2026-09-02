@@ -23,9 +23,13 @@ const LOGIN_BUTTON_WIDTH: f64 = 68.0;
 #[cfg(feature = "cloud")]
 const CLOUD_ICON_BUTTON_WIDTH: f64 = 30.0;
 const TAB_LEFT_MARGIN: f64 = 4.0;
-const TAB_GAP: f64 = 1.0;
+// Real separation between tabs so compressed neighbors never appear to
+// touch. Mirrored in render.rs; `fit_tab_widths`'s `reserved` budgets for
+// `TAB_GAP * (n - 1)` so widening this takes width away from the tabs
+// rather than overflowing the strip.
+const TAB_GAP: f64 = 4.0;
 const TAB_CLOSE_SIZE: f64 = 16.0;
-const TAB_PADDING_H: f64 = 12.0;
+const TAB_PADDING_H: f64 = 6.0;
 /// Width of the "⋯" overflow button shown left of "+" when tabs overflow.
 const TAB_OVERFLOW_WIDTH: f64 = 18.0;
 
@@ -120,7 +124,15 @@ impl ButtonPositions {
 // ── Tab strip layout ──────────────────────────────────────────────────────────
 
 /// Smallest width a tab compresses to when the strip runs out of room.
-pub const MIN_TAB_WIDTH: f64 = 48.0;
+///
+/// Derived, not picked: the natural-width formula is `TAB_PADDING_H + text +
+/// TAB_CLOSE_SIZE + TAB_PADDING_H` (see `tab_width_from_text`) — insets on
+/// both sides plus the × control. The floor keeps that same shape but swaps
+/// the measured `text` for a minimum readable name budget of its own: at
+/// least twice `TAB_CLOSE_SIZE`, so a floored tab still shows a couple of
+/// legible characters beside the × instead of next to nothing.
+/// `2 * TAB_PADDING_H + 3 * TAB_CLOSE_SIZE` = 2*6 + 3*16 = 60.
+pub const MIN_TAB_WIDTH: f64 = 2.0 * TAB_PADDING_H + 3.0 * TAB_CLOSE_SIZE;
 
 /// Right edge of the tab strip: the left edge of the right-side control
 /// group (window controls on Native, cloud icons + gear on Web). The tab
