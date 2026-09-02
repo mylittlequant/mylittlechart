@@ -1167,6 +1167,30 @@ impl App<'_> {
                 .expect("Failed to create window"),
         );
 
+        // A profile nobody has chosen a theme for takes the OS's own
+        // light/dark preference for its first frames, then never asks again
+        // — from here on the user's file decides (owner's ruling
+        // 2026-09-02, matching what the web shell does with
+        // `prefers-color-scheme`).
+        //
+        // Read off the window rather than poking the registry or
+        // `AppleInterfaceStyle`: winit already resolves the system setting
+        // per platform, and reading it here — before the first paint — is
+        // what keeps a dark-desktop user from being shown a white flash.
+        //
+        // Only the two base themes are ever inferred. High Contrast, Wizard
+        // Hat, Surf, Vaporwave and Terminal are deliberate picks (owner's
+        // ruling 2026-08-31), and guessing one from an OS bit would be
+        // inventing an opinion the OS never expressed.
+        if self.app_state.theme_preset.is_empty() {
+            let detected = match window.theme() {
+                Some(winit::window::Theme::Light) => "light",
+                _ => "dark",
+            };
+            eprintln!("[App] no saved theme — following the system: {detected}");
+            self.app_state.theme_preset = detected.to_string();
+        }
+
         let size = window.inner_size();
         // Telemetry's screen_width/screen_height: seeded here at creation,
         // kept current by the same Resized handler that already drives GPU

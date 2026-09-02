@@ -1258,8 +1258,21 @@ fn default_version() -> u32 {
 }
 
 
+/// Empty means UNSET — "nobody has chosen a theme for this profile yet" —
+/// not "dark".
+///
+/// Both shells already read it that way (`mlc-app-shell-web`'s
+/// `preferred_theme_from_browser` branch, `mlc-app-shell-vello`'s
+/// `if !theme_preset.is_empty()` guards), and it is the same convention
+/// `active_ui_style` documents two fields up. But this returned `"dark"`,
+/// so a profile created by the app was born already-decided and the
+/// detect-the-host's-preference branch could never be reached — on web it
+/// was dead code from the day it was written.
+///
+/// A profile written before this change keeps whatever string it has, which
+/// is the correct outcome: it WAS decided, even if only by this default.
 fn default_theme() -> String {
-    "dark".to_string()
+    String::new()
 }
 
 fn default_bar_count() -> u16 {
