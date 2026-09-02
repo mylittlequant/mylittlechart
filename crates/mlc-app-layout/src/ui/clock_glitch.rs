@@ -72,12 +72,13 @@ const SHADER_KIND: ClockShaderKind = ClockShaderKind::Engine;
 ///
 /// The step still rides the render cadence rather than a clock of its own,
 /// but one step per FRAME is 60 steps a second and reads as noise rather
-/// than as glitching (owner, 2026-09-02: "слишком быструю"). Six frames is
-/// about ten steps a second at 60fps — fast enough to feel alive, slow
-/// enough that the eye resolves each state. A divider keeps the property
-/// that matters: an FPS-limited app slows the animation with everything
-/// else instead of the two rates drifting apart.
-const FRAMES_PER_STEP: u64 = 6;
+/// than as glitching (owner, 2026-09-02: "слишком быструю", then "скорость
+/// в 2 раза меньше сделай" once six frames was still quick). Twelve frames
+/// is about five steps a second at 60fps — slow enough that the eye lands
+/// on each state instead of averaging them into a blur. A divider keeps the
+/// property that matters: an FPS-limited app slows the animation with
+/// everything else instead of the two rates drifting apart.
+const FRAMES_PER_STEP: u64 = 12;
 
 /// Brush radius in grid cells for [`ClockShaderKind::Engine`].
 ///
