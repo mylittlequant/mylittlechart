@@ -946,6 +946,11 @@ pub struct ChartApp {
     /// Timer controlling the periodic RecalcMode diagnostic log (every 5 s).
     recalc_log_timer: web_time::Instant,
 
+    /// Timer gating the idle-parked-preset release sweep — see
+    /// [`frame_lifecycle::tick::IDLE_RELEASE_SWEEP_INTERVAL`] and
+    /// [`Self::release_idle_parked_presets`].
+    idle_release_sweep_timer: web_time::Instant,
+
     /// Number of TradeUpdate events received since the last log flush.
     trade_count: u32,
 
@@ -3280,6 +3285,7 @@ impl ChartApp {
             lag_event_count: 0,
             recalc_count: 0,
             recalc_log_timer: web_time::Instant::now(),
+            idle_release_sweep_timer: web_time::Instant::now(),
             trade_count: 0,
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
@@ -3721,6 +3727,7 @@ impl ChartApp {
             lag_event_count: 0,
             recalc_count: 0,
             recalc_log_timer: web_time::Instant::now(),
+            idle_release_sweep_timer: web_time::Instant::now(),
             trade_count: 0,
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
@@ -4310,6 +4317,7 @@ impl ChartApp {
             lag_event_count: 0,
             recalc_count: 0,
             recalc_log_timer: web_time::Instant::now(),
+            idle_release_sweep_timer: web_time::Instant::now(),
             trade_count: 0,
             diagnostics_enabled: false,
             sidebar_data_dirty: true,

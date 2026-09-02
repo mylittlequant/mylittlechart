@@ -13,6 +13,72 @@ use mlc_backend_data_bridge::LiveUpdate;
 use mlc_core::{ChartId, ScaleMode, timestamp_ms_to_bar_f64};
 use mlc_backend_indicator_engine::RecalcMode;
 
+/// How long a parked preset tab sits untouched before its bars are given
+/// back. Owner's ruling, 2026-09-03: a session with twelve presets parked
+/// in the live cache held 2 097 MB of private memory, one of them still
+/// carrying a full 200 000-bar kline ring (`kline_layer_capacity`) hours
+/// after anyone last looked at it. Reopening a released tab shows the
+/// freshest data rather than whatever ancient viewport it was left on
+/// (the refill is unconditional and already forces a full refetch — see
+/// `input/chart_out_events.rs`'s cure path).
+const IDLE_RELEASE_AFTER: std::time::Duration = std::time::Duration::from_secs(30 * 60);
+
+/// Cadence of [`ChartApp::release_idle_parked_presets`]'s real walk over
+/// `live_preset_cache`. The sweep is called every frame but only does work
+/// on this interval — a parked tab's age only needs minute-granularity.
+const IDLE_RELEASE_SWEEP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(60);
+
+impl ChartApp {
+    /// Release the kline rings of every parked preset that has sat
+    /// untouched for at least [`IDLE_RELEASE_AFTER`]. Cheap to call every
+    /// frame: the walk over `live_preset_cache` only actually runs once per
+    /// [`IDLE_RELEASE_SWEEP_INTERVAL`] (gated by `idle_release_sweep_timer`).
+    ///
+    /// The ACTIVE preset is never a member of `live_preset_cache` —
+    /// `park_active_preset` only ever inserts the preset a window is
+    /// switching AWAY from, and `unpark_preset` removes an entry the
+    /// instant it becomes active again (`persistence/profile.rs`) — so
+    /// there is nothing here that can reach the tab the user is looking
+    /// at.
+    pub fn release_idle_parked_presets(&mut self) {
+        if self.idle_release_sweep_timer.elapsed() < IDLE_RELEASE_SWEEP_INTERVAL {
+            return;
+        }
+        self.idle_release_sweep_timer = web_time::Instant::now();
+        for (id, state) in self.live_preset_cache.iter_mut() {
+            if state.bars_released || state.parked_at.elapsed() < IDLE_RELEASE_AFTER {
+                continue;
+            }
+            let dropped = state.bubble_store.clear_all_kline_layers();
+            state.needs_initial_viewport_fit = true;
+            state.bars_released = true;
+            eprintln!(
+                "[ChartApp] Released idle preset '{}': dropped {} bars (parked {}s)",
+                id, dropped, state.parked_at.elapsed().as_secs(),
+            );
+        }
+    }
+
+    /// Same release walk as [`Self::release_idle_parked_presets`] but
+    /// unconditional — every not-yet-released parked preset gives its bars
+    /// back regardless of park age. For a future settings action ("free
+    /// memory now"); no UI wired to it yet.
+    pub fn release_all_parked_presets(&mut self) {
+        for (id, state) in self.live_preset_cache.iter_mut() {
+            if state.bars_released {
+                continue;
+            }
+            let dropped = state.bubble_store.clear_all_kline_layers();
+            state.needs_initial_viewport_fit = true;
+            state.bars_released = true;
+            eprintln!(
+                "[ChartApp] Released parked preset '{}': dropped {} bars (manual)",
+                id, dropped,
+            );
+        }
+    }
+}
+
 impl ChartApp {
     /// Called every frame with the current wall-clock time in milliseconds.
     ///
@@ -53,6 +119,12 @@ impl ChartApp {
         // each venue's token bucket. Same per-tick cadence as the connector
         // warm-up above — cheap no-op once the queue is empty.
         self.drain_watchlist_warmup();
+
+        // Idle-parked-preset release sweep (owner ruling 2026-09-03): give
+        // back the kline rings of any tab nobody has looked at for 30+
+        // minutes. Self-gated to once a minute internally — cheap to call
+        // every tick.
+        self.release_idle_parked_presets();
 
         // Load chat history for any restored chat leaves on the very first tick.
         // PTY sessions spawn-on-demand only (user must click [Start]).

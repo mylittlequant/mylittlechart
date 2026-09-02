@@ -261,6 +261,17 @@ impl ChartApp {
                     let matching_parked: Vec<(String, Vec<mlc_core::state::ChartId>)> =
                         self.live_preset_cache
                             .iter()
+                            // A preset whose bars were released for idleness
+                            // does not take them back on a live tick. It is
+                            // parked, off-screen and deliberately empty; the
+                            // cure path refills it in full when the user
+                            // actually returns to it. Without this the
+                            // release lasts until the next `BarsLoaded` for
+                            // any instrument it holds — seconds, on anything
+                            // still streaming — and the sweep would spend
+                            // forever re-emptying tabs that keep refilling
+                            // themselves behind the user's back.
+                            .filter(|(_, parked)| !parked.bars_released)
                             .map(|(preset_key, parked)| {
                                 let cids: Vec<mlc_core::state::ChartId> = parked
                                     .panel_grid

@@ -438,6 +438,8 @@ impl ChartApp {
             slot_dockings,
             panels_store,
             focused_free_leaf: self.sidebar_state.focused_free_leaf.take(),
+            parked_at: web_time::Instant::now(),
+            bars_released: false,
         };
         let t0 = web_time::Instant::now();
         self.live_preset_cache.insert(id.to_string(), state);

@@ -1049,6 +1049,31 @@ impl BubbleStore {
         }
     }
 
+    /// Drop every point from every kline ring on every bubble in this store,
+    /// returning the total point count actually dropped. Distinct from
+    /// [`super::data_bubble::DataBubble::reset_raw_layers`]'s "genuine
+    /// instrument reassignment" contract (module doc on
+    /// [`super::raw_layer`]): that restriction protects an ACTIVE bubble's
+    /// data from a chart-type/param/TF switch on the same instrument. This
+    /// method targets a whole `BubbleStore` extracted into a parked preset
+    /// tab's cache entry (`mlc-app::persistence::live_cache::LivePresetState`)
+    /// — already off-screen and already excluded from every live write path,
+    /// so "the same instrument, still being looked at" does not apply. Used
+    /// by the idle-tab release sweep (`ChartApp::release_idle_parked_presets`)
+    /// to give a long-parked tab's memory back; the refill on unpark is
+    /// unconditional (an empty ring already forces a full refetch), so there
+    /// is nothing here that needs preserving.
+    pub fn clear_all_kline_layers(&mut self) -> usize {
+        let mut dropped = 0usize;
+        for bubble in self.bubbles.values_mut() {
+            for layer in bubble.kline_layers.values_mut() {
+                dropped += layer.len();
+                layer.clear();
+            }
+        }
+        dropped
+    }
+
     /// Set the price-scale corner mode of a bubble known by id directly.
     pub fn set_scale_mode(&mut self, bid: BubbleId, mode: ScaleMode) {
         if let Some(b) = self.bubbles.get_mut(&bid) {

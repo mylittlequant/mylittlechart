@@ -47,4 +47,16 @@ pub struct LivePresetState {
     pub slot_dockings: [mlc_app_sidebar_content::SlotDockingManager; mlc_app_sidebar_content::free_slot::SLOT_COUNT],
     pub panels_store: crate::panels_store::TradingPanelsStore,
     pub focused_free_leaf: Option<(usize, uzor::panels::LeafId)>,
+    /// Wall-clock instant this preset was parked into the cache. The
+    /// idle-tab release sweep (`ChartApp::release_idle_parked_presets`)
+    /// measures elapsed time off this to answer "how long has nobody
+    /// looked at this tab" — never touched again while the entry sits
+    /// parked, so it stays exactly "park time" for the whole time this
+    /// preset is out of view.
+    pub parked_at: web_time::Instant,
+    /// Set once the release sweep has already emptied this entry's kline
+    /// rings. Lets the sweep skip an already-released preset on every
+    /// later pass instead of re-walking (and re-touching) its bubble
+    /// store every minute for as long as the tab stays parked.
+    pub bars_released: bool,
 }
