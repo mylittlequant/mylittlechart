@@ -1117,17 +1117,18 @@ impl App<'_> {
             attrs = attrs.with_undecorated_shadow(true);
         }
 
-        // Skeleton = loading screen shown while the welcome wizard / migration
-        // passphrase setup runs, with no live chart behind it yet.
-        // Owner's ruling 2026-08-31 (docs/mlc/audits/2026-08-30-entry-lock-
-        // vault-and-user-persistence.md §10): a locked vault is no longer a
-        // reason to withhold the chart, so `needs_vault_unlock` does not
-        // enter this. Owner's ruling 2026-09-02: neither does a MISSING
-        // vault — `needs_migration` is gone entirely (see `main()`), so
-        // first-run is the only case left with no saved profile geometry to
-        // restore, and it centers a 1200x800 window on the primary monitor.
-        let skeleton = self.is_first_run;
-        if skeleton {
+        // A first run has no saved profile geometry to restore, so its window
+        // is centred at 1200x800 on the primary monitor. That is a LAYOUT
+        // decision and the only thing first-run still changes about a window.
+        //
+        // It used to also make the window a skeleton — a spinner with no
+        // chart behind it, held until something promoted it. Nothing does
+        // that any more (owner's ruling 2026-09-02: the app starts
+        // immediately, a skeleton may only spin a spinner, never withhold the
+        // app). `main()` now creates the profile before the first window is
+        // built, so there is a real chart to draw from the first frame and
+        // the wizard is an ordinary modal over it.
+        if self.is_first_run {
             if let Some(monitor) = event_loop.primary_monitor().or_else(|| event_loop.available_monitors().next()) {
                 let screen = monitor.size();
                 let scale = monitor.scale_factor();
@@ -1289,7 +1290,8 @@ impl App<'_> {
             restore,
             &self.profile,
             &self.profile_manager,
-            skeleton,
+            // Never a skeleton at creation: see the first-run note above.
+            false,
         );
         // Attach this chart's backend to the AgentState so /api/v1/apps
         // routes resolve. Every ChartApp in this process shares one
@@ -1445,7 +1447,10 @@ impl App<'_> {
             delete_window_requested: false,
             last_sidebar_hover_row: None,
             created_at: web_time::Instant::now(),
-            skeleton,
+            // Never a skeleton at creation: see the first-run note above.
+            // The flag survives for the promote path, which rebuilds windows
+            // after a vault unlock.
+            skeleton: false,
             render_backend: mlc_app_sidebar_content::state::RenderBackend::VelloGpu,
             instanced_renderer: None,
             instanced_commands: Vec::new(),
@@ -2346,15 +2351,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             return;
         }
 
-        // Neither a locked vault (owner 2026-08-31) nor a missing one
-        // (owner 2026-09-02) forces skeleton mode — only a true first run,
-        // where there is no profile on disk to draw a chart from yet.
-        let skeleton = self.is_first_run;
-        if skeleton {
-            // Skeleton = one default-sized window centered by OS, no profile geometry.
-            eprintln!("[App] Skeleton mode — creating single loading window");
-            self.create_window(event_loop, None, None);
-        } else if self.saved_windows.is_empty() {
+        // No skeleton branch here any more. A first run reaches this with a
+        // profile already on disk (see `main()`) and no saved windows, so it
+        // falls into the same "create a default window" path every other
+        // profile-with-no-saved-geometry takes — and gets a live chart.
+        if self.saved_windows.is_empty() {
             eprintln!("[App] No saved windows — creating default");
             self.create_window(event_loop, None, None);
         } else {
@@ -3368,54 +3369,61 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // recovery-key flow.
                 if cmd_str == "wizard_complete" {
                     cmd_handled = true;
-                    // Always create a real profile directory on wizard completion.
-                    // On first-run the profile_manager is backed by a `_pending`
-                    // placeholder (no directory on disk), so we must materialise
-                    // a real profile before vault-derive tries to write files.
-                    // On non-first-run (adding a second profile) we do the same.
-                    // `Some("")`, not `None` — an explicitly nameless profile.
-                    // `None` would fall through to `auto_generate_name()` and
-                    // silently hand this anonymous profile a "New Profile"
-                    // label nobody asked for; that label is reserved for the
-                    // paid tier's explicit "add another profile" action.
-                    match self.profile_manager.create_profile(Some(""), "chart") {
-                        Ok(meta) => {
-                            eprintln!(
-                                "[App] wizard_complete: created profile directory ({})",
-                                meta.id
-                            );
-                            // Switch active profile to the new one before reload.
-                            if let Some(mut index) = mlc_core::load_profile_index() {
-                                index.active_profile_id = meta.id.clone();
-                                let _ = mlc_core::save_profile_index(&index);
-                            }
-                            // Reload ProfileManager so active_profile_data_dir()
-                            // resolves to the real directory.
-                            self.profile_manager = mlc_app::user_manager::ProfileManager::load(None);
-                            self.profile = self.profile_manager.profile.clone();
-                            if !self.is_first_run {
-                                // Adding a second profile — clear stale presets/templates
-                                // on the shared core (Phase A/B: one instance for the
-                                // whole process, not a per-window AppState mirror).
+                    if self.is_first_run {
+                        // A first run has ALREADY had its profile created, by
+                        // the bootstrap in `main()`. Creating another one here
+                        // would hand the user two profiles for one wizard, and
+                        // there is no skeleton left to promote — the chart has
+                        // been live behind this modal from the first frame.
+                        // Finishing the wizard is now just: keep the theme and
+                        // language it collected, and stop being a first run.
+                        self.save_all(&[]);
+                        self.is_first_run = false;
+                        self.needs_vault_unlock = false;
+                        eprintln!("[App] wizard_complete — first run finished over a live chart");
+                    } else {
+                        // Running the wizard again to ADD a profile. This is
+                        // the only path that still creates one here.
+                        //
+                        // `Some("")`, not `None` — an explicitly nameless
+                        // profile. `None` would fall through to
+                        // `auto_generate_name()` and silently hand it a "New
+                        // Profile" label nobody asked for; that label belongs
+                        // to the paid tier's explicit "add another profile".
+                        match self.profile_manager.create_profile(Some(""), "chart") {
+                            Ok(meta) => {
+                                eprintln!(
+                                    "[App] wizard_complete: created profile directory ({})",
+                                    meta.id
+                                );
+                                // Switch active profile to the new one before reload.
+                                if let Some(mut index) = mlc_core::load_profile_index() {
+                                    index.active_profile_id = meta.id.clone();
+                                    let _ = mlc_core::save_profile_index(&index);
+                                }
+                                // Reload ProfileManager so active_profile_data_dir()
+                                // resolves to the real directory.
+                                self.profile_manager = mlc_app::user_manager::ProfileManager::load(None);
+                                self.profile = self.profile_manager.profile.clone();
+                                // Clear stale presets/templates on the shared core
+                                // (Phase A/B: one instance for the whole process,
+                                // not a per-window AppState mirror).
                                 self.core.presets_mut().replace_all(std::collections::HashMap::new());
                                 self.core.templates_mut().replace_all(self.profile_manager.template_manager.clone());
                             }
+                            Err(e) => {
+                                eprintln!("[App] wizard_complete: failed to create profile: {}", e);
+                            }
                         }
-                        Err(e) => {
-                            eprintln!("[App] wizard_complete: failed to create profile: {}", e);
-                            // Fall through — attempt vault on whatever dir we have.
-                        }
-                    }
 
-                    // No vault key to derive — the profile stays plaintext
-                    // until the user opens the vault themselves later
-                    // (profile manager). Save and promote the skeleton
-                    // straight to live.
-                    self.save_all(&[]);
-                    self.is_first_run = false;
-                    self.needs_vault_unlock = false;
-                    eprintln!("[App] wizard_complete — promoting skeleton to live");
-                    self.pending_skeleton_promote = true;
+                        // No vault key to derive — the profile stays plaintext
+                        // until the user opens the vault themselves later.
+                        // Rebuild the windows onto the new profile.
+                        self.save_all(&[]);
+                        self.needs_vault_unlock = false;
+                        eprintln!("[App] wizard_complete — rebuilding windows for the added profile");
+                        self.pending_skeleton_promote = true;
+                    }
                 }
 
                 // ── Local vault key derivation (e2e_setup) ──
@@ -5226,6 +5234,42 @@ fn main() {
 
     if is_first_run {
         eprintln!("[App] first-run detected — welcome wizard will be shown");
+    }
+
+    // First-run bootstrap, matching the web shell's `bootstrap_first_run`
+    // (`mlc-app-shell-web/src/persistence.rs`): create the profile NOW rather
+    // than waiting for the welcome wizard to finish.
+    //
+    // Until 2026-09-02 native did the opposite — it booted a SKELETON window
+    // (a spinner, no chart) and only created the profile when the wizard was
+    // completed. Two things came out of that. The app did not start until the
+    // user finished a first-run tour, which is the gate the owner ruled out.
+    // And dismissing the wizard — its × button, the dimmer, Esc, all of which
+    // it advertises as "always allowed, the wizard is a first-run courtesy,
+    // not a gate" — hid the modal without ever completing it, so the skeleton
+    // was never promoted and the spinner stayed up until the process was
+    // killed. Promotion has exactly three triggers (wizard completion, vault
+    // passphrase validation, recovery-key confirmation) and dismissal is none
+    // of them.
+    //
+    // With the profile on disk before the first window is built, the wizard
+    // becomes what its own module doc already claims it is on both shells: an
+    // ordinary dismissible modal floating over a live chart. The profile is
+    // nameless — see the identity ruling in `create_profile`'s callers.
+    if is_first_run {
+        match mlc_core::create_profile("", "chart") {
+            Ok(meta) => {
+                if let Some(mut index) = mlc_core::load_profile_index() {
+                    index.active_profile_id = meta.id.clone();
+                    let _ = mlc_core::save_profile_index(&index);
+                }
+                eprintln!("[App] first-run bootstrap: created profile {}", meta.id);
+            }
+            Err(e) => {
+                // Not fatal: the wizard's completion path still creates one.
+                eprintln!("[App] first-run bootstrap failed: {} — wizard will create the profile", e);
+            }
+        }
     }
 
     // Load ProfileManager (profile + templates + presets + snapshots) once at startup.

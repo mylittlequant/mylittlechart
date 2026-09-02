@@ -151,7 +151,11 @@ pub fn render_welcome_wizard(
         // A first-run courtesy, not a gate — always dismissible, unlike
         // `profile_manager`'s mandatory-migration exception.
         show_close: true,
-        draggable: false,
+        // Draggable by its header like every other modal (owner 2026-09-02:
+        // it would not move on native). Nothing behind it needs protecting —
+        // the chart is live and the wizard is a courtesy, so letting the user
+        // push it aside to look at what they are theming is the point.
+        draggable: true,
         placement: ModalPlacement::Center,
         layer: ZLayer::ModalOverlay,
         ..ModalShellSpec::new("welcome_wizard", &title, MODAL_W, content_h)
