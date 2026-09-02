@@ -272,7 +272,7 @@ impl ChartApp {
     /// Commit a DATA & CACHE slider value to the user profile.
     ///
     /// `field_id` matches the IDs used in the Performance tab renderer:
-    /// `"data_bg_bars"`, `"data_max_bars"`, `"data_store_size_mb"`, `"data_cleanup_days"`.
+    /// `"data_bg_bars"`, `"data_max_bars"`.
     pub(crate) fn apply_data_cache_slider_value(&mut self, field_id: &str, value: f64) {
         let mut user_mut = self.core.user_mut();
         let dl = &mut user_mut.profile_mut().domain.data_load;
@@ -288,18 +288,6 @@ impl ChartApp {
                 let v = dl.max_loaded_bars;
                 self.panel_app.user_settings_state.data_max_bars = v;
                 eprintln!("[ChartApp] data_load.max_loaded_bars = {}", v);
-            }
-            "data_store_size_mb" => {
-                dl.max_store_size_mb = (value.round() as u32).clamp(50, 5000);
-                let v = dl.max_store_size_mb;
-                self.panel_app.user_settings_state.data_store_size_mb = v;
-                eprintln!("[ChartApp] data_load.max_store_size_mb = {}", v);
-            }
-            "data_cleanup_days" => {
-                dl.store_cleanup_days = (value.round() as u32).clamp(1, 365);
-                let v = dl.store_cleanup_days;
-                self.panel_app.user_settings_state.data_cleanup_days = v;
-                eprintln!("[ChartApp] data_load.store_cleanup_days = {}", v);
             }
             _ => eprintln!("[ChartApp] apply_data_cache_slider_value: unknown field: {}", field_id),
         }

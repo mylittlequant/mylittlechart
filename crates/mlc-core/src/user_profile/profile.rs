@@ -166,14 +166,6 @@ pub struct DataLoadSettings {
     #[serde(default = "default_max_loaded_bars")]
     pub max_loaded_bars: u32,
 
-    /// Max total bar-store size on disk (MB). Default 500.
-    #[serde(default = "default_max_store_size_mb")]
-    pub max_store_size_mb: u32,
-
-    /// Delete bar files not accessed in N days. Default 30.
-    #[serde(default = "default_store_cleanup_days")]
-    pub store_cleanup_days: u32,
-
     /// Ring capacity (points) for one bubble's raw kline layer, per
     /// touched timeframe (unified-data-plane Stage Э1). Default 200_000.
     #[serde(default = "default_kline_layer_capacity")]
@@ -231,8 +223,6 @@ impl Default for DataLoadSettings {
         Self {
             background_bar_count: default_background_bar_count(),
             max_loaded_bars: default_max_loaded_bars(),
-            max_store_size_mb: default_max_store_size_mb(),
-            store_cleanup_days: default_store_cleanup_days(),
             kline_layer_capacity: default_kline_layer_capacity(),
             trade_raw_window_days: default_trade_raw_window_days(),
             derived_kline_target: default_derived_kline_target(),
@@ -1325,14 +1315,6 @@ fn default_max_loaded_bars() -> u32 {
     10_000
 }
 
-fn default_max_store_size_mb() -> u32 {
-    500
-}
-
-fn default_store_cleanup_days() -> u32 {
-    30
-}
-
 fn default_kline_layer_capacity() -> u32 {
     200_000
 }
@@ -1420,9 +1402,7 @@ mod json_compat_tests {
         "profile_created_at": 1700000000,
         "data_load": {
             "background_bar_count": 2000,
-            "max_loaded_bars": 10000,
-            "max_store_size_mb": 500,
-            "store_cleanup_days": 30
+            "max_loaded_bars": 10000
         }
     }"#;
 

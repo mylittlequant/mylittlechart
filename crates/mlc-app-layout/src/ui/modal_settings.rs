@@ -3736,10 +3736,6 @@ pub struct UserSettingsState {
     pub data_bg_bars: u32,
     /// Cached value synced from `UserProfile.data_load.max_loaded_bars`.
     pub data_max_bars: u32,
-    /// Cached value synced from `UserProfile.data_load.max_store_size_mb`.
-    pub data_store_size_mb: u32,
-    /// Cached value synced from `UserProfile.data_load.store_cleanup_days`.
-    pub data_cleanup_days: u32,
     /// Active slider drag for the DATA & CACHE sliders.
     pub data_slider_drag: Option<SliderDragState>,
 
@@ -3841,8 +3837,6 @@ impl Default for UserSettingsState {
             recovery_key_copied_at: 0,
             data_bg_bars: 2000,
             data_max_bars: 10000,
-            data_store_size_mb: 500,
-            data_cleanup_days: 30,
             data_slider_drag: None,
             wizard_selected_theme: String::new(),
             wizard_selected_backend: String::new(),

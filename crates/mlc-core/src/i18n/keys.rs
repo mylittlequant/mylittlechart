@@ -1013,45 +1013,41 @@ pub enum UserSettingsKey {
     EnableDiagnosticLogging  = 12,
     SliderBgBars             = 13,
     SliderMaxBars            = 14,
-    SliderCacheSizeMb        = 15,
-    SliderAutoCleanupDays    = 16,
 
     // Server tab — section header + labels
-    SectionServer            = 17,
-    EnableAgentApiServer     = 18,
-    ServerStopped            = 19,
-    ServerOpenAccess         = 20,
+    SectionServer            = 15,
+    EnableAgentApiServer     = 16,
+    ServerStopped            = 17,
+    ServerOpenAccess         = 18,
 
     // Performance tab — slider description captions
-    DescBgBars               = 21,
-    DescMaxBars              = 22,
-    DescCacheSize            = 23,
-    DescAutoCleanup          = 24,
+    DescBgBars               = 19,
+    DescMaxBars              = 20,
 
     // General tab — workspace toggle (workspace-panel arc, Stage 4)
-    TradingPanelTopbarTakeover = 25,
+    TradingPanelTopbarTakeover = 21,
 
     // General tab — "Control points" group (handle shape/size, 2026-08-08)
-    SectionControlPoints           = 26,
-    ControlPointShapeLabel         = 27,
-    ControlPointSizeLabel          = 28,
-    ControlPointShapeCircle        = 29,
-    ControlPointShapeRoundedSquare = 30,
-    ControlPointShapeSquare        = 31,
-    ControlPointSizeSmall          = 32,
-    ControlPointSizeMedium         = 33,
-    ControlPointSizeLarge          = 34,
+    SectionControlPoints           = 22,
+    ControlPointShapeLabel         = 23,
+    ControlPointSizeLabel          = 24,
+    ControlPointShapeCircle        = 25,
+    ControlPointShapeRoundedSquare = 26,
+    ControlPointShapeSquare        = 27,
+    ControlPointSizeSmall          = 28,
+    ControlPointSizeMedium         = 29,
+    ControlPointSizeLarge          = 30,
 
     // Tab strip (2026-08-29 Persistence tab). Discriminants frozen to
     // USER_SETTINGS_KEY_TABLE rows.
-    TabGeneral                     = 35,
-    TabPersistence                 = 36,
-    TabPerformance                 = 37,
-    TabServer                      = 38,
-    PersistToolbarLastTools        = 39,
-    PersistToolbarLastToolsHint    = 40,
-    PersistToolbarToggles          = 41,
-    PersistToolbarTogglesHint      = 42,
+    TabGeneral                     = 31,
+    TabPersistence                 = 32,
+    TabPerformance                 = 33,
+    TabServer                      = 34,
+    PersistToolbarLastTools        = 35,
+    PersistToolbarLastToolsHint    = 36,
+    PersistToolbarToggles          = 37,
+    PersistToolbarTogglesHint      = 38,
 
     // General tab — PROFILE row's Rename button, worded for the tier that
     // has an editable identity but no profile list (`account_signed_in &&
@@ -1060,11 +1056,11 @@ pub enum UserSettingsKey {
     // "Rename" reads as "rename one of several profiles", which does not
     // exist at this tier, so the row's own button gets its own word instead
     // of the multi-profile one (2026-09-02).
-    BtnNickname                    = 43,
+    BtnNickname                    = 39,
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 44;
+    pub const COUNT: usize = 40;
 
     /// Get translation for this key.
     #[inline]

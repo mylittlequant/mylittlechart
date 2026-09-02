@@ -178,8 +178,6 @@ impl ChartApp {
                 let dl = &profile.domain.data_load;
                 self.panel_app.user_settings_state.data_bg_bars      = dl.background_bar_count;
                 self.panel_app.user_settings_state.data_max_bars     = dl.max_loaded_bars;
-                self.panel_app.user_settings_state.data_store_size_mb = dl.max_store_size_mb;
-                self.panel_app.user_settings_state.data_cleanup_days  = dl.store_cleanup_days;
             }
         }
 
