@@ -911,12 +911,16 @@ impl App<'_> {
             // updates does not install the app. Deliberately NOT wired to the
             // profile's `cloud_enabled`, which governs cloud sync.
             true,
-            // Cloud sync stays OFF: its routes verify build attestation (the
-            // server runs BUILD_ATTEST_ENFORCE=true) and this shell's build.rs
-            // produces none, so every sync request would 403 forever. OTA and
-            // telemetry are not attested and already work; sync is the one
-            // capability that waits on build.rs signing.
-            false,
+            // Cloud sync is no longer a flag this shell gets to set. It
+            // follows the account: no OAuth, no cloud; OAuth, cloud; paid
+            // account, more room on the server (owner's ruling 2026-09-02).
+            // `mlc_updater` seeds it from the token store and flips it on
+            // sign-in and sign-out.
+            //
+            // What used to be here was a hardcoded `false` justified by the
+            // server enforcing build attestation. Measured 2026-09-02:
+            // `BUILD_ATTEST_ENFORCE` defaults to false and is not set on the
+            // box, and an unattested request answers 200.
             profile.domain.sync_state.synced_items.clone(),
             profile.domain.sync_state.last_synced_checksums.clone(),
             mlc_core::active_profile_data_dir(),

@@ -132,8 +132,9 @@ pub trait TelemetrySource: Send + Sync + 'static {
 /// the loop still runs so it can handle commands, but no network traffic
 /// is generated until a `SetCloudEnabled(true)` command arrives.
 ///
-/// `sync_enabled` seeds the initial cloud-sync enabled state from the user
-/// profile.  Can be toggled at runtime via [`UpdaterCommand::SetSyncEnabled`].
+/// Cloud sync is not a parameter: it follows the account, seeded from the
+/// token store and flipped by sign-in and sign-out (owner's ruling
+/// 2026-09-02 — no OAuth, no cloud; OAuth, cloud; paid, more room).
 ///
 /// `build_attest` carries the compile-time attestation values produced by
 /// `chart-app-vello/build.rs`.  Pass [`BuildAttestation::default`] for dev
@@ -152,7 +153,6 @@ pub fn start(
     runtime: &tokio::runtime::Handle,
     telemetry_source: Arc<dyn TelemetrySource>,
     connected: bool,
-    sync_enabled: bool,
     initial_synced_items: std::collections::HashSet<String>,
     initial_last_synced_checksums: std::collections::HashMap<String, String>,
     data_dir: std::path::PathBuf,
@@ -197,7 +197,7 @@ pub fn start(
         sync_checksums_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, sync_enabled, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
+    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
 
     handle
 }
@@ -218,7 +218,6 @@ async fn updater_loop(
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
     telemetry_source: Arc<dyn TelemetrySource>,
     mut connected: bool,
-    sync_enabled_init: bool,
     initial_synced_items: std::collections::HashSet<String>,
     initial_last_synced_checksums: std::collections::HashMap<String, String>,
     mut data_dir: std::path::PathBuf,
@@ -254,6 +253,18 @@ async fn updater_loop(
     // detection works correctly after a restart.  Without seeding, the empty map
     // would cause every locally-modified item to look like a conflict on the
     // first sync after startup.
+    // Cloud sync follows the ACCOUNT and nothing else (owner's ruling
+    // 2026-09-02): signed in means synced, signed out means not, a paid
+    // account means more room on the server. There is no user-facing switch
+    // and there should not be — the one that existed was for testing, and a
+    // caller-supplied boolean is how it survived: the native shell passed a
+    // hardcoded `false` with a comment about build attestation that had
+    // stopped being true.
+    //
+    // Seeded here from whatever token is already on disk, which is the same
+    // source `initial_auth` above reads, so the two cannot start out
+    // disagreeing.
+    let sync_enabled_init = token_store::load_token().is_some();
     let mut sync_state = cloud_sync::SyncState {
         enabled: sync_enabled_init,
         synced_items: initial_synced_items,
@@ -379,6 +390,8 @@ async fn updater_loop(
                             Ok(token) => {
                                 let _ = token_store::save_token(&token);
                                 log::info!("OAuth successful: {} ({})", token.display_name, token.provider);
+                                // Signing in IS enabling cloud sync.
+                                sync_state.enabled = true;
                                 let _ = auth_tx.send(state::AuthStatus::LoggedIn {
                                     display_name: token.display_name,
                                     provider: token.provider,
@@ -392,6 +405,9 @@ async fn updater_loop(
                     }
                     state::UpdaterCommand::Logout => {
                         token_store::clear_token();
+                        // ...and signing out IS disabling it. No account, no
+                        // cloud; the two are one fact, not two settings.
+                        sync_state.enabled = false;
                         let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
                         log::info!("Logged out");
                     }
