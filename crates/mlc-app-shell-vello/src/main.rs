@@ -5114,7 +5114,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 .toolbar_state
                 .hovered_bottom_toolbar_id
                 .as_deref()
-                == Some("clock");
+                == Some("clock")
+                // With the effect off there is nothing to animate — the
+                // toolbar draws the plain `fill_text` path either way, so
+                // holding the window awake here would just burn frames for
+                // no visible change (clock popup's third checkbox, owner ask
+                // 2026-09-02).
+                && pw.chart.core.user().profile().ui.clock_glitch_enabled;
             if clock_hovered {
                 // The glitch is painted by the toolbar pass, so the chart
                 // alone being clean is not enough to skip it.

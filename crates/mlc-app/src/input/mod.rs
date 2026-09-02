@@ -6224,6 +6224,24 @@ impl ChartApp {
             self.hide_crosshair();
         }
 
+        // Toolbar hover is a property of where the pointer IS, so a pointer
+        // that is nowhere hovers nothing. This used to survive the cursor
+        // leaving the window entirely: the ids kept their last value, so a
+        // toolbar item stayed lit, and once the clock's hover animation
+        // started keying off `hovered_bottom_toolbar_id` it also kept
+        // animating — and kept the window repainting — with the mouse
+        // somewhere else on the desktop (owner, 2026-09-02: "оно не
+        // реагирует на увод мышки за пределы окна, просто сидит на ховере и
+        // изменяется"). Clearing all six is the same rule, not just the one
+        // that made it visible.
+        let tb = &mut self.panel_app.toolbar_state;
+        tb.hovered_top_toolbar_id = None;
+        tb.hovered_bottom_toolbar_id = None;
+        tb.hovered_left_toolbar_id = None;
+        tb.hovered_right_toolbar_id = None;
+        tb.hovered_inline_id = None;
+        tb.hovered_favorites_id = None;
+
         // Trading center chart: cursor left the app window — hide its
         // crosshair too (leaf-keyed hide_crosshair above never reaches the
         // leafless aux chart).

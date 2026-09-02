@@ -861,6 +861,14 @@ pub struct ChartApp {
     /// Signal: text to copy to clipboard. Consumed by main.rs.
     pub clipboard_text: Option<String>,
 
+    /// Rendered-frame counter, bumped once per `render_to_scene`.
+    ///
+    /// Drives the toolbar clock's hover animation, which advances one step
+    /// per frame so it runs at the app's own FPS cadence rather than on a
+    /// wall-clock quantum of its own (owner's ruling 2026-09-02). Wraps;
+    /// every consumer only cares that consecutive frames differ.
+    pub anim_frame: u64,
+
     /// Signal: user clicked "Create" in the key manager. Consumed by main.rs
     /// which generates the key, calls `agent_state.add_key()`, and writes the
     /// raw key back into `user_settings_state.last_created_key`.
@@ -3259,6 +3267,7 @@ impl ChartApp {
             server_enabled_changed: None,
             local_agent_key_changed: None,
             clipboard_text: None,
+            anim_frame: 0,
             key_create_request: None,
             key_delete_request: None,
             key_list_refresh: false,
@@ -3699,6 +3708,7 @@ impl ChartApp {
             server_enabled_changed: None,
             local_agent_key_changed: None,
             clipboard_text: None,
+            anim_frame: 0,
             key_create_request: None,
             key_delete_request: None,
             key_list_refresh: false,
@@ -4287,6 +4297,7 @@ impl ChartApp {
             server_enabled_changed: None,
             local_agent_key_changed: None,
             clipboard_text: None,
+            anim_frame: 0,
             key_create_request: None,
             key_delete_request: None,
             key_list_refresh: false,
@@ -6146,6 +6157,9 @@ impl ChartApp {
     /// cached `self.last_toolbar_result` so input routing remains correct.
     pub fn render_to_scene(&mut self, ctx: &mut dyn RenderContext, current_time_ms: u64, skip_toolbar_draw: bool) -> RenderOutput {
         let _rt0 = web_time::Instant::now();
+        // One step per rendered frame — this is the cadence the clock's
+        // hover animation runs at.
+        self.anim_frame = self.anim_frame.wrapping_add(1);
         let w = self.width as f64;
         let h = self.height as f64;
 
@@ -7665,6 +7679,7 @@ impl ChartApp {
                 _ => None,
             };
             let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
+            let clock_glitch_enabled = self.core.user().profile().ui.clock_glitch_enabled;
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -7697,6 +7712,8 @@ impl ChartApp {
                 suppress_chart_controls,
                 Some(self.last_mouse_pos),
                 current_time_ms as f64 / 1000.0,
+                self.anim_frame,
+                clock_glitch_enabled,
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -8904,6 +8921,7 @@ impl ChartApp {
             _ => None,
         };
         let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
+        let clock_glitch_enabled = self.core.user().profile().ui.clock_glitch_enabled;
         // `render_toolbar_only` has no threaded `current_time_ms` (see
         // `granularity_edit_render`'s own doc comment above for why that
         // param was never added here) — a coarse wall-clock read, same
@@ -8946,6 +8964,14 @@ impl ChartApp {
             suppress_chart_controls,
             Some(self.last_mouse_pos),
             toolbar_anim_time_s,
+            // `render_toolbar_only` is the dirty-cache repaint path and has
+            // no threaded frame number; bump the same counter here so the
+            // animation keeps advancing when only the toolbar is redrawn.
+            {
+                self.anim_frame = self.anim_frame.wrapping_add(1);
+                self.anim_frame
+            },
+            clock_glitch_enabled,
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);
@@ -10003,6 +10029,7 @@ impl ChartApp {
                 ))
                 .unwrap_or((0, false, true));
             let hovered = self.panel_app.clock_popup_state.hovered_item.as_deref();
+            let clock_glitch = self.core.user().profile().ui.clock_glitch_enabled;
             render_clock_popup(
                 ctx,
                 w,
@@ -10011,6 +10038,7 @@ impl ChartApp {
                 active_offset,
                 use_24h,
                 show_utc,
+                clock_glitch,
                 hovered,
                 &frame_theme,
                 &toolbar_theme,

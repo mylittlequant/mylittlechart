@@ -427,6 +427,12 @@ pub fn chart_toolbar_render_toolbars(
     // host a `Clock` item (e.g. embedded header toolbars).
     mouse_pos: Option<(f64, f64)>,
     anim_time_s: f64,
+    anim_frame: u64,
+    // Clock hover-glitch user toggle (`ProfileUiSettings::
+    // clock_glitch_enabled`, clock popup's third checkbox, owner ask
+    // 2026-09-02): `true` (default) keeps the ascii cell-shader hover demo
+    // above; `false` always falls back to the plain `fill_text` draw path.
+    clock_glitch_enabled: bool,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -498,6 +504,8 @@ pub fn chart_toolbar_render_toolbars(
                 scroll_offset: tb.left_scroll_offset,
                 cursor: None,
                 anim_time_s: 0.0,
+                anim_frame: 0,
+                clock_glitch_enabled: false,
             };
 
             let drawing_rect = WidgetRect::new(
@@ -805,6 +813,8 @@ pub fn chart_toolbar_render_toolbars(
                 // nothing here reads `cursor`/`anim_time_s` today.
                 cursor: None,
                 anim_time_s: 0.0,
+                anim_frame: 0,
+                clock_glitch_enabled: false,
             };
 
             let control_rect = WidgetRect::new(
@@ -872,6 +882,8 @@ pub fn chart_toolbar_render_toolbars(
                 scroll_offset: tb.right_scroll_offset,
                 cursor: None,
                 anim_time_s: 0.0,
+                anim_frame: 0,
+                clock_glitch_enabled: false,
             };
 
             let right_rect = WidgetRect::new(
@@ -940,6 +952,8 @@ pub fn chart_toolbar_render_toolbars(
                 // 2026-09-02).
                 cursor: mouse_pos,
                 anim_time_s,
+                anim_frame,
+                clock_glitch_enabled,
             };
 
             let bottom_rect = WidgetRect::new(
@@ -1089,6 +1103,8 @@ pub fn chart_toolbar_render_toolbars(
                 scroll_offset: 0.0, // Inline bar never overflows (sized to fit)
                 cursor: None,
                 anim_time_s: 0.0,
+                anim_frame: 0,
+                clock_glitch_enabled: false,
             };
 
             // Pre-compute exact bar width from section items (single-pass, no measurement draw).
@@ -1182,6 +1198,8 @@ pub fn chart_toolbar_render_toolbars(
                 scroll_offset: 0.0, // Favorites bar never overflows (sized to fit)
                 cursor: None,
                 anim_time_s: 0.0,
+                anim_frame: 0,
+                clock_glitch_enabled: false,
             };
 
             // Pre-compute exact bar width from section items (single-pass, no measurement draw).

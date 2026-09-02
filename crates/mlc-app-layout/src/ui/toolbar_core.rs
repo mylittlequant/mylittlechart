@@ -735,6 +735,16 @@ pub struct ToolbarConfig {
     /// carries — never sourced from `SystemTime::now()` inside a painter.
     /// Only meaningful together with `cursor`; `0.0` when unused.
     pub anim_time_s: f64,
+    /// Rendered-frame counter. The clock's glitch advances one step per
+    /// frame, so it runs at the app's FPS cadence rather than on a clock of
+    /// its own (owner's ruling 2026-09-02).
+    pub anim_frame: u64,
+    /// User toggle (clock popup's third checkbox, profile-persisted) for the
+    /// hover glitch shader effect on `ToolbarItem::Clock`. `true` (default)
+    /// keeps today's hovered-and-known-pointer behaviour; `false` always
+    /// falls back to the plain `fill_text` draw path, same as an unknown
+    /// pointer.
+    pub clock_glitch_enabled: bool,
 }
 
 impl Default for ToolbarConfig {
@@ -751,6 +761,8 @@ impl Default for ToolbarConfig {
             scroll_offset: 0.0,
             cursor: None,
             anim_time_s: 0.0,
+            anim_frame: 0,
+            clock_glitch_enabled: true,
         }
     }
 }
@@ -1406,8 +1418,8 @@ pub fn draw_toolbar_with_icons(
                 // demo of the shared engine on this one element, not a
                 // hand-rolled lookalike). Every other case is exactly today's
                 // single `fill_text` call, unchanged.
-                match (is_hovered, config.cursor) {
-                    (true, Some(pointer)) => {
+                match (is_hovered, config.cursor, config.clock_glitch_enabled) {
+                    (true, Some(pointer), true) => {
                         super::clock_glitch::draw_clock_glitch(
                             ctx,
                             time,
@@ -1415,6 +1427,7 @@ pub fn draw_toolbar_with_icons(
                             &theme.item_text,
                             pointer,
                             config.anim_time_s,
+                            config.anim_frame,
                         );
                     }
                     _ => {

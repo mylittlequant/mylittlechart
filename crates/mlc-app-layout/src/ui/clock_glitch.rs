@@ -70,27 +70,30 @@ const SHADER_KIND: ClockShaderKind = ClockShaderKind::Engine;
 
 /// Brush radius in grid cells for [`ClockShaderKind::Engine`].
 ///
-/// Was 2.2 — about fifteen pixels at this font size, which the owner read as
-/// the mouse barely doing anything ("слишком маленькая область реакции на
-/// мышку"). A clock is ~18 cells wide, so this reaches most of the string
-/// from the middle and still falls off toward the ends.
-const BRUSH_RADIUS: f64 = 9.0;
+/// Roughly a mouse cursor's own footprint, which is what the effect is
+/// supposed to be tracking. 2.2 was too tight to notice and 9.0 was so wide
+/// it covered the whole string at once — at which point nothing reads as
+/// following the pointer, it just looks like the entire clock repainting
+/// (owner, 2026-09-02: "оно не понимает примерные размеры мышки, потому там
+/// сразу всё начинает перерисовываться"). Three cells is about twenty
+/// pixels at this font size: a local smudge that moves with the cursor.
+const BRUSH_RADIUS: f64 = 3.0;
 
 /// gate4agent uses 2.25 CELLS in a terminal grid, where a cell is a whole
 /// character box — kept verbatim for the comparison arm so the difference
 /// being looked at is the rules, not a re-tuned radius.
 const SHIMMER_BRUSH_RADIUS: f64 = 2.25;
 
-/// How long one glitch frame holds, in milliseconds.
+/// The animation advances one step per RENDERED FRAME, so it runs at the
+/// app's own FPS cadence.
 ///
-/// The swap used to be re-rolled on every rendered frame, which at 60Hz made
-/// the glyphs boil rather than glitch and forced a full repaint every single
-/// frame for as long as the pointer rested on the clock — the owner saw it
-/// as "работает медленно" (2026-09-02). Quantising to a tick is what the
-/// reference effect does too, and it buys both things at once: the animation
-/// reads as discrete glitch steps, and every frame inside one tick paints
-/// identical output.
-const TICK_MS: f64 = 72.0;
+/// It used to quantise wall-clock milliseconds into 72ms steps, borrowed
+/// from the terminal reference. Wrong frame of reference here: a windowed
+/// app already has a cadence, and pinning the effect to a second clock made
+/// it advance at a rate unrelated to what the renderer was doing — the owner
+/// put it exactly ("тик должен быть привязан к каденсу фпс"). One step per
+/// frame also means the FPS limit is what throttles it, rather than two
+/// independent rates beating against each other.
 
 /// Per-cell program: shows the clock's real character at rest. Inside the
 /// pointer's brush radius it rolls a glitch swap whose probability rises
@@ -226,6 +229,7 @@ pub(super) fn draw_clock_glitch(
     color_hex: &str,
     pointer: (f64, f64),
     anim_time_s: f64,
+    anim_frame: u64,
 ) {
     let chars: Vec<char> = time.chars().collect();
     let cols = chars.len();
@@ -247,10 +251,10 @@ pub(super) fn draw_clock_glitch(
     let color = ThemeManager::parse_hex_color(color_hex)
         .map(|(r, g, b)| [r, g, b])
         .unwrap_or_else(|| Cell::default().color);
-    // Quantised so the roll below is stable for 72ms at a time; `ctx.time`
-    // inside the shader still gets the un-quantised value for its pulse,
-    // which only shifts probability rather than picking glyphs.
-    let tick = (anim_time_s * 1000.0 / TICK_MS).floor().max(0.0) as u64;
+    // One step per rendered frame — see the note on `anim_frame`. `ctx.time`
+    // inside the shader still gets real elapsed seconds for its pulse, which
+    // only shifts probability rather than picking glyphs.
+    let tick = anim_frame;
     let mut grid = AsciiGrid::new(cols, 1);
     let gx = (pointer.0 - ox) / cell_w;
     let gy = (pointer.1 - oy) / cell_h;
