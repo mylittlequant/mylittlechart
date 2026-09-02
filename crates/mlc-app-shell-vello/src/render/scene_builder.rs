@@ -819,8 +819,13 @@ fn render_spinner(
     const STROKE_WIDTH: f64 = 3.0;
     const SWEEP: f64 = std::f64::consts::PI * 3.0 / 2.0; // 270 degrees — 3/4 ring
 
+    // Centred on what the user can SEE, which is the window minus the chrome
+    // strip along its top. Halving the raw window height put the ring 16px
+    // high — the strip is counted as space the spinner may occupy, and it is
+    // not. Owner's rule, 2026-09-03: a whole-app spinner sits on the centre of
+    // the window "прям идеально", and the strip is chrome, not window.
     let cx = window_width / 2.0;
-    let cy = window_height / 2.0;
+    let cy = chrome::CHROME_HEIGHT + (window_height - chrome::CHROME_HEIGHT) / 2.0;
 
     let t = (elapsed_ms % 1200) as f64 / 1200.0;
     let start_angle = t * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;

@@ -379,11 +379,24 @@ pub struct IndicatorSnapshot {
     pub timeframe_visibility: Option<TimeframeVisibilityConfig>,
     /// Cached computed output series (output key → values vector).
     ///
-    /// Persisted in local preset snapshots so that tab switching shows
-    /// indicator values immediately.  Stripped from cloud-sync payloads
-    /// (regenerable data — see `strip_preset_for_sync`).
-    /// Absent in older presets → deserialises as empty map via `default`.
-    #[serde(default)]
+    /// **Never serialized**, on the same terms as `WindowSnapshot::bars` and
+    /// for the same reason: an indicator's output is a function of the bars,
+    /// and the bars are not stored either. It is recomputed the moment they
+    /// arrive — the `indicator heal` path already does exactly that for any
+    /// instance that loads with none.
+    ///
+    /// It used to be written locally "so that tab switching shows indicator
+    /// values immediately", while `strip_preset_for_sync` removed it from
+    /// every cloud payload as regenerable. Both cannot be right, and the disk
+    /// measured the cost of the wrong one: 356 270 values across 16 presets,
+    /// 8 MB, one preset carrying 200 000 volume values in a 3.97 MB file of
+    /// which they were 1.78 MB (2026-09-03). A cache of derived data, kept
+    /// forever, uncapped, in the file that is supposed to describe a layout.
+    ///
+    /// Kept as a field because it is the live in-memory home of those values
+    /// during a session; `default` fills it on load, here and for the older
+    /// presets that still carry the key on disk.
+    #[serde(default, skip_serializing)]
     pub values: HashMap<String, Vec<f64>>,
 }
 

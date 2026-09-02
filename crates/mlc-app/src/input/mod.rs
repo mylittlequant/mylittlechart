@@ -3262,40 +3262,6 @@ impl ChartApp {
         // Background: viewport_before_drag already captured above.
         use crate::panel_grid::ChartDragStartHit;
 
-        // TEMP-DIAG: fires once per drag gesture; proves whether find_separator_at_y
-        // misses because sub_panes is empty or because y coordinates are offset.
-        {
-            let mc = &extended.main_chart.chart;
-            let sep_info: Vec<String> = extended.sub_panes.iter()
-                .map(|sp| format!("sep(y={:.1},h={:.1})", sp.separator.y, sp.separator.height))
-                .collect();
-            // Also dump the layout inputs: which window is active, what the
-            // inner docking tree holds, and what the indicator manager returns
-            // for that window (id/window_id/pane/visible) — pinpoints which
-            // side of the visible_set intersection drops the panes.
-            let active_cid = self.panel_app.panel_grid.active_container_id();
-            let inner_ids: Vec<u64> = self.panel_app.panel_grid.active_container()
-                .map(|w| crate::chart_container::collect_inner_instance_ids(&w.inner_docking))
-                .unwrap_or_default();
-            let inst_dump: Vec<String> = active_cid
-                .and_then(|cid| self.panel_app.panel_grid.containers().get(&cid).map(|w| w.current_tag_id))
-                .map(|bid| {
-                    self.core.indicators()
-                        .instances_for_bubble(bid)
-                        .into_iter()
-                        .map(|i| format!("inst(id={},bub={:?},pane={},vis={})", i.id, i.bubble_id, i.pane, i.visible))
-                        .collect()
-                })
-                .unwrap_or_default();
-            eprintln!(
-                "[TEMP-DIAG drag-start] x={:.1} y={:.1} main_chart(x={:.1},y={:.1},w={:.1},h={:.1}) sub_panes={} {} | active_cid={:?} inner_ids={:?} {}",
-                x, y, mc.x, mc.y, mc.width, mc.height,
-                extended.sub_panes.len(),
-                sep_info.join(" "),
-                active_cid, inner_ids, inst_dump.join(" ")
-            );
-        }
-
         let active_bid_ds = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
         // Same rule as the click path: bars come from the bubble already
         // resolved above, never from the lagging tag-registry lookup.
