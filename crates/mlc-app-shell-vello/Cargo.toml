@@ -52,7 +52,29 @@ keyring = "3"
 winresource = "0.1"
 
 [features]
-default = []
+# ON by default. Every cloud-facing surface in the graph — the chrome's
+# sign-in/account button, `CloudLoginPhase`, the settings modal's cloud
+# pages — is behind `cloud` in mlc-core/mlc-app/mlc-app-layout/
+# mlc-app-input-shell, and this shell never turned it on: the code was in
+# the tree and compiled out of the shipped binary (found 2026-09-03).
+#
+# Opt-in is what the web shell does, because `package-app.sh` passes the
+# flag. Nothing in this tree builds the native binary, so an opt-in flag
+# here is a switch no caller ever flips — the same silent strip that hit
+# the wasm stand on 2026-08-31. The OSS lite build is a separate repo
+# (§ oss/prop split), not a feature of this crate; `--no-default-features`
+# stays available for it.
+#
+# `mlc-cloud` is deliberately absent: it is the wasm transport. Native
+# talks to the server through `mlc-updater` (loopback OAuth + sync), which
+# is an unconditional dependency above.
+default = ["cloud"]
+cloud = [
+    "mlc-core/cloud",
+    "mlc-app/cloud",
+    "mlc-app-layout/cloud",
+    "mlc-app-input-shell/cloud",
+]
 
 [lints]
 workspace = true
