@@ -173,15 +173,27 @@ pub fn process_event(
             let (win_w, win_h) = platform.window_size();
             let hit = chrome::hit_test(x, y, win_w as f64, win_h as f64, chrome_st);
 
-            // Only the migration page (no live chart behind it yet) still
-            // takes over the chrome's own hover/click routing below — an
-            // ordinary profile-manager/welcome modal dims instead of hiding
-            // and leaves the chrome live, same as every other modal (owner's
-            // ruling 2026-08-31); its own z-order (InputCoordinator) is what
-            // decides whether a click reaches it or the chart beneath.
-            let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
+            // Hover follows the DIM, not a special case. Any modal that
+            // dims the backdrop also dims the chrome strip
+            // (`render_backdrop_dim`), and a control painted under a veil
+            // must not light up when the cursor crosses it — the owner
+            // called this out on 2026-09-02: the dimming is right, the hover
+            // leaking through it is not.
+            //
+            // The system buttons are the deliberate exception, both here and
+            // in the painter: `render_backdrop_dim` leaves
+            // `SYSTEM_BUTTONS_WIDTH` undimmed (owner's ruling 2026-08-31,
+            // minimise/maximise/close stay live while the window is dimmed),
+            // so they keep their hover too. Everything the veil covers goes
+            // to `ChromeHit::None`.
+            //
+            // This used to key off `profile_manager_mandatory` — the
+            // non-dismissible migration page, which no longer exists (see
+            // `mlc-app-shell-vello`'s startup). Keying off the dim itself is
+            // what the rule was always trying to say.
+            let dimmed = chart.panel_app.dim_backdrop_color().is_some();
             let prev_hovered = chrome_st.hovered;
-            chrome_st.hovered = if skeleton_active {
+            chrome_st.hovered = if dimmed {
                 match hit {
                     ChromeHit::NewTabButton
                     | ChromeHit::MenuButton
