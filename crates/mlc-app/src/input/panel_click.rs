@@ -4975,6 +4975,11 @@ impl ChartApp {
                         !window.scale_settings.time_format.show_utc_prefix;
                 }
                 // keep popup open
+            } else if item == "clock_glitch" {
+                let new_value = !self.core.user().profile().ui.clock_glitch_enabled;
+                self.core.user_mut().profile_mut().ui.clock_glitch_enabled = new_value;
+                self.profile_dirty = true;
+                // keep popup open
             } else if let Some(off) = item.strip_prefix("tz:") {
                 if let Ok(offset) = off.parse::<i32>() {
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {

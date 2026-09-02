@@ -35,8 +35,8 @@ const CHECKBOX_AREA_H: f64 = 24.0;
 const CHECKBOX_SIZE: f64 = 14.0;
 const TZ_COUNT: f64 = 25.0; // offsets -12..=+12
 
-/// Total popup height: header + TZ list + separator + two checkboxes.
-const POPUP_HEIGHT: f64 = HEADER_H + TZ_COUNT * ITEM_H + SEPARATOR_H + CHECKBOX_AREA_H * 2.0;
+/// Total popup height: header + TZ list + separator + three checkboxes.
+const POPUP_HEIGHT: f64 = HEADER_H + TZ_COUNT * ITEM_H + SEPARATOR_H + CHECKBOX_AREA_H * 3.0;
 
 // =============================================================================
 // Renderer
@@ -53,6 +53,7 @@ pub fn render_clock_popup(
     active_offset: i32,
     use_24h: bool,
     show_utc: bool,
+    clock_glitch: bool,
     hovered_item: Option<&str>,
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
@@ -255,6 +256,54 @@ pub fn render_clock_popup(
     // Hit zone for show_utc checkbox row
     input_coordinator.register_on_layer(
         "clock_popup:show_utc",
+        uzor::types::Rect::new(popup_x + 4.0, cy, POPUP_WIDTH - 8.0, CHECKBOX_AREA_H),
+        uzor::input::Sense::CLICK,
+        &layer_id,
+    );
+
+    cy += CHECKBOX_AREA_H;
+
+    // -------------------------------------------------------------------------
+    // Checkbox "Анимация при наведении" (clock hover-glitch shader toggle)
+    // -------------------------------------------------------------------------
+    let cb3_cy = cy + CHECKBOX_AREA_H / 2.0;
+    let cb3_top = cb3_cy - CHECKBOX_SIZE / 2.0;
+
+    // Checkbox square
+    crate::ui::overlay_fill::fill_checkbox(
+        ctx, clock_glitch, &toolbar_theme.item_bg_active, &toolbar_theme.dropdown_bg, &frame_theme.modal_bg,
+        cb_x, cb3_top, CHECKBOX_SIZE, CHECKBOX_SIZE, 3.0,
+    );
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(cb_x, cb3_top, CHECKBOX_SIZE, CHECKBOX_SIZE, 3.0);
+
+    // Checkmark (white, 2px stroke) when checked
+    if clock_glitch {
+        ctx.set_stroke_color(&toolbar_theme.item_text_active);
+        ctx.set_stroke_width(2.0);
+        ctx.begin_path();
+        ctx.move_to(cb_x + 2.0, cb3_top + CHECKBOX_SIZE / 2.0);
+        ctx.line_to(cb_x + CHECKBOX_SIZE / 2.0 - 1.0, cb3_top + CHECKBOX_SIZE - 3.0);
+        ctx.line_to(cb_x + CHECKBOX_SIZE - 2.0, cb3_top + 3.0);
+        ctx.stroke();
+        ctx.set_stroke_width(1.0);
+    }
+
+    // Checkbox label
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(
+        ClockKey::ClockGlitchToggle.get(current_language()),
+        cb_text_x,
+        cb3_cy,
+    );
+
+    // Hit zone for clock_glitch checkbox row
+    input_coordinator.register_on_layer(
+        "clock_popup:clock_glitch",
         uzor::types::Rect::new(popup_x + 4.0, cy, POPUP_WIDTH - 8.0, CHECKBOX_AREA_H),
         uzor::input::Sense::CLICK,
         &layer_id,

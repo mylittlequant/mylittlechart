@@ -774,6 +774,16 @@ pub struct ProfileUiSettings {
     pub drawings_locked: bool,
     #[serde(default = "default_true")]
     pub drawings_visible: bool,
+
+    /// Whether the toolbar clock's hover glitch shader effect is enabled
+    /// (clock popup's third checkbox, owner ask 2026-09-02). Defaults to
+    /// TRUE — a plain `#[serde(default)]` bool would default to false and
+    /// silently switch the effect off for every profile saved before this
+    /// field existed, same footgun `symbol_quick_search`/`drawings_visible`
+    /// above avoid with `default_true`. Purely a rendering-cosmetics toggle
+    /// — no daemon/headless consumer reads this.
+    #[serde(default = "default_true")]
+    pub clock_glitch_enabled: bool,
 }
 
 fn default_true() -> bool {
@@ -826,6 +836,7 @@ impl ProfileUiSettings {
             persist_toolbar_toggles: true,
             drawings_locked: false,
             drawings_visible: true,
+            clock_glitch_enabled: true,
         }
     }
 }

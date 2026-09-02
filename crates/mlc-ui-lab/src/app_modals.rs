@@ -249,6 +249,7 @@ struct ClockState {
     active_offset: i32,
     use_24h: bool,
     show_utc: bool,
+    clock_glitch: bool,
     hovered: Option<String>,
 }
 
@@ -345,7 +346,7 @@ impl AppModalsState {
             chart_browser_presets: stub_chart_browser_presets(),
             compare_settings: CompareSettingsState::default(),
             context_menu: ContextMenuState::default(),
-            clock: ClockState { active_offset: 0, use_24h: true, show_utc: true, hovered: None },
+            clock: ClockState { active_offset: 0, use_24h: true, show_utc: true, clock_glitch: true, hovered: None },
             panel_settings_rows: stub_panel_settings_rows(),
             indicator_overlay: IndicatorOverlayState::default(),
             indicator_overlay_items: stub_indicator_overlay_items(),
@@ -594,6 +595,7 @@ impl AppModalsState {
                     self.clock.active_offset,
                     self.clock.use_24h,
                     self.clock.show_utc,
+                    self.clock.clock_glitch,
                     self.clock.hovered.as_deref(),
                     frame_theme,
                     toolbar_theme,

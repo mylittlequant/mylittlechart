@@ -736,10 +736,14 @@ pub enum ClockKey {
     ShowUtcPrefix = 2,
     DateFormat    = 3,
     DayOfWeek     = 4,
+    /// Toolbar clock hover-glitch shader effect toggle (clock popup's third
+    /// checkbox, owner ask 2026-09-02). Appended at the end — frozen-order
+    /// rule, never renumbered into the block above.
+    ClockGlitchToggle = 5,
 }
 
 impl ClockKey {
-    pub const COUNT: usize = 5;
+    pub const COUNT: usize = 6;
 
     /// Get translation for this key
     #[inline]

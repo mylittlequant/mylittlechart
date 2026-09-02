@@ -417,15 +417,16 @@ pub(super) static WIZARD_KEY_TABLE: [[&str; N_LANG]; 30] = [
 ];
 
 // =============================================================================
-// ClockKey table  (5 variants × N_LANG)
+// ClockKey table  (6 variants × N_LANG)
 // =============================================================================
 
-pub(super) static CLOCK_KEY_TABLE: [[&str; N_LANG]; 5] = [
+pub(super) static CLOCK_KEY_TABLE: [[&str; N_LANG]; 6] = [
     /* 0 Timezone      */ [ "Timezone",              "Часовой пояс",          "Zona horaria",         "Zeitzone",              "Fuseau horaire",        "Fuso horário",          "时区",      "タイムゾーン",    "시간대",       "المنطقة الزمنية",    "Fuso orario",           "Saat dilimi",          "Strefa czasowa",       "Часовий пояс",         "समय क्षेत्र"        ],
     /* 1 Use24h        */ [ "24-hour format",         "24-часовой формат",     "Formato 24 horas",     "24-Stunden-Format",     "Format 24 heures",      "Formato 24 horas",      "24小时制",  "24時間形式",      "24시간 형식",   "تنسيق 24 ساعة",      "Formato 24 ore",        "24 saat formatı",      "Format 24-godzinny",   "24-годинний формат",   "24-घंटे का प्रारूप" ],
     /* 2 ShowUtcPrefix */ [ "Show UTC prefix",        "Показывать UTC",        "Mostrar prefijo UTC",  "UTC-Präfix anzeigen",   "Afficher préfixe UTC",  "Mostrar prefixo UTC",   "显示UTC前缀","UTCプレフィックスを表示","UTC 접두사 표시","إظهار بادئة UTC",    "Mostra prefisso UTC",   "UTC önekini göster",   "Pokaż prefiks UTC",    "Показувати UTC",       "UTC उपसर्ग दिखाएं" ],
     /* 3 DateFormat    */ [ "Date format",            "Формат даты",           "Formato de fecha",     "Datumsformat",          "Format de date",        "Formato de data",       "日期格式",  "日付形式",        "날짜 형식",     "تنسيق التاريخ",      "Formato data",          "Tarih formatı",        "Format daty",          "Формат дати",          "दिनांक प्रारूप"    ],
     /* 4 DayOfWeek     */ [ "Day of week on labels",  "День недели на метках", "Día de la semana en etiquetas","Wochentag auf Beschriftungen","Jour de semaine sur les étiquettes","Dia da semana nas etiquetas","标签上显示星期","ラベルに曜日表示","레이블에 요일 표시","يوم الأسبوع على التسميات","Giorno settimana nelle etichette","Etiketlerde haftanın günü","Dzień tygodnia na etykietach","День тижня на мітках","लेबल पर सप्ताह का दिन"],
+    /* 5 ClockGlitchToggle */ [ "Animate on hover",   "Анимация при наведении","Animar al pasar el cursor","Bei Hover animieren","Animer au survol","Animar ao passar o mouse","悬停时动画","ホバー時にアニメーション","호버 시 애니메이션","تحريك عند التحويم","Anima al passaggio del mouse","Üzerine gelince canlandır","Animuj przy najechaniu","Анімація при наведенні","होवर पर एनिमेट करें"],
 ];
 
 // =============================================================================

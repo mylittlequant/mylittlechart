@@ -169,6 +169,14 @@ impl ChartApp {
                 } else {
                     existing.ui.drawings_visible
                 },
+                // Clock hover-glitch toggle (clock popup's third checkbox,
+                // owner ask 2026-09-02): mutated in-place via
+                // `self.core.user_mut().profile_mut()` at click time
+                // (panel_click.rs), not via this snapshot builder — carried
+                // forward exactly like `welcome_wizard_seen` above, because
+                // this snapshot is built from live UI state and this is not
+                // UI state.
+                clock_glitch_enabled: existing.ui.clock_glitch_enabled,
             },
         }
     }
