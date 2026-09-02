@@ -80,6 +80,11 @@ impl ButtonPositions {
             ChromeFlavor::Web => width - MENU_BUTTON_WIDTH,
         };
         // Cloud builds: right-to-left — gear, "Sign in", Download, Links, News.
+        // Native and Web share this cluster: News/Links are server-published
+        // content, unrelated to whether the surface is a tab or a window, and
+        // Download is the same release manifest the in-process updater
+        // already reads, re-verbed on native from "download a binary" to
+        // "install this update".
         #[cfg(feature = "cloud")]
         let (login_left, download_left, links_left, news_left) = match flavor {
             ChromeFlavor::Web => {
@@ -89,11 +94,13 @@ impl ButtonPositions {
                 let ne = li - CLOUD_ICON_BUTTON_WIDTH;
                 (login, dl, li, ne)
             }
-            // Native carries only the sign-in / account button, immediately
-            // left of "new window" (owner's placement, 2026-09-02). The other
-            // three cloud buttons are a web-page concern — a desktop app has
-            // its own updater and its own links.
-            ChromeFlavor::Native => (new_window_left - LOGIN_BUTTON_WIDTH, 0.0, 0.0, 0.0),
+            ChromeFlavor::Native => {
+                let login = new_window_left - LOGIN_BUTTON_WIDTH;
+                let dl = login - CLOUD_ICON_BUTTON_WIDTH;
+                let li = dl - CLOUD_ICON_BUTTON_WIDTH;
+                let ne = li - CLOUD_ICON_BUTTON_WIDTH;
+                (login, dl, li, ne)
+            }
         };
         Self {
             close_x, maximize_x, minimize_x, close_window_left, mascot_left,
@@ -122,7 +129,12 @@ pub const MIN_TAB_WIDTH: f64 = 48.0;
 pub fn tabs_right_limit(width: f64, flavor: ChromeFlavor) -> f64 {
     let bp = ButtonPositions::compute(width, flavor);
     match flavor {
-        ChromeFlavor::Native => bp.new_window_left,
+        ChromeFlavor::Native => {
+            #[cfg(feature = "cloud")]
+            { bp.news_left }
+            #[cfg(not(feature = "cloud"))]
+            { bp.new_window_left }
+        }
         ChromeFlavor::Web => {
             #[cfg(feature = "cloud")]
             { bp.news_left }
@@ -240,6 +252,9 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
                 #[cfg(feature = "cloud")]
                 {
                     if x >= bp.login_left && x < bp.new_window_left { return ChromeHit::LoginButton; }
+                    if x >= bp.download_left && x < bp.login_left { return ChromeHit::DownloadButton; }
+                    if x >= bp.links_left && x < bp.download_left { return ChromeHit::LinksButton; }
+                    if x >= bp.news_left && x < bp.links_left { return ChromeHit::NewsButton; }
                 }
             }
             ChromeFlavor::Web => {

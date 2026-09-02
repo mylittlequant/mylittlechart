@@ -92,18 +92,28 @@ impl ButtonPositions {
                 let mascot_left       = close_window_left - MASCOT_BUTTON_WIDTH;
                 let menu_left         = mascot_left - MENU_BUTTON_WIDTH;
                 let new_window_left   = menu_left - NEW_WINDOW_BUTTON_WIDTH;
+                // Native cloud cluster, left of "new window": "Sign in",
+                // then Download / Links / News — see the same computation
+                // (and the reasoning for why native carries all three) in
+                // `logic.rs`, which the hit test reads.
+                #[cfg(feature = "cloud")]
+                let login_left = new_window_left - LOGIN_BUTTON_WIDTH;
+                #[cfg(feature = "cloud")]
+                let download_left = login_left - CLOUD_ICON_BUTTON_WIDTH;
+                #[cfg(feature = "cloud")]
+                let links_left = download_left - CLOUD_ICON_BUTTON_WIDTH;
+                #[cfg(feature = "cloud")]
+                let news_left = links_left - CLOUD_ICON_BUTTON_WIDTH;
                 Self {
                     close_x, maximize_x, minimize_x, close_window_left, menu_left, new_window_left,
-                    // Left of "new window" — see the same computation in
-                    // `logic.rs`, which the hit test reads.
                     #[cfg(feature = "cloud")]
-                    login_left: new_window_left - LOGIN_BUTTON_WIDTH,
+                    login_left,
                     #[cfg(feature = "cloud")]
-                    download_left: 0.0,
+                    download_left,
                     #[cfg(feature = "cloud")]
-                    links_left: 0.0,
+                    links_left,
                     #[cfg(feature = "cloud")]
-                    news_left: 0.0,
+                    news_left,
                 }
             }
             ChromeFlavor::Web => {
@@ -575,11 +585,42 @@ pub fn render(
                     ctx.set_font("600 12px sans-serif");
                     ctx.set_text_align(TextAlign::Center);
                     ctx.set_text_baseline(TextBaseline::Middle);
+                    // "Sign in" was sized for this button; an account name was
+                    // not, and a long handle would paint straight across the
+                    // News/Links/Update icons to its left. Clipped to the
+                    // button, the same way a tab name is clipped to its tab.
+                    ctx.save();
+                    ctx.clip_rect(bp.login_left, 0.0, LOGIN_BUTTON_WIDTH, CHROME_HEIGHT);
                     ctx.fill_text(
                         label,
                         bp.login_left + LOGIN_BUTTON_WIDTH / 2.0,
                         CHROME_HEIGHT / 2.0,
                     );
+                    ctx.restore();
+                }
+
+                // Cloud icon buttons: Download / Links / News (left of Sign
+                // in) — same icons, hover treatment and sizes as the Web
+                // arm below; only the anchor differs, and that is already
+                // carried by `ButtonPositions`.
+                #[cfg(feature = "cloud")]
+                {
+                    let icon_btns: [(f64, &str, ChromeHit); 3] = [
+                        (bp.download_left, "cloud_download", ChromeHit::DownloadButton),
+                        (bp.links_left, "globe", ChromeHit::LinksButton),
+                        (bp.news_left, "bell", ChromeHit::NewsButton),
+                    ];
+                    for (left, icon, hit) in icon_btns {
+                        if state.hovered == hit {
+                            ctx.set_fill_color(&c.button_hover);
+                            ctx.fill_rounded_rect(left + 2.0, 4.0, CLOUD_ICON_BUTTON_WIDTH - 4.0, CHROME_HEIGHT - 8.0, 6.0);
+                        }
+                        let icon_x = left + (CLOUD_ICON_BUTTON_WIDTH - 16.0) / 2.0;
+                        let icon_y = (CHROME_HEIGHT - 16.0) / 2.0;
+                        if let Some(svg) = icon_svg(icon) {
+                            draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, &c.icon_normal);
+                        }
+                    }
                 }
             }
             ChromeFlavor::Web => {

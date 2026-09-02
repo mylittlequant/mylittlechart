@@ -373,6 +373,31 @@ struct App<'s> {
     /// commands (logout, force-check, ...); `status_rx`/`auth_rx` are polled
     /// by UI code that needs to react to update/auth state.
     updater_handle: mlc_updater::UpdaterHandle,
+    /// Edge-detector for the cloud Download overlay: whether any window had
+    /// it open as of the previous frame. Flips false→true drives exactly one
+    /// `UpdaterCommand::ForceCheck` (so opening the overlay never shows a
+    /// stale check) — never sent again while it stays open.
+    #[cfg(feature = "cloud")]
+    download_overlay_was_open: bool,
+    /// Set when that edge fires a `ForceCheck`, cleared when the updater's
+    /// status leaves `Idle`. While it stands, `Idle` is reported as
+    /// "Checking" rather than "up to date": the updater sits idle both
+    /// before and after a check, so between asking and being answered the
+    /// only honest thing the overlay can say is that the question is open.
+    #[cfg(feature = "cloud")]
+    download_check_inflight: bool,
+    /// Mailbox for the News overlay's one fetch of the marketing site's blog
+    /// feed. `Sender` is cloned into the fire-and-forget task spawned on
+    /// `live_data_handle`; `Receiver` is polled (non-blocking `try_recv`) in
+    /// the same per-frame drain that started the fetch.
+    #[cfg(feature = "cloud")]
+    news_feed_tx: std::sync::mpsc::Sender<
+        Result<Vec<mlc_app_layout::ui::modal_settings::CloudNewsPost>, String>,
+    >,
+    #[cfg(feature = "cloud")]
+    news_feed_rx: std::sync::mpsc::Receiver<
+        Result<Vec<mlc_app_layout::ui::modal_settings::CloudNewsPost>, String>,
+    >,
     /// Thread-safe telemetry snapshot handed to the updater as
     /// `Arc<dyn TelemetrySource>` — see `telemetry.rs` for why `App` itself
     /// cannot implement the trait. Refreshed once a second below and on
@@ -640,6 +665,48 @@ fn render_toasts(
 /// `WatchlistManager::apply_seed_migration`.
 fn default_watchlist() -> mlc_app::WatchlistManager {
     mlc_app::WatchlistManager::default_seed()
+}
+
+/// One fetch of the marketing site's blog feed for the cloud News overlay.
+///
+/// Hand-parsed from `serde_json::Value` rather than a derived struct pair:
+/// this crate depends on `serde_json` directly but not on `serde` with the
+/// `derive` feature, and pulling that in for one small shape is not worth a
+/// new dependency edge. `id` in the feed is not part of `CloudNewsPost` and
+/// is ignored; `body` is optional in the feed (defaults to empty — the
+/// reading view falls back to the summary already).
+#[cfg(feature = "cloud")]
+async fn fetch_news_feed(
+) -> Result<Vec<mlc_app_layout::ui::modal_settings::CloudNewsPost>, String> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_default();
+    let body: serde_json::Value = client
+        .get("https://chart.example/blog/posts.json")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .json()
+        .await
+        .map_err(|e| e.to_string())?;
+    let posts = body
+        .get("posts")
+        .and_then(|v| v.as_array())
+        .ok_or_else(|| "blog feed: missing 'posts' array".to_string())?;
+    let str_field = |v: &serde_json::Value, key: &str| -> String {
+        v.get(key).and_then(|f| f.as_str()).unwrap_or_default().to_string()
+    };
+    Ok(posts
+        .iter()
+        .map(|p| mlc_app_layout::ui::modal_settings::CloudNewsPost {
+            date: str_field(p, "date"),
+            title: str_field(p, "title"),
+            summary: str_field(p, "summary"),
+            body: str_field(p, "body"),
+            url: str_field(p, "url"),
+        })
+        .collect())
 }
 
 /// Seed `core`'s domain managers (presets, templates, watchlists, snapshots,
@@ -1007,6 +1074,11 @@ impl App<'_> {
                 .expect("perf-sys-sampler thread spawn must succeed")
         };
 
+        // Mailbox for the cloud News overlay's blog-feed fetch — see the
+        // field doc on `news_feed_tx`/`news_feed_rx`.
+        #[cfg(feature = "cloud")]
+        let (news_feed_tx, news_feed_rx) = std::sync::mpsc::channel();
+
         Self {
             render_cx: RenderContext::new(),
             windows: HashMap::new(),
@@ -1029,6 +1101,14 @@ impl App<'_> {
             _phantom: std::marker::PhantomData,
             agent_state: Some(agent_state),
             updater_handle,
+            #[cfg(feature = "cloud")]
+            download_overlay_was_open: false,
+            #[cfg(feature = "cloud")]
+            download_check_inflight: false,
+            #[cfg(feature = "cloud")]
+            news_feed_tx,
+            #[cfg(feature = "cloud")]
+            news_feed_rx,
             telemetry,
             last_indicator_snapshot: web_time::Instant::now(),
             agent_snapshot_phase: 0,
@@ -4294,6 +4374,180 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // Clear dirty flag on all windows
                 for pw in self.windows.values_mut() {
                     pw.chart.panel_app.alert_settings_state.notification_settings_dirty = false;
+                }
+            }
+        }
+
+        // ── Drain cloud Download overlay: fresh check on open ────────────
+        // The overlay must not show whatever the updater last happened to
+        // think — force one check right as it opens (false→true edge only;
+        // never per-frame, that would hammer the manifest endpoint at
+        // render-loop rate).
+        #[cfg(feature = "cloud")]
+        {
+            use mlc_app_layout::ui::modal_settings::CloudOverlayKind;
+            let any_open = self.windows.values().any(|pw| {
+                let ov = &pw.chart.panel_app.cloud_overlay_state;
+                ov.is_open && ov.kind == CloudOverlayKind::Download
+            });
+            if any_open && !self.download_overlay_was_open {
+                let _ = self
+                    .updater_handle
+                    .cmd_tx
+                    .send(mlc_updater::UpdaterCommand::ForceCheck);
+                self.download_check_inflight = true;
+            }
+            self.download_overlay_was_open = any_open;
+        }
+
+        // ── Drain cloud Download overlay: map updater status → view ──────
+        // Runs every frame a window's Download overlay is open — the
+        // updater's own watch channel is the source of truth for install
+        // progress, so this just mirrors it into the overlay's data. The
+        // mapped phase is compared against what is already there before
+        // writing: this block runs unconditionally each pass, so an
+        // unconditional `request_redraw` here would pin the window at full
+        // framerate for as long as the overlay stayed open.
+        #[cfg(feature = "cloud")]
+        {
+            use mlc_app_layout::ui::modal_settings::{
+                CloudOverlayData, CloudOverlayKind, UpdateOverlayPhase,
+            };
+            let phase = match &*self.updater_handle.status_rx.borrow() {
+                // Idle is the updater's state both before a check and after
+                // one that found nothing, so it alone cannot distinguish
+                // "up to date" from "not asked yet" — the flag armed on the
+                // open edge does. Without it the overlay claimed the latest
+                // release for the frames between opening and the forced
+                // check being picked up, which is a claim about the server
+                // made before the server was asked.
+                mlc_updater::UpdateStatus::Idle if self.download_check_inflight => {
+                    UpdateOverlayPhase::Checking
+                }
+                mlc_updater::UpdateStatus::Idle => UpdateOverlayPhase::UpToDate {
+                    version: env!("CARGO_PKG_VERSION").to_string(),
+                },
+                mlc_updater::UpdateStatus::Checking => UpdateOverlayPhase::Checking,
+                mlc_updater::UpdateStatus::UpdateAvailable(info) => UpdateOverlayPhase::Available {
+                    version: info.version.clone(),
+                    notes: info.release_notes.clone(),
+                },
+                mlc_updater::UpdateStatus::Downloading { percent } => {
+                    UpdateOverlayPhase::Downloading { percent: *percent }
+                }
+                mlc_updater::UpdateStatus::Verifying => UpdateOverlayPhase::Verifying,
+                mlc_updater::UpdateStatus::Installing => UpdateOverlayPhase::Installing,
+                mlc_updater::UpdateStatus::RestartPending => UpdateOverlayPhase::RestartPending,
+                mlc_updater::UpdateStatus::Error(message) => {
+                    UpdateOverlayPhase::Failed { message: message.clone() }
+                }
+            };
+            // Any status other than Idle is an answer: the check landed.
+            if !matches!(phase, UpdateOverlayPhase::Checking) {
+                self.download_check_inflight = false;
+            }
+            for pw in self.windows.values_mut() {
+                let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+                if ov.is_open && ov.kind == CloudOverlayKind::Download {
+                    let next = CloudOverlayData::Update { phase: phase.clone() };
+                    if ov.data != next {
+                        ov.data = next;
+                        pw.chart_dirty = true;
+                        pw.overlay_dirty = true;
+                        pw.window.request_redraw();
+                    }
+                }
+            }
+        }
+
+        // ── Drain cloud Download overlay: install / retry requests ───────
+        // One-shot mailbox set by the overlay's Install (and Retry, same
+        // flag) button. The overlay itself does not change state here — the
+        // status-mapping block above reflects the updater's own
+        // Downloading/Verifying/Installing progress back once it starts
+        // moving.
+        #[cfg(feature = "cloud")]
+        {
+            let install_requested = self
+                .windows
+                .values()
+                .any(|pw| pw.chart.panel_app.cloud_overlay_state.update_install_requested);
+            if install_requested {
+                for pw in self.windows.values_mut() {
+                    pw.chart.panel_app.cloud_overlay_state.update_install_requested = false;
+                }
+                let _ = self
+                    .updater_handle
+                    .cmd_tx
+                    .send(mlc_updater::UpdaterCommand::InstallNow);
+            }
+        }
+
+        // ── Drain cloud overlay: outbound links + News feed fetch ────────
+        {
+            // Links: the overlay hands back either an absolute URL or a
+            // site-relative path; join the latter onto the production
+            // domain, then hand off to the existing open-URL drain above
+            // (`pending_open_url`) instead of a second `cmd /c start` copy.
+            #[cfg(feature = "cloud")]
+            for pw in self.windows.values_mut() {
+                if let Some(raw_url) = pw.chart.panel_app.cloud_overlay_state.open_url_requested.take() {
+                    let url = if raw_url.starts_with("http") {
+                        raw_url
+                    } else {
+                        let path = raw_url.strip_prefix('/').unwrap_or(&raw_url);
+                        format!("https://chart.example/{path}")
+                    };
+                    pw.chart.pending_open_url = Some(url);
+                }
+            }
+
+            // News: one fetch per Empty→open transition, fire-and-forget on
+            // the live-data runtime (never `block_on` here — this runs on
+            // the render thread every frame). The result comes back through
+            // `news_feed_rx`, polled below with a non-blocking `try_recv`.
+            #[cfg(feature = "cloud")]
+            {
+                use mlc_app_layout::ui::modal_settings::{CloudOverlayData, CloudOverlayKind};
+                let needs_fetch = self.windows.values().any(|pw| {
+                    let ov = &pw.chart.panel_app.cloud_overlay_state;
+                    ov.is_open
+                        && ov.kind == CloudOverlayKind::News
+                        && matches!(ov.data, CloudOverlayData::Empty)
+                });
+                if needs_fetch {
+                    for pw in self.windows.values_mut() {
+                        let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+                        if ov.is_open
+                            && ov.kind == CloudOverlayKind::News
+                            && matches!(ov.data, CloudOverlayData::Empty)
+                        {
+                            ov.data = CloudOverlayData::Loading;
+                            pw.chart_dirty = true;
+                            pw.overlay_dirty = true;
+                            pw.window.request_redraw();
+                        }
+                    }
+                    let tx = self.news_feed_tx.clone();
+                    self.live_data_handle.spawn(async move {
+                        let result = fetch_news_feed().await;
+                        let _ = tx.send(result);
+                    });
+                }
+
+                if let Ok(result) = self.news_feed_rx.try_recv() {
+                    for pw in self.windows.values_mut() {
+                        let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+                        if matches!(ov.data, CloudOverlayData::Loading) {
+                            ov.data = match &result {
+                                Ok(posts) => CloudOverlayData::News { posts: posts.clone() },
+                                Err(e) => CloudOverlayData::Error { message: e.clone() },
+                            };
+                            pw.chart_dirty = true;
+                            pw.overlay_dirty = true;
+                            pw.window.request_redraw();
+                        }
+                    }
                 }
             }
         }

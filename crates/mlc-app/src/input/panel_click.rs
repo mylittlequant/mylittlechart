@@ -5438,6 +5438,11 @@ impl ChartApp {
                         st.open_url_requested = Some(download_url.clone());
                     }
                 }
+                // The desktop build's Install / Try again. Both post the same
+                // mailbox because re-running the install IS the retry — the
+                // shell decides what to do with it, this side only records
+                // that it was asked for.
+                "update:install" => st.update_install_requested = true,
                 _ => {}
             }
             return;

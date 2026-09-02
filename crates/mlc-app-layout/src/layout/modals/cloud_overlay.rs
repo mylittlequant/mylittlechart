@@ -7,7 +7,10 @@
 //!   to the blog where the long-form posts live.
 //! - Links — social/project links, opened in a new tab via the
 //!   `open_url_requested` mailbox.
-//! - Download — desktop binary download link from the same manifest.
+//! - Download — the release manifest, read by whichever surface asked.
+//!   The web page gets binary download links; the desktop app gets its own
+//!   updater's state and an Install action, because there the app replaces
+//!   its own binary and a link would be busywork.
 //!
 //! Pure presentation: all effects live in the shell's cloud session driver.
 
@@ -17,7 +20,9 @@ use uzor::types::Rect as WidgetRect;
 use uzor::WidgetId;
 
 use crate::layout::render_chart::FrameTheme;
-use crate::ui::modal_settings::{CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudOverlayState};
+use crate::ui::modal_settings::{
+    CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudOverlayState, UpdateOverlayPhase,
+};
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{
     register_dimmer_zones, render_modal_shell, ModalPlacement, ModalShell, ModalShellSpec,
@@ -50,11 +55,17 @@ pub struct CloudOverlayResult {
     pub header_rect: WidgetRect,
 }
 
-fn title_for(kind: CloudOverlayKind) -> &'static str {
-    match kind {
+fn title_for(state: &CloudOverlayState) -> &'static str {
+    match state.kind {
         CloudOverlayKind::News => "What's new",
         CloudOverlayKind::Links => "Links",
-        CloudOverlayKind::Download => "Download",
+        // Same feed, but the desktop build acts on it instead of linking to
+        // it, and the title has to say which of the two the user is looking
+        // at — "Download" over an Install button reads like a mistake.
+        CloudOverlayKind::Download => match &state.data {
+            CloudOverlayData::Update { .. } => "Update",
+            _ => "Download",
+        },
     }
 }
 
@@ -86,7 +97,20 @@ const MAX_NEWS_POSTS: usize = 3;
 fn content_height(state: &CloudOverlayState) -> f64 {
     match state.kind {
         CloudOverlayKind::Links => SOCIAL_LINKS.len() as f64 * ROW_H + 4.0,
-        CloudOverlayKind::Download => 22.0 + ROW_H + 24.0,
+        CloudOverlayKind::Download => match &state.data {
+            // Update view: caption + notes + the action row (or, in the
+            // phases that have no action, caption + a status line).
+            CloudOverlayData::Update { phase } => match phase {
+                UpdateOverlayPhase::Available { notes, .. } => {
+                    22.0 + wrap_text(notes, 62).len().min(4) as f64 * 16.0 + 10.0 + ROW_H
+                }
+                UpdateOverlayPhase::Checking | UpdateOverlayPhase::UpToDate { .. } => 22.0 + 24.0,
+                UpdateOverlayPhase::RestartPending => 22.0 + ROW_H + 8.0,
+                UpdateOverlayPhase::Failed { .. } => 22.0 + 24.0 + ROW_H,
+                _ => 22.0 + 24.0,
+            },
+            _ => 22.0 + ROW_H + 24.0,
+        },
         CloudOverlayKind::News => match &state.data {
             CloudOverlayData::News { posts } => {
                 // Reading view: one post, expanded. List view: up to
@@ -128,7 +152,7 @@ pub fn render_cloud_overlay(
         layer: ZLayer::ModalOverlay,
         ..ModalShellSpec::new(
             "cloud_overlay",
-            title_for(state.kind),
+            title_for(state),
             MODAL_W,
             content_height(state),
         )
@@ -183,6 +207,11 @@ fn draw_body(
         }
 
         CloudOverlayKind::Download => match &state.data {
+            // Desktop build: the updater is already running against this
+            // manifest in the same process, so the overlay is a view of it.
+            CloudOverlayData::Update { phase } => {
+                draw_update_phase(ctx, coord, layer_id, x, y, row_w, phase, tt);
+            }
             CloudOverlayData::Ready { version, .. } => {
                 ctx.set_font("12px sans-serif");
                 ctx.set_fill_color(&tt.item_text_muted);
@@ -352,6 +381,130 @@ fn draw_news_detail(
         }
         ly += 10.0;
     }
+}
+
+/// The Download overlay on a desktop build: the in-process updater's state.
+///
+/// Only two phases carry an action. `Available` offers Install, which posts
+/// the `update_install_requested` mailbox for the shell to turn into an
+/// updater command; `Failed` offers a retry through the same mailbox, since
+/// re-running the install IS the retry. Everything between them is the
+/// updater working on its own — a progress line, nothing to press.
+#[allow(clippy::too_many_arguments)]
+fn draw_update_phase(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    row_w: f64,
+    phase: &UpdateOverlayPhase,
+    tt: &ToolbarTheme,
+) {
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+
+    match phase {
+        UpdateOverlayPhase::Checking => {
+            ctx.fill_text("Checking for updates…", x, y);
+        }
+
+        UpdateOverlayPhase::UpToDate { version } => {
+            ctx.fill_text(&format!("You are on the latest release, v{version}."), x, y);
+        }
+
+        UpdateOverlayPhase::Available { version, notes } => {
+            ctx.fill_text(&format!("Version {version} is available."), x, y);
+            let mut ny = y + 22.0;
+            ctx.set_font("12px sans-serif");
+            ctx.set_fill_color(&tt.item_text);
+            for line in wrap_text(notes, 62).into_iter().take(4) {
+                ctx.fill_text(&line, x, ny);
+                ny += 16.0;
+            }
+            draw_action_row(
+                ctx,
+                coord,
+                layer_id,
+                "cloud_overlay:update:install",
+                WidgetRect::new(x, ny + 10.0, row_w, ROW_H - ROW_GAP),
+                &format!("Install v{version}"),
+                tt,
+            );
+        }
+
+        UpdateOverlayPhase::Downloading { percent } => {
+            ctx.fill_text(&format!("Downloading… {percent}%"), x, y);
+            // A bar rather than a spinner: this is the one phase whose length
+            // the updater actually knows.
+            let track_y = y + 26.0;
+            ctx.set_fill_color(&tt.dropdown_bg);
+            ctx.fill_rounded_rect(x, track_y, row_w, 6.0, 3.0);
+            ctx.set_fill_color(GOLD);
+            ctx.fill_rounded_rect(x, track_y, row_w * (*percent as f64 / 100.0), 6.0, 3.0);
+        }
+
+        UpdateOverlayPhase::Verifying => {
+            ctx.fill_text("Verifying the download…", x, y);
+        }
+
+        UpdateOverlayPhase::Installing => {
+            ctx.fill_text("Installing…", x, y);
+        }
+
+        UpdateOverlayPhase::RestartPending => {
+            ctx.fill_text("Installed. It takes effect the next time you start the app.", x, y);
+        }
+
+        UpdateOverlayPhase::Failed { message } => {
+            ctx.set_fill_color(&tt.item_text);
+            ctx.fill_text("The update did not complete.", x, y);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&tt.item_text_muted);
+            let m = crate::ui::widgets::fit_text_to_width(ctx, message, row_w);
+            ctx.fill_text(&m, x, y + 20.0);
+            draw_action_row(
+                ctx,
+                coord,
+                layer_id,
+                "cloud_overlay:update:install",
+                WidgetRect::new(x, y + 44.0, row_w, ROW_H - ROW_GAP),
+                "Try again",
+                tt,
+            );
+        }
+    }
+}
+
+/// A row that DOES something in this window, as opposed to [`draw_link_row`],
+/// which leaves for a URL. Gold surface, centred label, no external glyph —
+/// the glyph is the whole difference the user reads.
+fn draw_action_row(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    widget_id: &str,
+    rect: WidgetRect,
+    label: &str,
+    tt: &ToolbarTheme,
+) {
+    let hovered = coord.is_hovered(&WidgetId::from(widget_id));
+    ctx.set_fill_color(GOLD);
+    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+    if hovered {
+        // The accent is already the brightest thing in the dialog, so hover
+        // reads as a veil over it rather than another colour.
+        ctx.set_fill_color(&tt.item_bg_hover);
+        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+    }
+    ctx.set_font("600 13px sans-serif");
+    ctx.set_fill_color("#101014");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(label, rect.center_x(), rect.center_y());
+    coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
 }
 
 /// One clickable row: SVG icon + label + trailing "opens externally" glyph,

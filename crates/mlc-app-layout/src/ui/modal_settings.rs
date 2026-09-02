@@ -4347,7 +4347,14 @@ pub enum CloudOverlayKind {
     News,
     /// Social/project links (GitHub, X, Telegram, Discord).
     Links,
-    /// Binary download links for the desktop app.
+    /// The same release manifest, read by whichever surface is asking.
+    ///
+    /// On the web page it means "get the desktop app" and renders download
+    /// links. In the desktop app it means "install this update": the shell
+    /// already runs the updater against that manifest in-process, so the
+    /// overlay shows update state and an Install button, never a link to a
+    /// binary the user is expected to fetch by hand. One feed, two verbs —
+    /// see [`CloudOverlayData::Update`].
     Download,
 }
 
@@ -4363,8 +4370,42 @@ pub enum CloudOverlayData {
     Ready { version: String, notes: String, download_url: String },
     /// Blog feed for the News overlay (from /blog/posts.json).
     News { posts: Vec<CloudNewsPost> },
+    /// Native's read of the release manifest: where the in-process updater
+    /// currently stands. Never carries a download URL — see
+    /// [`UpdateOverlayPhase`].
+    Update { phase: UpdateOverlayPhase },
     /// Fetch failed.
     Error { message: String },
+}
+
+/// The updater's state as the Download overlay shows it on a desktop build.
+///
+/// A flat mirror of `mlc_updater::UpdateStatus`, redeclared here because the
+/// layout crate must not depend on the updater — the shell maps one onto the
+/// other. Every phase past `Available` is the app updating *itself*: it
+/// fetches, checks the hash and replaces its own binary, which is the whole
+/// reason the desktop surface does not hand out a link.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub enum UpdateOverlayPhase {
+    /// Asking the manifest. Distinct from `UpToDate` on purpose: the updater
+    /// sits idle both before and after a check, and reporting "you are up to
+    /// date" while the question is still open would be a guess.
+    Checking,
+    /// The manifest answers with the version already running.
+    UpToDate { version: String },
+    /// A newer build exists and has not been started.
+    Available { version: String, notes: String },
+    /// Fetching the new binary.
+    Downloading { percent: u8 },
+    /// Checking the downloaded binary's hash against the manifest.
+    Verifying,
+    /// Writing the new binary over the running one.
+    Installing,
+    /// Installed — it takes effect on the next launch.
+    RestartPending,
+    /// The update run failed; the installed build is untouched.
+    Failed { message: String },
 }
 
 /// One blog post as shown in the News overlay.
@@ -4392,6 +4433,10 @@ pub struct CloudOverlayState {
     pub data: CloudOverlayData,
     /// One-shot mailbox: URL to open in a new tab (link rows, downloads).
     pub open_url_requested: Option<String>,
+    /// One-shot mailbox: the user pressed Install in the Download overlay of
+    /// a desktop build. The shell turns it into `UpdaterCommand::InstallNow`;
+    /// the web shell never sets it and never reads it.
+    pub update_install_requested: bool,
     /// News reading view: index of the post being read in-modal, None = the
     /// post list. Reset whenever the overlay opens or closes.
     pub selected_post: Option<usize>,
@@ -4408,6 +4453,7 @@ impl Default for CloudOverlayState {
             kind: CloudOverlayKind::News,
             data: CloudOverlayData::Empty,
             open_url_requested: None,
+            update_install_requested: false,
             selected_post: None,
             position: None,
             is_dragging: false,
@@ -4425,15 +4471,26 @@ impl CloudOverlayState {
         self.selected_post = None;
         self.is_dragging = false;
         self.drag_offset = None;
-        // Keep fetched data across reopens of the same kind; refetch when
-        // switching kinds (News holds a blog feed, Download a release
-        // manifest — one cannot render the other) or after an error.
-        let kind_mismatch = matches!(
-            (&self.kind, &self.data),
-            (CloudOverlayKind::News, CloudOverlayData::Ready { .. })
-                | (CloudOverlayKind::Download, CloudOverlayData::News { .. })
+        // Keep what is already fetched only when it is the finished form
+        // THIS kind renders; anything else goes back to `Empty` so the
+        // driver fetches again.
+        //
+        // Stated as "what to keep" rather than as a list of mismatched
+        // pairs, because the list was incomplete the moment `Update` was
+        // added and would be again: News opened over an `Update` payload
+        // matched no pair, so it kept data it cannot render, and `Empty` is
+        // the only value that makes the driver refetch — the overlay sat on
+        // "Loading…" forever. `Loading` is deliberately not kept either: a
+        // fetch whose result was dropped (the user switched kinds while it
+        // was in flight) leaves exactly that value behind, and re-asking is
+        // the only way out of it.
+        let keep = matches!(
+            (kind, &self.data),
+            (CloudOverlayKind::News, CloudOverlayData::News { .. })
+                | (CloudOverlayKind::Download, CloudOverlayData::Ready { .. })
+                | (CloudOverlayKind::Download, CloudOverlayData::Update { .. })
         );
-        if kind_mismatch || matches!(self.data, CloudOverlayData::Error { .. }) {
+        if !keep {
             self.data = CloudOverlayData::Empty;
         }
     }
