@@ -247,8 +247,12 @@ pub fn bottom_toolbar() -> PanelToolbarDef {
             let mut s = ToolbarSectionDef::new(vec![
                 ToolbarItemDef::icon_button("expand", ToolbarIconId::new("Expand"))
                     .with_tooltip(t_toolbar(TK::Expand)),
-                ToolbarItemDef::button("clock").with_text("00:00:00")
-                    .with_tooltip(t_toolbar(TK::ServerTime)),
+                // No tooltip (owner 2026-09-02: "отключи тултип у тайма").
+                // It read "Server time", which is not what this clock shows,
+                // and it covered the glyphs the hover animation is there to
+                // display. `TK::ServerTime` and its translations stay in the
+                // table for when a correct one is wanted back.
+                ToolbarItemDef::button("clock").with_text("00:00:00"),
             ]);
             s.align = SectionAlign::End;
             s
