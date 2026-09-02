@@ -3644,6 +3644,24 @@ pub struct UserSettingsState {
     /// True if the user selected the E2E option (so page 2 is shown after linking).
     pub wizard_e2e_chosen: bool,
 
+    // ── Welcome wizard drag geometry ──────────────────────────────────────
+    // A SEPARATE trio from `position`/`is_dragging`/`drag_offset` above,
+    // deliberately: those back the User Settings modal itself, and the
+    // wizard renders from this same `UserSettingsState` but is a different
+    // on-screen surface (`welcome_wizard.rs`'s own `begin_modal_shell` call,
+    // namespace `"welcome_wizard"`, never `"user_settings"`). Sharing the
+    // trio would make dragging the wizard move the (currently closed)
+    // Settings window's remembered position too, and vice versa — the two
+    // are never open at once, but their geometry must not alias regardless.
+    /// Wizard modal position (`None` = centered on screen — the wizard's
+    /// resting state on open and after every dismiss, never inherited from
+    /// wherever a previous run's drag left it; see `reset_wizard_position`).
+    pub wizard_position: Option<(f64, f64)>,
+    /// Whether the wizard is currently being dragged by its header.
+    pub wizard_is_dragging: bool,
+    /// Offset from mouse to the wizard's top-left when its drag started.
+    pub wizard_drag_offset: Option<(f64, f64)>,
+
     // ── Profile ──────────────────────────────────────────────────────────
     /// Display name of the active profile.
     pub profile_display_name: String,
@@ -3788,6 +3806,9 @@ impl Default for UserSettingsState {
             profiles_with_vault_status: Vec::new(),
             wizard_page: 0,
             wizard_e2e_chosen: false,
+            wizard_position: None,
+            wizard_is_dragging: false,
+            wizard_drag_offset: None,
             // Empty, not "Default" (owner's identity ruling 2026-09-02: an
             // anonymous profile has no user-facing name at all). This is a
             // pre-sync placeholder that a real profile load overwrites within
@@ -3875,6 +3896,41 @@ impl UserSettingsState {
     /// End dragging.
     pub fn end_drag(&mut self) {
         self.is_dragging = false;
+    }
+
+    // ── Welcome wizard drag helpers ───────────────────────────────────────────
+    // Own trio, own methods — see the field docs on `wizard_position` for why
+    // this cannot reuse `start_drag`/`update_drag`/`end_drag` above.
+
+    /// Start dragging the wizard from its header.
+    pub fn wizard_start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {
+        self.wizard_is_dragging = true;
+        self.wizard_drag_offset = Some((mouse_x - modal_x, mouse_y - modal_y));
+    }
+
+    /// Update the wizard's position while dragging.
+    pub fn wizard_update_drag(&mut self, mouse_x: f64, mouse_y: f64) {
+        if let Some((ox, oy)) = self.wizard_drag_offset {
+            self.wizard_position = Some((mouse_x - ox, mouse_y - oy));
+        }
+    }
+
+    /// End dragging the wizard. Keeps `wizard_position` — a released drag is
+    /// still where the user put it, for the rest of THIS run.
+    pub fn wizard_end_drag(&mut self) {
+        self.wizard_is_dragging = false;
+        self.wizard_drag_offset = None;
+    }
+
+    /// Full reset of the wizard's drag geometry — called at the wizard's own
+    /// open/close boundaries (dismiss via ×/dimmer/Esc, "Show Wizard", "Run
+    /// Wizard", and the wizard's own completion), so a position dragged to in
+    /// a PREVIOUS showing never carries into the next: the wizard always
+    /// opens centred.
+    pub fn reset_wizard_position(&mut self) {
+        self.wizard_position = None;
+        self.wizard_is_dragging = false;
+        self.wizard_drag_offset = None;
     }
 
     // ── DATA & CACHE slider helpers ───────────────────────────────────────────

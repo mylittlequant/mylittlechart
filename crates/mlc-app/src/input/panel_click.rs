@@ -178,6 +178,9 @@ impl ChartApp {
     pub(super) fn dismiss_welcome_wizard(&mut self) {
         self.panel_app.user_settings_state.show_welcome_wizard = false;
         self.panel_app.user_settings_state.wizard_page = 0;
+        // Back to centred. A wizard reopened later must not surface wherever
+        // a previous run's drag happened to leave it.
+        self.panel_app.user_settings_state.reset_wizard_position();
         let cp_wid = uzor::WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
         let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
         let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
@@ -5529,6 +5532,7 @@ impl ChartApp {
                 "show_wizard" => {
                     self.panel_app.user_settings_state.show_welcome_wizard = true;
                     self.panel_app.user_settings_state.wizard_page = 0;
+                    self.panel_app.user_settings_state.reset_wizard_position();
                     // Clear leaked state from profile_manager
                     {
                         let cp_wid = uzor::WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);
@@ -5649,6 +5653,7 @@ impl ChartApp {
                     self.panel_app.user_settings_state.show_welcome_wizard = true;
                     self.panel_app.user_settings_state.show_profile_manager = false;
                     self.panel_app.user_settings_state.wizard_page = 0;
+                    self.panel_app.user_settings_state.reset_wizard_position();
                     // Clear leaked state from profile_manager
                     {
                         let cp_wid = uzor::WidgetId::from(crate::text_input::CONFIRM_PASSPHRASE);

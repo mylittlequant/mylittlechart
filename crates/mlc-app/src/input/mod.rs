@@ -2088,6 +2088,21 @@ impl ChartApp {
                             true
                         } else { false }
                     }
+                    // The welcome wizard renders into the SAME
+                    // `result.user_settings` slot (`chart_panel_app.rs`), so
+                    // its header rect arrives here under that field — but it
+                    // is a different surface with its own remembered
+                    // position, hence the wizard-specific trio on the state.
+                    // Without this arm the header's `Sense::DRAG`
+                    // registration produced a drag_start that matched no
+                    // prefix and was silently dropped, which is why
+                    // `draggable: true` alone never moved anything.
+                    "welcome_wizard" => {
+                        if let Some(ref us) = self.frame_result.as_ref().and_then(|r| r.user_settings.as_ref()) {
+                            self.panel_app.user_settings_state.wizard_start_drag(x, y, us.header_rect.x, us.header_rect.y);
+                            true
+                        } else { false }
+                    }
                     #[cfg(feature = "cloud")]
                     "cloud_login" => {
                         if let Some(ref cl) = self.frame_result.as_ref().and_then(|r| r.cloud_login.as_ref()) {
@@ -3997,6 +4012,10 @@ impl ChartApp {
             self.panel_app.user_settings_state.update_drag(x, y);
             return;
         }
+        if self.panel_app.user_settings_state.wizard_is_dragging {
+            self.panel_app.user_settings_state.wizard_update_drag(x, y);
+            return;
+        }
         #[cfg(feature = "cloud")]
         {
             if self.panel_app.cloud_login_state.is_dragging {
@@ -5021,6 +5040,11 @@ impl ChartApp {
         if self.panel_app.user_settings_state.is_dragging {
             self.panel_app.user_settings_state.end_drag();
             eprintln!("[ChartApp] user_settings modal drag ended");
+            return;
+        }
+        if self.panel_app.user_settings_state.wizard_is_dragging {
+            self.panel_app.user_settings_state.wizard_end_drag();
+            eprintln!("[ChartApp] welcome_wizard modal drag ended");
             return;
         }
         #[cfg(feature = "cloud")]

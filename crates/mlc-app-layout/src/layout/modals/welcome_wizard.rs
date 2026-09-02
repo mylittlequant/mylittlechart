@@ -155,8 +155,18 @@ pub fn render_welcome_wizard(
         // it would not move on native). Nothing behind it needs protecting —
         // the chart is live and the wizard is a courtesy, so letting the user
         // push it aside to look at what they are theming is the point.
+        //
+        // `At(state.wizard_position)`, not `Center`: `draggable: true` alone
+        // only registers the header rect with `Sense::DRAG` — nothing then
+        // STORES or APPLIES a dragged position, which is exactly why it used
+        // to look draggable and never move. `wizard_position` is a field of
+        // `UserSettingsState` separate from that struct's own
+        // `position`/`is_dragging`/`drag_offset` (those back the User
+        // Settings modal itself — see the field doc on `wizard_position`),
+        // `None` until the user actually drags, which is what keeps the
+        // wizard centred on open.
         draggable: true,
-        placement: ModalPlacement::Center,
+        placement: ModalPlacement::At(state.wizard_position),
         layer: ZLayer::ModalOverlay,
         ..ModalShellSpec::new("welcome_wizard", &title, MODAL_W, content_h)
     };
