@@ -165,6 +165,39 @@ pub enum ChromeHit {
     ResizeBottomRight,
 }
 
+/// True when `hit` lands on a control that a modal's backdrop veil covers,
+/// and which therefore must neither light up nor act while that modal is
+/// open.
+///
+/// The complement is deliberate, not an oversight. `render_backdrop_dim`
+/// leaves [`SYSTEM_BUTTONS_WIDTH`](crate::chrome::SYSTEM_BUTTONS_WIDTH)
+/// unpainted on native — minimise, maximise, close stay live under a modal
+/// (owner's ruling 2026-08-31) — and window management is not a control at
+/// all: dragging the window by its caption or pulling a resize edge must
+/// keep working, or a modal turns the window into a brick.
+///
+/// One list, used by BOTH the hover suppression and the click suppression in
+/// `dispatch.rs`. They were separate once and the click half was simply
+/// missing, so a veiled button did not highlight but still fired.
+pub fn is_veiled_hit(hit: ChromeHit) -> bool {
+    matches!(
+        hit,
+        ChromeHit::MascotButton
+            | ChromeHit::MenuButton
+            | ChromeHit::LoginButton
+            | ChromeHit::NewsButton
+            | ChromeHit::LinksButton
+            | ChromeHit::DownloadButton
+            | ChromeHit::Tab(_)
+            | ChromeHit::TabClose(_)
+            | ChromeHit::TabRename(_)
+            | ChromeHit::TabOverflow
+            | ChromeHit::NewTabButton
+            | ChromeHit::NewWindowButton
+            | ChromeHit::CloseWindowButton
+    )
+}
+
 /// Mutable rendering state for the chrome strip.
 pub struct ChromeState {
     pub hovered: ChromeHit,

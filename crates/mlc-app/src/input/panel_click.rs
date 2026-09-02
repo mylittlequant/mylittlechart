@@ -172,6 +172,60 @@ impl ChartApp {
         self.panel_app.credentials_state.pending_unlock_return = None;
     }
 
+    /// Close whichever backdrop-dimming modal is currently open.
+    ///
+    /// Owner's ruling 2026-09-02: a click that lands on chrome the veil
+    /// covers should just put the modal away — the control under it is not
+    /// supposed to fire, and swallowing the click outright would leave the
+    /// user pressing a dead button with no way to learn why. This is the
+    /// chrome-side twin of the dimmer zones the modal already registers over
+    /// the chart, which have always dismissed on click.
+    ///
+    /// The list mirrors `ChartPanelApp::dim_backdrop_color` — one open flag
+    /// per `dim_backdrop: true` modal. Keep the two in step; a modal that
+    /// dims but is missing here becomes a veil nothing can lift from the
+    /// chrome. Returns whether anything was actually closed.
+    pub fn dismiss_dimmed_modal(&mut self) -> bool {
+        #[cfg(feature = "cloud")]
+        {
+            if self.panel_app.cloud_login_state.is_open {
+                self.panel_app.cloud_login_state.is_open = false;
+                return true;
+            }
+            if self.panel_app.cloud_overlay_state.is_open {
+                self.panel_app.cloud_overlay_state.is_open = false;
+                return true;
+            }
+        }
+        if self.panel_app.user_settings_state.show_welcome_wizard {
+            // Full dismissal, not just the flag: the wizard also owns text
+            // fields and a dragged position that must not survive it.
+            self.dismiss_welcome_wizard();
+            return true;
+        }
+        if self.panel_app.user_settings_state.show_profile_manager {
+            self.panel_app.user_settings_state.show_profile_manager = false;
+            return true;
+        }
+        if self.panel_app.primitive_settings_state.save_template_mode {
+            self.panel_app.primitive_settings_state.save_template_mode = false;
+            return true;
+        }
+        if self.panel_app.indicator_settings_state.save_template_mode {
+            self.panel_app.indicator_settings_state.save_template_mode = false;
+            return true;
+        }
+        if self.panel_app.compare_settings_state.save_template_mode {
+            self.panel_app.compare_settings_state.save_template_mode = false;
+            return true;
+        }
+        if self.panel_app.chart_settings_state.save_template_mode {
+            self.panel_app.chart_settings_state.save_template_mode = false;
+            return true;
+        }
+        false
+    }
+
     /// Hide the Welcome Wizard and reset it to page 0. Shared by the ×
     /// button, the dimmer click and Esc — always allowed, the wizard is a
     /// first-run courtesy, not a gate.

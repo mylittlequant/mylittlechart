@@ -193,18 +193,8 @@ pub fn process_event(
             // what the rule was always trying to say.
             let dimmed = chart.panel_app.dim_backdrop_color().is_some();
             let prev_hovered = chrome_st.hovered;
-            chrome_st.hovered = if dimmed {
-                match hit {
-                    ChromeHit::NewTabButton
-                    | ChromeHit::MenuButton
-                    | ChromeHit::MascotButton
-                    | ChromeHit::NewWindowButton
-                    | ChromeHit::Tab(_)
-                    | ChromeHit::TabClose(_)
-                    | ChromeHit::TabRename(_)
-                    | ChromeHit::TabOverflow => ChromeHit::None,
-                    other => other,
-                }
+            chrome_st.hovered = if dimmed && chrome::is_veiled_hit(hit) {
+                ChromeHit::None
             } else {
                 hit
             };
@@ -526,6 +516,19 @@ pub fn process_event(
 
                 let (win_w, win_h) = platform.window_size();
                 let hit = chrome::hit_test(x, y, win_w as f64, win_h as f64, chrome_st);
+
+                // A press on chrome the modal veil covers puts the modal
+                // away instead of firing the control (owner 2026-09-02).
+                // Same `is_veiled_hit` list the hover suppression uses, so
+                // "does not light up" and "does not act" can never disagree
+                // — before this, a veiled button stayed dark and still fired.
+                // The system cluster, the caption drag and the resize edges
+                // are outside that list and keep working: a dimmed window
+                // must still be movable, resizable and closable.
+                if chart.panel_app.dim_backdrop_color().is_some() && chrome::is_veiled_hit(hit) {
+                    chart.dismiss_dimmed_modal();
+                    return;
+                }
 
                 // Inline tab rename routing: a press INSIDE the renaming tab
                 // is caret placement in the shared text store (geometry pushed
