@@ -206,6 +206,18 @@ pub fn process_event(
                 chrome_st.tab_list_open = true;
             }
 
+            // ...and leaving it closes it again. Opening on hover without a
+            // matching close leaves the list parked over the chart until an
+            // unrelated click dismisses it. The region it closes outside of
+            // carries a slack and reaches the top of the window, so walking
+            // from the button into the list never crosses out of it.
+            if chrome_st.tab_list_open
+                && chrome::tab_list_should_close(chrome_st, x, y, win_w as f64)
+            {
+                chrome_st.tab_list_open = false;
+                chrome_st.tab_list_hovered = -1;
+            }
+
             {
                 let time_ms = state.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;
                 chrome::update_tooltip(chrome_st, x, y, time_ms);

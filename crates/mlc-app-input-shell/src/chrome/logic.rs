@@ -491,6 +491,33 @@ pub fn tab_list_hit_test(state: &ChromeState, x: f64, y: f64, width: f64) -> Opt
     }
 }
 
+/// How far the pointer may stray from the open tab list before it closes.
+///
+/// A dropdown that opens on hover has to close on leave, or it stays over the
+/// chart until something unrelated is clicked — owner, 2026-09-03: "залипает".
+/// The slack keeps a hand that clips a boundary by a pixel from flickering it
+/// shut on the way in.
+const TAB_LIST_LEAVE_SLACK: f64 = 10.0;
+
+/// Whether the open tab-list dropdown should close for a pointer at `(x, y)`.
+///
+/// The live region is the panel, inflated by [`TAB_LIST_LEAVE_SLACK`] and
+/// extended up to the top of the window. The extension is what makes the
+/// journey from the "⋯" button down into the list continuous: the button sits
+/// in the chrome strip above the panel and inside its horizontal span, so
+/// without it the pointer would leave the region the instant it left the
+/// button, closing the very list it just opened.
+pub fn tab_list_should_close(state: &ChromeState, x: f64, y: f64, width: f64) -> bool {
+    if !state.tab_list_open {
+        return false;
+    }
+    let (mx, my, mw, mh) = tab_list_rect(state, width);
+    x < mx - TAB_LIST_LEAVE_SLACK
+        || x > mx + mw + TAB_LIST_LEAVE_SLACK
+        || y < -TAB_LIST_LEAVE_SLACK
+        || y > my + mh + TAB_LIST_LEAVE_SLACK
+}
+
 /// Update the hovered row of the open tab-list dropdown.
 pub fn tab_list_hover(state: &mut ChromeState, x: f64, y: f64, width: f64) {
     state.tab_list_hovered = tab_list_hit_test(state, x, y, width).map(|i| i as i32).unwrap_or(-1);
