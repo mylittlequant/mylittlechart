@@ -59,9 +59,6 @@ struct ButtonPositions {
     /// Web flavor: Download button (cloud builds).
     #[cfg(feature = "cloud")]
     download_left: f64,
-    /// Web flavor: Links button (cloud builds).
-    #[cfg(feature = "cloud")]
-    links_left: f64,
     /// Web flavor: News button (cloud builds).
     #[cfg(feature = "cloud")]
     news_left: f64,
@@ -83,27 +80,25 @@ impl ButtonPositions {
             // Web: the gear is the rightmost button (mirrors render.rs).
             ChromeFlavor::Web => width - MENU_BUTTON_WIDTH,
         };
-        // Cloud builds: right-to-left — gear, "Sign in", Download, Links, News.
-        // Native and Web share this cluster: News/Links are server-published
+        // Cloud builds: right-to-left — gear, "Sign in", Download, News.
+        // Native and Web share this cluster: News is server-published
         // content, unrelated to whether the surface is a tab or a window, and
         // Download is the same release manifest the in-process updater
         // already reads, re-verbed on native from "download a binary" to
         // "install this update".
         #[cfg(feature = "cloud")]
-        let (login_left, download_left, links_left, news_left) = match flavor {
+        let (login_left, download_left, news_left) = match flavor {
             ChromeFlavor::Web => {
                 let login = menu_left - LOGIN_BUTTON_WIDTH;
                 let dl = login - CLOUD_ICON_BUTTON_WIDTH;
-                let li = dl - CLOUD_ICON_BUTTON_WIDTH;
-                let ne = li - CLOUD_ICON_BUTTON_WIDTH;
-                (login, dl, li, ne)
+                let ne = dl - CLOUD_ICON_BUTTON_WIDTH;
+                (login, dl, ne)
             }
             ChromeFlavor::Native => {
                 let login = new_window_left - LOGIN_BUTTON_WIDTH;
                 let dl = login - CLOUD_ICON_BUTTON_WIDTH;
-                let li = dl - CLOUD_ICON_BUTTON_WIDTH;
-                let ne = li - CLOUD_ICON_BUTTON_WIDTH;
-                (login, dl, li, ne)
+                let ne = dl - CLOUD_ICON_BUTTON_WIDTH;
+                (login, dl, ne)
             }
         };
         Self {
@@ -113,8 +108,6 @@ impl ButtonPositions {
             login_left,
             #[cfg(feature = "cloud")]
             download_left,
-            #[cfg(feature = "cloud")]
-            links_left,
             #[cfg(feature = "cloud")]
             news_left,
         }
@@ -229,6 +222,21 @@ pub fn scroll_tab_strip(state: &mut ChromeState, width: f64, delta: f64) {
     state.tab_scroll = (state.tab_scroll + delta).clamp(0.0, max);
 }
 
+/// Cloud button hit-test — Sign in / Download / News occupy the same
+/// bp-relative bands on both flavors; the Sign-in band's upper edge is the
+/// one thing that differs (it butts against `new_window_left` on Native,
+/// `menu_left` on Web), so that bound stays a caller-supplied parameter.
+/// Written once because the two flavor arms of `hit_test` used to carry this
+/// chain twice, byte-for-byte — exactly the kind of duplication that let
+/// `draw_account_button`'s two copies (render.rs) silently disagree.
+#[cfg(feature = "cloud")]
+fn cloud_button_hit_test(x: f64, bp: &ButtonPositions, login_upper: f64) -> Option<ChromeHit> {
+    if x >= bp.login_left && x < login_upper { return Some(ChromeHit::LoginButton); }
+    if x >= bp.download_left && x < bp.login_left { return Some(ChromeHit::DownloadButton); }
+    if x >= bp.news_left && x < bp.download_left { return Some(ChromeHit::NewsButton); }
+    None
+}
+
 // ── hit_test ──────────────────────────────────────────────────────────────────
 
 pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) -> ChromeHit {
@@ -262,22 +270,16 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
                 if x >= bp.menu_left         && x < bp.mascot_left       { return ChromeHit::MenuButton; }
                 if x >= bp.new_window_left   && x < bp.menu_left         { return ChromeHit::NewWindowButton; }
                 #[cfg(feature = "cloud")]
-                {
-                    if x >= bp.login_left && x < bp.new_window_left { return ChromeHit::LoginButton; }
-                    if x >= bp.download_left && x < bp.login_left { return ChromeHit::DownloadButton; }
-                    if x >= bp.links_left && x < bp.download_left { return ChromeHit::LinksButton; }
-                    if x >= bp.news_left && x < bp.links_left { return ChromeHit::NewsButton; }
+                if let Some(hit) = cloud_button_hit_test(x, &bp, bp.new_window_left) {
+                    return hit;
                 }
             }
             ChromeFlavor::Web => {
                 // Web: gear is rightmost; cloud builds add the cloud buttons.
                 if x >= bp.menu_left { return ChromeHit::MenuButton; }
                 #[cfg(feature = "cloud")]
-                {
-                    if x >= bp.login_left && x < bp.menu_left { return ChromeHit::LoginButton; }
-                    if x >= bp.download_left && x < bp.login_left { return ChromeHit::DownloadButton; }
-                    if x >= bp.links_left && x < bp.download_left { return ChromeHit::LinksButton; }
-                    if x >= bp.news_left && x < bp.links_left { return ChromeHit::NewsButton; }
+                if let Some(hit) = cloud_button_hit_test(x, &bp, bp.menu_left) {
+                    return hit;
                 }
             }
         }

@@ -374,7 +374,7 @@ impl CloudSession {
             }
         }
 
-        // ── Cloud overlay (News/Links/Download): url mailbox + data fetch ──
+        // ── Cloud overlay (News/Download): url mailbox + data fetch ──
         {
             let ov = &mut chart.panel_app.cloud_overlay_state;
             if ov.is_open {

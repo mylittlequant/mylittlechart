@@ -266,7 +266,6 @@ pub fn process_event(
                 | ChromeHit::MenuButton
                 | ChromeHit::LoginButton
                 | ChromeHit::NewsButton
-                | ChromeHit::LinksButton
                 | ChromeHit::DownloadButton
                 | ChromeHit::Tab(_)
                 | ChromeHit::TabClose(_)
@@ -710,7 +709,7 @@ pub fn process_event(
                         }
                         return;
                     }
-                    ChromeHit::NewsButton | ChromeHit::LinksButton | ChromeHit::DownloadButton => {
+                    ChromeHit::NewsButton | ChromeHit::DownloadButton => {
                         #[cfg(feature = "cloud")]
                         {
                             use mlc_app_layout::ui::modal_settings::CloudOverlayKind;
@@ -718,7 +717,6 @@ pub fn process_event(
                             if !skeleton_active {
                                 let kind = match hit {
                                     ChromeHit::NewsButton => CloudOverlayKind::News,
-                                    ChromeHit::LinksButton => CloudOverlayKind::Links,
                                     _ => CloudOverlayKind::Download,
                                 };
                                 chart.panel_app.cloud_overlay_state.toggle(kind);

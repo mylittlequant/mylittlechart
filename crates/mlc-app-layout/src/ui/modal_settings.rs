@@ -4371,7 +4371,7 @@ impl CloudLoginState {
 }
 
 // =============================================================================
-// CloudOverlayState — News / Links / Download overlays (cloud builds only)
+// CloudOverlayState — News / Download overlays (cloud builds only)
 // =============================================================================
 
 /// Which cloud overlay is showing.
@@ -4379,9 +4379,11 @@ impl CloudLoginState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CloudOverlayKind {
     /// Release news ("what's new") — data from GET /api/updates/latest.
+    /// Also carries the LINKS section (social/project links) at the bottom
+    /// of its list view; a standalone Links overlay used to hold those, but
+    /// a bare list of links was thin content for a chrome button of its own
+    /// (owner, 2026-09-04).
     News,
-    /// Social/project links (GitHub, X, Telegram, Discord).
-    Links,
     /// The same release manifest, read by whichever surface is asking.
     ///
     /// On the web page it means "get the desktop app" and renders download
@@ -4487,7 +4489,7 @@ pub struct CloudNewsPost {
     pub url: String,
 }
 
-/// State for the News / Links / Download overlays (one open at a time).
+/// State for the News / Download overlays (one open at a time).
 ///
 /// Same mailbox contract as [`CloudLoginState`]: pure UI state + flags,
 /// effects in the shell driver.

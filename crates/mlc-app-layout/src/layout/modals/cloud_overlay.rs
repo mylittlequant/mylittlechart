@@ -1,12 +1,13 @@
-//! News / Links / Download overlays (cloud builds only).
+//! News / Download overlays (cloud builds only).
 //!
 //! Standard modal shell (`ui::widgets::modal`) over a dimmed backdrop, one
 //! dialog per [`CloudOverlayKind`]:
 //! - News — "what's new": version + release notes from /api/updates/latest
-//!   (fetched by the shell driver into [`CloudOverlayData`]), plus a row out
-//!   to the blog where the long-form posts live.
-//! - Links — social/project links, opened in a new tab via the
-//!   `open_url_requested` mailbox.
+//!   (fetched by the shell driver into [`CloudOverlayData`]), followed by a
+//!   LINKS section (social/project links, opened in a new tab via the
+//!   `open_url_requested` mailbox) — a standalone Links overlay was thin
+//!   enough content on its own that the owner folded it in here
+//!   (2026-09-04) rather than keep it a chrome button of its own.
 //! - Download — the release manifest, read by whichever surface asked.
 //!   The web page gets binary download links; the desktop app gets its own
 //!   updater's state and an Install action, because there the app replaces
@@ -39,15 +40,18 @@ const ROW_H: f64 = 40.0;
 /// Gap between stacked rows.
 const ROW_GAP: f64 = 6.0;
 
-/// Social/project links shown in the Links overlay (id, label, URL).
-/// Keep in sync with the landing footer. The click handler resolves ids
-/// through this table, so a row anywhere (News → blog) can reuse them.
+/// Social/project links shown in the News overlay's LINKS section (id,
+/// label, URL). Keep in sync with the landing footer. The click handler
+/// resolves ids through this table, so a row anywhere can reuse them.
+///
+/// No `blog` entry: the reader landing on this section is already inside the
+/// blog feed (the posts above it come straight from it), so a row pointing
+/// back to itself would be dead weight.
 pub const SOCIAL_LINKS: &[(&str, &str, &str)] = &[
     ("github", "GitHub", "https://github.com/knyaz-tishini/mylittlechart"),
     ("x", "X / Twitter", "https://x.com/mylittlechart"),
     ("telegram", "Telegram", "https://t.me/mylittlechart"),
     ("discord", "Discord", "https://discord.gg/mylittlechart"),
-    ("blog", "Blog", "https://chart.example/blog"),
     ("donate", "Support the project", "https://chart.example/donate"),
 ];
 
@@ -59,7 +63,6 @@ pub struct CloudOverlayResult {
 fn title_for(state: &CloudOverlayState) -> &'static str {
     match state.kind {
         CloudOverlayKind::News => "What's new",
-        CloudOverlayKind::Links => "Links",
         // Same feed, but the desktop build acts on it instead of linking to
         // it, and the title has to say which of the two the user is looking
         // at — "Download" over an Install button reads like a mistake.
@@ -99,10 +102,26 @@ const MAX_RELEASE_ROWS: usize = 12;
 /// The News overlay shows at most this many posts.
 const MAX_NEWS_POSTS: usize = 3;
 
+/// Gap between the last post block (or, with no posts, the list's top) and
+/// the LINKS heading below it.
+const LINKS_SECTION_GAP: f64 = 8.0;
+/// Height of the LINKS heading line itself — the same offset cloud_login's
+/// own "SIGNED IN AS" leaves before its first line of content, so the two
+/// modals' section headers read as one family.
+const LINKS_HEADING_H: f64 = 22.0;
+
+/// Height of the LINKS section the News list appends below its posts: gap +
+/// heading + one row per [`SOCIAL_LINKS`] entry. A function, not inlined at
+/// both call sites, so `content_height` and `draw_links_section` can never
+/// disagree on the frame this section needs — same reason `post_block_h`
+/// mirrors `draw_news_post`.
+fn links_section_h() -> f64 {
+    LINKS_SECTION_GAP + LINKS_HEADING_H + SOCIAL_LINKS.len() as f64 * ROW_H
+}
+
 /// Body height per kind — the shell sizes the frame from this.
 fn content_height(state: &CloudOverlayState) -> f64 {
     match state.kind {
-        CloudOverlayKind::Links => SOCIAL_LINKS.len() as f64 * ROW_H + 4.0,
         CloudOverlayKind::Download => match &state.data {
             // Update view: caption + notes + the action row (or, in the
             // phases that have no action, caption + a status line).
@@ -128,7 +147,7 @@ fn content_height(state: &CloudOverlayState) -> f64 {
         CloudOverlayKind::News => match &state.data {
             CloudOverlayData::News { posts } => {
                 // Reading view: one post, expanded. List view: up to
-                // MAX_NEWS_POSTS blocks + the blog row.
+                // MAX_NEWS_POSTS blocks + the LINKS section.
                 if let Some(post) = state.selected_post.and_then(|i| posts.get(i)) {
                     post_detail_h(post)
                 } else {
@@ -137,7 +156,7 @@ fn content_height(state: &CloudOverlayState) -> f64 {
                         .take(MAX_NEWS_POSTS)
                         .map(post_block_h)
                         .sum();
-                    blocks + 8.0 + ROW_H
+                    blocks + links_section_h()
                 }
             }
             _ => 84.0,
@@ -145,7 +164,7 @@ fn content_height(state: &CloudOverlayState) -> f64 {
     }
 }
 
-/// Render the cloud overlay (News / Links / Download).
+/// Render the cloud overlay (News, which carries the LINKS section / Download).
 pub fn render_cloud_overlay(
     ctx: &mut dyn RenderContext,
     window_w: f64,
@@ -205,21 +224,6 @@ fn draw_body(
     let row_w = w;
 
     match state.kind {
-        CloudOverlayKind::Links => {
-            for (i, (id, label, _url)) in SOCIAL_LINKS.iter().enumerate() {
-                draw_link_row(
-                    ctx,
-                    coord,
-                    layer_id,
-                    &format!("cloud_overlay:link:{}", id),
-                    WidgetRect::new(x, y + i as f64 * ROW_H, row_w, ROW_H - ROW_GAP),
-                    label,
-                    Icon::Globe,
-                    tt,
-                );
-            }
-        }
-
         CloudOverlayKind::Download => match &state.data {
             // Desktop build: the updater is already running against this
             // manifest in the same process, so the overlay is a view of it.
@@ -325,16 +329,7 @@ fn draw_body(
                             tt,
                         );
                     }
-                    draw_link_row(
-                        ctx,
-                        coord,
-                        layer_id,
-                        "cloud_overlay:link:blog",
-                        WidgetRect::new(x, py + 8.0, row_w, ROW_H - ROW_GAP),
-                        "All news on the blog",
-                        Icon::Globe,
-                        tt,
-                    );
+                    draw_links_section(ctx, coord, layer_id, x, py, row_w, tt);
                 }
             }
             CloudOverlayData::Error { message } => {
@@ -389,6 +384,44 @@ fn draw_news_post(
 
     coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
     h
+}
+
+/// LINKS section appended below the News list's posts: a small-caps heading
+/// in the same font/colour cloud_login's own "SIGNED IN AS"/"PLAN" headers
+/// use (so the two modals read as one family), followed by one row per
+/// [`SOCIAL_LINKS`] entry. Widget ids stay `cloud_overlay:link:{id}` — the
+/// input side (`panel_click.rs`) resolves them through `SOCIAL_LINKS`
+/// regardless of which overlay drew the row, so folding the old standalone
+/// Links overlay in here needed no change on that side.
+fn draw_links_section(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    row_w: f64,
+    tt: &ToolbarTheme,
+) {
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.set_font("11px monospace");
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.fill_text("LINKS", x, y + LINKS_SECTION_GAP);
+
+    let mut ry = y + LINKS_SECTION_GAP + LINKS_HEADING_H;
+    for (id, label, _url) in SOCIAL_LINKS {
+        draw_link_row(
+            ctx,
+            coord,
+            layer_id,
+            &format!("cloud_overlay:link:{}", id),
+            WidgetRect::new(x, ry, row_w, ROW_H - ROW_GAP),
+            label,
+            Icon::Globe,
+            tt,
+        );
+        ry += ROW_H;
+    }
 }
 
 /// The News reading view: one post expanded in place — back row on top,

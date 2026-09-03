@@ -79,8 +79,6 @@ struct ButtonPositions {
     #[cfg(feature = "cloud")]
     download_left: f64,
     #[cfg(feature = "cloud")]
-    links_left: f64,
-    #[cfg(feature = "cloud")]
     news_left: f64,
 }
 
@@ -96,17 +94,14 @@ impl ButtonPositions {
                 let menu_left         = mascot_left - MENU_BUTTON_WIDTH;
                 let new_window_left   = menu_left - NEW_WINDOW_BUTTON_WIDTH;
                 // Native cloud cluster, left of "new window": "Sign in",
-                // then Download / Links / News — see the same computation
-                // (and the reasoning for why native carries all three) in
+                // then Download / News — see the same computation in
                 // `logic.rs`, which the hit test reads.
                 #[cfg(feature = "cloud")]
                 let login_left = new_window_left - LOGIN_BUTTON_WIDTH;
                 #[cfg(feature = "cloud")]
                 let download_left = login_left - CLOUD_ICON_BUTTON_WIDTH;
                 #[cfg(feature = "cloud")]
-                let links_left = download_left - CLOUD_ICON_BUTTON_WIDTH;
-                #[cfg(feature = "cloud")]
-                let news_left = links_left - CLOUD_ICON_BUTTON_WIDTH;
+                let news_left = download_left - CLOUD_ICON_BUTTON_WIDTH;
                 Self {
                     close_x, maximize_x, minimize_x, close_window_left, menu_left, new_window_left,
                     #[cfg(feature = "cloud")]
@@ -114,22 +109,18 @@ impl ButtonPositions {
                     #[cfg(feature = "cloud")]
                     download_left,
                     #[cfg(feature = "cloud")]
-                    links_left,
-                    #[cfg(feature = "cloud")]
                     news_left,
                 }
             }
             ChromeFlavor::Web => {
-                // Web: right-to-left — gear, "Sign in", Download, Links, News.
+                // Web: right-to-left — gear, "Sign in", Download, News.
                 let menu_left = width - MENU_BUTTON_WIDTH;
                 #[cfg(feature = "cloud")]
                 let login_left = menu_left - LOGIN_BUTTON_WIDTH;
                 #[cfg(feature = "cloud")]
                 let download_left = login_left - CLOUD_ICON_BUTTON_WIDTH;
                 #[cfg(feature = "cloud")]
-                let links_left = download_left - CLOUD_ICON_BUTTON_WIDTH;
-                #[cfg(feature = "cloud")]
-                let news_left = links_left - CLOUD_ICON_BUTTON_WIDTH;
+                let news_left = download_left - CLOUD_ICON_BUTTON_WIDTH;
                 Self {
                     close_x:           0.0,
                     maximize_x:        0.0,
@@ -141,8 +132,6 @@ impl ButtonPositions {
                     login_left,
                     #[cfg(feature = "cloud")]
                     download_left,
-                    #[cfg(feature = "cloud")]
-                    links_left,
                     #[cfg(feature = "cloud")]
                     news_left,
                 }
@@ -579,48 +568,10 @@ pub fn render(
                 #[cfg(feature = "cloud")]
                 draw_account_button(ctx, state, c, &bp);
 
-                // Cloud icon buttons: Download / Links / News (left of Sign
-                // in) — same icons, hover treatment and sizes as the Web
-                // arm below; only the anchor differs, and that is already
-                // carried by `ButtonPositions`.
+                // Cloud icon buttons: Download / News (left of Sign in) —
+                // one drawing for both flavors, see `draw_cloud_icon_buttons`.
                 #[cfg(feature = "cloud")]
-                {
-                    // While an installed update waits for a restart this button
-                    // stops being "download" and becomes the notice: a restart
-                    // glyph in the theme's accent. The updater reaches that
-                    // state and the overlay says so — but only while it is
-                    // open, and closing it left no trace at all while the app
-                    // went on running the old binary. The control that offered
-                    // the update is where "it is ready" belongs, and the accent
-                    // is the one colour in this strip that means something is
-                    // waiting on you.
-                    let restarting = state.update_restart_pending;
-                    let icon_btns: [(f64, &str, ChromeHit); 3] = [
-                        (
-                            bp.download_left,
-                            if restarting { "refresh" } else { "cloud_download" },
-                            ChromeHit::DownloadButton,
-                        ),
-                        (bp.links_left, "globe", ChromeHit::LinksButton),
-                        (bp.news_left, "bell", ChromeHit::NewsButton),
-                    ];
-                    for (left, icon, hit) in icon_btns {
-                        if state.hovered == hit {
-                            ctx.set_fill_color(&c.button_hover);
-                            ctx.fill_rounded_rect(left + 2.0, 4.0, CLOUD_ICON_BUTTON_WIDTH - 4.0, CHROME_HEIGHT - 8.0, 6.0);
-                        }
-                        let icon_x = left + (CLOUD_ICON_BUTTON_WIDTH - 16.0) / 2.0;
-                        let icon_y = (CHROME_HEIGHT - 16.0) / 2.0;
-                        let ink = if restarting && hit == ChromeHit::DownloadButton {
-                            &c.cta_bg
-                        } else {
-                            &c.icon_normal
-                        };
-                        if let Some(svg) = icon_svg(icon) {
-                            draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, ink);
-                        }
-                    }
-                }
+                draw_cloud_icon_buttons(ctx, state, c, &bp);
             }
             ChromeFlavor::Web => {
                 // Sign-in / account button — one drawing for both flavors.
@@ -633,47 +584,10 @@ pub fn render(
                 #[cfg(feature = "cloud")]
                 draw_account_button(ctx, state, c, &bp);
 
-                // Cloud icon buttons: Download / Links / News (left of Sign in).
-                // Hover lights the background patch ONLY — the icon keeps its
-                // normal color, same as every other toolbar button in the app.
+                // Cloud icon buttons: Download / News (left of Sign in) —
+                // one drawing for both flavors, see `draw_cloud_icon_buttons`.
                 #[cfg(feature = "cloud")]
-                {
-                    // While an installed update waits for a restart this button
-                    // stops being "download" and becomes the notice: a restart
-                    // glyph in the theme's accent. The updater reaches that
-                    // state and the overlay says so — but only while it is
-                    // open, and closing it left no trace at all while the app
-                    // went on running the old binary. The control that offered
-                    // the update is where "it is ready" belongs, and the accent
-                    // is the one colour in this strip that means something is
-                    // waiting on you.
-                    let restarting = state.update_restart_pending;
-                    let icon_btns: [(f64, &str, ChromeHit); 3] = [
-                        (
-                            bp.download_left,
-                            if restarting { "refresh" } else { "cloud_download" },
-                            ChromeHit::DownloadButton,
-                        ),
-                        (bp.links_left, "globe", ChromeHit::LinksButton),
-                        (bp.news_left, "bell", ChromeHit::NewsButton),
-                    ];
-                    for (left, icon, hit) in icon_btns {
-                        if state.hovered == hit {
-                            ctx.set_fill_color(&c.button_hover);
-                            ctx.fill_rounded_rect(left + 2.0, 4.0, CLOUD_ICON_BUTTON_WIDTH - 4.0, CHROME_HEIGHT - 8.0, 6.0);
-                        }
-                        let icon_x = left + (CLOUD_ICON_BUTTON_WIDTH - 16.0) / 2.0;
-                        let icon_y = (CHROME_HEIGHT - 16.0) / 2.0;
-                        let ink = if restarting && hit == ChromeHit::DownloadButton {
-                            &c.cta_bg
-                        } else {
-                            &c.icon_normal
-                        };
-                        if let Some(svg) = icon_svg(icon) {
-                            draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, ink);
-                        }
-                    }
-                }
+                draw_cloud_icon_buttons(ctx, state, c, &bp);
 
                 // Menu button (gear) — rightmost. Same hover rule: background
                 // patch only, the icon itself does not recolor.
@@ -1056,7 +970,7 @@ fn draw_account_button(
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     // "Sign in" was sized for this button; an account name was not, and a long
-    // handle would paint straight across the News/Links/Update icons to its
+    // handle would paint straight across the News/Download icons to its
     // left. Clipped to the button, the same way a tab name is clipped to its
     // tab.
     ctx.save();
@@ -1067,6 +981,53 @@ fn draw_account_button(
         CHROME_HEIGHT / 2.0,
     );
     ctx.restore();
+}
+
+/// Cloud icon buttons — Download, News (left of "Sign in") — one drawing for
+/// both flavors. Used to be written twice, once per flavor arm, with
+/// identical bodies; kept as one function for the same reason
+/// [`draw_account_button`] is: a duplicated widget is exactly the shape a
+/// shipped bug took tonight (the account button's two copies disagreed).
+///
+/// While an installed update waits for a restart the Download button stops
+/// meaning "download" and becomes the notice instead: a restart glyph in the
+/// theme's accent. The updater reaches that state and the overlay says so —
+/// but only while the overlay is open, and closing it left no trace at all
+/// while the app went on running the old binary. The control that offered
+/// the update is where "it is ready" belongs, and the accent is the one
+/// colour in this strip that means something is waiting on you.
+#[cfg(feature = "cloud")]
+fn draw_cloud_icon_buttons(
+    ctx: &mut dyn MlcRenderContext,
+    state: &ChromeState,
+    c: &ChromeColors,
+    bp: &ButtonPositions,
+) {
+    let restarting = state.update_restart_pending;
+    let icon_btns: [(f64, &str, ChromeHit); 2] = [
+        (
+            bp.download_left,
+            if restarting { "refresh" } else { "cloud_download" },
+            ChromeHit::DownloadButton,
+        ),
+        (bp.news_left, "bell", ChromeHit::NewsButton),
+    ];
+    for (left, icon, hit) in icon_btns {
+        if state.hovered == hit {
+            ctx.set_fill_color(&c.button_hover);
+            ctx.fill_rounded_rect(left + 2.0, 4.0, CLOUD_ICON_BUTTON_WIDTH - 4.0, CHROME_HEIGHT - 8.0, 6.0);
+        }
+        let icon_x = left + (CLOUD_ICON_BUTTON_WIDTH - 16.0) / 2.0;
+        let icon_y = (CHROME_HEIGHT - 16.0) / 2.0;
+        let ink = if restarting && hit == ChromeHit::DownloadButton {
+            &c.cta_bg
+        } else {
+            &c.icon_normal
+        };
+        if let Some(svg) = icon_svg(icon) {
+            draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, ink);
+        }
+    }
 }
 
 /// Pick black or white label text for readability over a `#rrggbb` fill,

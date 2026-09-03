@@ -140,10 +140,10 @@ pub enum ChromeHit {
     MenuButton,
     /// Cloud sign-in button (Web flavor, server builds only).
     LoginButton,
-    /// Cloud "What's new" button (Web flavor, cloud builds).
+    /// Cloud "What's new" button (Web flavor, cloud builds). Also opens the
+    /// LINKS section folded into the bottom of that overlay's list view —
+    /// there is no standalone links button any more (owner, 2026-09-04).
     NewsButton,
-    /// Cloud social/project links button (Web flavor, cloud builds).
-    LinksButton,
     /// Cloud desktop-download button (Web flavor, cloud builds).
     DownloadButton,
     Tab(usize),
@@ -186,7 +186,6 @@ pub fn is_veiled_hit(hit: ChromeHit) -> bool {
             | ChromeHit::MenuButton
             | ChromeHit::LoginButton
             | ChromeHit::NewsButton
-            | ChromeHit::LinksButton
             | ChromeHit::DownloadButton
             | ChromeHit::Tab(_)
             | ChromeHit::TabClose(_)
