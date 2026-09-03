@@ -5433,9 +5433,29 @@ impl ChartApp {
                     }
                 }
                 "news_back" => st.selected_post = None,
-                "download:win64" => {
+                // The row that expands the modal into the full catalogue.
+                "toggle_expand" => st.expanded = !st.expanded,
+                // The primary action row — THIS visitor's own build.
+                "download:primary" => {
                     if let mlc_app_layout::ui::modal_settings::CloudOverlayData::Ready { download_url, .. } = &st.data {
                         st.open_url_requested = Some(download_url.clone());
+                    }
+                }
+                // A row in the expanded list — some other platform's current
+                // build, or an older version. `platform`/`version` together
+                // are the only key the release list has (a platform can list
+                // several versions), so both ride in the widget id.
+                rest if rest.starts_with("download:release:") => {
+                    let key = &rest["download:release:".len()..];
+                    if let Some((platform, version)) = key.split_once(':') {
+                        if let mlc_app_layout::ui::modal_settings::CloudOverlayData::Ready { releases, .. } = &st.data {
+                            if let Some(entry) = releases
+                                .iter()
+                                .find(|r| r.platform == platform && r.version == version)
+                            {
+                                st.open_url_requested = Some(entry.download_url.clone());
+                            }
+                        }
                     }
                 }
                 // The desktop build's Install / Try again. Both post the same

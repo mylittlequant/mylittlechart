@@ -18,13 +18,16 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use wasm_bindgen_futures::spawn_local;
+use wasm_bindgen::JsCast;
+use wasm_bindgen_futures::{spawn_local, JsFuture};
 
 use mlc_app::ChartApp;
-use mlc_app_layout::ui::modal_settings::{CloudLoginPhase, CloudNewsPost, CloudOverlayData, CloudOverlayKind};
+use mlc_app_layout::ui::modal_settings::{
+    CloudLoginPhase, CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudReleaseEntry,
+};
 use mlc_cloud::{
     BuildAttestation, BlogPost, CloudConfig, DeviceAuthPoll, EntitlementsResponse, FetchTransport,
-    StoredToken, VersionManifest,
+    ReleaseEntry, StoredToken, VersionManifest,
 };
 
 const TOKEN_KEY: &str = "mlc.cloud.token.v1";
@@ -46,7 +49,11 @@ enum FlowResult {
     Code(Result<String, String>),
     Poll(Result<DeviceAuthPoll, String>),
     Logout,
-    Updates(Result<VersionManifest, String>),
+    /// This visitor's own platform id, their latest manifest, and the full
+    /// release catalogue — fetched together so the Download overlay never
+    /// shows the collapsed view without already holding what the expand
+    /// button needs.
+    Updates(Result<(&'static str, VersionManifest, Vec<ReleaseEntry>), String>),
     News(Result<Vec<BlogPost>, String>),
 }
 
@@ -263,11 +270,22 @@ impl CloudSession {
                         self.inner.borrow_mut().next_poll_ms = now_ms + POLL_INTERVAL_MS;
                     }
                 }
-                FlowResult::Updates(Ok(m)) => {
+                FlowResult::Updates(Ok((platform, m, releases))) => {
                     chart.panel_app.cloud_overlay_state.data = CloudOverlayData::Ready {
+                        platform: platform.to_string(),
                         version: m.version,
                         notes: m.release_notes,
                         download_url: m.download_url,
+                        releases: releases
+                            .into_iter()
+                            .map(|r| CloudReleaseEntry {
+                                platform: r.platform,
+                                version: r.version,
+                                file_size: r.file_size,
+                                download_url: r.download_url,
+                                created_at: r.created_at,
+                            })
+                            .collect(),
                     };
                 }
                 FlowResult::Updates(Err(e)) => {
@@ -344,10 +362,19 @@ impl CloudSession {
                                 inner.borrow_mut().result = Some(FlowResult::News(r));
                             }
                             _ => {
-                                let r = transport
-                                    .updates_latest("win64")
+                                let platform = detect_platform().await;
+                                let latest = transport
+                                    .updates_latest(platform)
                                     .await
                                     .map_err(|e| e.to_string());
+                                let list = transport
+                                    .updates_list("stable")
+                                    .await
+                                    .map_err(|e| e.to_string());
+                                let r = match (latest, list) {
+                                    (Ok(m), Ok(releases)) => Ok((platform, m, releases)),
+                                    (Err(e), _) | (_, Err(e)) => Err(e),
+                                };
                                 inner.borrow_mut().result = Some(FlowResult::Updates(r));
                             }
                         }
@@ -479,6 +506,79 @@ fn load_or_create_device_id() -> String {
         id
     } else {
         format!("web-{}", js_sys::Date::now() as u64)
+    }
+}
+
+/// Which build id (`win64` / `macos-arm64` / `macos-x64` / `linux64`,
+/// `mlc_updater::platform`'s own ids) the Download overlay should offer this
+/// visitor first. Mirrors the landing page's own `detectPlatform()`
+/// (`mylittlechart-landing/web/index.html`) exactly, including the reasoning:
+///
+/// The OS is readable and reliable from `navigator.userAgent`. The CPU
+/// architecture is not: only Chromium exposes it
+/// (`navigator.userAgentData.getHighEntropyValues(['architecture'])`), and
+/// Safari on an Apple Silicon Mac still reports an Intel-looking user agent
+/// — so trusting the UA there would hand an M-series visitor the x86_64
+/// build. Hence: read the OS from the UA, ask for the architecture where it
+/// can actually be asked, and default macOS to arm64 otherwise, since Apple
+/// stopped selling Intel Macs in 2023. Whoever this guesses wrong for finds
+/// every other build in the expanded list, which is the only reason
+/// guessing is acceptable at all.
+///
+/// `userAgentData` has no typed `web-sys` binding (it is Chromium-only and
+/// not part of the stable web-sys feature set here), hence the raw
+/// `js_sys::Reflect` calls rather than a struct field.
+async fn detect_platform() -> &'static str {
+    let Some(window) = web_sys::window() else {
+        return "win64";
+    };
+    let navigator = window.navigator();
+    let ua = navigator.user_agent().unwrap_or_default();
+    if ua.contains("Windows") {
+        return "win64";
+    }
+    if ua.contains("Linux") || ua.contains("X11") {
+        return "linux64";
+    }
+    if !(ua.contains("Mac OS X") || ua.contains("Macintosh")) {
+        // Unrecognised UA (a phone, something exotic): still offer a build
+        // rather than nothing, same fallback the landing page uses.
+        return "win64";
+    }
+
+    let uad = js_sys::Reflect::get(&navigator, &"userAgentData".into())
+        .ok()
+        .filter(|v| !v.is_undefined() && !v.is_null());
+    let Some(uad) = uad else {
+        return "macos-arm64";
+    };
+    let get_high_entropy_values = js_sys::Reflect::get(&uad, &"getHighEntropyValues".into())
+        .ok()
+        .and_then(|f| f.dyn_into::<js_sys::Function>().ok());
+    let Some(func) = get_high_entropy_values else {
+        return "macos-arm64";
+    };
+    let hints = js_sys::Array::of1(&"architecture".into());
+    let promise = func
+        .call1(&uad, &hints)
+        .ok()
+        .and_then(|p| p.dyn_into::<js_sys::Promise>().ok());
+    let Some(promise) = promise else {
+        return "macos-arm64";
+    };
+    match JsFuture::from(promise).await {
+        Ok(v) => {
+            let arch = js_sys::Reflect::get(&v, &"architecture".into())
+                .ok()
+                .and_then(|a| a.as_string())
+                .unwrap_or_default();
+            if arch == "x86" {
+                "macos-x64"
+            } else {
+                "macos-arm64"
+            }
+        }
+        Err(_) => "macos-arm64",
     }
 }
 

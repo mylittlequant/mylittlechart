@@ -288,6 +288,18 @@ impl FetchTransport {
         self.decode_success(status, &body)
     }
 
+    /// `GET /api/updates/list?channel=…` — every published release, every
+    /// platform, newest first. Drives the Download overlay's expanded list;
+    /// `updates_latest` above stays what the collapsed single-platform view
+    /// (and the OTA updater) asks for.
+    pub async fn updates_list(&self, channel: &str) -> Result<Vec<ReleaseEntry>, CloudError> {
+        let (status, body) = self
+            .exchange("GET", &format!("/api/updates/list?channel={}", channel), None, &[])
+            .await?;
+        let resp: ReleaseListResponse = self.decode_success(status, &body)?;
+        Ok(resp.releases)
+    }
+
     /// `GET /blog/posts.json` — static blog feed for the News overlay.
     /// Same-origin static file, anonymous.
     pub async fn blog_posts(&self) -> Result<Vec<BlogPost>, CloudError> {

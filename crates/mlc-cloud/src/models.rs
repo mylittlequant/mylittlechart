@@ -252,6 +252,33 @@ pub struct VersionManifest {
     pub channel: String,
 }
 
+/// One entry in the release catalogue (`GET /api/updates/list?channel=…`).
+/// Mirrors one row of the server's `releases` table — every published
+/// platform/version pair, not just the caller's own platform. Drives the
+/// Download overlay's expanded "other platforms & versions" list; the
+/// single-platform `VersionManifest` above stays what the collapsed view
+/// (and the OTA updater) asks for.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseEntry {
+    pub platform: String,
+    pub version: String,
+    pub channel: String,
+    #[serde(default)]
+    pub sha256: String,
+    #[serde(default)]
+    pub file_size: u64,
+    #[serde(default)]
+    pub release_notes: String,
+    pub created_at: String,
+    pub download_url: String,
+}
+
+/// Response body from `GET /api/updates/list?channel=…`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReleaseListResponse {
+    pub releases: Vec<ReleaseEntry>,
+}
+
 /// One entry in the blog feed (`GET /blog/posts.json`, static file on the
 /// same origin). Drives the News overlay in cloud builds.
 #[derive(Debug, Clone, Serialize, Deserialize)]

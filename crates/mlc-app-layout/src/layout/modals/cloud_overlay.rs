@@ -21,7 +21,8 @@ use uzor::WidgetId;
 
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::modal_settings::{
-    CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudOverlayState, UpdateOverlayPhase,
+    CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudOverlayState, CloudReleaseEntry,
+    UpdateOverlayPhase,
 };
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{
@@ -90,6 +91,11 @@ fn post_detail_h(post: &CloudNewsPost) -> f64 {
     28.0 + 16.0 + 24.0 + h
 }
 
+/// The Download overlay's expanded list shows at most this many builds.
+/// The modal grows with its content and cannot scroll, so this is what
+/// keeps it inside the window as release history accumulates.
+const MAX_RELEASE_ROWS: usize = 12;
+
 /// The News overlay shows at most this many posts.
 const MAX_NEWS_POSTS: usize = 3;
 
@@ -109,6 +115,14 @@ fn content_height(state: &CloudOverlayState) -> f64 {
                 UpdateOverlayPhase::Failed { .. } => 22.0 + 24.0 + ROW_H,
                 _ => 22.0 + 24.0,
             },
+            // Web view: caption + primary action + OTA note + the row that
+            // expands the modal, plus — only while expanded — one row per
+            // `release_rows` entry. Shared arithmetic with `draw_body` via
+            // `download_ready_height`/`release_rows` so the frame can never
+            // size differently from what actually gets drawn into it.
+            CloudOverlayData::Ready { platform, releases, .. } => {
+                download_ready_height(state.expanded, release_rows(platform, releases).len())
+            }
             _ => 22.0 + ROW_H + 24.0,
         },
         CloudOverlayKind::News => match &state.data {
@@ -212,30 +226,77 @@ fn draw_body(
             CloudOverlayData::Update { phase } => {
                 draw_update_phase(ctx, coord, layer_id, x, y, row_w, phase, tt);
             }
-            CloudOverlayData::Ready { version, .. } => {
+            CloudOverlayData::Ready { platform, version, releases, .. } => {
                 ctx.set_font("12px sans-serif");
                 ctx.set_fill_color(&tt.item_text_muted);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
-                let cap = format!("Desktop app — latest release v{}", version);
+                let cap = format!("{} — latest release v{}", platform_label(platform), version);
                 ctx.fill_text(&cap, x, y);
-                draw_link_row(
+
+                // Primary action: THIS visitor's own build, straight away —
+                // no dropdown, no picking a platform first.
+                draw_action_row(
                     ctx,
                     coord,
                     layer_id,
-                    "cloud_overlay:download:win64",
+                    "cloud_overlay:download:primary",
                     WidgetRect::new(x, y + 22.0, row_w, ROW_H - ROW_GAP),
-                    "Windows (x64)",
-                    Icon::CloudDownload,
+                    &format!("Download for {}", platform_label(platform)),
                     tt,
                 );
+
                 ctx.set_font("11px sans-serif");
                 ctx.set_fill_color(&tt.item_text_muted);
+                let note_y = y + 22.0 + ROW_H + 6.0;
                 ctx.fill_text(
                     "The desktop app updates itself (OTA) once installed.",
                     x,
-                    y + 22.0 + ROW_H + 6.0,
+                    note_y,
                 );
+
+                // The row that expands the modal into the full catalogue —
+                // every other platform's current build, then older versions.
+                let rows = release_rows(platform, releases);
+                let toggle_y = note_y + 14.0;
+                let toggle_label = if state.expanded {
+                    "Hide other platforms & versions"
+                } else {
+                    "Other platforms & versions"
+                };
+                draw_expand_row(
+                    ctx,
+                    coord,
+                    layer_id,
+                    "cloud_overlay:toggle_expand",
+                    WidgetRect::new(x, toggle_y, row_w, ROW_H - ROW_GAP),
+                    toggle_label,
+                    state.expanded,
+                    tt,
+                );
+
+                if state.expanded {
+                    let mut ry = toggle_y + ROW_H + 8.0;
+                    for r in rows {
+                        draw_link_row(
+                            ctx,
+                            coord,
+                            layer_id,
+                            &format!("cloud_overlay:download:release:{}:{}", r.platform, r.version),
+                            WidgetRect::new(x, ry, row_w, ROW_H - ROW_GAP),
+                            &format!(
+                                "{} — v{} — {} — {}",
+                                platform_label(&r.platform),
+                                r.version,
+                                format_file_size_mb(r.file_size),
+                                format_release_date(&r.created_at),
+                            ),
+                            Icon::CloudDownload,
+                            tt,
+                        );
+                        ry += ROW_H;
+                    }
+                }
             }
             CloudOverlayData::Error { message } => {
                 draw_status(ctx, tt, x, y, w, "Failed to load release info", Some(message));
@@ -504,6 +565,129 @@ fn draw_action_row(
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(label, rect.center_x(), rect.center_y());
+    coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
+}
+
+/// Height of the Download overlay's web (`Ready`) body: caption + primary
+/// action + OTA note + the row that expands the modal, plus — only while
+/// expanded — one row per entry `release_rows` returns. Shared with
+/// `draw_body`'s own layout below so the frame and its content can never
+/// size differently (same reason `post_block_h` is shared with the News
+/// overlay above).
+fn download_ready_height(expanded: bool, list_rows: usize) -> f64 {
+    let collapsed = 22.0 + ROW_H + 20.0 + ROW_H;
+    if !expanded || list_rows == 0 {
+        collapsed
+    } else {
+        collapsed + 8.0 + list_rows as f64 * ROW_H
+    }
+}
+
+/// Rows for the Download overlay's expanded list: every OTHER platform's
+/// current build first, then every release that is not the newest for its
+/// own platform ("older versions" — the visitor's own platform included).
+/// The visitor's own current build is never in here — it is already the
+/// primary action row above.
+///
+/// Relies on the server returning newest-first
+/// (`GET /api/updates/list`, confirmed live 2026-09-03), so the first entry
+/// seen for a given platform IS that platform's current build; no separate
+/// version comparison is needed.
+fn release_rows<'a>(
+    own_platform: &str,
+    releases: &'a [CloudReleaseEntry],
+) -> Vec<&'a CloudReleaseEntry> {
+    let mut seen_platform = std::collections::HashSet::new();
+    let mut current = Vec::new();
+    let mut older = Vec::new();
+    for r in releases {
+        if seen_platform.insert(r.platform.as_str()) {
+            if r.platform != own_platform {
+                current.push(r);
+            }
+        } else {
+            older.push(r);
+        }
+    }
+    // Capped, like the News overlay's own MAX_NEWS_POSTS. The modal has no
+    // scrolling: every row it holds makes the frame taller, and the release
+    // list is the one thing here that grows without bound — a year of patch
+    // releases would push the frame past the bottom of the window with no way
+    // to reach what fell off. Other platforms come first in this order, so the
+    // cap eats the oldest versions, which is the right thing to lose.
+    current
+        .into_iter()
+        .chain(older)
+        .take(MAX_RELEASE_ROWS)
+        .collect()
+}
+
+/// Human label for a platform id (`mlc_updater::platform`'s own ids) —
+/// mirrors the landing page's own `detectPlatform()` labels
+/// (`mylittlechart-landing/web/index.html`). Unrecognised ids (a future
+/// platform this build doesn't know about yet) fall back to the id itself
+/// rather than hiding the row.
+fn platform_label(id: &str) -> &str {
+    match id {
+        "win64" => "Windows",
+        "macos-arm64" => "macOS (Apple Silicon)",
+        "macos-x64" => "macOS (Intel)",
+        "linux64" => "Linux",
+        other => other,
+    }
+}
+
+/// `file_size` bytes as a one-decimal MB string, for the expanded release
+/// rows.
+fn format_file_size_mb(bytes: u64) -> String {
+    format!("{:.1} MB", bytes as f64 / 1_048_576.0)
+}
+
+/// `created_at` trimmed from its full ISO-8601 timestamp to the date —
+/// this crate has no datetime dependency to parse it properly, and the
+/// date is all the row needs.
+fn format_release_date(created_at: &str) -> &str {
+    created_at.split('T').next().unwrap_or(created_at)
+}
+
+/// The row that expands/collapses the Download overlay's release list — a
+/// toggle, not a navigation, so it borrows [`draw_link_row`]'s surface but
+/// swaps the trailing "opens externally" glyph for a chevron that flips
+/// with the state (that glyph would be a lie here: nothing leaves the
+/// window).
+#[allow(clippy::too_many_arguments)]
+fn draw_expand_row(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    widget_id: &str,
+    rect: WidgetRect,
+    label: &str,
+    expanded: bool,
+    tt: &ToolbarTheme,
+) {
+    let hovered = coord.is_hovered(&WidgetId::from(widget_id));
+    ctx.set_fill_color(if hovered { &tt.item_bg_hover } else { &tt.dropdown_bg });
+    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+
+    let icon = if expanded { Icon::ChevronUp } else { Icon::ChevronDown };
+    let icon_tint = if hovered { &tt.item_text } else { &tt.item_text_muted };
+    draw_svg_icon(
+        ctx,
+        icon.svg(),
+        rect.x + 10.0,
+        rect.y + (rect.height - 18.0) / 2.0,
+        18.0,
+        18.0,
+        icon_tint,
+    );
+
+    ctx.set_font("13px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(label, rect.x + 38.0, rect.center_y());
+
     coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
 }
 

@@ -4360,8 +4360,23 @@ pub enum CloudOverlayData {
     Empty,
     /// Fetch in flight.
     Loading,
-    /// Latest release manifest: version + release notes + download URL.
-    Ready { version: String, notes: String, download_url: String },
+    /// Web's read of the release manifest: this visitor's own build (the
+    /// collapsed view) plus the full release catalogue, fetched once
+    /// alongside it, for the expanded "other platforms & versions" list.
+    Ready {
+        /// This visitor's platform id, resolved by the shell BEFORE the
+        /// fetch — `win64` / `macos-arm64` / `macos-x64` / `linux64`
+        /// (`mlc_updater::platform`'s own ids). The caption and the
+        /// primary action row read this rather than re-deriving it.
+        platform: String,
+        version: String,
+        notes: String,
+        download_url: String,
+        /// Every published release, every platform, newest first — read
+        /// once alongside the fetch above; shown only once the overlay is
+        /// expanded (`CloudOverlayState::expanded`).
+        releases: Vec<CloudReleaseEntry>,
+    },
     /// Blog feed for the News overlay (from /blog/posts.json).
     News { posts: Vec<CloudNewsPost> },
     /// Native's read of the release manifest: where the in-process updater
@@ -4402,6 +4417,22 @@ pub enum UpdateOverlayPhase {
     Failed { message: String },
 }
 
+/// One entry in the release catalogue, as shown in the Download overlay's
+/// expanded list. A flat mirror of `mlc_cloud::ReleaseEntry`, redeclared
+/// here for the same reason `CloudNewsPost` mirrors `mlc_cloud::BlogPost`:
+/// the layout crate must not depend on the cloud transport crate.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct CloudReleaseEntry {
+    pub platform: String,
+    pub version: String,
+    pub file_size: u64,
+    pub download_url: String,
+    /// Server timestamp (`created_at`), ISO-8601. Shown trimmed to a date
+    /// — this crate does not depend on a datetime library to re-parse it.
+    pub created_at: String,
+}
+
 /// One blog post as shown in the News overlay.
 #[cfg(feature = "cloud")]
 #[derive(Clone, Debug, PartialEq)]
@@ -4434,6 +4465,11 @@ pub struct CloudOverlayState {
     /// News reading view: index of the post being read in-modal, None = the
     /// post list. Reset whenever the overlay opens or closes.
     pub selected_post: Option<usize>,
+    /// Download overlay: whether the expanded list (other platforms + older
+    /// versions) is showing. Reset whenever the overlay opens or closes —
+    /// reopening it must not inherit the last visit's expansion, same
+    /// reason `selected_post` resets.
+    pub expanded: bool,
     pub position: Option<(f64, f64)>,
     pub is_dragging: bool,
     pub drag_offset: Option<(f64, f64)>,
@@ -4449,6 +4485,7 @@ impl Default for CloudOverlayState {
             open_url_requested: None,
             update_install_requested: false,
             selected_post: None,
+            expanded: false,
             position: None,
             is_dragging: false,
             drag_offset: None,
@@ -4463,6 +4500,7 @@ impl CloudOverlayState {
         self.kind = kind;
         self.open_url_requested = None;
         self.selected_post = None;
+        self.expanded = false;
         self.is_dragging = false;
         self.drag_offset = None;
         // Keep what is already fetched only when it is the finished form
@@ -4493,6 +4531,7 @@ impl CloudOverlayState {
         self.is_open = false;
         self.open_url_requested = None;
         self.selected_post = None;
+        self.expanded = false;
         self.is_dragging = false;
         self.drag_offset = None;
     }
