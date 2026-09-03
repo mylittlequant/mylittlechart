@@ -386,6 +386,11 @@ struct App<'s> {
     /// only honest thing the overlay can say is that the question is open.
     #[cfg(feature = "cloud")]
     download_check_inflight: bool,
+    /// Whether the "restart to finish" toast has already been shown for the
+    /// update currently waiting. One notice per installed update: the state
+    /// persists until the app restarts, so a toast driven by the state alone
+    /// would reappear on every frame it is checked.
+    restart_toast_shown: bool,
     /// Mailbox for the News overlay's one fetch of the marketing site's blog
     /// feed. `Sender` is cloned into the fire-and-forget task spawned on
     /// `live_data_handle`; `Receiver` is polled (non-blocking `try_recv`) in
@@ -1105,6 +1110,7 @@ impl App<'_> {
             download_overlay_was_open: false,
             #[cfg(feature = "cloud")]
             download_check_inflight: false,
+            restart_toast_shown: false,
             #[cfg(feature = "cloud")]
             news_feed_tx,
             #[cfg(feature = "cloud")]
@@ -4663,6 +4669,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 }
                 _ => None,
             };
+            // An installed update waiting for a restart: the chrome's download
+            // button becomes a restart glyph in the accent, and it stays that
+            // way until the app is restarted. Read from the updater's own
+            // state, so it cannot drift from what actually happened.
+            let restart_pending = matches!(
+                &*self.updater_handle.status_rx.borrow(),
+                mlc_updater::UpdateStatus::RestartPending
+            );
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.account_signed_in = account_signed_in;
                 if pw.chrome_state.account_label != account_label {
@@ -4670,6 +4684,25 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     pw.toolbar_dirty = true;
                     pw.window.request_redraw();
                 }
+                if pw.chrome_state.update_restart_pending != restart_pending {
+                    pw.chrome_state.update_restart_pending = restart_pending;
+                    pw.toolbar_dirty = true;
+                    pw.window.request_redraw();
+                }
+            }
+            // ...and said once, out loud, at the moment it becomes true. The
+            // glyph is a standing reminder for anyone who looks at the strip;
+            // this is for the person who was looking at the chart. Once only —
+            // the state holds until restart, so anything driven by the state
+            // rather than by the transition would repeat forever.
+            if restart_pending && !self.restart_toast_shown {
+                self.restart_toast_shown = true;
+                self.active_toasts.push(mlc_alert_delivery::ToastNotification {
+                    title: "Update installed".to_string(),
+                    message: "Restart mylittlechart to start using it.".to_string(),
+                    timestamp: screenshot::now_ms(),
+                    duration_ms: 8000,
+                });
             }
             // `UserSettingsState::multi_profile` — this shell has no
             // `mlc-cloud` transport (native side does not exist, see that

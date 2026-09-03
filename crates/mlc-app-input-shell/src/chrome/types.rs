@@ -208,6 +208,16 @@ pub struct ChromeState {
     /// whatever it already watches (`mlc_updater`'s `auth_rx` on native) —
     /// so there is one source of truth and the strip just reflects it.
     pub account_label: Option<String>,
+    /// True while an update has been installed and is waiting for a restart.
+    ///
+    /// The updater reaches `RestartPending` and the overlay says so — but only
+    /// while the overlay is open, and closing it leaves no trace. The app keeps
+    /// running the old binary quite happily, so the one person who needs to
+    /// know that a restart is now worth something has no way to find out.
+    /// While this is set the cloud-download button becomes a restart glyph in
+    /// the theme's accent: the control that would have offered the update
+    /// becomes the notice that it is waiting.
+    pub update_restart_pending: bool,
     pub is_maximized: bool,
     pub title: String,
     pub colors: ChromeColors,
@@ -243,6 +253,7 @@ impl ChromeState {
         Self {
             hovered:      ChromeHit::None,
             account_label: None,
+            update_restart_pending: false,
             is_maximized: false,
             title:        title.into(),
             colors:       ChromeColors::default(),

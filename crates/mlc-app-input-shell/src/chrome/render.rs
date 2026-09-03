@@ -628,8 +628,22 @@ pub fn render(
                 // carried by `ButtonPositions`.
                 #[cfg(feature = "cloud")]
                 {
+                    // While an installed update waits for a restart this button
+                    // stops being "download" and becomes the notice: a restart
+                    // glyph in the theme's accent. The updater reaches that
+                    // state and the overlay says so — but only while it is
+                    // open, and closing it left no trace at all while the app
+                    // went on running the old binary. The control that offered
+                    // the update is where "it is ready" belongs, and the accent
+                    // is the one colour in this strip that means something is
+                    // waiting on you.
+                    let restarting = state.update_restart_pending;
                     let icon_btns: [(f64, &str, ChromeHit); 3] = [
-                        (bp.download_left, "cloud_download", ChromeHit::DownloadButton),
+                        (
+                            bp.download_left,
+                            if restarting { "refresh" } else { "cloud_download" },
+                            ChromeHit::DownloadButton,
+                        ),
                         (bp.links_left, "globe", ChromeHit::LinksButton),
                         (bp.news_left, "bell", ChromeHit::NewsButton),
                     ];
@@ -640,8 +654,13 @@ pub fn render(
                         }
                         let icon_x = left + (CLOUD_ICON_BUTTON_WIDTH - 16.0) / 2.0;
                         let icon_y = (CHROME_HEIGHT - 16.0) / 2.0;
+                        let ink = if restarting && hit == ChromeHit::DownloadButton {
+                            &c.cta_bg
+                        } else {
+                            &c.icon_normal
+                        };
                         if let Some(svg) = icon_svg(icon) {
-                            draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, &c.icon_normal);
+                            draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, ink);
                         }
                     }
                 }
@@ -680,8 +699,22 @@ pub fn render(
                 // normal color, same as every other toolbar button in the app.
                 #[cfg(feature = "cloud")]
                 {
+                    // While an installed update waits for a restart this button
+                    // stops being "download" and becomes the notice: a restart
+                    // glyph in the theme's accent. The updater reaches that
+                    // state and the overlay says so — but only while it is
+                    // open, and closing it left no trace at all while the app
+                    // went on running the old binary. The control that offered
+                    // the update is where "it is ready" belongs, and the accent
+                    // is the one colour in this strip that means something is
+                    // waiting on you.
+                    let restarting = state.update_restart_pending;
                     let icon_btns: [(f64, &str, ChromeHit); 3] = [
-                        (bp.download_left, "cloud_download", ChromeHit::DownloadButton),
+                        (
+                            bp.download_left,
+                            if restarting { "refresh" } else { "cloud_download" },
+                            ChromeHit::DownloadButton,
+                        ),
                         (bp.links_left, "globe", ChromeHit::LinksButton),
                         (bp.news_left, "bell", ChromeHit::NewsButton),
                     ];
@@ -692,8 +725,13 @@ pub fn render(
                         }
                         let icon_x = left + (CLOUD_ICON_BUTTON_WIDTH - 16.0) / 2.0;
                         let icon_y = (CHROME_HEIGHT - 16.0) / 2.0;
+                        let ink = if restarting && hit == ChromeHit::DownloadButton {
+                            &c.cta_bg
+                        } else {
+                            &c.icon_normal
+                        };
                         if let Some(svg) = icon_svg(icon) {
-                            draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, &c.icon_normal);
+                            draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, ink);
                         }
                     }
                 }
