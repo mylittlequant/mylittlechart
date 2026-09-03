@@ -3602,6 +3602,13 @@ impl ChartApp {
             tf.register(text_input::CRED_ADD_API_KEY, TextFieldConfig::text());
             tf.register(text_input::CRED_ADD_API_SECRET, TextFieldConfig::password());
             tf.register(text_input::CRED_ADD_PASSPHRASE, TextFieldConfig::password());
+            // Account overlay gift/trial code. See SYMBOL_QUICK_SEARCH above
+            // for why this line is the difference between a field and a
+            // drawing of one. Codes are ten uppercase alphanumerics; the box
+            // accepts a little more so a pasted code with a stray character
+            // is still editable rather than silently truncated, and the
+            // server normalises what finally arrives.
+            tf.register(text_input::REDEEM_CODE, TextFieldConfig::text().with_max_len(32));
         }
 
         // Populate sub_panes from the real indicator_manager.
