@@ -1499,7 +1499,24 @@ impl App<'_> {
         // shared `BackendCore` user profile. Off the snapshot, a second
         // window opened after the wizard was closed would still see `false`
         // and raise it again — the exact bug this is fixing.
-        if !self.core.user().profile().ui.welcome_wizard_seen {
+        // ...and only when there was no profile on disk to begin with.
+        // `is_first_run` is exactly that: "profile.json did not exist at
+        // startup". Web has always ANDed the flag with this
+        // (`mlc-app-shell-web/src/lib.rs`); native kept only the flag, and the
+        // flag was added long after these profiles were written, so
+        // `serde(default)` hands every one of them `false` and a first-run
+        // screen forever.
+        //
+        // On a legacy profile that was not cosmetic. The wizard raised, and
+        // finishing it took the `wizard_complete` else-branch — the one that
+        // exists to ADD a profile — which created a fresh empty profile,
+        // rewrote `active_profile_id` to it and switched. The owner lost the
+        // twelve tabs he had open and landed on "Untitled" with no presets,
+        // three launches running (2026-09-03). The gate is what stops that
+        // whole chain: no raise, no else-branch, no phantom profile.
+        let show_wizard =
+            self.is_first_run && !self.core.user().profile().ui.welcome_wizard_seen;
+        if show_wizard {
             chart.panel_app.user_settings_state.show_welcome_wizard = true;
         }
 
@@ -3562,9 +3579,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         self.is_first_run = false;
                         self.needs_vault_unlock = false;
                         eprintln!("[App] wizard_complete — first run finished over a live chart");
-                    } else {
-                        // Running the wizard again to ADD a profile. This is
-                        // the only path that still creates one here.
+                    } else if !mlc_core::active_profile_data_dir().join("profile.json").exists() {
+                        // Reached only when there is genuinely no profile on
+                        // disk. Creating one over an existing profile is
+                        // forbidden outright — see the refusal below for what
+                        // it cost.
                         //
                         // `Some("")`, not `None` — an explicitly nameless
                         // profile. `None` would fall through to
@@ -3604,6 +3623,35 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         self.needs_vault_unlock = false;
                         eprintln!("[App] wizard_complete — rebuilding windows for the added profile");
                         self.pending_skeleton_promote = true;
+                    } else {
+                        // A profile already exists on disk. The wizard may not
+                        // create another one over it — ever, however it got
+                        // raised.
+                        //
+                        // Without this guard the sequence on 2026-09-03 was:
+                        // a legacy profile has `welcome_wizard_seen: false`
+                        // because the field was added after it was written, so
+                        // the wizard raises over a live session; finishing it
+                        // is not `is_first_run`, so it fell into the branch
+                        // above, made a fresh empty profile, rewrote
+                        // `active_profile_id` to it and switched. The owner's
+                        // profile — 55 presets, twelve open tabs — stopped
+                        // being the active one, the chart came up "Untitled"
+                        // with nothing in it, and the window promote that
+                        // followed deadlocked with all 45 threads waiting.
+                        //
+                        // The gate on the raise (see `show_wizard`) already
+                        // stops that chain at the start. This is the second
+                        // line: a bug in the wizard must not be able to cost
+                        // someone their profile. Adding a profile deliberately
+                        // is a different action and belongs to its own command,
+                        // not to "the wizard finished".
+                        self.save_all(&[]);
+                        self.needs_vault_unlock = false;
+                        eprintln!(
+                            "[App] wizard_complete: REFUSED to create a profile — one already exists at {}. Keeping the active profile and the theme/language the wizard collected.",
+                            mlc_core::active_profile_data_dir().display()
+                        );
                     }
                 }
 

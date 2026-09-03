@@ -3776,11 +3776,18 @@ pub fn render_full_chart_panel(
         // Horizontal separators spanning full width (chart + price scale).
         let horz_x = chart.x.min(price_scale.x);
         let horz_w = chart.width + price_scale.width;
-        // Top border is suppressed in split mode — the split separator handles it.
-        if !data.is_split {
-            // Top border (visible when above-main panes exist).
-            ctx.fill_rect(horz_x, total_chart_top, horz_w, 1.0);
-        }
+        // No top border here. `total_chart_top` is the toolbar's bottom edge,
+        // and the toolbar already draws its own rule there
+        // (`panel_app.rs`'s "Bottom border of control strip"). Both landed with
+        // a zero gap, so the boundary was a 2px band pretending to be a 1px
+        // line — invisible in the dark themes, obvious the moment the owner
+        // opened High Contrast (2026-09-03).
+        //
+        // The comment this replaces said the line was "visible when above-main
+        // panes exist", but it was gated on `!data.is_split`, which is a
+        // different question. The above-main case is genuinely handled ten
+        // lines below, where each such pane draws the rule at its own
+        // `content.y` — that is the gate the comment was describing.
         // Bottom border between chart content and time scale (always drawn).
         ctx.fill_rect(horz_x, total_chart_bottom, horz_w, 1.0);
 

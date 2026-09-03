@@ -276,14 +276,32 @@ pub fn render(
             let tab_left  = cursor;
             let tab_right = cursor + tw;
 
+            // The marker sits one pixel clear of the strip's own bottom rule.
+            //
+            // It used to end exactly where that rule begins, and with nothing
+            // between them the two read as a single thick band: the tab stopped
+            // looking selected and started looking like a heavier border.
+            // Nobody saw it in the dark themes, where both colours are close to
+            // the background; High Contrast paints the separator white against
+            // a blue accent and the merge is unmistakable (owner, 2026-09-03).
+            //
+            // Widening the accent was the other suggestion and it makes the
+            // band thicker, which is the complaint. Moving it onto the
+            // separator's row would mean breaking that rule under the active
+            // tab — it is drawn after the tab loop and spans the whole strip,
+            // so it would need reordering and would leave the strip's bottom
+            // edge discontinuous. A gap costs one pixel and neither.
+            const TAB_MARKER_H: f64 = 2.0;
+            const TAB_MARKER_GAP: f64 = 1.0;
+            let marker_y = CHROME_HEIGHT - 1.0 - TAB_MARKER_GAP - TAB_MARKER_H;
             if tab.active {
                 ctx.set_fill_color(&c.tab_accent);
-                ctx.fill_rect(tab_left, CHROME_HEIGHT - 3.0, tw, 2.0);
+                ctx.fill_rect(tab_left, marker_y, tw, TAB_MARKER_H);
             } else if state.hovered == ChromeHit::Tab(i) {
                 // Only the label space lights the hover underline — hovering
                 // the overlay buttons (pencil/close) is not hovering the tab.
                 ctx.set_fill_color(&c.button_hover);
-                ctx.fill_rect(tab_left, CHROME_HEIGHT - 3.0, tw, 2.0);
+                ctx.fill_rect(tab_left, marker_y, tw, TAB_MARKER_H);
             }
 
             if state.renaming_tab == Some(i) {
