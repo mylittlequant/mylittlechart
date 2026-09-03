@@ -18,6 +18,7 @@ pub mod verify;
 pub mod attest;
 pub mod entitlements;
 pub mod redeem;
+pub mod auth_probe;
 
 pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState};
 
@@ -243,6 +244,30 @@ async fn updater_loop(
         .build()
         .unwrap_or_default();
 
+    // A stored token is a claim, not a fact. Confirm it before the rest of
+    // this process treats the user as signed in — an expired or revoked token
+    // otherwise shows an account name in the chrome, offers Sign out and
+    // Redeem, and refuses every call behind them.
+    {
+        if let Some(t) = token_store::load_token() {
+            let header = format!("Bearer {}", t.token);
+            match auth_probe::probe(&http_client, &header).await {
+                auth_probe::Verdict::Rejected => {
+                    token_store::clear_token();
+                    let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
+                    eprintln!(
+                        "[{} Updater] stored token rejected by the server — signed out",
+                        now_ts()
+                    );
+                }
+                auth_probe::Verdict::Valid => {}
+                // Offline, or the server is unwell. Says nothing about the
+                // token, so it changes nothing.
+                auth_probe::Verdict::Unknown => {}
+            }
+        }
+    }
+
     // In-memory sync state — updated after each successful cycle.
     // The authoritative state is owned by main.rs (in UserProfile); this copy
     // lets the updater loop track the last-sync timestamp without needing a
@@ -440,6 +465,23 @@ async fn updater_loop(
                                     }
                                     Err(e) => {
                                         log::warn!("[Updater] redeem failed: {}", e);
+                                        // A 401 here is the boot probe's answer
+                                        // arriving late — the session died while
+                                        // the app was running. Same conclusion,
+                                        // so the same demotion, or the user is
+                                        // left retyping a good code at a dead
+                                        // session forever.
+                                        if matches!(
+                                            auth_probe::probe(&http_client, &auth).await,
+                                            auth_probe::Verdict::Rejected
+                                        ) {
+                                            token_store::clear_token();
+                                            let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
+                                            eprintln!(
+                                                "[{} Updater] session rejected during redeem — signed out",
+                                                now_ts()
+                                            );
+                                        }
                                         let _ = redeem_tx.send(state::RedeemState::Failed { message: e });
                                     }
                                 }

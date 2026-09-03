@@ -3417,6 +3417,44 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
+        // ── Drain the account overlay's Sign out ─────────────────────
+        // The overlay sets a one-shot and stops there, like every other action
+        // it owns. Nothing on this shell read it, so the button was inert and
+        // an account could not be left at all — which mattered most for the
+        // account nobody could use, a token the server had stopped accepting
+        // (owner, 2026-09-04).
+        #[cfg(feature = "cloud")]
+        {
+            let asked = self
+                .windows
+                .values_mut()
+                .any(|pw| std::mem::take(&mut pw.chart.panel_app.cloud_login_state.sign_out_requested));
+            if asked {
+                let _ = self
+                    .updater_handle
+                    .cmd_tx
+                    .send(mlc_updater::UpdaterCommand::Logout);
+                use mlc_app_layout::ui::modal_settings::{CloudLoginPhase, RedeemStatus};
+                for pw in self.windows.values_mut() {
+                    let st = &mut pw.chart.panel_app.cloud_login_state;
+                    st.phase = CloudLoginPhase::ChooseProvider;
+                    st.redeem_status = RedeemStatus::Idle;
+                    st.is_paid = false;
+                    st.paid_until = None;
+                    pw.chart_dirty = true;
+                    pw.overlay_dirty = true;
+                    pw.window.request_redraw();
+                }
+                self.active_toasts.push(mlc_alert_delivery::ToastNotification {
+                    title: "Signed out".to_string(),
+                    message: "You have been logged out.".to_string(),
+                    timestamp: screenshot::now_ms(),
+                    duration_ms: 4000,
+                });
+                eprintln!("[App] sign out requested from the account overlay");
+            }
+        }
+
         // ── Drain a submitted gift/trial code ────────────────────────
         // The overlay records that a code was submitted and stops there; the
         // text itself lives in the shared text-field store, and the round trip
