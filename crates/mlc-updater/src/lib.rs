@@ -49,37 +49,33 @@ use std::sync::Arc;
 /// Base URL for the update server.
 const UPDATE_SERVER: &str = "https://chart.example";
 
-/// Returns the active update channel, with env var override.
+/// The release track this client asks the server for.
 ///
-/// Priority: `UPDATE_CHANNEL` env var > default `"stable"`.
-/// - `"dev"` — fast 2-minute poll interval, used for local dev builds.
-/// - `"stable"` (default) — 4-hour poll interval for production installs.
+/// There is one: `"stable"`. The `"dev"` track is gone (owner, 2026-09-03:
+/// "никакого дев больше нет"), and with it the `UPDATE_CHANNEL` override —
+/// a client that can put itself on a different track is a client whose
+/// behaviour nobody can predict from the outside, and the one thing the dev
+/// track actually changed was how hard it hammered the server.
 ///
-/// DEFERRED (phase 2): the persisted `device_settings.json` channel source is
-/// gone — oss-strip 2/N (d81c4dbb) removed `DeviceSettings.update_channel`
-/// from `mlc_core::user_profile::DeviceSettings`. Until that field is
-/// re-added, only the env override and the `"stable"` default remain.
+/// Kept as a function rather than a constant because the manifest query and
+/// the release registration both name the track, and the day a second one
+/// exists it will be decided here.
 pub fn get_channel() -> String {
-    // Env var override for CI / scripted launches
-    if let Ok(ch) = std::env::var("UPDATE_CHANNEL") {
-        if ch == "dev" || ch == "stable" {
-            return ch;
-        }
-    }
-    // Persisted DeviceSettings channel was stripped (see doc note above).
     "stable".to_string()
 }
 
-/// Returns the check interval for the current channel.
-fn check_interval_for_channel(channel: &str) -> std::time::Duration {
-    match channel {
-        "dev" => std::time::Duration::from_secs(2 * 60),
-        _ => std::time::Duration::from_secs(4 * 60 * 60),
-    }
-}
+/// How often to ask the server whether a newer build exists: four hours,
+/// unconditionally.
+///
+/// This used to be two minutes on the `dev` track — a factor of 120 between
+/// two machines running the same binary, which is how one development machine
+/// came to produce 26 992 of production's 27 085 telemetry rows back when the
+/// heartbeat rode this same tick. Neither the interval nor the track is
+/// configurable now.
+const CHECK_INTERVAL: std::time::Duration = std::time::Duration::from_secs(4 * 60 * 60);
 
 /// How often telemetry and the heartbeat are sent — the same on every channel,
-/// and deliberately not derived from [`check_interval_for_channel`].
+/// and deliberately not derived from [`CHECK_INTERVAL`].
 ///
 /// Both used to ride the update-check tick. That coupling is why one
 /// development machine produced 26 992 of the 27 085 telemetry rows in
@@ -228,8 +224,8 @@ async fn updater_loop(
     // Obtain device_id once at startup — stable for the life of this process.
     let device_id = telemetry::get_or_create_device_id();
     let current_version = env!("CARGO_PKG_VERSION");
-    let mut channel = get_channel();
-    let interval_secs = check_interval_for_channel(&channel).as_secs();
+    let channel = get_channel();
+    let interval_secs = CHECK_INTERVAL.as_secs();
     eprintln!("[{} Updater] Starting — current version: v{}, device_id: {}", now_ts(), current_version, device_id);
     log::info!("[Updater] channel={}, interval={}s", &channel, interval_secs);
 
@@ -282,7 +278,7 @@ async fn updater_loop(
     // Initial check on startup (with small delay to let the app initialize).
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
 
-    let mut check_interval = tokio::time::interval(check_interval_for_channel(&channel));
+    let mut check_interval = tokio::time::interval(CHECK_INTERVAL);
     check_interval.tick().await; // consume first immediate tick
 
     // Telemetry runs on its own clock — see TELEMETRY_INTERVAL.
@@ -859,18 +855,15 @@ async fn updater_loop(
                         }
                     }
                     state::UpdaterCommand::SetChannel(new_channel) => {
+                        // There is one track and it is not switchable. Kept as
+                        // a command so an old caller does not fail to compile,
+                        // and loud so a caller that still sends it is found
+                        // rather than silently ignored.
                         if new_channel != channel {
-                            eprintln!("[{} Updater] channel switched: {} → {}", now_ts(), channel, new_channel);
-                            channel = new_channel;
-                            check_interval = tokio::time::interval(check_interval_for_channel(&channel));
-                            check_interval.tick().await; // consume immediate tick
-                            log::info!("[Updater] channel={}, interval={}s", channel, check_interval_for_channel(&channel).as_secs());
-                            // Immediately check for updates on the new channel
-                            if connected {
-                                let token = token_store::load_token();
-                                let auth = token.as_ref().map(|t| format!("Bearer {}", t.token));
-                                do_check(&status_tx, current_version, auth.as_deref(), &channel).await;
-                            }
+                            eprintln!(
+                                "[{} Updater] SetChannel({}) refused — one track only, staying on '{}'",
+                                now_ts(), new_channel, channel
+                            );
                         }
                     }
                     state::UpdaterCommand::Shutdown => {

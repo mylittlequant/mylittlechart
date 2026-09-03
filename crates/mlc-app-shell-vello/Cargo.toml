@@ -40,10 +40,10 @@ mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", packa
 mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
 sysinfo = "0.34"
 mlc-app-render-context-instanced = { path = "../mlc-app-render-context-instanced", package = "mylittlechart-app-render-context-instanced" }
-uzor-render-wgpu-instanced = "=1.4.16"
+uzor-render-wgpu-instanced = "=1.5.1"
 mlc-app-render-context-vello-cpu = { path = "../mlc-app-render-context-vello-cpu", package = "mylittlechart-app-render-context-vello-cpu" }
 mlc-app-render-context-vello-hybrid = { path = "../mlc-app-render-context-vello-hybrid", package = "mylittlechart-app-render-context-vello-hybrid" }
-uzor-render-vello-hybrid = "=1.4.16"
+uzor-render-vello-hybrid = "=1.5.1"
 vello_hybrid = { version = "0.0.9", features = ["wgpu"] }
 mlc-app-render-context-tiny-skia = { path = "../mlc-app-render-context-tiny-skia", package = "mylittlechart-app-render-context-tiny-skia" }
 keyring = "3"
