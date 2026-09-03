@@ -7,6 +7,7 @@ pub mod state;
 pub mod platform;
 pub mod token_store;
 pub mod check;
+pub mod device_auth;
 pub mod download;
 pub mod replace;
 pub mod telemetry;
@@ -113,6 +114,17 @@ const ENTITLEMENTS_RETRY_SECS: u64 = 30;
 /// same caller identity on every call, so there is nothing to gain from
 /// asking more often than this regardless of what the server said.
 const ENTITLEMENTS_MIN_REASK_SECS: u64 = 60;
+
+/// How often `StartOAuth` polls `GET /api/auth/poll` once the code has been
+/// minted and the browser opened.
+const DEVICE_AUTH_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(2500);
+
+/// How long `StartOAuth` keeps polling before giving up on a code nobody
+/// confirmed. Deliberately shorter than the server's own code TTL
+/// (`DeviceCodeResponse::expires_in`, 10 minutes) — a user who never
+/// finishes signing in should not leave this command in flight for the rest
+/// of that window.
+const DEVICE_AUTH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
 /// Trait for providing telemetry data from the application.
 /// Implemented by the main app to feed live metrics to the updater.
@@ -414,8 +426,8 @@ async fn updater_loop(
                     }
                     state::UpdaterCommand::StartOAuth(provider) => {
                         let device_id = telemetry::get_or_create_device_id();
-                        match oauth::start_oauth_flow(&provider, &device_id).await {
-                            Ok(token) => {
+                        match do_device_oauth(&http_client, &provider, &device_id).await {
+                            Some(token) => {
                                 let _ = token_store::save_token(&token);
                                 log::info!("OAuth successful: {} ({})", token.display_name, token.provider);
                                 // Signing in IS enabling cloud sync.
@@ -426,8 +438,11 @@ async fn updater_loop(
                                     user_id: token.user_id,
                                 });
                             }
-                            Err(e) => {
-                                log::error!("OAuth failed: {}", e);
+                            None => {
+                                // do_device_oauth already logged why (mint
+                                // failure, browser-open failure, expiry, or
+                                // timeout) — nothing more to say here.
+                                let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
                             }
                         }
                     }
@@ -1137,6 +1152,67 @@ async fn do_entitlements_check(
         Err(e) => {
             log::warn!("[Updater] entitlements fetch failed: {}", e);
             now_unix_ms() + (ENTITLEMENTS_RETRY_SECS * 1000) as i64
+        }
+    }
+}
+
+/// Run the device-code sign-in flow for `provider`: mint a code, open the
+/// browser at its authorize URL, then poll [`device_auth::poll`] every
+/// [`DEVICE_AUTH_POLL_INTERVAL`] until it is confirmed, expires, or
+/// [`DEVICE_AUTH_DEADLINE`] passes — whichever comes first.
+///
+/// A plain sequential `.await` inside the command loop's `select!` arm — the
+/// same shape the loopback flow it replaces already had (that one blocked
+/// the same loop for up to 120s waiting on its callback listener), so the
+/// command loop does not process another command while a sign-in is in
+/// flight. Not restructured here; that is a separate decision.
+///
+/// Never logs the device code or the returned token — only outcomes.
+async fn do_device_oauth(
+    client: &reqwest::Client,
+    provider: &str,
+    device_id: &str,
+) -> Option<token_store::StoredToken> {
+    let code = match device_auth::create(client, device_id).await {
+        Ok(c) => c,
+        Err(e) => {
+            log::error!("[Updater] device-code sign-in: could not mint a code: {}", e);
+            return None;
+        }
+    };
+
+    let url = device_auth::authorize_url(provider, &code);
+    if let Err(e) = oauth::open_url(&url) {
+        log::error!("[Updater] device-code sign-in: could not open the browser: {}", e);
+        return None;
+    }
+    log::info!("[Updater] device-code sign-in: waiting for {} to confirm in the browser...", provider);
+
+    let poll_loop = async {
+        loop {
+            tokio::time::sleep(DEVICE_AUTH_POLL_INTERVAL).await;
+            match device_auth::poll(client, &code).await {
+                Ok(device_auth::PollOutcome::Confirmed(token)) => return Some(token),
+                Ok(device_auth::PollOutcome::Pending) => continue,
+                Ok(device_auth::PollOutcome::Expired) => {
+                    log::warn!("[Updater] device-code sign-in: code expired or was already used");
+                    return None;
+                }
+                Err(e) => {
+                    // Transient (network blip, server hiccup) — keep trying
+                    // until the outer deadline.
+                    log::warn!("[Updater] device-code sign-in: poll failed, retrying: {}", e);
+                    continue;
+                }
+            }
+        }
+    };
+
+    match tokio::time::timeout(DEVICE_AUTH_DEADLINE, poll_loop).await {
+        Ok(outcome) => outcome,
+        Err(_) => {
+            log::warn!("[Updater] device-code sign-in: timed out after {}s waiting for confirmation", DEVICE_AUTH_DEADLINE.as_secs());
+            None
         }
     }
 }

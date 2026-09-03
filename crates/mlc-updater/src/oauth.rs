@@ -1,6 +1,18 @@
 //! OAuth authentication via Telegram, GitHub, or Discord.
 //!
 //! Flow: open browser → user authenticates → callback to localhost → exchange code → store token.
+//!
+//! **Dormant.** `StartOAuth` no longer calls [`start_oauth_flow`] — see
+//! `device_auth.rs` for the flow it uses instead. Each provider's OAuth app
+//! has exactly one registered callback URL (the server's own
+//! `https://chart.example/api/oauth/{provider}/web-callback`), so a
+//! `redirect_uri` built from a local loopback port
+//! (`http://127.0.0.1:<port>/callback`, as [`start_oauth_flow`] asks the
+//! server to use below) is never the registered one and the provider refuses
+//! it outright — "The redirect_uri is not associated with this application."
+//! This flow cannot work against that configuration, for any port. Left in
+//! place rather than deleted; removing it is the owner's call, not this
+//! change's.
 
 use crate::token_store::StoredToken;
 use crate::UPDATE_SERVER;
@@ -48,7 +60,11 @@ async fn bind_callback_listener() -> Result<(tokio::net::TcpListener, u16), Stri
 }
 
 /// Open a URL in the default browser.
-fn open_url(url: &str) -> Result<(), String> {
+///
+/// `pub(crate)` — also used by the device-code flow (`lib.rs`) to open
+/// [`crate::device_auth::authorize_url`], since that flow is otherwise
+/// identical here: open a URL, nothing more.
+pub(crate) fn open_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("cmd")
