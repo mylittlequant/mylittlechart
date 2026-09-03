@@ -86,7 +86,9 @@ fn content_height(state: &CloudLoginState) -> f64 {
         CloudLoginPhase::ChooseProvider => {
             24.0 + OAUTH_PROVIDERS.len() as f64 * (BTN_H + BTN_GAP)
         }
-        CloudLoginPhase::AwaitingConfirm { .. } => 312.0,
+        CloudLoginPhase::AwaitingConfirm { .. } => {
+            42.0 + OAUTH_PROVIDERS.len() as f64 * (BTN_H + BTN_GAP) + 18.0
+        }
         CloudLoginPhase::SignedIn { .. } => 278.0,
         CloudLoginPhase::Success { .. } => 78.0,
         CloudLoginPhase::Error { .. } => 110.0,
@@ -208,7 +210,14 @@ fn draw_body(
             }
         }
 
-        CloudLoginPhase::AwaitingConfirm { code } => {
+        // Signing in, with the browser away at the provider. The device code
+        // that makes this work rides in the authorize URL and is never shown:
+        // it exists so a client that cannot receive a redirect can still be
+        // confirmed, and both of our clients CAN receive one — web through its
+        // popup, desktop through the same web callback. Printing it, and
+        // offering to open a page where it must be typed, asked the user to do
+        // by hand what the URL already did (owner, 2026-09-04).
+        CloudLoginPhase::AwaitingConfirm { .. } => {
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Top);
             ctx.set_font("13px sans-serif");
@@ -231,38 +240,10 @@ fn draw_body(
                 btn_y += BTN_H + BTN_GAP;
             }
 
-            ctx.set_font("10px monospace");
-            ctx.set_fill_color(&tt.item_text_muted);
-            ctx.set_text_align(TextAlign::Center);
-            ctx.fill_text("OR CONFIRM THE CODE ON THE SITE", cx, btn_y + 4.0);
-
-            let code_y = btn_y + 16.0;
-            let code_h = 44.0;
-            ctx.set_fill_color(&tt.dropdown_bg);
-            ctx.fill_rounded_rect(x, code_y, w, code_h, SETTINGS_BUTTON_RADIUS);
-            ctx.set_stroke_color(&tt.separator);
-            ctx.set_stroke_width(1.0);
-            ctx.stroke_rounded_rect(x, code_y, w, code_h, SETTINGS_BUTTON_RADIUS);
-            ctx.set_font("700 22px monospace");
-            ctx.set_fill_color(GOLD);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(code, cx, code_y + code_h / 2.0);
-
-            let link_y = code_y + code_h + BTN_GAP;
-            draw_button(
-                ctx,
-                coord,
-                layer_id,
-                "cloud_login:open_page",
-                WidgetRect::new(x, link_y, w, BTN_H),
-                "Open the sign-in page",
-                BtnStyle::Primary,
-                tt,
-            );
-
             ctx.set_font("11px sans-serif");
             ctx.set_fill_color(&tt.item_text_muted);
-            ctx.fill_text("Waiting for confirmation…", cx, link_y + BTN_H + 18.0);
+            ctx.set_text_align(TextAlign::Center);
+            ctx.fill_text("Waiting for the browser…", cx, btn_y + 10.0);
         }
 
         CloudLoginPhase::Success { display_name } => {

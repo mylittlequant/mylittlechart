@@ -5371,7 +5371,6 @@ impl ChartApp {
                 "modal_bg" => { /* absorb */ }
                 "header" => { /* drag start handled in mouse_down */ }
                 rest if rest.starts_with("dimmer") => st.close(),
-                "open_page" => st.open_url_requested = Some("/dashboard".to_string()),
                 "sign_out" => st.sign_out_requested = true,
                 // Submitting a code is the shell's round trip; all that
                 // happens here is the one-shot. Enter in the field sets the
