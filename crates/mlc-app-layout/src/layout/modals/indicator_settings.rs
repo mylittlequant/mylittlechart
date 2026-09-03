@@ -162,8 +162,16 @@ pub fn render_indicator_settings_modal(
     let content_height = shell.content.height;
     let content_padding = 12.0;
 
+    // An opaque backing for the scrollable body, in the modal's OWN colour.
+    // It used to fill with `toolbar_bg` — a different theme token entirely
+    // (#131722 against the modal's #1e222d in the default dark theme) — so in
+    // Solid, where this runs at all, the body came out a different colour from
+    // the header, tab rail and footer that the shell had just painted with
+    // `modal_bg`. Glass hid it: there the guard is false and the block is
+    // skipped, leaving the frame fill to cover everything. Same variable the
+    // shell was handed a few lines above, so the two cannot disagree.
     if !crate::ui::overlay_fill::color_is_translucent(&frame_theme.modal_bg) {
-        ctx.set_fill_color(&frame_theme.toolbar_bg);
+        ctx.set_fill_color(&frame_theme.modal_bg);
         ctx.fill_rect(content_x, content_y, content_width, content_height);
     }
 
