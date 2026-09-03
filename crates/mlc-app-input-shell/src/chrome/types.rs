@@ -208,6 +208,15 @@ pub struct ChromeState {
     /// whatever it already watches (`mlc_updater`'s `auth_rx` on native) —
     /// so there is one source of truth and the strip just reflects it.
     pub account_label: Option<String>,
+    /// Which provider that account signed in with (`"github"`, …), when the
+    /// shell knows.
+    ///
+    /// Travels beside `account_label` because it comes from the same place
+    /// and is needed at the same moment: the account overlay prints "via
+    /// {provider}", and the click that opens it is handled here. Without it
+    /// that line read "via " with nothing after it on native, which is what
+    /// happens when a screen is handed half a fact.
+    pub account_provider: Option<String>,
     /// True while an update has been installed and is waiting for a restart.
     ///
     /// The updater reaches `RestartPending` and the overlay says so — but only
@@ -253,6 +262,7 @@ impl ChromeState {
         Self {
             hovered:      ChromeHit::None,
             account_label: None,
+            account_provider: None,
             update_restart_pending: false,
             is_maximized: false,
             title:        title.into(),

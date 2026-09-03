@@ -266,10 +266,14 @@ fn draw_body(
             ctx.set_fill_color(&tt.item_text);
             ctx.fill_text(display_name, x, y + 22.0);
 
-            ctx.set_font("12px sans-serif");
-            ctx.set_fill_color(&tt.item_text_muted);
-            let via = format!("via {}", provider);
-            ctx.fill_text(&via, x, y + 48.0);
+            // A shell that does not know the provider says nothing, rather
+            // than "via " with the answer missing.
+            if !provider.is_empty() {
+                ctx.set_font("12px sans-serif");
+                ctx.set_fill_color(&tt.item_text_muted);
+                let via = format!("via {}", provider);
+                ctx.fill_text(&via, x, y + 48.0);
+            }
 
             draw_button(
                 ctx,

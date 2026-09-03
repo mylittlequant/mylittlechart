@@ -4705,12 +4705,15 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // The chrome's sign-in button reads the same channel, so the
             // strip cannot disagree with the settings modal about who is
             // signed in — one source, two readers.
-            let account_label: Option<String> = match &*self.updater_handle.auth_rx.borrow() {
-                mlc_updater::AuthStatus::LoggedIn { display_name, .. } => {
-                    Some(display_name.clone())
-                }
-                _ => None,
-            };
+            let (account_label, account_provider): (Option<String>, Option<String>) =
+                match &*self.updater_handle.auth_rx.borrow() {
+                    mlc_updater::AuthStatus::LoggedIn {
+                        display_name,
+                        provider,
+                        ..
+                    } => (Some(display_name.clone()), Some(provider.clone())),
+                    _ => (None, None),
+                };
             // An installed update waiting for a restart: the chrome's download
             // button becomes a restart glyph in the accent, and it stays that
             // way until the app is restarted. Read from the updater's own
@@ -4726,6 +4729,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     pw.toolbar_dirty = true;
                     pw.window.request_redraw();
                 }
+                pw.chrome_state.account_provider = account_provider.clone();
                 if pw.chrome_state.update_restart_pending != restart_pending {
                     pw.chrome_state.update_restart_pending = restart_pending;
                     pw.toolbar_dirty = true;

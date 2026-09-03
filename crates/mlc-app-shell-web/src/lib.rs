@@ -2201,6 +2201,7 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
             if st.chrome.account_label != label {
                 st.chrome.account_label = label;
             }
+            st.chrome.account_provider = st.cloud.account_provider();
         }
 
         // Sync chrome colours from the chart theme — wasm parity with the

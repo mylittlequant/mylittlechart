@@ -145,6 +145,11 @@ impl CloudSession {
         self.inner.borrow().token.as_ref().map(|t| t.display_name.clone())
     }
 
+    /// The provider that account signed in with, or `None` when signed out.
+    pub fn account_provider(&self) -> Option<String> {
+        self.inner.borrow().token.as_ref().map(|t| t.provider.clone())
+    }
+
     pub fn drive(&self, chart: &mut ChartApp, now_ms: f64) {
         // Keep the profile header in sync with the active profile.
         let profile_id = chart.core.user().profile().domain.profile_id.clone();

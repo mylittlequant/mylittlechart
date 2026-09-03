@@ -695,7 +695,10 @@ pub fn process_event(
                                         match chrome_st.account_label.clone() {
                                             Some(display_name) => CloudLoginPhase::SignedIn {
                                                 display_name,
-                                                provider: String::new(),
+                                                provider: chrome_st
+                                                    .account_provider
+                                                    .clone()
+                                                    .unwrap_or_default(),
                                             },
                                             None => CloudLoginPhase::ChooseProvider,
                                         };
