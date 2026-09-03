@@ -62,9 +62,21 @@ pub const OAUTH_PROVIDERS: &[(&str, &str)] = &[
     ("google", "Continue with Google"),
 ];
 
-/// Geometry the input side needs (header drag).
+/// Geometry the input side needs: the header (drag) and the code field.
+///
+/// The field's rect and char boundaries travel back because
+/// `TextFieldStore` cannot see the screen — `ChartApp::
+/// update_text_field_geometry` feeds them to `update_field` every frame, and
+/// without that a field has no `last_rect`, so the store's `on_drag_start`
+/// hit-test never finds it: no click-to-caret, no drag-selection, and no
+/// engagement, which is what makes the caret blink at all. Every other modal
+/// field in this crate hands the same pair back.
 pub struct CloudLoginResult {
     pub header_rect: WidgetRect,
+    /// Where the gift-code box was drawn, when the account view is showing.
+    pub redeem_input_rect: Option<WidgetRect>,
+    /// Char boundary X positions inside that box (len = char count + 1).
+    pub redeem_char_positions: Vec<f64>,
 }
 
 /// Body height per phase — the shell sizes the frame from this.
@@ -111,6 +123,7 @@ pub fn render_cloud_login_modal(
         layer: ZLayer::ModalOverlay,
         ..ModalShellSpec::new("cloud_login", title, MODAL_W, content_height(state))
     };
+    let mut field: Option<(WidgetRect, Vec<f64>)> = None;
     let shell = render_modal_shell(
         ctx,
         input_coordinator,
@@ -125,13 +138,21 @@ pub fn render_cloud_login_modal(
                 shell.frame,
                 (window_w, window_h),
             );
-            draw_body(
+            field = draw_body(
                 ctx, coord, layer_id, shell, state, frame_theme, toolbar_theme,
                 current_time_ms,
             );
         },
     );
-    CloudLoginResult { header_rect: shell.header }
+    let (redeem_input_rect, redeem_char_positions) = match field {
+        Some((rect, positions)) => (Some(rect), positions),
+        None => (None, Vec::new()),
+    };
+    CloudLoginResult {
+        header_rect: shell.header,
+        redeem_input_rect,
+        redeem_char_positions,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -144,7 +165,8 @@ fn draw_body(
     ft: &FrameTheme,
     tt: &ToolbarTheme,
     current_time_ms: u64,
-) {
+) -> Option<(WidgetRect, Vec<f64>)> {
+    let mut redeem_field: Option<(WidgetRect, Vec<f64>)> = None;
     let x = shell.content.x;
     let y = shell.content.y;
     let w = shell.content.width;
@@ -286,9 +308,9 @@ fn draw_body(
                 tt,
             );
 
-            draw_plan_and_redeem(
+            redeem_field = Some(draw_plan_and_redeem(
                 ctx, coord, layer_id, x, y + 126.0, w, state, ft, tt, current_time_ms,
-            );
+            ));
         }
 
         CloudLoginPhase::Error { message } => {
@@ -315,6 +337,7 @@ fn draw_body(
             );
         }
     }
+    redeem_field
 }
 
 /// The account view's lower half: which tier this account is on, and the one
@@ -335,7 +358,7 @@ fn draw_plan_and_redeem(
     ft: &FrameTheme,
     tt: &ToolbarTheme,
     current_time_ms: u64,
-) {
+) -> (WidgetRect, Vec<f64>) {
     ctx.set_fill_color(&tt.separator);
     ctx.fill_rect(x, y, w, 1.0);
 
@@ -464,6 +487,8 @@ fn draw_plan_and_redeem(
         let fitted = crate::ui::widgets::fit_text_to_width(ctx, &msg, w);
         ctx.fill_text(&fitted, x, row_y + FIELD_H + 12.0);
     }
+
+    (field_rect, input_result.char_x_positions)
 }
 
 /// Button fills: the gold CTA follows the brandbook, the rest follow the

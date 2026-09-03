@@ -10621,6 +10621,20 @@ impl ChartApp {
                     cbr.search_char_positions.clone(),
                 );
             }
+            // Account overlay's gift-code box. Without this it had a focus
+            // call and nothing else, which is the same shape the vault fields
+            // shipped with below: no drag-selection, no click-to-position.
+            #[cfg(feature = "cloud")]
+            if let Some(ref cl) = fr.cloud_login {
+                if let Some(r) = cl.redeem_input_rect {
+                    let id = WidgetId::from(text_input::REDEEM_CODE);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id,
+                        (r.x, r.y, r.width, r.height),
+                        cl.redeem_char_positions.clone(),
+                    );
+                }
+            }
             if let Some(ref pni) = fr.preset_name_input {
                 let r = &pni.input_text_rect;
                 let pni_id = WidgetId::from(text_input::PRESET_NAME_INPUT);

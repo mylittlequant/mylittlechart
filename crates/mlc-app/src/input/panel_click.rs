@@ -5365,15 +5365,6 @@ impl ChartApp {
         // === Cloud sign-in / account overlay clicks (cloud builds only) ===
         #[cfg(feature = "cloud")]
         if let Some(action) = widget_id.strip_prefix("cloud_login:") {
-            // Focusing the code box touches the coordinator, not the overlay
-            // state, so it is answered before `st` borrows `self`.
-            if action == "redeem_input" {
-                self.input_coordinator
-                    .borrow_mut()
-                    .text_fields_mut()
-                    .focus(uzor::WidgetId::from(crate::text_input::REDEEM_CODE));
-                return;
-            }
             let st = &mut self.panel_app.cloud_login_state;
             match action {
                 "close" => st.close(),
@@ -5387,6 +5378,12 @@ impl ChartApp {
                 // same flag (`text_input::dispatch`), so the button and the
                 // key cannot drift apart.
                 "redeem" => st.redeem_requested = true,
+                // The code box takes its caret from `TextFieldStore::
+                // on_drag_start` on the mousedown, like every other field in
+                // the app. Focusing it again here would clear `engaged` —
+                // `focus` is an arming call and arming is silent — and take
+                // back the caret that click had just placed.
+                "redeem_input" => { /* claimed on mousedown by the store */ }
                 "retry" => {
                     st.phase = mlc_app_layout::ui::modal_settings::CloudLoginPhase::RequestCode;
                 }
