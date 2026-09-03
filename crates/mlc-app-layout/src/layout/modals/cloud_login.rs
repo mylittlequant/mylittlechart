@@ -413,8 +413,11 @@ fn draw_plan_and_redeem(
     let cfg = InputConfig::new(&text)
         .with_focused(engaged)
         .with_cursor(cursor)
-        .with_selection(sel_start, sel_end)
-        .with_placeholder("XXXXXXXXXX");
+        .with_selection(sel_start, sel_end);
+    // The placeholder is a hint about what to type, and it has done its job the
+    // moment a caret lands in the box. Leaving it under the caret reads as text
+    // that is already there.
+    let cfg = if engaged { cfg } else { cfg.with_placeholder("XXXXXXXXXX") };
     let input_result = draw_input(ctx, &cfg, WidgetState::Normal, field_rect, &widget_theme);
     if engaged && coord.text_fields().cursor_visible(current_time_ms) {
         draw_input_cursor(

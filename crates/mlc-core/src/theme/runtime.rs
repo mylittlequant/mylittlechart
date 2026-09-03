@@ -718,10 +718,23 @@ impl RuntimeTheme {
         self.style_params.apply_opacity(&self.colors.toolbar_bg, OpacityType::Toolbar)
     }
 
-    /// Get modal background with style opacity applied
+    /// Get modal background with style opacity applied.
+    ///
+    /// The toolbar/background colour, NOT `dropdown_bg`. A modal is a surface
+    /// the app puts you on and it belongs to the app chrome; `dropdown_bg` is
+    /// for the things that float above a surface — dropdowns, popups, menus —
+    /// and floating is what earns a different shade. Reading this off
+    /// `dropdown_bg` painted every modal frame in the app the popup colour
+    /// (#1e222d against the #131722 chrome in the default dark theme), which is
+    /// why the settings modals, whose bodies fill correctly, came out in two
+    /// colours in Solid — owner, 2026-09-04.
+    ///
+    /// The opacity type stays `Modal`: this is a modal surface that happens to
+    /// share the chrome colour, not the toolbar, and Glass fades the two by
+    /// different amounts.
     pub fn modal_bg_styled(&self) -> String {
         use super::style::OpacityType;
-        self.style_params.apply_opacity(&self.colors.dropdown_bg, OpacityType::Modal)
+        self.style_params.apply_opacity(&self.colors.toolbar_bg, OpacityType::Modal)
     }
 
     /// Get sidebar background with style opacity applied

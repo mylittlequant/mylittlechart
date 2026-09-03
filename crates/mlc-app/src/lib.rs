@@ -97,6 +97,87 @@ macro_rules! sglog {
 }
 pub(crate) use sglog;
 
+/// Register every text field this app owns on the coordinator's
+/// `TextFieldStore`.
+///
+/// One function, called by all three `ChartApp` constructors, because this
+/// table used to be copy-pasted into each of them and a field added to one
+/// copy simply did not exist in the other two. `TextFieldStore::on_char`
+/// looks the field state up by id and returns `TextAction::None` when there
+/// is none — so an unregistered field draws, takes a click zone, publishes
+/// geometry, and still swallows every keystroke. It has now caused that
+/// exact defect twice: the profile-manager inputs under skeleton mode
+/// (which builds through `new_window`, not `new`), and the account
+/// overlay's gift-code box (owner, 2026-09-04, on a build where it was
+/// registered in `new` alone).
+fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
+    let tf = coord.text_fields_mut();
+    tf.register(text_input::HEX_COLOR, TextFieldConfig::text()
+        .with_filter(|c| c == '#' || c.is_ascii_hexdigit())
+        .with_max_len(9));
+    tf.register(text_input::AGENT_PTY, TextFieldConfig::raw());
+    tf.register(text_input::AGENT_CHAT, TextFieldConfig::text());
+    // Bar-mode parameter: digits and decimal point only, max 12 chars.
+    tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
+        .with_filter(|c| c.is_ascii_digit() || c == '.')
+        .with_max_len(12));
+    tf.register(text_input::WATERMARK_TEXT, TextFieldConfig::text().with_max_len(64));
+    // Granularity favorites (kusok 1): custom TF name (letters+digits,
+    // e.g. "7m") and custom numeric param (digits+dot) input rows.
+    tf.register(text_input::TF_FAVORITE_INPUT, TextFieldConfig::text()
+        .with_filter(|c| c.is_ascii_alphanumeric())
+        .with_max_len(8));
+    tf.register(text_input::PARAM_FAVORITE_INPUT, TextFieldConfig::text()
+        .with_filter(|c| c.is_ascii_digit() || c == '.')
+        .with_max_len(16));
+    // Wave 1 search/dialog fields.
+    tf.register(text_input::SYMBOL_SEARCH, TextFieldConfig::text());
+    tf.register(text_input::INDICATOR_SEARCH, TextFieldConfig::text());
+    tf.register(text_input::COMPARE_SEARCH, TextFieldConfig::text());
+    // Symbol fast-search dropdown input (symbol-search-compare arc,
+    // Wave 2). Registration is MANDATORY, not cosmetic: an
+    // unregistered id can still be focus()ed (the store only tracks
+    // the id), but `on_char` looks the field state up and returns
+    // `TextAction::None` when missing — live repro 2026-07-16:
+    // caret rendered, keystrokes silently dropped.
+    tf.register(text_input::SYMBOL_QUICK_SEARCH, TextFieldConfig::text());
+    tf.register(text_input::CHART_BROWSER_SEARCH, TextFieldConfig::text());
+    tf.register(text_input::WATCHLIST_SEARCH, TextFieldConfig::text());
+    tf.register(text_input::WATCHLIST_GROUP_NAME, TextFieldConfig::text());
+    tf.register(text_input::PRESET_NAME_INPUT, TextFieldConfig::text());
+    // Wave 2a template-name overlay fields.
+    tf.register(text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+    tf.register(text_input::INDICATOR_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+    tf.register(text_input::COMPARE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+    tf.register(text_input::CHART_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
+    // Wave 2b inline sub-field editor (one WidgetId per modal, discriminant in active_field_id).
+    tf.register(text_input::PRIMITIVE_SETTINGS_FIELD, TextFieldConfig::text());
+    tf.register(text_input::INDICATOR_SETTINGS_FIELD, TextFieldConfig::text());
+    tf.register(text_input::CHART_SETTINGS_FIELD, TextFieldConfig::text());
+    tf.register(text_input::COMPARE_SETTINGS_FIELD, TextFieldConfig::text());
+    // Wave 3 profile management + alert token fields.
+    tf.register(text_input::NEW_PROFILE_NAME, TextFieldConfig::text());
+    tf.register(text_input::PROFILE_RENAME, TextFieldConfig::text());
+    tf.register(text_input::NEW_PASSPHRASE, TextFieldConfig::password());
+    tf.register(text_input::CONFIRM_PASSPHRASE, TextFieldConfig::password());
+    tf.register(text_input::RECOVERY_KEY, TextFieldConfig::text());
+    tf.register(text_input::ALERT_TG_TOKEN, TextFieldConfig::text());
+    // Credentials modal: webhook URL edit + "add key" form fields.
+    tf.register(text_input::CRED_WEBHOOK_URL, TextFieldConfig::text());
+    tf.register(text_input::CRED_ADD_EXCHANGE, TextFieldConfig::text());
+    tf.register(text_input::CRED_ADD_LABEL, TextFieldConfig::text());
+    tf.register(text_input::CRED_ADD_API_KEY, TextFieldConfig::text());
+    tf.register(text_input::CRED_ADD_API_SECRET, TextFieldConfig::password());
+    tf.register(text_input::CRED_ADD_PASSPHRASE, TextFieldConfig::password());
+    // Account overlay gift/trial code. See SYMBOL_QUICK_SEARCH above
+    // for why this line is the difference between a field and a
+    // drawing of one. Codes are ten uppercase alphanumerics; the box
+    // accepts a little more so a pasted code with a stray character
+    // is still editable rather than silently truncated, and the
+    // server normalises what finally arrives.
+    tf.register(text_input::REDEEM_CODE, TextFieldConfig::text().with_max_len(32));
+}
+
 use std::cell::RefCell;
 
 use mlc_core::{
@@ -3541,75 +3622,8 @@ impl ChartApp {
             }
         }
 
-        // Register text fields on the InputCoordinator's TextFieldStore.
-        {
-            let mut coord = app.input_coordinator.borrow_mut();
-            let tf = coord.text_fields_mut();
-            tf.register(text_input::HEX_COLOR, TextFieldConfig::text()
-                .with_filter(|c| c == '#' || c.is_ascii_hexdigit())
-                .with_max_len(9));
-            tf.register(text_input::AGENT_PTY, TextFieldConfig::raw());
-            tf.register(text_input::AGENT_CHAT, TextFieldConfig::text());
-            // Bar-mode parameter: digits and decimal point only, max 12 chars.
-            tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
-                .with_filter(|c| c.is_ascii_digit() || c == '.')
-                .with_max_len(12));
-            tf.register(text_input::WATERMARK_TEXT, TextFieldConfig::text().with_max_len(64));
-            // Granularity favorites (kusok 1): custom TF name (letters+digits,
-            // e.g. "7m") and custom numeric param (digits+dot) input rows.
-            tf.register(text_input::TF_FAVORITE_INPUT, TextFieldConfig::text()
-                .with_filter(|c| c.is_ascii_alphanumeric())
-                .with_max_len(8));
-            tf.register(text_input::PARAM_FAVORITE_INPUT, TextFieldConfig::text()
-                .with_filter(|c| c.is_ascii_digit() || c == '.')
-                .with_max_len(16));
-            // Wave 1 search/dialog fields.
-            tf.register(text_input::SYMBOL_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::INDICATOR_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::COMPARE_SEARCH, TextFieldConfig::text());
-            // Symbol fast-search dropdown input (symbol-search-compare arc,
-            // Wave 2). Registration is MANDATORY, not cosmetic: an
-            // unregistered id can still be focus()ed (the store only tracks
-            // the id), but `on_char` looks the field state up and returns
-            // `TextAction::None` when missing — live repro 2026-07-16:
-            // caret rendered, keystrokes silently dropped.
-            tf.register(text_input::SYMBOL_QUICK_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::CHART_BROWSER_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::WATCHLIST_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::WATCHLIST_GROUP_NAME, TextFieldConfig::text());
-            tf.register(text_input::PRESET_NAME_INPUT, TextFieldConfig::text());
-            // Wave 2a template-name overlay fields.
-            tf.register(text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
-            tf.register(text_input::INDICATOR_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
-            tf.register(text_input::COMPARE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
-            tf.register(text_input::CHART_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
-            // Wave 2b inline sub-field editor (one WidgetId per modal, discriminant in active_field_id).
-            tf.register(text_input::PRIMITIVE_SETTINGS_FIELD, TextFieldConfig::text());
-            tf.register(text_input::INDICATOR_SETTINGS_FIELD, TextFieldConfig::text());
-            tf.register(text_input::CHART_SETTINGS_FIELD, TextFieldConfig::text());
-            tf.register(text_input::COMPARE_SETTINGS_FIELD, TextFieldConfig::text());
-            // Wave 3 profile management + alert token fields.
-            tf.register(text_input::NEW_PROFILE_NAME, TextFieldConfig::text());
-            tf.register(text_input::PROFILE_RENAME, TextFieldConfig::text());
-            tf.register(text_input::NEW_PASSPHRASE, TextFieldConfig::password());
-            tf.register(text_input::CONFIRM_PASSPHRASE, TextFieldConfig::password());
-            tf.register(text_input::RECOVERY_KEY, TextFieldConfig::text());
-            tf.register(text_input::ALERT_TG_TOKEN, TextFieldConfig::text());
-            // Credentials modal: webhook URL edit + "add key" form fields.
-            tf.register(text_input::CRED_WEBHOOK_URL, TextFieldConfig::text());
-            tf.register(text_input::CRED_ADD_EXCHANGE, TextFieldConfig::text());
-            tf.register(text_input::CRED_ADD_LABEL, TextFieldConfig::text());
-            tf.register(text_input::CRED_ADD_API_KEY, TextFieldConfig::text());
-            tf.register(text_input::CRED_ADD_API_SECRET, TextFieldConfig::password());
-            tf.register(text_input::CRED_ADD_PASSPHRASE, TextFieldConfig::password());
-            // Account overlay gift/trial code. See SYMBOL_QUICK_SEARCH above
-            // for why this line is the difference between a field and a
-            // drawing of one. Codes are ten uppercase alphanumerics; the box
-            // accepts a little more so a pasted code with a stray character
-            // is still editable rather than silently truncated, and the
-            // server normalises what finally arrives.
-            tf.register(text_input::REDEEM_CODE, TextFieldConfig::text().with_max_len(32));
-        }
+        // Every text field this app owns — see `register_all_text_fields`.
+        register_all_text_fields(&mut app.input_coordinator.borrow_mut());
 
         // Populate sub_panes from the real indicator_manager.
         app.sync_sub_panes_from_manager();
@@ -3826,68 +3840,8 @@ impl ChartApp {
             bar_count,
         );
 
-        // Register text fields on the InputCoordinator's TextFieldStore.
-        {
-            let mut coord = app.input_coordinator.borrow_mut();
-            let tf = coord.text_fields_mut();
-            tf.register(text_input::HEX_COLOR, TextFieldConfig::text()
-                .with_filter(|c| c == '#' || c.is_ascii_hexdigit())
-                .with_max_len(9));
-            tf.register(text_input::AGENT_PTY, TextFieldConfig::raw());
-            tf.register(text_input::AGENT_CHAT, TextFieldConfig::text());
-            // Bar-mode parameter: digits and decimal point only, max 12 chars.
-            tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
-                .with_filter(|c| c.is_ascii_digit() || c == '.')
-                .with_max_len(12));
-            tf.register(text_input::WATERMARK_TEXT, TextFieldConfig::text().with_max_len(64));
-            // Granularity favorites (kusok 1): custom TF name (letters+digits,
-            // e.g. "7m") and custom numeric param (digits+dot) input rows.
-            tf.register(text_input::TF_FAVORITE_INPUT, TextFieldConfig::text()
-                .with_filter(|c| c.is_ascii_alphanumeric())
-                .with_max_len(8));
-            tf.register(text_input::PARAM_FAVORITE_INPUT, TextFieldConfig::text()
-                .with_filter(|c| c.is_ascii_digit() || c == '.')
-                .with_max_len(16));
-            // Wave 1 search/dialog fields.
-            tf.register(text_input::SYMBOL_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::INDICATOR_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::COMPARE_SEARCH, TextFieldConfig::text());
-            // Symbol fast-search dropdown input (symbol-search-compare arc,
-            // Wave 2). Registration is MANDATORY, not cosmetic: an
-            // unregistered id can still be focus()ed (the store only tracks
-            // the id), but `on_char` looks the field state up and returns
-            // `TextAction::None` when missing — live repro 2026-07-16:
-            // caret rendered, keystrokes silently dropped.
-            tf.register(text_input::SYMBOL_QUICK_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::CHART_BROWSER_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::WATCHLIST_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::WATCHLIST_GROUP_NAME, TextFieldConfig::text());
-            tf.register(text_input::PRESET_NAME_INPUT, TextFieldConfig::text());
-            // Wave 2a template-name overlay fields.
-            tf.register(text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
-            tf.register(text_input::INDICATOR_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
-            tf.register(text_input::COMPARE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
-            tf.register(text_input::CHART_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
-            // Wave 2b inline sub-field editor (one WidgetId per modal, discriminant in active_field_id).
-            tf.register(text_input::PRIMITIVE_SETTINGS_FIELD, TextFieldConfig::text());
-            tf.register(text_input::INDICATOR_SETTINGS_FIELD, TextFieldConfig::text());
-            tf.register(text_input::CHART_SETTINGS_FIELD, TextFieldConfig::text());
-            tf.register(text_input::COMPARE_SETTINGS_FIELD, TextFieldConfig::text());
-            // Wave 3 profile management + alert token fields.
-            tf.register(text_input::NEW_PROFILE_NAME, TextFieldConfig::text());
-            tf.register(text_input::PROFILE_RENAME, TextFieldConfig::text());
-            tf.register(text_input::NEW_PASSPHRASE, TextFieldConfig::password());
-            tf.register(text_input::CONFIRM_PASSPHRASE, TextFieldConfig::password());
-            tf.register(text_input::RECOVERY_KEY, TextFieldConfig::text());
-            tf.register(text_input::ALERT_TG_TOKEN, TextFieldConfig::text());
-            // Credentials modal: webhook URL edit + "add key" form fields.
-            tf.register(text_input::CRED_WEBHOOK_URL, TextFieldConfig::text());
-            tf.register(text_input::CRED_ADD_EXCHANGE, TextFieldConfig::text());
-            tf.register(text_input::CRED_ADD_LABEL, TextFieldConfig::text());
-            tf.register(text_input::CRED_ADD_API_KEY, TextFieldConfig::text());
-            tf.register(text_input::CRED_ADD_API_SECRET, TextFieldConfig::password());
-            tf.register(text_input::CRED_ADD_PASSPHRASE, TextFieldConfig::password());
-        }
+        // Every text field this app owns — see `register_all_text_fields`.
+        register_all_text_fields(&mut app.input_coordinator.borrow_mut());
 
         app.needs_initial_viewport_fit = true;
         app.sync_sub_panes_from_manager();
@@ -4841,73 +4795,8 @@ impl ChartApp {
             }
         }
 
-        // Register text fields on the InputCoordinator's TextFieldStore.
-        {
-            let mut coord = app.input_coordinator.borrow_mut();
-            let tf = coord.text_fields_mut();
-            tf.register(text_input::HEX_COLOR, TextFieldConfig::text()
-                .with_filter(|c| c == '#' || c.is_ascii_hexdigit())
-                .with_max_len(9));
-            tf.register(text_input::AGENT_PTY, TextFieldConfig::raw());
-            tf.register(text_input::AGENT_CHAT, TextFieldConfig::text());
-            // Bar-mode parameter: digits and decimal point only, max 12 chars.
-            tf.register(text_input::BAR_MODE_PARAM, TextFieldConfig::text()
-                .with_filter(|c| c.is_ascii_digit() || c == '.')
-                .with_max_len(12));
-            tf.register(text_input::WATERMARK_TEXT, TextFieldConfig::text().with_max_len(64));
-            // Granularity favorites (kusok 1): custom TF name (letters+digits,
-            // e.g. "7m") and custom numeric param (digits+dot) input rows.
-            tf.register(text_input::TF_FAVORITE_INPUT, TextFieldConfig::text()
-                .with_filter(|c| c.is_ascii_alphanumeric())
-                .with_max_len(8));
-            tf.register(text_input::PARAM_FAVORITE_INPUT, TextFieldConfig::text()
-                .with_filter(|c| c.is_ascii_digit() || c == '.')
-                .with_max_len(16));
-            // Wave 1 search/dialog fields.
-            tf.register(text_input::SYMBOL_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::INDICATOR_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::COMPARE_SEARCH, TextFieldConfig::text());
-            // Symbol fast-search dropdown input (symbol-search-compare arc,
-            // Wave 2). Registration is MANDATORY, not cosmetic: an
-            // unregistered id can still be focus()ed (the store only tracks
-            // the id), but `on_char` looks the field state up and returns
-            // `TextAction::None` when missing — live repro 2026-07-16:
-            // caret rendered, keystrokes silently dropped.
-            tf.register(text_input::SYMBOL_QUICK_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::CHART_BROWSER_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::WATCHLIST_SEARCH, TextFieldConfig::text());
-            tf.register(text_input::WATCHLIST_GROUP_NAME, TextFieldConfig::text());
-            tf.register(text_input::PRESET_NAME_INPUT, TextFieldConfig::text());
-            // Wave 2a template-name overlay fields.
-            tf.register(text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
-            tf.register(text_input::INDICATOR_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
-            tf.register(text_input::COMPARE_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
-            tf.register(text_input::CHART_SETTINGS_TEMPLATE_NAME, TextFieldConfig::text());
-            // Wave 2b inline sub-field editor (one WidgetId per modal, discriminant in active_field_id).
-            tf.register(text_input::PRIMITIVE_SETTINGS_FIELD, TextFieldConfig::text());
-            tf.register(text_input::INDICATOR_SETTINGS_FIELD, TextFieldConfig::text());
-            tf.register(text_input::CHART_SETTINGS_FIELD, TextFieldConfig::text());
-            tf.register(text_input::COMPARE_SETTINGS_FIELD, TextFieldConfig::text());
-            // Wave 3 profile management + alert token fields.  Skeleton-mode
-            // (profile-manager unlock screen) creates the ChartApp through
-            // `new_window`, NOT `new`; without registering these here the
-            // passphrase / profile-name / recovery-key / tg-token inputs
-            // silently drop every character (TextFieldStore::on_char returns
-            // TextAction::None when the field is not registered).
-            tf.register(text_input::NEW_PROFILE_NAME, TextFieldConfig::text());
-            tf.register(text_input::PROFILE_RENAME, TextFieldConfig::text());
-            tf.register(text_input::NEW_PASSPHRASE, TextFieldConfig::password());
-            tf.register(text_input::CONFIRM_PASSPHRASE, TextFieldConfig::password());
-            tf.register(text_input::RECOVERY_KEY, TextFieldConfig::text());
-            tf.register(text_input::ALERT_TG_TOKEN, TextFieldConfig::text());
-            // Credentials modal: webhook URL edit + "add key" form fields.
-            tf.register(text_input::CRED_WEBHOOK_URL, TextFieldConfig::text());
-            tf.register(text_input::CRED_ADD_EXCHANGE, TextFieldConfig::text());
-            tf.register(text_input::CRED_ADD_LABEL, TextFieldConfig::text());
-            tf.register(text_input::CRED_ADD_API_KEY, TextFieldConfig::text());
-            tf.register(text_input::CRED_ADD_API_SECRET, TextFieldConfig::password());
-            tf.register(text_input::CRED_ADD_PASSPHRASE, TextFieldConfig::password());
-        }
+        // Every text field this app owns — see `register_all_text_fields`.
+        register_all_text_fields(&mut app.input_coordinator.borrow_mut());
 
         app.sync_sub_panes_from_manager();
         app

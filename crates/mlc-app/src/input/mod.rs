@@ -2543,6 +2543,22 @@ impl ChartApp {
                     return false;
                 }
             }
+            // Cloud account overlay — text select drag on the gift-code field.
+            // Every modal field needs its own arm here: the generic
+            // `on_drag_start` claim further down is never reached for a press
+            // that lands on a modal, so a field whose modal is not listed in
+            // this block is a picture of a field. It draws, it registers a
+            // click zone, it publishes geometry, and the store still never
+            // sees the press.
+            #[cfg(feature = "cloud")]
+            if let Some(ref cl) = result.cloud_login {
+                if let Some(r) = cl.redeem_input_rect {
+                    if r.contains(x, y) && self.panel_app.cloud_login_state.is_open {
+                        self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                        return false;
+                    }
+                }
+            }
             // Vault tab (User Settings) — text select drag on one of its own
             // text fields (webhook URL, or one of the add-key form's five
             // fields). `on_drag_start` does the real hit-test and cursor
