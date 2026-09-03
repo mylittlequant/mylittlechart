@@ -2190,6 +2190,19 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
         }
         st.chrome.tabs = tabs;
 
+        // The account button. The shell has held the token since boot and
+        // never told the strip, so the button invited a signed-in visitor to
+        // sign in, forever (owner, 2026-09-03). Read every frame from the
+        // session that owns the token, so it cannot drift from the truth —
+        // the native shell does the same from `auth_rx`.
+        #[cfg(feature = "cloud")]
+        {
+            let label = st.cloud.account_label();
+            if st.chrome.account_label != label {
+                st.chrome.account_label = label;
+            }
+        }
+
         // Sync chrome colours from the chart theme — wasm parity with the
         // native shell (scene_builder.rs:42-51). Without this the preset
         // tab strip keeps its hardcoded defaults and ignores theme/skin

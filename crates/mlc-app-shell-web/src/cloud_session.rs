@@ -131,6 +131,16 @@ impl CloudSession {
 
     /// Per-frame driver. Reads the overlay's phase + one-shot flags, advances
     /// the flow, applies finished async results.
+    /// The signed-in account's display name, or `None` when signed out.
+    ///
+    /// The chrome's account button reads this. Without it that button said
+    /// "Sign in" forever — the web shell held the token all along and simply
+    /// never told the strip, so a signed-in visitor was still being invited to
+    /// sign in (owner, 2026-09-03).
+    pub fn account_label(&self) -> Option<String> {
+        self.inner.borrow().token.as_ref().map(|t| t.display_name.clone())
+    }
+
     pub fn drive(&self, chart: &mut ChartApp, now_ms: f64) {
         // Keep the profile header in sync with the active profile.
         let profile_id = chart.core.user().profile().domain.profile_id.clone();
@@ -406,8 +416,11 @@ impl CloudSession {
         }
 
         // ── One-shot UI flags ────────────────────────────────────────────
+        // The sign-in trip goes to a popup, not a tab: this is the login
+        // modal's own mailbox, and the user should come back to a modal that
+        // is still open rather than to a tab telling them to close it.
         if let Some(url) = st.open_url_requested.take() {
-            open_new_tab(&url);
+            open_auth_popup(&url);
         }
         if st.sign_out_requested {
             st.sign_out_requested = false;
@@ -612,5 +625,28 @@ fn read_build_attestation() -> Option<BuildAttestation> {
 fn open_new_tab(url: &str) {
     if let Some(w) = web_sys::window() {
         let _ = w.open_with_url_and_target(url, "_blank");
+    }
+}
+
+/// Open the provider's sign-in page in a small popup rather than a tab.
+///
+/// The provider's page cannot live inside our own modal: it is their domain,
+/// their cookies, and they forbid being framed. So a real browsing context is
+/// unavoidable — but it does not have to be a full tab the user is then told
+/// to close by hand. A sized popup keeps the app on screen behind it, and the
+/// callback page closes itself, so the modal simply flips to signed-in without
+/// the user doing anything (owner, 2026-09-03: "не надо спавнить другое окно
+/// для оауса").
+///
+/// Falls back to a tab if the popup is blocked — refusing to sign in because a
+/// popup blocker exists would be worse than the tab it replaces.
+fn open_auth_popup(url: &str) {
+    let Some(w) = web_sys::window() else { return };
+    let features = "popup=yes,width=520,height=680,menubar=no,toolbar=no,location=yes";
+    match w.open_with_url_and_target_and_features(url, "mlc_oauth", features) {
+        Ok(Some(_)) => {}
+        _ => {
+            let _ = w.open_with_url_and_target(url, "_blank");
+        }
     }
 }
