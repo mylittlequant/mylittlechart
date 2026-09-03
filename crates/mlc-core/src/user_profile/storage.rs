@@ -330,10 +330,102 @@ pub fn profiles_dir() -> PathBuf {
 /// Returns `None` if the file does not exist or cannot be parsed.
 pub fn load_profile_index() -> Option<ProfileIndex> {
     let path = profiles_dir().join("index.json");
-    let bytes = global_storage().read(&path_key(&path)).ok()??;
-    let json = String::from_utf8(bytes).ok()?;
-    let index: ProfileIndex = serde_json::from_str(&json).ok()?;
-    Some(index)
+    let Ok(Some(bytes)) = global_storage().read(&path_key(&path)) else {
+        // Genuinely absent. This is the only failure that may be read as
+        // "there are no profiles" — see below for why the distinction is not
+        // pedantry.
+        return None;
+    };
+
+    // A UTF-8 BOM is not corruption, it is a Windows editor being a Windows
+    // editor. PowerShell 5.1's `Set-Content -Encoding utf8` writes one, and on
+    // 2026-09-03 that alone cost the owner his profile list: parsing failed,
+    // the failure was indistinguishable from "no index", and the caller
+    // bootstrapped a fresh profile over the top.
+    let raw = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+
+    match std::str::from_utf8(raw).ok().and_then(|j| serde_json::from_str::<ProfileIndex>(j).ok()) {
+        Some(index) => Some(index),
+        None => {
+            // The file EXISTS and does not parse. That is damage, not a first
+            // run, and the two must never look alike to a caller: one of them
+            // is answered by creating a profile and rewriting this very file,
+            // which is how a parse error turns into data loss.
+            //
+            // Rebuild from the directories instead — they are the ground
+            // truth, the index is a convenience. Every profile dir carries its
+            // own `profile.json`; the index only orders them and names the
+            // active one.
+            eprintln!(
+                "[ProfileIndex] {} exists but does not parse — rebuilding from the profile directories rather than treating this as a first run",
+                path.display()
+            );
+            rebuild_profile_index_from_disk()
+        }
+    }
+}
+
+/// Reconstruct the profile index by reading `profiles/*/profile.json`.
+///
+/// Used when `index.json` is present but unreadable. Returns `None` only when
+/// there are no profile directories at all — which really is a first run.
+///
+/// The active profile cannot be recovered from the directories (it lives only
+/// in the index), so the most recently modified profile is chosen: the one the
+/// user was last using. Better than the alphabetically first, and the user can
+/// switch in one click if it guesses wrong.
+fn rebuild_profile_index_from_disk() -> Option<ProfileIndex> {
+    let dir = profiles_dir();
+    let mut found: Vec<(std::time::SystemTime, ProfileMeta)> = Vec::new();
+
+    for entry in std::fs::read_dir(&dir).ok()?.flatten() {
+        let pdir = entry.path();
+        if !pdir.is_dir() {
+            continue;
+        }
+        let pj = pdir.join("profile.json");
+        let Ok(bytes) = std::fs::read(&pj) else { continue };
+        let raw = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+        let Ok(text) = std::str::from_utf8(raw) else { continue };
+        let Ok(profile) = serde_json::from_str::<UserProfile>(text) else { continue };
+
+        let dir_name = entry.file_name().to_string_lossy().to_string();
+        let id = if profile.domain.profile_id.is_empty() {
+            dir_name.clone()
+        } else {
+            profile.domain.profile_id.clone()
+        };
+        let modified = std::fs::metadata(&pj)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+
+        found.push((
+            modified,
+            ProfileMeta {
+                id,
+                display_name: profile.ui.display_name.clone(),
+                avatar: profile.ui.avatar.clone(),
+                created_at: profile.ui.profile_created_at,
+                dir_name,
+                cloud_enabled: profile.domain.cloud_enabled,
+                sync_level: profile.domain.sync_level.clone(),
+            },
+        ));
+    }
+
+    if found.is_empty() {
+        return None;
+    }
+
+    found.sort_by(|a, b| b.0.cmp(&a.0));
+    let active_profile_id = found[0].1.id.clone();
+    let profiles: Vec<ProfileMeta> = found.into_iter().map(|(_, m)| m).collect();
+    eprintln!(
+        "[ProfileIndex] rebuilt {} profile(s) from disk; active = {}",
+        profiles.len(),
+        active_profile_id
+    );
+    Some(ProfileIndex { active_profile_id, profiles })
 }
 
 /// Save the profile index to `profiles/index.json`.
