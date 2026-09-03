@@ -4234,6 +4234,27 @@ pub enum CloudLoginPhase {
     Error { message: String },
 }
 
+/// Outcome of the most recent gift/trial code submission.
+///
+/// A mailbox, not a request: the modal draws whatever is here, the shell owns
+/// the round trip and writes the result back. Both shells reach the same
+/// endpoint by different roads — the web one through `mlc-cloud`'s transport,
+/// the desktop one through `mlc-updater`'s watch channel — and this is where
+/// the two meet.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum RedeemStatus {
+    /// Nothing submitted since the overlay opened.
+    #[default]
+    Idle,
+    /// A submission is in flight — the button is dead and says so.
+    Working,
+    /// Accepted; the account is now paid until this instant (RFC 3339).
+    Redeemed { paid_until: String },
+    /// Refused, with the sentence to show the person who typed it.
+    Failed { message: String },
+}
+
 /// State for the cloud sign-in / account overlay.
 #[cfg(feature = "cloud")]
 #[derive(Clone, Debug)]
@@ -4256,6 +4277,18 @@ pub struct CloudLoginState {
     /// One-shot flag set by the "Sign out" button in the account view; the
     /// shell observes it, revokes the token, and clears it.
     pub sign_out_requested: bool,
+    /// One-shot flag set by the "Redeem" button (or Enter in the code field)
+    /// in the account view; the shell observes it, submits the code currently
+    /// in `text_input::REDEEM_CODE`, and clears it.
+    pub redeem_requested: bool,
+    /// What came back from the last submission. Written by the shell.
+    pub redeem_status: RedeemStatus,
+    /// Whether this account's paid access is live, as last answered by
+    /// `GET /api/entitlements`. Written by the shell every time that answer
+    /// lands — never inferred here from a feature name.
+    pub is_paid: bool,
+    /// When that paid access ends (RFC 3339), when it is paid at all.
+    pub paid_until: Option<String>,
     /// Overlay position (None = centered on screen).
     pub position: Option<(f64, f64)>,
     /// Whether the overlay is being dragged by its header.
@@ -4273,6 +4306,10 @@ impl Default for CloudLoginState {
             oauth_login_requested: None,
             open_url_requested: None,
             sign_out_requested: false,
+            redeem_requested: false,
+            redeem_status: RedeemStatus::Idle,
+            is_paid: false,
+            paid_until: None,
             position: None,
             is_dragging: false,
             drag_offset: None,
@@ -4288,6 +4325,9 @@ impl CloudLoginState {
         self.is_open = true;
         self.open_url_requested = None;
         self.sign_out_requested = false;
+        self.redeem_requested = false;
+        // Last visit's "already used" is not this visit's news.
+        self.redeem_status = RedeemStatus::Idle;
         self.phase = CloudLoginPhase::RequestCode;
     }
 
@@ -4297,6 +4337,7 @@ impl CloudLoginState {
         self.is_open = false;
         self.open_url_requested = None;
         self.sign_out_requested = false;
+        self.redeem_requested = false;
         self.is_dragging = false;
         self.drag_offset = None;
     }

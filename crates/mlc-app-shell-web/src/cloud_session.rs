@@ -24,10 +24,11 @@ use wasm_bindgen_futures::{spawn_local, JsFuture};
 use mlc_app::ChartApp;
 use mlc_app_layout::ui::modal_settings::{
     CloudLoginPhase, CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudReleaseEntry,
+    RedeemStatus,
 };
 use mlc_cloud::{
-    BuildAttestation, BlogPost, CloudConfig, DeviceAuthPoll, EntitlementsResponse, FetchTransport,
-    ReleaseEntry, StoredToken, VersionManifest,
+    redeem_error_message, BuildAttestation, BlogPost, CloudConfig, DeviceAuthPoll,
+    EntitlementsResponse, FetchTransport, ReleaseEntry, StoredToken, VersionManifest,
 };
 
 const TOKEN_KEY: &str = "mlc.cloud.token.v1";
@@ -55,6 +56,9 @@ enum FlowResult {
     /// button needs.
     Updates(Result<(&'static str, VersionManifest, Vec<ReleaseEntry>), String>),
     News(Result<Vec<BlogPost>, String>),
+    /// A gift/trial code came back accepted (the new paid-until instant) or
+    /// refused (the sentence to print).
+    Redeem(Result<String, String>),
 }
 
 struct Inner {
@@ -172,6 +176,12 @@ impl CloudSession {
                 match r {
                     Ok(resp) => {
                         chart.panel_app.user_settings_state.multi_profile = resp.has_multi_profile();
+                        // The account view states the tier outright; this is
+                        // where that fact arrives. Read from the server's own
+                        // `paid` field, never inferred from which features
+                        // happen to be in the list.
+                        chart.panel_app.cloud_login_state.is_paid = resp.paid;
+                        chart.panel_app.cloud_login_state.paid_until = resp.paid_until.clone();
                         // `expires_at` is unix-ms, the same clock as
                         // `now_ms` here — floor it so a server answer that
                         // is already stale (or asks to be re-checked
@@ -185,6 +195,8 @@ impl CloudSession {
                         // set — never to the paid set, and never leaves the
                         // General tab locked on a stale answer either.
                         chart.panel_app.user_settings_state.multi_profile = false;
+                        chart.panel_app.cloud_login_state.is_paid = false;
+                        chart.panel_app.cloud_login_state.paid_until = None;
                         web_sys::console::warn_1(
                             &format!("[cloud] entitlements fetch failed: {}", e).into(),
                         );
@@ -318,6 +330,18 @@ impl CloudSession {
                 FlowResult::News(Err(e)) => {
                     chart.panel_app.cloud_overlay_state.data = CloudOverlayData::Error { message: e };
                 }
+                FlowResult::Redeem(Ok(paid_until)) => {
+                    st.redeem_status = RedeemStatus::Redeemed {
+                        paid_until: paid_until.clone(),
+                    };
+                    // The tier just changed; the cached entitlements answer is
+                    // now wrong. Ask again on the next frame rather than
+                    // waiting out a TTL the user did not agree to.
+                    self.inner.borrow_mut().next_entitlements_ms = 0.0;
+                }
+                FlowResult::Redeem(Err(message)) => {
+                    st.redeem_status = RedeemStatus::Failed { message };
+                }
                 FlowResult::Logout => {
                     // Local sign-out regardless of the server answer.
                     clear_token();
@@ -422,6 +446,43 @@ impl CloudSession {
         if let Some(url) = st.open_url_requested.take() {
             open_auth_popup(&url);
         }
+        // A submitted code. The field keeps its text — a refused code is
+        // usually one wrong character, not a reason to retype ten.
+        if st.redeem_requested {
+            st.redeem_requested = false;
+            let code = {
+                let coord = chart.input_coordinator.borrow();
+                coord
+                    .text_fields()
+                    .text(&uzor::WidgetId::from(mlc_app::text_input::REDEEM_CODE))
+                    .trim()
+                    .to_string()
+            };
+            if code.is_empty() {
+                st.redeem_status = RedeemStatus::Failed {
+                    message: "Enter a code first".to_string(),
+                };
+            } else if self.inner.borrow().token.is_none() {
+                st.redeem_status = RedeemStatus::Failed {
+                    message: "Sign in first".to_string(),
+                };
+            } else {
+                st.redeem_status = RedeemStatus::Working;
+                let inner = self.inner.clone();
+                let transport = self.inner.borrow().transport.snapshot();
+                self.inner.borrow_mut().in_flight = true;
+                spawn_local(async move {
+                    let r = transport
+                        .redeem(&code)
+                        .await
+                        .map(|resp| resp.paid_until)
+                        .map_err(|e| redeem_error_message(&e));
+                    inner.borrow_mut().result = Some(FlowResult::Redeem(r));
+                });
+            }
+            return;
+        }
+
         if st.sign_out_requested {
             st.sign_out_requested = false;
             let token = self.inner.borrow().token.as_ref().map(|t| t.token.clone());

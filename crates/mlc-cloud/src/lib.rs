@@ -100,3 +100,21 @@ impl std::fmt::Display for CloudError {
 }
 
 impl std::error::Error for CloudError {}
+
+/// The sentence to show someone who just submitted a gift code that did not
+/// work.
+///
+/// Lives here rather than in the shell because both the wording and the status
+/// mapping are one fact about one endpoint, and `CloudError`'s own `Display`
+/// is a developer's line ("HTTP 409: …"), not a reader's. The desktop shell
+/// has its own copy of this mapping in `mlc-updater` — it does not depend on
+/// this crate at all (native transport lives there) — so the two are written
+/// to say the same thing.
+pub fn redeem_error_message(e: &CloudError) -> String {
+    match e {
+        CloudError::Http { status: 404, .. } => "No such code".to_string(),
+        CloudError::Http { status: 409, .. } => "This code has already been used".to_string(),
+        CloudError::Unauthorized => "Sign in again, then retry".to_string(),
+        other => other.to_string(),
+    }
+}

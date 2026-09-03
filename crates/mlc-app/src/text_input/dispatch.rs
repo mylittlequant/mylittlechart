@@ -64,7 +64,7 @@ impl ChartApp {
     /// Returns true if the key was routed to a text field (caller should return early
     /// to prevent the key from reaching global shortcuts).
     ///
-    /// Covers (in order): ALERT_TG_TOKEN, CRED_WEBHOOK_URL,
+    /// Covers (in order): ALERT_TG_TOKEN, REDEEM_CODE, CRED_WEBHOOK_URL,
     /// CRED_ADD_EXCHANGE, CRED_ADD_LABEL, CRED_ADD_API_KEY,
     /// CRED_ADD_API_SECRET, CRED_ADD_PASSPHRASE, PROFILE_RENAME,
     /// NEW_PASSPHRASE, NEW_PROFILE_NAME, RECOVERY_KEY, CONFIRM_PASSPHRASE,
@@ -87,7 +87,8 @@ impl ChartApp {
 
         // Only route early fields; late fields (chart_browser, presets, settings, search)
         // are handled after global undo/redo by dispatch_text_key_late.
-        let is_early_field = matches!(
+        #[allow(unused_mut)]
+        let mut is_early_field = matches!(
             focused_id.as_str(),
             ALERT_TG_TOKEN
                 | CRED_WEBHOOK_URL
@@ -108,6 +109,12 @@ impl ChartApp {
                 | AGENT_PTY
                 | AGENT_CHAT
         );
+        // The redeem field is early too, but it only exists in cloud builds
+        // and a `matches!` arm cannot carry a cfg of its own.
+        #[cfg(feature = "cloud")]
+        {
+            is_early_field |= focused_id.as_str() == REDEEM_CODE;
+        }
         if !is_early_field {
             return false;
         }
@@ -249,6 +256,8 @@ impl ChartApp {
                                              => self.text_action_search_overlay(action),
             AGENT_CHAT                       => self.text_action_agent_chat(ch, action),
             AGENT_PTY                        => self.text_action_agent_pty(action),
+            #[cfg(feature = "cloud")]
+            REDEEM_CODE                      => self.text_action_redeem_code(ch, action),
             ALERT_TG_TOKEN                   => self.text_action_alert_token(ch, action),
             CRED_WEBHOOK_URL                 => self.text_action_cred_webhook_url(ch, action),
             CRED_ADD_EXCHANGE                => self.text_action_cred_add_field(crate::input::credentials::CredAddField::Exchange, ch, action),
@@ -806,6 +815,43 @@ impl ChartApp {
                 let token = self.input_coordinator.borrow().text_fields().text(&tg_wid).trim().to_string();
                 self.panel_app.alert_settings_state.notification_secrets.telegram.bot_token = token;
                 self.panel_app.alert_settings_state.notification_settings_dirty = true;
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            }
+            _ => {}
+        }
+    }
+
+    /// The account overlay's gift/trial code field.
+    ///
+    /// Enter submits — the same one-shot the "Redeem" button sets, so the two
+    /// routes cannot behave differently. Escape just leaves the field; it does
+    /// not close the overlay, because a code half-typed into a modal that also
+    /// holds Sign out is not something to discard on a stray key.
+    ///
+    /// The text is deliberately left in place on submit. The shell reads it
+    /// when it drains the flag, and if the code is refused the person can fix
+    /// one character rather than retype ten.
+    #[cfg(feature = "cloud")]
+    fn text_action_redeem_code(&mut self, ch: char, action: TextAction) {
+        let submit = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::REDEEM_CODE);
+            let code = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+            if code.is_empty() {
+                return;
+            }
+            chart.panel_app.cloud_login_state.redeem_requested = true;
+        };
+        if ch == '\r' || ch == '\n' {
+            submit(self);
+            return;
+        }
+        if ch == '\x1b' {
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            return;
+        }
+        match action {
+            TextAction::Commit(_) => submit(self),
+            TextAction::Cancel => {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             _ => {}

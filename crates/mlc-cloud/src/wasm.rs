@@ -277,6 +277,24 @@ impl FetchTransport {
         self.decode_success(status, &body)
     }
 
+    // ── /api/account/* ────────────────────────────────────────────────────
+
+    /// `POST /api/account/redeem` — spend a gift/trial code on the signed-in
+    /// account, returning the new paid-until instant.
+    ///
+    /// Failures keep their status: 404 is "no such code", 409 is "already
+    /// spent", 401 is "not signed in". Turning those into a sentence is
+    /// [`redeem_error_message`]'s job, not the transport's — the wording
+    /// belongs next to the screen that prints it.
+    pub async fn redeem(&self, code: &str) -> Result<RedeemResponse, CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "code": code }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", "/api/account/redeem", Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
     // ── /api/updates/* (anonymous) ────────────────────────────────────────
 
     /// `GET /api/updates/latest?platform=…` — release manifest for the

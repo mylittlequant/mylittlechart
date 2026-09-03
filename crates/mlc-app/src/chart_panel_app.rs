@@ -919,6 +919,7 @@ impl ChartPanelApp {
                 &self.cloud_login_state,
                 frame_theme,
                 toolbar_theme,
+                current_time_ms,
                 input_coordinator,
             ));
         }

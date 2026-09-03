@@ -92,6 +92,15 @@ pub struct Entitlements {
     pub features: Vec<String>,
     /// Millisecond Unix timestamp from the server; re-ask after it passes.
     pub expires_at: i64,
+    /// Whether the caller currently has a paid (or redeemed-trial) tier.
+    /// `#[serde(default)]` so an older server that doesn't emit this field
+    /// still parses — the caller degrades to `false`, the free reading.
+    #[serde(default)]
+    pub paid: bool,
+    /// RFC3339 timestamp of when the paid tier expires, if any.
+    /// `#[serde(default)]` for the same reason as `paid`.
+    #[serde(default)]
+    pub paid_until: Option<String>,
 }
 
 impl Entitlements {
@@ -99,6 +108,22 @@ impl Entitlements {
     pub fn has(&self, feature: &str) -> bool {
         self.features.iter().any(|f| f == feature)
     }
+}
+
+/// Outcome of the most recent gift/trial code redemption attempt, broadcast
+/// via a watch channel so the UI reads it as a frame-local fact rather than
+/// owning the request itself.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum RedeemState {
+    /// No redemption has been attempted (or the last one was superseded).
+    #[default]
+    Idle,
+    /// A redemption request is in flight.
+    Working,
+    /// The code was redeemed successfully; carries the new paid-until timestamp (RFC3339).
+    Redeemed { paid_until: String },
+    /// The redemption attempt failed; carries a human-readable message.
+    Failed { message: String },
 }
 
 /// Information about an available update.
@@ -150,6 +175,14 @@ pub enum UpdaterCommand {
     StartOAuth(String),
     /// Log out (clear stored token).
     Logout,
+    /// Redeem a gift/trial code for the signed-in account.
+    ///
+    /// Requires a stored token — with none, the updater publishes
+    /// [`RedeemState::Failed`] without making a request. The outcome is
+    /// broadcast via [`UpdaterHandle::redeem_rx`]; a success also refreshes
+    /// `entitlements_rx` immediately so the new tier is visible without
+    /// waiting out the entitlements poll interval.
+    RedeemCode(String),
     /// Enable or disable cloud connectivity at runtime.
     /// `true` = cloud enabled (OTA, sync, telemetry),
     /// `false` = cloud disabled (stop all network activity).
@@ -289,6 +322,12 @@ pub struct UpdaterHandle {
     /// advances via a successful fetch — see that type's own doc for why a
     /// failed fetch must never publish anything else.
     pub entitlements_rx: watch::Receiver<Entitlements>,
+    /// Outcome of the most recent [`UpdaterCommand::RedeemCode`] attempt.
+    ///
+    /// The UI polls this each frame (a channel read, not network IO) to
+    /// drive a redeem-code modal's state. Starts at [`RedeemState::Idle`]
+    /// and is republished on every attempt — see that type's own doc.
+    pub redeem_rx: watch::Receiver<RedeemState>,
     /// Current cloud sync status.
     ///
     /// The UI polls `has_changed()` each frame and displays progress

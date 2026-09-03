@@ -218,6 +218,19 @@ pub struct MeResponse {
 pub struct EntitlementsResponse {
     pub features: Vec<String>,
     pub expires_at: i64,
+    /// Whether this caller's paid access is live right now.
+    ///
+    /// Stated outright rather than inferred from the presence of a paid
+    /// feature name: the feature set is what paid currently *buys*, and that
+    /// list will move. Whether the account is paid is a separate fact and the
+    /// account view shows it directly. `#[serde(default)]` because a server
+    /// older than 2026-09-04 does not send it — a missing answer reads as not
+    /// paid, never the other way round.
+    #[serde(default)]
+    pub paid: bool,
+    /// When that paid access ends (RFC 3339), or `None` when it is not paid.
+    #[serde(default)]
+    pub paid_until: Option<String>,
 }
 
 impl EntitlementsResponse {
@@ -228,6 +241,17 @@ impl EntitlementsResponse {
     pub fn has_multi_profile(&self) -> bool {
         self.features.iter().any(|f| f == Self::MULTI_PROFILE)
     }
+}
+
+/// Response body from `POST /api/account/redeem` on success.
+///
+/// The failure side is not a shape at all — the server answers 404 for an
+/// unknown code and 409 for one already spent, and the transport turns those
+/// into the message the modal prints, so there is nothing here to model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RedeemResponse {
+    /// The account's new paid-until instant (RFC 3339) after the grant.
+    pub paid_until: String,
 }
 
 // =============================================================================

@@ -126,6 +126,15 @@ pub const RECOVERY_KEY: &str = "recovery_key";
 /// Telegram bot token input (alert settings notifications tab).
 pub const ALERT_TG_TOKEN: &str = "alert_tg_token";
 
+/// Gift/trial code input in the account overlay (cloud builds).
+///
+/// The modal that draws it lives in `mlc-app-layout`, which cannot depend on
+/// this crate, so the id is spelled there as a literal too
+/// (`cloud_login.rs`'s `REDEEM_FIELD`) — the same split every other modal
+/// field in that crate already has. Enter submits, which is what a
+/// ten-character code typed from a message wants.
+pub const REDEEM_CODE: &str = "redeem_code";
+
 /// Webhook URL input (credentials modal). Replaces the decorative field of
 /// the same name that used to live in the alert-settings Notifications tab
 /// (`alert_set:item:webhook_url`, whose click handler was a literal no-op) —

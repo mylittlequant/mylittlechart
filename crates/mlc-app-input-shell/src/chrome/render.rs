@@ -569,58 +569,15 @@ pub fn render(
                     }
                 }
 
-                // Sign-in / account button. One control with two readings:
-                // "Sign in" while nobody is, the account's own name once
-                // somebody is — the same button the user pressed is the one
-                // that now says who they are, so there is nothing new to find.
+                // Sign-in / account button — one drawing for both flavors.
+                // It used to be written twice and the copies disagreed: the
+                // native one read `account_label`, the web one printed the
+                // literal "Sign in" and never looked at the field at all. So
+                // the web strip went on inviting a signed-in visitor to sign
+                // in even after the shell started publishing the label
+                // (owner, 2026-09-04). One body, so they cannot drift again.
                 #[cfg(feature = "cloud")]
-                {
-                    let signed_in = state.account_label.is_some();
-                    let hovered = state.hovered == ChromeHit::LoginButton;
-                    let inset_x = 2.0;
-                    let inset_y = 4.0;
-                    // Signed out it is the one accent action in the strip.
-                    // Signed in it is an ordinary control — the call to action
-                    // has been answered, and leaving it shouting is noise.
-                    if signed_in {
-                        if hovered {
-                            ctx.set_fill_color(&c.button_hover);
-                            ctx.fill_rounded_rect(
-                                bp.login_left + inset_x, inset_y,
-                                LOGIN_BUTTON_WIDTH - inset_x * 2.0,
-                                CHROME_HEIGHT - inset_y * 2.0, 7.0,
-                            );
-                        }
-                        // Same token every other chrome glyph uses, so a
-                        // signed-in account reads as part of the strip.
-                        ctx.set_fill_color(&c.icon_normal);
-                    } else {
-                        let cta = if hovered { &c.cta_bg_hover } else { &c.cta_bg };
-                        ctx.set_fill_color(cta);
-                        ctx.fill_rounded_rect(
-                            bp.login_left + inset_x, inset_y,
-                            LOGIN_BUTTON_WIDTH - inset_x * 2.0,
-                            CHROME_HEIGHT - inset_y * 2.0, 7.0,
-                        );
-                        ctx.set_fill_color(contrasting_text_color(cta));
-                    }
-                    let label = state.account_label.as_deref().unwrap_or("Sign in");
-                    ctx.set_font("600 12px sans-serif");
-                    ctx.set_text_align(TextAlign::Center);
-                    ctx.set_text_baseline(TextBaseline::Middle);
-                    // "Sign in" was sized for this button; an account name was
-                    // not, and a long handle would paint straight across the
-                    // News/Links/Update icons to its left. Clipped to the
-                    // button, the same way a tab name is clipped to its tab.
-                    ctx.save();
-                    ctx.clip_rect(bp.login_left, 0.0, LOGIN_BUTTON_WIDTH, CHROME_HEIGHT);
-                    ctx.fill_text(
-                        label,
-                        bp.login_left + LOGIN_BUTTON_WIDTH / 2.0,
-                        CHROME_HEIGHT / 2.0,
-                    );
-                    ctx.restore();
-                }
+                draw_account_button(ctx, state, c, &bp);
 
                 // Cloud icon buttons: Download / Links / News (left of Sign
                 // in) — same icons, hover treatment and sizes as the Web
@@ -666,33 +623,15 @@ pub fn render(
                 }
             }
             ChromeFlavor::Web => {
-                // "Sign in" button (cloud builds) — the single accent action
-                // in the chrome strip. Colors come from the active theme
-                // (accent / accent_hover), the label picks black or white by
-                // luminance so it stays readable on any skin.
+                // Sign-in / account button — one drawing for both flavors.
+                // It used to be written twice and the copies disagreed: the
+                // native one read `account_label`, the web one printed the
+                // literal "Sign in" and never looked at the field at all. So
+                // the web strip went on inviting a signed-in visitor to sign
+                // in even after the shell started publishing the label
+                // (owner, 2026-09-04). One body, so they cannot drift again.
                 #[cfg(feature = "cloud")]
-                {
-                    let cta = if state.hovered == ChromeHit::LoginButton {
-                        &c.cta_bg_hover
-                    } else {
-                        &c.cta_bg
-                    };
-                    let inset_x = 2.0;
-                    let inset_y = 4.0;
-                    ctx.set_fill_color(cta);
-                    ctx.fill_rounded_rect(
-                        bp.login_left + inset_x,
-                        inset_y,
-                        LOGIN_BUTTON_WIDTH - inset_x * 2.0,
-                        CHROME_HEIGHT - inset_y * 2.0,
-                        7.0,
-                    );
-                    ctx.set_font("600 12px sans-serif");
-                    ctx.set_fill_color(contrasting_text_color(cta));
-                    ctx.set_text_align(TextAlign::Center);
-                    ctx.set_text_baseline(TextBaseline::Middle);
-                    ctx.fill_text("Sign in", bp.login_left + LOGIN_BUTTON_WIDTH / 2.0, CHROME_HEIGHT / 2.0);
-                }
+                draw_account_button(ctx, state, c, &bp);
 
                 // Cloud icon buttons: Download / Links / News (left of Sign in).
                 // Hover lights the background patch ONLY — the icon keeps its
@@ -1062,6 +1001,72 @@ fn draw_rect_outline(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, h: f64
     ctx.fill_rect(x, y + h - t, w, t);
     ctx.fill_rect(x, y + t, t, h - t * 2.0);
     ctx.fill_rect(x + w - t, y + t, t, h - t * 2.0);
+}
+
+/// The sign-in / account button: one control with two readings — "Sign in"
+/// while nobody is, the account's own name once somebody is, so the button the
+/// user pressed is the one that now says who they are.
+///
+/// Signed out it is the single accent action in the strip. Signed in it is an
+/// ordinary control: the call to action has been answered, and leaving it
+/// shouting is noise.
+///
+/// Shared by both flavors deliberately. This lived as two copies that
+/// disagreed — the web one ignored `account_label` entirely — which is exactly
+/// the drift a duplicated widget produces.
+#[cfg(feature = "cloud")]
+fn draw_account_button(
+    ctx: &mut dyn MlcRenderContext,
+    state: &ChromeState,
+    c: &ChromeColors,
+    bp: &ButtonPositions,
+) {
+    let signed_in = state.account_label.is_some();
+    let hovered = state.hovered == ChromeHit::LoginButton;
+    let inset_x = 2.0;
+    let inset_y = 4.0;
+    if signed_in {
+        if hovered {
+            ctx.set_fill_color(&c.button_hover);
+            ctx.fill_rounded_rect(
+                bp.login_left + inset_x,
+                inset_y,
+                LOGIN_BUTTON_WIDTH - inset_x * 2.0,
+                CHROME_HEIGHT - inset_y * 2.0,
+                7.0,
+            );
+        }
+        // Same token every other chrome glyph uses, so a signed-in account
+        // reads as part of the strip.
+        ctx.set_fill_color(&c.icon_normal);
+    } else {
+        let cta = if hovered { &c.cta_bg_hover } else { &c.cta_bg };
+        ctx.set_fill_color(cta);
+        ctx.fill_rounded_rect(
+            bp.login_left + inset_x,
+            inset_y,
+            LOGIN_BUTTON_WIDTH - inset_x * 2.0,
+            CHROME_HEIGHT - inset_y * 2.0,
+            7.0,
+        );
+        ctx.set_fill_color(contrasting_text_color(cta));
+    }
+    let label = state.account_label.as_deref().unwrap_or("Sign in");
+    ctx.set_font("600 12px sans-serif");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    // "Sign in" was sized for this button; an account name was not, and a long
+    // handle would paint straight across the News/Links/Update icons to its
+    // left. Clipped to the button, the same way a tab name is clipped to its
+    // tab.
+    ctx.save();
+    ctx.clip_rect(bp.login_left, 0.0, LOGIN_BUTTON_WIDTH, CHROME_HEIGHT);
+    ctx.fill_text(
+        label,
+        bp.login_left + LOGIN_BUTTON_WIDTH / 2.0,
+        CHROME_HEIGHT / 2.0,
+    );
+    ctx.restore();
 }
 
 /// Pick black or white label text for readability over a `#rrggbb` fill,

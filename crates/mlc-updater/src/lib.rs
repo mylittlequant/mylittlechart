@@ -17,8 +17,9 @@ pub mod vault_params;
 pub mod verify;
 pub mod attest;
 pub mod entitlements;
+pub mod redeem;
 
-pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements};
+pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState};
 
 /// Format current time as `HH:MM:SS` for log lines.
 pub fn now_ts() -> String {
@@ -175,6 +176,10 @@ pub fn start(
     // anything else.
     let (entitlements_tx, entitlements_rx) = watch::channel(state::Entitlements::default());
 
+    // Channel for the outcome of the most recent redeem-code attempt —
+    // starts Idle, republished on every `RedeemCode` command.
+    let (redeem_tx, redeem_rx) = watch::channel(state::RedeemState::Idle);
+
     // Channel for cloud sync status — starts Idle, updated by the updater loop.
     let (sync_status_tx, sync_status_rx) = watch::channel(state::SyncStatus::Idle);
 
@@ -189,11 +194,12 @@ pub fn start(
         cmd_tx,
         auth_rx,
         entitlements_rx,
+        redeem_rx,
         sync_status_rx,
         sync_checksums_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
+    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, redeem_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
 
     handle
 }
@@ -209,6 +215,7 @@ async fn updater_loop(
     status_tx: watch::Sender<UpdateStatus>,
     auth_tx: watch::Sender<state::AuthStatus>,
     entitlements_tx: watch::Sender<state::Entitlements>,
+    redeem_tx: watch::Sender<state::RedeemState>,
     sync_status_tx: watch::Sender<state::SyncStatus>,
     sync_checksums_tx: watch::Sender<std::collections::HashMap<String, String>>,
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
@@ -406,6 +413,38 @@ async fn updater_loop(
                         sync_state.enabled = false;
                         let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
                         log::info!("Logged out");
+                    }
+                    state::UpdaterCommand::RedeemCode(code) => {
+                        let token = token_store::load_token();
+                        let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
+                        match auth_header {
+                            None => {
+                                let _ = redeem_tx.send(state::RedeemState::Failed {
+                                    message: "Sign in first".to_string(),
+                                });
+                                log::warn!("[Updater] redeem failed: not signed in");
+                            }
+                            Some(auth) => {
+                                let _ = redeem_tx.send(state::RedeemState::Working);
+                                match redeem::redeem(&http_client, &auth, &code).await {
+                                    Ok(paid_until) => {
+                                        log::info!("[Updater] redeem: ok until {}", paid_until);
+                                        let _ = redeem_tx.send(state::RedeemState::Redeemed {
+                                            paid_until: paid_until.clone(),
+                                        });
+                                        // Refresh entitlements immediately so the new
+                                        // paid tier is visible without waiting out the
+                                        // poll interval — the whole point of redeeming
+                                        // is that the app changes tier now.
+                                        next_entitlements_at_ms = do_entitlements_check(&http_client, &entitlements_tx, Some(&auth)).await;
+                                    }
+                                    Err(e) => {
+                                        log::warn!("[Updater] redeem failed: {}", e);
+                                        let _ = redeem_tx.send(state::RedeemState::Failed { message: e });
+                                    }
+                                }
+                            }
+                        }
                     }
                     state::UpdaterCommand::ForceSync => {
                         if connected {

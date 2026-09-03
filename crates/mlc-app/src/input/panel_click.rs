@@ -5365,6 +5365,15 @@ impl ChartApp {
         // === Cloud sign-in / account overlay clicks (cloud builds only) ===
         #[cfg(feature = "cloud")]
         if let Some(action) = widget_id.strip_prefix("cloud_login:") {
+            // Focusing the code box touches the coordinator, not the overlay
+            // state, so it is answered before `st` borrows `self`.
+            if action == "redeem_input" {
+                self.input_coordinator
+                    .borrow_mut()
+                    .text_fields_mut()
+                    .focus(uzor::WidgetId::from(crate::text_input::REDEEM_CODE));
+                return;
+            }
             let st = &mut self.panel_app.cloud_login_state;
             match action {
                 "close" => st.close(),
@@ -5373,6 +5382,11 @@ impl ChartApp {
                 rest if rest.starts_with("dimmer") => st.close(),
                 "open_page" => st.open_url_requested = Some("/dashboard".to_string()),
                 "sign_out" => st.sign_out_requested = true,
+                // Submitting a code is the shell's round trip; all that
+                // happens here is the one-shot. Enter in the field sets the
+                // same flag (`text_input::dispatch`), so the button and the
+                // key cannot drift apart.
+                "redeem" => st.redeem_requested = true,
                 "retry" => {
                     st.phase = mlc_app_layout::ui::modal_settings::CloudLoginPhase::RequestCode;
                 }

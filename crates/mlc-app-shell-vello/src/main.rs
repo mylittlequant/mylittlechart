@@ -3417,6 +3417,48 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
+        // ── Drain a submitted gift/trial code ────────────────────────
+        // The overlay records that a code was submitted and stops there; the
+        // text itself lives in the shared text-field store, and the round trip
+        // belongs to the updater, which already holds the token and the
+        // client. Same division as the OAuth pick above.
+        #[cfg(feature = "cloud")]
+        {
+            let submitted = self
+                .windows
+                .values_mut()
+                .any(|pw| std::mem::take(&mut pw.chart.panel_app.cloud_login_state.redeem_requested));
+            if submitted {
+                let code = self
+                    .windows
+                    .values()
+                    .find_map(|pw| {
+                        let coord = pw.chart.input_coordinator.borrow();
+                        let text = coord
+                            .text_fields()
+                            .text(&uzor::WidgetId::from(mlc_app::text_input::REDEEM_CODE))
+                            .trim()
+                            .to_string();
+                        (!text.is_empty()).then_some(text)
+                    })
+                    .unwrap_or_default();
+                if code.is_empty() {
+                    use mlc_app_layout::ui::modal_settings::RedeemStatus;
+                    for pw in self.windows.values_mut() {
+                        pw.chart.panel_app.cloud_login_state.redeem_status =
+                            RedeemStatus::Failed { message: "Enter a code first".to_string() };
+                        pw.overlay_dirty = true;
+                        pw.window.request_redraw();
+                    }
+                } else {
+                    let _ = self
+                        .updater_handle
+                        .cmd_tx
+                        .send(mlc_updater::UpdaterCommand::RedeemCode(code));
+                }
+            }
+        }
+
         // ── Drain updater command requests ───────────────────────────────
         {
             let cmd: Option<String> = self.windows.values_mut()
@@ -4720,8 +4762,51 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 .entitlements_rx
                 .borrow()
                 .has("multi_profile");
+            // The account overlay states the tier outright rather than
+            // implying it from which surfaces are unlocked. Same channel, and
+            // the server's own `paid` field — never a guess from the feature
+            // list, which is what paid currently buys and will move.
+            #[cfg(feature = "cloud")]
+            let (is_paid, paid_until) = {
+                let ent = self.updater_handle.entitlements_rx.borrow();
+                (ent.paid, ent.paid_until.clone())
+            };
+            // Outcome of the last submitted gift code. `RedeemState` is the
+            // updater's word for it; `RedeemStatus` is the overlay's. They are
+            // two crates that do not know each other, so the map is here.
+            #[cfg(feature = "cloud")]
+            let redeem_status = if !self.updater_handle.redeem_rx.has_changed().unwrap_or(false) {
+                // Only on the edge. The channel keeps its last outcome for the
+                // life of the process, so copying it every frame would put
+                // last hour's "already used" back on a freshly opened overlay
+                // the instant `CloudLoginState::open` had cleared it.
+                None
+            } else {
+                use mlc_app_layout::ui::modal_settings::RedeemStatus;
+                Some(match &*self.updater_handle.redeem_rx.borrow_and_update() {
+                    mlc_updater::RedeemState::Idle => RedeemStatus::Idle,
+                    mlc_updater::RedeemState::Working => RedeemStatus::Working,
+                    mlc_updater::RedeemState::Redeemed { paid_until } => {
+                        RedeemStatus::Redeemed { paid_until: paid_until.clone() }
+                    }
+                    mlc_updater::RedeemState::Failed { message } => {
+                        RedeemStatus::Failed { message: message.clone() }
+                    }
+                })
+            };
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.multi_profile = multi_profile;
+                #[cfg(feature = "cloud")]
+                {
+                    let st = &mut pw.chart.panel_app.cloud_login_state;
+                    st.is_paid = is_paid;
+                    st.paid_until = paid_until.clone();
+                    if let Some(status) = redeem_status.as_ref() {
+                        st.redeem_status = status.clone();
+                        pw.overlay_dirty = true;
+                        pw.window.request_redraw();
+                    }
+                }
             }
 
             // Global scale_mode persistence channel removed entirely
