@@ -433,6 +433,11 @@ pub fn chart_toolbar_render_toolbars(
     // 2026-09-02): `true` (default) keeps the ascii cell-shader hover demo
     // above; `false` always falls back to the plain `fill_text` draw path.
     clock_glitch_enabled: bool,
+    // `UserSettingsState::account_signed_in` snapshot (screenshot-
+    // destination arc): gates the ShareLink row in the camera button's
+    // double-click destination dropdown — anonymous sessions see exactly
+    // the Clipboard / DownloadFile rows.
+    account_signed_in: bool,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -533,8 +538,35 @@ pub fn chart_toolbar_render_toolbars(
 
             // Apply active states for control strip
             control_sections = apply_active_states(control_sections, |id| {
-                tb.is_active(id)
+                match id {
+                    // Camera button (screenshot-destination arc): highlight
+                    // while its destination dropdown is open (`is_active`
+                    // covers that via `open_dropdown_id`) or a non-default
+                    // destination is remembered.
+                    "screenshot" => tb.is_active(id)
+                        || tb.screenshot_destination != mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard,
+                    _ => tb.is_active(id),
+                }
             });
+
+            // Camera button icon follows the remembered destination (default
+            // = Clipboard keeps the def's camera icon). Same swap mechanic
+            // the left toolbar uses for Magnet/Lock/Eye above.
+            control_sections = apply_toggle_icons(
+                control_sections,
+                |id| match id {
+                    "screenshot" => tb.screenshot_destination != mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard,
+                    _ => false,
+                },
+                |id| match id {
+                    "screenshot" => match tb.screenshot_destination {
+                        mlc_core::state::toolbar_state::ScreenshotDestination::DownloadFile => Some("CloudDownload"),
+                        mlc_core::state::toolbar_state::ScreenshotDestination::ShareLink => Some("NewWindow"),
+                        mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard => None,
+                    },
+                    _ => None,
+                },
+            );
 
             // Override symbol_selector and timeframe_selector text with actual live values.
             //
@@ -1433,7 +1465,7 @@ pub fn chart_toolbar_render_toolbars(
 
         // Render open dropdown if any
         let dropdown_result = if let Some(ref dropdown_id) = tb.open_dropdown_id {
-            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, favorite_primitives, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, symbol_quick_search_render, symbol_quick_search, split_symbol_compare, quicksearch_minimal)
+            chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, favorite_primitives, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, symbol_quick_search_render, symbol_quick_search, split_symbol_compare, quicksearch_minimal, account_signed_in)
         } else {
             None
         };
@@ -1682,6 +1714,7 @@ fn chart_toolbar_render_dropdown(
     symbol_quick_search_enabled: bool,
     split_symbol_compare: bool,
     quicksearch_minimal: bool,
+    account_signed_in: bool,
 ) -> Option<DropdownRenderInfo> {
         // 1. Find the button rect for this dropdown in the toolbar results.
         //    If open_dropdown_position is set (e.g. for new_tab_menu opened by chrome),
@@ -1724,9 +1757,9 @@ fn chart_toolbar_render_dropdown(
         // fresh here so it always reflects the active chart_type/instrument.
         let mut items = if dropdown_id == "timeframe_selector" {
             resolution_param_dropdown_items(active_chart_type)
-                .or_else(|| chart_toolbar_find_dropdown_items(tb, dropdown_id, toolbar_config, presets, active_preset_id))?
+                .or_else(|| chart_toolbar_find_dropdown_items(tb, dropdown_id, toolbar_config, presets, active_preset_id, account_signed_in))?
         } else {
-            chart_toolbar_find_dropdown_items(tb, dropdown_id, toolbar_config, presets, active_preset_id)?
+            chart_toolbar_find_dropdown_items(tb, dropdown_id, toolbar_config, presets, active_preset_id, account_signed_in)?
         };
 
         // Granularity favorites (user-granularity-templates-inner arc, кусок
@@ -3271,6 +3304,7 @@ fn chart_toolbar_find_dropdown_items(
     toolbar_config: &ToolbarConfig,
     presets: &[mlc_core::PresetSummary],
     active_preset_id: &str,
+    account_signed_in: bool,
 ) -> Option<Vec<DropdownItemDef>> {
         // Special case: symbol_selector's inline fast-search dropdown
         // (symbol-search-compare-inner arc, Wave 2, кусок 4). The toolbar
@@ -3299,6 +3333,23 @@ fn chart_toolbar_find_dropdown_items(
                 DropdownItemDef::action("magnet_ohlc", "Weak Magnet (OHLC)").with_icon(ToolbarIconId::new("Magnet")),
                 DropdownItemDef::action("magnet_strong", "Strong Magnet (Body)").with_icon(ToolbarIconId::new("MagnetStrong")),
             ]);
+        }
+
+        // Special case: screenshot (camera) is an icon_button that opens a
+        // destination dropdown on double-click — same shape as magnet above.
+        // Selecting a row sets the destination AND fires immediately
+        // (`handle_dropdown_select_with_chart`'s `"screenshot"` arm). The
+        // ShareLink row exists ONLY for signed-in users (owner ruling —
+        // anonymous sessions see exactly Clipboard / DownloadFile).
+        if dropdown_id == "screenshot" {
+            let mut items = vec![
+                DropdownItemDef::action("shot_clipboard", "Clipboard").with_icon(ToolbarIconId::new("Copy")),
+                DropdownItemDef::action("shot_download", "Download File").with_icon(ToolbarIconId::new("CloudDownload")),
+            ];
+            if account_signed_in {
+                items.push(DropdownItemDef::action("shot_share_link", "Share Link").with_icon(ToolbarIconId::new("NewWindow")));
+            }
+            return Some(items);
         }
 
         // Special case: the favorites bar's "+" picker (favorite-primitives

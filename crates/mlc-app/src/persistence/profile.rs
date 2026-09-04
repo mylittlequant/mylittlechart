@@ -82,6 +82,10 @@ impl ChartApp {
                 favorites_bar_y: Some(fav.y),
                 favorites_bar_dock: Some(fav_dock_str.to_string()),
                 favorites_bar_visible: self.panel_app.toolbar_state.favorites_bar_visible,
+                // Screenshot destination (screenshot-destination arc): live
+                // value comes from the toolbar state — the camera button's
+                // destination dropdown is the only writer.
+                screenshot_destination: self.panel_app.toolbar_state.screenshot_destination,
                 // Favorite drawing tools (favorite-primitives arc): mutated
                 // in-place via `self.core.user_mut().profile_mut()` by the
                 // `ToggleFavoritePrimitive` handler (chart_out_events.rs),
@@ -600,6 +604,7 @@ impl ChartApp {
                     };
                 }
                 self.panel_app.toolbar_state.favorites_bar_visible = profile.ui.favorites_bar_visible;
+                self.panel_app.toolbar_state.screenshot_destination = profile.ui.screenshot_destination;
             }
             Err(e) => {
                 eprintln!("[UserProfile] Failed to load profile: {}", e);

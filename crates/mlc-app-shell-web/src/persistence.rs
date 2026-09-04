@@ -158,6 +158,10 @@ pub fn save_persistent_state(chart: &mut ChartApp) {
         mlc_core::InlineDockEdge::Free => "Free".to_string(),
     });
     profile.ui.favorites_bar_visible = chart.panel_app.toolbar_state.favorites_bar_visible;
+    // Screenshot destination (screenshot-destination arc) — live toolbar-
+    // state value, same carry as the favorites bar above; the camera
+    // button's destination dropdown is the only writer.
+    profile.ui.screenshot_destination = chart.panel_app.toolbar_state.screenshot_destination;
     profile.ui.persist_toolbar_last_tools = chart.core.user().profile().ui.persist_toolbar_last_tools;
     profile.ui.persist_toolbar_toggles = chart.core.user().profile().ui.persist_toolbar_toggles;
     if profile.ui.persist_toolbar_last_tools {

@@ -8,6 +8,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
+use crate::state::toolbar_state::ScreenshotDestination;
 use crate::state::ewa_engine::EwaEngineConfig;
 use crate::state::candle_pattern_engine::CandlePatternEngineConfig;
 use crate::state::smc_engine::SmcEngineConfig;
@@ -573,6 +574,12 @@ pub struct ProfileUiSettings {
     #[serde(default)]
     pub favorites_bar_visible: bool,
 
+    /// Screenshot destination chosen via the camera button's double-click
+    /// dropdown (clipboard / download_file / share_link) — remembered so
+    /// single-click and Ctrl+S keep firing to the last-chosen destination.
+    #[serde(default)]
+    pub screenshot_destination: ScreenshotDestination,
+
     /// Favorite drawing tool ids shown on the quick-pick bar, in user order
     /// (flyout row item ids — `"trend_line"`, `"crosshair"`, …). Mutated
     /// in-place by `ChartOutEvent::ToggleFavoritePrimitive`, same pattern as
@@ -798,6 +805,7 @@ impl ProfileUiSettings {
             favorites_bar_y: None,
             favorites_bar_dock: None,
             favorites_bar_visible: false,
+            screenshot_destination: ScreenshotDestination::default(),
             favorite_primitives: Vec::new(),
             favorite_indicators: Vec::new(),
             device_name: String::new(),

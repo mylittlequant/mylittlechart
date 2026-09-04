@@ -2336,6 +2336,10 @@ impl App<'_> {
                 };
                 profile.ui.favorites_bar_dock = Some(fav_dock_str.to_string());
                 profile.ui.favorites_bar_visible = pw.chart.panel_app.toolbar_state.favorites_bar_visible;
+                // Screenshot destination (screenshot-destination arc) —
+                // live toolbar-state value, same preferred-window carry as
+                // the favorites bar above.
+                profile.ui.screenshot_destination = pw.chart.panel_app.toolbar_state.screenshot_destination;
                 if profile.ui.persist_toolbar_last_tools {
                     profile.ui.toolbar_last_tools = pw.chart.panel_app.toolbar_state.quick_select_memory
                         .iter()

@@ -623,6 +623,23 @@ pub struct ChartToolbarRenderResult {
     pub symbol_inline_input: Option<(WidgetRect, Vec<f64>)>,
 }
 
+/// Screenshot destination chosen via the camera button's double-click
+/// dropdown (mirrors the magnet button's double-click pattern). Remembered
+/// across sessions via `ProfileUiSettings::screenshot_destination`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ScreenshotDestination {
+    /// Copy the PNG to the OS clipboard (default).
+    #[default]
+    Clipboard,
+    /// Save the PNG as a file (native: screenshot dir; wasm: browser download).
+    DownloadFile,
+    /// Upload and copy a shareable link (authenticated users only — the row
+    /// is filtered out for anonymous sessions; backend upload lands in a
+    /// later wave, stubbed as clipboard + log until then).
+    ShareLink,
+}
+
 // =============================================================================
 // ChartToolbarState
 // =============================================================================
@@ -680,6 +697,15 @@ pub struct ChartToolbarState {
     /// Double-click (within 300ms) opens the magnet dropdown.
     /// Single-click toggles magnet ON/OFF.
     pub last_magnet_click_time: Option<Instant>,
+    /// Timestamp of the last screenshot (camera) button click — used for
+    /// double-click detection (same 300ms pattern as `last_magnet_click_time`).
+    /// Single-click fires a screenshot to `screenshot_destination`;
+    /// double-click opens the destination dropdown.
+    pub last_screenshot_click_time: Option<Instant>,
+    /// Where user-initiated screenshots go (clipboard / file / share link).
+    /// Set by the camera button's destination dropdown; read by the shells
+    /// when draining the pending-screenshot flag.
+    pub screenshot_destination: ScreenshotDestination,
     /// Floating inline config toolbar state (position, dock edge, drag state).
     pub floating_inline_bar: FloatingInlineBar,
     /// Floating favorites quick-pick bar state (favorite-primitives arc) —
@@ -781,6 +807,8 @@ impl Default for ChartToolbarState {
             watermark_edit_cursor_visible: true,
             hovered_submenu_item: None,
             last_magnet_click_time: None,
+            last_screenshot_click_time: None,
+            screenshot_destination: ScreenshotDestination::default(),
             floating_inline_bar: FloatingInlineBar::default(),
             favorites_bar: FloatingInlineBar::default(),
             favorites_bar_visible: false,
@@ -1033,10 +1061,31 @@ impl ChartToolbarState {
                 vec![ChartOutEvent::Redo]
             }
 
-            // === Screenshot ===
+            // === Screenshot — icon_button with double-click destination dropdown ===
+            // Single-click: fire a screenshot to the current (last-chosen)
+            // destination — same destination Ctrl+S uses (the shells read
+            // `screenshot_destination` when draining the pending flag).
+            // Double-click (within 300ms): open the destination dropdown
+            // WITHOUT firing again (a screenshot can't be "unfired" the way
+            // the magnet toggle is undone, so only the first click fires).
             "screenshot" => {
-                eprintln!("[ChartToolbar] screenshot");
-                vec![ChartOutEvent::Screenshot]
+                let now = Instant::now();
+                let is_double_click = self.last_screenshot_click_time
+                    .map(|t| now.duration_since(t).as_millis() < 300)
+                    .unwrap_or(false);
+
+                if is_double_click {
+                    self.last_screenshot_click_time = None; // reset so next single-click is fresh
+                    eprintln!("[ChartToolbar] screenshot double-click — open dropdown");
+                    self.open_dropdown_id = Some("screenshot".to_string());
+                    vec![ChartOutEvent::Consumed]
+                } else {
+                    // First click: record time AND fire — if no second click
+                    // arrives within 300ms this acts as the single-click shot.
+                    self.last_screenshot_click_time = Some(now);
+                    eprintln!("[ChartToolbar] screenshot");
+                    vec![ChartOutEvent::Screenshot]
+                }
             }
 
             // === Chart settings — app-level modal ===
@@ -1171,7 +1220,19 @@ impl ChartToolbarState {
                 vec![ChartOutEvent::Consumed]
             }
 
-            // === Drawing tool dropdowns — select and apply tool ===
+            // === Screenshot destination picker (opened via double-click on the camera button) ===
+            // Choosing a row sets the destination AND fires a screenshot to
+            // it immediately (owner ruling: selection = action + memory).
+            "screenshot" => {
+                eprintln!("[ChartToolbar] screenshot destination: {}", item_id);
+                match item_id {
+                    "shot_clipboard" => self.screenshot_destination = ScreenshotDestination::Clipboard,
+                    "shot_download" => self.screenshot_destination = ScreenshotDestination::DownloadFile,
+                    "shot_share_link" => self.screenshot_destination = ScreenshotDestination::ShareLink,
+                    _ => {}
+                }
+                vec![ChartOutEvent::Screenshot]
+            }
             "cursor_tools" | "line_tools" | "fib_tools" | "pattern_tools"
             | "price_action_tools"
             | "brush_tools" | "annotation_tools" | "projection_tools" => {
@@ -1489,5 +1550,140 @@ impl ChartToolbarState {
             // If close to 0, snap to 0 so first items are fully visible
             *offset = if new_val < SNAP_EDGE { 0.0 } else { new_val.max(0.0) };
         }
+    }
+}
+
+// =============================================================================
+// Tests
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::chart::types::crosshair::Crosshair;
+    use crate::state::drawing_session::DrawingSession;
+    use web_time::Duration;
+
+    /// Minimal `DrawingSession` stub — the screenshot arms never touch the
+    /// drawing manager, so every method is an inert default.
+    struct NoopDrawingSession;
+
+    impl DrawingSession for NoopDrawingSession {
+        fn is_freehand_tool(&self) -> bool { false }
+        fn is_drawing(&self) -> bool { false }
+        fn current_pane(&self) -> Option<u64> { None }
+        fn set_current_pane(&mut self, _pane_id: Option<u64>) {}
+        fn start_freehand(&mut self, _ts_ms: i64, _price: f64) -> bool { false }
+        fn add_freehand_point(&mut self, _ts_ms: i64, _price: f64, _bar_interval_ms: i64) -> bool { false }
+        fn complete_freehand(&mut self) -> bool { false }
+        fn selected(&self) -> Option<u64> { None }
+        fn last_index(&self) -> Option<u64> { None }
+        fn get_type_id(&self, _prim_id: u64) -> Option<String> { None }
+        fn get_points(&self, _prim_id: u64) -> Option<Vec<(i64, f64)>> { None }
+        fn get_data(&self, _prim_id: u64) -> Option<crate::drawing::PrimitiveData> { None }
+        fn pane_id_of(&self, _prim_id: u64) -> Option<u64> { None }
+        fn toggle_lock(&mut self) {}
+        fn toggle_visible(&mut self) {}
+        fn is_visible(&self) -> bool { true }
+        fn set_tool(&mut self, _tool_id: Option<&str>) {}
+        fn delete_selected(&mut self) -> bool { false }
+        fn delete_all(&mut self) {}
+        fn hit_test(&self, _x: f64, _y: f64, _bars: &[crate::Bar], _viewport: &crate::Viewport, _price_scale: &crate::PriceScale) -> Option<u64> { None }
+        fn hit_test_in_pane(&self, _x: f64, _y: f64, _pane_id: u64, _bars: &[crate::Bar], _viewport: &crate::Viewport, _price_scale: &crate::PriceScale) -> Option<u64> { None }
+        fn hit_test_control_point(&self, _x: f64, _y: f64, _bars: &[crate::Bar], _viewport: &crate::Viewport, _price_scale: &crate::PriceScale) -> Option<crate::drawing::ControlPointType> { None }
+        fn hit_test_control_point_in_pane(&self, _x: f64, _y: f64, _pane_id: u64, _bars: &[crate::Bar], _viewport: &crate::Viewport, _price_scale: &crate::PriceScale) -> Option<crate::drawing::ControlPointType> { None }
+    }
+
+    #[test]
+    fn screenshot_single_click_fires_with_current_destination() {
+        let mut tb = ChartToolbarState::default();
+        let mut crosshair = Crosshair::default();
+        let mut session = NoopDrawingSession;
+        assert_eq!(tb.screenshot_destination, ScreenshotDestination::Clipboard);
+
+        let events = tb.handle_toolbar_click_with_chart("screenshot", &mut crosshair, &mut session);
+        assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
+        assert!(tb.open_dropdown_id.is_none());
+        assert!(tb.last_screenshot_click_time.is_some());
+    }
+
+    #[test]
+    fn screenshot_double_click_opens_dropdown_without_firing() {
+        let mut tb = ChartToolbarState::default();
+        let mut crosshair = Crosshair::default();
+        let mut session = NoopDrawingSession;
+
+        // First click fires.
+        let events = tb.handle_toolbar_click_with_chart("screenshot", &mut crosshair, &mut session);
+        assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
+
+        // Second click within 300ms: opens the destination dropdown, Consumed
+        // (no second Screenshot event).
+        let events = tb.handle_toolbar_click_with_chart("screenshot", &mut crosshair, &mut session);
+        assert!(events.iter().all(|e| matches!(e, ChartOutEvent::Consumed)));
+        assert_eq!(tb.open_dropdown_id.as_deref(), Some("screenshot"));
+        assert!(tb.last_screenshot_click_time.is_none());
+    }
+
+    #[test]
+    fn screenshot_slow_second_click_fires_again() {
+        let mut tb = ChartToolbarState::default();
+        let mut crosshair = Crosshair::default();
+        let mut session = NoopDrawingSession;
+
+        let events = tb.handle_toolbar_click_with_chart("screenshot", &mut crosshair, &mut session);
+        assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
+
+        // Simulate a click outside the 300ms double-click window.
+        tb.last_screenshot_click_time = Some(Instant::now() - Duration::from_millis(500));
+        let events = tb.handle_toolbar_click_with_chart("screenshot", &mut crosshair, &mut session);
+        assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
+        assert!(tb.open_dropdown_id.is_none());
+    }
+
+    #[test]
+    fn screenshot_dropdown_select_sets_destination_and_fires() {
+        let mut tb = ChartToolbarState::default();
+        let mut crosshair = Crosshair::default();
+        let mut session = NoopDrawingSession;
+        tb.open_dropdown_id = Some("screenshot".to_string());
+
+        let events = tb.handle_dropdown_select_with_chart(
+            "screenshot", "shot_download", &mut crosshair, &mut session, false,
+        );
+        assert_eq!(tb.screenshot_destination, ScreenshotDestination::DownloadFile);
+        assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
+        // Selection closes the dropdown (same as every other dropdown arm).
+        assert!(tb.open_dropdown_id.is_none());
+
+        let events = tb.handle_dropdown_select_with_chart(
+            "screenshot", "shot_share_link", &mut crosshair, &mut session, false,
+        );
+        assert_eq!(tb.screenshot_destination, ScreenshotDestination::ShareLink);
+        assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
+
+        let events = tb.handle_dropdown_select_with_chart(
+            "screenshot", "shot_clipboard", &mut crosshair, &mut session, false,
+        );
+        assert_eq!(tb.screenshot_destination, ScreenshotDestination::Clipboard);
+        assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
+    }
+
+    #[test]
+    fn screenshot_destination_serde_round_trip() {
+        assert_eq!(ScreenshotDestination::default(), ScreenshotDestination::Clipboard);
+        for dest in [
+            ScreenshotDestination::Clipboard,
+            ScreenshotDestination::DownloadFile,
+            ScreenshotDestination::ShareLink,
+        ] {
+            let json = serde_json::to_string(&dest).unwrap();
+            let back: ScreenshotDestination = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, dest);
+        }
+        assert_eq!(
+            serde_json::to_string(&ScreenshotDestination::ShareLink).unwrap(),
+            "\"share_link\""
+        );
     }
 }

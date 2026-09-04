@@ -4945,6 +4945,7 @@ impl ChartApp {
             };
         }
         self.panel_app.toolbar_state.favorites_bar_visible = profile.ui.favorites_bar_visible;
+        self.panel_app.toolbar_state.screenshot_destination = profile.ui.screenshot_destination;
 
         if profile.ui.persist_toolbar_last_tools {
             for (dropdown_id, tool_id) in &profile.ui.toolbar_last_tools {

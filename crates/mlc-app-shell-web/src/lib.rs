@@ -1705,11 +1705,29 @@ fn run_render_loop(
                 // Chart-local content rect (chart open space + scales, no
                 // chrome/toolbars/sidebar) — parity with the native crop
                 // (`screenshot_rect()` / gpu_submit.rs).
-                let rect = {
+                let (rect, destination) = {
                     let st = state_clone.borrow();
-                    st.chart.screenshot_rect()
+                    (
+                        st.chart.screenshot_rect(),
+                        st.chart.panel_app.toolbar_state.screenshot_destination,
+                    )
                 };
-                trigger_screenshot_to_clipboard("chart", Some(rect));
+                // Screenshot-destination arc: the camera button's dropdown
+                // picks where user-initiated shots go; Ctrl+S shares it
+                // (both triggers land here). Parity with the native branch
+                // in `mlc-app-shell-vello/src/render/gpu_submit.rs`.
+                match destination {
+                    mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard => {
+                        trigger_screenshot_to_clipboard("chart", Some(rect));
+                    }
+                    mlc_core::state::toolbar_state::ScreenshotDestination::DownloadFile => {
+                        trigger_screenshot_download("chart", Some(rect));
+                    }
+                    mlc_core::state::toolbar_state::ScreenshotDestination::ShareLink => {
+                        trigger_screenshot_to_clipboard("chart", Some(rect));
+                        web_sys::console::log_1(&"[share] share-link upload lands in a later wave".into());
+                    }
+                }
             }
         }
 
@@ -2519,6 +2537,52 @@ fn trigger_screenshot_to_clipboard(canvas_id: &str, rect_css: Option<(u32, u32, 
         if let Err(e) = result {
             web_sys::console::error_1(
                 &format!("[screenshot] clipboard setup failed: {:?}", e).into(),
+            );
+        }
+    });
+}
+
+/// Downloads the current chart region as a PNG file through the browser —
+/// the wasm arm of the `DownloadFile` screenshot destination (native parity:
+/// `mlc-app-shell-vello/src/render/gpu_submit.rs`'s file-save branch).
+///
+/// Flow: `screenshot_region_blob` → object URL → temp `<a download>` click →
+/// revoke. Filename mirrors the native `screenshot_YYYYMMDD_HHMMSS.png`
+/// (`mlc-app-shell-vello/src/screenshot.rs::timestamp_for_filename`), using
+/// `js_sys::Date` local time.
+#[cfg(target_arch = "wasm32")]
+fn trigger_screenshot_download(canvas_id: &str, rect_css: Option<(u32, u32, u32, u32)>) {
+    use wasm_bindgen::JsCast;
+
+    screenshot_region_blob(canvas_id, rect_css, |blob| {
+        let result: Result<(), JsValue> = (|| {
+            let url = web_sys::Url::create_object_url_with_blob(&blob)?;
+            let win = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
+            let doc = win.document().ok_or_else(|| JsValue::from_str("no document"))?;
+            let now = js_sys::Date::new_0();
+            let filename = format!(
+                "screenshot_{}{:02}{:02}_{:02}{:02}{:02}.png",
+                now.get_full_year(),
+                now.get_month() + 1,
+                now.get_date(),
+                now.get_hours(),
+                now.get_minutes(),
+                now.get_seconds(),
+            );
+            let anchor = doc
+                .create_element("a")?
+                .dyn_into::<web_sys::HtmlAnchorElement>()?;
+            anchor.set_href(&url);
+            anchor.set_download(&filename);
+            anchor.click();
+            web_sys::Url::revoke_object_url(&url)?;
+            web_sys::console::log_1(&format!("[screenshot] download triggered: {}", filename).into());
+            Ok(())
+        })();
+
+        if let Err(e) = result {
+            web_sys::console::error_1(
+                &format!("[screenshot] download setup failed: {:?}", e).into(),
             );
         }
     });

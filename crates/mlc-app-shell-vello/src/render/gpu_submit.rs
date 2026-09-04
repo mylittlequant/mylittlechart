@@ -2,6 +2,7 @@
 
 use vello::AaConfig;
 use vello::util::RenderContext;
+use mlc_core::state::toolbar_state::ScreenshotDestination;
 use crate::{
     chrome,
     screenshot,
@@ -60,32 +61,43 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
     // Screenshot capture
     if pw.screenshot_pending {
         pw.screenshot_pending = false;
+        // Destination chosen via the camera button's dropdown (screenshot-
+        // destination arc) — clipboard / file / share-link stub. Alert and
+        // agent capture paths below are NOT gated by this.
+        let destination = pw.chart.panel_app.toolbar_state.screenshot_destination;
         let (cx, cy, cw, ch) = pw.chart.screenshot_rect();
         let crop = Some((cx, cy + chrome::CHROME_HEIGHT as u32, cw, ch));
         match screenshot::capture_screenshot(device, queue, &pw.surface, crop) {
             Some((pixels, img_width, img_height)) => {
-                match arboard::Clipboard::new() {
-                    Ok(mut clipboard) => {
-                        let img = arboard::ImageData {
-                            width: img_width as usize,
-                            height: img_height as usize,
-                            bytes: std::borrow::Cow::Borrowed(&pixels),
-                        };
-                        if let Err(e) = clipboard.set_image(img) {
-                            eprintln!("[Screenshot] Clipboard error: {e}");
-                        } else {
-                            eprintln!("[Screenshot] Copied to clipboard");
+                if matches!(destination, ScreenshotDestination::Clipboard | ScreenshotDestination::ShareLink) {
+                    match arboard::Clipboard::new() {
+                        Ok(mut clipboard) => {
+                            let img = arboard::ImageData {
+                                width: img_width as usize,
+                                height: img_height as usize,
+                                bytes: std::borrow::Cow::Borrowed(&pixels),
+                            };
+                            if let Err(e) = clipboard.set_image(img) {
+                                eprintln!("[Screenshot] Clipboard error: {e}");
+                            } else {
+                                eprintln!("[Screenshot] Copied to clipboard");
+                            }
+                        }
+                        Err(e) => eprintln!("[Screenshot] Failed to open clipboard: {e}"),
+                    }
+                }
+                if destination == ScreenshotDestination::DownloadFile {
+                    if let Some(png_bytes) = screenshot::encode_png(&pixels, img_width, img_height) {
+                        let filename = format!("screenshot_{}.png", screenshot::timestamp_for_filename());
+                        let path = screenshot::screenshot_save_dir().join(&filename);
+                        match std::fs::write(&path, &png_bytes) {
+                            Ok(_) => eprintln!("[Screenshot] Saved {} bytes to: {}", png_bytes.len(), path.display()),
+                            Err(e) => eprintln!("[Screenshot] Failed to write file: {e}"),
                         }
                     }
-                    Err(e) => eprintln!("[Screenshot] Failed to open clipboard: {e}"),
                 }
-                if let Some(png_bytes) = screenshot::encode_png(&pixels, img_width, img_height) {
-                    let filename = format!("screenshot_{}.png", screenshot::timestamp_for_filename());
-                    let path = screenshot::screenshot_save_dir().join(&filename);
-                    match std::fs::write(&path, &png_bytes) {
-                        Ok(_) => eprintln!("[Screenshot] Saved {} bytes to: {}", png_bytes.len(), path.display()),
-                        Err(e) => eprintln!("[Screenshot] Failed to write file: {e}"),
-                    }
+                if destination == ScreenshotDestination::ShareLink {
+                    eprintln!("[share] share-link upload lands in a later wave");
                 }
             }
             None => eprintln!("[Screenshot] Capture failed"),
@@ -268,32 +280,43 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
     // Screenshot capture
     if pw.screenshot_pending {
         pw.screenshot_pending = false;
+        // Destination chosen via the camera button's dropdown (screenshot-
+        // destination arc) — clipboard / file / share-link stub. Alert and
+        // agent capture paths below are NOT gated by this.
+        let destination = pw.chart.panel_app.toolbar_state.screenshot_destination;
         let (cx, cy, cw, ch) = pw.chart.screenshot_rect();
         let crop = Some((cx, cy + chrome::CHROME_HEIGHT as u32, cw, ch));
         match screenshot::capture_screenshot(device, queue, &pw.surface, crop) {
             Some((pixels, img_width, img_height)) => {
-                match arboard::Clipboard::new() {
-                    Ok(mut clipboard) => {
-                        let img = arboard::ImageData {
-                            width: img_width as usize,
-                            height: img_height as usize,
-                            bytes: std::borrow::Cow::Borrowed(&pixels),
-                        };
-                        if let Err(e) = clipboard.set_image(img) {
-                            eprintln!("[Screenshot] Clipboard error: {e}");
-                        } else {
-                            eprintln!("[Screenshot] Copied to clipboard");
+                if matches!(destination, ScreenshotDestination::Clipboard | ScreenshotDestination::ShareLink) {
+                    match arboard::Clipboard::new() {
+                        Ok(mut clipboard) => {
+                            let img = arboard::ImageData {
+                                width: img_width as usize,
+                                height: img_height as usize,
+                                bytes: std::borrow::Cow::Borrowed(&pixels),
+                            };
+                            if let Err(e) = clipboard.set_image(img) {
+                                eprintln!("[Screenshot] Clipboard error: {e}");
+                            } else {
+                                eprintln!("[Screenshot] Copied to clipboard");
+                            }
+                        }
+                        Err(e) => eprintln!("[Screenshot] Failed to open clipboard: {e}"),
+                    }
+                }
+                if destination == ScreenshotDestination::DownloadFile {
+                    if let Some(png_bytes) = screenshot::encode_png(&pixels, img_width, img_height) {
+                        let filename = format!("screenshot_{}.png", screenshot::timestamp_for_filename());
+                        let path = screenshot::screenshot_save_dir().join(&filename);
+                        match std::fs::write(&path, &png_bytes) {
+                            Ok(_) => eprintln!("[Screenshot] Saved {} bytes to: {}", png_bytes.len(), path.display()),
+                            Err(e) => eprintln!("[Screenshot] Failed to write file: {e}"),
                         }
                     }
-                    Err(e) => eprintln!("[Screenshot] Failed to open clipboard: {e}"),
                 }
-                if let Some(png_bytes) = screenshot::encode_png(&pixels, img_width, img_height) {
-                    let filename = format!("screenshot_{}.png", screenshot::timestamp_for_filename());
-                    let path = screenshot::screenshot_save_dir().join(&filename);
-                    match std::fs::write(&path, &png_bytes) {
-                        Ok(_) => eprintln!("[Screenshot] Saved {} bytes to: {}", png_bytes.len(), path.display()),
-                        Err(e) => eprintln!("[Screenshot] Failed to write file: {e}"),
-                    }
+                if destination == ScreenshotDestination::ShareLink {
+                    eprintln!("[share] share-link upload lands in a later wave");
                 }
             }
             None => eprintln!("[Screenshot] Capture failed"),
