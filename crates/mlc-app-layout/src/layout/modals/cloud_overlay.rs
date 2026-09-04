@@ -913,7 +913,9 @@ fn release_rows(releases: &[CloudReleaseEntry]) -> Vec<&CloudReleaseEntry> {
 /// release convention (`nemo/mylittlechart/CLAUDE.md`: one version ships to
 /// every platform in the same wave) means the common case is exactly what
 /// the owner asked for (2026-09-04) — one block per wave, every platform
-/// under it.
+/// under it. Inside a block the platforms are sorted alphabetically by
+/// label (Linux → macOS → Windows): the server order within a wave is just
+/// publish order, which has no meaning to a reader (owner, 2026-09-05).
 fn group_release_rows<'a>(rows: &[&'a CloudReleaseEntry]) -> Vec<ReleaseVersionGroup<'a>> {
     let mut groups: Vec<ReleaseVersionGroup<'a>> = Vec::new();
     for r in rows {
@@ -921,6 +923,9 @@ fn group_release_rows<'a>(rows: &[&'a CloudReleaseEntry]) -> Vec<ReleaseVersionG
             Some(last) if last.version == r.version.as_str() => last.entries.push(r),
             _ => groups.push(ReleaseVersionGroup { version: r.version.as_str(), entries: vec![*r] }),
         }
+    }
+    for g in &mut groups {
+        g.entries.sort_by(|a, b| platform_sort_key(&a.platform).cmp(&platform_sort_key(&b.platform)));
     }
     groups
 }
@@ -1092,17 +1097,27 @@ fn draw_ready_view(
 
 /// Human label for a platform id (`mlc_updater::platform`'s own ids) —
 /// mirrors the landing page's own `detectPlatform()` labels
-/// (`mylittlechart-landing/web/index.html`). Unrecognised ids (a future
-/// platform this build doesn't know about yet) fall back to the id itself
-/// rather than hiding the row.
+/// (`mylittlechart-landing/web/index.html`). Architecture is stated
+/// explicitly rather than in vendor marketing names: "x86-64"/"arm64" is
+/// what the artifact actually is, it sorts honestly, and it does not break
+/// the day a Windows/arm64 build exists (owner, 2026-09-05). Unrecognised
+/// ids (a future platform this build doesn't know about yet) fall back to
+/// the id itself rather than hiding the row.
 fn platform_label(id: &str) -> &str {
     match id {
-        "win64" => "Windows",
-        "macos-arm64" => "macOS (Apple Silicon)",
-        "macos-x64" => "macOS (Intel)",
-        "linux64" => "Linux",
+        "win64" => "Windows (x86-64)",
+        "macos-arm64" => "macOS (arm64)",
+        "macos-x64" => "macOS (x86-64)",
+        "linux64" => "Linux (x86-64)",
         other => other,
     }
+}
+
+/// Alphabetical order key for a platform row: lowercased label, because a
+/// naive byte sort would put "Windows" (W) before "macOS" (m). Catalogue
+/// order is Linux → macOS → Windows (owner, 2026-09-05).
+fn platform_sort_key(id: &str) -> String {
+    platform_label(id).to_lowercase()
 }
 
 /// `file_size` bytes as a one-decimal MB string, for the expanded release
@@ -1253,7 +1268,7 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{group_release_rows, release_rows, wrap_text};
+    use super::{group_release_rows, platform_label, release_rows, wrap_text};
     use crate::ui::modal_settings::CloudReleaseEntry;
 
     /// Byte-offset slicing panics inside a multibyte char (an em-dash in a
@@ -1311,5 +1326,26 @@ mod tests {
         assert_eq!(groups[0].version, "0.5.588");
         assert_eq!(groups[0].entries.len(), 2);
         assert_eq!(groups[1].version, "0.5.587");
+    }
+
+    /// Inside a version block, platforms read alphabetically by label:
+    /// Linux → macOS (arm64) → macOS (x86-64) → Windows — not the publish
+    /// order the server happened to answer in (owner, 2026-09-05). The sort
+    /// key is lowercased, or ASCII would park "Windows" ahead of "macOS".
+    #[test]
+    fn group_entries_sort_alphabetically_by_label() {
+        let releases = vec![
+            entry("win64", "0.5.588"),
+            entry("macos-x64", "0.5.588"),
+            entry("linux64", "0.5.588"),
+            entry("macos-arm64", "0.5.588"),
+        ];
+        let groups = group_release_rows(&release_rows(&releases));
+        assert_eq!(groups.len(), 1);
+        let labels: Vec<&str> = groups[0].entries.iter().map(|e| platform_label(&e.platform)).collect();
+        assert_eq!(
+            labels,
+            vec!["Linux (x86-64)", "macOS (arm64)", "macOS (x86-64)", "Windows (x86-64)"]
+        );
     }
 }
