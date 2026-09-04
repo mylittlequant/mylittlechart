@@ -6,6 +6,8 @@ use mlc_core::i18n::{TooltipKey, current_language};
 use super::types::{
     CHROME_HEIGHT, ChromeContextMenu, ChromeFlavor, ChromeHit, ChromeMenuAction, ChromeState,
 };
+#[cfg(feature = "cloud")]
+use super::types::ChromeUpdate;
 
 // ── Layout constants (mirrored from vello chrome.rs) ─────────────────────────
 
@@ -22,6 +24,10 @@ const LOGIN_BUTTON_WIDTH: f64 = 68.0;
 /// Icon-sized cloud buttons (Web flavor, cloud builds).
 #[cfg(feature = "cloud")]
 const CLOUD_ICON_BUTTON_WIDTH: f64 = 30.0;
+/// The update control once it has widened into "Restart" — a glyph plus the
+/// word, so the strip asks in words rather than hoping a changed icon is read.
+#[cfg(feature = "cloud")]
+const RESTART_BUTTON_WIDTH: f64 = 84.0;
 const TAB_LEFT_MARGIN: f64 = 4.0;
 // Real separation between tabs so compressed neighbors never appear to
 // touch. Mirrored in render.rs; `fit_tab_widths`'s `reserved` budgets for
@@ -45,6 +51,39 @@ const CONTEXT_MENU_ITEMS_LEN: usize = 2;
 
 // ── ButtonPositions ───────────────────────────────────────────────────────────
 
+/// The update control's width for layout, or zero on a build without cloud.
+pub(crate) fn positions_update_w(#[allow(unused)] state: &ChromeState) -> f64 {
+    #[cfg(feature = "cloud")]
+    {
+        update_button_width(state.update, state.flavor)
+    }
+    #[cfg(not(feature = "cloud"))]
+    {
+        0.0
+    }
+}
+
+/// How wide the update control is right now, in this flavor.
+///
+/// The single source both the painter and the hit test read. They keep their
+/// own `ButtonPositions` structs, and a width computed twice is a width that
+/// eventually disagrees — which in a chrome strip means clicking one button
+/// and hitting another.
+///
+/// Zero means "not drawn": on the desktop an idle updater has nothing to
+/// offer, so the slot closes and its neighbours move right. On the web the
+/// button is the release catalogue rather than an updater, so it is always
+/// there.
+#[cfg(feature = "cloud")]
+pub(crate) fn update_button_width(update: ChromeUpdate, flavor: ChromeFlavor) -> f64 {
+    match (flavor, update) {
+        (ChromeFlavor::Web, _) => CLOUD_ICON_BUTTON_WIDTH,
+        (_, ChromeUpdate::Idle) => 0.0,
+        (_, ChromeUpdate::Restart) => RESTART_BUTTON_WIDTH,
+        (_, ChromeUpdate::Working { .. }) | (_, ChromeUpdate::Failed) => CLOUD_ICON_BUTTON_WIDTH,
+    }
+}
+
 struct ButtonPositions {
     close_x: f64,
     maximize_x: f64,
@@ -65,7 +104,9 @@ struct ButtonPositions {
 }
 
 impl ButtonPositions {
-    fn compute(width: f64, flavor: ChromeFlavor) -> Self {
+    /// `update_w` is [`update_button_width`]'s answer — zero when the
+    /// update control is not drawn, which closes its slot up.
+    fn compute(width: f64, flavor: ChromeFlavor, #[allow(unused)] update_w: f64) -> Self {
         let close_x           = width - BUTTON_WIDTH;
         let maximize_x        = width - BUTTON_WIDTH * 2.0;
         let minimize_x        = width - BUTTON_WIDTH * 3.0;
@@ -131,8 +172,9 @@ pub const MIN_TAB_WIDTH: f64 = 2.0 * TAB_PADDING_H + 3.0 * TAB_CLOSE_SIZE;
 /// group (window controls on Native, cloud icons + gear on Web). The tab
 /// strip is everything between TAB_LEFT_MARGIN and this line — the buttons
 /// are static, the tabs are dynamic and shrink to fit whatever is left.
-pub fn tabs_right_limit(width: f64, flavor: ChromeFlavor) -> f64 {
-    let bp = ButtonPositions::compute(width, flavor);
+pub fn tabs_right_limit(width: f64, state: &ChromeState) -> f64 {
+    let flavor = state.flavor;
+    let bp = ButtonPositions::compute(width, flavor, positions_update_w(state));
     match flavor {
         ChromeFlavor::Native => {
             #[cfg(feature = "cloud")]
@@ -165,7 +207,7 @@ pub fn fit_tab_widths(state: &mut ChromeState, width: f64) {
     if n == 0 {
         return;
     }
-    let limit = tabs_right_limit(width, state.flavor);
+    let limit = tabs_right_limit(width, state);
     let reserved = TAB_LEFT_MARGIN
         + TAB_GAP * (n as f64 - 1.0).max(0.0)
         + 1.0                    // separator before "+"
@@ -208,7 +250,7 @@ pub fn max_tab_scroll(state: &ChromeState, width: f64) -> f64 {
     if n == 0 {
         return 0.0;
     }
-    let limit = tabs_right_limit(width, state.flavor);
+    let limit = tabs_right_limit(width, state);
     let strip_w = limit - TAB_LEFT_MARGIN - 1.0 - NEW_TAB_BUTTON_WIDTH - 4.0;
     let natural: f64 = state.tab_widths.iter().sum::<f64>()
         + TAB_GAP * (n as f64 - 1.0).max(0.0);
@@ -258,7 +300,7 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
     }
 
     if y < CHROME_HEIGHT {
-        let bp = ButtonPositions::compute(width, state.flavor);
+        let bp = ButtonPositions::compute(width, state.flavor, positions_update_w(state));
 
         match state.flavor {
             ChromeFlavor::Native => {
@@ -287,7 +329,7 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
         // Tabs — the strip scrolls horizontally (state.tab_scroll) when it
         // overflows; zones are clamped to the visible strip so a tab clipped
         // at either edge doesn't get phantom hits outside it.
-        let strip_limit = tabs_right_limit(width, state.flavor);
+        let strip_limit = tabs_right_limit(width, state);
 
         // "⋯" overflow button, immediately left of "+" (rendered on top of
         // the clipped strip, so it wins over the tab zone beneath it).
@@ -452,7 +494,7 @@ pub fn context_menu_hover(menu: &mut ChromeContextMenu, x: f64, y: f64) {
 /// Returns the x coordinate of the left edge of the + button — after the
 /// (scrolled) tabs, pinned inside the strip when they overflow.
 pub fn new_tab_button_x(state: &ChromeState, width: f64) -> f64 {
-    let limit = tabs_right_limit(width, state.flavor);
+    let limit = tabs_right_limit(width, state);
     (tab_strip_end_x(state) - state.tab_scroll).min(limit - NEW_TAB_BUTTON_WIDTH)
 }
 
@@ -467,7 +509,7 @@ fn tab_strip_end_x(state: &ChromeState) -> f64 {
 /// Geometry of the tab-list dropdown (opened from the "⋯" overflow button):
 /// right-aligned under the "+"/"⋯" cluster, just below the chrome strip.
 pub fn tab_list_rect(state: &ChromeState, width: f64) -> (f64, f64, f64, f64) {
-    let limit = tabs_right_limit(width, state.flavor);
+    let limit = tabs_right_limit(width, state);
     let plus_left = (tab_strip_end_x(state) - state.tab_scroll)
         .min(limit - NEW_TAB_BUTTON_WIDTH);
     let h = TAB_LIST_PADDING * 2.0 + state.tabs.len() as f64 * TAB_LIST_ITEM_HEIGHT;
@@ -531,7 +573,7 @@ pub fn scroll_tab_into_view(state: &mut ChromeState, width: f64, idx: usize) {
     if idx >= state.tab_widths.len() {
         return;
     }
-    let limit = tabs_right_limit(width, state.flavor);
+    let limit = tabs_right_limit(width, state);
     let visible_right = limit - NEW_TAB_BUTTON_WIDTH - TAB_OVERFLOW_WIDTH - 5.0;
     let mut left = TAB_LEFT_MARGIN;
     for w in state.tab_widths.iter().take(idx) {

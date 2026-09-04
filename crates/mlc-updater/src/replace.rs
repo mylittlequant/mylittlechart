@@ -12,6 +12,23 @@
 /// 4. Rename `{current_exe}.new` → `{current_exe}`
 ///
 /// On failure at step 3-4, attempts rollback from `.old`.
+/// Delete the rollback copy left by the previous update.
+///
+/// `self_replace` renames the running binary to `{exe}.old` before putting the
+/// new one in its place, and clears a stale one only when the NEXT update
+/// arrives — so one ~86 MB copy of the previous version sits on disk in
+/// between, sometimes for months. Call this once the new binary has started
+/// successfully: at that point it has proved it runs, which is exactly when
+/// the copy to roll back to stops being worth its size.
+///
+/// Failure is not reported. A locked or already-absent file is not a problem
+/// worth a line in anyone's log, and nothing downstream depends on it.
+pub fn clear_rollback_copy() {
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::fs::remove_file(exe.with_extension("exe.old"));
+    }
+}
+
 pub fn self_replace(binary_data: &[u8]) -> Result<(), String> {
     let current_exe = std::env::current_exe()
         .map_err(|e| format!("Cannot determine current exe: {}", e))?;

@@ -15,6 +15,8 @@ use mlc_app_layout::ui::widgets::{
 use super::types::{
     CHROME_HEIGHT, ChromeColors, ChromeContextMenu, ChromeFlavor, ChromeHit, ChromeState,
 };
+#[cfg(feature = "cloud")]
+use super::types::ChromeUpdate;
 use crate::tooltip::TooltipState;
 use crate::tooltip::calculate_tooltip_position;
 
@@ -83,7 +85,9 @@ struct ButtonPositions {
 }
 
 impl ButtonPositions {
-    fn compute(width: f64, flavor: ChromeFlavor) -> Self {
+    /// `update_w` is `logic::update_button_width`'s answer — zero when the
+    /// update control is not drawn, which closes its slot up.
+    fn compute(width: f64, flavor: ChromeFlavor, #[allow(unused)] update_w: f64) -> Self {
         match flavor {
             ChromeFlavor::Native => {
                 let close_x           = width - BUTTON_WIDTH;
@@ -99,7 +103,7 @@ impl ButtonPositions {
                 #[cfg(feature = "cloud")]
                 let login_left = new_window_left - LOGIN_BUTTON_WIDTH;
                 #[cfg(feature = "cloud")]
-                let download_left = login_left - CLOUD_ICON_BUTTON_WIDTH;
+                let download_left = login_left - update_w;
                 #[cfg(feature = "cloud")]
                 let news_left = download_left - CLOUD_ICON_BUTTON_WIDTH;
                 Self {
@@ -118,7 +122,7 @@ impl ButtonPositions {
                 #[cfg(feature = "cloud")]
                 let login_left = menu_left - LOGIN_BUTTON_WIDTH;
                 #[cfg(feature = "cloud")]
-                let download_left = login_left - CLOUD_ICON_BUTTON_WIDTH;
+                let download_left = login_left - update_w;
                 #[cfg(feature = "cloud")]
                 let news_left = download_left - CLOUD_ICON_BUTTON_WIDTH;
                 Self {
@@ -185,7 +189,7 @@ pub fn update_tab_widths(
     // Keep the tab being renamed in view while typing grows it — scroll the
     // strip so its right edge never disappears under the "+" / controls.
     if let Some(ri) = state.renaming_tab {
-        let right_edge_of_strip = super::logic::tabs_right_limit(width, state.flavor)
+        let right_edge_of_strip = super::logic::tabs_right_limit(width, state)
             - NEW_TAB_BUTTON_WIDTH - 1.0 - 4.0;
         let mut cursor = TAB_LEFT_MARGIN - state.tab_scroll;
         for (i, w) in state.tab_widths.iter().enumerate() {
@@ -222,7 +226,7 @@ pub fn render(
     input_coord: &std::cell::RefCell<uzor::input::InputCoordinator>,
 ) {
     let c = &state.colors;
-    let bp = ButtonPositions::compute(width, state.flavor);
+    let bp = ButtonPositions::compute(width, state.flavor, super::logic::positions_update_w(state));
 
     // Background.
     ctx.set_fill_color(&c.background);
@@ -243,7 +247,7 @@ pub fn render(
         // guarantee that nothing ever bleeds under the buttons — and when
         // the strip overflows, that nothing peeks between the tabs and the
         // "⋯"/"+" cluster.
-        let tabs_limit = super::logic::tabs_right_limit(width, state.flavor);
+        let tabs_limit = super::logic::tabs_right_limit(width, state);
         let overflow = super::logic::max_tab_scroll(state, width) > 0.5;
         let strip_end = {
             let n = state.tab_widths.len();
@@ -1003,29 +1007,103 @@ fn draw_cloud_icon_buttons(
     c: &ChromeColors,
     bp: &ButtonPositions,
 ) {
-    let restarting = state.update_restart_pending;
-    let icon_btns: [(f64, &str, ChromeHit); 2] = [
-        (
-            bp.download_left,
-            if restarting { "refresh" } else { "cloud_download" },
-            ChromeHit::DownloadButton,
-        ),
-        (bp.news_left, "bell", ChromeHit::NewsButton),
-    ];
-    for (left, icon, hit) in icon_btns {
+    // The blog panel. A globe, not a bell: the panel behind this button
+    // stopped being a notification feed when the links moved into it, and a
+    // bell promises something is waiting when usually nothing is.
+    {
+        let hit = ChromeHit::NewsButton;
         if state.hovered == hit {
             ctx.set_fill_color(&c.button_hover);
-            ctx.fill_rounded_rect(left + 2.0, 4.0, CLOUD_ICON_BUTTON_WIDTH - 4.0, CHROME_HEIGHT - 8.0, 6.0);
+            ctx.fill_rounded_rect(
+                bp.news_left + 2.0, 4.0,
+                CLOUD_ICON_BUTTON_WIDTH - 4.0, CHROME_HEIGHT - 8.0, 6.0,
+            );
         }
-        let icon_x = left + (CLOUD_ICON_BUTTON_WIDTH - 16.0) / 2.0;
+        let icon_x = bp.news_left + (CLOUD_ICON_BUTTON_WIDTH - 16.0) / 2.0;
         let icon_y = (CHROME_HEIGHT - 16.0) / 2.0;
-        let ink = if restarting && hit == ChromeHit::DownloadButton {
-            &c.cta_bg
-        } else {
-            &c.icon_normal
-        };
-        if let Some(svg) = icon_svg(icon) {
-            draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, ink);
+        if let Some(svg) = icon_svg("globe") {
+            draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, &c.icon_normal);
+        }
+    }
+
+    draw_update_control(ctx, state, c, bp);
+}
+
+/// The update control: one button with four readings, and no button at all
+/// when there is nothing to say.
+///
+/// This replaces the toast that used to announce a pending restart. A toast
+/// fades and the thing it announced does not — the app went on running the old
+/// binary long after the line was gone. The control that would have offered
+/// the update is where "it is ready" belongs, and it stays there until it is
+/// answered (owner, 2026-09-04).
+///
+/// On the web this is not an updater at all: the button is the release
+/// catalogue, so it is always drawn in its plain state.
+fn draw_update_control(
+    ctx: &mut dyn MlcRenderContext,
+    state: &ChromeState,
+    c: &ChromeColors,
+    bp: &ButtonPositions,
+) {
+    let w = super::logic::update_button_width(state.update, state.flavor);
+    if w <= 0.0 {
+        return;
+    }
+    let left = bp.download_left;
+    let hovered = state.hovered == ChromeHit::DownloadButton;
+    let icon_y = (CHROME_HEIGHT - 16.0) / 2.0;
+
+    // Ready to restart: the one accent action in the strip, and it says so in
+    // words. The same treatment a signed-out "Sign in" gets — in this strip an
+    // accent fill already means the app is asking something of you.
+    if state.update == ChromeUpdate::Restart {
+        let bg = if hovered { &c.cta_bg_hover } else { &c.cta_bg };
+        ctx.set_fill_color(bg);
+        ctx.fill_rounded_rect(left + 2.0, 4.0, w - 4.0, CHROME_HEIGHT - 8.0, 7.0);
+        let ink = contrasting_text_color(bg);
+        if let Some(svg) = icon_svg("refresh") {
+            draw_svg_icon(ctx, svg, left + 9.0, icon_y, 16.0, 16.0, ink);
+        }
+        ctx.set_font("600 12px sans-serif");
+        ctx.set_fill_color(ink);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Restart", left + 30.0, CHROME_HEIGHT / 2.0);
+        return;
+    }
+
+    if hovered {
+        ctx.set_fill_color(&c.button_hover);
+        ctx.fill_rounded_rect(left + 2.0, 4.0, w - 4.0, CHROME_HEIGHT - 8.0, 6.0);
+    }
+
+    // Failed: the glyph carries it, the panel behind it carries the message.
+    // Loud enough to notice, quiet enough not to nag.
+    let ink = if state.update == ChromeUpdate::Failed {
+        &c.close_hover
+    } else {
+        &c.icon_normal
+    };
+    let icon_x = left + (w - 16.0) / 2.0;
+    if let Some(svg) = icon_svg("cloud_download") {
+        draw_svg_icon(ctx, svg, icon_x, icon_y, 16.0, 16.0, ink);
+    }
+
+    // Working: the progress lives in the button itself rather than in a
+    // separate surface. The percentage is known during the download, so the
+    // bar fills honestly; verify and install are short and unmeasurable, and
+    // there the bar simply sits full.
+    if let ChromeUpdate::Working { percent } = state.update {
+        let track_w = w - 12.0;
+        let track_x = left + 6.0;
+        let track_y = CHROME_HEIGHT - 7.0;
+        ctx.set_fill_color(&c.separator);
+        ctx.fill_rounded_rect(track_x, track_y, track_w, 2.0, 1.0);
+        let frac = percent.map(|p| (p as f64 / 100.0).clamp(0.0, 1.0)).unwrap_or(1.0);
+        if frac > 0.0 {
+            ctx.set_fill_color(&c.cta_bg);
+            ctx.fill_rounded_rect(track_x, track_y, track_w * frac, 2.0, 1.0);
         }
     }
 }

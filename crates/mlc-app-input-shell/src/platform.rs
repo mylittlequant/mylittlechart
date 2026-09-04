@@ -38,6 +38,11 @@ pub struct DispatchOut {
     pub close_requested: bool,
     /// "Close Window" context-menu item — close this window only.
     pub close_window_requested: bool,
+    /// The chrome's update control was pressed while an installed update was
+    /// waiting. The shell saves and restarts into the new binary; nothing
+    /// restarts without this, by design — an update announces itself and waits
+    /// (owner, 2026-09-04).
+    pub restart_requested: bool,
     /// "Delete Window" context-menu item — delete preset + close window.
     pub delete_window_requested: bool,
     /// New-window button clicked — spawn a sibling window.

@@ -225,7 +225,7 @@ pub struct ChromeState {
     /// While this is set the cloud-download button becomes a restart glyph in
     /// the theme's accent: the control that would have offered the update
     /// becomes the notice that it is waiting.
-    pub update_restart_pending: bool,
+    pub update: ChromeUpdate,
     pub is_maximized: bool,
     pub title: String,
     pub colors: ChromeColors,
@@ -256,13 +256,38 @@ pub struct ChromeState {
     pub flavor: ChromeFlavor,
 }
 
+/// What the update control has to say right now.
+///
+/// One button with four readings instead of a button plus a toast. A toast
+/// fades, and the thing it was announcing does not — the app goes on running
+/// the old binary long after the line has gone. The control that would have
+/// offered the update is where "it is ready" belongs, and it stays there until
+/// it is answered (owner, 2026-09-04).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum ChromeUpdate {
+    /// Nothing to say. On the desktop the button is not drawn at all — a
+    /// control that does nothing in an app which updates itself is furniture.
+    /// On the web this is the ordinary state: there the button is the release
+    /// catalogue, which is always worth offering.
+    #[default]
+    Idle,
+    /// Fetching or applying. `percent` is the download's progress; `None`
+    /// covers verify and install, which are short and cannot be measured.
+    Working { percent: Option<u8> },
+    /// Installed and waiting. The button widens and asks for the restart.
+    Restart,
+    /// The last attempt failed. Says so without nagging; the panel behind it
+    /// carries the message.
+    Failed,
+}
+
 impl ChromeState {
     pub fn new(title: impl Into<String>) -> Self {
         Self {
             hovered:      ChromeHit::None,
             account_label: None,
             account_provider: None,
-            update_restart_pending: false,
+            update: ChromeUpdate::Idle,
             is_maximized: false,
             title:        title.into(),
             colors:       ChromeColors::default(),

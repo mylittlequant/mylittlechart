@@ -4489,6 +4489,59 @@ pub struct CloudNewsPost {
     pub url: String,
 }
 
+/// Which slice of the blog feed the News overlay's list view shows.
+///
+/// Added 2026-09-04: the feed plus the LINKS section beneath it outgrew one
+/// scroll, so the list view got a tab bar instead of a longer page. `Latest`
+/// is the glance a visitor gets by default — the same three entries and the
+/// same LINKS section this overlay always showed; `All` trades the LINKS
+/// section for the rest of the catalogue, for whoever actually wants to read
+/// back through it.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum NewsTab {
+    #[default]
+    Latest,
+    All,
+}
+
+#[cfg(feature = "cloud")]
+impl NewsTab {
+    /// Tab id — also the widget-id suffix the shell's tab bar registers
+    /// (`cloud_overlay:tab:{id}`), so this is the one place the two sides of
+    /// that click can drift apart.
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Latest => "latest",
+            Self::All => "all",
+        }
+    }
+
+    /// Tab label, in the app's short lower-case-free chrome voice.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Latest => "Latest",
+            Self::All => "All",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "latest" => Some(Self::Latest),
+            "all" => Some(Self::All),
+            _ => None,
+        }
+    }
+
+    /// Index into the shell's own tab strip (`ModalTabs::Horizontal::active`).
+    pub fn index(&self) -> usize {
+        match self {
+            Self::Latest => 0,
+            Self::All => 1,
+        }
+    }
+}
+
 /// State for the News / Download overlays (one open at a time).
 ///
 /// Same mailbox contract as [`CloudLoginState`]: pure UI state + flags,
@@ -4513,6 +4566,11 @@ pub struct CloudOverlayState {
     /// reopening it must not inherit the last visit's expansion, same
     /// reason `selected_post` resets.
     pub expanded: bool,
+    /// News overlay: which of the list view's two tabs is showing. Reset
+    /// whenever the overlay opens or closes, same reason `selected_post` and
+    /// `expanded` reset — a panel reopened later must not surface on the tab
+    /// someone left it on.
+    pub news_tab: NewsTab,
     pub position: Option<(f64, f64)>,
     pub is_dragging: bool,
     pub drag_offset: Option<(f64, f64)>,
@@ -4529,6 +4587,7 @@ impl Default for CloudOverlayState {
             update_install_requested: false,
             selected_post: None,
             expanded: false,
+            news_tab: NewsTab::Latest,
             position: None,
             is_dragging: false,
             drag_offset: None,
@@ -4544,6 +4603,7 @@ impl CloudOverlayState {
         self.open_url_requested = None;
         self.selected_post = None;
         self.expanded = false;
+        self.news_tab = NewsTab::default();
         self.is_dragging = false;
         self.drag_offset = None;
         // Keep what is already fetched only when it is the finished form
@@ -4575,6 +4635,7 @@ impl CloudOverlayState {
         self.open_url_requested = None;
         self.selected_post = None;
         self.expanded = false;
+        self.news_tab = NewsTab::default();
         self.is_dragging = false;
         self.drag_offset = None;
     }

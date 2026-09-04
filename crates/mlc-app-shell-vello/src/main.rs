@@ -174,6 +174,10 @@ struct PerWindowState {
     app_id: String,
     /// Set when context menu "Close Window" is selected; drained in about_to_wait.
     close_window_requested: bool,
+    /// The chrome's update control was pressed while an installed update
+    /// was waiting. Drained in `about_to_wait`: save everything, then hand
+    /// over to the new binary.
+    restart_requested: bool,
     /// Set when context menu "Delete Window" is selected; drained in about_to_wait.
     delete_window_requested: bool,
     /// Last sidebar row index the cursor was hovering over.
@@ -390,7 +394,6 @@ struct App<'s> {
     /// update currently waiting. One notice per installed update: the state
     /// persists until the app restarts, so a toast driven by the state alone
     /// would reappear on every frame it is checked.
-    restart_toast_shown: bool,
     /// Mailbox for the News overlay's one fetch of the marketing site's blog
     /// feed. `Sender` is cloned into the fire-and-forget task spawned on
     /// `live_data_handle`; `Receiver` is polled (non-blocking `try_recv`) in
@@ -1110,7 +1113,6 @@ impl App<'_> {
             download_overlay_was_open: false,
             #[cfg(feature = "cloud")]
             download_check_inflight: false,
-            restart_toast_shown: false,
             #[cfg(feature = "cloud")]
             news_feed_tx,
             #[cfg(feature = "cloud")]
@@ -1585,6 +1587,7 @@ impl App<'_> {
             window_id,
             app_id,
             close_window_requested: false,
+            restart_requested: false,
             delete_window_requested: false,
             last_sidebar_hover_row: None,
             created_at: web_time::Instant::now(),
@@ -3159,6 +3162,27 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         }
 
         // ── Single-window close/delete (from chrome context menu) ───────
+        // Restart into the update that is already installed on disk. The only
+        // path in this application that replaces the running process, and it
+        // exists only because someone pressed a control that said "Restart" —
+        // the updater installs quietly and then waits (see `ChromeUpdate`).
+        if self.windows.values().any(|pw| pw.restart_requested) {
+            for pw in self.windows.values_mut() {
+                pw.restart_requested = false;
+            }
+            eprintln!("[App] restart requested — saving, then handing over to the new binary");
+            self.save_all(&[]);
+            match mlc_updater::replace::spawn_and_exit(
+                self.windows
+                    .values()
+                    .next()
+                    .map(|pw| pw.chart.core.user().server_port()),
+            ) {
+                Ok(()) => return,
+                Err(e) => eprintln!("[App] restart failed, staying on the running build: {e}"),
+            }
+        }
+
         // Close window: save state but keep in profile.
         // Delete window: remove from active AND from profile.
         {
@@ -4756,10 +4780,27 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // button becomes a restart glyph in the accent, and it stays that
             // way until the app is restarted. Read from the updater's own
             // state, so it cannot drift from what actually happened.
-            let restart_pending = matches!(
-                &*self.updater_handle.status_rx.borrow(),
-                mlc_updater::UpdateStatus::RestartPending
-            );
+            // What the chrome's update control should be saying. One
+            // button with four readings; the toast that used to announce a
+            // pending restart is gone, because a toast fades and the pending
+            // restart does not (owner, 2026-09-04).
+            let update_state = {
+                use mlc_app_input_shell::chrome::ChromeUpdate;
+                match &*self.updater_handle.status_rx.borrow() {
+                    mlc_updater::UpdateStatus::Downloading { percent } => {
+                        ChromeUpdate::Working { percent: Some(*percent) }
+                    }
+                    mlc_updater::UpdateStatus::Verifying
+                    | mlc_updater::UpdateStatus::Installing => {
+                        ChromeUpdate::Working { percent: None }
+                    }
+                    mlc_updater::UpdateStatus::RestartPending => ChromeUpdate::Restart,
+                    mlc_updater::UpdateStatus::Error(_) => ChromeUpdate::Failed,
+                    // Idle, Checking and a freshly-found update have nothing
+                    // to ask of anyone: the install runs on its own.
+                    _ => ChromeUpdate::Idle,
+                }
+            };
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.account_signed_in = account_signed_in;
                 if pw.chrome_state.account_label != account_label {
@@ -4768,25 +4809,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     pw.window.request_redraw();
                 }
                 pw.chrome_state.account_provider = account_provider.clone();
-                if pw.chrome_state.update_restart_pending != restart_pending {
-                    pw.chrome_state.update_restart_pending = restart_pending;
+                if pw.chrome_state.update != update_state {
+                    pw.chrome_state.update = update_state;
                     pw.toolbar_dirty = true;
                     pw.window.request_redraw();
                 }
-            }
-            // ...and said once, out loud, at the moment it becomes true. The
-            // glyph is a standing reminder for anyone who looks at the strip;
-            // this is for the person who was looking at the chart. Once only —
-            // the state holds until restart, so anything driven by the state
-            // rather than by the transition would repeat forever.
-            if restart_pending && !self.restart_toast_shown {
-                self.restart_toast_shown = true;
-                self.active_toasts.push(mlc_alert_delivery::ToastNotification {
-                    title: "Update installed".to_string(),
-                    message: "Restart mylittlechart to start using it.".to_string(),
-                    timestamp: screenshot::now_ms(),
-                    duration_ms: 8000,
-                });
             }
             // `UserSettingsState::multi_profile` — this shell has no
             // `mlc-cloud` transport (native side does not exist, see that

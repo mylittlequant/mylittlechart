@@ -5424,6 +5424,15 @@ impl ChartApp {
                 "close" | "ok" => st.close(),
                 "modal_bg" => { /* absorb */ }
                 "header" => { /* drag start handled in mouse_down */ }
+                // News overlay's list-view tab bar (drawn by the modal shell
+                // itself, hence the `{ns}:tab:{id}` id it registers under).
+                rest if rest.starts_with("tab:") => {
+                    if let Some(tab) =
+                        mlc_app_layout::ui::modal_settings::NewsTab::from_id(&rest["tab:".len()..])
+                    {
+                        st.news_tab = tab;
+                    }
+                }
                 rest if rest.starts_with("dimmer") => st.close(),
                 rest if rest.starts_with("link:") => {
                     let id = &rest["link:".len()..];

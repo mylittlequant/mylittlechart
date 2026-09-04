@@ -7,6 +7,7 @@ pub mod types;
 pub use types::{
     CHROME_HEIGHT, ChromeFlavor, ChromeHit, ChromeMenuAction, ChromeContextMenu, ChromeColors,
     ChromeState, Tab, TabDrag, is_veiled_hit,
+    ChromeUpdate,
 };
 pub use logic::{hit_test, update_tooltip, context_menu_hit_test, context_menu_hover, new_tab_button_x,
     tabs_right_limit, max_tab_scroll, scroll_tab_strip, scroll_tab_into_view,

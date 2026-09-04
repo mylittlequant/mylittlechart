@@ -3,11 +3,15 @@
 //! Standard modal shell (`ui::widgets::modal`) over a dimmed backdrop, one
 //! dialog per [`CloudOverlayKind`]:
 //! - News — "what's new": version + release notes from /api/updates/latest
-//!   (fetched by the shell driver into [`CloudOverlayData`]), followed by a
-//!   LINKS section (social/project links, opened in a new tab via the
+//!   (fetched by the shell driver into [`CloudOverlayData`]), plus a LINKS
+//!   section (social/project links, opened in a new tab via the
 //!   `open_url_requested` mailbox) — a standalone Links overlay was thin
 //!   enough content on its own that the owner folded it in here
-//!   (2026-09-04) rather than keep it a chrome button of its own.
+//!   (2026-09-04) rather than keep it a chrome button of its own. The two
+//!   outgrew one scroll the same day, so the list view carries the shell's
+//!   own horizontal tab bar ([`NewsTab`]): `Latest`, the default glance —
+//!   the LINKS section under a handful of recent posts — and `All`, the
+//!   full feed with nothing under it.
 //! - Download — the release manifest, read by whichever surface asked.
 //!   The web page gets binary download links; the desktop app gets its own
 //!   updater's state and an Install action, because there the app replaces
@@ -23,12 +27,12 @@ use uzor::WidgetId;
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::modal_settings::{
     CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudOverlayState, CloudReleaseEntry,
-    UpdateOverlayPhase,
+    NewsTab, UpdateOverlayPhase,
 };
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{
     register_dimmer_zones, render_modal_shell, ModalPlacement, ModalShell, ModalShellSpec,
-    ModalTheme, SETTINGS_BUTTON_RADIUS,
+    ModalTab, ModalTabs, ModalTheme, TabFit, SETTINGS_BUTTON_RADIUS,
 };
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
@@ -119,6 +123,32 @@ fn links_section_h() -> f64 {
     LINKS_SECTION_GAP + LINKS_HEADING_H + SOCIAL_LINKS.len() as f64 * ROW_H
 }
 
+/// The News overlay's list-view tabs — `Latest` (the default glance: up to
+/// `MAX_NEWS_POSTS` entries + LINKS) and `All` (the full catalogue, no
+/// LINKS). Drawn only over the list view: the in-modal reading view
+/// (`state.selected_post.is_some()`) and the Download overlay have nothing
+/// to switch between, so neither carries a tab bar at all.
+const NEWS_TAB_ITEMS: &[ModalTab<'static>] = &[
+    ModalTab { id: "latest", label: "Latest", icon: None },
+    ModalTab { id: "all", label: "All", icon: None },
+];
+
+/// Height of the News list view for `tab` — the block sum for whichever
+/// slice of `posts` that tab shows, plus the LINKS section only on
+/// `NewsTab::Latest`. A function, not inlined at `content_height` and
+/// `draw_news_list` both, for the same reason `post_block_h` is shared with
+/// `draw_news_post`: the frame and what actually gets painted into it can
+/// never disagree.
+fn news_list_h(tab: NewsTab, posts: &[CloudNewsPost]) -> f64 {
+    match tab {
+        NewsTab::Latest => {
+            let blocks: f64 = posts.iter().take(MAX_NEWS_POSTS).map(post_block_h).sum();
+            blocks + links_section_h()
+        }
+        NewsTab::All => posts.iter().map(post_block_h).sum(),
+    }
+}
+
 /// Body height per kind — the shell sizes the frame from this.
 fn content_height(state: &CloudOverlayState) -> f64 {
     match state.kind {
@@ -146,17 +176,14 @@ fn content_height(state: &CloudOverlayState) -> f64 {
         },
         CloudOverlayKind::News => match &state.data {
             CloudOverlayData::News { posts } => {
-                // Reading view: one post, expanded. List view: up to
-                // MAX_NEWS_POSTS blocks + the LINKS section.
+                // Reading view: one post, expanded — no tabs over it (the
+                // shell only sizes in the tab bar when `render_cloud_overlay`
+                // actually gives it one). List view: whichever of the two
+                // tabs is active, via `news_list_h`.
                 if let Some(post) = state.selected_post.and_then(|i| posts.get(i)) {
                     post_detail_h(post)
                 } else {
-                    let blocks: f64 = posts
-                        .iter()
-                        .take(MAX_NEWS_POSTS)
-                        .map(post_block_h)
-                        .sum();
-                    blocks + links_section_h()
+                    news_list_h(state.news_tab, posts)
                 }
             }
             _ => 84.0,
@@ -179,7 +206,7 @@ pub fn render_cloud_overlay(
         &toolbar_theme.separator,
         toolbar_theme,
     );
-    let spec = ModalShellSpec {
+    let mut spec = ModalShellSpec {
         dim_backdrop: true,
         placement: ModalPlacement::At(state.position),
         layer: ZLayer::ModalOverlay,
@@ -190,6 +217,20 @@ pub fn render_cloud_overlay(
             content_height(state),
         )
     };
+    // Tabs only over the News list view — a reading view or the Download
+    // overlay has nothing to switch between, so `spec.tabs` stays `None` and
+    // the shell draws no tab bar (and charges the frame no `TAB_BAR_H`) for
+    // either of them.
+    let show_news_tabs = state.kind == CloudOverlayKind::News
+        && matches!(&state.data, CloudOverlayData::News { .. })
+        && state.selected_post.is_none();
+    if show_news_tabs {
+        spec = spec.with_tabs(ModalTabs::Horizontal {
+            items: NEWS_TAB_ITEMS,
+            active: state.news_tab.index(),
+            fit: TabFit::Equal,
+        });
+    }
     let shell = render_modal_shell(
         ctx,
         input_coordinator,
@@ -315,21 +356,7 @@ fn draw_body(
                 if let Some(post) = state.selected_post.and_then(|i| posts.get(i)) {
                     draw_news_detail(ctx, coord, layer_id, x, y, w, post, tt);
                 } else {
-                    let mut py = y;
-                    for (i, post) in posts.iter().take(MAX_NEWS_POSTS).enumerate() {
-                        py += draw_news_post(
-                            ctx,
-                            coord,
-                            layer_id,
-                            &format!("cloud_overlay:post:{}", i),
-                            x,
-                            py,
-                            w,
-                            post,
-                            tt,
-                        );
-                    }
-                    draw_links_section(ctx, coord, layer_id, x, py, row_w, tt);
+                    draw_news_list(ctx, coord, layer_id, x, y, w, row_w, state.news_tab, posts, tt);
                 }
             }
             CloudOverlayData::Error { message } => {
@@ -339,6 +366,63 @@ fn draw_body(
                 draw_status(ctx, tt, x, y, w, "Loading…", None);
             }
         },
+    }
+}
+
+/// The News overlay's list view: `NewsTab::Latest` draws up to
+/// `MAX_NEWS_POSTS` blocks and the LINKS section beneath them — the glance a
+/// reopened panel always comes back to; `NewsTab::All` draws every entry,
+/// newest first, and stops there, since a reader who asked for the whole
+/// catalogue did not come here for the LINKS section. Widget ids for the
+/// post rows stay `cloud_overlay:post:{i}` with `i` the row's own index into
+/// `posts` either way, so `panel_click.rs`'s `posts.get(i)` lookup for the
+/// reading view needs no change for which tab drew the row that opened it.
+#[allow(clippy::too_many_arguments)]
+fn draw_news_list(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    row_w: f64,
+    tab: NewsTab,
+    posts: &[CloudNewsPost],
+    tt: &ToolbarTheme,
+) {
+    let mut py = y;
+    match tab {
+        NewsTab::Latest => {
+            for (i, post) in posts.iter().take(MAX_NEWS_POSTS).enumerate() {
+                py += draw_news_post(
+                    ctx,
+                    coord,
+                    layer_id,
+                    &format!("cloud_overlay:post:{}", i),
+                    x,
+                    py,
+                    w,
+                    post,
+                    tt,
+                );
+            }
+            draw_links_section(ctx, coord, layer_id, x, py, row_w, tt);
+        }
+        NewsTab::All => {
+            for (i, post) in posts.iter().enumerate() {
+                py += draw_news_post(
+                    ctx,
+                    coord,
+                    layer_id,
+                    &format!("cloud_overlay:post:{}", i),
+                    x,
+                    py,
+                    w,
+                    post,
+                    tt,
+                );
+            }
+        }
     }
 }
 

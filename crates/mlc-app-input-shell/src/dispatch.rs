@@ -719,6 +719,16 @@ pub fn process_event(
                                     ChromeHit::NewsButton => CloudOverlayKind::News,
                                     _ => CloudOverlayKind::Download,
                                 };
+                                // While an installed update is waiting, this
+                                // control is the restart, not a way into the
+                                // catalogue. Pressing what says "Restart" must
+                                // restart.
+                                if hit == ChromeHit::DownloadButton
+                                    && chrome_st.update == chrome::ChromeUpdate::Restart
+                                {
+                                    out.restart_requested = true;
+                                    return;
+                                }
                                 chart.panel_app.cloud_overlay_state.toggle(kind);
                                 chart.panel_app.cloud_login_state.close();
                                 dirty.chart_dirty = true;

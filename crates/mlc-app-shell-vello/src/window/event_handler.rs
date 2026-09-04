@@ -202,6 +202,14 @@ impl App<'_> {
             pw.spawn_new_window = true;
             pw.dispatch_out.spawn_new_window = false;
         }
+        if pw.dispatch_out.restart_requested {
+            pw.dispatch_out.restart_requested = false;
+            // The one place this application restarts itself, and only ever
+            // because someone pressed the control that said "Restart". The
+            // updater installs in the background and then waits — see
+            // `ChromeUpdate` — so nothing here is a surprise to the user.
+            pw.restart_requested = true;
+        }
 
         // ── Sync shell_dirty → PerWindowState dirty flags ─────────────────
         // Additive: dirty flags from shell_dirty propagate to pw, never clear.

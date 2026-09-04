@@ -256,6 +256,10 @@ async fn updater_loop(
         .build()
         .unwrap_or_default();
 
+    // This build started, so the copy of the previous one kept for rollback
+    // has done its job and is only occupying disk now.
+    replace::clear_rollback_copy();
+
     // A stored token is a claim, not a fact. Confirm it before the rest of
     // this process treats the user as signed in — an expired or revoked token
     // otherwise shows an account name in the chrome, offers Sign out and
@@ -1290,8 +1294,10 @@ async fn do_install(
             let _ = status_tx.send(UpdateStatus::Installing);
             match replace::self_replace(&binary_data) {
                 Ok(()) => {
-                    // Signal RestartPending — the main thread (about_to_wait)
-                    // will call save_all() and then spawn_and_exit().
+                    // Signal RestartPending. Nothing restarts from here: the
+                    // chrome control widens into "Restart" and waits to be
+                    // pressed, and only that press reaches save_all() and
+                    // spawn_and_exit() (owner, 2026-09-04).
                     // We must NOT call process::exit() from the async task
                     // because the main thread would never get a chance to
                     // persist profile/agents/presets to disk.
