@@ -2644,6 +2644,10 @@ impl ChartApp {
                 self.request_screenshot();
             }
 
+            ChartOutEvent::ShareLiveChart => {
+                self.request_share_live();
+            }
+
             ref other => {
                 eprintln!("[ChartApp] unhandled event: {:?}", other);
             }

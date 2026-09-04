@@ -243,6 +243,79 @@ impl EntitlementsResponse {
     }
 }
 
+// =============================================================================
+// /api/share/* shapes (chart sharing)
+//
+// Mirrors `mylittlechart-server/crates/server/src/routes/share.rs`. The public
+// read (`GET /api/share/{token}`) is unauthenticated — the link token alone is
+// the capability. Creation is capped per kind (free 1/10, paid 10/100 active
+// live/screenshot shares); exceeding the ceiling answers 403.
+// =============================================================================
+
+/// Request body for `POST /api/share/live` — the active preset frozen into
+/// a public link. `preset` is the serialized `ChartPreset` JSON; the server
+/// caps it at 256 KiB (bars are `skip_serializing`, so a normal preset is
+/// far below that).
+#[derive(Debug, Clone, Serialize)]
+pub struct ShareCreateLiveRequest {
+    pub title: String,
+    pub preset: serde_json::Value,
+}
+
+/// Response body from `POST /api/share/live` and `POST /api/share/screenshot`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareCreateResponse {
+    pub token: String,
+    /// Root-relative link target (`/?share=<token>`) — prefix with the
+    /// origin before handing it to a clipboard.
+    pub url_path: String,
+    /// RFC 3339 instant after which the share stops resolving.
+    pub expires_at: String,
+}
+
+/// Public view of one share (`GET /api/share/{token}`), tagged by `kind`.
+/// Unknown/expired/revoked tokens answer a bare 404 instead.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum SharePublicResponse {
+    Live {
+        title: String,
+        /// Owner display label (display_name with public_id fallback).
+        owner: String,
+        /// The frozen `ChartPreset` JSON.
+        preset: serde_json::Value,
+        created_at: String,
+        expires_at: String,
+    },
+    Screenshot {
+        title: String,
+        owner: String,
+        /// Root-relative URL of the PNG blob (`/api/share/{token}/png`).
+        png_url: String,
+        bytes: i64,
+        expires_at: String,
+    },
+}
+
+/// One row of `GET /api/share/mine` (the caller's own active shares).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareListEntry {
+    pub token: String,
+    pub kind: String,
+    pub title: String,
+    pub url_path: String,
+    /// PNG byte count for screenshot shares; 0 for live shares.
+    pub bytes: i64,
+    pub created_at: String,
+    pub expires_at: String,
+}
+
+/// Response body from `GET /api/share/mine`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareListResponse {
+    pub shares: Vec<ShareListEntry>,
+}
+
 /// Response body from `POST /api/account/redeem` on success.
 ///
 /// The failure side is not a shape at all — the server answers 404 for an

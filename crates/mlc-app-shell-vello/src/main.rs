@@ -5152,6 +5152,15 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 pw.screenshot_pending = true;
             }
 
+            // Chart-sharing arc: the toolbar "share_chart" button sets this
+            // via `ChartOutEvent::ShareLiveChart`. The upload lives on the
+            // wasm shell (web is the share surface); native needs a new
+            // authed POST in mlc-updater first. Drain + log so the flag
+            // never sticks set.
+            if pw.chart.drain_pending_share_live() {
+                eprintln!("[share] live share requested but native upload is not wired yet (wasm-only for now)");
+            }
+
             // Tooltip tick — fires when cursor is stationary (no CursorMoved events)
             {
                 let time_ms = pw.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;

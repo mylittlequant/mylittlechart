@@ -3602,6 +3602,23 @@ impl ChartApp {
                 self.request_screenshot();
                 return;
             }
+            // Share-chart button (chart-sharing arc) — a signed-in session
+            // freezes the active preset into a public link. Anonymous clicks
+            // get the same refusal style as the multiprofile gate below:
+            // logged, plus the sign-in overlay the chrome's own account
+            // button opens (cloud builds only).
+            if item_id == "share_chart" {
+                if !self.panel_app.user_settings_state.account_signed_in {
+                    eprintln!("[ChartApp] share_chart refused: account_signed_in=false");
+                    #[cfg(feature = "cloud")]
+                    {
+                        self.panel_app.cloud_login_state.open();
+                    }
+                    return;
+                }
+                self.process_chart_out_event(mlc_core::events::ChartOutEvent::ShareLiveChart);
+                return;
+            }
 
             // Pinned-favorites quick-pick buttons on the top toolbar (user-
             // granularity-templates-inner arc, кусок 3 — TradingView

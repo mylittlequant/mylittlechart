@@ -335,6 +335,12 @@ pub enum ChartOutEvent {
     /// (mirrors Ctrl+S keyboard path).
     Screenshot,
 
+    /// Create a public live-share link for the active preset (toolbar
+    /// "share_chart" button, chart-sharing arc). The chart only raises its
+    /// pending flag — the POST to `/api/share/live` is the shell's job,
+    /// which owns the cloud session and its token.
+    ShareLiveChart,
+
     // === Consumed (chart handled it internally) ===
     /// The chart fully handled this action. No app-level work needed.
     Consumed,

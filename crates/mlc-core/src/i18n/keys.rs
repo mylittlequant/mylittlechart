@@ -629,10 +629,13 @@ pub enum ToolbarTooltipKey {
     /// Left-toolbar star button toggling the favorites quick-pick bar
     /// (favorite-primitives arc).
     FavoriteTools     = 47,
+    /// Top-toolbar globe button creating a public live-share link for the
+    /// active preset (chart-sharing arc).
+    ShareChart        = 48,
 }
 
 impl ToolbarTooltipKey {
-    pub const COUNT: usize = 48;
+    pub const COUNT: usize = 49;
 
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {

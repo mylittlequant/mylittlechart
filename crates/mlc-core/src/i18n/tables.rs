@@ -328,7 +328,7 @@ pub(super) static LABEL_POSITION_KEY_TABLE: [[&str; N_LANG]; 9] = [
 //
 //  Col:  0=En                             1=Ru                                2..14=""
 
-pub(super) static TOOLBAR_TOOLTIP_KEY_TABLE: [[&str; N_LANG]; 48] = [
+pub(super) static TOOLBAR_TOOLTIP_KEY_TABLE: [[&str; N_LANG]; 49] = [
     /* 0  Crosshair          */ [ "Crosshair",                    "Перекрестие",                      "Retícula",              "Fadenkreuz",             "Réticule",               "Mira",                   "十字线",        "クロスヘア",     "크로스헤어",     "المؤشر",          "Crosshair",               "Çapraz çizgi",           "Celownik",              "Перехрестя",              "क्रॉसहेयर"          ],
     /* 1  TrendLine          */ [ "Trend Line",                   "Трендовая линия",                  "Línea de tendencia",    "Trendlinie",             "Ligne de tendance",      "Linha de tendência",     "趋势线",        "トレンドライン",  "추세선",         "خط الاتجاه",      "Linea di tendenza",       "Trend çizgisi",          "Linia trendu",          "Трендова лінія",          "ट्रेंड लाइन"        ],
     /* 2  HorizontalLine     */ [ "Horizontal Line",              "Горизонтальная линия",             "Línea horizontal",      "Horizontale Linie",      "Ligne horizontale",      "Linha horizontal",       "水平线",        "水平線",         "수평선",         "خط أفقي",         "Linea orizzontale",       "Yatay çizgi",            "Linia pozioma",         "Горизонтальна лінія",     "क्षैतिज रेखा"       ],
@@ -377,6 +377,7 @@ pub(super) static TOOLBAR_TOOLTIP_KEY_TABLE: [[&str; N_LANG]; 48] = [
     /* 45 SplitView          */ [ "Split View",                   "Разделить вид",                    "Vista dividida",        "Geteilte Ansicht",       "Vue partagée",           "Visão dividida",         "分屏",          "分割表示",       "화면 분할",      "عرض مقسم",        "Vista divisa",            "Bölünmüş görünüm",       "Widok podzielony",      "Розділений вигляд",       "स्प्लिट व्यू"       ],
     /* 46 ServerTime         */ [ "Server Time",                  "Серверное время",                  "Hora del servidor",     "Serverzeit",             "Heure serveur",          "Hora do servidor",       "服务器时间",    "サーバー時刻",   "서버 시간",      "وقت الخادم",      "Ora server",              "Sunucu saati",           "Czas serwera",          "Серверний час",           "सर्वर समय"          ],
     /* 47 FavoriteTools      */ [ "Favorite Tools",               "Избранные инструменты",            "Herr. favoritas",       "Favoriten-Werkzeuge",    "Outils favoris",         "Ferramentas favoritas",  "收藏工具",      "お気に入りツール","즐겨찾기 도구",  "أدوات مفضلة",    "Strumenti preferiti",     "Favori araçlar",         "Ulubione narzędzia",    "Обрані інструменти",      "पसंदीदा टूल्स"      ],
+    /* 48 ShareChart         */ [ "Share Chart",                  "Поделиться графиком",              "Compartir gráfico",     "Chart teilen",           "Partager le graphique",  "Compartilhar gráfico",   "分享图表",      "チャートを共有",  "차트 공유",      "مشاركة الرسم",   "Condividi grafico",       "Grafiği paylaş",         "Udostępnij wykres",     "Поділитися графіком",     "चार्ट साझा करें"      ],
 ];
 
 // =============================================================================

@@ -234,6 +234,12 @@ pub fn standalone_top_toolbar() -> PanelToolbarDef {
             ToolbarItemDef::icon_button("screenshot", ToolbarIconId::new("Camera"))
                 .with_tooltip(t_toolbar(TK::Screenshot)),
         ]),
+        // 10. Share chart (live-share link; anonymous sessions are refused
+        // at the click site, panel_click.rs)
+        ToolbarSectionDef::new(vec![
+            ToolbarItemDef::icon_button("share_chart", ToolbarIconId::new("Globe"))
+                .with_tooltip(t_toolbar(TK::ShareChart)),
+        ]),
     ]).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
 }
 
@@ -328,6 +334,12 @@ pub fn top_toolbar() -> PanelToolbarDef {
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::icon_button("screenshot", ToolbarIconId::new("Camera"))
                 .with_tooltip(t_toolbar(TK::Screenshot)),
+        ]),
+        // 11. Share chart (live-share link; anonymous sessions are refused
+        // at the click site, panel_click.rs)
+        ToolbarSectionDef::new(vec![
+            ToolbarItemDef::icon_button("share_chart", ToolbarIconId::new("Globe"))
+                .with_tooltip(t_toolbar(TK::ShareChart)),
         ]),
     ]).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
 }

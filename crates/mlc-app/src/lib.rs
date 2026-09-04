@@ -677,6 +677,11 @@ pub struct ChartApp {
     /// Pending screenshot request — set by context menu, drained by the renderer.
     pending_screenshot: bool,
 
+    /// Pending live-share request — set by the toolbar "share_chart" button
+    /// (via `ChartOutEvent::ShareLiveChart`), drained by the shell, which
+    /// owns the cloud session/token. Mirror of `pending_screenshot`.
+    pending_share_live: bool,
+
     /// When set, the frame loop should clear in-memory bars and re-fetch.
     pub pending_reset_cache: bool,
     /// When set, the frame loop should delete the .bin file, clear in-memory bars, and re-fetch.
@@ -3293,6 +3298,7 @@ impl ChartApp {
             fav_group_drag: None,
             modal_state: ModalState::new(),
             pending_screenshot: false,
+            pending_share_live: false,
             pending_reset_cache: false,
             pending_reset_storage: false,
             drag_start_points: None,
@@ -3672,6 +3678,7 @@ impl ChartApp {
             fav_group_drag: None,
             modal_state: ModalState::new(),
             pending_screenshot: false,
+            pending_share_live: false,
             pending_reset_cache: false,
             pending_reset_storage: false,
             drag_start_points: None,
@@ -4208,6 +4215,7 @@ impl ChartApp {
             fav_group_drag: None,
             modal_state: ModalState::new(),
             pending_screenshot: false,
+            pending_share_live: false,
             pending_reset_cache: false,
             pending_reset_storage: false,
             drag_start_points: None,
@@ -5127,6 +5135,17 @@ impl ChartApp {
         dlog!("[Screenshot] Capture requested");
     }
 
+    /// Request a public live-share link for the active preset (chart-sharing
+    /// arc, toolbar "share_chart" button).
+    ///
+    /// The shell drains this flag via `drain_pending_share_live()` and POSTs
+    /// the serialized preset to `/api/share/live` — the cloud session and
+    /// its token live in the shell, not here.
+    pub fn request_share_live(&mut self) {
+        self.pending_share_live = true;
+        dlog!("[Share] Live-share link requested");
+    }
+
     // -------------------------------------------------------------------------
     // Live exchange support
     // -------------------------------------------------------------------------
@@ -5394,6 +5413,17 @@ impl ChartApp {
     pub fn drain_pending_screenshot(&mut self) -> bool {
         let pending = self.pending_screenshot;
         self.pending_screenshot = false;
+        pending
+    }
+
+    /// Drain the pending live-share request.
+    ///
+    /// Returns `true` if a share was requested since the last call.
+    /// Mirror of `drain_pending_screenshot` — the shell performs the
+    /// actual upload and clipboard write.
+    pub fn drain_pending_share_live(&mut self) -> bool {
+        let pending = self.pending_share_live;
+        self.pending_share_live = false;
         pending
     }
 

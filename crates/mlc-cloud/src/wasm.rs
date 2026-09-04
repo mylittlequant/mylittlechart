@@ -57,23 +57,29 @@ impl FetchTransport {
         )
     }
 
-    /// One HTTP exchange. Returns the raw status + body for every completed
-    /// request; only network/JS failures become `Err`. Callers map statuses
-    /// (`poll` needs its own 202/410 handling, everything else uses
-    /// [`decode_success`]).
-    async fn exchange(
+    /// Build one `Request` with the shared header set attached.
+    ///
+    /// `json_body` controls Content-Type: `application/json` for structured
+    /// bodies, absent for multipart (the browser must set the
+    /// `multipart/form-data; boundary=…` header itself). `auth` gates the
+    /// bearer token — the public share read must go out WITHOUT it even
+    /// when one is configured: the link token alone is the capability,
+    /// and sending the viewer's own credential along is pure leak surface.
+    fn build_request(
         &self,
         method: &str,
         path: &str,
-        body: Option<String>,
+        body: Option<JsValue>,
+        json_body: bool,
+        auth: bool,
         extra_headers: &[(&str, &str)],
-    ) -> Result<(u16, String), CloudError> {
+    ) -> Result<Request, CloudError> {
         let opts = RequestInit::new();
         opts.set_method(method);
         opts.set_mode(RequestMode::Cors);
         opts.set_cache(RequestCache::NoStore);
         if let Some(b) = body.as_ref() {
-            opts.set_body(&JsValue::from_str(b));
+            opts.set_body(b);
         }
 
         let req = Request::new_with_str_and_init(&self.url(path), &opts)
@@ -85,11 +91,13 @@ impl FetchTransport {
                 .set(k, v)
                 .map_err(|e| CloudError::Transport(format!("set header {}: {:?}", k, e)))
         };
-        if body.is_some() {
+        if json_body {
             set("Content-Type", "application/json")?;
         }
-        if let Some(token) = self.config.token.as_ref() {
-            set("Authorization", &format!("Bearer {}", token))?;
+        if auth {
+            if let Some(token) = self.config.token.as_ref() {
+                set("Authorization", &format!("Bearer {}", token))?;
+            }
         }
         set("X-Profile-Id", &self.config.profile_id)?;
         set("X-Device-Id", &self.config.device_id)?;
@@ -102,9 +110,14 @@ impl FetchTransport {
         for (k, v) in extra_headers {
             set(k, v)?;
         }
+        Ok(req)
+    }
 
+    /// Execute one built request. Returns the raw status + body for every
+    /// completed request; only network/JS failures become `Err`.
+    async fn perform(&self, req: &Request) -> Result<(u16, String), CloudError> {
         let window = web_sys::window().ok_or_else(|| CloudError::Transport("no window".into()))?;
-        let resp_value = JsFuture::from(window.fetch_with_request(&req))
+        let resp_value = JsFuture::from(window.fetch_with_request(req))
             .await
             .map_err(|e| CloudError::Transport(format!("fetch: {:?}", e)))?;
         let resp: Response = resp_value
@@ -122,6 +135,40 @@ impl FetchTransport {
             .as_string()
             .ok_or_else(|| CloudError::Decode("body is not a string".into()))?;
         Ok((status, body))
+    }
+
+    /// One HTTP exchange (JSON body or none, bearer attached when
+    /// configured). Callers map statuses (`poll` needs its own 202/410
+    /// handling, everything else uses [`decode_success`]).
+    async fn exchange(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<String>,
+        extra_headers: &[(&str, &str)],
+    ) -> Result<(u16, String), CloudError> {
+        let json_body = body.is_some();
+        let req = self.build_request(
+            method,
+            path,
+            body.map(|b| JsValue::from_str(&b)),
+            json_body,
+            true,
+            extra_headers,
+        )?;
+        self.perform(&req).await
+    }
+
+    /// One multipart POST (`POST /api/share/screenshot`). No Content-Type —
+    /// the browser fills in `multipart/form-data; boundary=…` from the
+    /// [`web_sys::FormData`] body.
+    async fn exchange_multipart(
+        &self,
+        path: &str,
+        form: web_sys::FormData,
+    ) -> Result<(u16, String), CloudError> {
+        let req = self.build_request("POST", path, Some(form.into()), false, true, &[])?;
+        self.perform(&req).await
     }
 
     /// Map a completed exchange onto a typed body, or a semantic error.
@@ -292,6 +339,73 @@ impl FetchTransport {
         let (status, body) = self
             .exchange("POST", "/api/account/redeem", Some(payload), &[])
             .await?;
+        self.decode_success(status, &body)
+    }
+
+    // ── /api/share/* ────────────────────────────────────────────────────
+
+    /// `POST /api/share/live` — freeze the active preset into a public
+    /// link. 403 is the per-kind active-share ceiling (free 1 / paid 10
+    /// live shares) — the caller words it for the user.
+    pub async fn share_create_live(
+        &self,
+        title: &str,
+        preset: serde_json::Value,
+    ) -> Result<ShareCreateResponse, CloudError> {
+        let payload = serde_json::to_string(&ShareCreateLiveRequest {
+            title: title.to_string(),
+            preset,
+        })
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", "/api/share/live", Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/share/screenshot` — multipart upload, one `png` field
+    /// plus an optional `title`. Same response shape as
+    /// [`Self::share_create_live`]; ceiling free 10 / paid 100.
+    pub async fn share_create_screenshot(
+        &self,
+        title: &str,
+        png: web_sys::Blob,
+    ) -> Result<ShareCreateResponse, CloudError> {
+        let form = web_sys::FormData::new()
+            .map_err(|e| CloudError::Transport(format!("FormData::new: {:?}", e)))?;
+        form.append_with_blob("png", &png)
+            .map_err(|e| CloudError::Transport(format!("FormData png: {:?}", e)))?;
+        if !title.is_empty() {
+            form.append_with_str("title", title)
+                .map_err(|e| CloudError::Transport(format!("FormData title: {:?}", e)))?;
+        }
+        let (status, body) = self.exchange_multipart("/api/share/screenshot", form).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/share/mine` — the caller's own active shares.
+    pub async fn share_list(&self) -> Result<Vec<ShareListEntry>, CloudError> {
+        let (status, body) = self.exchange("GET", "/api/share/mine", None, &[]).await?;
+        let resp: ShareListResponse = self.decode_success(status, &body)?;
+        Ok(resp.shares)
+    }
+
+    /// `DELETE /api/share/{token}` — owner revoke.
+    pub async fn share_revoke(&self, token: &str) -> Result<(), CloudError> {
+        let (status, body) = self
+            .exchange("DELETE", &format!("/api/share/{}", token), None, &[])
+            .await?;
+        self.decode_success(status, &body)
+            .map(|_: serde_json::Value| ())
+    }
+
+    /// `GET /api/share/{token}` — PUBLIC: deliberately goes out without
+    /// the configured bearer token (see [`Self::build_request`]'s `auth`
+    /// gate). Unknown/expired/revoked tokens answer the same bare 404,
+    /// which surfaces here as [`CloudError::Http`] with status 404.
+    pub async fn share_get_public(&self, token: &str) -> Result<SharePublicResponse, CloudError> {
+        let req = self.build_request("GET", &format!("/api/share/{}", token), None, false, false, &[])?;
+        let (status, body) = self.perform(&req).await?;
         self.decode_success(status, &body)
     }
 

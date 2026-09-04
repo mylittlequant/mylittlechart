@@ -634,9 +634,10 @@ pub enum ScreenshotDestination {
     Clipboard,
     /// Save the PNG as a file (native: screenshot dir; wasm: browser download).
     DownloadFile,
-    /// Upload and copy a shareable link (authenticated users only — the row
-    /// is filtered out for anonymous sessions; backend upload lands in a
-    /// later wave, stubbed as clipboard + log until then).
+    /// Upload the PNG and copy a shareable link (authenticated users only —
+    /// the row is filtered out for anonymous sessions). The wasm shell
+    /// uploads via `POST /api/share/screenshot` and copies the absolute
+    /// link; the native shell still stubs it as clipboard + log.
     ShareLink,
 }
 

@@ -91,6 +91,16 @@ pub struct CloudSession {
     inner: Rc<RefCell<Inner>>,
 }
 
+impl Clone for CloudSession {
+    /// Cheap handle clone — shares the same `Inner` (the share fire-and-forget
+    /// spawns carry a copy into their `spawn_local` future).
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
 impl CloudSession {
     /// Build the session from localStorage + `window.MLC_BUILD`.
     /// `server_url` is "" (same-origin) in production.
@@ -148,6 +158,56 @@ impl CloudSession {
     /// The provider that account signed in with, or `None` when signed out.
     pub fn account_provider(&self) -> Option<String> {
         self.inner.borrow().token.as_ref().map(|t| t.provider.clone())
+    }
+
+    // ── Chart sharing (fire-and-forget) ──────────────────────────────────
+    //
+    // Both share creates are one-shot uploads with the same result contract:
+    // on success the ABSOLUTE share URL (origin + `url_path`) goes to the OS
+    // clipboard and the console; a 403 is the per-kind active-share ceiling
+    // and is logged as "share limit reached"; anything else logs the
+    // transport's own description. No mailbox — nothing in the UI waits on
+    // the answer, so these bypass the `FlowResult`/`in_flight` machine.
+
+    /// `POST /api/share/screenshot` — upload the cropped chart-region PNG.
+    /// Anonymous sessions are refused up front (the camera dropdown already
+    /// hides its ShareLink row for them; this is the belt to its braces).
+    pub fn share_screenshot(&self, png: web_sys::Blob, title: String) {
+        if !self.is_signed_in() {
+            web_sys::console::warn_1(&"[share] screenshot share refused: not signed in".into());
+            return;
+        }
+        let transport = self.inner.borrow().transport.snapshot();
+        spawn_local(async move {
+            match transport.share_create_screenshot(&title, png).await {
+                Ok(resp) => {
+                    let url = absolute_share_url(&resp.url_path);
+                    crate::clipboard_write_text(&url);
+                    web_sys::console::log_1(&format!("[share] screenshot shared: {}", url).into());
+                }
+                Err(e) => log_share_error("screenshot", &e),
+            }
+        });
+    }
+
+    /// `POST /api/share/live` — freeze the active preset into a public link.
+    /// Same refusal/result contract as [`Self::share_screenshot`].
+    pub fn share_live(&self, title: String, preset: serde_json::Value) {
+        if !self.is_signed_in() {
+            web_sys::console::warn_1(&"[share] live share refused: not signed in".into());
+            return;
+        }
+        let transport = self.inner.borrow().transport.snapshot();
+        spawn_local(async move {
+            match transport.share_create_live(&title, preset).await {
+                Ok(resp) => {
+                    let url = absolute_share_url(&resp.url_path);
+                    crate::clipboard_write_text(&url);
+                    web_sys::console::log_1(&format!("[share] live chart shared: {}", url).into());
+                }
+                Err(e) => log_share_error("live", &e),
+            }
+        });
     }
 
     pub fn drive(&self, chart: &mut ChartApp, now_ms: f64) {
@@ -547,6 +607,35 @@ impl CloudSession {
 }
 
 // ── localStorage persistence ─────────────────────────────────────────────
+
+/// `origin + url_path` → the absolute share URL handed to the clipboard.
+/// `url_path` is root-relative (`/?share=<token>`) exactly so the client
+/// pins the origin the share was created on.
+fn absolute_share_url(url_path: &str) -> String {
+    let origin = web_sys::window()
+        .and_then(|w| w.location().origin().ok())
+        .unwrap_or_default();
+    format!("{}{}", origin, url_path)
+}
+
+/// Word a failed share create for the console. 403 from either share-create
+/// endpoint is the per-kind active-share ceiling (free 1 live / 10
+/// screenshots, paid 10/100) — say so in words; anything else is the
+/// transport's own description.
+fn log_share_error(what: &str, e: &mlc_cloud::CloudError) {
+    match e {
+        mlc_cloud::CloudError::Forbidden(_) => {
+            web_sys::console::warn_1(
+                &format!("[share] {} share limit reached — revoke an existing share or upgrade the account", what).into(),
+            );
+        }
+        other => {
+            web_sys::console::error_1(
+                &format!("[share] {} share failed: {}", what, other).into(),
+            );
+        }
+    }
+}
 
 fn local_storage() -> Option<web_sys::Storage> {
     web_sys::window().and_then(|w| w.local_storage().ok().flatten())

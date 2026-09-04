@@ -173,9 +173,13 @@ pub fn start() {
     );
     web_sys::console::log_1(&"[mlc-app-shell-web] booting".into());
     apply_dev_proxy_gate_from_url();
+    // `?share=<token>` viewer mode (chart-sharing arc) — parsed next to the
+    // other boot-time URL gate; the fetch itself is async and runs at the
+    // top of `run()`, before any app state exists.
+    let share_token = share_token_from_url();
 
-    spawn_local(async {
-        if let Err(e) = run().await {
+    spawn_local(async move {
+        if let Err(e) = run(share_token).await {
             web_sys::console::error_1(&format!("[mlc-app-shell-web] fatal: {:?}", e).into());
         }
     });
@@ -204,6 +208,92 @@ fn apply_dev_proxy_gate_from_url() {
     web_sys::console::warn_1(
         &"[mlc-app-shell-web] DEV mlc_proxy_gate=entitled — proxy denied".into(),
     );
+}
+
+/// Parse `?share=<token>` out of the page URL (chart-sharing arc).
+/// Same split grammar as `apply_dev_proxy_gate_from_url` above.
+#[cfg(target_arch = "wasm32")]
+fn share_token_from_url() -> Option<String> {
+    let search = web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .unwrap_or_default();
+    search
+        .trim_start_matches('?')
+        .split('&')
+        .find_map(|p| p.strip_prefix("share="))
+        .filter(|t| !t.is_empty())
+        .map(|t| t.to_string())
+}
+
+/// How a `?share=<token>` boot resolves (cloud builds only).
+#[cfg(all(target_arch = "wasm32", feature = "cloud"))]
+enum ShareBoot {
+    /// No `?share=` param, or the fetch said no — normal boot.
+    Normal,
+    /// Screenshot share — the browser was redirected to the PNG; the app
+    /// never boots (v1 viewer for screenshots, per the sharing spec).
+    Redirect,
+    /// Live share — boot read-only on the frozen preset.
+    Live(mlc_core::preset::preset::ChartPreset),
+}
+
+/// Resolve a `?share=<token>` boot BEFORE any chart state exists.
+///
+/// The fetch goes through a throwaway anonymous transport: the share token
+/// alone is the capability, and the viewer's own session (if any) must not
+/// ride along. Live shares deserialize the frozen `ChartPreset` — a
+/// `PRESET_VERSION` mismatch or a corrupt body falls back to a normal boot
+/// with a console error rather than stranding the viewer on an error page.
+#[cfg(all(target_arch = "wasm32", feature = "cloud"))]
+async fn resolve_share_boot(token: Option<String>) -> ShareBoot {
+    let Some(token) = token else { return ShareBoot::Normal };
+    let transport = mlc_cloud::FetchTransport::new(mlc_cloud::CloudConfig {
+        server_url: String::new(),
+        token: None,
+        profile_id: String::new(),
+        device_id: String::new(),
+        attestation: None,
+    });
+    match transport.share_get_public(&token).await {
+        Ok(mlc_cloud::SharePublicResponse::Screenshot { png_url, .. }) => {
+            web_sys::console::log_1(
+                &format!("[share] screenshot share — redirecting to {}", png_url).into(),
+            );
+            if let Some(w) = web_sys::window() {
+                let _ = w.location().assign(&png_url);
+            }
+            ShareBoot::Redirect
+        }
+        Ok(mlc_cloud::SharePublicResponse::Live { preset, title, .. }) => {
+            match serde_json::from_value::<mlc_core::preset::preset::ChartPreset>(preset) {
+                Ok(p) if p.version == mlc_core::preset::preset::PRESET_VERSION => {
+                    web_sys::console::log_1(
+                        &format!("[share] viewer boot on shared preset '{}' ({})", title, p.id).into(),
+                    );
+                    ShareBoot::Live(p)
+                }
+                Ok(p) => {
+                    web_sys::console::error_1(
+                        &format!("[share] preset version {} unsupported (client is on {}) — normal boot",
+                            p.version, mlc_core::preset::preset::PRESET_VERSION).into(),
+                    );
+                    ShareBoot::Normal
+                }
+                Err(e) => {
+                    web_sys::console::error_1(
+                        &format!("[share] shared preset did not deserialize: {} — normal boot", e).into(),
+                    );
+                    ShareBoot::Normal
+                }
+            }
+        }
+        Err(e) => {
+            web_sys::console::error_1(
+                &format!("[share] share fetch failed ({}): {} — normal boot", token, e).into(),
+            );
+            ShareBoot::Normal
+        }
+    }
 }
 
 // ─── Boot-time theme helpers ────────────────────────────────────────────────
@@ -240,7 +330,31 @@ fn write_boot_bg(bg: &str) {
 // ─── Async boot sequence ───────────────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
-async fn run() -> Result<(), JsValue> {
+async fn run(share_token: Option<String>) -> Result<(), JsValue> {
+    // `?share=` viewer boot (chart-sharing arc) — resolved FIRST so a
+    // screenshot share redirects without paying the bridge/app startup, and
+    // a live share knows it is a read-only viewer before anything writes.
+    #[cfg(feature = "cloud")]
+    let share_boot = resolve_share_boot(share_token).await;
+    #[cfg(not(feature = "cloud"))]
+    let read_only = {
+        if share_token.is_some() {
+            web_sys::console::warn_1(
+                &"[share] ?share= ignored — this build has no cloud support".into(),
+            );
+        }
+        false
+    };
+    #[cfg(feature = "cloud")]
+    {
+        if matches!(share_boot, ShareBoot::Redirect) {
+            // The browser is navigating to the PNG; never boot the app.
+            return Ok(());
+        }
+    }
+    #[cfg(feature = "cloud")]
+    let read_only = matches!(share_boot, ShareBoot::Live(_));
+
     let (bridge, live_rx, _connector_ready_rx) = DataBridge::new().await;
     // 2026-06-24: do NOT hold the first receiver alive — `broadcast::Sender`
     // measures "lag" per-receiver, and any unread receiver drags the slow-
@@ -261,14 +375,23 @@ async fn run() -> Result<(), JsValue> {
     // just happened so the welcome wizard can be raised below once `app`
     // exists. Returning visits are a no-op here; `ProfileManager::load`
     // below resolves the existing profile either way.
-    let is_first_run = persistence::bootstrap_first_run();
+    // Viewer sessions (`?share=` live) write NOTHING to localStorage — the
+    // bootstrap's create_profile is itself a write, so it is skipped along
+    // with every save below (all gated on `read_only`).
+    let is_first_run = if read_only {
+        false
+    } else {
+        persistence::bootstrap_first_run()
+    };
 
     let mut profile_manager = mlc_app::user_manager::ProfileManager::load(None);
     profile_manager.profile.record_launch(env!("CARGO_PKG_VERSION"));
-    if let Err(e) = profile_manager.save_profile() {
-        web_sys::console::error_1(
-            &format!("[mlc-app-shell-web] failed to save profile at startup: {:?}", e).into(),
-        );
+    if !read_only {
+        if let Err(e) = profile_manager.save_profile() {
+            web_sys::console::error_1(
+                &format!("[mlc-app-shell-web] failed to save profile at startup: {:?}", e).into(),
+            );
+        }
     }
 
     // Best-effort: ask the browser not to evict localStorage under storage
@@ -335,6 +458,22 @@ async fn run() -> Result<(), JsValue> {
     // the wrong theme.
     write_boot_bg(&app.panel_app.theme_manager.current().chart.background);
 
+    // Live-share viewer: register the frozen preset into the shared core and
+    // switch this window onto it — the same `LoadPreset` path a chrome tab
+    // click takes (`ChartApp::load_preset`). Runs AFTER `new_window`'s own
+    // restore so the viewer preset wins the tab strip; persistence is off
+    // (`read_only`), so the switch never reaches localStorage. The wizard
+    // below is skipped for viewer sessions (`is_first_run` is false there).
+    #[cfg(feature = "cloud")]
+    if let ShareBoot::Live(preset) = share_boot {
+        let id = preset.id.clone();
+        web_sys::console::log_1(
+            &format!("[share] opening shared preset '{}' ({})", preset.name, id).into(),
+        );
+        app.core.presets_mut().insert(id.clone(), preset);
+        app.load_preset(&id);
+    }
+
     // First-run courtesy (owner's ruling 2026-08-31): `bootstrap_first_run`
     // above had to create a profile from nothing — raise the wizard
     // (theme → language → name) instead of staying silent. A returning
@@ -390,7 +529,7 @@ async fn run() -> Result<(), JsValue> {
         .map_err(|e| JsValue::from_str(&e))?;
 
     web_sys::console::log_1(&"[mlc-app-shell-web] render loop running".into());
-    run_render_loop(app, provider, bridge, profile_manager)
+    run_render_loop(app, provider, bridge, profile_manager, read_only)
 }
 
 /// Flush both persistence layers on tab close/hide.
@@ -434,7 +573,12 @@ fn install_persistence_flush_hooks(
             // per-frame drain in `run_render_loop`: a tab hidden mid-cold-
             // load must not persist the pre-restore placeholder window.
             if let Ok(mut st) = state.try_borrow_mut() {
-                if mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state) {
+                // `read_only` (`?share=` viewer): no localStorage writes,
+                // ever. The OPFS market-data flush below stays ungated —
+                // it is not localStorage.
+                if !st.read_only
+                    && mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
+                {
                     persistence::save_persistent_state(&mut st.chart);
                 }
             }
@@ -470,7 +614,12 @@ fn install_persistence_flush_hooks(
             // Best-effort — same try_borrow + is_persist_safe rationale as
             // the visibilitychange hook above.
             if let Ok(mut st) = state.try_borrow_mut() {
-                if mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state) {
+                // `read_only` (`?share=` viewer): no localStorage writes,
+                // ever. The OPFS market-data flush below stays ungated —
+                // it is not localStorage.
+                if !st.read_only
+                    && mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
+                {
                     persistence::save_persistent_state(&mut st.chart);
                 }
             }
@@ -498,6 +647,11 @@ struct WebAppState {
     out:                mlc_app_input_shell::DispatchOut,
     toolbar_tooltip:    mlc_app_input_shell::TooltipState,
     screenshot_pending: bool,
+    /// Read-only `?share=` live-viewer session (chart-sharing arc): renders
+    /// the shared preset but writes NOTHING to localStorage — the per-frame
+    /// save drain, the visibilitychange/beforeunload flush hooks and the
+    /// boot-time `save_profile` are all gated on this flag.
+    read_only:          bool,
     /// DOM canvas element for cursor CSS updates.
     canvas_id:          String,
     /// Settle-debounce for `chart.resize` (audit D2).  `canvas.client_width()/
@@ -535,8 +689,11 @@ struct WebAppState {
     /// fanout to do on this shell since it hosts exactly one `ChartApp`.
     profile_manager:    mlc_app::user_manager::ProfileManager,
     /// Cloud session driver (sign-in overlay + sync transport). Cloud builds only.
+    /// `None` in a read-only viewer session: its init would persist a fresh
+    /// device id to localStorage and its drive() would poll entitlements —
+    /// both ruled out for a viewer (writes nothing, shares nobody's session).
     #[cfg(feature = "cloud")]
-    cloud:              cloud_session::CloudSession,
+    cloud:              Option<cloud_session::CloudSession>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -546,6 +703,7 @@ impl WebAppState {
         canvas_id: &str,
         bridge: Arc<mlc_backend_data_bridge::DataBridge>,
         profile_manager: mlc_app::user_manager::ProfileManager,
+        read_only: bool,
     ) -> Self {
         let mut input = mlc_app_input_shell::InputState::default();
         // Web shell renders chrome — offset chart by chrome height.
@@ -564,6 +722,7 @@ impl WebAppState {
             // shells via `ChromeState::new()`.
             toolbar_tooltip:    mlc_app_input_shell::TooltipState::with_delay(700.0),
             screenshot_pending: false,
+            read_only,
             canvas_id:          canvas_id.to_string(),
             last_measured:      None,
             last_applied:       None,
@@ -573,7 +732,7 @@ impl WebAppState {
             bridge,
             profile_manager,
             #[cfg(feature = "cloud")]
-            cloud: cloud_session::CloudSession::init(""),
+            cloud: if read_only { None } else { Some(cloud_session::CloudSession::init("")) },
         }
     }
 }
@@ -586,8 +745,9 @@ fn run_render_loop(
     provider: WebWindowProvider,
     bridge: Arc<mlc_backend_data_bridge::DataBridge>,
     profile_manager: mlc_app::user_manager::ProfileManager,
+    read_only: bool,
 ) -> Result<(), JsValue> {
-    let state = Rc::new(RefCell::new(WebAppState::new(app, "chart", bridge.clone(), profile_manager)));
+    let state = Rc::new(RefCell::new(WebAppState::new(app, "chart", bridge.clone(), profile_manager, read_only)));
 
     // Wire Ctrl+C / Ctrl+X to read the active selection out of TextFieldStore.
     // The closure runs synchronously inside the DOM `copy` / `cut` listener in
@@ -677,11 +837,14 @@ fn run_render_loop(
 
             // Cloud session driver: advances the sign-in overlay's
             // device-code flow (spawn_local futures report back through the
-            // session's mailbox, applied on the next frame).
+            // session's mailbox, applied on the next frame). `None` in a
+            // read-only `?share=` viewer session — nothing to drive.
             #[cfg(feature = "cloud")]
             {
                 let st = &mut *st;
-                st.cloud.drive(&mut st.chart, now_ms as f64);
+                if let Some(cloud) = &st.cloud {
+                    cloud.drive(&mut st.chart, now_ms as f64);
+                }
             }
         }
 
@@ -1193,7 +1356,9 @@ fn run_render_loop(
         {
             let mut st = state_clone.borrow_mut();
             let persist_safe = mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state);
-            if persist_safe
+            // `read_only` (`?share=` viewer) is the hard gate: a viewer
+            // session writes NOTHING to localStorage, dirty flags or not.
+            if !st.read_only && persist_safe
                 && (st.chart.profile_dirty || st.chart.profile_geometry_dirty || st.chart.watchlists_dirty
                     || !st.chart.preset_actions.is_empty())
             {
@@ -1724,8 +1889,103 @@ fn run_render_loop(
                         trigger_screenshot_download("chart", Some(rect));
                     }
                     mlc_core::state::toolbar_state::ScreenshotDestination::ShareLink => {
-                        trigger_screenshot_to_clipboard("chart", Some(rect));
-                        web_sys::console::log_1(&"[share] share-link upload lands in a later wave".into());
+                        // Chart-sharing arc: upload the cropped PNG via
+                        // `POST /api/share/screenshot`, then the ABSOLUTE
+                        // share URL (origin + url_path) goes to the
+                        // clipboard — see `CloudSession::share_screenshot`.
+                        // Title: the active preset's name, else "chart".
+                        #[cfg(feature = "cloud")]
+                        {
+                            let upload = {
+                                let st = state_clone.borrow();
+                                let id = st.chart.panel_app.active_preset_id.clone();
+                                let name = st.chart.core.presets().get(&id).map(|p| p.name.clone());
+                                let title = name
+                                    .filter(|n| !n.is_empty())
+                                    .unwrap_or_else(|| "chart".to_string());
+                                st.cloud
+                                    .clone()
+                                    .filter(|c| c.is_signed_in())
+                                    .map(|cloud| (cloud, title))
+                            };
+                            match upload {
+                                Some((cloud, title)) => {
+                                    screenshot_region_blob("chart", Some(rect), move |blob| {
+                                        cloud.share_screenshot(blob, title);
+                                    });
+                                }
+                                // The dropdown's ShareLink row is hidden for
+                                // anonymous sessions; a shot landing here
+                                // anyway (read-only viewer, stale state) is a
+                                // refusal, not a silent clipboard fallback.
+                                None => {
+                                    web_sys::console::warn_1(
+                                        &"[share] share-link refused: no signed-in cloud session".into(),
+                                    );
+                                }
+                            }
+                        }
+                        #[cfg(not(feature = "cloud"))]
+                        {
+                            trigger_screenshot_to_clipboard("chart", Some(rect));
+                            web_sys::console::log_1(
+                                &"[share] share-link needs a cloud build — copied to clipboard instead".into(),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+
+        // ── Drain pending live-share requests ────────────────────────────────
+        // Toolbar "share_chart" button → `ChartOutEvent::ShareLiveChart` →
+        // `ChartApp::request_share_live()`. The POST lives here, not in the
+        // click handler, because the cloud session (and its token) belongs to
+        // WebAppState. Anonymous clicks are refused at the click site
+        // (panel_click.rs); a drain without a signed-in session is a bug-level
+        // event and is logged as one.
+        #[cfg(feature = "cloud")]
+        {
+            let request = {
+                let mut st = state_clone.borrow_mut();
+                if st.chart.drain_pending_share_live() {
+                    let id = st.chart.panel_app.active_preset_id.clone();
+                    let preset = st.chart.core.presets().get(&id).cloned();
+                    Some((st.cloud.clone(), preset))
+                } else {
+                    None
+                }
+            };
+            if let Some((cloud, preset)) = request {
+                match (cloud, preset) {
+                    (Some(cloud), Some(preset)) if cloud.is_signed_in() => {
+                        // The registry preset as-is: `bars` is
+                        // `skip_serializing` (mlc-core preset/snapshots.rs),
+                        // so the JSON is the restorable skeleton already —
+                        // the mlc-updater strip pass exists for OLD files
+                        // that still carry bars, not for this in-memory
+                        // serialization.
+                        match serde_json::to_value(&preset) {
+                            Ok(preset_json) => cloud.share_live(preset.name.clone(), preset_json),
+                            Err(e) => {
+                                web_sys::console::error_1(
+                                    &format!("[share] preset serialize failed: {}", e).into(),
+                                );
+                            }
+                        }
+                    }
+                    (Some(_), Some(_)) => {
+                        web_sys::console::warn_1(&"[share] live share refused: not signed in".into());
+                    }
+                    (Some(_), None) => {
+                        web_sys::console::warn_1(
+                            &"[share] live share: active preset not in the registry".into(),
+                        );
+                    }
+                    (None, _) => {
+                        web_sys::console::warn_1(
+                            &"[share] live share refused: no cloud session (viewer mode)".into(),
+                        );
                     }
                 }
             }
@@ -2222,11 +2482,13 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
         // the native shell does the same from `auth_rx`.
         #[cfg(feature = "cloud")]
         {
-            let label = st.cloud.account_label();
+            // `None` in a read-only viewer session — the strip keeps its
+            // anonymous "Sign in" label, matching the absent session.
+            let label = st.cloud.as_ref().and_then(|c| c.account_label());
             if st.chrome.account_label != label {
                 st.chrome.account_label = label;
             }
-            st.chrome.account_provider = st.cloud.account_provider();
+            st.chrome.account_provider = st.cloud.as_ref().and_then(|c| c.account_provider());
         }
 
         // Sync chrome colours from the chart theme — wasm parity with the
