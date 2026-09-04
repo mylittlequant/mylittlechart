@@ -1539,7 +1539,10 @@ impl App<'_> {
         // already populated unconditionally above.
         chart.panel_app.user_settings_state.needs_vault_unlock = self.needs_vault_unlock;
 
-        let chrome_px = (chrome::CHROME_HEIGHT * window.scale_factor()) as u32;
+        // Physical-px convention: the whole shell renders 1:1 physical px and
+        // the steady-state resize path (dispatch.rs) subtracts CHROME_HEIGHT
+        // unscaled — boot must match, or on scale!=1 the chart starts short.
+        let chrome_px = chrome::CHROME_HEIGHT as u32;
         chart.resize(size.width, size.height.saturating_sub(chrome_px));
 
         let win_id = window.id();
@@ -1930,9 +1933,11 @@ impl App<'_> {
                     }
                 }
 
-                // Resize using the sizes captured on the main thread.
-                let (w, h, scale) = window_sizes.get(idx).copied().unwrap_or((1200, 800, 1.0));
-                let chrome_px = (chrome::CHROME_HEIGHT * scale) as u32;
+                // Resize using the sizes captured on the main thread. Scale is
+                // captured but intentionally unused: physical-px convention,
+                // CHROME_HEIGHT is subtracted unscaled everywhere (dispatch.rs).
+                let (w, h, _scale) = window_sizes.get(idx).copied().unwrap_or((1200, 800, 1.0));
+                let chrome_px = chrome::CHROME_HEIGHT as u32;
                 chart.resize(w, h.saturating_sub(chrome_px));
 
                 results.push(PromoteWindowResult {
