@@ -127,17 +127,26 @@ impl ButtonPositions {
         // Download is the same release manifest the in-process updater
         // already reads, re-verbed on native from "download a binary" to
         // "install this update".
+        //
+        // The Download slot is `update_w` wide — zero when the updater is
+        // idle, `RESTART_BUTTON_WIDTH` while a restart is pending. This MUST
+        // stay identical to render.rs's `ButtonPositions::compute`: the
+        // painter places News/Download by the real width, and a hit test or
+        // `tabs_right_limit` computed on a fixed width puts every band 54px
+        // off whenever the control widens into "Restart" (owner hit exactly
+        // this 2026-09-04: Restart's left half opened the blog, and the tab
+        // strip ran under the widened button instead of collapsing).
         #[cfg(feature = "cloud")]
         let (login_left, download_left, news_left) = match flavor {
             ChromeFlavor::Web => {
                 let login = menu_left - LOGIN_BUTTON_WIDTH;
-                let dl = login - CLOUD_ICON_BUTTON_WIDTH;
+                let dl = login - update_w;
                 let ne = dl - CLOUD_ICON_BUTTON_WIDTH;
                 (login, dl, ne)
             }
             ChromeFlavor::Native => {
                 let login = new_window_left - LOGIN_BUTTON_WIDTH;
-                let dl = login - CLOUD_ICON_BUTTON_WIDTH;
+                let dl = login - update_w;
                 let ne = dl - CLOUD_ICON_BUTTON_WIDTH;
                 (login, dl, ne)
             }
@@ -675,5 +684,63 @@ mod tests {
         assert!((rest[1] - rest[2]).abs() < 0.001);
         assert!(rest[0] >= MIN_TAB_WIDTH);
         assert!(rest[0] < 300.0, "neighbors give up width so the live tab can stay natural");
+    }
+}
+
+#[cfg(all(test, feature = "cloud"))]
+mod cloud_tests {
+    use super::*;
+    use crate::chrome::types::{ChromeFlavor, ChromeState, ChromeUpdate};
+
+    fn native_state(update: ChromeUpdate) -> ChromeState {
+        let mut state = ChromeState::new("t");
+        state.flavor = ChromeFlavor::Native;
+        state.update = update;
+        state
+    }
+
+    #[test]
+    fn restart_widens_download_slot_and_moves_tabs_limit_left() {
+        let width = 1200.0;
+        let idle = native_state(ChromeUpdate::Idle);
+        let restart = native_state(ChromeUpdate::Restart);
+        let idle_limit = tabs_right_limit(width, &idle);
+        let restart_limit = tabs_right_limit(width, &restart);
+        assert!(
+            (idle_limit - restart_limit - RESTART_BUTTON_WIDTH).abs() < 0.001,
+            "Restart must push the tab strip's right limit left by the widened button"
+        );
+    }
+
+    #[test]
+    fn hit_test_matches_painted_restart_geometry() {
+        let width = 1200.0;
+        let height = 800.0;
+        let state = native_state(ChromeUpdate::Restart);
+        // Same geometry render.rs paints: Restart spans
+        // [login_left - RESTART_BUTTON_WIDTH, login_left).
+        let bp = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&state));
+        assert!((bp.login_left - bp.download_left - RESTART_BUTTON_WIDTH).abs() < 0.001);
+        // Both edges of the painted Restart button must hit Download — the
+        // left half used to fall through to News (owner, 2026-09-04).
+        assert_eq!(hit_test(bp.download_left + 1.0, 10.0, width, height, &state), ChromeHit::DownloadButton);
+        assert_eq!(hit_test(bp.login_left - 1.0, 10.0, width, height, &state), ChromeHit::DownloadButton);
+        // The News button painted one icon-slot left of the widened control
+        // must hit News.
+        let news_mid = bp.download_left - CLOUD_ICON_BUTTON_WIDTH / 2.0;
+        assert_eq!(hit_test(news_mid, 10.0, width, height, &state), ChromeHit::NewsButton);
+    }
+
+    #[test]
+    fn idle_closes_the_download_slot_for_hit_test_and_tabs_alike() {
+        let width = 1200.0;
+        let height = 800.0;
+        let state = native_state(ChromeUpdate::Idle);
+        let bp = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&state));
+        // No update control drawn: News butts directly against Sign in, and a
+        // click on the painted News button hits News, not a phantom Download.
+        assert!((bp.login_left - bp.news_left - CLOUD_ICON_BUTTON_WIDTH).abs() < 0.001);
+        let news_mid = bp.login_left - CLOUD_ICON_BUTTON_WIDTH / 2.0;
+        assert_eq!(hit_test(news_mid, 10.0, width, height, &state), ChromeHit::NewsButton);
     }
 }
