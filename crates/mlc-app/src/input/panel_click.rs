@@ -5430,7 +5430,7 @@ impl ChartApp {
                     if let Some(tab) =
                         mlc_app_layout::ui::modal_settings::NewsTab::from_id(&rest["tab:".len()..])
                     {
-                        st.news_tab = tab;
+                        st.set_news_tab(tab);
                     }
                 }
                 rest if rest.starts_with("dimmer") => st.close(),

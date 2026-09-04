@@ -4571,6 +4571,13 @@ pub struct CloudOverlayState {
     /// `expanded` reset — a panel reopened later must not surface on the tab
     /// someone left it on.
     pub news_tab: NewsTab,
+    /// Scroll offset for whichever of the two views draws a real scroll
+    /// container (`crate::layout::modals::cloud_overlay`'s `draw_body`): the
+    /// Download body, and the News list view. Reset on `open()`/`close()`
+    /// and via `set_news_tab`, same reason `selected_post`/`expanded`
+    /// reset — a reopened panel, or a panel switched to the OTHER News tab,
+    /// must not resume mid-scroll from wherever the last view left it.
+    pub scroll: ScrollState,
     pub position: Option<(f64, f64)>,
     pub is_dragging: bool,
     pub drag_offset: Option<(f64, f64)>,
@@ -4588,6 +4595,7 @@ impl Default for CloudOverlayState {
             selected_post: None,
             expanded: false,
             news_tab: NewsTab::Latest,
+            scroll: ScrollState::new(),
             position: None,
             is_dragging: false,
             drag_offset: None,
@@ -4604,6 +4612,7 @@ impl CloudOverlayState {
         self.selected_post = None;
         self.expanded = false;
         self.news_tab = NewsTab::default();
+        self.scroll.reset();
         self.is_dragging = false;
         self.drag_offset = None;
         // Keep what is already fetched only when it is the finished form
@@ -4636,6 +4645,7 @@ impl CloudOverlayState {
         self.selected_post = None;
         self.expanded = false;
         self.news_tab = NewsTab::default();
+        self.scroll.reset();
         self.is_dragging = false;
         self.drag_offset = None;
     }
@@ -4646,6 +4656,16 @@ impl CloudOverlayState {
         } else {
             self.open(kind);
         }
+    }
+
+    /// Switch the News list view's tab, resetting scroll the same reason
+    /// `open()`/`close()` do — the tab switched TO must not inherit the
+    /// scroll position of whichever tab was showing before it. The click
+    /// handler (`mlc-app`'s `panel_click.rs`, `"tab:" =>` arm) should call
+    /// this instead of writing `news_tab` directly for that reset to apply.
+    pub fn set_news_tab(&mut self, tab: NewsTab) {
+        self.news_tab = tab;
+        self.scroll.reset();
     }
 
     pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {

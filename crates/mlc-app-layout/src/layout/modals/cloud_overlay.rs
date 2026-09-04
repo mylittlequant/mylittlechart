@@ -29,11 +29,13 @@ use crate::ui::modal_settings::{
     CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudOverlayState, CloudReleaseEntry,
     NewsTab, UpdateOverlayPhase,
 };
+use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig, ScrollableResult};
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{
     register_dimmer_zones, render_modal_shell, ModalPlacement, ModalShell, ModalShellSpec,
     ModalTab, ModalTabs, ModalTheme, TabFit, SETTINGS_BUTTON_RADIUS,
 };
+use crate::ui::widgets::types::WidgetTheme;
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
 
@@ -59,9 +61,36 @@ pub const SOCIAL_LINKS: &[(&str, &str, &str)] = &[
     ("donate", "Support the project", "https://chart.example/donate"),
 ];
 
-/// Geometry the input side needs (header drag).
+/// Geometry the input side needs (header drag) plus, once a view carries a
+/// real scroll container, what it needs to route wheel/scrollbar-drag input
+/// through it the same way the other scrollable modals in this crate do
+/// (`chart_settings`, `indicator_settings`, `primitive_settings`,
+/// `user_settings`, `trading_container_modal`).
+#[derive(Clone, Debug, Default)]
 pub struct CloudOverlayResult {
     pub header_rect: WidgetRect,
+    /// Total content height the active view actually drew — `None` for a
+    /// view with no scroll container (the News reading view, and the
+    /// Error/Loading status views on either kind).
+    pub total_content_height: Option<f64>,
+    /// The scroll container's own viewport height
+    /// (`shell.content.height`). Alongside `total_content_height`, this is
+    /// what `ScrollState::handle_wheel`/`handle_drag` need to clamp an
+    /// offset correctly.
+    pub viewport_height: Option<f64>,
+    /// The unclipped scroll viewport rect, registered under
+    /// `cloud_overlay:scroll_viewport` with `Sense::SCROLL` — mirrors
+    /// `chart_settings:scroll_viewport` and the other modals that already
+    /// route wheel input through that convention
+    /// (`mlc-app/src/input/mod.rs::on_scroll`). Wiring THIS overlay into
+    /// that match, and into the scrollbar-drag handlers, is a follow-up
+    /// outside this crate's own file scope — not done in this pass.
+    pub scroll_viewport_rect: Option<WidgetRect>,
+    /// Scrollbar handle rect, for drag hit-testing (same wiring gap as
+    /// `scroll_viewport_rect`).
+    pub scrollbar_handle_rect: Option<WidgetRect>,
+    /// Scrollbar track rect, for click-to-jump hit-testing.
+    pub scrollbar_track_rect: Option<WidgetRect>,
 }
 
 fn title_for(state: &CloudOverlayState) -> &'static str {
@@ -98,12 +127,10 @@ fn post_detail_h(post: &CloudNewsPost) -> f64 {
     28.0 + 16.0 + 24.0 + h
 }
 
-/// The Download overlay's expanded list shows at most this many builds.
-/// The modal grows with its content and cannot scroll, so this is what
-/// keeps it inside the window as release history accumulates.
-const MAX_RELEASE_ROWS: usize = 12;
-
-/// The News overlay shows at most this many posts.
+/// The News overlay shows at most this many posts on the `Latest` tab —
+/// the glance a reopened panel always comes back to. The `All` tab is
+/// unbounded (`news_list_h`) and is exactly what the scroll container
+/// below exists for.
 const MAX_NEWS_POSTS: usize = 3;
 
 /// Gap between the last post block (or, with no posts, the list's top) and
@@ -149,30 +176,68 @@ fn news_list_h(tab: NewsTab, posts: &[CloudNewsPost]) -> f64 {
     }
 }
 
-/// Body height per kind — the shell sizes the frame from this.
+/// Height of the Download overlay's Error/Loading status views — headline
+/// plus, on Error, one clipped detail line (`draw_status`). Named so
+/// `content_height` and `draw_body`'s own scroll-container sizing read the
+/// same number instead of repeating the arithmetic twice.
+const DOWNLOAD_STATUS_H: f64 = 22.0 + ROW_H + 24.0;
+
+/// Ceiling on the Download body once it is wrapped in a scroll container.
+/// The collapsed view is ~122px and never needs it; the number matters
+/// only once the release catalogue is expanded, where it leaves room for
+/// the collapsed rows plus roughly six release rows (`6.0 * ROW_H`) before
+/// the container starts scrolling — enough to glance at a short history
+/// without a scrollbar, small enough that the modal never grows past what
+/// a laptop-sized window has room for under the toolbar button it opens
+/// from.
+const DOWNLOAD_MAX_BODY_H: f64 = 400.0;
+
+/// Ceiling on the News list body once it is wrapped in a scroll container.
+/// Sized so the default `Latest` tab (up to `MAX_NEWS_POSTS` two-line posts
+/// plus the fixed LINKS section, ~470px worst case) fits without ever
+/// needing to scroll in the common case; the `All` tab, whose post count is
+/// unbounded, is what actually exercises the scroll container this leaves
+/// room for.
+const NEWS_LIST_MAX_BODY_H: f64 = 480.0;
+
+/// Height of the Download overlay's Update (desktop) body for `phase` —
+/// shared between `content_height` and `draw_body`'s own scroll-container
+/// sizing so the frame and what `draw_update_phase` actually paints can
+/// never disagree (same doctrine as `post_block_h` paired with
+/// `draw_news_post`).
+fn update_phase_h(phase: &UpdateOverlayPhase) -> f64 {
+    match phase {
+        UpdateOverlayPhase::Available { notes, .. } => {
+            22.0 + wrap_text(notes, 62).len().min(4) as f64 * 16.0 + 10.0 + ROW_H
+        }
+        UpdateOverlayPhase::Checking | UpdateOverlayPhase::UpToDate { .. } => 22.0 + 24.0,
+        UpdateOverlayPhase::RestartPending => 22.0 + ROW_H + 8.0,
+        UpdateOverlayPhase::Failed { .. } => 22.0 + 24.0 + ROW_H,
+        _ => 22.0 + 24.0,
+    }
+}
+
+/// Body height per kind — the shell sizes the frame from this. For the two
+/// views a scroll container wraps (the Download body, the News list view)
+/// this is the FULL content height, uncapped — `render_cloud_overlay` is
+/// what clamps the frame at `DOWNLOAD_MAX_BODY_H`/`NEWS_LIST_MAX_BODY_H`,
+/// and `draw_body`'s own `ScrollableContainer` is what makes the excess
+/// reachable rather than lost.
 fn content_height(state: &CloudOverlayState) -> f64 {
     match state.kind {
         CloudOverlayKind::Download => match &state.data {
-            // Update view: caption + notes + the action row (or, in the
-            // phases that have no action, caption + a status line).
-            CloudOverlayData::Update { phase } => match phase {
-                UpdateOverlayPhase::Available { notes, .. } => {
-                    22.0 + wrap_text(notes, 62).len().min(4) as f64 * 16.0 + 10.0 + ROW_H
-                }
-                UpdateOverlayPhase::Checking | UpdateOverlayPhase::UpToDate { .. } => 22.0 + 24.0,
-                UpdateOverlayPhase::RestartPending => 22.0 + ROW_H + 8.0,
-                UpdateOverlayPhase::Failed { .. } => 22.0 + 24.0 + ROW_H,
-                _ => 22.0 + 24.0,
-            },
+            CloudOverlayData::Update { phase } => update_phase_h(phase),
             // Web view: caption + primary action + OTA note + the row that
-            // expands the modal, plus — only while expanded — one row per
-            // `release_rows` entry. Shared arithmetic with `draw_body` via
-            // `download_ready_height`/`release_rows` so the frame can never
-            // size differently from what actually gets drawn into it.
-            CloudOverlayData::Ready { platform, releases, .. } => {
-                download_ready_height(state.expanded, release_rows(platform, releases).len())
-            }
-            _ => 22.0 + ROW_H + 24.0,
+            // expands the modal, plus — only while expanded — the grouped
+            // release catalogue. Shared arithmetic with `draw_ready_view`
+            // via `download_ready_height`/`release_rows`/`group_release_rows`
+            // so the frame can never size differently from what actually
+            // gets drawn into it.
+            CloudOverlayData::Ready { platform, releases, .. } => download_ready_height(
+                state.expanded,
+                &group_release_rows(&release_rows(platform, releases)),
+            ),
+            _ => DOWNLOAD_STATUS_H,
         },
         CloudOverlayKind::News => match &state.data {
             CloudOverlayData::News { posts } => {
@@ -230,7 +295,19 @@ pub fn render_cloud_overlay(
             active: state.news_tab.index(),
             fit: TabFit::Equal,
         });
+        // The News list view is the one whose content is unbounded (the
+        // `All` tab, and a long history under `Latest`'s LINKS section) —
+        // cap it here and let `draw_body`'s scroll container reach the rest.
+        spec = spec.with_max_content_height(NEWS_LIST_MAX_BODY_H);
     }
+    // The Download body is the OTHER unbounded view (the release catalogue
+    // once expanded). Capping every `Download` data variant, not just
+    // `Ready`, is what lets `draw_body` wrap the whole kind in one scroll
+    // container instead of special-casing which variant needs it.
+    if state.kind == CloudOverlayKind::Download {
+        spec = spec.with_max_content_height(DOWNLOAD_MAX_BODY_H);
+    }
+    let mut result = CloudOverlayResult::default();
     let shell = render_modal_shell(
         ctx,
         input_coordinator,
@@ -245,10 +322,47 @@ pub fn render_cloud_overlay(
                 shell.frame,
                 (window_w, window_h),
             );
-            draw_body(ctx, coord, layer_id, shell, state, toolbar_theme);
+            draw_body(ctx, coord, layer_id, shell, state, toolbar_theme, &mut result);
         },
     );
-    CloudOverlayResult { header_rect: shell.header }
+    result.header_rect = shell.header;
+    result
+}
+
+/// Scrollbar geometry shared by every `ScrollableContainer` in this file —
+/// same 8px handle + 4px padding, auto-hidden while content fits, that
+/// `chart_settings.rs` uses for its own tab bodies.
+fn scroll_config() -> ScrollableConfig {
+    ScrollableConfig {
+        scrollbar_width: 8.0,
+        scrollbar_padding: 4.0,
+        always_show_scrollbar: false,
+    }
+}
+
+/// Register the scrollbar handle (inflated ±5px on X, for a forgiving drag
+/// target) and track (for a jump-to-position click) — the same wiring every
+/// other scrollable modal in this crate uses (`chart_settings`,
+/// `user_settings`, `trading_container_modal`, ...). One
+/// `cloud_overlay:scrollbar_*` id pair regardless of which of the two views
+/// drew it, since only one is ever on screen at a time.
+fn register_scrollbar_hit_zones(
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    scroll_result: &ScrollableResult,
+) {
+    if let Some(ref hr) = scroll_result.handle_rect {
+        let inflated = WidgetRect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        coord.register_on_layer("cloud_overlay:scrollbar_handle", inflated, Sense::DRAG, layer_id);
+    }
+    if let Some(ref tr) = scroll_result.track_rect {
+        coord.register_on_layer(
+            "cloud_overlay:scrollbar_track",
+            WidgetRect::new(tr.x, tr.y, tr.width, tr.height),
+            Sense::CLICK,
+            layer_id,
+        );
+    }
 }
 
 fn draw_body(
@@ -258,105 +372,106 @@ fn draw_body(
     shell: &ModalShell,
     state: &CloudOverlayState,
     tt: &ToolbarTheme,
+    result: &mut CloudOverlayResult,
 ) {
     let x = shell.content.x;
     let y = shell.content.y;
     let w = shell.content.width;
-    let row_w = w;
+    let viewport_h = shell.content.height;
 
     match state.kind {
-        CloudOverlayKind::Download => match &state.data {
-            // Desktop build: the updater is already running against this
-            // manifest in the same process, so the overlay is a view of it.
-            CloudOverlayData::Update { phase } => {
-                draw_update_phase(ctx, coord, layer_id, x, y, row_w, phase, tt);
-            }
-            CloudOverlayData::Ready { platform, version, releases, .. } => {
-                ctx.set_font("12px sans-serif");
-                ctx.set_fill_color(&tt.item_text_muted);
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Top);
-                let cap = format!("{} — latest release v{}", platform_label(platform), version);
-                ctx.fill_text(&cap, x, y);
-
-                // Primary action: THIS visitor's own build, straight away —
-                // no dropdown, no picking a platform first.
-                draw_action_row(
-                    ctx,
-                    coord,
-                    layer_id,
-                    "cloud_overlay:download:primary",
-                    WidgetRect::new(x, y + 22.0, row_w, ROW_H - ROW_GAP),
-                    &format!("Download for {}", platform_label(platform)),
-                    tt,
-                );
-
-                ctx.set_font("11px sans-serif");
-                ctx.set_fill_color(&tt.item_text_muted);
-                let note_y = y + 22.0 + ROW_H + 6.0;
-                ctx.fill_text(
-                    "The desktop app updates itself (OTA) once installed.",
-                    x,
-                    note_y,
-                );
-
-                // The row that expands the modal into the full catalogue —
-                // every other platform's current build, then older versions.
-                let rows = release_rows(platform, releases);
-                let toggle_y = note_y + 14.0;
-                let toggle_label = if state.expanded {
-                    "Hide other platforms & versions"
-                } else {
-                    "Other platforms & versions"
-                };
-                draw_expand_row(
-                    ctx,
-                    coord,
-                    layer_id,
-                    "cloud_overlay:toggle_expand",
-                    WidgetRect::new(x, toggle_y, row_w, ROW_H - ROW_GAP),
-                    toggle_label,
+        CloudOverlayKind::Download => {
+            let drawn_h = match &state.data {
+                CloudOverlayData::Update { phase } => update_phase_h(phase),
+                CloudOverlayData::Ready { platform, releases, .. } => download_ready_height(
                     state.expanded,
-                    tt,
-                );
+                    &group_release_rows(&release_rows(platform, releases)),
+                ),
+                _ => DOWNLOAD_STATUS_H,
+            };
 
-                if state.expanded {
-                    let mut ry = toggle_y + ROW_H + 8.0;
-                    for r in rows {
-                        draw_link_row(
-                            ctx,
-                            coord,
-                            layer_id,
-                            &format!("cloud_overlay:download:release:{}:{}", r.platform, r.version),
-                            WidgetRect::new(x, ry, row_w, ROW_H - ROW_GAP),
-                            &format!(
-                                "{} — v{} — {} — {}",
-                                platform_label(&r.platform),
-                                r.version,
-                                format_file_size_mb(r.file_size),
-                                format_release_date(&r.created_at),
-                            ),
-                            Icon::CloudDownload,
-                            tt,
-                        );
-                        ry += ROW_H;
-                    }
+            // Every Download variant paints inside ONE scroll container: the
+            // clip it applies is what actually guarantees nothing paints
+            // outside the shell's content rect (the OTA/update copy was
+            // spilling past the frame's right edge and bottom before this),
+            // and the same container is what lets the expanded release
+            // catalogue scroll once it outgrows `DOWNLOAD_MAX_BODY_H`.
+            let viewport_rect = WidgetRect::new(x, y, w, viewport_h);
+            coord.register_on_layer(
+                "cloud_overlay:scroll_viewport",
+                viewport_rect,
+                Sense::SCROLL,
+                layer_id,
+            );
+            let scrollable = ScrollableContainer::new(viewport_rect, &state.scroll, Some(scroll_config()));
+            scrollable.begin(ctx);
+            let sx = x;
+            let sy = scrollable.content_y();
+            // From here the paintable width is `content_width()`, not `w` —
+            // the container clips to it, and a row laid out to the full
+            // viewport width loses its right end at that clip.
+            let sw = scrollable.content_width();
+
+            match &state.data {
+                CloudOverlayData::Update { phase } => {
+                    draw_update_phase(ctx, coord, layer_id, sx, sy, sw, phase, tt);
+                }
+                CloudOverlayData::Ready { platform, version, releases, .. } => {
+                    draw_ready_view(
+                        ctx, coord, layer_id, sx, sy, sw, state.expanded, platform, version, releases, tt,
+                    );
+                }
+                CloudOverlayData::Error { message } => {
+                    draw_status(ctx, tt, sx, sy, sw, "Failed to load release info", Some(message));
+                }
+                _ => {
+                    draw_status(ctx, tt, sx, sy, sw, "Loading release info…", None);
                 }
             }
-            CloudOverlayData::Error { message } => {
-                draw_status(ctx, tt, x, y, w, "Failed to load release info", Some(message));
-            }
-            _ => {
-                draw_status(ctx, tt, x, y, w, "Loading release info…", None);
-            }
-        },
+
+            let widget_theme = WidgetTheme::default();
+            let scroll_result = scrollable.end(ctx, drawn_h, &widget_theme);
+            result.total_content_height = Some(drawn_h);
+            result.viewport_height = Some(viewport_h);
+            result.scroll_viewport_rect = Some(viewport_rect);
+            result.scrollbar_handle_rect = scroll_result.handle_rect;
+            result.scrollbar_track_rect = scroll_result.track_rect;
+            register_scrollbar_hit_zones(coord, layer_id, &scroll_result);
+        }
 
         CloudOverlayKind::News => match &state.data {
             CloudOverlayData::News { posts } => {
                 if let Some(post) = state.selected_post.and_then(|i| posts.get(i)) {
+                    // The reading view is one post — never long enough on
+                    // its own (owner defect list names only the catalogue
+                    // and the `All` tab) to need a second scroll container;
+                    // `content_height` sizes the frame to it directly, same
+                    // as before this pass.
                     draw_news_detail(ctx, coord, layer_id, x, y, w, post, tt);
                 } else {
-                    draw_news_list(ctx, coord, layer_id, x, y, w, row_w, state.news_tab, posts, tt);
+                    let drawn_h = news_list_h(state.news_tab, posts);
+                    let viewport_rect = WidgetRect::new(x, y, w, viewport_h);
+                    coord.register_on_layer(
+                        "cloud_overlay:scroll_viewport",
+                        viewport_rect,
+                        Sense::SCROLL,
+                        layer_id,
+                    );
+                    let scrollable =
+                        ScrollableContainer::new(viewport_rect, &state.scroll, Some(scroll_config()));
+                    scrollable.begin(ctx);
+                    let sy = scrollable.content_y();
+                    let sw = scrollable.content_width();
+                    draw_news_list(ctx, coord, layer_id, x, sy, sw, sw, state.news_tab, posts, tt);
+
+                    let widget_theme = WidgetTheme::default();
+                    let scroll_result = scrollable.end(ctx, drawn_h, &widget_theme);
+                    result.total_content_height = Some(drawn_h);
+                    result.viewport_height = Some(viewport_h);
+                    result.scroll_viewport_rect = Some(viewport_rect);
+                    result.scrollbar_handle_rect = scroll_result.handle_rect;
+                    result.scrollbar_track_rect = scroll_result.track_rect;
+                    register_scrollbar_hit_zones(coord, layer_id, &scroll_result);
                 }
             }
             CloudOverlayData::Error { message } => {
@@ -377,6 +492,9 @@ fn draw_body(
 /// post rows stay `cloud_overlay:post:{i}` with `i` the row's own index into
 /// `posts` either way, so `panel_click.rs`'s `posts.get(i)` lookup for the
 /// reading view needs no change for which tab drew the row that opened it.
+/// Called with `y` already at the scroll container's own offset content
+/// position (`ScrollableContainer::content_y()`), so every row's hit zone
+/// registers at the same on-screen position it paints at.
 #[allow(clippy::too_many_arguments)]
 fn draw_news_list(
     ctx: &mut dyn RenderContext,
@@ -568,6 +686,12 @@ fn draw_news_detail(
 /// updater command; `Failed` offers a retry through the same mailbox, since
 /// re-running the install IS the retry. Everything between them is the
 /// updater working on its own — a progress line, nothing to press.
+///
+/// Every line is run through `fit_text_to_width`: this copy is fixed English
+/// text, but "fixed" never meant "short enough in every font the browser
+/// actually renders it in" — the OTA/update wording was spilling past the
+/// frame's right edge before this, and clipping it defensively (rather than
+/// trusting the string) is what `draw_status`'s error detail already did.
 #[allow(clippy::too_many_arguments)]
 fn draw_update_phase(
     ctx: &mut dyn RenderContext,
@@ -586,19 +710,31 @@ fn draw_update_phase(
 
     match phase {
         UpdateOverlayPhase::Checking => {
-            ctx.fill_text("Checking for updates…", x, y);
+            let line = crate::ui::widgets::fit_text_to_width(ctx, "Checking for updates…", row_w);
+            ctx.fill_text(&line, x, y);
         }
 
         UpdateOverlayPhase::UpToDate { version } => {
-            ctx.fill_text(&format!("You are on the latest release, v{version}."), x, y);
+            let line = crate::ui::widgets::fit_text_to_width(
+                ctx,
+                &format!("You are on the latest release, v{version}."),
+                row_w,
+            );
+            ctx.fill_text(&line, x, y);
         }
 
         UpdateOverlayPhase::Available { version, notes } => {
-            ctx.fill_text(&format!("Version {version} is available."), x, y);
+            let headline = crate::ui::widgets::fit_text_to_width(
+                ctx,
+                &format!("Version {version} is available."),
+                row_w,
+            );
+            ctx.fill_text(&headline, x, y);
             let mut ny = y + 22.0;
             ctx.set_font("12px sans-serif");
             ctx.set_fill_color(&tt.item_text);
             for line in wrap_text(notes, 62).into_iter().take(4) {
+                let line = crate::ui::widgets::fit_text_to_width(ctx, &line, row_w);
                 ctx.fill_text(&line, x, ny);
                 ny += 16.0;
             }
@@ -614,7 +750,12 @@ fn draw_update_phase(
         }
 
         UpdateOverlayPhase::Downloading { percent } => {
-            ctx.fill_text(&format!("Downloading… {percent}%"), x, y);
+            let line = crate::ui::widgets::fit_text_to_width(
+                ctx,
+                &format!("Downloading… {percent}%"),
+                row_w,
+            );
+            ctx.fill_text(&line, x, y);
             // A bar rather than a spinner: this is the one phase whose length
             // the updater actually knows.
             let track_y = y + 26.0;
@@ -625,20 +766,28 @@ fn draw_update_phase(
         }
 
         UpdateOverlayPhase::Verifying => {
-            ctx.fill_text("Verifying the download…", x, y);
+            let line = crate::ui::widgets::fit_text_to_width(ctx, "Verifying the download…", row_w);
+            ctx.fill_text(&line, x, y);
         }
 
         UpdateOverlayPhase::Installing => {
-            ctx.fill_text("Installing…", x, y);
+            let line = crate::ui::widgets::fit_text_to_width(ctx, "Installing…", row_w);
+            ctx.fill_text(&line, x, y);
         }
 
         UpdateOverlayPhase::RestartPending => {
-            ctx.fill_text("Installed. It takes effect the next time you start the app.", x, y);
+            let line = crate::ui::widgets::fit_text_to_width(
+                ctx,
+                "Installed. It takes effect the next time you start the app.",
+                row_w,
+            );
+            ctx.fill_text(&line, x, y);
         }
 
         UpdateOverlayPhase::Failed { message } => {
             ctx.set_fill_color(&tt.item_text);
-            ctx.fill_text("The update did not complete.", x, y);
+            let headline = crate::ui::widgets::fit_text_to_width(ctx, "The update did not complete.", row_w);
+            ctx.fill_text(&headline, x, y);
             ctx.set_font("11px sans-serif");
             ctx.set_fill_color(&tt.item_text_muted);
             let m = crate::ui::widgets::fit_text_to_width(ctx, message, row_w);
@@ -685,19 +834,40 @@ fn draw_action_row(
     coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
 }
 
+/// One version's block in the Download overlay's expanded release
+/// catalogue: the version string plus every entry (platform) published
+/// under it, in the same relative order `release_rows` already
+/// established.
+struct ReleaseVersionGroup<'a> {
+    version: &'a str,
+    entries: Vec<&'a CloudReleaseEntry>,
+}
+
+/// Vertical gap the version separator leaves on either side of its 1px
+/// rule — half above, half below, so adjacent blocks read as evenly spaced
+/// rather than the rule crowding one side.
+const VERSION_SEP_GAP: f64 = 8.0;
+/// Total vertical space one separator (gap + rule + gap) eats between two
+/// release blocks — `download_ready_height`'s and `draw_ready_view`'s
+/// shared unit, so the two can never disagree on how tall the expanded
+/// list actually is.
+const VERSION_SEP_H: f64 = VERSION_SEP_GAP * 2.0 + 1.0;
+
 /// Height of the Download overlay's web (`Ready`) body: caption + primary
 /// action + OTA note + the row that expands the modal, plus — only while
-/// expanded — one row per entry `release_rows` returns. Shared with
-/// `draw_body`'s own layout below so the frame and its content can never
-/// size differently (same reason `post_block_h` is shared with the News
-/// overlay above).
-fn download_ready_height(expanded: bool, list_rows: usize) -> f64 {
+/// expanded — one row per entry across every version group in `groups`,
+/// plus one `VERSION_SEP_H` separator between each pair of adjacent groups
+/// (never after the last one). Shared with `draw_ready_view`'s own layout
+/// below so the frame and its content can never size differently (same
+/// reason `post_block_h` is shared with the News overlay above).
+fn download_ready_height(expanded: bool, groups: &[ReleaseVersionGroup<'_>]) -> f64 {
     let collapsed = 22.0 + ROW_H + 20.0 + ROW_H;
-    if !expanded || list_rows == 0 {
-        collapsed
-    } else {
-        collapsed + 8.0 + list_rows as f64 * ROW_H
+    if !expanded || groups.is_empty() {
+        return collapsed;
     }
+    let rows: usize = groups.iter().map(|g| g.entries.len()).sum();
+    let separators = groups.len() - 1;
+    collapsed + 8.0 + rows as f64 * ROW_H + separators as f64 * VERSION_SEP_H
 }
 
 /// Rows for the Download overlay's expanded list: every OTHER platform's
@@ -710,6 +880,13 @@ fn download_ready_height(expanded: bool, list_rows: usize) -> f64 {
 /// (`GET /api/updates/list`, confirmed live 2026-09-03), so the first entry
 /// seen for a given platform IS that platform's current build; no separate
 /// version comparison is needed.
+///
+/// Unbounded — this used to cap itself at a fixed row count because the
+/// modal had no scrolling, and every row past that count fell off with no
+/// way to reach it. Now that `draw_body` wraps the Download view in a real
+/// `ScrollableContainer` (2026-09-04), the whole history is reachable and
+/// the cap is gone; `group_release_rows` + `draw_ready_view`'s separators
+/// are what keep a long list readable instead.
 fn release_rows<'a>(
     own_platform: &str,
     releases: &'a [CloudReleaseEntry],
@@ -726,17 +903,193 @@ fn release_rows<'a>(
             older.push(r);
         }
     }
-    // Capped, like the News overlay's own MAX_NEWS_POSTS. The modal has no
-    // scrolling: every row it holds makes the frame taller, and the release
-    // list is the one thing here that grows without bound — a year of patch
-    // releases would push the frame past the bottom of the window with no way
-    // to reach what fell off. Other platforms come first in this order, so the
-    // cap eats the oldest versions, which is the right thing to lose.
-    current
-        .into_iter()
-        .chain(older)
-        .take(MAX_RELEASE_ROWS)
-        .collect()
+    current.into_iter().chain(older).collect()
+}
+
+/// Group `rows` by version, folding every ADJACENT row that shares one into
+/// a single block — never a global regroup, since `release_rows` already
+/// orders current builds before older ones and the same version string
+/// could in principle recur on both sides of that boundary; regrouping
+/// those together would silently reorder history. The project's own
+/// release convention (`nemo/mylittlechart/CLAUDE.md`: one version ships to
+/// every platform in the same wave) means the common case is exactly what
+/// the owner asked for (2026-09-04) — one block per wave, every platform
+/// under it.
+fn group_release_rows<'a>(rows: &[&'a CloudReleaseEntry]) -> Vec<ReleaseVersionGroup<'a>> {
+    let mut groups: Vec<ReleaseVersionGroup<'a>> = Vec::new();
+    for r in rows {
+        match groups.last_mut() {
+            Some(last) if last.version == r.version.as_str() => last.entries.push(r),
+            _ => groups.push(ReleaseVersionGroup { version: r.version.as_str(), entries: vec![*r] }),
+        }
+    }
+    groups
+}
+
+/// Left inset before a release row's label — mirrors `draw_link_row`'s own
+/// `rect.x + 38.0` for its label start, so the truncation budget matches
+/// exactly what the row actually paints into.
+const RELEASE_ROW_LABEL_X: f64 = 38.0;
+/// Reserved on the right for `draw_link_row`'s trailing "opens externally"
+/// glyph (a 14px icon at `rect.right() - 26.0`) plus a little breathing
+/// room, so a full-width label never runs under it.
+const RELEASE_ROW_LABEL_TRAILING: f64 = 32.0;
+
+/// A release row's label, built with graceful degradation rather than
+/// painted past the row's width: platform + version first — the version is
+/// what a row is FOR, so it is never dropped — then, only as they fit, the
+/// size and finally the date. Matches `draw_link_row`'s own `"13px
+/// sans-serif"` font so the measurement is of what actually gets drawn. A
+/// platform label + version long enough to overflow on their own fall
+/// through to `fit_text_to_width` as the last resort, so nothing here ever
+/// paints past `max_w` regardless.
+fn release_row_label(
+    ctx: &mut dyn RenderContext,
+    platform_label: &str,
+    version: &str,
+    size: &str,
+    date: &str,
+    max_w: f64,
+) -> String {
+    ctx.set_font("13px sans-serif");
+    let full = format!("{} — v{} — {} — {}", platform_label, version, size, date);
+    if ctx.measure_text(&full) <= max_w {
+        return full;
+    }
+    let no_date = format!("{} — v{} — {}", platform_label, version, size);
+    if ctx.measure_text(&no_date) <= max_w {
+        return no_date;
+    }
+    let core = format!("{} — v{}", platform_label, version);
+    if ctx.measure_text(&core) <= max_w {
+        return core;
+    }
+    crate::ui::widgets::fit_text_to_width(ctx, &core, max_w)
+}
+
+/// The Download overlay's web (`Ready`) body: caption, primary action, OTA
+/// note, the row that expands the modal, and — while expanded — the
+/// release catalogue grouped into one block per version (owner ask,
+/// 2026-09-04) with a `tt.separator` rule between adjacent blocks. Height
+/// is `download_ready_height`'s job, not this function's — the two must
+/// never disagree, so this never recomputes what that already owns.
+#[allow(clippy::too_many_arguments)]
+fn draw_ready_view(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    expanded: bool,
+    platform: &str,
+    version: &str,
+    releases: &[CloudReleaseEntry],
+    tt: &ToolbarTheme,
+) {
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let cap = format!("{} — latest release v{}", platform_label(platform), version);
+    // Built from a server-supplied label with no length guarantee — clip it
+    // the same way `draw_status`'s error detail does, rather than let a
+    // long platform name run past the frame's right edge.
+    let cap = crate::ui::widgets::fit_text_to_width(ctx, &cap, w);
+    ctx.fill_text(&cap, x, y);
+
+    // Primary action: THIS visitor's own build, straight away — no
+    // dropdown, no picking a platform first.
+    draw_action_row(
+        ctx,
+        coord,
+        layer_id,
+        "cloud_overlay:download:primary",
+        WidgetRect::new(x, y + 22.0, w, ROW_H - ROW_GAP),
+        &format!("Download for {}", platform_label(platform)),
+        tt,
+    );
+
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&tt.item_text_muted);
+    let note_y = y + 22.0 + ROW_H + 6.0;
+    // Fixed copy, but "fixed" never meant "short enough in every font the
+    // browser actually renders it in" — clip defensively instead of
+    // trusting the string (this line was the one spilling past the frame's
+    // right edge on the live wasm build).
+    let note = crate::ui::widgets::fit_text_to_width(
+        ctx,
+        "The desktop app updates itself (OTA) once installed.",
+        w,
+    );
+    ctx.fill_text(&note, x, note_y);
+
+    // The row that expands the modal into the full catalogue — every other
+    // platform's current build, then older versions.
+    let toggle_y = note_y + 14.0;
+    let toggle_label = if expanded {
+        "Hide other platforms & versions"
+    } else {
+        "Other platforms & versions"
+    };
+    draw_expand_row(
+        ctx,
+        coord,
+        layer_id,
+        "cloud_overlay:toggle_expand",
+        WidgetRect::new(x, toggle_y, w, ROW_H - ROW_GAP),
+        toggle_label,
+        expanded,
+        tt,
+    );
+
+    if !expanded {
+        return;
+    }
+    let groups = group_release_rows(&release_rows(platform, releases));
+    if groups.is_empty() {
+        return;
+    }
+    let label_max_w = (w - RELEASE_ROW_LABEL_X - RELEASE_ROW_LABEL_TRAILING).max(0.0);
+    let mut ry = toggle_y + ROW_H + 8.0;
+    for (gi, group) in groups.iter().enumerate() {
+        for entry in &group.entries {
+            let label = release_row_label(
+                ctx,
+                platform_label(&entry.platform),
+                &entry.version,
+                &format_file_size_mb(entry.file_size),
+                format_release_date(&entry.created_at),
+                label_max_w,
+            );
+            draw_link_row(
+                ctx,
+                coord,
+                layer_id,
+                &format!("cloud_overlay:download:release:{}:{}", entry.platform, entry.version),
+                WidgetRect::new(x, ry, w, ROW_H - ROW_GAP),
+                &label,
+                Icon::CloudDownload,
+                tt,
+            );
+            ry += ROW_H;
+        }
+        // A separator between version blocks — the owner's ask (2026-09-04):
+        // the catalogue reads as one block per version, platforms under it,
+        // not a flat list. Never drawn after the LAST block, which would
+        // just be a stray line sitting above the scroll container's own
+        // bottom edge.
+        if gi + 1 < groups.len() {
+            ry += VERSION_SEP_GAP;
+            ctx.set_stroke_color(&tt.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.begin_path();
+            ctx.move_to(x, ry);
+            ctx.line_to(x + w, ry);
+            ctx.stroke();
+            ry += 1.0 + VERSION_SEP_GAP;
+        }
+    }
 }
 
 /// Human label for a platform id (`mlc_updater::platform`'s own ids) —

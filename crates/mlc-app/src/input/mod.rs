@@ -2226,6 +2226,15 @@ impl ChartApp {
             // Scrollbar handle drags — dispatched via InputCoordinator DRAG registration.
             if id.ends_with(":scrollbar_handle") {
                 let prefix = &id[..id.len() - ":scrollbar_handle".len()];
+                #[cfg(feature = "cloud")]
+                if prefix == "cloud_overlay" {
+                    self.panel_app.cloud_overlay_state.scroll.start_drag(y);
+                    // FALSE like every other modal drag here:  means "a
+                    // popup was dismissed, drop this press", and the shell
+                    // answers that by ending the drag we just started.
+                    self.ui_drag_active = true;
+                    return false;
+                }
                 let started = if prefix == "sidebar" {
                     self.sidebar_state.current_right_scroll_mut().start_drag(y);
                     true
@@ -2852,6 +2861,25 @@ impl ChartApp {
                         viewport_rect:   tt.scroll_viewport_rect,
                     };
                     let scroll_state = tags_tabs_active_scroll(&mut self.panel_app.tags_tabs_state);
+                    if try_handle_track_click(x, y, &mut [(&info, scroll_state)]) {
+                        return false;
+                    }
+                }
+            }
+            // Cloud overlay scrollbar track click (handle drag via InputCoordinator)
+            #[cfg(feature = "cloud")]
+            if self.panel_app.cloud_overlay_state.is_open {
+                if let Some(ref co) = result.cloud_overlay {
+                    use crate::scroll_dispatch::try_handle_track_click;
+                                use crate::scroll_dispatch::ScrollableInfo;
+                                let info = ScrollableInfo {
+                                    handle_rect:     co.scrollbar_handle_rect,
+                                    track_rect:      co.scrollbar_track_rect,
+                                    content_height:  co.total_content_height.unwrap_or(0.0),
+                                    viewport_height: co.viewport_height.unwrap_or(0.0),
+                                    viewport_rect:   co.scroll_viewport_rect,
+                                };
+                    let scroll_state = &mut self.panel_app.cloud_overlay_state.scroll;
                     if try_handle_track_click(x, y, &mut [(&info, scroll_state)]) {
                         return false;
                     }
@@ -4175,6 +4203,22 @@ impl ChartApp {
         }
 
         // === Scrollbar drag move ===
+        #[cfg(feature = "cloud")]
+        if self.panel_app.cloud_overlay_state.scroll.is_dragging {
+            if let Some(ref result) = self.frame_result {
+                if let Some(ref co) = result.cloud_overlay {
+                    if let Some(ref track_rect) = co.scrollbar_track_rect {
+                        self.panel_app.cloud_overlay_state.scroll.handle_drag(
+                            y,
+                            track_rect.height,
+                            co.total_content_height.unwrap_or(0.0),
+                            co.viewport_height.unwrap_or(0.0),
+                        );
+                    }
+                }
+            }
+            return;
+        }
         if self.panel_app.chart_settings_state.scroll.is_dragging {
             if let Some(ref result) = self.frame_result {
                 if let Some(ref cs) = result.chart_settings {
@@ -4941,6 +4985,15 @@ impl ChartApp {
                 // order becomes the "original" and sort mode resets to unsorted.
                 self.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
             }
+            return;
+        }
+
+        // End the cloud overlay's scrollbar drag. Same shape as tags_tabs and
+        // user_settings below — this overlay is an ordinary app modal and gets
+        // the ordinary machinery, not one of its own.
+        #[cfg(feature = "cloud")]
+        if self.panel_app.cloud_overlay_state.scroll.is_dragging {
+            self.panel_app.cloud_overlay_state.scroll.end_drag();
             return;
         }
 
@@ -6719,6 +6772,31 @@ impl ChartApp {
                                     viewport_rect:   tt.scroll_viewport_rect,
                                 };
                                 let scroll_state = tags_tabs_active_scroll(&mut self.panel_app.tags_tabs_state);
+                                let _ = try_handle_wheel(x, y, scroll_step, &mut [(&info, scroll_state)]);
+                            }
+                            return;
+                        }
+                        // The cloud overlay's own viewport — the release
+                        // catalogue and the News "All" tab both outgrow their
+                        // frame, and a scrollbar nobody can turn is a picture
+                        // of a scrollbar.
+                        #[cfg(feature = "cloud")]
+                        "cloud_overlay:scroll_viewport" => {
+                            if let Some(ref co) = self.frame_result
+                                .as_ref()
+                                .and_then(|r| r.cloud_overlay.as_ref())
+                                .cloned()
+                            {
+                                use crate::scroll_dispatch::try_handle_wheel;
+                                use crate::scroll_dispatch::ScrollableInfo;
+                                let info = ScrollableInfo {
+                                    handle_rect:     co.scrollbar_handle_rect,
+                                    track_rect:      co.scrollbar_track_rect,
+                                    content_height:  co.total_content_height.unwrap_or(0.0),
+                                    viewport_height: co.viewport_height.unwrap_or(0.0),
+                                    viewport_rect:   co.scroll_viewport_rect,
+                                };
+                                let scroll_state = &mut self.panel_app.cloud_overlay_state.scroll;
                                 let _ = try_handle_wheel(x, y, scroll_step, &mut [(&info, scroll_state)]);
                             }
                             return;
