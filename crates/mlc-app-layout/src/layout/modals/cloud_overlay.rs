@@ -233,9 +233,9 @@ fn content_height(state: &CloudOverlayState) -> f64 {
             // via `download_ready_height`/`release_rows`/`group_release_rows`
             // so the frame can never size differently from what actually
             // gets drawn into it.
-            CloudOverlayData::Ready { platform, releases, .. } => download_ready_height(
+            CloudOverlayData::Ready { releases, .. } => download_ready_height(
                 state.expanded,
-                &group_release_rows(&release_rows(platform, releases)),
+                &group_release_rows(&release_rows(releases)),
             ),
             _ => DOWNLOAD_STATUS_H,
         },
@@ -383,9 +383,9 @@ fn draw_body(
         CloudOverlayKind::Download => {
             let drawn_h = match &state.data {
                 CloudOverlayData::Update { phase } => update_phase_h(phase),
-                CloudOverlayData::Ready { platform, releases, .. } => download_ready_height(
+                CloudOverlayData::Ready { releases, .. } => download_ready_height(
                     state.expanded,
-                    &group_release_rows(&release_rows(platform, releases)),
+                    &group_release_rows(&release_rows(releases)),
                 ),
                 _ => DOWNLOAD_STATUS_H,
             };
@@ -843,15 +843,19 @@ struct ReleaseVersionGroup<'a> {
     entries: Vec<&'a CloudReleaseEntry>,
 }
 
-/// Vertical gap the version separator leaves on either side of its 1px
-/// rule — half above, half below, so adjacent blocks read as evenly spaced
-/// rather than the rule crowding one side.
+/// Vertical gap the version separator leaves above and below its label
+/// line, so adjacent blocks read as evenly spaced rather than the band
+/// crowding one side.
 const VERSION_SEP_GAP: f64 = 8.0;
-/// Total vertical space one separator (gap + rule + gap) eats between two
-/// release blocks — `download_ready_height`'s and `draw_ready_view`'s
-/// shared unit, so the two can never disagree on how tall the expanded
-/// list actually is.
-const VERSION_SEP_H: f64 = VERSION_SEP_GAP * 2.0 + 1.0;
+/// Height of the version label line inside the separator band (11px font
+/// plus slack). The band introduces the NEXT (older) block: its version on
+/// the left, a hairline filling the rest — a bare rule said nothing about
+/// which block was which (owner, 2026-09-04).
+const VERSION_SEP_LABEL_H: f64 = 14.0;
+/// Total vertical space one separator band eats between two release blocks —
+/// `download_ready_height`'s and `draw_ready_view`'s shared unit, so the two
+/// can never disagree on how tall the expanded list actually is.
+const VERSION_SEP_H: f64 = VERSION_SEP_GAP + VERSION_SEP_LABEL_H + VERSION_SEP_GAP;
 
 /// Height of the Download overlay's web (`Ready`) body: caption + primary
 /// action + OTA note + the row that expands the modal, plus — only while
@@ -870,11 +874,12 @@ fn download_ready_height(expanded: bool, groups: &[ReleaseVersionGroup<'_>]) -> 
     collapsed + 8.0 + rows as f64 * ROW_H + separators as f64 * VERSION_SEP_H
 }
 
-/// Rows for the Download overlay's expanded list: every OTHER platform's
-/// current build first, then every release that is not the newest for its
-/// own platform ("older versions" — the visitor's own platform included).
-/// The visitor's own current build is never in here — it is already the
-/// primary action row above.
+/// Rows for the Download overlay's expanded list: every platform's current
+/// build first, then every release that is not the newest for its own
+/// platform ("older versions"). The visitor's own platform is NOT excluded:
+/// its current build also sits in the primary action row above, but the
+/// owner ruled (2026-09-04) the catalogue lists the complete wave — win,
+/// both macs, linux — not the wave minus the reader.
 ///
 /// Relies on the server returning newest-first
 /// (`GET /api/updates/list`, confirmed live 2026-09-03), so the first entry
@@ -887,18 +892,13 @@ fn download_ready_height(expanded: bool, groups: &[ReleaseVersionGroup<'_>]) -> 
 /// `ScrollableContainer` (2026-09-04), the whole history is reachable and
 /// the cap is gone; `group_release_rows` + `draw_ready_view`'s separators
 /// are what keep a long list readable instead.
-fn release_rows<'a>(
-    own_platform: &str,
-    releases: &'a [CloudReleaseEntry],
-) -> Vec<&'a CloudReleaseEntry> {
+fn release_rows(releases: &[CloudReleaseEntry]) -> Vec<&CloudReleaseEntry> {
     let mut seen_platform = std::collections::HashSet::new();
     let mut current = Vec::new();
     let mut older = Vec::new();
     for r in releases {
         if seen_platform.insert(r.platform.as_str()) {
-            if r.platform != own_platform {
-                current.push(r);
-            }
+            current.push(r);
         } else {
             older.push(r);
         }
@@ -970,8 +970,9 @@ fn release_row_label(
 /// The Download overlay's web (`Ready`) body: caption, primary action, OTA
 /// note, the row that expands the modal, and — while expanded — the
 /// release catalogue grouped into one block per version (owner ask,
-/// 2026-09-04) with a `tt.separator` rule between adjacent blocks. Height
-/// is `download_ready_height`'s job, not this function's — the two must
+/// 2026-09-04) with a labelled separator band between adjacent blocks: the
+/// band names the older block it introduces. Height is
+/// `download_ready_height`'s job, not this function's — the two must
 /// never disagree, so this never recomputes what that already owns.
 #[allow(clippy::too_many_arguments)]
 fn draw_ready_view(
@@ -1046,7 +1047,7 @@ fn draw_ready_view(
     if !expanded {
         return;
     }
-    let groups = group_release_rows(&release_rows(platform, releases));
+    let groups = group_release_rows(&release_rows(releases));
     if groups.is_empty() {
         return;
     }
@@ -1074,20 +1075,29 @@ fn draw_ready_view(
             );
             ry += ROW_H;
         }
-        // A separator between version blocks — the owner's ask (2026-09-04):
-        // the catalogue reads as one block per version, platforms under it,
-        // not a flat list. Never drawn after the LAST block, which would
-        // just be a stray line sitting above the scroll container's own
-        // bottom edge.
+        // A separator band between version blocks — the owner's ask
+        // (2026-09-04): the catalogue reads as one block per version,
+        // platforms under it, not a flat list. The band names the NEXT
+        // (older) block it introduces: version label on the left, hairline
+        // filling the rest of the line. Never drawn after the LAST block,
+        // which would just be a stray label sitting above the scroll
+        // container's own bottom edge.
         if gi + 1 < groups.len() {
             ry += VERSION_SEP_GAP;
+            let label = format!("v{}", groups[gi + 1].version);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            ctx.fill_text(&label, x, ry);
+            let rule_x = x + ctx.measure_text(&label) + 8.0;
             ctx.set_stroke_color(&tt.separator);
             ctx.set_stroke_width(1.0);
             ctx.begin_path();
-            ctx.move_to(x, ry);
-            ctx.line_to(x + w, ry);
+            ctx.move_to(rule_x, ry + VERSION_SEP_LABEL_H / 2.0);
+            ctx.line_to(x + w, ry + VERSION_SEP_LABEL_H / 2.0);
             ctx.stroke();
-            ry += 1.0 + VERSION_SEP_GAP;
+            ry += VERSION_SEP_LABEL_H + VERSION_SEP_GAP;
         }
     }
 }
@@ -1255,7 +1265,8 @@ fn wrap_text(text: &str, width: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::wrap_text;
+    use super::{group_release_rows, release_rows, wrap_text};
+    use crate::ui::modal_settings::CloudReleaseEntry;
 
     /// Byte-offset slicing panics inside a multibyte char (an em-dash in a
     /// blog summary crashed the whole wasm render loop). Wrapping must hold
@@ -1266,5 +1277,51 @@ mod tests {
         let lines = wrap_text(text, 62);
         assert!(lines.len() >= 2);
         assert_eq!(lines.concat().replace(' ', ""), text.replace(' ', ""));
+    }
+
+    fn entry(platform: &str, version: &str) -> CloudReleaseEntry {
+        CloudReleaseEntry {
+            platform: platform.to_string(),
+            version: version.to_string(),
+            file_size: 1,
+            download_url: String::new(),
+            created_at: "2026-09-04T00:00:00Z".to_string(),
+        }
+    }
+
+    /// The catalogue lists the complete wave — the visitor's own platform
+    /// included. It used to drop that row ("the primary action covers it"),
+    /// and the owner read the 0.5.588 group of three as a missing binary
+    /// (2026-09-04).
+    #[test]
+    fn release_rows_keep_the_visitors_own_platform() {
+        let releases = vec![
+            entry("linux64", "0.5.588"),
+            entry("macos-x64", "0.5.588"),
+            entry("macos-arm64", "0.5.588"),
+            entry("win64", "0.5.588"),
+            entry("win64", "0.5.587"),
+        ];
+        let rows = release_rows(&releases);
+        assert_eq!(rows.len(), 5, "own platform's current build stays in the catalogue");
+        // Current builds first (newest-first server order preserved), then
+        // older ones.
+        assert_eq!(rows[4].version, "0.5.587");
+    }
+
+    /// Adjacent rows sharing a version fold into one block; the same version
+    /// on both sides of the current/older boundary stays two blocks.
+    #[test]
+    fn group_release_rows_folds_adjacent_only() {
+        let releases = vec![
+            entry("win64", "0.5.588"),
+            entry("linux64", "0.5.588"),
+            entry("win64", "0.5.587"),
+        ];
+        let groups = group_release_rows(&release_rows(&releases));
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].version, "0.5.588");
+        assert_eq!(groups[0].entries.len(), 2);
+        assert_eq!(groups[1].version, "0.5.587");
     }
 }
