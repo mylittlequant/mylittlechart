@@ -1702,7 +1702,14 @@ fn run_render_loop(
                 shell_flag || chart_flag
             };
             if pending {
-                trigger_screenshot_to_clipboard("chart");
+                // Chart-local content rect (chart open space + scales, no
+                // chrome/toolbars/sidebar) — parity with the native crop
+                // (`screenshot_rect()` / gpu_submit.rs).
+                let rect = {
+                    let st = state_clone.borrow();
+                    st.chart.screenshot_rect()
+                };
+                trigger_screenshot_to_clipboard("chart", Some(rect));
             }
         }
 
@@ -2368,23 +2375,82 @@ fn clipboard_write_text(text: &str) {
     });
 }
 
-// ─── Screenshot via canvas.toBlob → navigator.clipboard.write ────────────────
+// ─── Screenshot: chart-region crop → canvas.toBlob → destination ────────────
 
-/// Copies the current canvas contents as a PNG to the OS clipboard.
+/// Produces a PNG `Blob` of the chart region and hands it to `consumer`.
 ///
-/// Flow: `canvas.to_blob_with_type("image/png")` → callback receives `Blob` →
-/// `ClipboardItem({"image/png": blob})` → `navigator.clipboard.write([item])`.
+/// `rect_css` is the chart-local content rect (`ChartApp::screenshot_rect()`)
+/// in css px; the chart is painted translated down by `CHROME_HEIGHT` and the
+/// canvas backing store is physical px (`css * dpr`), so the source rect is
+/// `(x*dpr, (y+CHROME_HEIGHT)*dpr, w*dpr, h*dpr)` clamped to the canvas.
+/// Cropping goes through a temp canvas + `drawImage` (native does a GPU
+/// readback crop in `mlc-app-shell-vello/src/screenshot.rs` — this is the
+/// canvas2d parity of it).  `rect_css = None` captures the whole canvas.
 ///
-/// The `Closure` is stored in an `Rc<RefCell<Option<…>>>` so the JS GC cannot
-/// collect it before the callback fires, then it self-destructs.
+/// The toBlob `Closure` is stored in an `Rc<RefCell<Option<…>>>` so the JS GC
+/// cannot collect it before the callback fires, then it self-destructs.
 #[cfg(target_arch = "wasm32")]
-fn trigger_screenshot_to_clipboard(canvas_id: &str) {
+fn screenshot_region_blob(
+    canvas_id: &str,
+    rect_css: Option<(u32, u32, u32, u32)>,
+    consumer: impl FnOnce(web_sys::Blob) + 'static,
+) {
     use wasm_bindgen::JsCast;
 
-    let canvas = match get_canvas(canvas_id) {
-        Some(c) => c,
-        None => {
-            web_sys::console::warn_1(&"[screenshot] canvas not found".into());
+    let result: Result<web_sys::HtmlCanvasElement, JsValue> = (|| {
+        let canvas = get_canvas(canvas_id)
+            .ok_or_else(|| JsValue::from_str("canvas not found"))?;
+        let Some((rx, ry, rw, rh)) = rect_css else {
+            return Ok(canvas);
+        };
+        if rw == 0 || rh == 0 {
+            return Err(JsValue::from_str("empty crop rect"));
+        }
+        let win = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
+        let dpr = win.device_pixel_ratio();
+        let cw = canvas.width();
+        let ch = canvas.height();
+        // Chart-local css px → physical source rect (chart is painted
+        // translated by CHROME_HEIGHT, see render_frame).
+        let sx = ((rx as f64) * dpr) as u32;
+        let sy = ((ry as f64 + CHROME_HEIGHT) * dpr) as u32;
+        let sw = ((rw as f64) * dpr) as u32;
+        let sh = ((rh as f64) * dpr) as u32;
+        // Clamp to the canvas (mirrors the native crop clamp discipline).
+        if sx >= cw || sy >= ch {
+            return Err(JsValue::from_str("crop rect outside canvas"));
+        }
+        let sw = sw.min(cw - sx);
+        let sh = sh.min(ch - sy);
+
+        let doc = win.document().ok_or_else(|| JsValue::from_str("no document"))?;
+        let tmp = doc
+            .create_element("canvas")?
+            .dyn_into::<web_sys::HtmlCanvasElement>()?;
+        tmp.set_width(sw);
+        tmp.set_height(sh);
+        let tctx = tmp
+            .get_context("2d")?
+            .ok_or_else(|| JsValue::from_str("no 2d context"))?
+            .dyn_into::<web_sys::CanvasRenderingContext2d>()?;
+        tctx.draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+            &canvas,
+            sx as f64,
+            sy as f64,
+            sw as f64,
+            sh as f64,
+            0.0,
+            0.0,
+            sw as f64,
+            sh as f64,
+        )?;
+        Ok(tmp)
+    })();
+
+    let source = match result {
+        Ok(c) => c,
+        Err(e) => {
+            web_sys::console::error_1(&format!("[screenshot] crop failed: {:?}", e).into());
             return;
         }
     };
@@ -2396,7 +2462,34 @@ fn trigger_screenshot_to_clipboard(canvas_id: &str) {
 
     let cb = Closure::once(move |blob: web_sys::Blob| {
         let _ = closure_slot_inner.borrow_mut().take();
+        consumer(blob);
+    });
 
+    *closure_slot.borrow_mut() = Some(cb);
+
+    let cb_ref = closure_slot
+        .borrow()
+        .as_ref()
+        .map(|c| c.as_ref().unchecked_ref::<js_sys::Function>().clone());
+
+    if let Some(cb_fn) = cb_ref {
+        if let Err(e) = source.to_blob_with_type(&cb_fn, "image/png") {
+            web_sys::console::error_1(
+                &format!("[screenshot] to_blob_with_type failed: {:?}", e).into(),
+            );
+            let _ = closure_slot.borrow_mut().take();
+        }
+    }
+}
+
+/// Copies the current chart region (open space + scales, no chrome/toolbars/
+/// sidebar — parity with the native crop) as a PNG to the OS clipboard.
+///
+/// Flow: `screenshot_region_blob` → `ClipboardItem({"image/png": blob})` →
+/// `navigator.clipboard.write([item])`.
+#[cfg(target_arch = "wasm32")]
+fn trigger_screenshot_to_clipboard(canvas_id: &str, rect_css: Option<(u32, u32, u32, u32)>) {
+    screenshot_region_blob(canvas_id, rect_css, |blob| {
         let result: Result<(), JsValue> = (|| {
             // Build ClipboardItem: { "image/png": blob }
             let record = js_sys::Object::new();
@@ -2429,20 +2522,4 @@ fn trigger_screenshot_to_clipboard(canvas_id: &str) {
             );
         }
     });
-
-    *closure_slot.borrow_mut() = Some(cb);
-
-    let cb_ref = closure_slot
-        .borrow()
-        .as_ref()
-        .map(|c| c.as_ref().unchecked_ref::<js_sys::Function>().clone());
-
-    if let Some(cb_fn) = cb_ref {
-        if let Err(e) = canvas.to_blob_with_type(&cb_fn, "image/png") {
-            web_sys::console::error_1(
-                &format!("[screenshot] to_blob_with_type failed: {:?}", e).into(),
-            );
-            let _ = closure_slot.borrow_mut().take();
-        }
-    }
 }
