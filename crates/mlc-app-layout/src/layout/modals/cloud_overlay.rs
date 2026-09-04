@@ -843,16 +843,16 @@ struct ReleaseVersionGroup<'a> {
     entries: Vec<&'a CloudReleaseEntry>,
 }
 
-/// Vertical gap the version separator leaves above and below its label
-/// line, so adjacent blocks read as evenly spaced rather than the band
-/// crowding one side.
+/// Vertical gap a group header band leaves above and below its label line,
+/// so blocks read as evenly spaced rather than the band crowding one side.
 const VERSION_SEP_GAP: f64 = 8.0;
-/// Height of the version label line inside the separator band (11px font
-/// plus slack). The band introduces the NEXT (older) block: its version on
-/// the left, a hairline filling the rest — a bare rule said nothing about
-/// which block was which (owner, 2026-09-04).
+/// Height of the version label line inside a group header band (11px font
+/// plus slack). EVERY group gets the band above it — first included: the
+/// band carries the block's version and date on the left, a hairline
+/// filling the rest, so no block in the catalogue is an unlabeled orphan
+/// (owner, 2026-09-04).
 const VERSION_SEP_LABEL_H: f64 = 14.0;
-/// Total vertical space one separator band eats between two release blocks —
+/// Total vertical space one group header band eats above its release block —
 /// `download_ready_height`'s and `draw_ready_view`'s shared unit, so the two
 /// can never disagree on how tall the expanded list actually is.
 const VERSION_SEP_H: f64 = VERSION_SEP_GAP + VERSION_SEP_LABEL_H + VERSION_SEP_GAP;
@@ -860,8 +860,8 @@ const VERSION_SEP_H: f64 = VERSION_SEP_GAP + VERSION_SEP_LABEL_H + VERSION_SEP_G
 /// Height of the Download overlay's web (`Ready`) body: caption + primary
 /// action + OTA note + the row that expands the modal, plus — only while
 /// expanded — one row per entry across every version group in `groups`,
-/// plus one `VERSION_SEP_H` separator between each pair of adjacent groups
-/// (never after the last one). Shared with `draw_ready_view`'s own layout
+/// plus one `VERSION_SEP_H` header band per group (every group is headed,
+/// the first one too). Shared with `draw_ready_view`'s own layout
 /// below so the frame and its content can never size differently (same
 /// reason `post_block_h` is shared with the News overlay above).
 fn download_ready_height(expanded: bool, groups: &[ReleaseVersionGroup<'_>]) -> f64 {
@@ -870,8 +870,7 @@ fn download_ready_height(expanded: bool, groups: &[ReleaseVersionGroup<'_>]) -> 
         return collapsed;
     }
     let rows: usize = groups.iter().map(|g| g.entries.len()).sum();
-    let separators = groups.len() - 1;
-    collapsed + 8.0 + rows as f64 * ROW_H + separators as f64 * VERSION_SEP_H
+    collapsed + 8.0 + rows as f64 * ROW_H + groups.len() as f64 * VERSION_SEP_H
 }
 
 /// Rows for the Download overlay's expanded list: every platform's current
@@ -890,7 +889,7 @@ fn download_ready_height(expanded: bool, groups: &[ReleaseVersionGroup<'_>]) -> 
 /// modal had no scrolling, and every row past that count fell off with no
 /// way to reach it. Now that `draw_body` wraps the Download view in a real
 /// `ScrollableContainer` (2026-09-04), the whole history is reachable and
-/// the cap is gone; `group_release_rows` + `draw_ready_view`'s separators
+/// the cap is gone; `group_release_rows` + `draw_ready_view`'s header bands
 /// are what keep a long list readable instead.
 fn release_rows(releases: &[CloudReleaseEntry]) -> Vec<&CloudReleaseEntry> {
     let mut seen_platform = std::collections::HashSet::new();
@@ -935,43 +934,33 @@ const RELEASE_ROW_LABEL_X: f64 = 38.0;
 /// room, so a full-width label never runs under it.
 const RELEASE_ROW_LABEL_TRAILING: f64 = 32.0;
 
-/// A release row's label, built with graceful degradation rather than
-/// painted past the row's width: platform + version first — the version is
-/// what a row is FOR, so it is never dropped — then, only as they fit, the
-/// size and finally the date. Matches `draw_link_row`'s own `"13px
-/// sans-serif"` font so the measurement is of what actually gets drawn. A
-/// platform label + version long enough to overflow on their own fall
-/// through to `fit_text_to_width` as the last resort, so nothing here ever
-/// paints past `max_w` regardless.
+/// A release row's label: platform + size, nothing else. The version and
+/// the date live in the group header band above the block — repeating them
+/// in every row is noise under a labelled group (owner, 2026-09-04). Falls
+/// back to `fit_text_to_width` if even platform + size overflows, so
+/// nothing ever paints past `max_w`. Matches `draw_link_row`'s own
+/// `"13px sans-serif"` font so the measurement is of what actually gets
+/// drawn.
 fn release_row_label(
     ctx: &mut dyn RenderContext,
     platform_label: &str,
-    version: &str,
     size: &str,
-    date: &str,
     max_w: f64,
 ) -> String {
     ctx.set_font("13px sans-serif");
-    let full = format!("{} — v{} — {} — {}", platform_label, version, size, date);
+    let full = format!("{} — {}", platform_label, size);
     if ctx.measure_text(&full) <= max_w {
         return full;
     }
-    let no_date = format!("{} — v{} — {}", platform_label, version, size);
-    if ctx.measure_text(&no_date) <= max_w {
-        return no_date;
-    }
-    let core = format!("{} — v{}", platform_label, version);
-    if ctx.measure_text(&core) <= max_w {
-        return core;
-    }
-    crate::ui::widgets::fit_text_to_width(ctx, &core, max_w)
+    crate::ui::widgets::fit_text_to_width(ctx, &full, max_w)
 }
 
 /// The Download overlay's web (`Ready`) body: caption, primary action, OTA
 /// note, the row that expands the modal, and — while expanded — the
 /// release catalogue grouped into one block per version (owner ask,
-/// 2026-09-04) with a labelled separator band between adjacent blocks: the
-/// band names the older block it introduces. Height is
+/// 2026-09-04) with a labelled header band above EVERY block — version and
+/// date on the left, hairline right; rows under it carry platform and size
+/// only. Height is
 /// `download_ready_height`'s job, not this function's — the two must
 /// never disagree, so this never recomputes what that already owns.
 #[allow(clippy::too_many_arguments)]
@@ -1053,14 +1042,37 @@ fn draw_ready_view(
     }
     let label_max_w = (w - RELEASE_ROW_LABEL_X - RELEASE_ROW_LABEL_TRAILING).max(0.0);
     let mut ry = toggle_y + ROW_H + 8.0;
-    for (gi, group) in groups.iter().enumerate() {
+    for group in groups.iter() {
+        // A header band above EVERY version block, the first included — an
+        // unlabeled first block read as an orphan next to the labelled
+        // older ones (owner, 2026-09-04). Version + date on the left,
+        // hairline filling the rest of the line; the rows below then carry
+        // only platform and size, because a labelled group makes repeating
+        // the version in every row pure noise.
+        ry += VERSION_SEP_GAP;
+        let header = format!(
+            "v{} — {}",
+            group.version,
+            format_release_date(&group.entries[0].created_at)
+        );
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(&header, x, ry);
+        let rule_x = x + ctx.measure_text(&header) + 8.0;
+        ctx.set_stroke_color(&tt.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(rule_x, ry + VERSION_SEP_LABEL_H / 2.0);
+        ctx.line_to(x + w, ry + VERSION_SEP_LABEL_H / 2.0);
+        ctx.stroke();
+        ry += VERSION_SEP_LABEL_H + VERSION_SEP_GAP;
         for entry in &group.entries {
             let label = release_row_label(
                 ctx,
                 platform_label(&entry.platform),
-                &entry.version,
                 &format_file_size_mb(entry.file_size),
-                format_release_date(&entry.created_at),
                 label_max_w,
             );
             draw_link_row(
@@ -1074,30 +1086,6 @@ fn draw_ready_view(
                 tt,
             );
             ry += ROW_H;
-        }
-        // A separator band between version blocks — the owner's ask
-        // (2026-09-04): the catalogue reads as one block per version,
-        // platforms under it, not a flat list. The band names the NEXT
-        // (older) block it introduces: version label on the left, hairline
-        // filling the rest of the line. Never drawn after the LAST block,
-        // which would just be a stray label sitting above the scroll
-        // container's own bottom edge.
-        if gi + 1 < groups.len() {
-            ry += VERSION_SEP_GAP;
-            let label = format!("v{}", groups[gi + 1].version);
-            ctx.set_font("11px sans-serif");
-            ctx.set_fill_color(&tt.item_text_muted);
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Top);
-            ctx.fill_text(&label, x, ry);
-            let rule_x = x + ctx.measure_text(&label) + 8.0;
-            ctx.set_stroke_color(&tt.separator);
-            ctx.set_stroke_width(1.0);
-            ctx.begin_path();
-            ctx.move_to(rule_x, ry + VERSION_SEP_LABEL_H / 2.0);
-            ctx.line_to(x + w, ry + VERSION_SEP_LABEL_H / 2.0);
-            ctx.stroke();
-            ry += VERSION_SEP_LABEL_H + VERSION_SEP_GAP;
         }
     }
 }
