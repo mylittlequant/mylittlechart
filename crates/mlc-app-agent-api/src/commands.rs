@@ -6,11 +6,27 @@
 
 use std::sync::Arc;
 
+use rand::rngs::OsRng;
+use rand::RngCore;
+
+use mlc_backend_shell_http::auth::{agent_keys_paths, AgentKeyRecord};
 use mlc_backend_shell_http::AgentState;
 use mlc_backend_shell_http::state::AgentCommand;
 use mlc_backend_indicator_engine::IndicatorParamValue;
 
 use crate::host::AgentHost;
+
+/// Milliseconds since the Unix epoch — used only to timestamp a freshly
+/// minted [`AgentKeyRecord`]. Plain `std::time::SystemTime`, not
+/// `web_time`: this crate is never compiled for wasm32 (see the crate doc /
+/// `mlc-app-shell-web`'s Cargo.toml — the Agent API is native/headless
+/// only today).
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 /// Drain agent commands pushed by HTTP handlers and apply them to the chart
 /// state held by `host`. Call this once per tick / frame.
@@ -313,12 +329,84 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                 host.request_screenshot(&window_id, chart_id, response_tx);
             }
 
-            AgentCommand::CreateKey { label, tier } => {
-                eprintln!("[AgentCommand] CreateKey ignored (auth removed): label={}, tier={}", label, tier);
+            // Mint: refuse while the vault is sealed (same gate
+            // `credentials.rs`'s "+ Add key" uses) — a key generated with no
+            // `VaultKey` to encrypt the sidecar under would have nowhere
+            // durable to live and would vanish on the next unlock's
+            // `agent_keys.enc` reload. See `auth.rs`'s module doc for the
+            // sidecar's storage shape.
+            AgentCommand::CreateKey { label, tier, role } => {
+                let Some(core) = agent_state.core() else {
+                    eprintln!("[AgentCommand] CreateKey: no backend core attached, refusing '{}'", label);
+                    continue;
+                };
+                let Some(vault_key) = core.user().vault_key() else {
+                    eprintln!("[AgentCommand] CreateKey: vault is sealed, refusing to mint '{}'", label);
+                    continue;
+                };
+
+                let mut raw_key = [0u8; 32];
+                OsRng.fill_bytes(&mut raw_key);
+                let raw_key_hex = hex::encode(raw_key);
+                let fingerprint_hex = hex::encode(mlc_vault::crypto::fingerprint_sha256(&raw_key));
+
+                let dir = mlc_core::active_profile_data_dir();
+                let (_salt_path, vault_path) = agent_keys_paths(&dir);
+                let mut records: Vec<AgentKeyRecord> =
+                    mlc_vault::load_encrypted(&vault_key, &vault_path).unwrap_or_default();
+                records.push(AgentKeyRecord {
+                    fingerprint_hex,
+                    label: label.clone(),
+                    tier,
+                    role,
+                    created_at_ms: now_ms(),
+                });
+
+                if let Err(e) = mlc_vault::save_encrypted(&vault_key, &vault_path, &records) {
+                    eprintln!("[AgentCommand] CreateKey: failed to save agent_keys.enc: {}", e);
+                    continue;
+                }
+                if let Err(e) = agent_state.agent_key_store.unlock_with_key(&vault_key) {
+                    eprintln!("[AgentCommand] CreateKey: minted '{}' but failed to refresh the RAM store: {}", label, e);
+                    continue;
+                }
+                agent_state.set_last_minted_key(raw_key_hex);
+                eprintln!("[AgentCommand] CreateKey: minted '{}' (tier={:?}, role={:?})", label, tier, role);
             }
 
-            AgentCommand::DeleteKey { label } => {
-                eprintln!("[AgentCommand] DeleteKey ignored (auth removed): label={}", label);
+            // Revoke: same load/remove/save/`unlock_with_key` dance as
+            // mint, keyed by fingerprint rather than label (see the
+            // `AgentCommand::DeleteKey` field doc).
+            AgentCommand::DeleteKey { fingerprint_hex } => {
+                let Some(core) = agent_state.core() else {
+                    eprintln!("[AgentCommand] DeleteKey: no backend core attached, refusing '{}'", fingerprint_hex);
+                    continue;
+                };
+                let Some(vault_key) = core.user().vault_key() else {
+                    eprintln!("[AgentCommand] DeleteKey: vault is sealed, refusing to revoke '{}'", fingerprint_hex);
+                    continue;
+                };
+
+                let dir = mlc_core::active_profile_data_dir();
+                let (_salt_path, vault_path) = agent_keys_paths(&dir);
+                let mut records: Vec<AgentKeyRecord> =
+                    mlc_vault::load_encrypted(&vault_key, &vault_path).unwrap_or_default();
+                let before = records.len();
+                records.retain(|r| r.fingerprint_hex != fingerprint_hex);
+                if records.len() == before {
+                    eprintln!("[AgentCommand] DeleteKey: no key found with fingerprint '{}'", fingerprint_hex);
+                    continue;
+                }
+
+                if let Err(e) = mlc_vault::save_encrypted(&vault_key, &vault_path, &records) {
+                    eprintln!("[AgentCommand] DeleteKey: failed to save agent_keys.enc: {}", e);
+                    continue;
+                }
+                if let Err(e) = agent_state.agent_key_store.unlock_with_key(&vault_key) {
+                    eprintln!("[AgentCommand] DeleteKey: revoked '{}' but failed to refresh the RAM store: {}", fingerprint_hex, e);
+                    continue;
+                }
+                eprintln!("[AgentCommand] DeleteKey: revoked '{}'", fingerprint_hex);
             }
 
             // ── UI test hooks (Phase 7 — admin-tier automation) ────────

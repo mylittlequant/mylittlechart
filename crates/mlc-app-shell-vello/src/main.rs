@@ -3499,10 +3499,21 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         {
             let create_req: Option<(String, String)> = self.windows.values_mut()
                 .find_map(|pw| pw.chart.key_create_request.take());
-            if let Some((label, tier)) = create_req {
+            if let Some((label, _tier)) = create_req {
                 if let Some(ref agent_state) = self.agent_state {
+                    use mlc_backend_shell_http::auth::{AgentKeyRole, Tier};
                     use mlc_backend_shell_http::state::AgentCommand;
-                    agent_state.push_command(AgentCommand::CreateKey { label, tier });
+                    // No tier/role picker is wired into the UI yet (piece 4
+                    // owns `render_server_tab`'s key-manager rebuild) —
+                    // every route is gated at `Tier::SignedIn` today (plan
+                    // §2), and a key minted with no role picker defaults to
+                    // the more capable `Control` rather than silently
+                    // handing out a read-only key nobody asked for.
+                    agent_state.push_command(AgentCommand::CreateKey {
+                        label,
+                        tier: Tier::SignedIn,
+                        role: AgentKeyRole::Control,
+                    });
                 }
             }
         }
@@ -3511,10 +3522,15 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         {
             let delete_req: Option<String> = self.windows.values_mut()
                 .find_map(|pw| pw.chart.key_delete_request.take());
-            if let Some(label) = delete_req {
+            if let Some(fingerprint_hex) = delete_req {
                 if let Some(ref agent_state) = self.agent_state {
                     use mlc_backend_shell_http::state::AgentCommand;
-                    agent_state.push_command(AgentCommand::DeleteKey { label });
+                    // `key_delete_request` still carries the pre-auth
+                    // "label to delete" shape — no key-manager UI stages it
+                    // yet (see the field's own doc in `mlc-app`). Piece 4's
+                    // list-backed UI rebuild is what starts staging a real
+                    // fingerprint here.
+                    agent_state.push_command(AgentCommand::DeleteKey { fingerprint_hex });
                 }
             }
         }

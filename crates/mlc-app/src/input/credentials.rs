@@ -151,11 +151,36 @@ impl ChartApp {
         self.input_coordinator.borrow_mut().text_fields_mut().set_text(&wid, &webhook_url);
     }
 
+    /// Seal the wired agent-key `SecretStore` (if the host set one via
+    /// [`ChartApp::set_agent_key_store`]) — the counterpart of
+    /// [`Self::sync_agent_key_store`], called from every path that seals
+    /// the main vault so the Agent API's key store never outlives it.
+    fn seal_agent_key_store(&self) {
+        if let Some(store) = &self.agent_key_store {
+            store.seal();
+        }
+    }
+
+    /// Refresh the wired agent-key `SecretStore` (if any) off the SAME
+    /// `VaultKey` that just unlocked the main vault — called from every
+    /// path that derives or restores one (`finish_credentials_unlock`,
+    /// `apply_vault_setup`'s fresh-setup branch, `apply_recovery_unlock`).
+    /// `unlock_with_key` skips PBKDF2 entirely (the render thread already
+    /// holds the derived key here, never a passphrase to re-derive from).
+    fn sync_agent_key_store(&self, vault_key: &mlc_vault::vault::VaultKey) {
+        if let Some(store) = &self.agent_key_store {
+            if let Err(e) = store.unlock_with_key(vault_key) {
+                eprintln!("[ChartApp] agent key store: failed to unlock alongside vault: {}", e);
+            }
+        }
+    }
+
     /// Seal the vault deliberately (the "Lock" button) — the counterpart a
     /// user must have alongside "Unlock" per the owner's ask, since until
     /// now there was only ever unlock.
     fn lock_vault(&mut self) {
         self.core.user_mut().seal_vault();
+        self.seal_agent_key_store();
 
         // The alert-settings mirror holds its own copy of the same secrets
         // (telegram bot token, webhook url) — sealing must wipe it too, and
@@ -339,6 +364,7 @@ impl ChartApp {
     /// (`List` or `AddKey`) that asked for the unlock.
     fn finish_credentials_unlock(&mut self, key: mlc_vault::vault::VaultKey, secrets: mlc_core::user_profile::VaultSecrets) {
         self.core.user_mut().unseal_vault(key, secrets);
+        self.sync_agent_key_store(&key);
 
         let (notification_secrets, bot_token) = {
             let user = self.core.user();
@@ -523,6 +549,9 @@ impl ChartApp {
             // Re-validating an existing vault is exactly what the
             // credentials-modal reseal command already does — reuse it
             // rather than re-deriving/decrypting a second time in this file.
+            // `try_unlock_credentials` → `finish_credentials_unlock` already
+            // syncs the agent-key store off this same key on success, so
+            // this branch does not need its own `sync_agent_key_store` call.
             return match self.try_unlock_credentials(passphrase) {
                 Ok(()) => {
                     if let Some(key) = self.core.user().vault_key() {
@@ -539,6 +568,7 @@ impl ChartApp {
             Ok(key) => {
                 self.core.user_mut().set_vault_key(Some(key));
                 self.core.templates_mut().set_vault_key(Some(key));
+                self.sync_agent_key_store(&key);
                 // The whole point of this call: a vault key now exists but
                 // `vault.enc` itself does not yet — nothing else about this
                 // profile changed, so nothing else would mark it dirty.
@@ -621,6 +651,7 @@ impl ChartApp {
         .map_err(|e| format!("Recovered key did not decrypt the vault: {}", e))?;
 
         self.core.user_mut().unseal_vault(vault_key, secrets);
+        self.sync_agent_key_store(&vault_key);
         profile_manager.set_vault_key(vault_key);
         self.panel_app.user_settings_state.needs_vault_unlock = false;
         Ok(())
@@ -639,6 +670,16 @@ impl ChartApp {
     /// Returns the new formatted recovery key on success — the caller must
     /// show it once (`ProfileManagerPage::ShowRecoveryKey` or
     /// `CredentialsView::ShowRecoveryKey`, same host test as above).
+    ///
+    /// Deliberately does NOT touch `agent_key_store` — out of scope for the
+    /// agent-api-auth plan's four named seal/unlock call-outs. `rekey_vault`
+    /// re-encrypts `vault.enc` under a brand-new `VaultKey`, but
+    /// `agent_keys.enc` stays encrypted under the OLD one until something
+    /// re-derives it: any agent key minted before a re-key survives on disk
+    /// but goes unreadable by `agent_key_store` (and by the render thread's
+    /// own load-append-save mint/revoke path) until the next full unlock
+    /// re-syncs it. Re-encrypting the sidecar here too is a follow-up, not
+    /// this piece's job.
     pub fn apply_new_passphrase(
         &mut self,
         new_passphrase: &str,

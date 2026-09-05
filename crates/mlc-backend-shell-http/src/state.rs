@@ -5,12 +5,17 @@
 //! HTTP handlers read them via `RwLock`.
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use mlc_backend::BackendCore;
 use mlc_backend_data_bridge::DataBridge;
+use mlc_vault::{SecretStore, Sealed};
+
+use crate::auth::{AgentKeyRecord, AgentKeyRole, Tier};
 
 // ===========================================================================
 // AgentState — root shared state
@@ -72,11 +77,63 @@ pub struct AgentState {
     /// any consumer attaches a backend, and we want a single shared state
     /// instance to hold the backend after `attach_core` is called once.
     pub core: Mutex<Option<Arc<BackendCore>>>,
+
+    /// RAM-only, TTL-bounded holder for the decrypted `agent_keys.enc`
+    /// sidecar — the source of truth `auth::auth_middleware` checks every
+    /// Bearer token against. `24h` absolute TTL, no idle TTL (see
+    /// `mlc_vault::store` — an agent key store must not die from inactivity
+    /// between infrequent API calls, only from being unattended too long).
+    ///
+    /// [`Self::new`] wires a placeholder store bound to empty paths, which
+    /// is permanently sealed (nothing ever calls `unlock`/`unlock_with_key`
+    /// on it) — every request answers `423` until the host builds a real
+    /// one on the profile's sidecar paths and passes it to
+    /// [`Self::with_agent_key_store`]. Kept this way (rather than making the
+    /// field `Option`) so `auth_middleware`'s signature never has to handle
+    /// "no store configured" as a state distinct from "sealed".
+    pub agent_key_store: Arc<SecretStore>,
+
+    /// The most recently minted raw agent key, waiting for its one-time
+    /// display in the UI's key-manager reveal box. Set by the render
+    /// thread's `CreateKey` handling (`mlc-app-agent-api`), drained by
+    /// [`Self::take_last_minted_key`].
+    last_minted_key: Mutex<Option<String>>,
 }
 
 impl AgentState {
     /// Create a new [`AgentState`] wrapping the given bridge.
+    ///
+    /// Wires a permanently-sealed placeholder [`SecretStore`] as
+    /// `agent_key_store` — every Agent API request answers `423` until the
+    /// host instead calls [`Self::with_agent_key_store`] with a store bound
+    /// to the profile's real `agent_keys.enc` sidecar. Kept as a 2-argument
+    /// constructor so existing callers built against the pre-auth
+    /// `AgentState` keep compiling unchanged.
     pub fn new(bridge: Arc<DataBridge>, version: impl Into<String>) -> Self {
+        Self::with_agent_key_store(
+            bridge,
+            version,
+            Arc::new(SecretStore::with_ttls(
+                PathBuf::new(),
+                PathBuf::new(),
+                None,
+                Duration::from_secs(24 * 60 * 60),
+            )),
+        )
+    }
+
+    /// Create a new [`AgentState`] with an already-built agent-key
+    /// [`SecretStore`] — the host constructs this bound to
+    /// `active_profile_data_dir().join("agent_keys.enc")` (and the
+    /// matching `salt.hex`) via `SecretStore::with_ttls(.., None,
+    /// Duration::from_secs(24 * 3600))`; this crate does not know the
+    /// profile directory layout, so it takes the store rather than the
+    /// paths.
+    pub fn with_agent_key_store(
+        bridge: Arc<DataBridge>,
+        version: impl Into<String>,
+        agent_key_store: Arc<SecretStore>,
+    ) -> Self {
         Self {
             bridge,
             indicator_snapshot: RwLock::new(IndicatorSnapshot::default()),
@@ -91,7 +148,34 @@ impl AgentState {
             last_agent_access_ms: AtomicU64::new(0),
             version: version.into(),
             core: Mutex::new(None),
+            agent_key_store,
+            last_minted_key: Mutex::new(None),
         }
+    }
+
+    /// Drain the most recently minted raw agent key, if one is pending
+    /// display. Surfaces the raw key exactly once — the UI's one-time
+    /// reveal box drains it on the next frame and never sees it again.
+    pub fn take_last_minted_key(&self) -> Option<String> {
+        self.last_minted_key.lock().ok().and_then(|mut g| g.take())
+    }
+
+    /// Stash a freshly minted raw agent key for
+    /// [`Self::take_last_minted_key`] to drain once. Called by the render
+    /// thread right after generating the key (`CreateKey` handling in
+    /// `mlc-app-agent-api`).
+    pub fn set_last_minted_key(&self, raw_key: String) {
+        if let Ok(mut g) = self.last_minted_key.lock() {
+            *g = Some(raw_key);
+        }
+    }
+
+    /// List the minted agent keys' public records (never the raw key), or
+    /// [`Sealed`] while `agent_key_store` is locked — the UI's key-manager
+    /// panel shows "unlock to manage keys" on that.
+    pub fn list_keys(&self) -> Result<Vec<AgentKeyRecord>, Sealed> {
+        let bytes = self.agent_key_store.get()?;
+        Ok(crate::auth::parse_key_records(&bytes))
     }
 
     /// Attach a `BackendCore` so the `/v1/apps` routes can resolve. Call
@@ -399,21 +483,28 @@ pub enum AgentCommand {
     },
 
     // -- Key management (UI-initiated) --
-    /// Create a new managed API key with the given label and tier.
+    /// Create a new managed API key with the given label, tier and role.
     ///
-    /// Pushed by the UI key manager "Create" button.  The render thread
-    /// generates the raw key, calls `agent_state.add_key()`, and stores the
-    /// raw key in `UserSettingsState.last_created_key` for the one-time
-    /// display box.
+    /// Pushed by the UI key manager "Create" button. The render thread
+    /// (`mlc-app-agent-api`) generates 32 random bytes, fingerprints them,
+    /// appends an `AgentKeyRecord` to the `agent_keys.enc` sidecar under the
+    /// retained `VaultKey`, calls `agent_key_store.unlock_with_key` to
+    /// refresh the HTTP-facing RAM copy, then calls
+    /// [`AgentState::set_last_minted_key`] so the UI's one-time reveal box
+    /// can pick up the raw key.
     CreateKey {
         label: String,
-        tier: String,
+        tier: Tier,
+        role: AgentKeyRole,
     },
-    /// Delete all managed API keys whose label matches `label`.
+    /// Revoke the managed agent key with the given fingerprint.
     ///
-    /// Pushed by the UI key manager delete [X] button.
+    /// Pushed by the UI key manager delete [X] button. Keyed by
+    /// `fingerprint_hex` rather than label — labels are not required to be
+    /// unique, fingerprints are (short of two callers minting the exact
+    /// same 32 random bytes).
     DeleteKey {
-        label: String,
+        fingerprint_hex: String,
     },
 
     // -- UI test hooks (Phase 7 — admin-tier automation, owner ruling

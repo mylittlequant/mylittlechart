@@ -15,10 +15,23 @@ serde_json = "1"
 tower-http = { version = "0.5", features = ["cors"] }
 base64 = "0.22"
 socket2 = "0.5"
+# Hex-encode the SHA-256 agent-key fingerprint for storage/comparison in
+# `AgentKeyRecord::fingerprint_hex` (auth.rs).
+hex.workspace = true
 
 # Workspace path dependencies
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 mlc-backend = { path = "../mlc-backend", package = "mylittlechart-backend" }
+# Auth: SecretStore (RAM-only, TTL-bounded agent-key sidecar) + the
+# fingerprint/constant-time-compare helpers in mlc_vault::crypto. Does not
+# pull in mlc-core — this shell only ever sees `Arc<SecretStore>` and
+# `VaultKey`, never `VaultSecrets`.
+mlc-vault = { path = "../mlc-vault", package = "mylittlechart-vault" }
+
+[dev-dependencies]
+# `Router::oneshot` for the auth-middleware unit tests — same tower version
+# axum 0.7.9 resolves against (see Cargo.lock), `util` feature for `ServiceExt`.
+tower = { version = "0.5", features = ["util"] }
 
 [lints]
 workspace = true

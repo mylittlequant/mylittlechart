@@ -4,9 +4,14 @@
 //! query bar data, indicator snapshots, window layout, and issue viewport/symbol
 //! commands via REST without touching exchange APIs directly.
 //!
-//! All routes are open — the server only binds 127.0.0.1, so access is
-//! restricted to local processes on the user's machine.
+//! Every route requires a `Bearer` agent key minted from inside the app
+//! (`AgentState::agent_key_store`, see `auth.rs`): a sealed key store answers
+//! `423`, a missing or unrecognised key answers `401`, and a mutating method
+//! (`POST`/`PUT`/`PATCH`/`DELETE`) presented by a `ReadOnly` key answers
+//! `403`. The server still only binds `127.0.0.1` — the auth layer bounds
+//! WHO on this machine may act, not WHERE the traffic can come from.
 
+pub mod auth;
 pub mod routes;
 pub mod state;
 
@@ -15,6 +20,7 @@ use axum::{Router, extract::State, middleware::Next, response::Response};
 use axum::http::Request;
 use socket2::{Domain, Protocol, Socket, Type};
 
+use auth::{auth_middleware, tier_gate, Tier};
 pub use state::AgentState;
 
 /// Middleware: record the time of every Agent API request.
@@ -34,8 +40,13 @@ async fn track_access(
 
 /// Start the internal Agent API server on the given tokio runtime handle.
 ///
-/// All routes are merged into a single open Router. The listener is bound
-/// to `127.0.0.1` only, so the server is not reachable from the network.
+/// All routes are merged into a single Router, each module gated at
+/// [`Tier::SignedIn`] via [`tier_gate`]. [`auth_middleware`] wraps the whole
+/// thing as the outermost layer (added last — see the doc on
+/// [`axum::middleware::from_fn_with_state`]'s ordering) and `track_access`
+/// stays innermost so it only ever sees a request that already passed auth.
+/// The listener is still bound to `127.0.0.1` only, so the server is not
+/// reachable from the network.
 ///
 /// Returns a [`tokio::task::JoinHandle`] so the caller can abort or await it
 /// if needed.
@@ -44,24 +55,29 @@ pub fn start_server(
     handle: &tokio::runtime::Handle,
     port: u16,
 ) -> tokio::task::JoinHandle<()> {
+    let agent_key_store = state.agent_key_store.clone();
     let app: Router = Router::new()
-        .merge(routes::health::routes())
-        .merge(routes::apps::routes())
-        .merge(routes::bars::routes())
-        .merge(routes::indicators::routes())
-        .merge(routes::windows::routes())
-        .merge(routes::viewport::routes())
-        .merge(routes::controls::routes())
-        .merge(routes::indicators_crud::routes())
-        .merge(routes::primitives::routes())
-        .merge(routes::screenshot::routes())
-        .merge(routes::catalog::routes())
-        .merge(routes::watchlists::routes())
-        .merge(routes::connectors_status::routes())
-        .merge(routes::ui::routes())
+        .merge(tier_gate(routes::health::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::apps::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::bars::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::indicators::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::windows::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::viewport::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::controls::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::indicators_crud::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::primitives::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::screenshot::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::catalog::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::watchlists::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::connectors_status::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::ui::routes(), Tier::SignedIn))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             track_access,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            agent_key_store,
+            auth_middleware,
         ))
         .with_state(state);
 

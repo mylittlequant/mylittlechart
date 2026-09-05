@@ -40,6 +40,10 @@ pub enum SystemEventKind {
     Alert,
     /// Memory-watchdog pressure warning.
     Memory,
+    /// Agent API fact — today, only "a key-minting/revoke or an HTTP
+    /// request found the vault sealed" (owner ruling 2026-09-05/06, agent
+    /// API auth + `SecretStore` wiring plan).
+    Agent,
     /// Anything else — also the serde fallback for a future variant an
     /// older build doesn't know about, and for an unset field on load.
     #[default]

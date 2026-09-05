@@ -11,10 +11,11 @@
 //! - `GET  /api/v1/windows/:window_id/ui/state`      — read-only snapshot
 //!   of account/overlay/forum/events/toast state
 //!
-//! Like every other Agent API route (see the crate's own module doc), there
-//! is no key-tier check here: the server binds `127.0.0.1` only and every
-//! route is reachable by any local process. These three are intended for
-//! admin/test/automation use, not exposed to a lower-trust caller.
+//! Like every other Agent API route (see the crate's own module doc), these
+//! three sit behind `auth_middleware`: a `ReadOnly` key gets `403` on
+//! `ui/dispatch` and `ui/text` (both mutate — `POST`), while `ui/state`
+//! stays reachable to either role since it is `GET`-only. A read-only key
+//! never gets agent control over the app; it only ever gets to look at it.
 
 use std::sync::Arc;
 use std::time::Duration;

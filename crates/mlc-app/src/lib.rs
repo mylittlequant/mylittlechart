@@ -1422,6 +1422,15 @@ pub struct ChartApp {
     /// includes the `Timeframe`, so a new active TF is simply a new,
     /// not-yet-warmed key.
     pub(crate) watchlist_warmed: std::collections::HashSet<(mlc_core::instrument::InstrumentAddress, mlc_core::state::Timeframe)>,
+
+    /// Handle to the native host's RAM-only agent-key `SecretStore` —
+    /// unlocked/sealed off the SAME `VaultKey` as the main vault, so every
+    /// seal/unlock call-out in `input/credentials.rs` that already derives
+    /// or drops one also keeps this store in lockstep (see
+    /// [`Self::set_agent_key_store`]'s doc). `None` on any shell that never
+    /// wires an Agent API — today, `mlc-app-shell-web`'s wasm build (see
+    /// that shell's own `mlc-app-agent-api` doc note).
+    pub(crate) agent_key_store: Option<std::sync::Arc<mlc_vault::SecretStore>>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -3486,6 +3495,7 @@ impl ChartApp {
             watchlist_warmup_queue: std::collections::VecDeque::new(),
             watchlist_warmup_budget: std::collections::HashMap::new(),
             watchlist_warmed: std::collections::HashSet::new(),
+            agent_key_store: None,
         };
 
         // Trading snapshots are per-panel now (`(exchange, account_type)`
@@ -3871,6 +3881,7 @@ impl ChartApp {
             watchlist_warmup_queue: std::collections::VecDeque::new(),
             watchlist_warmup_budget: std::collections::HashMap::new(),
             watchlist_warmed: std::collections::HashSet::new(),
+            agent_key_store: None,
         };
 
         app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::default_seed());
@@ -3899,6 +3910,18 @@ impl ChartApp {
         app.sync_sub_panes_from_manager();
 
         app
+    }
+
+    /// Wire the native host's agent-key `SecretStore` so every vault
+    /// seal/unlock call-out in `input/credentials.rs` also keeps the Agent
+    /// API's key store in lockstep — both are unlocked/sealed off the same
+    /// `VaultKey`, never independently keyed (agent-api-auth plan §2,
+    /// "Storage"). Call once, right after the host constructs both stores.
+    /// A shell that never wires an Agent API (today: `mlc-app-shell-web`'s
+    /// wasm build) simply never calls this, leaving the handle at its
+    /// default `None` — every seal/unlock call-out is a no-op then.
+    pub fn set_agent_key_store(&mut self, store: std::sync::Arc<mlc_vault::SecretStore>) {
+        self.agent_key_store = Some(store);
     }
 
     // -------------------------------------------------------------------------
@@ -4404,6 +4427,7 @@ impl ChartApp {
             watchlist_warmup_queue: std::collections::VecDeque::new(),
             watchlist_warmup_budget: std::collections::HashMap::new(),
             watchlist_warmed: std::collections::HashSet::new(),
+            agent_key_store: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
