@@ -1210,6 +1210,8 @@ impl ChartToolbarState {
             "watchlist" => vec![ChartOutEvent::ToggleWatchlist],
             "screener" => vec![ChartOutEvent::ToggleScreener],
             "alerts" => vec![ChartOutEvent::ToggleAlerts],
+            // Bottom-anchored Events button (system event log, 2026-09-05).
+            "events" => vec![ChartOutEvent::ToggleEvents],
             "layers" | "object_tree" => vec![ChartOutEvent::ToggleObjectTree],
             "signals" => vec![ChartOutEvent::ToggleSignals],
             "monitoring" => vec![ChartOutEvent::ToggleMonitoring],
