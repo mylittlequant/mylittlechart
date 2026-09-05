@@ -50,6 +50,15 @@ const TAB_LEFT_MARGIN: f64 = 4.0;
 // touch (owner report 2026-09: tabs "collide" when many are open). Mirrored
 // in logic.rs, which budgets for it in `fit_tab_widths`'s `reserved`.
 const TAB_GAP: f64 = 4.0;
+/// Active/hover marker under a tab: height and the one-pixel gap that keeps
+/// it off the strip's bottom separator (Arc H2). Shared by the resting tabs
+/// AND the floating tab drawn during drag&drop — the floating copy used to
+/// carry its own formula and merged with the separator again.
+const TAB_MARKER_H: f64 = 2.0;
+const TAB_MARKER_GAP: f64 = 1.0;
+fn tab_marker_y() -> f64 {
+    CHROME_HEIGHT - 1.0 - TAB_MARKER_GAP - TAB_MARKER_H
+}
 const TAB_PADDING_H: f64 = 6.0;
 const TAB_CLOSE_SIZE: f64 = 16.0;
 /// Width of the "⋯" overflow button shown left of "+" when tabs overflow.
@@ -287,9 +296,7 @@ pub fn render(
             // tab — it is drawn after the tab loop and spans the whole strip,
             // so it would need reordering and would leave the strip's bottom
             // edge discontinuous. A gap costs one pixel and neither.
-            const TAB_MARKER_H: f64 = 2.0;
-            const TAB_MARKER_GAP: f64 = 1.0;
-            let marker_y = CHROME_HEIGHT - 1.0 - TAB_MARKER_GAP - TAB_MARKER_H;
+            let marker_y = tab_marker_y();
             if tab.active {
                 ctx.set_fill_color(&c.tab_accent);
                 ctx.fill_rect(tab_left, marker_y, tw, TAB_MARKER_H);
@@ -478,7 +485,7 @@ pub fn render(
                 ctx.restore();
                 if tab.active {
                     ctx.set_fill_color(&c.tab_accent);
-                    ctx.fill_rect(fx, CHROME_HEIGHT - 3.0, tw, 2.0);
+                    ctx.fill_rect(fx, tab_marker_y(), tw, TAB_MARKER_H);
                 }
             }
         }
