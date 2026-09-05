@@ -10,7 +10,7 @@ use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
 use mlc_core::i18n::{current_language, Language, TextKey, UserSettingsKey};
 use mlc_core::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
-use crate::ui::modal_settings::{CredentialsState, CredentialsView, UserSettingsState, UserSettingsTab};
+use crate::ui::modal_settings::{CredentialsState, CredentialsView, NickStatus, UserSettingsState, UserSettingsTab};
 use crate::ui::scroll_state::ScrollState;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{ModalTheme, WidgetTheme, RadioOption, draw_radio_group, auto_btn_width, fit_text_to_width};
@@ -1379,6 +1379,17 @@ fn render_single_profile_row(
     let is_renaming = state.account_signed_in
         && state.profile_rename_mode
         && state.profile_rename_target_id.as_deref() == Some(id);
+    // The account-nickname edit — a completely separate flag pair from the
+    // profile rename above (`UserSettingsState::nick_edit_mode`'s own doc):
+    // one submits to `POST /api/account/nick`, the other to local
+    // `profile_meta`. Mutually exclusive in practice (this row's own "Save"
+    // button only ever arms one of the two, and `is_renaming` above cannot
+    // become true from a control this row still draws), but both flags are
+    // checked independently rather than assumed disjoint.
+    let is_nick_editing = state.account_signed_in && state.nick_edit_mode;
+    // Extra height reserved below the row for a validation/server error —
+    // 0.0 unless the nick edit below actually has one to show.
+    let mut nick_msg_h = 0.0_f64;
 
     if is_renaming {
         // Inline rename input + Save/Cancel — same idiom as the multi-profile
@@ -1492,6 +1503,152 @@ fn render_single_profile_row(
             Sense::CLICK | Sense::HOVER,
             layer_id,
         );
+    } else if is_nick_editing {
+        // Inline account-nickname edit + Save/Cancel — same idiom as the
+        // profile-rename block above, but this submits the ACCOUNT's
+        // nickname (`POST /api/account/nick`, via the shell's cloud
+        // transport) rather than the local profile's display name, so it
+        // reads from/writes to a completely separate set of state
+        // (`nick_edit_render`/`nick_edit_focused`/`nick_status`, never
+        // `profile_rename_render`/`profile_display_name`).
+        let save_label   = TextKey::Save.get(current_language());
+        let cancel_label = TextKey::Cancel.get(current_language());
+
+        ctx.set_font("11px sans-serif");
+        let save_w   = auto_btn_width(ctx, save_label,   "11px sans-serif", btn_padding_x, btn_min_w);
+        let cancel_w = auto_btn_width(ctx, cancel_label, "11px sans-serif", btn_padding_x, btn_min_w);
+        let avail_btns = (right_edge - name_x).max(0.0);
+        let (save_w, cancel_w) = {
+            let total = save_w + cancel_w + btn_gap;
+            if total > avail_btns && total > 0.0 {
+                let scale = avail_btns / total;
+                (save_w * scale, cancel_w * scale)
+            } else {
+                (save_w, cancel_w)
+            }
+        };
+        let cancel_btn_x = right_edge - cancel_w;
+        let confirm_btn_x = cancel_btn_x - save_w - btn_gap;
+
+        let input_w = (confirm_btn_x - name_x - btn_gap).max(0.0);
+        let input_h = 22.0;
+        let input_y = y + (profile_row_h - input_h) / 2.0;
+        let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+
+        let working = state.nick_status == NickStatus::Working;
+        let nk_render = &state.nick_edit_render;
+        let (sel_start, sel_end) = if let Some((lo, hi)) = nk_render.selection_range() {
+            (Some(lo), Some(hi))
+        } else {
+            (None, None)
+        };
+        let nick_input_config = InputConfig::new(&nk_render.text)
+            .with_focused(state.nick_edit_focused)
+            .with_cursor(nk_render.cursor)
+            .with_placeholder("Nickname...")
+            .with_selection(sel_start, sel_end);
+        let nick_input_result = draw_input(
+            ctx, &nick_input_config, WidgetState::Normal,
+            WidgetRect::new(name_x, input_y, input_w, input_h), &widget_theme,
+        );
+
+        result.content_items.push((
+            "user_settings:account_nick_input".to_string(),
+            WidgetRect::new(name_x, input_y, input_w, input_h),
+        ));
+        result.input_char_positions.push((
+            "user_settings:account_nick_input".to_string(),
+            nick_input_result.char_x_positions.clone(),
+        ));
+        input_coordinator.register_on_layer(
+            "user_settings:account_nick_input",
+            uzor::types::Rect::new(name_x, input_y, input_w, input_h),
+            Sense::CLICK,
+            layer_id,
+        );
+
+        if state.nick_edit_focused && nk_render.cursor_visible {
+            draw_input_cursor(
+                ctx,
+                nick_input_result.cursor_x,
+                nick_input_result.cursor_y,
+                nick_input_result.cursor_height,
+                text_color,
+            );
+        }
+
+        let btn_y = y + (profile_row_h - btn_h) / 2.0;
+
+        // Save button — drawn but unreachable (no hit id) while a
+        // submission is in flight, the same "dead rather than removed"
+        // idiom `cloud_login.rs`'s Redeem button uses, so the row never
+        // reflows out from under a click about to land.
+        if working {
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            ctx.fill_rounded_rect(confirm_btn_x, btn_y, save_w, btn_h, 3.0);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.5));
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("...", confirm_btn_x + save_w / 2.0, btn_y + btn_h / 2.0);
+            ctx.set_text_align(TextAlign::Left);
+        } else {
+            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.success, 0.2));
+            ctx.fill_rounded_rect(confirm_btn_x, btn_y, save_w, btn_h, 3.0);
+            ctx.set_stroke_color(&mlc_core::apply_opacity(&toolbar_theme.success, 0.6));
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(confirm_btn_x, btn_y, save_w, btn_h, 3.0);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&toolbar_theme.success);
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(fit_text_to_width(ctx, save_label, save_w - btn_padding_x).as_str(), confirm_btn_x + save_w / 2.0, btn_y + btn_h / 2.0);
+            ctx.set_text_align(TextAlign::Left);
+
+            result.content_items.push(("account_nick_confirm".to_string(), WidgetRect::new(confirm_btn_x, btn_y, save_w, btn_h)));
+            input_coordinator.register_on_layer(
+                "user_settings:account_nick_confirm",
+                uzor::types::Rect::new(confirm_btn_x, btn_y, save_w, btn_h),
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+        }
+
+        // Cancel button
+        ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+        ctx.fill_rounded_rect(cancel_btn_x, btn_y, cancel_w, btn_h, 3.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(cancel_btn_x, btn_y, cancel_w, btn_h, 3.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.7));
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(fit_text_to_width(ctx, cancel_label, cancel_w - btn_padding_x).as_str(), cancel_btn_x + cancel_w / 2.0, btn_y + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("account_nick_cancel".to_string(), WidgetRect::new(cancel_btn_x, btn_y, cancel_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:account_nick_cancel",
+            uzor::types::Rect::new(cancel_btn_x, btn_y, cancel_w, btn_h),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+
+        // Validation/server error — same style as the profile manager's
+        // SetNewPassphrase page (`render_page_set_new_passphrase`'s own
+        // `has_error` block): danger-colored, below the row.
+        if let NickStatus::Failed { message } = &state.nick_status {
+            let msg_y = y + profile_row_h + 2.0;
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(toolbar_theme.danger.as_str());
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            let fitted = fit_text_to_width(ctx, message, available_w);
+            ctx.fill_text(&fitted, name_x, msg_y);
+            ctx.set_text_align(TextAlign::Left);
+            nick_msg_h = 18.0;
+        }
     } else {
         // Normal display: name, plus the two identity controls a real
         // signed-in account gets — a nickname and an avatar. An anonymous
@@ -1533,7 +1690,11 @@ fn render_single_profile_row(
                 right_edge - rename_w
             };
 
-            let rename_hover_id = format!("profile_rename:{}", id);
+            // Fixed id, not per-profile like `profile_rename:{id}` above —
+            // this button opens the ACCOUNT nick edit (`account_nick_edit`),
+            // never a `profile_meta` rename, so there is exactly one target
+            // regardless of which profile happens to be active.
+            let rename_hover_id = "account_nick_edit".to_string();
             let is_rename_hovered = state.hovered_item_id.as_deref() == Some(rename_hover_id.as_str());
             let rename_bg = if is_rename_hovered {
                 mlc_core::apply_opacity(&toolbar_theme.item_text, 0.12)
@@ -1552,8 +1713,8 @@ fn render_single_profile_row(
             ctx.fill_text(fit_text_to_width(ctx, rename_label, rename_w - btn_padding_x).as_str(), rename_btn_x + rename_w / 2.0, btn_y + btn_h / 2.0);
             ctx.set_text_align(TextAlign::Left);
 
-            let rename_hit_id = format!("user_settings:profile_rename:{}", id);
-            result.content_items.push((format!("profile_rename:{}", id), WidgetRect::new(rename_btn_x, btn_y, rename_w, btn_h)));
+            let rename_hit_id = "user_settings:account_nick_edit".to_string();
+            result.content_items.push(("account_nick_edit".to_string(), WidgetRect::new(rename_btn_x, btn_y, rename_w, btn_h)));
             input_coordinator.register_on_layer(
                 rename_hit_id.as_str(),
                 uzor::types::Rect::new(rename_btn_x, btn_y, rename_w, btn_h),
@@ -1599,7 +1760,7 @@ fn render_single_profile_row(
         && state.show_avatar_picker
         && state.profile_avatar_target_id.as_deref().map(|t| t == id).unwrap_or(true);
     if !picker_open {
-        return y + profile_row_h;
+        return y + profile_row_h + nick_msg_h;
     }
 
     let avatars = [
@@ -1633,7 +1794,7 @@ fn render_single_profile_row(
         );
     }
 
-    y + profile_row_h + picker_h + 4.0
+    y + profile_row_h + picker_h + 4.0 + nick_msg_h
 }
 
 #[allow(clippy::too_many_arguments)]

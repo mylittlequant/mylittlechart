@@ -3530,6 +3530,51 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
+        // ── Drain a submitted account-nickname edit ──────────────────────
+        // Unlike the two blocks above, NOT `#[cfg(feature = "cloud")]` —
+        // this row lives in the User Settings modal
+        // (`UserSettingsState::nick_edit_mode`), which compiles in every
+        // build, not the login overlay. Local validation already ran in
+        // `ChartApp` before `nick_save_requested` was armed
+        // (`account_nick_confirm`/`text_action_account_nick`), so an empty
+        // submission here would mean the field was blanked after that —
+        // treated the same way the redeem block treats an empty code.
+        {
+            let submitted = self
+                .windows
+                .values_mut()
+                .any(|pw| std::mem::take(&mut pw.chart.panel_app.user_settings_state.nick_save_requested));
+            if submitted {
+                let nick = self
+                    .windows
+                    .values()
+                    .find_map(|pw| {
+                        let coord = pw.chart.input_coordinator.borrow();
+                        let text = coord
+                            .text_fields()
+                            .text(&uzor::WidgetId::from(mlc_app::text_input::ACCOUNT_NICK))
+                            .trim()
+                            .to_string();
+                        (!text.is_empty()).then_some(text)
+                    })
+                    .unwrap_or_default();
+                if nick.is_empty() {
+                    use mlc_app_layout::ui::modal_settings::NickStatus;
+                    for pw in self.windows.values_mut() {
+                        pw.chart.panel_app.user_settings_state.nick_status =
+                            NickStatus::Failed { message: "Enter a nickname first".to_string() };
+                        pw.overlay_dirty = true;
+                        pw.window.request_redraw();
+                    }
+                } else {
+                    let _ = self
+                        .updater_handle
+                        .cmd_tx
+                        .send(mlc_updater::UpdaterCommand::SetNick(nick));
+                }
+            }
+        }
+
         // ── Drain updater command requests ───────────────────────────────
         {
             let cmd: Option<String> = self.windows.values_mut()
@@ -4812,6 +4857,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             };
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.account_signed_in = account_signed_in;
+                // Mirrors the chrome's own `account_label` below — the nick
+                // edit box prefills from this, not the unrelated local
+                // profile name.
+                pw.chart.panel_app.user_settings_state.account_label =
+                    account_label.clone().unwrap_or_default();
                 if pw.chrome_state.account_label != account_label {
                     pw.chrome_state.account_label = account_label.clone();
                     pw.toolbar_dirty = true;
@@ -4872,6 +4922,25 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                 })
             };
+            // Outcome of the last submitted account nickname. `NickState` is
+            // the updater's word for it; `NickStatus` is the settings row's.
+            // Unlike `redeem_status` above this is NOT `cfg(feature =
+            // "cloud")`-gated — the row it drives compiles in every build.
+            let nick_status = if !self.updater_handle.nick_rx.has_changed().unwrap_or(false) {
+                None
+            } else {
+                use mlc_app_layout::ui::modal_settings::NickStatus;
+                Some(match &*self.updater_handle.nick_rx.borrow_and_update() {
+                    mlc_updater::NickState::Idle => NickStatus::Idle,
+                    mlc_updater::NickState::Working => NickStatus::Working,
+                    mlc_updater::NickState::Saved { effective_label } => {
+                        NickStatus::Saved { effective_label: effective_label.clone() }
+                    }
+                    mlc_updater::NickState::Failed { message } => {
+                        NickStatus::Failed { message: message.clone() }
+                    }
+                })
+            };
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.multi_profile = multi_profile;
                 #[cfg(feature = "cloud")]
@@ -4884,6 +4953,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         pw.overlay_dirty = true;
                         pw.window.request_redraw();
                     }
+                }
+                if let Some(status) = nick_status.as_ref() {
+                    use mlc_app_layout::ui::modal_settings::NickStatus;
+                    let uss = &mut pw.chart.panel_app.user_settings_state;
+                    uss.nick_status = status.clone();
+                    if matches!(status, NickStatus::Saved { .. }) {
+                        uss.nick_edit_mode = false;
+                        uss.nick_edit_focused = false;
+                    }
+                    pw.overlay_dirty = true;
+                    pw.window.request_redraw();
                 }
             }
 

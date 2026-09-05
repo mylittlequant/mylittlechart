@@ -327,6 +327,33 @@ pub struct RedeemResponse {
     pub paid_until: String,
 }
 
+/// Request body for `POST /api/account/nick` — sets the account-level
+/// nickname (distinct from any per-profile display name; see
+/// `mlc_app_layout::ui::modal_settings::UserSettingsState::nick_edit_mode`'s
+/// own doc for why the two never share state).
+#[derive(Debug, Clone, Serialize)]
+pub struct SetNickRequest {
+    pub nick: String,
+}
+
+/// Response body from `POST /api/account/nick` on success.
+///
+/// The failure side is not a shape either — 400 is a locally-shaped nick that
+/// still failed server validation, 409 is taken/reserved, 429 is the
+/// per-account cooldown (its body additionally carries `next_allowed_at`,
+/// read directly off the raw [`CloudError::Http`] body by
+/// [`crate::nick_error_message`] rather than modeled here, the same split
+/// `redeem_error_message` uses for [`RedeemResponse`]'s failure side).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetNickResponse {
+    /// The nick as the server stored it (may differ from the submission by
+    /// normalization, e.g. casing).
+    pub nick: String,
+    /// The label to show for this account from now on — the nick when one
+    /// is set. Read this rather than re-deriving it locally.
+    pub effective_label: String,
+}
+
 // =============================================================================
 // /api/updates/* shapes (anonymous release manifest)
 // =============================================================================

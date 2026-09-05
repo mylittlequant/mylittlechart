@@ -123,6 +123,14 @@ pub const CONFIRM_PASSPHRASE: &str = "confirm_passphrase";
 /// Long paste-friendly text field; read-only display on ShowRecoveryKey page.
 pub const RECOVERY_KEY: &str = "recovery_key";
 
+/// Inline account-nickname edit input (user settings single-profile row,
+/// `UserSettingsState::nick_edit_mode`). Sets the ACCOUNT's nickname via
+/// `POST /api/account/nick` — never `PROFILE_RENAME`'s local `profile_meta`
+/// display name, even though both edit the same row for a single-profile
+/// identity. Not `cfg(feature = "cloud")`-gated, unlike `REDEEM_CODE`: the
+/// row that owns this field compiles in every build.
+pub const ACCOUNT_NICK: &str = "account_nick";
+
 /// Telegram bot token input (alert settings notifications tab).
 pub const ALERT_TG_TOKEN: &str = "alert_tg_token";
 

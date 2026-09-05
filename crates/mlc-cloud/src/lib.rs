@@ -118,3 +118,41 @@ pub fn redeem_error_message(e: &CloudError) -> String {
         other => other.to_string(),
     }
 }
+
+/// The sentence to show someone whose nickname submission was refused.
+/// Lives here for the same reason [`redeem_error_message`] does — see that
+/// function's own doc.
+pub fn nick_error_message(e: &CloudError) -> String {
+    #[derive(serde::Deserialize)]
+    struct ErrorBody {
+        error: String,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct RateLimitBody {
+        #[serde(default)]
+        error: String,
+        #[serde(default)]
+        next_allowed_at: String,
+    }
+    fn server_text(body: &str) -> Option<String> {
+        serde_json::from_str::<ErrorBody>(body).ok().map(|b| b.error)
+    }
+    match e {
+        CloudError::Http { status: 400, body } => {
+            server_text(body).unwrap_or_else(|| "That nickname isn't valid".to_string())
+        }
+        CloudError::Http { status: 409, body } => {
+            server_text(body).unwrap_or_else(|| "That nickname is already taken".to_string())
+        }
+        CloudError::Http { status: 429, body } => match serde_json::from_str::<RateLimitBody>(body) {
+            Ok(b) if !b.next_allowed_at.is_empty() => format!(
+                "Too many nickname changes — try again after {}",
+                b.next_allowed_at
+            ),
+            Ok(b) if !b.error.is_empty() => b.error,
+            _ => "Too many nickname changes — try again later".to_string(),
+        },
+        CloudError::Unauthorized => "Sign in again, then retry".to_string(),
+        other => other.to_string(),
+    }
+}

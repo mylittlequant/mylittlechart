@@ -126,6 +126,24 @@ pub enum RedeemState {
     Failed { message: String },
 }
 
+/// Outcome of the most recent account-nickname submission
+/// ([`UpdaterCommand::SetNick`]), broadcast via a watch channel — same
+/// mailbox idiom as [`RedeemState`], mapped by the shell onto
+/// `mlc_app_layout::ui::modal_settings::NickStatus`.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum NickState {
+    /// No submission since the settings row last opened (or the last one
+    /// was superseded).
+    #[default]
+    Idle,
+    /// A submission is in flight.
+    Working,
+    /// Accepted; carries the label to show for this account from now on.
+    Saved { effective_label: String },
+    /// Refused, with the sentence to show the person who typed it.
+    Failed { message: String },
+}
+
 /// Information about an available update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateInfo {
@@ -183,6 +201,16 @@ pub enum UpdaterCommand {
     /// `entitlements_rx` immediately so the new tier is visible without
     /// waiting out the entitlements poll interval.
     RedeemCode(String),
+    /// Set the signed-in account's nickname (account-level attribute,
+    /// distinct from any local profile display name).
+    ///
+    /// Requires a stored token — with none, the updater publishes
+    /// [`NickState::Failed`] without making a request. On success the token
+    /// store's `display_name` is updated to the returned effective label and
+    /// [`UpdaterHandle::auth_rx`] republishes it, so the chrome's account
+    /// label picks it up the same frame. The outcome is broadcast via
+    /// [`UpdaterHandle::nick_rx`].
+    SetNick(String),
     /// Enable or disable cloud connectivity at runtime.
     /// `true` = cloud enabled (OTA, sync, telemetry),
     /// `false` = cloud disabled (stop all network activity).
@@ -328,6 +356,11 @@ pub struct UpdaterHandle {
     /// drive a redeem-code modal's state. Starts at [`RedeemState::Idle`]
     /// and is republished on every attempt — see that type's own doc.
     pub redeem_rx: watch::Receiver<RedeemState>,
+    /// Outcome of the most recent [`UpdaterCommand::SetNick`] attempt.
+    ///
+    /// Same polling contract as [`Self::redeem_rx`]; starts at
+    /// [`NickState::Idle`].
+    pub nick_rx: watch::Receiver<NickState>,
     /// Current cloud sync status.
     ///
     /// The UI polls `has_changed()` each frame and displays progress

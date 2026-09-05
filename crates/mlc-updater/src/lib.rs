@@ -19,9 +19,10 @@ pub mod verify;
 pub mod attest;
 pub mod entitlements;
 pub mod redeem;
+pub mod nick;
 pub mod auth_probe;
 
-pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState};
+pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState, NickState};
 
 /// Format current time as `HH:MM:SS` for log lines.
 pub fn now_ts() -> String {
@@ -193,6 +194,10 @@ pub fn start(
     // starts Idle, republished on every `RedeemCode` command.
     let (redeem_tx, redeem_rx) = watch::channel(state::RedeemState::Idle);
 
+    // Channel for the outcome of the most recent nickname submission —
+    // starts Idle, republished on every `SetNick` command.
+    let (nick_tx, nick_rx) = watch::channel(state::NickState::Idle);
+
     // Channel for cloud sync status — starts Idle, updated by the updater loop.
     let (sync_status_tx, sync_status_rx) = watch::channel(state::SyncStatus::Idle);
 
@@ -208,11 +213,12 @@ pub fn start(
         auth_rx,
         entitlements_rx,
         redeem_rx,
+        nick_rx,
         sync_status_rx,
         sync_checksums_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, redeem_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
+    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, redeem_tx, nick_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
 
     handle
 }
@@ -229,6 +235,7 @@ async fn updater_loop(
     auth_tx: watch::Sender<state::AuthStatus>,
     entitlements_tx: watch::Sender<state::Entitlements>,
     redeem_tx: watch::Sender<state::RedeemState>,
+    nick_tx: watch::Sender<state::NickState>,
     sync_status_tx: watch::Sender<state::SyncStatus>,
     sync_checksums_tx: watch::Sender<std::collections::HashMap<String, String>>,
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
@@ -504,6 +511,53 @@ async fn updater_loop(
                                         let _ = redeem_tx.send(state::RedeemState::Failed { message: e });
                                     }
                                 }
+                            }
+                        }
+                    }
+                    state::UpdaterCommand::SetNick(requested_nick) => {
+                        let token = token_store::load_token();
+                        let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
+                        match (token, auth_header) {
+                            (Some(stored), Some(auth)) => {
+                                let _ = nick_tx.send(state::NickState::Working);
+                                match nick::set_nick(&http_client, &auth, &requested_nick).await {
+                                    Ok(effective_label) => {
+                                        log::info!("[Updater] set_nick: ok, now '{}'", effective_label);
+                                        let mut updated = stored;
+                                        updated.display_name = effective_label.clone();
+                                        let _ = token_store::save_token(&updated);
+                                        let _ = auth_tx.send(state::AuthStatus::LoggedIn {
+                                            display_name: effective_label.clone(),
+                                            provider: updated.provider,
+                                            user_id: updated.user_id,
+                                        });
+                                        let _ = nick_tx.send(state::NickState::Saved { effective_label });
+                                    }
+                                    Err(e) => {
+                                        log::warn!("[Updater] set_nick failed: {}", e);
+                                        // Same reasoning as the redeem arm above: a
+                                        // rejected session should demote to signed-out
+                                        // now, not on the next unrelated request.
+                                        if matches!(
+                                            auth_probe::probe(&http_client, &auth).await,
+                                            auth_probe::Verdict::Rejected
+                                        ) {
+                                            token_store::clear_token();
+                                            let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
+                                            eprintln!(
+                                                "[{} Updater] session rejected during set_nick — signed out",
+                                                now_ts()
+                                            );
+                                        }
+                                        let _ = nick_tx.send(state::NickState::Failed { message: e });
+                                    }
+                                }
+                            }
+                            _ => {
+                                let _ = nick_tx.send(state::NickState::Failed {
+                                    message: "Sign in first".to_string(),
+                                });
+                                log::warn!("[Updater] set_nick failed: not signed in");
                             }
                         }
                     }

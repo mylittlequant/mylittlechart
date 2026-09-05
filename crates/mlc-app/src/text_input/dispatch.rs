@@ -67,9 +67,9 @@ impl ChartApp {
     /// Covers (in order): ALERT_TG_TOKEN, REDEEM_CODE, CRED_WEBHOOK_URL,
     /// CRED_ADD_EXCHANGE, CRED_ADD_LABEL, CRED_ADD_API_KEY,
     /// CRED_ADD_API_SECRET, CRED_ADD_PASSPHRASE, PROFILE_RENAME,
-    /// NEW_PASSPHRASE, NEW_PROFILE_NAME, RECOVERY_KEY, CONFIRM_PASSPHRASE,
-    /// BAR_MODE_PARAM, TF_FAVORITE_INPUT, PARAM_FAVORITE_INPUT, HEX_COLOR,
-    /// AGENT_PTY, AGENT_CHAT.
+    /// ACCOUNT_NICK, NEW_PASSPHRASE, NEW_PROFILE_NAME, RECOVERY_KEY,
+    /// CONFIRM_PASSPHRASE, BAR_MODE_PARAM, TF_FAVORITE_INPUT,
+    /// PARAM_FAVORITE_INPUT, HEX_COLOR, AGENT_PTY, AGENT_CHAT.
     pub(crate) fn dispatch_text_key_early(&mut self, key: &KeyPress) -> bool {
         use crate::text_input::*;
 
@@ -98,6 +98,7 @@ impl ChartApp {
                 | CRED_ADD_API_SECRET
                 | CRED_ADD_PASSPHRASE
                 | PROFILE_RENAME
+                | ACCOUNT_NICK
                 | NEW_PASSPHRASE
                 | NEW_PROFILE_NAME
                 | RECOVERY_KEY
@@ -252,6 +253,7 @@ impl ChartApp {
             RECOVERY_KEY                     => self.text_action_recovery_key(ch, action),
             NEW_PROFILE_NAME                 => self.text_action_new_profile_name(ch, action),
             PROFILE_RENAME                   => self.text_action_profile_rename(action),
+            ACCOUNT_NICK                     => self.text_action_account_nick(ch, action),
             SYMBOL_SEARCH | INDICATOR_SEARCH | COMPARE_SEARCH
                                              => self.text_action_search_overlay(action),
             AGENT_CHAT                       => self.text_action_agent_chat(ch, action),
@@ -668,6 +670,58 @@ impl ChartApp {
                     self.pending_updater_cmd = Some(format!("profile_rename:{}", new_name));
                 }
             }
+            _ => {}
+        }
+    }
+
+    /// The single-profile row's account-nickname field
+    /// (`UserSettingsState::nick_edit_mode`).
+    ///
+    /// Enter validates locally via
+    /// [`mlc_app_layout::ui::modal_settings::validate_nick`] and, if it
+    /// passes, arms the same one-shot `nick_save_requested` the Save button
+    /// sets (so key and click cannot disagree) and marks the status
+    /// `Working` immediately — the shell owns the actual round trip, same
+    /// division as `text_action_redeem_code`. Escape closes the edit and
+    /// discards whatever was typed: unlike `REDEEM_CODE` (an always-visible
+    /// box, so Escape there only blurs), this field only exists while
+    /// `nick_edit_mode` is true, so there is a mode to leave.
+    fn text_action_account_nick(&mut self, ch: char, action: TextAction) {
+        let submit = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::ACCOUNT_NICK);
+            let nick = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+            match mlc_app_layout::ui::modal_settings::validate_nick(&nick) {
+                Ok(()) => {
+                    chart.panel_app.user_settings_state.nick_status =
+                        mlc_app_layout::ui::modal_settings::NickStatus::Working;
+                    chart.panel_app.user_settings_state.nick_save_requested = true;
+                }
+                Err(message) => {
+                    chart.panel_app.user_settings_state.nick_status =
+                        mlc_app_layout::ui::modal_settings::NickStatus::Failed { message };
+                }
+            }
+        };
+        let cancel = |chart: &mut ChartApp| {
+            let uss = &mut chart.panel_app.user_settings_state;
+            uss.nick_edit_mode = false;
+            uss.nick_edit_focused = false;
+            uss.nick_status = mlc_app_layout::ui::modal_settings::NickStatus::Idle;
+            let wid = WidgetId::from(crate::text_input::ACCOUNT_NICK);
+            chart.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+            chart.input_coordinator.borrow_mut().text_fields_mut().blur();
+        };
+        if ch == '\r' || ch == '\n' {
+            submit(self);
+            return;
+        }
+        if ch == '\x1b' {
+            cancel(self);
+            return;
+        }
+        match action {
+            TextAction::Commit(_) => submit(self),
+            TextAction::Cancel => cancel(self),
             _ => {}
         }
     }

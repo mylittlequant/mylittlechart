@@ -342,6 +342,21 @@ impl FetchTransport {
         self.decode_success(status, &body)
     }
 
+    /// `POST /api/account/nick` — set the account's nickname. Format is
+    /// checked once on the client, in `mlc_app_layout::ui::modal_settings::
+    /// validate_nick`, before the submission is ever armed; the server
+    /// re-checks regardless and answers 400/409/429 its own way.
+    /// [`crate::nick_error_message`] turns a refusal into the sentence the
+    /// modal prints.
+    pub async fn set_nick(&self, nick: &str) -> Result<SetNickResponse, CloudError> {
+        let payload = serde_json::to_string(&SetNickRequest { nick: nick.to_string() })
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", "/api/account/nick", Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
     // ── /api/share/* ────────────────────────────────────────────────────
 
     /// `POST /api/share/live` — freeze the active preset into a public

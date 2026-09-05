@@ -59,6 +59,9 @@ enum FlowResult {
     /// A gift/trial code came back accepted (the new paid-until instant) or
     /// refused (the sentence to print).
     Redeem(Result<String, String>),
+    /// A nickname submission came back accepted (the new effective label) or
+    /// refused (the sentence to print).
+    Nick(Result<String, String>),
 }
 
 struct Inner {
@@ -227,6 +230,11 @@ impl CloudSession {
         // (a bool copy), unlike the entitlements fetch this is not an
         // endpoint call, so there is no reason to gate it to "moments".
         chart.panel_app.user_settings_state.account_signed_in = self.is_signed_in();
+        // Mirrors `account_label()` — the same source the chrome's account
+        // button reads — so the nick edit box can prefill with what the
+        // person already sees there, not the unrelated local profile name.
+        chart.panel_app.user_settings_state.account_label =
+            self.account_label().unwrap_or_default();
 
         // ── Entitlements: boot + periodic background re-ask ────────────────
         // Deliberately its own block, ahead of and independent from the
@@ -407,6 +415,38 @@ impl CloudSession {
                 FlowResult::Redeem(Err(message)) => {
                     st.redeem_status = RedeemStatus::Failed { message };
                 }
+                FlowResult::Nick(Ok(effective_label)) => {
+                    // Persist the new label into the stored token so the
+                    // chrome's `account_label()` — and every future
+                    // session's boot read — reflects it, not just this
+                    // frame's UI state.
+                    if let Some(t) = self.inner.borrow_mut().token.as_mut() {
+                        t.display_name = effective_label.clone();
+                    }
+                    if let Some(t) = self.inner.borrow().token.clone() {
+                        save_token(&t);
+                    }
+                    // The account overlay's own "SIGNED IN AS" line is a
+                    // second reader of the same fact — keep it from showing
+                    // a name the person just changed elsewhere.
+                    if let CloudLoginPhase::SignedIn { provider, .. } = st.phase.clone() {
+                        st.phase = CloudLoginPhase::SignedIn {
+                            display_name: effective_label.clone(),
+                            provider,
+                        };
+                    }
+                    let uss = &mut chart.panel_app.user_settings_state;
+                    uss.nick_status = mlc_app_layout::ui::modal_settings::NickStatus::Saved {
+                        effective_label: effective_label.clone(),
+                    };
+                    uss.nick_edit_mode = false;
+                    uss.nick_edit_focused = false;
+                    uss.account_label = effective_label;
+                }
+                FlowResult::Nick(Err(message)) => {
+                    chart.panel_app.user_settings_state.nick_status =
+                        mlc_app_layout::ui::modal_settings::NickStatus::Failed { message };
+                }
                 FlowResult::Logout => {
                     // Local sign-out regardless of the server answer.
                     clear_token();
@@ -421,6 +461,11 @@ impl CloudSession {
                     inner.next_entitlements_ms = 0.0;
                     drop(inner);
                     chart.panel_app.user_settings_state.multi_profile = false;
+                    chart.panel_app.user_settings_state.account_label = String::new();
+                    chart.panel_app.user_settings_state.nick_edit_mode = false;
+                    chart.panel_app.user_settings_state.nick_edit_focused = false;
+                    chart.panel_app.user_settings_state.nick_status =
+                        mlc_app_layout::ui::modal_settings::NickStatus::Idle;
                     {
                         let mut user = chart.core.user_mut();
                         let p = user.profile_mut();
@@ -430,6 +475,42 @@ impl CloudSession {
                     }
                     chart.profile_dirty = true;
                     st.phase = CloudLoginPhase::RequestCode;
+                }
+            }
+        }
+
+        // ── Account nickname (User Settings modal, NOT the login overlay) ──
+        // Deliberately independent of `cloud_login_state.is_open` (checked
+        // further down, before the phase machine) — this row lives in the
+        // always-available Settings modal, not this driver's login/account
+        // overlay, so it must not share that gate.
+        {
+            let submitted = std::mem::take(&mut chart.panel_app.user_settings_state.nick_save_requested);
+            if submitted {
+                let nick = {
+                    let coord = chart.input_coordinator.borrow();
+                    coord
+                        .text_fields()
+                        .text(&uzor::WidgetId::from(mlc_app::text_input::ACCOUNT_NICK))
+                        .trim()
+                        .to_string()
+                };
+                if self.inner.borrow().token.is_none() {
+                    chart.panel_app.user_settings_state.nick_status =
+                        mlc_app_layout::ui::modal_settings::NickStatus::Failed {
+                            message: "Sign in first".to_string(),
+                        };
+                } else {
+                    let inner = self.inner.clone();
+                    let transport = self.inner.borrow().transport.snapshot();
+                    spawn_local(async move {
+                        let r = transport
+                            .set_nick(&nick)
+                            .await
+                            .map(|resp| resp.effective_label)
+                            .map_err(|e| mlc_cloud::nick_error_message(&e));
+                        inner.borrow_mut().result = Some(FlowResult::Nick(r));
+                    });
                 }
             }
         }

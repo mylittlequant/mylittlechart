@@ -6208,6 +6208,64 @@ impl ChartApp {
                     self.panel_app.user_settings_state.profile_rename_target_id = None;
                     eprintln!("[ChartApp] profile_rename_cancel");
                 }
+                // ── Account nickname (ACCOUNT-level, `POST /api/account/nick`) ──
+                // Deliberately its own state and hit ids, never
+                // `profile_rename_*` above — see `UserSettingsState::
+                // nick_edit_mode`'s own doc for why the two never share a
+                // wire, even though both drive the same row's "Nickname"
+                // control for a single-profile identity.
+                "account_nick_edit" => {
+                    // An anonymous identity has a fixed name — the button is
+                    // not drawn for it (`render_single_profile_row`), so this
+                    // arm refuses rather than opening an editor for an
+                    // account that was never asked for a nickname.
+                    if !self.panel_app.user_settings_state.account_signed_in {
+                        eprintln!("[ChartApp] account_nick_edit refused: account_signed_in=false");
+                    } else {
+                        let current = self.panel_app.user_settings_state.account_label.clone();
+                        let wid = uzor::WidgetId::from(crate::text_input::ACCOUNT_NICK);
+                        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&wid, &current);
+                        self.input_coordinator.borrow_mut().text_fields_mut().focus(wid);
+                        let uss = &mut self.panel_app.user_settings_state;
+                        uss.nick_edit_mode = true;
+                        uss.nick_edit_focused = true;
+                        uss.nick_status = mlc_app_layout::ui::modal_settings::NickStatus::Idle;
+                        eprintln!("[ChartApp] account_nick_edit: opened, prefilled '{}'", current);
+                    }
+                }
+                "account_nick_input" => {
+                    // Claimed on mousedown by the store — same "nothing to
+                    // do here" idiom as `redeem_input` (`cloud_login.rs`'s
+                    // own doc): TextFieldStore already placed the caret.
+                    self.panel_app.user_settings_state.nick_edit_focused = true;
+                }
+                "account_nick_confirm" => {
+                    let wid = uzor::WidgetId::from(crate::text_input::ACCOUNT_NICK);
+                    let nick = self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+                    match mlc_app_layout::ui::modal_settings::validate_nick(&nick) {
+                        Ok(()) => {
+                            self.panel_app.user_settings_state.nick_status =
+                                mlc_app_layout::ui::modal_settings::NickStatus::Working;
+                            self.panel_app.user_settings_state.nick_save_requested = true;
+                            eprintln!("[ChartApp] account_nick_confirm: submitting '{}'", nick);
+                        }
+                        Err(message) => {
+                            eprintln!("[ChartApp] account_nick_confirm refused locally: {}", message);
+                            self.panel_app.user_settings_state.nick_status =
+                                mlc_app_layout::ui::modal_settings::NickStatus::Failed { message };
+                        }
+                    }
+                }
+                "account_nick_cancel" => {
+                    let uss = &mut self.panel_app.user_settings_state;
+                    uss.nick_edit_mode = false;
+                    uss.nick_edit_focused = false;
+                    uss.nick_status = mlc_app_layout::ui::modal_settings::NickStatus::Idle;
+                    let wid = uzor::WidgetId::from(crate::text_input::ACCOUNT_NICK);
+                    self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    eprintln!("[ChartApp] account_nick_cancel");
+                }
                 "profile_new" => {
                     // "+ New Profile" is not drawn below the paid tier
                     // (`render_profile_section`) — refuse a command reaching

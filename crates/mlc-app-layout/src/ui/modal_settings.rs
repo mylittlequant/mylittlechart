@@ -3510,6 +3510,53 @@ pub enum ProfileManagerPage {
 }
 
 
+// =============================================================================
+// Account nickname (account-level, `POST /api/account/nick`)
+// =============================================================================
+
+/// Outcome of the most recent account-nickname submission from the
+/// single-profile row's inline edit — same mailbox idiom as
+/// [`RedeemStatus`] (the shell owns the round trip and writes the result
+/// back here), but NOT `cfg(feature = "cloud")`-gated: the row it drives
+/// (`crate::layout::modals::user_settings::render_single_profile_row`)
+/// compiles in every build, unlike the login overlay.
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum NickStatus {
+    /// Nothing submitted since the edit was last opened.
+    #[default]
+    Idle,
+    /// A submission is in flight — the Save button is dead and says so.
+    Working,
+    /// Accepted; carries the label to show for this account from now on.
+    Saved { effective_label: String },
+    /// Refused (local validation or the server), with the sentence to show
+    /// the person who typed it.
+    Failed { message: String },
+}
+
+/// Client-side account-nickname format check — mirrors the server's own
+/// `POST /api/account/nick` 400 rule exactly, so a bad nick is refused
+/// before a round trip: 3-24 characters, ASCII letters/digits plus
+/// `_`/`-`/`.`, and the first character must be a letter or digit.
+///
+/// The one client-side copy of the rule: the click and Enter handlers in
+/// `mlc-app` call it before arming `nick_save_requested`, so neither
+/// transport crate (`mlc-cloud` on web, `mlc-updater` on native) validates
+/// again — the server is the second and final check.
+pub fn validate_nick(nick: &str) -> Result<(), String> {
+    let len = nick.chars().count();
+    if !(3..=24).contains(&len) {
+        return Err("Nickname must be 3-24 characters".to_string());
+    }
+    if !nick.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        return Err("Nickname may only contain letters, digits, '_', '-', '.'".to_string());
+    }
+    if !nick.chars().next().is_some_and(|c| c.is_ascii_alphanumeric()) {
+        return Err("Nickname must start with a letter or digit".to_string());
+    }
+    Ok(())
+}
+
 /// State for the User Settings modal.
 #[derive(Clone, Debug)]
 pub struct UserSettingsState {
@@ -3686,6 +3733,41 @@ pub struct UserSettingsState {
     pub profile_rename_focused: bool,
     /// ID of the profile row currently being renamed (None = not renaming).
     pub profile_rename_target_id: Option<String>,
+
+    // ── Account nickname (server-side, distinct from the local profile's
+    // `profile_meta` display name above — see `POST /api/account/nick`) ──
+    /// Whether the account nickname is being edited inline in the
+    /// single-profile row's "Nickname" control. A signed-in identity's
+    /// account nick is an ACCOUNT attribute set via `POST
+    /// /api/account/nick` (owner's identity ruling 2026-09-02: "a nickname
+    /// is an ACCOUNT attribute ... never a profile name" —
+    /// `welcome_wizard.rs`'s own doc) — this never touches
+    /// `profile_rename_mode`/`profile_display_name` above, even though
+    /// both live in the same row for a single-profile identity.
+    pub nick_edit_mode: bool,
+    /// Render-time snapshot of the nick edit input (populated from
+    /// TextFieldStore by ChartApp), same idiom as `profile_rename_render`.
+    pub nick_edit_render: ActiveFieldRender,
+    /// Whether the nick edit input field is focused for keyboard input.
+    pub nick_edit_focused: bool,
+    /// One-shot flag set by the Save button (or Enter in the field, once
+    /// local validation via [`validate_nick`] passes); the shell observes
+    /// it, submits the text currently in the field via its own cloud
+    /// transport (`mlc-cloud`'s `set_nick` on web, `mlc-updater`'s
+    /// `nick::set_nick` on native), and clears it. Same mailbox idiom as
+    /// `CloudLoginState::redeem_requested`.
+    pub nick_save_requested: bool,
+    /// Outcome of the most recent nick submission (local validation
+    /// failure or the server's answer).
+    pub nick_status: NickStatus,
+    /// The signed-in account's current label (nick if set, else the OAuth
+    /// display name) — mirrors the chrome's own account-label source
+    /// (web: `CloudSession::account_label`; native:
+    /// `AuthStatus::LoggedIn::display_name`), synced every frame, so the
+    /// edit box can prefill with what the person already sees elsewhere
+    /// rather than the unrelated local profile name. Empty when signed out.
+    pub account_label: String,
+
     /// Whether the avatar picker popover is open.
     pub show_avatar_picker: bool,
     /// ID of the profile whose avatar picker is open (None = active profile).
@@ -3820,6 +3902,12 @@ impl Default for UserSettingsState {
             profile_rename_render: ActiveFieldRender::default(),
             profile_rename_focused: false,
             profile_rename_target_id: None,
+            nick_edit_mode: false,
+            nick_edit_render: ActiveFieldRender::default(),
+            nick_edit_focused: false,
+            nick_save_requested: false,
+            nick_status: NickStatus::default(),
+            account_label: String::new(),
             show_avatar_picker: false,
             profile_avatar_target_id: None,
             show_new_profile_dialog: false,
