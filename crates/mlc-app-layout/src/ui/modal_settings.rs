@@ -3459,6 +3459,19 @@ impl UserSettingsTab {
         &[Self::General, Self::Vault, Self::Persistence, Self::Performance, Self::Server]
     }
 
+    /// [`Self::all`], with `Server` dropped while signed out — the Agent
+    /// API is gated on `account_signed_in && server_enabled()` (agent-api-
+    /// auth-and-secret-store plan, piece 4), so a signed-out session has no
+    /// reachable server for the tab to manage. Same `retain`-by-id idiom
+    /// `panel_app.rs:850` already uses for `share_chart` on the same gate.
+    pub fn visible(signed_in: bool) -> Vec<Self> {
+        let mut tabs = Self::all().to_vec();
+        if !signed_in {
+            tabs.retain(|t| *t != Self::Server);
+        }
+        tabs
+    }
+
     pub fn from_id(s: &str) -> Option<Self> {
         match s {
             "general" => Some(Self::General),
@@ -3661,6 +3674,34 @@ pub struct UserSettingsState {
     pub server_port: u16,
     /// Current server status: "running", "stopped", "error".
     pub server_status: String,
+
+    // ── Agent API key manager (Server tab, agent-api-auth-and-secret-store
+    // plan piece 4) ────────────────────────────────────────────────────────
+    // This crate cannot see `mlc_backend_shell_http::AgentState` (dependency
+    // direction is one-way upward: types → engines → backend → app →
+    // shells, and `AgentState` lives in a shell crate) — `main.rs` mirrors
+    // `AgentState::list_keys()` into these plain fields every frame instead.
+    /// Minted keys' public records: `(fingerprint_hex, label, role,
+    /// created_at_ms)`. `role` is the `Debug` spelling of
+    /// `mlc_backend_shell_http::auth::AgentKeyRole` (`"Control"` /
+    /// `"ReadOnly"`) — the same cross-crate string-mirror idiom
+    /// `UiEventEntry::kind` already uses for `SystemEventKind`.
+    pub agent_keys: Vec<(String, String, String, u64)>,
+    /// Whether the agent-key `SecretStore` is sealed — `true` also while no
+    /// store is wired at all, matching that store's own always-sealed
+    /// placeholder default. The Server tab shows "Unlock the vault to
+    /// manage keys" instead of the list/create form while this is set.
+    pub agent_keys_sealed: bool,
+    /// The most recently minted raw agent key, drained once from
+    /// `AgentState::take_last_minted_key()` by `main.rs` — the Server tab's
+    /// one-time reveal box shows this until "Copy"/dismiss clears it.
+    pub last_created_key: Option<String>,
+    /// Render-time snapshot of the key-manager "label" input (populated
+    /// from TextFieldStore by ChartApp), same idiom as `nick_edit_render`.
+    pub key_label_render: ActiveFieldRender,
+    /// Whether the key-manager "label" input field is focused for keyboard
+    /// input.
+    pub key_label_focused: bool,
 
     /// Scroll state for the General tab content.
     pub general_tab_scroll: ScrollState,
@@ -3894,6 +3935,11 @@ impl Default for UserSettingsState {
             server_enabled: true,
             server_port: 17420,
             server_status: "running".to_string(),
+            agent_keys: Vec::new(),
+            agent_keys_sealed: true,
+            last_created_key: None,
+            key_label_render: ActiveFieldRender::default(),
+            key_label_focused: false,
             general_tab_scroll: ScrollState::default(),
             sync_tab_scroll: ScrollState::default(),
             vault_tab_scroll: ScrollState::default(),

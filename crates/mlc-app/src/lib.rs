@@ -174,6 +174,9 @@ fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
     tf.register(text_input::CRED_ADD_API_KEY, TextFieldConfig::text());
     tf.register(text_input::CRED_ADD_API_SECRET, TextFieldConfig::password());
     tf.register(text_input::CRED_ADD_PASSPHRASE, TextFieldConfig::password());
+    // Server tab's agent-API key manager "label" field (agent-api-auth-and-
+    // secret-store plan, piece 4).
+    tf.register(text_input::KEY_LABEL_INPUT, TextFieldConfig::text().with_max_len(64));
     // Account overlay gift/trial code. See SYMBOL_QUICK_SEARCH above
     // for why this line is the difference between a field and a
     // drawing of one. Codes are ten uppercase alphanumerics; the box
@@ -9866,6 +9869,21 @@ impl ChartApp {
                 cs_mut.add_api_secret_render = add_api_secret;
                 cs_mut.add_passphrase_render = add_passphrase;
             }
+
+            // Wave 4b — Server tab's agent-API key manager "label" field
+            // (agent-api-auth-and-secret-store plan, piece 4). Same
+            // self-contained shape as the Wave 3 alert-token field above —
+            // Wave 4's own `populate` closure is already out of scope here.
+            {
+                let wid = uzor::WidgetId::from(text_input::KEY_LABEL_INPUT);
+                let focused = self.panel_app.user_settings_state.key_label_focused;
+                self.panel_app.user_settings_state.key_label_render = ActiveFieldRender {
+                    text: tf.text(&wid).to_string(),
+                    cursor: tf.cursor(&wid),
+                    selection_start: tf.selection_range(&wid).map(|(s, _)| s),
+                    cursor_visible: cursor_blink && focused,
+                };
+            }
         }
 
         let theme_manager_ptr: *const mlc_core::theme::ThemeManager =
@@ -10762,6 +10780,11 @@ impl ChartApp {
                     (text_input::CRED_ADD_API_KEY, "cred:add:api_key"),
                     (text_input::CRED_ADD_API_SECRET, "cred:add:api_secret"),
                     (text_input::CRED_ADD_PASSPHRASE, "cred:add:passphrase"),
+                    // Server tab's agent-API key manager "label" field
+                    // (agent-api-auth-and-secret-store plan, piece 4) —
+                    // unprefixed content-item id, see `input/mod.rs`'s
+                    // `VAULT_TEXT_FIELDS` comment for why.
+                    (text_input::KEY_LABEL_INPUT, "key_label"),
                 ];
                 for &(store_id, ui_id) in VAULT_FIELDS {
                     if let Some((_, rect)) = us.content_items.iter().find(|(k, _)| k.as_str() == ui_id) {

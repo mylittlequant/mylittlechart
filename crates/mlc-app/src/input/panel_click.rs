@@ -5938,6 +5938,27 @@ impl ChartApp {
                     self.server_enabled_changed = Some(self.panel_app.user_settings_state.server_enabled);
                     eprintln!("[ChartApp] server_enabled = {}", self.panel_app.user_settings_state.server_enabled);
                 }
+                // ── Agent API key manager (Server tab, agent-api-auth-and-
+                // secret-store plan, piece 4) ──────────────────────────────
+                // Click already focused/placed the caret via `on_drag_start`'s
+                // "user_settings:key_label" hit (`input/mod.rs`'s
+                // `VAULT_TEXT_FIELDS` block) — nothing left to do here.
+                "key_label" => {}
+                "key_create" => self.submit_key_create_request(),
+                rest if rest.starts_with("key_delete:") => {
+                    let fingerprint_hex = rest["key_delete:".len()..].to_string();
+                    self.key_delete_request = Some(fingerprint_hex.clone());
+                    eprintln!("[ChartApp] user_settings: key_delete requested, fingerprint={}", fingerprint_hex);
+                }
+                "key_reveal_copy" => {
+                    if let Some(ref raw_key) = self.panel_app.user_settings_state.last_created_key {
+                        self.clipboard_text = Some(raw_key.clone());
+                        eprintln!("[ChartApp] user_settings: minted key copied to clipboard");
+                    }
+                }
+                "key_reveal_dismiss" => {
+                    self.panel_app.user_settings_state.last_created_key = None;
+                }
                 // ── Welcome Wizard handlers ───────────────────────────────────
                 // Page order: 0=Theme, 1=Language (last page — its forward
                 // button ends the wizard directly). Owner's identity ruling
@@ -8253,6 +8274,25 @@ impl ChartApp {
         };
         self.panel_app.user_settings_state.persist_toolbar_toggles = now_on;
         self.autosave_snapshot();
+    }
+
+    /// Submit the Server tab's key-manager "Create key" action — reads
+    /// whatever is currently in [`crate::text_input::KEY_LABEL_INPUT`],
+    /// stages `key_create_request` if non-empty, then clears and blurs the
+    /// field. Shared by the "Create key" button click and the field's own
+    /// Enter-to-submit action (`text_input::dispatch::text_action_key_label`).
+    /// Minting itself (and the raw-key one-time reveal) happens later, off
+    /// `main.rs`'s drain of `key_create_request` into
+    /// `AgentCommand::CreateKey` — see that field's own doc.
+    pub(crate) fn submit_key_create_request(&mut self) {
+        let wid = uzor::WidgetId::from(crate::text_input::KEY_LABEL_INPUT);
+        let label = self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+        if !label.is_empty() {
+            self.key_create_request = Some((label, String::new()));
+            self.input_coordinator.borrow_mut().text_fields_mut().set_text(&wid, "");
+        }
+        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+        self.panel_app.user_settings_state.key_label_focused = false;
     }
 
     /// Set `ProfileUiSettings::control_point_shape`, push it into the live

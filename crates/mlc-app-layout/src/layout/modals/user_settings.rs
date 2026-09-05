@@ -11,7 +11,6 @@ use uzor::input::Sense;
 use mlc_core::i18n::{current_language, Language, TextKey, UserSettingsKey};
 use mlc_core::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
 use crate::ui::modal_settings::{CredentialsState, CredentialsView, NickStatus, UserSettingsState, UserSettingsTab};
-use crate::ui::scroll_state::ScrollState;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{ModalTheme, WidgetTheme, RadioOption, draw_radio_group, auto_btn_width, fit_text_to_width};
 use crate::ui::widgets::{
@@ -61,7 +60,11 @@ pub fn render_user_settings_modal(
     // height that leaves the frame exactly where it was.
     let content_height = modal_h - HEADER_H - FOOTER_H;
 
-    let tab_items: Vec<ModalTab<'_>> = UserSettingsTab::all()
+    // `Server` drops out while signed out — the Agent API has no reachable
+    // server for a signed-out session to manage (agent-api-auth-and-secret-
+    // store plan, piece 4).
+    let visible_tabs = UserSettingsTab::visible(state.account_signed_in);
+    let tab_items: Vec<ModalTab<'_>> = visible_tabs
         .iter()
         .map(|tab| {
             let icon = match tab {
@@ -75,7 +78,7 @@ pub fn render_user_settings_modal(
             ModalTab::with_icon(tab.id(), tab.label(), icon)
         })
         .collect();
-    let active_tab_idx = UserSettingsTab::all()
+    let active_tab_idx = visible_tabs
         .iter()
         .position(|t| *t == state.active_tab)
         .unwrap_or(0);
@@ -2674,11 +2677,12 @@ fn render_server_tab(
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
 ) {
-    // Server tab content is short (status row + endpoint info), no scroll needed.
-    let no_scroll = ScrollState::default();
+    // The key-manager list (agent-api-auth-and-secret-store plan, piece 4)
+    // can grow past the fixed content height a bare status row never did —
+    // real scroll state now, matching every other tab in this modal.
     let container = ScrollableContainer::new(
         viewport_rect,
-        &no_scroll,
+        &state.server_tab_scroll,
         None,
     );
     container.begin(ctx);
@@ -2755,28 +2759,173 @@ fn render_server_tab(
     ctx.fill_text(&status_text, dot_cx + dot_r + 6.0, dot_cy);
     cy += row_h + 16.0;
 
-    // ── Access info (replaces the old API KEYS section) ──────────────────────
-    // The OSS build serves the Agent API openly on 127.0.0.1, so there are no
-    // user-managed keys. Tell the user where the API is reachable instead.
+    // ── Section: API KEYS (agent-api-auth-and-secret-store plan, piece 4) ────
+    // Every route needs a minted, unsealed key — the Server tab is where one
+    // gets created, listed and revoked. See `mlc_backend_shell_http::auth`
+    // for the auth model this manages.
+    cy += section_gap;
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("API Keys", x, cy);
+    cy += 20.0;
+
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+
+    if state.agent_keys_sealed {
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Unlock the vault to manage keys.", x, cy + row_h / 2.0);
+        cy += row_h;
+    } else {
+        // "label" input + "Create key" button row.
+        let btn_w = 92.0;
+        let field_w = (available_w - btn_w - 8.0).max(60.0);
+        let field_rect = WidgetRect::new(x, cy, field_w, row_h);
+        let render = &state.key_label_render;
+        let (sel_start, sel_end) = if let Some((lo, hi)) = render.selection_range() {
+            (Some(lo), Some(hi))
+        } else {
+            (None, None)
+        };
+        let config = InputConfig::new(&render.text)
+            .with_placeholder("Key label")
+            .with_focused(state.key_label_focused)
+            .with_cursor(render.cursor)
+            .with_selection(sel_start, sel_end)
+            .with_font_size(12.0);
+        let input_result = draw_input(
+            ctx, &config, crate::ui::widgets::types::WidgetState::Normal, field_rect, &widget_theme,
+        );
+        if state.key_label_focused && render.cursor_visible {
+            draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &toolbar_theme.item_text);
+        }
+        result.content_items.push(("key_label".to_string(), field_rect));
+        result.input_char_positions.push(("key_label".to_string(), input_result.char_x_positions));
+        input_coordinator.register_on_layer("user_settings:key_label", field_rect, Sense::CLICK, layer_id);
+
+        let btn_x = x + field_w + 8.0;
+        let btn_rect = WidgetRect::new(btn_x, cy, btn_w, row_h);
+        let btn_hovered = state.hovered_item_id.as_deref() == Some("key_create");
+        ctx.set_fill_color(if btn_hovered { &toolbar_theme.accent_hover } else { &toolbar_theme.accent });
+        ctx.fill_rounded_rect(btn_x, cy, btn_w, row_h, 4.0);
+        ctx.set_fill_color(&toolbar_theme.item_text_active);
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Create key", btn_x + btn_w / 2.0, cy + row_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+        result.content_items.push(("key_create".to_string(), btn_rect));
+        input_coordinator.register_on_layer("user_settings:key_create", btn_rect, Sense::CLICK | Sense::HOVER, layer_id);
+        cy += row_h + 10.0;
+
+        // Managed key list.
+        if state.agent_keys.is_empty() {
+            ctx.set_fill_color(&toolbar_theme.item_text_muted);
+            ctx.set_font("11px sans-serif");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text("No agent keys yet.", x, cy + row_h / 2.0);
+            cy += row_h;
+        } else {
+            for (fingerprint_hex, label, role, _created_at_ms) in &state.agent_keys {
+                let title = if label.is_empty() {
+                    let short = &fingerprint_hex[..fingerprint_hex.len().min(8)];
+                    format!("{short} · {role}")
+                } else {
+                    format!("{label} · {role}")
+                };
+                ctx.set_fill_color(&toolbar_theme.item_text);
+                ctx.set_font("12px sans-serif");
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                ctx.fill_text(&title, x, cy + row_h / 2.0);
+
+                let remove_w = 24.0;
+                let remove_id = format!("key_delete:{fingerprint_hex}");
+                let rm_x = x + available_w - remove_w;
+                let rm_hovered = state.hovered_item_id.as_deref() == Some(remove_id.as_str());
+                if rm_hovered {
+                    ctx.set_fill_color(&toolbar_theme.danger);
+                    ctx.fill_rounded_rect(rm_x, cy + 2.0, remove_w, row_h - 4.0, 3.0);
+                }
+                draw_svg_icon(ctx, Icon::Close.svg(), rm_x + 4.0, cy + (row_h - 16.0) / 2.0, 16.0, 16.0, &toolbar_theme.item_text_muted);
+                let rm_rect = WidgetRect::new(rm_x, cy, remove_w, row_h);
+                let remove_widget_id = format!("user_settings:{remove_id}");
+                result.content_items.push((remove_id, rm_rect));
+                input_coordinator.register_on_layer(
+                    remove_widget_id.as_str(), rm_rect, Sense::CLICK | Sense::HOVER, layer_id,
+                );
+
+                cy += row_h + 6.0;
+            }
+        }
+
+        // One-time raw-key reveal box — surfaces the freshly minted key
+        // exactly once (`AgentState::take_last_minted_key`, drained by
+        // `main.rs` into this same field every frame).
+        if let Some(ref raw_key) = state.last_created_key {
+            cy += 8.0;
+            let box_h = row_h + 8.0;
+            ctx.set_fill_color(&toolbar_theme.dropdown_bg);
+            ctx.fill_rounded_rect(x, cy, available_w, box_h, 4.0);
+            ctx.set_stroke_color(&toolbar_theme.accent);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(x, cy, available_w, box_h, 4.0);
+
+            let copy_w = 50.0;
+            let dismiss_w = 20.0;
+            let text_w = (available_w - copy_w - dismiss_w - 24.0).max(20.0);
+            ctx.set_font("11px monospace");
+            let shown = fit_text_to_width(ctx, raw_key, text_w);
+            ctx.set_fill_color(&toolbar_theme.item_text);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(&shown, x + 8.0, cy + box_h / 2.0);
+
+            let copy_x = x + available_w - copy_w - dismiss_w - 8.0;
+            let copy_rect = WidgetRect::new(copy_x, cy, copy_w, box_h);
+            let copy_hovered = state.hovered_item_id.as_deref() == Some("key_reveal_copy");
+            ctx.set_fill_color(if copy_hovered { &toolbar_theme.item_bg_hover } else { &toolbar_theme.dropdown_bg });
+            ctx.fill_rounded_rect(copy_x, cy + 2.0, copy_w, box_h - 4.0, 3.0);
+            ctx.set_fill_color(&toolbar_theme.item_text);
+            ctx.set_font("11px sans-serif");
+            ctx.set_text_align(TextAlign::Center);
+            ctx.fill_text("Copy", copy_x + copy_w / 2.0, cy + box_h / 2.0);
+            ctx.set_text_align(TextAlign::Left);
+            result.content_items.push(("key_reveal_copy".to_string(), copy_rect));
+            input_coordinator.register_on_layer("user_settings:key_reveal_copy", copy_rect, Sense::CLICK | Sense::HOVER, layer_id);
+
+            let dismiss_x = x + available_w - dismiss_w;
+            let dismiss_rect = WidgetRect::new(dismiss_x, cy, dismiss_w, box_h);
+            draw_svg_icon(ctx, Icon::Close.svg(), dismiss_x + 2.0, cy + (box_h - 16.0) / 2.0, 16.0, 16.0, &toolbar_theme.item_text_muted);
+            result.content_items.push(("key_reveal_dismiss".to_string(), dismiss_rect));
+            input_coordinator.register_on_layer("user_settings:key_reveal_dismiss", dismiss_rect, Sense::CLICK | Sense::HOVER, layer_id);
+
+            cy += box_h + 4.0;
+            ctx.set_fill_color(&toolbar_theme.item_text_muted);
+            ctx.set_font("10px sans-serif");
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            ctx.fill_text("Copy this key now — it will not be shown again.", x, cy);
+            cy += 16.0;
+        }
+    }
+
+    cy += 16.0;
     ctx.set_font("11px sans-serif");
     ctx.set_fill_color(&toolbar_theme.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(
-        UserSettingsKey::ServerOpenAccess.get(current_language()),
-        x,
-        cy,
-    );
-    cy += 18.0;
     ctx.fill_text(
         &format!("Endpoint: http://127.0.0.1:{}/", state.server_port),
         x,
         cy,
     );
     let bottom = cy + 18.0;
-    // Silence the now-unused parameter warning.
-    let _ = frame_theme;
-    let _ = available_w;
 
     let total_content_h = bottom - container.content_y();
     let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);

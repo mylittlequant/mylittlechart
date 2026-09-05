@@ -206,6 +206,7 @@ impl ChartApp {
                 | INDICATOR_SEARCH
                 | COMPARE_SEARCH
                 | SYMBOL_QUICK_SEARCH
+                | KEY_LABEL_INPUT
         );
         if !is_late_field {
             return false;
@@ -283,6 +284,7 @@ impl ChartApp {
             TF_FAVORITE_INPUT                => self.text_action_tf_favorite_input(action),
             PARAM_FAVORITE_INPUT             => self.text_action_param_favorite_input(action),
             SYMBOL_QUICK_SEARCH              => self.text_action_symbol_quick_search(action),
+            KEY_LABEL_INPUT                  => self.text_action_key_label(action),
             PRIMITIVE_SETTINGS_FIELD         => self.text_action_prim_settings_field(action),
             INDICATOR_SETTINGS_FIELD         => self.text_action_ind_settings_field(action),
             CHART_SETTINGS_FIELD             => self.text_action_chart_settings_field(action),
@@ -451,6 +453,22 @@ impl ChartApp {
             TextAction::Cancel => {
                 self.standalone_panels.wl_group_name_input.close();
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            }
+            TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
+        }
+    }
+
+    /// Server tab's agent-API key manager "label" field (agent-api-auth-
+    /// and-secret-store plan, piece 4). Enter submits the same "Create key"
+    /// action the button click does — see
+    /// [`ChartApp::submit_key_create_request`] (`panel_click.rs`) for the
+    /// shared body.
+    fn text_action_key_label(&mut self, action: TextAction) {
+        match action {
+            TextAction::Commit(_) => self.submit_key_create_request(),
+            TextAction::Cancel => {
+                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                self.panel_app.user_settings_state.key_label_focused = false;
             }
             TextAction::TextChanged(_) | TextAction::None | TextAction::RawInput(_) => {}
         }

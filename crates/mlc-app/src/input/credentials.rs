@@ -671,24 +671,24 @@ impl ChartApp {
     /// show it once (`ProfileManagerPage::ShowRecoveryKey` or
     /// `CredentialsView::ShowRecoveryKey`, same host test as above).
     ///
-    /// Deliberately does NOT touch `agent_key_store` — out of scope for the
-    /// agent-api-auth plan's four named seal/unlock call-outs. `rekey_vault`
-    /// re-encrypts `vault.enc` under a brand-new `VaultKey`, but
-    /// `agent_keys.enc` stays encrypted under the OLD one until something
-    /// re-derives it: any agent key minted before a re-key survives on disk
-    /// but goes unreadable by `agent_key_store` (and by the render thread's
-    /// own load-append-save mint/revoke path) until the next full unlock
-    /// re-syncs it. Re-encrypting the sidecar here too is a follow-up, not
-    /// this piece's job.
+    /// Also re-encrypts the `agent_keys.enc` sidecar under the new
+    /// `VaultKey` (piece 3 of the agent-api-auth-and-secret-store plan left
+    /// this as a documented gap — closed here, in piece 4): `rekey_vault`
+    /// re-encrypts `vault.enc` synchronously, but without this, any agent
+    /// key minted before the re-key would survive on disk yet go unreadable
+    /// by `agent_key_store` (and by the render thread's own load-append-save
+    /// mint/revoke path) until the next full unlock happened to re-sync it.
     pub fn apply_new_passphrase(
         &mut self,
         new_passphrase: &str,
         profile_manager: &mut crate::user_manager::ProfileManager,
     ) -> Result<String, String> {
+        let old_key = profile_manager.vault_key;
         let formatted = profile_manager.rekey_vault(new_passphrase)?;
         if let Some(new_key) = profile_manager.vault_key {
             self.core.user_mut().set_vault_key(Some(new_key));
             self.core.templates_mut().set_vault_key(Some(new_key));
+            self.rekey_agent_key_store(old_key, &new_key);
             // `rekey_vault` already re-encrypted `vault.enc` synchronously
             // under the new key, but `templates/*` on disk are still under
             // the OLD one — both shells' persistence drains re-save
@@ -701,6 +701,40 @@ impl ChartApp {
             self.persist_profile();
         }
         Ok(formatted)
+    }
+
+    /// Re-encrypt the `agent_keys.enc` sidecar from `old_key` to `new_key`
+    /// after [`Self::apply_new_passphrase`] re-keys the main vault, then
+    /// re-syncs the wired [`Self::agent_key_store`] off the new key so a
+    /// live session keeps working with its already-issued keys instead of
+    /// finding them unreadable until the next full unlock. `old_key` is
+    /// `None` only if the vault was never unlocked to begin with, in which
+    /// case `rekey_vault` itself would already have refused — kept as a
+    /// guard rather than an `expect`, not a path this is expected to take.
+    ///
+    /// A profile that never minted a key has no sidecar file at all; that
+    /// read failure (not just a wrong key) is treated the same as "nothing
+    /// to carry forward" — the main vault's own re-key already succeeded by
+    /// the time this runs, and a missing sidecar is not a reason to undo it.
+    fn rekey_agent_key_store(
+        &self,
+        old_key: Option<mlc_vault::vault::VaultKey>,
+        new_key: &mlc_vault::vault::VaultKey,
+    ) {
+        let Some(old_key) = old_key else { return };
+        let vault_path = mlc_core::active_profile_data_dir().join("agent_keys.enc");
+        let records = match mlc_vault::vault::load_encrypted::<serde_json::Value>(&old_key, &vault_path) {
+            Ok(records) => records,
+            Err(e) => {
+                eprintln!("[ChartApp] agent key store: agent_keys.enc not re-keyed ({}) — likely no keys minted yet", e);
+                return;
+            }
+        };
+        if let Err(e) = mlc_vault::vault::save_encrypted(new_key, &vault_path, &records) {
+            eprintln!("[ChartApp] agent key store: failed to re-key agent_keys.enc: {}", e);
+            return;
+        }
+        self.sync_agent_key_store(new_key);
     }
 }
 

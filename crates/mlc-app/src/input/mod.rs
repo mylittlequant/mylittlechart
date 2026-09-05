@@ -2601,13 +2601,22 @@ impl ChartApp {
             // (same split every other settings-modal field already has).
             if self.panel_app.user_settings_state.is_open {
                 if let Some(ref us) = result.user_settings {
-                    const VAULT_TEXT_FIELDS: [&str; 6] = [
+                    const VAULT_TEXT_FIELDS: [&str; 7] = [
                         "cred:webhook_url",
                         "cred:add:exchange",
                         "cred:add:label",
                         "cred:add:api_key",
                         "cred:add:api_secret",
                         "cred:add:passphrase",
+                        // Server tab's agent-API key manager "label" field
+                        // (agent-api-auth-and-secret-store plan, piece 4) —
+                        // a different tab of the same modal, reusing this
+                        // block rather than growing a near-identical one.
+                        // Unprefixed, like every other "user_settings:"
+                        // content-item id (`render_server_tab` pushes the
+                        // short form; only `register_on_layer`'s actual
+                        // dispatch id carries the `"user_settings:"` prefix).
+                        "key_label",
                     ];
                     let hit_field = us.content_items.iter()
                         .find(|(id, rect)| VAULT_TEXT_FIELDS.contains(&id.as_str()) && rect.contains(x, y))
@@ -2620,6 +2629,7 @@ impl ChartApp {
                         cs.add_api_key_focused    = field_id == "cred:add:api_key";
                         cs.add_api_secret_focused = field_id == "cred:add:api_secret";
                         cs.add_passphrase_focused = field_id == "cred:add:passphrase";
+                        self.panel_app.user_settings_state.key_label_focused = field_id == "key_label";
                         self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                         return false;
                     }

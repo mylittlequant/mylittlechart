@@ -410,6 +410,15 @@ struct App<'s> {
     /// Shared state for the internal Agent API server.
     agent_state: Option<std::sync::Arc<mlc_backend_shell_http::AgentState>>,
 
+    /// `JoinHandle` for the currently-running Agent API listener task,
+    /// `None` while stopped. Owned by the sign-in/`server_enabled` edge in
+    /// `about_to_wait` (agent-api-auth-and-secret-store plan, piece 4): the
+    /// listener starts when `account_signed_in && server_enabled()` becomes
+    /// true and is `.abort()`ed + cleared on the reverse transition (sign-out
+    /// or the settings toggle turning the server off). Replaces the old
+    /// boot-time-only start, which had no stop path at all.
+    listener_handle: Option<tokio::task::JoinHandle<()>>,
+
     /// OTA / telemetry / auth background task, started once in `App::new`
     /// after the `DataBridge` exists. `cmd_tx` forwards user-triggered
     /// commands (logout, force-check, ...); `status_rx`/`auth_rx` are polled
@@ -930,10 +939,41 @@ impl App<'_> {
         core.seed_exchange_symbols_from_bridge();
         seed_core_from_profile(&core, &profile_manager);
 
+        // Agent-key `SecretStore` — ONE instance for the whole process,
+        // bound to the active profile's `agent_keys.enc` sidecar (same
+        // `VaultKey` as `vault.enc`, its own 24h-absolute/no-idle TTL — see
+        // `mlc_backend_shell_http::auth::agent_keys_paths`'s doc). Handed to
+        // `AgentState` below AND to every window's `ChartApp` via
+        // `set_agent_key_store` (`create_window`/`start_promote_async`), so
+        // the HTTP-facing copy and the render thread's mint/revoke path
+        // never drift onto two different stores.
+        let agent_key_store = {
+            let (salt_path, vault_path) = mlc_backend_shell_http::auth::agent_keys_paths(
+                &mlc_core::active_profile_data_dir(),
+            );
+            let store = std::sync::Arc::new(mlc_vault::SecretStore::with_ttls(
+                salt_path,
+                vault_path,
+                None,
+                std::time::Duration::from_secs(24 * 60 * 60),
+            ));
+            // `seed_core_from_profile` above already retained whatever
+            // `VaultKey` the boot flow derived — if the main vault is
+            // already unlocked at this point, unlock the sidecar off the
+            // SAME key now so a running session does not start sealed.
+            if let Some(vault_key) = core.user().vault_key() {
+                if let Err(e) = store.unlock_with_key(&vault_key) {
+                    eprintln!("[App] agent key store: failed to unlock at startup: {}", e);
+                }
+            }
+            store
+        };
+
         // Start the internal Agent API server on the DataBridge's tokio runtime.
-        let agent_state = std::sync::Arc::new(mlc_backend_shell_http::AgentState::new(
+        let agent_state = std::sync::Arc::new(mlc_backend_shell_http::AgentState::with_agent_key_store(
             bridge.clone(),
             env!("CARGO_PKG_VERSION").to_string(),
+            agent_key_store,
         ));
         // ── Populate indicator catalog (one-time, at startup) ─────────────────
         {
@@ -1074,17 +1114,12 @@ impl App<'_> {
             }
         }
 
-        // Only start the server if enabled in profile
-        let _server_handle = if core.user().server_enabled() {
-            Some(mlc_backend_shell_http::start_server(
-                agent_state.clone(),
-                &live_data_handle,
-                core.user().server_port(),
-            ))
-        } else {
-            eprintln!("[App] Agent API server disabled in settings");
-            None
-        };
+        // The Agent API listener no longer starts here — it starts (and
+        // stops) off `account_signed_in && server_enabled()` in
+        // `about_to_wait`'s per-frame edge (agent-api-auth-and-secret-store
+        // plan, piece 4): unauthenticated boot must never bind the port,
+        // and a settings-toggle flip must take effect without a restart.
+        // See `App::listener_handle`'s own doc.
 
         // ── Start the OTA / telemetry / auth background task ──────────────────
         // Runs on `live_data_handle` — the same multi-thread runtime `bridge`
@@ -1222,6 +1257,7 @@ impl App<'_> {
             app_connector_ready_rx,
             _phantom: std::marker::PhantomData,
             agent_state: Some(agent_state),
+            listener_handle: None,
             updater_handle,
             #[cfg(feature = "cloud")]
             download_overlay_was_open: false,
@@ -1527,10 +1563,15 @@ impl App<'_> {
             false,
         );
         // Attach this chart's backend to the AgentState so /api/v1/apps
-        // routes resolve. Every ChartApp in this process shares one
+        // routes resolve, and wire the SAME agent-key `SecretStore` into
+        // this window's ChartApp (agent-api-auth-and-secret-store plan,
+        // piece 4) — the seal/unlock call-outs in `credentials.rs` are all
+        // `if let Some(store) = &self.agent_key_store`, a no-op until a
+        // host calls this. Every ChartApp in this process shares one
         // Arc<BackendCore>, so the last writer wins safely.
         if let Some(ref agent_state) = self.agent_state {
             agent_state.attach_core(chart.core.clone());
+            chart.set_agent_key_store(agent_state.agent_key_store.clone());
         }
         // Apply the app-level theme so new windows start with the correct preset.
         if !self.app_state.theme_preset.is_empty() {
@@ -1953,6 +1994,11 @@ impl App<'_> {
         // once by `seed_core_from_profile`; the worker reads it directly
         // via `core.user()` instead of capturing separate clones.
         let theme_preset = self.app_state.theme_preset.clone();
+        // Agent-key `SecretStore` (agent-api-auth-and-secret-store plan,
+        // piece 4) — same `Arc` every other window already carries, cloned
+        // for the worker thread so a promoted window's ChartApp is wired
+        // exactly like one built through `create_window`.
+        let agent_key_store = self.agent_state.as_ref().map(|s| s.agent_key_store.clone());
 
         // Capture window sizes now (on the main thread — winit Arc<Window> is !Send).
         let window_sizes: Vec<(u32, u32, f64)> = window_ids.iter().map(|wid| {
@@ -2000,6 +2046,9 @@ impl App<'_> {
                     &profile_manager,
                     false, // skeleton = false
                 );
+                if let Some(ref store) = agent_key_store {
+                    chart.set_agent_key_store(store.clone());
+                }
 
                 // Apply the app-level theme.
                 if !theme_preset.is_empty() {
@@ -3484,7 +3533,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     pw.chart.panel_app.user_settings_state.server_status = status.to_string();
                 }
                 eprintln!("[App] server_enabled changed to: {}", enabled);
-                // Note: actual server start/stop requires app restart for now
+                // Actual listener start/stop happens later this same frame,
+                // off `account_signed_in && server_enabled()`
+                // (agent-api-auth-and-secret-store plan, piece 4) — see the
+                // `want`/`listener_handle` edge below, which also corrects
+                // `server_status` to the real bound/not-bound fact.
             }
         }
 
@@ -5150,14 +5203,19 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // `Option<String>` here (mirrors `redeem_status`/`nick_status`
             // below) so the `watch::Ref` guard is gone before
             // `system_event_window_mut()` needs `&mut self` again.
-            let newly_signed_in_as: Option<String> =
+            // `just_signed_out` (agent-api-auth-and-secret-store plan, piece
+            // 4): the sign-out edge off this SAME channel/`has_changed()`
+            // read — a second, separate `has_changed()` call below would
+            // find the "changed" bit already consumed by the
+            // `borrow_and_update()` this match already does.
+            let (newly_signed_in_as, just_signed_out): (Option<String>, bool) =
                 if self.updater_handle.auth_rx.has_changed().unwrap_or(false) {
                     match &*self.updater_handle.auth_rx.borrow_and_update() {
-                        mlc_updater::AuthStatus::LoggedIn { display_name, .. } => Some(display_name.clone()),
-                        _ => None,
+                        mlc_updater::AuthStatus::LoggedIn { display_name, .. } => (Some(display_name.clone()), false),
+                        mlc_updater::AuthStatus::NotLoggedIn => (None, true),
                     }
                 } else {
-                    None
+                    (None, false)
                 };
             if let Some(display_name) = newly_signed_in_as {
                 let body = format!("Signed in as {display_name}.");
@@ -5165,6 +5223,80 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     pw.chart.push_system_event(mlc_core::SystemEventKind::Account, "Signed in", body, true);
                 }
             }
+            // Seal the agent-key SecretStore on sign-out — a signed-out
+            // session must not keep an unlocked RAM copy of it, even though
+            // the listener start/stop edge just below already stops the
+            // server on this same transition (`seal()` is idempotent, so a
+            // stray fire on the very first frame — before this receiver has
+            // ever seen a real change — costs nothing).
+            if just_signed_out {
+                if let Some(ref agent_state) = self.agent_state {
+                    agent_state.agent_key_store.seal();
+                }
+            }
+            // Agent API listener start/stop: the port only ever binds for a
+            // signed-in session with the Server-tab toggle on — never at
+            // boot, regardless of the toggle (agent-api-auth-and-secret-
+            // store plan, piece 4). `bind_with_reuse`'s own retry loop
+            // tolerates the brief window where a just-stopped listener's
+            // socket has not yet been released by the OS.
+            let want_agent_listener = account_signed_in && self.core.user().server_enabled();
+            if want_agent_listener && self.listener_handle.is_none() {
+                // Cloned out of `self.agent_state` (rather than matched by
+                // `ref`) so the borrow ends here — `system_event_window_mut`
+                // below needs `&mut self` and cannot run while any part of
+                // `self` is still immutably borrowed.
+                if let Some(agent_state) = self.agent_state.clone() {
+                    let port = self.core.user().server_port();
+                    let handle = mlc_backend_shell_http::start_server(
+                        agent_state, &self.live_data_handle, port,
+                    );
+                    self.listener_handle = Some(handle);
+                    if let Some(pw) = self.system_event_window_mut() {
+                        pw.chart.push_system_event(
+                            mlc_core::SystemEventKind::Agent,
+                            format!("Agent API listening on 127.0.0.1:{port}"),
+                            String::new(),
+                            false,
+                        );
+                    }
+                    eprintln!("[App] Agent API listener started on 127.0.0.1:{}", port);
+                }
+            } else if !want_agent_listener && self.listener_handle.is_some() {
+                if let Some(handle) = self.listener_handle.take() {
+                    handle.abort();
+                }
+                if let Some(pw) = self.system_event_window_mut() {
+                    pw.chart.push_system_event(
+                        mlc_core::SystemEventKind::Agent,
+                        "Agent API stopped",
+                        String::new(),
+                        false,
+                    );
+                }
+                eprintln!("[App] Agent API listener stopped");
+            }
+            let agent_server_status = if self.listener_handle.is_some() { "running" } else { "stopped" };
+
+            // Drain the most recently minted raw agent key into the Server
+            // tab's one-time reveal box, and mirror the current key list +
+            // the store's sealed state every frame — this crate cannot see
+            // `AgentState` (dependency direction), so `UserSettingsState`
+            // carries plain mirrors instead (see that struct's own doc).
+            let freshly_minted_key = self.agent_state.as_ref().and_then(|s| s.take_last_minted_key());
+            let (agent_keys, agent_keys_sealed): (Vec<(String, String, String, u64)>, bool) =
+                match self.agent_state.as_ref().map(|s| s.list_keys()) {
+                    Some(Ok(records)) => (
+                        records.iter().map(|r| (
+                            r.fingerprint_hex.clone(),
+                            r.label.clone(),
+                            format!("{:?}", r.role),
+                            r.created_at_ms,
+                        )).collect(),
+                        false,
+                    ),
+                    _ => (Vec::new(), true),
+                };
             // The chrome's sign-in button reads the same channel, so the
             // strip cannot disagree with the settings modal about who is
             // signed in — one source, two readers.
@@ -5235,6 +5367,24 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.account_signed_in = account_signed_in;
+                // `Server` tab is not drawn while signed out
+                // (`UserSettingsTab::visible`) — force off it here too, so a
+                // sign-out that happens while the tab is open does not leave
+                // `active_tab` pointing at a tab the rail no longer shows
+                // (agent-api-auth-and-secret-store plan, piece 4).
+                if !account_signed_in
+                    && pw.chart.panel_app.user_settings_state.active_tab
+                        == mlc_app_layout::ui::modal_settings::UserSettingsTab::Server
+                {
+                    pw.chart.panel_app.user_settings_state.active_tab =
+                        mlc_app_layout::ui::modal_settings::UserSettingsTab::General;
+                }
+                pw.chart.panel_app.user_settings_state.server_status = agent_server_status.to_string();
+                pw.chart.panel_app.user_settings_state.agent_keys = agent_keys.clone();
+                pw.chart.panel_app.user_settings_state.agent_keys_sealed = agent_keys_sealed;
+                if let Some(ref raw_key) = freshly_minted_key {
+                    pw.chart.panel_app.user_settings_state.last_created_key = Some(raw_key.clone());
+                }
                 // Mirrors the chrome's own `account_label` below — the nick
                 // edit box prefills from this, not the unrelated local
                 // profile name.

@@ -210,6 +210,11 @@ pub const TF_FAVORITE_INPUT: &str = "tf_favorite_input";
 /// add and edit, same as `TF_FAVORITE_INPUT`.
 pub const PARAM_FAVORITE_INPUT: &str = "param_favorite_input";
 
+/// Label input in the Server tab's agent-API key manager "Create key" row
+/// (agent-api-auth-and-secret-store plan, piece 4). Free-form text; an
+/// empty label refuses the create rather than being rejected by this field.
+pub const KEY_LABEL_INPUT: &str = "key_label_input";
+
 /// Inline fast-search text field hosted in the `symbol_selector` toolbar
 /// dropdown (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner spec
 /// 2026-07-16, `ProfileUiSettings::symbol_quick_search`). Mirrors
@@ -272,5 +277,6 @@ pub fn known_field_ids() -> &'static [&'static str] {
         TF_FAVORITE_INPUT,
         PARAM_FAVORITE_INPUT,
         SYMBOL_QUICK_SEARCH,
+        KEY_LABEL_INPUT,
     ]
 }
