@@ -1305,6 +1305,16 @@ impl BackendCore {
         let mut rx = self.broadcast_rx.lock().expect("BackendCore.broadcast_rx poisoned");
         let mut lagged = false;
 
+        // Whole-loop attribution (owner report 2026-09-05: a 2.2s tick spent
+        // ~2.2s somewhere between `chart.tick` and `render`, and the ONLY
+        // measured sub-step inside it — `prewarm_wire_symbol_cache` — was
+        // 16.7ms). `loop_t0`/`processed_updates` answer "was it THIS drain
+        // loop, and how many `LiveUpdate`s did it chew through" without
+        // timing every branch — one line, only when the whole drain ran
+        // long, never per update.
+        let loop_t0 = web_time::Instant::now();
+        let mut processed_updates: usize = 0;
+
         loop {
             let update = match rx.try_recv() {
                 Ok(u) => u,
@@ -1327,6 +1337,7 @@ impl BackendCore {
                 }
                 Err(_) => break,
             };
+            processed_updates += 1;
 
             match update {
                 // ── BarsLoaded ─────────────────────────────────────────────────
@@ -1841,8 +1852,25 @@ impl BackendCore {
                 // ── SymbolsLoaded ───────────────────────────────────────────────
                 LiveUpdate::SymbolsLoaded { exchange_id, symbols } => {
                     let count = symbols.len();
+                    // Split attribution (owner report 2026-09-05): station
+                    // warmup delivers this per exchange/account_type, and
+                    // the only sub-step with its own log
+                    // (`prewarm_wire_symbol_cache`) measured 16.7ms while the
+                    // whole tick was 2.2s long — so this arm, not just the
+                    // prewarm call, needed its own clock.
+                    let set_symbols_t0 = web_time::Instant::now();
                     self.exchange_symbols_mut().set_symbols(exchange_id, symbols);
+                    let set_symbols_ms = set_symbols_t0.elapsed().as_secs_f64() * 1000.0;
+                    let prewarm_t0 = web_time::Instant::now();
                     self.bridge.prewarm_wire_symbol_cache(exchange_id);
+                    let prewarm_ms = prewarm_t0.elapsed().as_secs_f64() * 1000.0;
+                    let total_ms = set_symbols_ms + prewarm_ms;
+                    if total_ms > 50.0 {
+                        mlc_backend_data_bridge::dlog!(
+                            "[SymbolsLoaded] {:?}: {} symbols set_symbols={:.1}ms prewarm={:.1}ms total={:.1}ms",
+                            exchange_id, count, set_symbols_ms, prewarm_ms, total_ms,
+                        );
+                    }
                     events.push(BubbleEvent::SymbolsLoaded { exchange_id, count });
                 }
 
@@ -2257,6 +2285,14 @@ impl BackendCore {
             }
         }
         drop(rx);
+
+        let loop_ms = loop_t0.elapsed().as_secs_f64() * 1000.0;
+        if loop_ms > 50.0 {
+            mlc_backend_data_bridge::dlog!(
+                "[tick_writers] drained {} LiveUpdates in {:.1}ms",
+                processed_updates, loop_ms,
+            );
+        }
 
         // Lagged kline self-heal (owner defect 2026-07-30): raw
         // `BarUpdate`s dropped by the broadcast overflow have no refold to

@@ -1,4 +1,12 @@
-//! Always-on wasm-only frame/persistence instrumentation for the web shell.
+//! Always-on wasm-only frame/persistence instrumentation for the web shell —
+//! MEASUREMENT ONLY. Owner's ruling 2026-09-05: dev tooling must not ship
+//! inside the product. This module never writes to the DOM and never calls
+//! `console.*`; it just keeps a rolling record and answers when asked.
+//! Display/collection live entirely in dig2browser's CDP driver
+//! (`dig2browser/tools/cdp-control/cdp_control.py`, `perf` and `hud`
+//! verbs) — that tool installs its own on-page HUD `<div>` and polls
+//! [`PerfMeter::snapshot_js`] over CDP `Runtime.evaluate`; nothing here is
+//! user-visible or console-visible in a shipped build.
 //!
 //! # Why this exists
 //!
@@ -22,38 +30,51 @@
 //! `mylittlechart/CLAUDE.md` crate contract) — the shell times around the
 //! calls it already makes into `ChartApp`/`persistence`.
 //!
-//! # Cost when the HUD is off
+//! # Cost
 //!
 //! [`FrameTimer`] is a handful of `performance.now()` reads (JS property
 //! gets, not allocations) per frame, folded into a fixed-size ring buffer
-//! ([`PerfMeter`]) that is allocated once at boot and never grows. Long-frame
-//! warnings and the periodic summary are always on (owner's spec — a half-
-//! freeze must leave a trace whether or not anyone opened the HUD), but both
-//! are rate-limited and only format a `String` when they actually log
-//! (≤ 1/s and 1/10s respectively). The `<div id="mlc-perf">` HUD itself is
-//! created only when explicitly enabled (`?perf=1` or
-//! `localStorage["mlc.perf"] == "1"`) and never touches the DOM otherwise.
+//! ([`PerfMeter`]) that is allocated once at boot and never grows. A second,
+//! much smaller ring keeps the last [`LONG_FRAME_RING_CAP`] frames whose
+//! total exceeded [`LONG_FRAME_MS`] — a plain `Copy` push, no formatting.
+//! Nothing is written anywhere per frame beyond those two ring pushes: no
+//! DOM, no `console.*`, no rate-limited timers. The only place a `String`
+//! or a JS object gets built at all is [`PerfMeter::snapshot_js`], and only
+//! when `window.__MLC_PERF()` is actually called from outside the page (see
+//! `lib.rs::run_render_loop` for where that global is installed).
 //!
 //! # Phase boundaries (see `lib.rs::run_render_loop`'s RAF closure)
 //!
-//! `Events` (DOM → `dispatch_event`) → `Tick` (`chart.tick` +
-//! watchlist/template drains + cloud `drive`) → `Drains` (cold-apply/theme/
-//! clipboard/profile-command drains, the `MLC_DEBUG` diag block, and —
-//! after `Render` — screenshot capture, live-share/REST-cure drains,
-//! background-warm) → `Persist` (`persistence::save_persistent_state`) →
-//! `Render` (`render_frame`). `Drains` accumulates across all three of its
-//! disjoint spans; the other phases are contiguous. This intentionally
-//! groups every non-tick/persist/render bookkeeping drain into one bucket —
-//! the WHERE brief names screenshot/share/nick drains as "drains", even
-//! though a couple of them execute after the render call in the actual
-//! code order.
+//! `Events` (DOM → `dispatch_event`) → `Tick`, split into three sub-phases
+//! so a 2.2s "tick" (owner report 2026-09-05) points at ONE of them instead
+//! of the whole bucket: `tick_chart` (`chart.tick`), `tick_drains`
+//! (watchlist + template action drains) and `tick_cloud` (cloud session
+//! `drive`) → `Drains` (cold-apply/theme/clipboard/profile-command drains,
+//! the `MLC_DEBUG` diag block, and — after `Render` — screenshot capture,
+//! live-share/REST-cure drains, background-warm) → `Persist`
+//! (`persistence::save_persistent_state`) → `Render`, split into four
+//! sub-phases matching `render_frame`'s actual sections (`lib.rs`):
+//! `render_setup` (canvas resize/ctx creation + the monitoring-panel
+//! sample), `render_chart` (tab-strip state sync + `chart.render`, the base
+//! panel/bubble paint), `render_overlay` (`render_overlay` /
+//! `render_toolbar_only` / `render_modal_layer` / panel overlay popups) and
+//! `render_present` (the tooltip re-arm + the chrome-strip paint —
+//! `mlc_app_input_shell::render` + backdrop dim + tab list + tooltips —
+//! the last layer composited before the frame is done; canvas2d has no
+//! separate `put_image_data`/blit step to time here, it draws straight
+//! onto the visible context). `Drains` accumulates across all three of its
+//! disjoint spans; the other phases (and their sub-phases) are contiguous.
+//! This intentionally groups every non-tick/persist/render bookkeeping
+//! drain into one bucket — the WHERE brief names screenshot/share/nick
+//! drains as "drains", even though a couple of them execute after the
+//! render call in the actual code order.
 //!
 //! Network (fetch) timing is deliberately absent: this shell never calls
 //! `fetch` itself — all cloud/archive-proxy calls go through
 //! `mlc_cloud::FetchTransport` (a different crate, out of scope per the
 //! task brief) — so there is no single shell-owned call site to wrap.
 
-use wasm_bindgen::JsCast;
+use wasm_bindgen::{JsCast, JsValue};
 
 /// Frames kept in the ring buffer — at a steady 60fps this is ~5s of
 /// history, which doubles as the "5s window" the owner's stats are over.
@@ -61,18 +82,15 @@ const FRAME_RING_CAP: usize = 300;
 
 /// Number of named phases tracked per frame — must match [`Phase`]'s variant
 /// count; used to size `FrameTimer::totals`.
-const PHASE_COUNT: usize = 5;
+const PHASE_COUNT: usize = 10;
 
-/// Minimum gap between long-frame `console.warn` lines.
-const WARN_RATE_LIMIT_MS: f64 = 1_000.0;
-/// Gap between the always-on `console.info` summary lines.
-const SUMMARY_INTERVAL_MS: f64 = 10_000.0;
-/// Gap between HUD `<div>` text updates.
-const HUD_UPDATE_INTERVAL_MS: f64 = 500.0;
-/// A frame counts as "long" for the always-on warning above this total.
+/// A frame counts as "long" for the long-frame ring below this total.
 const LONG_FRAME_MS: f32 = 100.0;
 /// Threshold for the window's `>50ms` bucket count.
 const SLOW_FRAME_MS: f32 = 50.0;
+/// Long-frame ring capacity — the last N frames whose total exceeded
+/// [`LONG_FRAME_MS`], oldest first in [`PerfMeter::snapshot_js`]'s output.
+const LONG_FRAME_RING_CAP: usize = 20;
 
 /// `performance.now()` — matches the pattern already used throughout
 /// `lib.rs` (`win.performance().map(|p| p.now())`) rather than caching a
@@ -115,38 +133,23 @@ pub fn js_heap_used_mb() -> Option<f64> {
     Some(bytes / (1024.0 * 1024.0))
 }
 
-/// `?perf=1` in the page URL, or `localStorage["mlc.perf"] == "1"`.
-/// Same split grammar as `lib.rs::share_token_from_url` /
-/// `apply_dev_proxy_gate_from_url` — checked once at boot, next to those.
-pub fn hud_enabled() -> bool {
-    let from_url = web_sys::window()
-        .and_then(|w| w.location().search().ok())
-        .map(|search| {
-            search
-                .trim_start_matches('?')
-                .split('&')
-                .any(|p| p == "perf=1")
-        })
-        .unwrap_or(false);
-    if from_url {
-        return true;
-    }
-    web_sys::window()
-        .and_then(|w| w.local_storage().ok().flatten())
-        .and_then(|storage| storage.get_item("mlc.perf").ok().flatten())
-        .map(|v| v == "1")
-        .unwrap_or(false)
-}
-
 /// Named phase buckets a [`FrameTimer`] accumulates into. Order matches the
-/// module doc's phase-boundary writeup.
+/// module doc's phase-boundary writeup. `Tick` and `Render` are each split
+/// into sub-phases (owner report 2026-09-05: a bare "tick=2254.7ms" or
+/// "render=760.7ms" names a bucket, not an address) so `dominant_phase` can
+/// point at the actual slow step.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Phase {
     Events = 0,
-    Tick = 1,
-    Drains = 2,
-    Persist = 3,
-    Render = 4,
+    TickChart = 1,
+    TickDrains = 2,
+    TickCloud = 3,
+    Drains = 4,
+    Persist = 5,
+    RenderSetup = 6,
+    RenderChart = 7,
+    RenderOverlay = 8,
+    RenderPresent = 9,
 }
 
 /// One frame's phase breakdown — `Copy` so the ring buffer is a plain fixed
@@ -154,21 +157,34 @@ pub enum Phase {
 #[derive(Clone, Copy, Default)]
 struct FrameSample {
     events_ms: f32,
-    tick_ms: f32,
+    tick_chart_ms: f32,
+    tick_drains_ms: f32,
+    tick_cloud_ms: f32,
     drains_ms: f32,
     persist_ms: f32,
-    render_ms: f32,
+    render_setup_ms: f32,
+    render_chart_ms: f32,
+    render_overlay_ms: f32,
+    render_present_ms: f32,
     total_ms: f32,
     events_drained: u16,
 }
 
-/// Which named phase had the largest share of a given [`FrameSample`].
+/// Which named sub-phase had the largest share of a given [`FrameSample`].
 fn dominant_phase(s: &FrameSample) -> &'static str {
     let mut name = "events";
     let mut max = s.events_ms;
-    if s.tick_ms > max {
-        max = s.tick_ms;
-        name = "tick";
+    if s.tick_chart_ms > max {
+        max = s.tick_chart_ms;
+        name = "tick_chart";
+    }
+    if s.tick_drains_ms > max {
+        max = s.tick_drains_ms;
+        name = "tick_drains";
+    }
+    if s.tick_cloud_ms > max {
+        max = s.tick_cloud_ms;
+        name = "tick_cloud";
     }
     if s.drains_ms > max {
         max = s.drains_ms;
@@ -178,17 +194,44 @@ fn dominant_phase(s: &FrameSample) -> &'static str {
         max = s.persist_ms;
         name = "persist";
     }
-    if s.render_ms > max {
-        name = "render";
+    if s.render_setup_ms > max {
+        max = s.render_setup_ms;
+        name = "render_setup";
+    }
+    if s.render_chart_ms > max {
+        max = s.render_chart_ms;
+        name = "render_chart";
+    }
+    if s.render_overlay_ms > max {
+        max = s.render_overlay_ms;
+        name = "render_overlay";
+    }
+    if s.render_present_ms > max {
+        name = "render_present";
     }
     name
+}
+
+/// One entry in the long-frame ring — captured whenever a frame's
+/// `total_ms` exceeds [`LONG_FRAME_MS`]. Display lives entirely in
+/// `dig2browser/tools/cdp-control/cdp_control.py` now; this struct only
+/// carries what [`PerfMeter::snapshot_js`] needs to describe the frame.
+#[derive(Clone, Copy, Default)]
+struct LongFrameEntry {
+    /// `performance.now()` at the moment this frame was recorded (shared
+    /// with `FrameTimer::finish`'s own `now` read — no extra JS call).
+    at_ms: f64,
+    sample: FrameSample,
+    dominant: &'static str,
 }
 
 /// Per-frame stopwatch — created at the top of the RAF closure, `enter()`
 /// called at each phase boundary, `finish()` folds the result into the
 /// shared [`PerfMeter`]. Each method is exactly one `performance.now()`
-/// read; a full frame is `start` + up to 6 `enter` + `finish` — the "handful
-/// of `performance.now()` calls" the task brief asks for.
+/// read; a full frame is `start` + up to 10 `enter` (one per `Tick`/`Render`
+/// sub-phase boundary) + `finish` — still the "handful of
+/// `performance.now()` calls" the task brief asks for, none of them
+/// allocating.
 pub struct FrameTimer {
     start_ms: f64,
     last_mark_ms: f64,
@@ -236,15 +279,23 @@ impl FrameTimer {
         let delta = (now - self.last_mark_ms).max(0.0) as f32;
         self.totals[self.current as usize] += delta;
         let total_ms = (now - self.start_ms).max(0.0) as f32;
-        meter.record_frame(FrameSample {
-            events_ms: self.totals[Phase::Events as usize],
-            tick_ms: self.totals[Phase::Tick as usize],
-            drains_ms: self.totals[Phase::Drains as usize],
-            persist_ms: self.totals[Phase::Persist as usize],
-            render_ms: self.totals[Phase::Render as usize],
-            total_ms,
-            events_drained: self.events_drained,
-        });
+        meter.record_frame(
+            FrameSample {
+                events_ms: self.totals[Phase::Events as usize],
+                tick_chart_ms: self.totals[Phase::TickChart as usize],
+                tick_drains_ms: self.totals[Phase::TickDrains as usize],
+                tick_cloud_ms: self.totals[Phase::TickCloud as usize],
+                drains_ms: self.totals[Phase::Drains as usize],
+                persist_ms: self.totals[Phase::Persist as usize],
+                render_setup_ms: self.totals[Phase::RenderSetup as usize],
+                render_chart_ms: self.totals[Phase::RenderChart as usize],
+                render_overlay_ms: self.totals[Phase::RenderOverlay as usize],
+                render_present_ms: self.totals[Phase::RenderPresent as usize],
+                total_ms,
+                events_drained: self.events_drained,
+            },
+            now,
+        );
     }
 }
 
@@ -268,45 +319,33 @@ fn percentile(sorted: &[f32], p: f32) -> f32 {
     sorted[idx.min(sorted.len() - 1)]
 }
 
-fn fmt_heap(heap_mb: Option<f64>) -> String {
-    match heap_mb {
-        Some(mb) => format!("{:.1}MiB", mb),
-        None => "n/a".to_string(),
+/// Builds the flat `{events, tick_chart, ..., render_present}` object shared
+/// by `snapshot_js`'s `"last"` (which adds `total`/`events_drained` on top)
+/// and each `"long_frames"` entry's nested `"phases"`.
+fn phases_to_js(s: &FrameSample) -> js_sys::Object {
+    let obj = js_sys::Object::new();
+    let entries: [(&str, f32); 10] = [
+        ("events", s.events_ms),
+        ("tick_chart", s.tick_chart_ms),
+        ("tick_drains", s.tick_drains_ms),
+        ("tick_cloud", s.tick_cloud_ms),
+        ("drains", s.drains_ms),
+        ("persist", s.persist_ms),
+        ("render_setup", s.render_setup_ms),
+        ("render_chart", s.render_chart_ms),
+        ("render_overlay", s.render_overlay_ms),
+        ("render_present", s.render_present_ms),
+    ];
+    for (key, val) in entries {
+        set_prop(&obj, key, JsValue::from(val as f64));
     }
+    obj
 }
 
-/// `<div id="mlc-perf">` — created once, only when [`hud_enabled`] says so;
-/// updated in place, never recreated.
-struct Hud {
-    div: web_sys::HtmlElement,
-    last_update_ms: f64,
-}
-
-impl Hud {
-    /// Appends the HUD element to `document.body`. Inline `style` only — the
-    /// site CSP (`style-src 'unsafe-inline'`) allows it and no external
-    /// asset is needed for an 11px monospace overlay.
-    fn create() -> Option<Self> {
-        let win = web_sys::window()?;
-        let doc = win.document()?;
-        let body = doc.body()?;
-        let el = doc.create_element("div").ok()?;
-        el.set_id("mlc-perf");
-        let _ = el.set_attribute(
-            "style",
-            "position:fixed;top:4px;left:4px;z-index:2147483647;\
-             font-family:monospace;font-size:11px;line-height:1.4;\
-             background:rgba(0,0,0,0.65);color:#0f0;padding:6px 8px;\
-             white-space:pre;pointer-events:none;",
-        );
-        body.append_child(&el).ok()?;
-        let div = el.dyn_into::<web_sys::HtmlElement>().ok()?;
-        Some(Self { div, last_update_ms: 0.0 })
-    }
-
-    fn set_text(&self, text: &str) {
-        self.div.set_inner_text(text);
-    }
+/// `Reflect::set` with the error dropped — every property set below is on an
+/// object this module just created, so the only failure mode is "impossible".
+fn set_prop(obj: &js_sys::Object, key: &str, val: JsValue) {
+    let _ = js_sys::Reflect::set(obj, &JsValue::from_str(key), &val);
 }
 
 /// Shared frame/persistence instrumentation state — one instance lives on
@@ -319,36 +358,36 @@ pub struct PerfMeter {
     frame_head: usize,
     frame_len: usize,
 
+    /// Most recently recorded sample — the `"last"` key of `snapshot_js`'s
+    /// output, kept separately so a snapshot never has to reach back into
+    /// the ring at `frame_head - 1`.
+    last_sample: FrameSample,
+
+    long_frames: [LongFrameEntry; LONG_FRAME_RING_CAP],
+    long_frame_head: usize,
+    long_frame_len: usize,
+
     persist_total_writes: u64,
     last_persist_ms: f32,
     max_persist_ms: f32,
 
     boot_wasm_mb: f64,
-    last_warn_ms: f64,
-    last_summary_ms: f64,
-
-    hud: Option<Hud>,
 }
 
 impl PerfMeter {
     pub fn new() -> Self {
-        let hud = if hud_enabled() { Hud::create() } else { None };
-        if hud_enabled() && hud.is_none() {
-            web_sys::console::warn_1(
-                &"[mlc-perf] ?perf=1 / mlc.perf set but the HUD element could not be created".into(),
-            );
-        }
         Self {
             frames: [FrameSample::default(); FRAME_RING_CAP],
             frame_head: 0,
             frame_len: 0,
+            last_sample: FrameSample::default(),
+            long_frames: [LongFrameEntry::default(); LONG_FRAME_RING_CAP],
+            long_frame_head: 0,
+            long_frame_len: 0,
             persist_total_writes: 0,
             last_persist_ms: 0.0,
             max_persist_ms: 0.0,
             boot_wasm_mb: wasm_memory_mb(),
-            last_warn_ms: 0.0,
-            last_summary_ms: now_ms(),
-            hud,
         }
     }
 
@@ -358,6 +397,25 @@ impl PerfMeter {
         if self.frame_len < FRAME_RING_CAP {
             self.frame_len += 1;
         }
+    }
+
+    fn push_long_frame(&mut self, entry: LongFrameEntry) {
+        self.long_frames[self.long_frame_head] = entry;
+        self.long_frame_head = (self.long_frame_head + 1) % LONG_FRAME_RING_CAP;
+        if self.long_frame_len < LONG_FRAME_RING_CAP {
+            self.long_frame_len += 1;
+        }
+    }
+
+    /// Oldest-first iterator over the long-frame ring's current contents —
+    /// `snapshot_js`'s `"long_frames"` array is specified oldest-first, so
+    /// this walks starting at `long_frame_head` once the ring has wrapped
+    /// (that slot holds the next one to be overwritten, i.e. the oldest
+    /// still-retained entry) and from `0` while it hasn't.
+    fn long_frames_oldest_first(&self) -> impl Iterator<Item = &LongFrameEntry> {
+        let n = self.long_frame_len;
+        let start = if n < LONG_FRAME_RING_CAP { 0 } else { self.long_frame_head };
+        (0..n).map(move |i| &self.long_frames[(start + i) % LONG_FRAME_RING_CAP])
     }
 
     /// Stack-allocated (no heap traffic) percentile/max/long-frame-count
@@ -400,67 +458,19 @@ impl PerfMeter {
     }
 
     /// Called once per frame from `FrameTimer::finish`. Always pushes the
-    /// sample into the ring; long-frame warning / periodic summary / HUD
-    /// text are each independently rate-limited and only pay for a
-    /// `window_stats()` pass + `String` formatting when at least one of them
-    /// is due this frame.
-    fn record_frame(&mut self, sample: FrameSample) {
+    /// sample into the ring and updates `last_sample`; a frame over
+    /// [`LONG_FRAME_MS`] additionally gets a `Copy` push into the long-frame
+    /// ring. No formatting, no DOM, no console — see the module doc's
+    /// "Cost" section.
+    fn record_frame(&mut self, sample: FrameSample, at_ms: f64) {
         self.push_frame(sample);
-        let now = now_ms();
-
-        let want_warn = sample.total_ms > LONG_FRAME_MS && now - self.last_warn_ms >= WARN_RATE_LIMIT_MS;
-        let want_summary = now - self.last_summary_ms >= SUMMARY_INTERVAL_MS;
-        let want_hud = self.hud.as_ref().is_some_and(|h| now - h.last_update_ms >= HUD_UPDATE_INTERVAL_MS);
-
-        if !(want_warn || want_summary || want_hud) {
-            return;
-        }
-
-        let stats = self.window_stats();
-        let wasm_mb = wasm_memory_mb();
-        let heap_mb = js_heap_used_mb();
-
-        if want_warn {
-            self.last_warn_ms = now;
-            web_sys::console::warn_1(&format!(
-                "[mlc-perf] long frame {:.1}ms — events={:.1} tick={:.1} drains={:.1} persist={:.1} render={:.1} | \
-                 wasm={:.1}MiB heap={} | events_drained={} persist_writes={} (last {:.1}ms, max {:.1}ms)",
-                sample.total_ms, sample.events_ms, sample.tick_ms, sample.drains_ms, sample.persist_ms, sample.render_ms,
-                wasm_mb, fmt_heap(heap_mb),
-                sample.events_drained, self.persist_total_writes, self.last_persist_ms, self.max_persist_ms,
-            ).into());
-        }
-
-        if want_summary {
-            self.last_summary_ms = now;
-            web_sys::console::info_1(&format!(
-                "[mlc-perf] p50={:.1}ms p95={:.1}ms max={:.1}ms >50ms={} >100ms={} worst={} | wasm={:.1}MiB(+{:.1}) heap={}",
-                stats.p50, stats.p95, stats.max, stats.over_50, stats.over_100, stats.worst_phase,
-                wasm_mb, wasm_mb - self.boot_wasm_mb, fmt_heap(heap_mb),
-            ).into());
-        }
-
-        if want_hud {
-            let text = format!(
-                "MLC PERF (?perf=1)\n\
-                 frame p50/p95/max: {:.1}/{:.1}/{:.1} ms\n\
-                 >50ms {}  >100ms {}  worst: {}\n\
-                 wasm mem: {:.1} MiB (+{:.1})\n\
-                 js heap: {}\n\
-                 persist: {} writes / last {:.1}ms / max {:.1}ms",
-                stats.p50, stats.p95, stats.max,
-                stats.over_50, stats.over_100, stats.worst_phase,
-                wasm_mb, wasm_mb - self.boot_wasm_mb,
-                fmt_heap(heap_mb),
-                self.persist_total_writes,
-                self.last_persist_ms, self.max_persist_ms,
-            );
-            // `hud` re-borrowed here (not above) so `window_stats()` and the
-            // warn/summary formatting above don't hold it mutably borrowed.
-            if let Some(hud) = self.hud.as_mut() {
-                hud.last_update_ms = now;
-                hud.set_text(&text);
-            }
+        self.last_sample = sample;
+        if sample.total_ms > LONG_FRAME_MS {
+            self.push_long_frame(LongFrameEntry {
+                at_ms,
+                sample,
+                dominant: dominant_phase(&sample),
+            });
         }
     }
 
@@ -476,6 +486,80 @@ impl PerfMeter {
         self.last_persist_ms = ms as f32;
         self.max_persist_ms = self.max_persist_ms.max(self.last_persist_ms);
         self.persist_total_writes = self.persist_total_writes.saturating_add(writes as u64);
+    }
+
+    /// On-demand snapshot for `window.__MLC_PERF()` — installed once at
+    /// boot in `lib.rs::run_render_loop`. Built fresh on every call (no
+    /// caching): one `window_stats()` stack pass plus a handful of
+    /// `Reflect::set` calls, paid only when JS actually asks. Shape (all
+    /// numbers in ms / MiB):
+    ///
+    /// ```text
+    /// {
+    ///   "v": 1,
+    ///   "frames": <ring len>,
+    ///   "window": {"p50","p95","max","over_50","over_100","worst_phase"},
+    ///   "last": {"total","events","tick_chart","tick_drains","tick_cloud",
+    ///            "drains","persist","render_setup","render_chart",
+    ///            "render_overlay","render_present","events_drained"},
+    ///   "memory": {"wasm_mb","wasm_growth_mb","heap_mb" (null when absent)},
+    ///   "persist": {"writes","last_ms","max_ms"},
+    ///   "long_frames": [{"at_ms","total","dominant",
+    ///                    "phases":{the 10 sub-phase names},
+    ///                    "events_drained"} … oldest first, max 20],
+    /// }
+    /// ```
+    ///
+    /// The caller (`lib.rs`) is responsible for the `{"busy":true}` case —
+    /// this method assumes it already holds a live `&WebAppState` borrow.
+    pub fn snapshot_js(&self) -> JsValue {
+        let stats = self.window_stats();
+        let wasm_mb = wasm_memory_mb();
+        let heap_mb = js_heap_used_mb();
+
+        let root = js_sys::Object::new();
+        set_prop(&root, "v", JsValue::from(1u32));
+        set_prop(&root, "frames", JsValue::from(self.frame_len as u32));
+
+        let window_obj = js_sys::Object::new();
+        set_prop(&window_obj, "p50", JsValue::from(stats.p50 as f64));
+        set_prop(&window_obj, "p95", JsValue::from(stats.p95 as f64));
+        set_prop(&window_obj, "max", JsValue::from(stats.max as f64));
+        set_prop(&window_obj, "over_50", JsValue::from(stats.over_50));
+        set_prop(&window_obj, "over_100", JsValue::from(stats.over_100));
+        set_prop(&window_obj, "worst_phase", JsValue::from_str(stats.worst_phase));
+        set_prop(&root, "window", window_obj.into());
+
+        let last_obj = phases_to_js(&self.last_sample);
+        set_prop(&last_obj, "total", JsValue::from(self.last_sample.total_ms as f64));
+        set_prop(&last_obj, "events_drained", JsValue::from(self.last_sample.events_drained as f64));
+        set_prop(&root, "last", last_obj.into());
+
+        let memory_obj = js_sys::Object::new();
+        set_prop(&memory_obj, "wasm_mb", JsValue::from(wasm_mb));
+        set_prop(&memory_obj, "wasm_growth_mb", JsValue::from(wasm_mb - self.boot_wasm_mb));
+        set_prop(&memory_obj, "heap_mb", heap_mb.map(JsValue::from).unwrap_or(JsValue::NULL));
+        set_prop(&root, "memory", memory_obj.into());
+
+        let persist_obj = js_sys::Object::new();
+        set_prop(&persist_obj, "writes", JsValue::from(self.persist_total_writes as f64));
+        set_prop(&persist_obj, "last_ms", JsValue::from(self.last_persist_ms as f64));
+        set_prop(&persist_obj, "max_ms", JsValue::from(self.max_persist_ms as f64));
+        set_prop(&root, "persist", persist_obj.into());
+
+        let long_frames_arr = js_sys::Array::new();
+        for entry in self.long_frames_oldest_first() {
+            let entry_obj = js_sys::Object::new();
+            set_prop(&entry_obj, "at_ms", JsValue::from(entry.at_ms));
+            set_prop(&entry_obj, "total", JsValue::from(entry.sample.total_ms as f64));
+            set_prop(&entry_obj, "dominant", JsValue::from_str(entry.dominant));
+            set_prop(&entry_obj, "phases", phases_to_js(&entry.sample).into());
+            set_prop(&entry_obj, "events_drained", JsValue::from(entry.sample.events_drained as f64));
+            long_frames_arr.push(&entry_obj);
+        }
+        set_prop(&root, "long_frames", long_frames_arr.into());
+
+        root.into()
     }
 }
 

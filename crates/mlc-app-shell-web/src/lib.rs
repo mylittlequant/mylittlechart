@@ -811,6 +811,36 @@ fn run_render_loop(
 ) -> Result<(), JsValue> {
     let state = Rc::new(RefCell::new(WebAppState::new(app, "chart", bridge.clone(), profile_manager, read_only)));
 
+    // ── Perf snapshot export (owner ruling 2026-09-05: the chart keeps the
+    // MEASUREMENT only; display/collection moved to dig2browser's CDP driver,
+    // `dig2browser/tools/cdp-control/cdp_control.py`'s `perf`/`hud` verbs) ──
+    // `window.__MLC_PERF()` — one on-demand snapshot per call, built by
+    // `perf::PerfMeter::snapshot_js`; nothing here runs per-frame. `try_borrow`
+    // because DevTools can call this mid-frame while the RAF closure below
+    // already holds `state` mutably — that case answers `{"busy":true}`
+    // instead of panicking on a double-borrow.
+    {
+        let state_for_perf = state.clone();
+        let perf_closure = Closure::wrap(Box::new(move || -> JsValue {
+            match state_for_perf.try_borrow() {
+                Ok(st) => st.perf.snapshot_js(),
+                Err(_) => {
+                    let busy = js_sys::Object::new();
+                    let _ = js_sys::Reflect::set(&busy, &"busy".into(), &true.into());
+                    busy.into()
+                }
+            }
+        }) as Box<dyn Fn() -> JsValue>);
+        if let Some(win) = web_sys::window() {
+            let _ = js_sys::Reflect::set(&win, &"__MLC_PERF".into(), perf_closure.as_ref().unchecked_ref());
+        }
+        // Lives for the page — same "one closure per page load, never
+        // reconstructed" shape as the RAF closure and the RAF-stall
+        // watchdog below (`std::mem::forget(closure)` /
+        // `std::mem::forget(watchdog_closure)`).
+        std::mem::forget(perf_closure);
+    }
+
     // Wire Ctrl+C / Ctrl+X to read the active selection out of TextFieldStore.
     // The closure runs synchronously inside the DOM `copy` / `cut` listener in
     // uzor-window-web — only window allowed to write `clipboardData`.
@@ -875,9 +905,13 @@ fn run_render_loop(
                 dispatch_event(&mut st, event, &canvas_id);
             }
         }
-        frame_timer.enter(perf::Phase::Tick);
+        frame_timer.enter(perf::Phase::TickChart);
 
         // ── Tick ──────────────────────────────────────────────────────────────
+        // Split into three sub-phases (owner report 2026-09-05: a 2254.7ms
+        // "tick" during station warmup needed an address, not a bucket) —
+        // `tick_chart` isolates `chart.tick` itself from the drains and the
+        // cloud driver that follow it in the same borrow.
         {
             let now_ms = web_time::SystemTime::now()
                 .duration_since(web_time::UNIX_EPOCH)
@@ -885,6 +919,7 @@ fn run_render_loop(
                 .unwrap_or(0);
             let mut st = state_clone.borrow_mut();
             st.chart.tick(now_ms);
+            frame_timer.enter(perf::Phase::TickDrains);
             // Drain queued WatchlistActions into core.watchlist_manager + bridge.
             // Native equivalent: mlc-app-shell-vello/main.rs:2191-2360 (which writes
             // into a parallel AppState cache). Wasm has one window — drive the
@@ -901,6 +936,7 @@ fn run_render_loop(
             // templates)". The apply itself belongs to ChartApp; the shell
             // only has to ask for it.
             st.chart.drain_template_actions();
+            frame_timer.enter(perf::Phase::TickCloud);
 
             // Cloud session driver: advances the sign-in overlay's
             // device-code flow (spawn_local futures report back through the
@@ -1917,9 +1953,14 @@ fn run_render_loop(
             let _ = js_sys::Reflect::set(&win, &"MLC_DEBUG".into(), &dbg);
         }
 
-        frame_timer.enter(perf::Phase::Render);
+        frame_timer.enter(perf::Phase::RenderSetup);
         // ── Render frame ──────────────────────────────────────────────────────
-        let render_result = render_frame(state_clone.clone());
+        // `render_frame` takes `&mut frame_timer` and marks its own
+        // `RenderChart`/`RenderOverlay`/`RenderPresent` sub-phase boundaries
+        // internally (see its body) — it never borrows `state` for the
+        // whole call, only in short-lived scopes, so handing it a plain
+        // `&mut FrameTimer` on the stack doesn't fight those borrows.
+        let render_result = render_frame(state_clone.clone(), &mut frame_timer);
         if let Err(e) = render_result {
             web_sys::console::error_1(&format!("[mlc-app-shell-web] render error: {:?}", e).into());
         }
@@ -2371,7 +2412,7 @@ fn dispatch_event(
 // ─── Render frame ──────────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
-fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
+fn render_frame(state: Rc<RefCell<WebAppState>>, timer: &mut perf::FrameTimer) -> Result<(), JsValue> {
     use wasm_bindgen::JsCast;
 
     let win = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;
@@ -2532,6 +2573,7 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
             // pipeline in canvas2d).
         }
     }
+    timer.enter(perf::Phase::RenderChart);
 
     // ── Tab sync (mirror of scene_builder.rs:63-94 for the web shell) ─────────
     {
@@ -2642,6 +2684,7 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
             // after sidebar_scene). Hits still come from last_toolbar_result
             // inside render(); paint of toolbars/dropdowns is the pass below.
             st.chart.render(&mut ctx, now_ms, true);
+            timer.enter(perf::Phase::RenderOverlay);
             st.chart.render_overlay(&mut ctx);
             st.chart.render_toolbar_only(&mut ctx);
             st.chart.render_modal_layer(&mut ctx, now_ms);
@@ -2657,6 +2700,7 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
         }
         ctx.restore();
     }
+    timer.enter(perf::Phase::RenderPresent);
 
     // ── Tooltip tick — mirrors mlc-app-shell-vello/src/main.rs:4339-4351 ──────
     // Dwell tooltips only flip `visible` inside `TooltipState::update()`/
