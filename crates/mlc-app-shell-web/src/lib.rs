@@ -165,12 +165,19 @@ pub fn start() {
     // Bridge `log`-crate records (mlc-app layer) into tracing so they reach
     // the console alongside dig3's native tracing output.
     let _ = tracing_log::LogTracer::init();
+    // Level: INFO by default, raised by `?log=trace|debug` (or
+    // localStorage "mlc.log"). This used to be TRACE unconditionally — "loud,
+    // that's the point" — and in the 0.5.593 release it meant every WS frame
+    // (`dig3::ws::frame received … payload_len`) became a styled console
+    // line: 31 349 of them in 110 s on production (285/s), each one a
+    // formatted String plus a console.log call on the main thread, retained
+    // by the browser for the life of the tab. That is a measured cost paid
+    // by every visitor, not a diagnostic. INFO still shows connect/heal/
+    // resub and every WARN/ERROR; the per-frame stream is opt-in.
+    let log_level = log_level_from_url_or_storage();
     tracing_wasm::set_as_global_default_with_config(
         tracing_wasm::WASMLayerConfigBuilder::new()
-            // TRACE so we see every per-frame dispatch (dig3::ws::frame),
-            // not just connect/error events. Yes, this is loud — that's the
-            // point. Filter in DevTools if needed.
-            .set_max_level(tracing::Level::TRACE)
+            .set_max_level(log_level)
             .build(),
     );
     web_sys::console::log_1(&"[mlc-app-shell-web] booting".into());
@@ -225,6 +232,38 @@ fn share_token_from_url() -> Option<String> {
         .find_map(|p| p.strip_prefix("share="))
         .filter(|t| !t.is_empty())
         .map(|t| t.to_string())
+}
+
+/// Console log level: `?log=trace|debug|info|warn|error` in the page URL,
+/// else `localStorage["mlc.log"]` with the same words, else INFO. Same split
+/// grammar as `share_token_from_url` above; read once at boot, before the
+/// tracing subscriber is installed (see `start`).
+#[cfg(target_arch = "wasm32")]
+fn log_level_from_url_or_storage() -> tracing::Level {
+    let parse = |s: &str| match s.trim().to_ascii_lowercase().as_str() {
+        "trace" => Some(tracing::Level::TRACE),
+        "debug" => Some(tracing::Level::DEBUG),
+        "info" => Some(tracing::Level::INFO),
+        "warn" | "warning" => Some(tracing::Level::WARN),
+        "error" => Some(tracing::Level::ERROR),
+        _ => None,
+    };
+    let from_url = web_sys::window()
+        .and_then(|w| w.location().search().ok())
+        .and_then(|search| {
+            search
+                .trim_start_matches('?')
+                .split('&')
+                .find_map(|p| p.strip_prefix("log=").and_then(parse))
+        });
+    if let Some(level) = from_url {
+        return level;
+    }
+    web_sys::window()
+        .and_then(|w| w.local_storage().ok().flatten())
+        .and_then(|storage| storage.get_item("mlc.log").ok().flatten())
+        .and_then(|v| parse(&v))
+        .unwrap_or(tracing::Level::INFO)
 }
 
 /// How a `?share=<token>` boot resolves (cloud builds only).
