@@ -438,6 +438,13 @@ pub fn chart_toolbar_render_toolbars(
     // double-click destination dropdown — anonymous sessions see exactly
     // the Clipboard / DownloadFile rows.
     account_signed_in: bool,
+    // `ChartApp::is_capturing_screenshot()` snapshot (screenshot-is-chart-
+    // only arc, 2026-09-05): an open toolbar dropdown opens BELOW its
+    // button, i.e. past the top-toolbar strip and into the cropped chart
+    // rect — suppressed while a screenshot capture is in flight so it never
+    // leaks into the PNG. Callers with no capture concept of their own
+    // (embedded headers) pass `false`, unchanged from today.
+    is_capturing_screenshot: bool,
 ) -> ChartToolbarRenderResult {
         // Use provided theme or fall back to the hardcoded dark default.
         let theme: TcToolbarTheme = match toolbar_theme {
@@ -828,6 +835,19 @@ pub fn chart_toolbar_render_toolbars(
                     section.items.retain(|item| {
                         !matches!(item.id(), Some(id) if CHART_SEMANTIC_IDS.contains(&id))
                     });
+                }
+            }
+
+            // Screenshot-destination arc, anonymous-sharing ruling
+            // (2026-09-05): a signed-out session cannot use `share_chart`
+            // (the live-share link needs a cloud session) — drop the globe
+            // button from the strip entirely rather than draw it disabled,
+            // same `retain`-by-id idiom `split_symbol_compare` uses for
+            // `compare` above. `panel_click.rs`'s intercept refusal stays as
+            // a backstop for stale rendered state.
+            if !account_signed_in {
+                for section in &mut control_sections {
+                    section.items.retain(|item| item.id() != Some("share_chart"));
                 }
             }
 
@@ -1463,25 +1483,36 @@ pub fn chart_toolbar_render_toolbars(
             })
         };
 
-        // Render open dropdown if any
-        let dropdown_result = if let Some(ref dropdown_id) = tb.open_dropdown_id {
+        // Render open dropdown if any. Suppressed while a screenshot capture
+        // is in flight (screenshot-is-chart-only arc, 2026-09-05): a
+        // top-toolbar dropdown opens BELOW its button, i.e. past the strip
+        // and into the cropped chart rect.
+        let dropdown_result = if is_capturing_screenshot {
+            None
+        } else if let Some(ref dropdown_id) = tb.open_dropdown_id {
             chart_toolbar_render_dropdown(tb, ctx, dropdown_id, toolbar_config, layout, &drawing_result, &control_result, dd_theme_ref, presets, active_preset_id, autosave_enabled, sync_flags, is_expanded, split_without_group, is_mono_group, allowed_timeframes, active_chart_type, active_chart_type_param, chart_type_data_modes, timeframe_native_map, footprint_live_only, granularity_favorites, favorite_primitives, granularity_edit_render, pin_granularity_favorites, granularity_drag_render, symbol_quick_search_render, symbol_quick_search, split_symbol_compare, quicksearch_minimal, account_signed_in)
         } else {
             None
         };
 
-        // Render inline style/width/wave/wave-succession dropdown popup if open
-        let inline_dropdown_result = chart_toolbar_render_inline_dropdown(
-            tb,
-            ctx,
-            &inline_config,
-            dd_theme_ref,
-            &theme,
-            layout.full_rect.height,
-            selected_primitive.map(|c| c.wave_slots.as_slice()).unwrap_or(&[]),
-            selected_primitive.map(|c| c.wave_slot_kinds.as_slice()).unwrap_or(&[]),
-            selected_primitive.map(|c| c.successor_kinds.as_slice()).unwrap_or(&[]),
-        );
+        // Render inline style/width/wave/wave-succession dropdown popup if
+        // open — same screenshot-capture suppression as `dropdown_result`
+        // above (opens beside the left toolbar, into the cropped chart rect).
+        let inline_dropdown_result = if is_capturing_screenshot {
+            None
+        } else {
+            chart_toolbar_render_inline_dropdown(
+                tb,
+                ctx,
+                &inline_config,
+                dd_theme_ref,
+                &theme,
+                layout.full_rect.height,
+                selected_primitive.map(|c| c.wave_slots.as_slice()).unwrap_or(&[]),
+                selected_primitive.map(|c| c.wave_slot_kinds.as_slice()).unwrap_or(&[]),
+                selected_primitive.map(|c| c.successor_kinds.as_slice()).unwrap_or(&[]),
+            )
+        };
 
         ChartToolbarRenderResult {
             left_toolbar: drawing_result,

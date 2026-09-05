@@ -146,6 +146,23 @@ struct PerWindowState {
     last_drag_pos: Option<(f64, f64)>,
     last_click: Option<(web_time::Instant, f64, f64)>,
     screenshot_pending: bool,
+    /// Set when `ChartApp::drain_pending_screenshot()` fires, consumed by the
+    /// very next `build_window_scene` call (screenshot-is-chart-only arc,
+    /// 2026-09-05).
+    ///
+    /// The GPU renderer is pipelined one frame behind scene build (see
+    /// `render/gpu_submit.rs`'s doc comment on `submit_window_gpu_from_gpu_
+    /// scene`): the scene the GPU thread renders+captures this tick was
+    /// BUILT last tick, before the click that requested the screenshot was
+    /// even processed. Setting `screenshot_pending` (below) immediately
+    /// would make the capture read a stale, already-swapped-in scene that
+    /// was never built with overlays suppressed. Arming instead defers the
+    /// capture by exactly one tick: `build_window_scene` sees `screenshot_
+    /// armed`, calls `ChartApp::set_capturing_screenshot(true)` for that one
+    /// build pass (suppressing overlay/modal/tooltip painters), then sets
+    /// `screenshot_pending = true` so the freshly-built, overlay-free scene
+    /// is the one the GPU thread swaps in and captures next tick.
+    screenshot_armed: bool,
     /// Pending agent screenshot requests — each entry is `(chart_id, response_tx)`.
     ///
     /// Accumulated by [`drain_agent_commands`] and processed at the end of
@@ -1579,6 +1596,7 @@ impl App<'_> {
             last_drag_pos: None,
             last_click: None,
             screenshot_pending: false,
+            screenshot_armed: false,
             pending_agent_screenshots: Vec::new(),
             modifiers: winit::keyboard::ModifiersState::default(),
             drawing_capture: false,
@@ -5229,7 +5247,18 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
 
             if pw.chart.drain_pending_screenshot() {
-                pw.screenshot_pending = true;
+                // Arm instead of setting `screenshot_pending` directly: the
+                // GPU thread is one tick behind scene build (see
+                // `screenshot_armed`'s doc), so the scene it is about to
+                // capture right now was built BEFORE this click landed.
+                // Force a full rebuild on the very next `build_window_scene`
+                // pass too — the toolbar/chart/overlay sub-scenes are
+                // cached, and a stale one built before the request could
+                // still carry an already-painted tooltip/dropdown/preview.
+                pw.screenshot_armed = true;
+                pw.chart_dirty = true;
+                pw.overlay_dirty = true;
+                pw.toolbar_dirty = true;
             }
 
             // Chart-sharing arc: the toolbar "share_chart" button sets this
@@ -5865,7 +5894,7 @@ fn main() {
     println!("  Left drag : Pan chart");
     println!("  Scroll    : Zoom");
     println!("  Escape    : Cancel / close modal");
-    println!("  Ctrl+S    : Screenshot (copied to clipboard + saved to Pictures/Screenshots)");
+    println!("  Ctrl+S    : Screenshot (copied to clipboard + saved to Downloads)");
     println!();
 
     // Initialize diagnostics (logging, crash reporting, memory watchdog).

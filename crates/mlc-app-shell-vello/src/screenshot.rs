@@ -249,17 +249,50 @@ pub(crate) fn capture_screenshot(
 
 /// Return the directory where screenshots should be saved.
 ///
-/// Prefers `%USERPROFILE%\Pictures\Screenshots` on Windows; falls back to the
-/// current working directory so the function always returns a usable path.
+/// Owner ruling (2026-09-05): the "Download File" destination goes to the
+/// user's normal Downloads folder — where every browser download lands —
+/// not Pictures. Prefers [`downloads_dir`], falling back to
+/// `Pictures\Screenshots` only when Downloads cannot be resolved (no home
+/// env var at all — a stripped service account), and finally to the current
+/// working directory so the function always returns a usable path.
+///
+/// No `dirs`/`directories` crate is in this workspace's dependency tree
+/// (checked before writing this), so both paths are built the same way the
+/// previous Pictures-only implementation already did: joining onto the
+/// platform's home-directory env var. That is also exactly what the owner
+/// asked for (`%USERPROFILE%\Downloads` / `~/Downloads`), so no new
+/// dependency is needed here.
 pub(crate) fn screenshot_save_dir() -> std::path::PathBuf {
-    if let Some(home) = std::env::var_os("USERPROFILE") {
-        let dir = std::path::PathBuf::from(home)
-            .join("Pictures")
-            .join("Screenshots");
+    if let Some(dir) = downloads_dir() {
+        let _ = std::fs::create_dir_all(&dir);
+        return dir;
+    }
+    if let Some(home) = home_dir() {
+        let dir = home.join("Pictures").join("Screenshots");
         let _ = std::fs::create_dir_all(&dir);
         return dir;
     }
     std::env::current_dir().unwrap_or_default()
+}
+
+/// The OS "Downloads" folder: `%USERPROFILE%\Downloads` on Windows,
+/// `$HOME/Downloads` on macOS/Linux. `None` when the platform's home env
+/// var is unset, letting the caller fall back.
+fn downloads_dir() -> Option<std::path::PathBuf> {
+    home_dir().map(|home| home.join("Downloads"))
+}
+
+/// The platform's home directory env var, unparsed: `USERPROFILE` on
+/// Windows, `HOME` elsewhere.
+fn home_dir() -> Option<std::path::PathBuf> {
+    #[cfg(target_os = "windows")]
+    {
+        std::env::var_os("USERPROFILE").map(std::path::PathBuf::from)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::var_os("HOME").map(std::path::PathBuf::from)
+    }
 }
 
 /// Encode raw RGBA pixels to PNG bytes.

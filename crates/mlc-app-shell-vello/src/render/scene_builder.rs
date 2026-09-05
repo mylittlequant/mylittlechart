@@ -25,6 +25,16 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
         return 0;
     }
 
+    // Screenshot-is-chart-only arc (2026-09-05): consume the one-shot arm
+    // set by `about_to_wait`'s `drain_pending_screenshot()` handling. Marks
+    // `ChartApp` as capturing for this ONE build pass so `render_overlay`/
+    // `render_modal_layer`/the toolbar dropdown skip painting, and marks
+    // `pw.screenshot_pending` at the end so the GPU thread captures THIS
+    // (overlay-free) scene once it is swapped in next tick — see
+    // `screenshot_armed`'s doc on `PerWindowState`.
+    let capturing_screenshot = std::mem::take(&mut pw.screenshot_armed);
+    pw.chart.set_capturing_screenshot(capturing_screenshot);
+
     let t0 = web_time::Instant::now();
 
     let _reset_start = web_time::Instant::now();
@@ -311,8 +321,10 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
             pw.scene.append(&popup_scene, None);
         }
 
-        // Render chrome context menu overlay
-        if pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open {
+        // Render chrome context menu overlay. Suppressed while capturing a
+        // screenshot (screenshot-is-chart-only arc, 2026-09-05) — a
+        // right-click tab-strip menu can open down into the chart rect.
+        if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open) {
             let mut overlay_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
             chrome::render_context_menu(&mut overlay_ctx, &pw.chrome_state.context_menu, &pw.chrome_state.colors);
             chrome::render_tab_list(&mut overlay_ctx, &pw.chrome_state, width as f64);
@@ -324,8 +336,10 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
             render_toasts(&mut toast_ctx, active_toasts, width as f64, height as f64);
         }
 
-        // Render tooltips (top-most layer): chrome + toolbar
-        {
+        // Render tooltips (top-most layer): chrome + toolbar. Suppressed
+        // while capturing a screenshot (screenshot-is-chart-only arc,
+        // 2026-09-05) — a hover tooltip is not chart content.
+        if !capturing_screenshot {
             let mut tooltip_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
             chrome::render_tooltip(&mut tooltip_ctx, &pw.chrome_state, width as f64, height as f64);
             chrome::render_tooltip_themed(&mut tooltip_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
@@ -424,7 +438,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 }
 
                 // Render chrome context menu overlay (at y_offset=0, absolute coords).
-                if pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open {
+                if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open) {
                     let mut overlay_ctx = mlc_app_render_context_instanced::InstancedChartRenderContext::new(
                         width as f32,
                         height as f32,
@@ -456,8 +470,10 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                     chart_ctx.inner_mut().draw_commands.extend_from_slice(&toast_ctx.inner().draw_commands);
                 }
 
-                // Render chrome tooltip (top-most layer).
-                {
+                // Render chrome tooltip (top-most layer). Suppressed while
+                // capturing a screenshot (screenshot-is-chart-only arc,
+                // 2026-09-05).
+                if !capturing_screenshot {
                     let mut tooltip_ctx = mlc_app_render_context_instanced::InstancedChartRenderContext::new(
                         width as f32,
                         height as f32,
@@ -545,7 +561,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 }
                 cpu_ctx.restore();
                 // Render chrome context menu overlay.
-                if pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open {
+                if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open) {
                     chrome::render_context_menu(
                         &mut cpu_ctx,
                         &pw.chrome_state.context_menu,
@@ -557,9 +573,13 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 if !active_toasts.is_empty() {
                     render_toasts(&mut cpu_ctx, active_toasts, width as f64, height as f64);
                 }
-                // Render tooltips (top-most layer).
-                chrome::render_tooltip(&mut cpu_ctx, &pw.chrome_state, width as f64, height as f64);
-                chrome::render_tooltip_themed(&mut cpu_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
+                // Render tooltips (top-most layer). Suppressed while
+                // capturing a screenshot (screenshot-is-chart-only arc,
+                // 2026-09-05).
+                if !capturing_screenshot {
+                    chrome::render_tooltip(&mut cpu_ctx, &pw.chrome_state, width as f64, height as f64);
+                    chrome::render_tooltip_themed(&mut cpu_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
+                }
                 // Spinner overlay (topmost, when promote worker is running).
                 if let Some(start) = pw.spinner_start {
                     render_spinner(&mut cpu_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64, &spinner_active_color, &spinner_backdrop_color);
@@ -628,7 +648,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 }
                 skia_ctx.restore();
                 // Render chrome context menu overlay.
-                if pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open {
+                if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open) {
                     chrome::render_context_menu(
                         &mut skia_ctx,
                         &pw.chrome_state.context_menu,
@@ -640,9 +660,13 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 if !active_toasts.is_empty() {
                     render_toasts(&mut skia_ctx, active_toasts, width as f64, height as f64);
                 }
-                // Render tooltips (top-most layer).
-                chrome::render_tooltip(&mut skia_ctx, &pw.chrome_state, width as f64, height as f64);
-                chrome::render_tooltip_themed(&mut skia_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
+                // Render tooltips (top-most layer). Suppressed while
+                // capturing a screenshot (screenshot-is-chart-only arc,
+                // 2026-09-05).
+                if !capturing_screenshot {
+                    chrome::render_tooltip(&mut skia_ctx, &pw.chrome_state, width as f64, height as f64);
+                    chrome::render_tooltip_themed(&mut skia_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
+                }
                 // Spinner overlay (topmost, when promote worker is running).
                 if let Some(start) = pw.spinner_start {
                     render_spinner(&mut skia_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64, &spinner_active_color, &spinner_backdrop_color);
@@ -701,7 +725,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 }
                 hybrid_ctx.translate(0.0, -chrome::CHROME_HEIGHT);
                 // Render chrome context menu overlay.
-                if pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open {
+                if !capturing_screenshot && (pw.chrome_state.context_menu.open || pw.chrome_state.tab_list_open) {
                     chrome::render_context_menu(
                         &mut hybrid_ctx,
                         &pw.chrome_state.context_menu,
@@ -713,9 +737,13 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 if !active_toasts.is_empty() {
                     render_toasts(&mut hybrid_ctx, active_toasts, width as f64, height as f64);
                 }
-                // Render tooltips (top-most layer).
-                chrome::render_tooltip(&mut hybrid_ctx, &pw.chrome_state, width as f64, height as f64);
-                chrome::render_tooltip_themed(&mut hybrid_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
+                // Render tooltips (top-most layer). Suppressed while
+                // capturing a screenshot (screenshot-is-chart-only arc,
+                // 2026-09-05).
+                if !capturing_screenshot {
+                    chrome::render_tooltip(&mut hybrid_ctx, &pw.chrome_state, width as f64, height as f64);
+                    chrome::render_tooltip_themed(&mut hybrid_ctx, &pw.toolbar_tooltip, &pw.chrome_state.colors.tooltip_bg, &pw.chrome_state.colors.tooltip_text, width as f64, height as f64);
+                }
                 // Spinner overlay (topmost, when promote worker is running).
                 if let Some(start) = pw.spinner_start {
                     render_spinner(&mut hybrid_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64, &spinner_active_color, &spinner_backdrop_color);
@@ -746,6 +774,16 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                 pw.spinner_start = None;
             }
         }
+    }
+
+    // This build pass produced the overlay-free scene armed above — hand
+    // off to the GPU thread (`screenshot_pending`, checked in
+    // `render/gpu_submit.rs` once this scene is swapped in as `gpu_scene`
+    // next tick) and drop the per-frame capture flag so ordinary frames
+    // render normally again.
+    if capturing_screenshot {
+        pw.chart.set_capturing_screenshot(false);
+        pw.screenshot_pending = true;
     }
 
     t0.elapsed().as_micros() as u64

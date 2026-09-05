@@ -2738,21 +2738,29 @@ fn render_frame(state: Rc<RefCell<WebAppState>>, timer: &mut perf::FrameTimer) -
             mlc_app_input_shell::chrome::render_backdrop_dim(&mut ctx, css_w as f64, st.chrome.flavor, &backdrop);
         }
         mlc_app_input_shell::render_tab_list(&mut ctx, &st.chrome, css_w as f64);
-        mlc_app_input_shell::render_tooltip(&mut ctx, &st.chrome, css_w as f64, css_h as f64);
-        // Toolbar/sidebar-item tooltips (left/top/right/bottom toolbar strips,
-        // agent + free-slot sidebar rows) live in the separate `toolbar_tooltip`
-        // TooltipState (dispatch.rs:316-360) — native paints it via its own
-        // `render_tooltip_themed` call on every render path
-        // (mlc-app-shell-vello/src/render/scene_builder.rs:318 etc.); the web
-        // shell tracked the state but never painted it.
-        mlc_app_input_shell::render_tooltip_themed(
-            &mut ctx,
-            &st.toolbar_tooltip,
-            &st.chrome.colors.tooltip_bg,
-            &st.chrome.colors.tooltip_text,
-            css_w as f64,
-            css_h as f64,
-        );
+        // Tooltips are the last layer and float over the chart rect — a
+        // toolbar-button tooltip ("Screenshot", of all things) was captured
+        // into the PNG on 2026-09-05. Both tooltip painters skip the frame a
+        // screenshot is taken from; the capture runs right after this
+        // function returns, so `is_capturing_screenshot()` is the same
+        // predicate every ChartApp overlay painter already gates on.
+        if !st.chart.is_capturing_screenshot() {
+            mlc_app_input_shell::render_tooltip(&mut ctx, &st.chrome, css_w as f64, css_h as f64);
+            // Toolbar/sidebar-item tooltips (left/top/right/bottom toolbar
+            // strips, agent + free-slot sidebar rows) live in the separate
+            // `toolbar_tooltip` TooltipState (dispatch.rs:316-360) — native
+            // paints it via its own `render_tooltip_themed` call on every
+            // render path (mlc-app-shell-vello/src/render/scene_builder.rs:318
+            // etc.); the web shell tracked the state but never painted it.
+            mlc_app_input_shell::render_tooltip_themed(
+                &mut ctx,
+                &st.toolbar_tooltip,
+                &st.chrome.colors.tooltip_bg,
+                &st.chrome.colors.tooltip_text,
+                css_w as f64,
+                css_h as f64,
+            );
+        }
     }
 
     Ok(())

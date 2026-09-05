@@ -681,6 +681,23 @@ pub struct ChartApp {
     /// Pending screenshot request — set by context menu, drained by the renderer.
     pending_screenshot: bool,
 
+    /// True while the render pass whose output a shell is about to capture
+    /// as a screenshot is running. Owner ruling (screenshot-is-chart-only
+    /// arc, 2026-09-05): the captured PNG is the chart and nothing else —
+    /// no tooltip, context menu, dropdown or modal may appear in it.
+    /// `is_capturing_screenshot()` reads `pending_screenshot` (true) OR this
+    /// field: the web shell drains `pending_screenshot` only AFTER its
+    /// (synchronous, single-pass) render call, so the plain peek is enough
+    /// there and needs no shell change. The native vello shell pipelines
+    /// scene-build one frame ahead of GPU capture and already converts
+    /// `pending_screenshot` into its own shell-side flag BEFORE the
+    /// captured scene is built, so `pending_screenshot` reads false by the
+    /// time `render()` runs for that scene — the vello shell instead calls
+    /// `set_capturing_screenshot()` around the specific build pass whose
+    /// output becomes the captured frame (see `mlc-app-shell-vello/src/
+    /// render/scene_builder.rs` and `main.rs`'s `screenshot_armed` handoff).
+    capturing_screenshot: bool,
+
     /// Pending live-share request — set by the toolbar "share_chart" button
     /// (via `ChartOutEvent::ShareLiveChart`), drained by the shell, which
     /// owns the cloud session/token. Mirror of `pending_screenshot`.
@@ -3302,6 +3319,7 @@ impl ChartApp {
             fav_group_drag: None,
             modal_state: ModalState::new(),
             pending_screenshot: false,
+            capturing_screenshot: false,
             pending_share_live: false,
             pending_reset_cache: false,
             pending_reset_storage: false,
@@ -3682,6 +3700,7 @@ impl ChartApp {
             fav_group_drag: None,
             modal_state: ModalState::new(),
             pending_screenshot: false,
+            capturing_screenshot: false,
             pending_share_live: false,
             pending_reset_cache: false,
             pending_reset_storage: false,
@@ -4219,6 +4238,7 @@ impl ChartApp {
             fav_group_drag: None,
             modal_state: ModalState::new(),
             pending_screenshot: false,
+            capturing_screenshot: false,
             pending_share_live: false,
             pending_reset_cache: false,
             pending_reset_storage: false,
@@ -5139,6 +5159,37 @@ impl ChartApp {
         dlog!("[Screenshot] Capture requested");
     }
 
+    /// True when the current render pass is producing the frame a shell is
+    /// about to capture as a screenshot.
+    ///
+    /// Overlay painters gate on this — the captured PNG is the chart only:
+    /// no tooltip, drawing-tool cursor preview, context menu, open dropdown
+    /// or modal may appear in it (owner ruling, screenshot-is-chart-only
+    /// arc 2026-09-05). See [`ChartApp::render_overlay`] and
+    /// [`ChartApp::render_modal_layer`], plus the vello shell's toolbar/
+    /// chrome tooltip render calls (`mlc-app-shell-vello/src/render/
+    /// scene_builder.rs`), which gate on this same predicate.
+    ///
+    /// True for `pending_screenshot` (still set, not yet drained by the web
+    /// shell's post-render drain) OR `capturing_screenshot` (explicitly
+    /// armed by the vello shell around the specific build pass whose output
+    /// becomes the captured frame — see `capturing_screenshot`'s doc for why
+    /// vello needs the explicit form).
+    pub fn is_capturing_screenshot(&self) -> bool {
+        self.pending_screenshot || self.capturing_screenshot
+    }
+
+    /// Explicitly mark whether the render pass about to run is capturing a
+    /// screenshot. Native vello only — see `capturing_screenshot`'s doc.
+    /// The web shell needs no equivalent call: its render call already runs
+    /// before `pending_screenshot` is drained, so [`is_capturing_screenshot`]
+    /// reads correctly from `pending_screenshot` alone.
+    ///
+    /// [`is_capturing_screenshot`]: Self::is_capturing_screenshot
+    pub fn set_capturing_screenshot(&mut self, capturing: bool) {
+        self.capturing_screenshot = capturing;
+    }
+
     /// Request a public live-share link for the active preset (chart-sharing
     /// arc, toolbar "share_chart" button).
     ///
@@ -5643,7 +5694,16 @@ impl ChartApp {
     ///
     /// The cached [`ExtendedFrameLayout`] built during [`prepare_frame`] is used
     /// directly — no geometry is recomputed here.
+    ///
+    /// Skips painting entirely while [`is_capturing_screenshot`] is true —
+    /// the drawing-tool cursor preview and the near-cursor OHLC tooltip are
+    /// not chart content (screenshot-is-chart-only arc, 2026-09-05).
+    ///
+    /// [`is_capturing_screenshot`]: Self::is_capturing_screenshot
     pub fn render_overlay(&self, ctx: &mut dyn RenderContext) {
+        if self.is_capturing_screenshot() {
+            return;
+        }
         use mlc_app_layout::layout::render_chart_overlay;
         use mlc_core::chart::ChartRect;
 
@@ -7619,6 +7679,7 @@ impl ChartApp {
             };
             let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
             let clock_glitch_enabled = self.core.user().profile().ui.clock_glitch_enabled;
+            let is_capturing_screenshot = self.is_capturing_screenshot();
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -7653,6 +7714,7 @@ impl ChartApp {
                 current_time_ms as f64 / 1000.0,
                 self.anim_frame,
                 clock_glitch_enabled,
+                is_capturing_screenshot,
             );
             drop(bubble_guard_tb);
             drop(tags_guard_tb);
@@ -8871,6 +8933,7 @@ impl ChartApp {
             .duration_since(web_time::UNIX_EPOCH)
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
+        let is_capturing_screenshot = self.is_capturing_screenshot();
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -8911,6 +8974,7 @@ impl ChartApp {
                 self.anim_frame
             },
             clock_glitch_enabled,
+            is_capturing_screenshot,
         );
         drop(bubble_guard_tb2);
         drop(tags_guard_tb2);
@@ -9397,7 +9461,16 @@ impl ChartApp {
     /// Cheap predicate: is there any panel-overlay popup to draw this frame?
     /// Lets the scene builder skip the per-frame `Scene::new()` + render + append
     /// when nothing is open (the common case).
+    ///
+    /// Always `false` while [`is_capturing_screenshot`] is true — these
+    /// popups can sit directly over a chart panel, which is exactly the
+    /// captured rect (screenshot-is-chart-only arc, 2026-09-05).
+    ///
+    /// [`is_capturing_screenshot`]: Self::is_capturing_screenshot
     pub fn has_panel_overlay_popups(&self) -> bool {
+        if self.is_capturing_screenshot() {
+            return false;
+        }
         (self.panel_app.sync_color_grid.is_open() && self.panel_app.sync_color_grid.target_is_panel())
             || matches!(
                 self.symbol_quick_edit.as_ref().map(|e| e.target),
@@ -9518,7 +9591,17 @@ impl ChartApp {
     /// contract as `render_panel_overlay_popups`.  Input events that arrive between
     /// renders will hit-test against these registrations, which is correct because
     /// modal hit-zones must beat chart/toolbar zones (modals are the topmost layer).
+    ///
+    /// Skips painting entirely while [`is_capturing_screenshot`] is true —
+    /// modals, context menus, the watchlist popup, panel tree manager and
+    /// every drag-preview this method draws are chrome, not chart content
+    /// (screenshot-is-chart-only arc, 2026-09-05).
+    ///
+    /// [`is_capturing_screenshot`]: Self::is_capturing_screenshot
     pub fn render_modal_layer(&mut self, ctx: &mut dyn RenderContext, current_time_ms: u64) {
+        if self.is_capturing_screenshot() {
+            return;
+        }
         let w = self.width as f64;
         let h = self.height as f64;
 
