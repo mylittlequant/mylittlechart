@@ -698,10 +698,14 @@ pub struct ChartToolbarState {
     /// Double-click (within 300ms) opens the magnet dropdown.
     /// Single-click toggles magnet ON/OFF.
     pub last_magnet_click_time: Option<Instant>,
-    /// Timestamp of the last screenshot (camera) button click — used for
-    /// double-click detection (same 300ms pattern as `last_magnet_click_time`).
+    /// Timestamp of the last screenshot (camera) button click — used both
+    /// for double-click detection (same pattern as `last_magnet_click_time`,
+    /// window `ChartToolbarState::SCREENSHOT_ACTIVE_MS`) and to drive
+    /// `screenshot_active()`, the ~1s "just fired" visual-active phase
+    /// (owner ruling 2026-09-05).
     /// Single-click fires a screenshot to `screenshot_destination`;
-    /// double-click opens the destination dropdown.
+    /// a second click inside the window opens the destination dropdown
+    /// instead of firing again.
     pub last_screenshot_click_time: Option<Instant>,
     /// Where user-initiated screenshots go (clipboard / file / share link).
     /// Set by the camera button's destination dropdown; read by the shells
@@ -841,12 +845,26 @@ impl ChartToolbarState {
         if self.primed_id.as_deref() == Some(id) { return true; }
         if self.open_dropdown_id.as_deref() == Some(id) { return true; }
         if self.active_tool_id.as_deref() == Some(id) { return true; }
+        // Camera button's ~1s "just fired" active phase (owner ruling
+        // 2026-09-05) — visually active independent of the dropdown.
+        if id == "screenshot" && self.screenshot_active() { return true; }
         if let Some(ref active_tool) = self.active_tool_id {
             if let Some((tool_id, _icon)) = self.quick_select_memory.get(id) {
                 if tool_id == active_tool { return true; }
             }
         }
         false
+    }
+
+    /// True while the camera (screenshot) button's SCREENSHOT_ACTIVE_MS
+    /// "just fired" active phase is live. Unlike the destination dropdown,
+    /// this is a one-shot pulse that expires on its own — nothing closes
+    /// it early. Consulted by `is_active("screenshot")` so the button paints
+    /// active the same way a drawing tool does (owner ruling 2026-09-05).
+    pub fn screenshot_active(&self) -> bool {
+        self.last_screenshot_click_time
+            .map(|t| Instant::now().duration_since(t).as_millis() < Self::SCREENSHOT_ACTIVE_MS as u128)
+            .unwrap_or(false)
     }
 
     /// Check if a toggle is on
@@ -988,6 +1006,15 @@ impl ChartToolbarState {
         }
     }
 
+    /// Window (ms) during which the camera button (a) reads as visually
+    /// active after a single-click fire and (b) treats a second click as
+    /// "open the destination dropdown" instead of firing again. Owner
+    /// ruling 2026-09-05: same double-click-opens-dropdown family as
+    /// magnet, but the active phase is a one-shot ~1s pulse that simply
+    /// expires — unlike magnet's active state, it is not a persistent
+    /// toggle. See `screenshot_active()` and the `"screenshot"` arm below.
+    const SCREENSHOT_ACTIVE_MS: u64 = 1000;
+
     /// Handle a toolbar click, executing chart-internal actions and returning app-level events.
     ///
     /// Returns `vec![ChartOutEvent::Consumed]` when the action was fully handled internally,
@@ -1065,14 +1092,17 @@ impl ChartToolbarState {
             // === Screenshot — icon_button with double-click destination dropdown ===
             // Single-click: fire a screenshot to the current (last-chosen)
             // destination — same destination Ctrl+S uses (the shells read
-            // `screenshot_destination` when draining the pending flag).
-            // Double-click (within 300ms): open the destination dropdown
-            // WITHOUT firing again (a screenshot can't be "unfired" the way
-            // the magnet toggle is undone, so only the first click fires).
+            // `screenshot_destination` when draining the pending flag) —
+            // and start the SCREENSHOT_ACTIVE_MS active phase (visual only,
+            // via `screenshot_active()`).
+            // Second click within SCREENSHOT_ACTIVE_MS: open the destination
+            // dropdown WITHOUT firing again (a screenshot can't be "unfired"
+            // the way the magnet toggle is undone, so only the first click
+            // fires) and clear the timestamp so the active phase ends.
             "screenshot" => {
                 let now = Instant::now();
                 let is_double_click = self.last_screenshot_click_time
-                    .map(|t| now.duration_since(t).as_millis() < 300)
+                    .map(|t| now.duration_since(t).as_millis() < Self::SCREENSHOT_ACTIVE_MS as u128)
                     .unwrap_or(false);
 
                 if is_double_click {
@@ -1081,8 +1111,9 @@ impl ChartToolbarState {
                     self.open_dropdown_id = Some("screenshot".to_string());
                     vec![ChartOutEvent::Consumed]
                 } else {
-                    // First click: record time AND fire — if no second click
-                    // arrives within 300ms this acts as the single-click shot.
+                    // First click: record time AND fire — starts the
+                    // SCREENSHOT_ACTIVE_MS active phase; if no second click
+                    // arrives within it, this acts as the single-click shot.
                     self.last_screenshot_click_time = Some(now);
                     eprintln!("[ChartToolbar] screenshot");
                     vec![ChartOutEvent::Screenshot]
@@ -1618,8 +1649,8 @@ mod tests {
         let events = tb.handle_toolbar_click_with_chart("screenshot", &mut crosshair, &mut session);
         assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
 
-        // Second click within 300ms: opens the destination dropdown, Consumed
-        // (no second Screenshot event).
+        // Second click within SCREENSHOT_ACTIVE_MS: opens the destination
+        // dropdown, Consumed (no second Screenshot event).
         let events = tb.handle_toolbar_click_with_chart("screenshot", &mut crosshair, &mut session);
         assert!(events.iter().all(|e| matches!(e, ChartOutEvent::Consumed)));
         assert_eq!(tb.open_dropdown_id.as_deref(), Some("screenshot"));
@@ -1635,11 +1666,25 @@ mod tests {
         let events = tb.handle_toolbar_click_with_chart("screenshot", &mut crosshair, &mut session);
         assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
 
-        // Simulate a click outside the 300ms double-click window.
-        tb.last_screenshot_click_time = Some(Instant::now() - Duration::from_millis(500));
+        // Simulate a click outside the SCREENSHOT_ACTIVE_MS window.
+        tb.last_screenshot_click_time = Some(Instant::now() - Duration::from_millis(1500));
         let events = tb.handle_toolbar_click_with_chart("screenshot", &mut crosshair, &mut session);
         assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
         assert!(tb.open_dropdown_id.is_none());
+    }
+
+    #[test]
+    fn screenshot_active_expires_after_window() {
+        let mut tb = ChartToolbarState::default();
+        assert!(!tb.screenshot_active());
+
+        tb.last_screenshot_click_time = Some(Instant::now());
+        assert!(tb.screenshot_active());
+        assert!(tb.is_active("screenshot"));
+
+        tb.last_screenshot_click_time = Some(Instant::now() - Duration::from_millis(1500));
+        assert!(!tb.screenshot_active());
+        assert!(!tb.is_active("screenshot"));
     }
 
     #[test]

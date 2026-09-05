@@ -3598,10 +3598,10 @@ impl ChartApp {
                 self.perform_redo();
                 return;
             }
-            if item_id == "screenshot" {
-                self.request_screenshot();
-                return;
-            }
+            // screenshot: no intercept here (owner ruling 2026-09-05) — it
+            // flows into handle_toolbar_click_with_chart() below like magnet,
+            // so the double-click-opens-dropdown arm in toolbar_state.rs
+            // actually runs instead of being shadowed by a plain fire-and-return.
             // Share-chart button (chart-sharing arc) — a signed-in session
             // freezes the active preset into a public link. Anonymous clicks
             // get the same refusal style as the multiprofile gate below:

@@ -163,6 +163,14 @@ struct PerWindowState {
     /// `screenshot_pending = true` so the freshly-built, overlay-free scene
     /// is the one the GPU thread swaps in and captures next tick.
     screenshot_armed: bool,
+    /// Last-seen value of `toolbar_state.screenshot_active()`, compared each
+    /// tick against the current value so the toolbar strip is marked dirty
+    /// exactly once when the camera button's ~1s active phase flips off
+    /// (owner ruling 2026-09-05). The toolbar strip is cached behind
+    /// `toolbar_dirty`, so without this the strip would keep painting the
+    /// active state after the phase actually expired, with no click or
+    /// other dirty-triggering event to force a rebuild.
+    screenshot_active_prev: bool,
     /// Pending agent screenshot requests — each entry is `(chart_id, response_tx)`.
     ///
     /// Accumulated by [`drain_agent_commands`] and processed at the end of
@@ -1597,6 +1605,7 @@ impl App<'_> {
             last_click: None,
             screenshot_pending: false,
             screenshot_armed: false,
+            screenshot_active_prev: false,
             pending_agent_screenshots: Vec::new(),
             modifiers: winit::keyboard::ModifiersState::default(),
             drawing_capture: false,
@@ -5259,6 +5268,21 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 pw.chart_dirty = true;
                 pw.overlay_dirty = true;
                 pw.toolbar_dirty = true;
+            }
+
+            // Camera button active-phase expiry (owner ruling 2026-09-05):
+            // the toolbar strip is cached behind `toolbar_dirty`, and
+            // nothing else invalidates it purely on the passage of time —
+            // compare against the last value seen so the strip repaints
+            // exactly once when `screenshot_active()` flips false, instead
+            // of visibly staying "active" past its ~1s window.
+            {
+                let screenshot_active_now = pw.chart.panel_app.toolbar_state.screenshot_active();
+                if screenshot_active_now != pw.screenshot_active_prev {
+                    pw.screenshot_active_prev = screenshot_active_now;
+                    pw.toolbar_dirty = true;
+                    pw.window.request_redraw();
+                }
             }
 
             // Chart-sharing arc: the toolbar "share_chart" button sets this
