@@ -2,7 +2,40 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>mylittlechart — web</title>
+  <title>mylittlechart — charting terminal for crypto and stock markets</title>
+  <meta name="description" content="Free, open-source charting terminal for crypto and stock markets: a native desktop app (Windows, macOS, Linux) and a browser version at https://chart.example/." />
+  <link rel="canonical" href="https://chart.example/" />
+  <link rel="alternate" type="application/atom+xml" title="mylittlechart blog" href="/blog/feed.xml" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="mylittlechart — charting terminal for crypto and stock markets" />
+  <meta property="og:description" content="Free, open-source charting terminal for crypto and stock markets: a native desktop app (Windows, macOS, Linux) and a browser version at https://chart.example/." />
+  <meta property="og:url" content="https://chart.example/" />
+  <meta property="og:image" content="https://chart.example/og-image.png" />
+  <meta name="twitter:card" content="summary_large_image" />
+  <meta name="twitter:title" content="mylittlechart — charting terminal for crypto and stock markets" />
+  <meta name="twitter:description" content="Free, open-source charting terminal for crypto and stock markets: a native desktop app (Windows, macOS, Linux) and a browser version at https://chart.example/." />
+  <meta name="twitter:image" content="https://chart.example/og-image.png" />
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "mylittlechart",
+    "description": "Free, open-source charting terminal for crypto and stock markets: a native desktop app (Windows, macOS, Linux) and a browser version at https://chart.example/.",
+    "applicationCategory": "FinanceApplication",
+    "operatingSystem": "Windows, macOS, Linux, Web",
+    "url": "https://chart.example/",
+    "offers": {
+      "@type": "Offer",
+      "price": "0",
+      "priceCurrency": "USD"
+    },
+    "sameAs": [
+      "https://github.com/ZENG3LD",
+      "https://discord.gg/4rCD8yaF",
+      "https://t.me/mylittlechart"
+    ]
+  }
+  </script>
   <!--
     SOURCE OF TRUTH: this file (`crates/mlc-app-shell-web/index.html`) owns
     the boot markup/CSS/dismissal logic. Production
@@ -11,7 +44,12 @@
     external script only because that site's CSP forbids inline scripts
     (`script-src 'self' 'wasm-unsafe-eval'`, no `'unsafe-inline'`). Change
     boot/dismissal behaviour HERE first, then port the same change to that
-    file's `#boot` CSS/markup and `app-boot.js`'s matching logic.
+    file's `#boot` CSS/markup and `app-boot.js`'s matching logic. The
+    `<head>` block above (description/canonical/OG/Twitter/JSON-LD) and the
+    `<noscript>` block in `<body>` below are likewise mirrored verbatim
+    (module-hash references excepted) — this file and the mirror are the
+    only two things any crawler ever reads for the product, since AI
+    crawlers do not execute JavaScript.
   -->
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -50,6 +88,12 @@
   </style>
 </head>
 <body>
+  <noscript>
+    <h1>mylittlechart</h1>
+    <p>mylittlechart is a free, open-source charting terminal for crypto and stock markets: a native desktop app for Windows, macOS and Linux, and this browser version — both built in Rust with GPU-accelerated rendering.</p>
+    <p>It ships 462+ technical indicators across 22 categories, 100+ drawing tools, 60+ exchange/data-provider/broker connectors, alerts, and multi-chart layouts, plus an optional local Agent API for AI-assisted charting.</p>
+    <p>Source and community: <a href="https://github.com/ZENG3LD">GitHub</a>, <a href="https://discord.gg/4rCD8yaF">Discord</a>, <a href="https://t.me/mylittlechart">Telegram</a>. Release notes and posts: <a href="https://chart.example/blog/">blog</a>.</p>
+  </noscript>
   <canvas id="chart" tabindex="0"></canvas>
   <div id="boot">
     <img class="logo" src="/mascot.svg" alt="" />
