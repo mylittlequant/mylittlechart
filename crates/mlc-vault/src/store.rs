@@ -62,7 +62,7 @@ use std::time::Duration;
 use web_time::Instant;
 use zeroize::Zeroizing;
 
-use crate::vault::{self, VaultError};
+use crate::vault::{self, VaultError, VaultKey};
 
 /// Idle timeout — the store wipes if no [`SecretStore::get`] call lands
 /// within this window of the last one. Resets on every successful `get()`.
@@ -104,16 +104,27 @@ struct Unlocked {
 }
 
 impl Unlocked {
-    /// Past either deadline.
-    fn expired(&self, now: Instant) -> bool {
+    /// Past either deadline. `idle_ttl: None` disables idle expiry entirely
+    /// — only `absolute_ttl` can seal the store in that case (used by
+    /// sidecars, e.g. an agent-key store, that must not die from inactivity
+    /// but still must not stay unlocked forever).
+    fn expired(&self, now: Instant, idle_ttl: Option<Duration>, absolute_ttl: Duration) -> bool {
         // `checked_duration_since` over `duration_since`: never panics
         // regardless of clock-source quirks on a given platform, and a
         // `None` (now earlier than the stamp) is honestly "no time has
         // passed yet", not an error — `unwrap_or_default()` here is exactly
         // that reading, not a suppressed failure.
-        let idle_elapsed = now.checked_duration_since(self.last_access).unwrap_or_default();
         let total_elapsed = now.checked_duration_since(self.unlocked_at).unwrap_or_default();
-        idle_elapsed >= IDLE_TTL || total_elapsed >= ABSOLUTE_TTL
+        if total_elapsed >= absolute_ttl {
+            return true;
+        }
+        match idle_ttl {
+            Some(idle_ttl) => {
+                let idle_elapsed = now.checked_duration_since(self.last_access).unwrap_or_default();
+                idle_elapsed >= idle_ttl
+            }
+            None => false,
+        }
     }
 }
 
@@ -131,16 +142,40 @@ impl Unlocked {
 pub struct SecretStore {
     salt_path: PathBuf,
     vault_path: PathBuf,
+    idle_ttl: Option<Duration>,
+    absolute_ttl: Duration,
     state: Mutex<Option<Unlocked>>,
 }
 
 impl SecretStore {
     /// Build a store bound to a given profile's `salt.hex` / `vault.enc`
-    /// paths. Starts sealed — nothing is read from disk until `unlock()`.
+    /// paths, using the crate's default TTLs ([`IDLE_TTL`] +
+    /// [`ABSOLUTE_TTL`]). Starts sealed — nothing is read from disk until
+    /// `unlock()`.
     pub fn new(salt_path: PathBuf, vault_path: PathBuf) -> Self {
+        Self::with_ttls(salt_path, vault_path, Some(IDLE_TTL), ABSOLUTE_TTL)
+    }
+
+    /// Build a store with explicit TTLs instead of the crate defaults.
+    ///
+    /// `idle_ttl: None` disables idle expiry — only `absolute_ttl` can seal
+    /// the store. This is for sidecar stores that share the profile's
+    /// `VaultKey` but are unlocked off the render thread rather than a
+    /// fresh passphrase prompt (e.g. an agent-API-key store), where an idle
+    /// clock would seal the store between infrequent API calls even while
+    /// the main vault stays open. Starts sealed — nothing is read from disk
+    /// until `unlock()` or `unlock_with_key()`.
+    pub fn with_ttls(
+        salt_path: PathBuf,
+        vault_path: PathBuf,
+        idle_ttl: Option<Duration>,
+        absolute_ttl: Duration,
+    ) -> Self {
         Self {
             salt_path,
             vault_path,
+            idle_ttl,
+            absolute_ttl,
             state: Mutex::new(None),
         }
     }
@@ -157,19 +192,28 @@ impl SecretStore {
     /// never seals an already-unlocked store.
     pub fn unlock(&self, passphrase: &str) -> Result<(), VaultError> {
         let salt = vault::load_or_create_salt(&self.salt_path)?;
+        // The vault AES key lives only for this block — handed straight to
+        // `unlock_with_key` and never stored on `Unlocked`. See the module
+        // doc "what zeroize does not cover".
+        let vault_key = Zeroizing::new(vault::derive_key(passphrase, &salt));
+        self.unlock_with_key(&vault_key)
+    }
 
-        let payload = {
-            // The vault AES key lives only for this block — one decrypt
-            // call — and is never stored on `Unlocked`. See the module doc
-            // "what zeroize does not cover".
-            let vault_key = Zeroizing::new(vault::derive_key(passphrase, &salt));
-            match vault::load_encrypted_raw(&vault_key, &self.vault_path) {
-                Ok(bytes) => bytes,
-                Err(VaultError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-                    b"{}".to_vec()
-                }
-                Err(e) => return Err(e),
+    /// Same as [`Self::unlock`], but for a caller that already holds the
+    /// derived `VaultKey` and skips the passphrase→key derivation (PBKDF2)
+    /// entirely — e.g. a render thread that retained the `VaultKey` from an
+    /// earlier full `unlock()` and wants to populate a second, independently
+    /// TTL'd `SecretStore` (built via [`Self::with_ttls`]) off the same key
+    /// without re-prompting for the passphrase.
+    ///
+    /// A missing `vault.enc` is not a failure — see [`Self::unlock`]'s doc.
+    pub fn unlock_with_key(&self, vault_key: &VaultKey) -> Result<(), VaultError> {
+        let payload = match vault::load_encrypted_raw(vault_key, &self.vault_path) {
+            Ok(bytes) => bytes,
+            Err(VaultError::Io(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+                b"{}".to_vec()
             }
+            Err(e) => return Err(e),
         };
 
         let now = Instant::now();
@@ -203,7 +247,7 @@ impl SecretStore {
         let mut guard = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let now = Instant::now();
         match guard.as_mut() {
-            Some(u) if !u.expired(now) => {
+            Some(u) if !u.expired(now, self.idle_ttl, self.absolute_ttl) => {
                 u.last_access = now;
                 Ok(Zeroizing::new(u.payload.to_vec()))
             }
@@ -225,10 +269,16 @@ impl SecretStore {
         let mut guard = self.state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let now = Instant::now();
         match guard.as_ref() {
-            Some(u) if !u.expired(now) => {
-                let idle_left = IDLE_TTL.saturating_sub(now.checked_duration_since(u.last_access).unwrap_or_default());
-                let total_left = ABSOLUTE_TTL.saturating_sub(now.checked_duration_since(u.unlocked_at).unwrap_or_default());
-                Some(idle_left.min(total_left))
+            Some(u) if !u.expired(now, self.idle_ttl, self.absolute_ttl) => {
+                let total_left = self.absolute_ttl.saturating_sub(now.checked_duration_since(u.unlocked_at).unwrap_or_default());
+                let left = match self.idle_ttl {
+                    Some(idle_ttl) => {
+                        let idle_left = idle_ttl.saturating_sub(now.checked_duration_since(u.last_access).unwrap_or_default());
+                        idle_left.min(total_left)
+                    }
+                    None => total_left,
+                };
+                Some(left)
             }
             _ => {
                 *guard = None; // same eager-wipe-on-touch as get()
@@ -368,6 +418,59 @@ mod tests {
             }
         }
         assert_eq!(store.get(), Err(Sealed));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn with_ttls_none_idle_never_idle_expires_but_absolute_expires() {
+        let dir = temp_dir("secret_store_with_ttls_no_idle");
+        let absolute_ttl = Duration::from_secs(60 * 60);
+        let store = SecretStore::with_ttls(dir.join("salt.hex"), dir.join("vault.enc"), None, absolute_ttl);
+        store.unlock("pw").unwrap();
+        {
+            // Push last_access well past the crate's default IDLE_TTL (15
+            // min) — with idle expiry disabled this must not seal the
+            // store on its own. Kept small enough not to underflow the
+            // monotonic clock's epoch on a freshly booted test machine
+            // (unlike a multi-day offset, which panics there).
+            let mut guard = store.state.lock().unwrap();
+            if let Some(u) = guard.as_mut() {
+                u.last_access = Instant::now() - Duration::from_secs(30 * 60);
+            }
+        }
+        assert!(store.get().is_ok(), "idle_ttl: None must never idle-expire");
+        {
+            // Now push the absolute deadline into the past — that must
+            // still seal it regardless of idle_ttl.
+            let mut guard = store.state.lock().unwrap();
+            if let Some(u) = guard.as_mut() {
+                u.unlocked_at = Instant::now() - absolute_ttl - Duration::from_secs(1);
+            }
+        }
+        assert_eq!(store.get(), Err(Sealed));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn unlock_with_key_round_trips_a_value_written_by_unlock() {
+        let dir = temp_dir("secret_store_unlock_with_key_roundtrip");
+        let salt_path = dir.join("salt.hex");
+        let vault_path = dir.join("vault.enc");
+
+        let salt = vault::load_or_create_salt(&salt_path).unwrap();
+        let key = vault::derive_key("correct horse", &salt);
+        #[derive(serde::Serialize, serde::Deserialize, PartialEq, Debug)]
+        struct Payload {
+            token: String,
+        }
+        vault::save_encrypted(&key, &vault_path, &Payload { token: "shh".into() }).unwrap();
+
+        let store = store_at(&dir);
+        store.unlock_with_key(&key).expect("unlock_with_key with the right key");
+        let bytes = store.get().expect("should be unlocked");
+        let decoded: Payload = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(decoded, Payload { token: "shh".into() });
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

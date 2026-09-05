@@ -28,6 +28,11 @@ zeroize = "1"
 # Instant panics there) — same crate mlc-core already uses for the same
 # reason (see crates/mlc-core/Cargo.toml).
 web-time = "1"
+# Constant-time slice comparison for fingerprint checks (SecretStore /
+# agent API keys). Already resolves as a transitive dep of aes-gcm (its
+# Ct-choice internals), so depending on it directly here adds no new
+# supply-chain surface — same reasoning as the zeroize note above.
+subtle = "2"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["Window", "Storage"] }

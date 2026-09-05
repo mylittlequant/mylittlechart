@@ -13,7 +13,8 @@ use aes_gcm::aead::Aead;
 use hkdf::Hkdf;
 use pbkdf2::pbkdf2_hmac;
 use rand::RngCore;
-use sha2::Sha256;
+use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 
 /// Number of PBKDF2 iterations (OWASP 2023 minimum for HMAC-SHA256).
 pub const PBKDF2_ITERATIONS: u32 = 600_000;
@@ -324,6 +325,45 @@ pub fn decrypt(key: &[u8; 32], data: &[u8]) -> Result<Vec<u8>, String> {
         .map_err(|e| format!("decrypt: {}", e))
 }
 
+// =============================================================================
+// Fingerprinting & constant-time comparison
+// =============================================================================
+
+/// SHA-256 fingerprint of arbitrary bytes.
+///
+/// Used to identify a secret (e.g. an agent API key) by a stable, non-secret
+/// handle that can be stored and looked up without ever persisting the raw
+/// secret itself.
+pub fn fingerprint_sha256(bytes: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&hasher.finalize());
+    out
+}
+
+/// Constant-time comparison of two byte slices.
+///
+/// For comparing a caller-supplied secret (e.g. a bearer token's fingerprint)
+/// against a stored value without leaking, via timing, how many leading
+/// bytes matched. Backed by the `subtle` crate, already pulled in
+/// transitively by `aes-gcm` for its own constant-time internals — see the
+/// `Cargo.toml` note.
+///
+/// The length check short-circuits before `subtle` is ever consulted: slice
+/// length is ordinarily public information (both sides of a real comparison
+/// already know their own length), so there is nothing to protect by hiding
+/// it, and comparing two length-mismatched buffers "at the same speed" would
+/// only cost time for no security benefit. What must run in constant time is
+/// the CONTENTS comparison once lengths already match — that part is
+/// `ct_eq`.
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.ct_eq(b).into()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -431,6 +471,30 @@ mod tests {
         let blob_b = encrypt_master_key_for_recovery(&master, &recovery_key_b, &salt).unwrap();
         // Blobs differ (different keys → different ciphertext)
         assert_ne!(blob_a[12..], blob_b[12..]); // skip the random nonce prefix
+    }
+
+    #[test]
+    fn fingerprint_sha256_is_stable_and_input_sensitive() {
+        let a = fingerprint_sha256(b"agent key one");
+        let a_again = fingerprint_sha256(b"agent key one");
+        let b = fingerprint_sha256(b"agent key two");
+        assert_eq!(a, a_again, "same input must hash to the same fingerprint");
+        assert_ne!(a, b, "different input must hash to a different fingerprint");
+    }
+
+    #[test]
+    fn constant_time_eq_true_for_equal_slices() {
+        assert!(constant_time_eq(b"same bytes", b"same bytes"));
+    }
+
+    #[test]
+    fn constant_time_eq_false_for_unequal_slices_of_same_length() {
+        assert!(!constant_time_eq(b"same length!", b"different m!"));
+    }
+
+    #[test]
+    fn constant_time_eq_false_for_length_mismatch() {
+        assert!(!constant_time_eq(b"short", b"a much longer slice"));
     }
 
     #[test]

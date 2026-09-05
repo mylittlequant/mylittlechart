@@ -8,7 +8,8 @@
 //!   top of the other three.
 //!
 //! This crate is a pure leaf: depends only on `aes-gcm`, `pbkdf2`, `hkdf`,
-//! `rand`, `sha2`, `hex`, `serde`, `zeroize`, `web-time`. No workspace deps.
+//! `rand`, `sha2`, `hex`, `serde`, `zeroize`, `web-time`, `subtle`. No
+//! workspace deps.
 
 pub mod crypto;
 pub mod storage;
