@@ -4568,6 +4568,13 @@ pub struct CloudReleaseEntry {
 #[cfg(feature = "cloud")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct CloudNewsPost {
+    pub id: String,
+    /// `"post"` (editorial) or `"patch"` (release note) — which of the News
+    /// list view's two tabs ([`NewsTab`]) this entry shows under.
+    pub kind: String,
+    /// Release version this entry documents (patch kind only); when
+    /// present, the Patch notes tab shows it in place of `title`.
+    pub version: Option<String>,
     pub date: String,
     pub title: String,
     pub summary: String,
@@ -4580,17 +4587,21 @@ pub struct CloudNewsPost {
 /// Which slice of the blog feed the News overlay's list view shows.
 ///
 /// Added 2026-09-04: the feed plus the LINKS section beneath it outgrew one
-/// scroll, so the list view got a tab bar instead of a longer page. `Latest`
-/// is the glance a visitor gets by default — the same three entries and the
-/// same LINKS section this overlay always showed; `All` trades the LINKS
-/// section for the rest of the catalogue, for whoever actually wants to read
-/// back through it.
+/// scroll, so the list view got a tab bar instead of a longer page.
+/// Reshaped 2026-09-05 (server now tags every entry with `kind`): `Posts`
+/// is the glance a visitor gets by default — up to a handful of editorial
+/// entries (`kind != "patch"`) and the same LINKS section this overlay
+/// always showed; `PatchNotes` trades the LINKS section for the full,
+/// unbounded release-note history (`kind == "patch"`), newest first. The
+/// variants were `Latest`/`All` before this reshape — `from_id` still
+/// accepts those ids so a client mid-upgrade (or a stale click target from
+/// the other tier) does not silently no-op.
 #[cfg(feature = "cloud")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum NewsTab {
     #[default]
-    Latest,
-    All,
+    Posts,
+    PatchNotes,
 }
 
 #[cfg(feature = "cloud")]
@@ -4600,23 +4611,26 @@ impl NewsTab {
     /// that click can drift apart.
     pub fn id(&self) -> &'static str {
         match self {
-            Self::Latest => "latest",
-            Self::All => "all",
+            Self::Posts => "posts",
+            Self::PatchNotes => "patch_notes",
         }
     }
 
     /// Tab label, in the app's short lower-case-free chrome voice.
     pub fn label(&self) -> &'static str {
         match self {
-            Self::Latest => "Latest",
-            Self::All => "All",
+            Self::Posts => "Posts",
+            Self::PatchNotes => "Patch notes",
         }
     }
 
+    /// Accepts both the current ids and the pre-2026-09-05 `latest`/`all`
+    /// ids, mapped onto their closest surviving meaning (`latest` was
+    /// always the default glance, `all` was always the unbounded list).
     pub fn from_id(id: &str) -> Option<Self> {
         match id {
-            "latest" => Some(Self::Latest),
-            "all" => Some(Self::All),
+            "posts" | "latest" => Some(Self::Posts),
+            "patch_notes" | "all" => Some(Self::PatchNotes),
             _ => None,
         }
     }
@@ -4624,8 +4638,8 @@ impl NewsTab {
     /// Index into the shell's own tab strip (`ModalTabs::Horizontal::active`).
     pub fn index(&self) -> usize {
         match self {
-            Self::Latest => 0,
-            Self::All => 1,
+            Self::Posts => 0,
+            Self::PatchNotes => 1,
         }
     }
 }
@@ -4682,7 +4696,7 @@ impl Default for CloudOverlayState {
             update_install_requested: false,
             selected_post: None,
             expanded: false,
-            news_tab: NewsTab::Latest,
+            news_tab: NewsTab::Posts,
             scroll: ScrollState::new(),
             position: None,
             is_dragging: false,

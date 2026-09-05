@@ -2,16 +2,17 @@
 //!
 //! Standard modal shell (`ui::widgets::modal`) over a dimmed backdrop, one
 //! dialog per [`CloudOverlayKind`]:
-//! - News — "what's new": version + release notes from /api/updates/latest
-//!   (fetched by the shell driver into [`CloudOverlayData`]), plus a LINKS
-//!   section (social/project links, opened in a new tab via the
-//!   `open_url_requested` mailbox) — a standalone Links overlay was thin
-//!   enough content on its own that the owner folded it in here
-//!   (2026-09-04) rather than keep it a chrome button of its own. The two
-//!   outgrew one scroll the same day, so the list view carries the shell's
-//!   own horizontal tab bar ([`NewsTab`]): `Latest`, the default glance —
-//!   the LINKS section under a handful of recent posts — and `All`, the
-//!   full feed with nothing under it.
+//! - News — the blog feed (fetched by the shell driver into
+//!   [`CloudOverlayData`]), plus a LINKS section (social/project links,
+//!   opened in a new tab via the `open_url_requested` mailbox) — a
+//!   standalone Links overlay was thin enough content on its own that the
+//!   owner folded it in here (2026-09-04) rather than keep it a chrome
+//!   button of its own. The two outgrew one scroll the same day, so the
+//!   list view carries the shell's own horizontal tab bar ([`NewsTab`]):
+//!   `Posts`, the default glance — the LINKS section under a handful of
+//!   recent editorial entries (`kind != "patch"`) — and `PatchNotes`, the
+//!   full, unbounded release-note history (`kind == "patch"`) with nothing
+//!   under it.
 //! - Download — the release manifest, read by whichever surface asked.
 //!   The web page gets binary download links; the desktop app gets its own
 //!   updater's state and an Install action, because there the app replaces
@@ -117,6 +118,24 @@ fn post_block_h(post: &CloudNewsPost) -> f64 {
     16.0 + 20.0 + summary_lines(&post.summary) * 16.0 + 14.0
 }
 
+/// Which of the two News list tabs a post belongs under.
+fn is_patch(post: &CloudNewsPost) -> bool {
+    post.kind == "patch"
+}
+
+/// The title text drawn for `post` — its release version when it is a patch
+/// note that carries one, its own title otherwise. Shared by the block and
+/// the reading view so neither can show a different heading for the same
+/// entry.
+fn display_title(post: &CloudNewsPost) -> &str {
+    if is_patch(post) {
+        if let Some(v) = post.version.as_deref().filter(|v| !v.is_empty()) {
+            return v;
+        }
+    }
+    &post.title
+}
+
 /// Height of the News reading view: back row + date + title + wrapped body.
 fn post_detail_h(post: &CloudNewsPost) -> f64 {
     let text = if post.body.is_empty() { &post.summary } else { &post.body };
@@ -127,8 +146,8 @@ fn post_detail_h(post: &CloudNewsPost) -> f64 {
     28.0 + 16.0 + 24.0 + h
 }
 
-/// The News overlay shows at most this many posts on the `Latest` tab —
-/// the glance a reopened panel always comes back to. The `All` tab is
+/// The News overlay shows at most this many entries on the `Posts` tab —
+/// the glance a reopened panel always comes back to. The `PatchNotes` tab is
 /// unbounded (`news_list_h`) and is exactly what the scroll container
 /// below exists for.
 const MAX_NEWS_POSTS: usize = 3;
@@ -150,29 +169,36 @@ fn links_section_h() -> f64 {
     LINKS_SECTION_GAP + LINKS_HEADING_H + SOCIAL_LINKS.len() as f64 * ROW_H
 }
 
-/// The News overlay's list-view tabs — `Latest` (the default glance: up to
-/// `MAX_NEWS_POSTS` entries + LINKS) and `All` (the full catalogue, no
-/// LINKS). Drawn only over the list view: the in-modal reading view
-/// (`state.selected_post.is_some()`) and the Download overlay have nothing
-/// to switch between, so neither carries a tab bar at all.
+/// The News overlay's list-view tabs — `Posts` (the default glance: up to
+/// `MAX_NEWS_POSTS` editorial entries + LINKS) and `PatchNotes` (the full
+/// release-note history, no LINKS). Drawn only over the list view: the
+/// in-modal reading view (`state.selected_post.is_some()`) and the Download
+/// overlay have nothing to switch between, so neither carries a tab bar at
+/// all.
 const NEWS_TAB_ITEMS: &[ModalTab<'static>] = &[
-    ModalTab { id: "latest", label: "Latest", icon: None },
-    ModalTab { id: "all", label: "All", icon: None },
+    ModalTab { id: "posts", label: "Posts", icon: None },
+    ModalTab { id: "patch_notes", label: "Patch notes", icon: None },
 ];
 
 /// Height of the News list view for `tab` — the block sum for whichever
-/// slice of `posts` that tab shows, plus the LINKS section only on
-/// `NewsTab::Latest`. A function, not inlined at `content_height` and
-/// `draw_news_list` both, for the same reason `post_block_h` is shared with
-/// `draw_news_post`: the frame and what actually gets painted into it can
-/// never disagree.
+/// slice of `posts` that tab shows (`Posts` = `kind != "patch"`, capped at
+/// `MAX_NEWS_POSTS`; `PatchNotes` = `kind == "patch"`, unbounded), plus the
+/// LINKS section only on `NewsTab::Posts`. A function, not inlined at
+/// `content_height` and `draw_news_list` both, for the same reason
+/// `post_block_h` is shared with `draw_news_post`: the frame and what
+/// actually gets painted into it can never disagree.
 fn news_list_h(tab: NewsTab, posts: &[CloudNewsPost]) -> f64 {
     match tab {
-        NewsTab::Latest => {
-            let blocks: f64 = posts.iter().take(MAX_NEWS_POSTS).map(post_block_h).sum();
+        NewsTab::Posts => {
+            let blocks: f64 = posts
+                .iter()
+                .filter(|p| !is_patch(p))
+                .take(MAX_NEWS_POSTS)
+                .map(post_block_h)
+                .sum();
             blocks + links_section_h()
         }
-        NewsTab::All => posts.iter().map(post_block_h).sum(),
+        NewsTab::PatchNotes => posts.iter().filter(|p| is_patch(p)).map(post_block_h).sum(),
     }
 }
 
@@ -193,10 +219,10 @@ const DOWNLOAD_STATUS_H: f64 = 22.0 + ROW_H + 24.0;
 const DOWNLOAD_MAX_BODY_H: f64 = 400.0;
 
 /// Ceiling on the News list body once it is wrapped in a scroll container.
-/// Sized so the default `Latest` tab (up to `MAX_NEWS_POSTS` two-line posts
+/// Sized so the default `Posts` tab (up to `MAX_NEWS_POSTS` two-line entries
 /// plus the fixed LINKS section, ~470px worst case) fits without ever
-/// needing to scroll in the common case; the `All` tab, whose post count is
-/// unbounded, is what actually exercises the scroll container this leaves
+/// needing to scroll in the common case; the `PatchNotes` tab, whose entry
+/// count is unbounded, is what actually exercises the scroll container this leaves
 /// room for.
 const NEWS_LIST_MAX_BODY_H: f64 = 480.0;
 
@@ -296,7 +322,7 @@ pub fn render_cloud_overlay(
             fit: TabFit::Equal,
         });
         // The News list view is the one whose content is unbounded (the
-        // `All` tab, and a long history under `Latest`'s LINKS section) —
+        // `PatchNotes` tab, and a long history under `Posts`'s LINKS section) —
         // cap it here and let `draw_body`'s scroll container reach the rest.
         spec = spec.with_max_content_height(NEWS_LIST_MAX_BODY_H);
     }
@@ -484,17 +510,20 @@ fn draw_body(
     }
 }
 
-/// The News overlay's list view: `NewsTab::Latest` draws up to
-/// `MAX_NEWS_POSTS` blocks and the LINKS section beneath them — the glance a
-/// reopened panel always comes back to; `NewsTab::All` draws every entry,
-/// newest first, and stops there, since a reader who asked for the whole
-/// catalogue did not come here for the LINKS section. Widget ids for the
-/// post rows stay `cloud_overlay:post:{i}` with `i` the row's own index into
-/// `posts` either way, so `panel_click.rs`'s `posts.get(i)` lookup for the
-/// reading view needs no change for which tab drew the row that opened it.
-/// Called with `y` already at the scroll container's own offset content
-/// position (`ScrollableContainer::content_y()`), so every row's hit zone
-/// registers at the same on-screen position it paints at.
+/// The News overlay's list view: `NewsTab::Posts` draws up to
+/// `MAX_NEWS_POSTS` editorial blocks (`kind != "patch"`) and the LINKS
+/// section beneath them — the glance a reopened panel always comes back to;
+/// `NewsTab::PatchNotes` draws every release note (`kind == "patch"`),
+/// newest first, and stops there, since a reader who asked for the release
+/// history did not come here for the LINKS section. Widget ids for the post
+/// rows stay `cloud_overlay:post:{i}` with `i` the row's own index into the
+/// UNFILTERED `posts` slice (not the position within the filtered/capped
+/// list this draws), so `panel_click.rs`'s `posts.get(i)` lookup for the
+/// reading view resolves to the same entry regardless of which tab drew the
+/// row that opened it. Called with `y` already at the scroll container's
+/// own offset content position (`ScrollableContainer::content_y()`), so
+/// every row's hit zone registers at the same on-screen position it paints
+/// at.
 #[allow(clippy::too_many_arguments)]
 fn draw_news_list(
     ctx: &mut dyn RenderContext,
@@ -510,8 +539,13 @@ fn draw_news_list(
 ) {
     let mut py = y;
     match tab {
-        NewsTab::Latest => {
-            for (i, post) in posts.iter().take(MAX_NEWS_POSTS).enumerate() {
+        NewsTab::Posts => {
+            let shown = posts
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| !is_patch(p))
+                .take(MAX_NEWS_POSTS);
+            for (i, post) in shown {
                 py += draw_news_post(
                     ctx,
                     coord,
@@ -526,8 +560,9 @@ fn draw_news_list(
             }
             draw_links_section(ctx, coord, layer_id, x, py, row_w, tt);
         }
-        NewsTab::All => {
-            for (i, post) in posts.iter().enumerate() {
+        NewsTab::PatchNotes => {
+            let shown = posts.iter().enumerate().filter(|(_, p)| is_patch(p));
+            for (i, post) in shown {
                 py += draw_news_post(
                     ctx,
                     coord,
@@ -544,8 +579,9 @@ fn draw_news_list(
     }
 }
 
-/// One blog post block in the News overlay: date, title, summary — the whole
-/// block is a click zone out to the post. Returns the height consumed.
+/// One blog post block in the News overlay: date, title (or version, via
+/// [`display_title`], for a patch note that carries one), summary — the
+/// whole block is a click zone out to the post. Returns the height consumed.
 #[allow(clippy::too_many_arguments)]
 fn draw_news_post(
     ctx: &mut dyn RenderContext,
@@ -574,7 +610,7 @@ fn draw_news_post(
 
     ctx.set_font("600 13px sans-serif");
     ctx.set_fill_color(if hovered { GOLD } else { &tt.item_text });
-    ctx.fill_text(&post.title, x + 8.0, y + 22.0);
+    ctx.fill_text(display_title(post), x + 8.0, y + 22.0);
 
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(&tt.item_text_muted);

@@ -705,9 +705,11 @@ fn default_watchlist() -> mlc_app::WatchlistManager {
 /// Hand-parsed from `serde_json::Value` rather than a derived struct pair:
 /// this crate depends on `serde_json` directly but not on `serde` with the
 /// `derive` feature, and pulling that in for one small shape is not worth a
-/// new dependency edge. `id` in the feed is not part of `CloudNewsPost` and
-/// is ignored; `body` is optional in the feed (defaults to empty — the
-/// reading view falls back to the summary already).
+/// new dependency edge. `body` is optional in the feed (defaults to empty —
+/// the reading view falls back to the summary already); `kind` defaults to
+/// `"post"` and `version` to absent, same as the wasm side's serde defaults,
+/// so a feed served before either field existed still parses; `next_before`
+/// is ignored — this fetch has no "load more".
 #[cfg(feature = "cloud")]
 async fn fetch_news_feed(
 ) -> Result<Vec<mlc_app_layout::ui::modal_settings::CloudNewsPost>, String> {
@@ -716,7 +718,7 @@ async fn fetch_news_feed(
         .build()
         .unwrap_or_default();
     let body: serde_json::Value = client
-        .get("https://chart.example/blog/posts.json")
+        .get("https://chart.example/api/posts?limit=100")
         .send()
         .await
         .map_err(|e| e.to_string())?
@@ -733,6 +735,13 @@ async fn fetch_news_feed(
     Ok(posts
         .iter()
         .map(|p| mlc_app_layout::ui::modal_settings::CloudNewsPost {
+            id: str_field(p, "id"),
+            kind: p
+                .get("kind")
+                .and_then(|f| f.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "post".to_string()),
+            version: p.get("version").and_then(|f| f.as_str()).map(|s| s.to_string()),
             date: str_field(p, "date"),
             title: str_field(p, "title"),
             summary: str_field(p, "summary"),

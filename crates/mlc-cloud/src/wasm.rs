@@ -447,10 +447,13 @@ impl FetchTransport {
         Ok(resp.releases)
     }
 
-    /// `GET /blog/posts.json` — static blog feed for the News overlay.
-    /// Same-origin static file, anonymous.
+    /// `GET /api/posts?limit=100` — recent blog feed for the News overlay,
+    /// newest first. Same-origin, anonymous. Replaces the old static
+    /// `GET /blog/posts.json` fetch (still served by the server from the
+    /// same store, so an unrebuilt client keeps working); `next_before` is
+    /// ignored — the overlay has no "load more" yet.
     pub async fn blog_posts(&self) -> Result<Vec<BlogPost>, CloudError> {
-        let (status, body) = self.exchange("GET", "/blog/posts.json", None, &[]).await?;
+        let (status, body) = self.exchange("GET", "/api/posts?limit=100", None, &[]).await?;
         let feed: BlogFeed = self.decode_success(status, &body)?;
         Ok(feed.posts)
     }

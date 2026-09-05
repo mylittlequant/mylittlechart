@@ -403,11 +403,21 @@ pub struct ReleaseListResponse {
     pub releases: Vec<ReleaseEntry>,
 }
 
-/// One entry in the blog feed (`GET /blog/posts.json`, static file on the
-/// same origin). Drives the News overlay in cloud builds.
+/// One entry in the blog feed (`GET /api/posts?limit=N`, same-origin,
+/// anonymous). Drives the News overlay in cloud builds. The old static
+/// `GET /blog/posts.json` document serves the same rows without `kind`/
+/// `version` — the defaults below keep this type parsing either shape.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlogPost {
     pub id: String,
+    /// `"post"` (editorial) or `"patch"` (release note); defaults to
+    /// `"post"` for feeds served before this field existed.
+    #[serde(default = "default_blog_post_kind")]
+    pub kind: String,
+    /// Release version the entry documents — set on `"patch"` rows, `None`
+    /// otherwise (and for feeds served before this field existed).
+    #[serde(default)]
+    pub version: Option<String>,
     pub date: String,
     pub title: String,
     pub summary: String,
@@ -416,6 +426,10 @@ pub struct BlogPost {
     #[serde(default)]
     pub body: String,
     pub url: String,
+}
+
+fn default_blog_post_kind() -> String {
+    "post".to_string()
 }
 
 /// The blog feed document.

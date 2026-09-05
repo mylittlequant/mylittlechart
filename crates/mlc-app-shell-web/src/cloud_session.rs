@@ -391,6 +391,9 @@ impl CloudSession {
                         posts: posts
                             .into_iter()
                             .map(|p| CloudNewsPost {
+                                id: p.id,
+                                kind: p.kind,
+                                version: p.version,
                                 date: p.date,
                                 title: p.title,
                                 summary: p.summary,
