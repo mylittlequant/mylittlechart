@@ -2734,6 +2734,22 @@ impl ChartApp {
             return;
         }
 
+        // === Events panel clicks (system event log, owner scope §8) ===
+        // Pattern: "events_mark_all_read" — header button.
+        if widget_id == "events_mark_all_read" {
+            self.mark_all_system_events_read();
+            eprintln!("[Sidebar] System events: marked all read");
+            return;
+        }
+        // Pattern: "events:row:{id}" (row click — mark read only, no
+        // navigation; the log has no source window to jump to).
+        if let Some(id) = widget_id.strip_prefix("events:row:").and_then(|s| s.parse::<u64>().ok()) {
+            self.system_events_mut().mark_read(id);
+            self.persist_profile();
+            eprintln!("[Sidebar] System event {} marked read", id);
+            return;
+        }
+
         // === Object tree panel clicks ===
         // Widget IDs use namespaced format: "{section_tag}_{prefix}_{action}_{id}"
         // where section_tag is one of: grp, win, mem, flt (flat/untagged).

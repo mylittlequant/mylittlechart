@@ -171,6 +171,13 @@ struct PerWindowState {
     /// active state after the phase actually expired, with no click or
     /// other dirty-triggering event to force a rebuild.
     screenshot_active_prev: bool,
+    /// Last-seen value of `chart.unread_count() > 0`, compared each tick so
+    /// the toolbar strip is marked dirty exactly once when the system-event
+    /// log's unread badge flips (owner scope §8, 2026-09-05) — same cached-
+    /// strip problem as `screenshot_active_prev` above: nothing else drives
+    /// `toolbar_dirty` when an event arrives from a background path with no
+    /// accompanying click.
+    unread_events_prev: bool,
     /// Pending agent screenshot requests — each entry is `(chart_id, response_tx)`.
     ///
     /// Accumulated by [`drain_agent_commands`] and processed at the end of
@@ -1635,6 +1642,7 @@ impl App<'_> {
             screenshot_pending: false,
             screenshot_armed: false,
             screenshot_active_prev: false,
+            unread_events_prev: false,
             pending_agent_screenshots: Vec::new(),
             modifiers: winit::keyboard::ModifiersState::default(),
             drawing_capture: false,
@@ -5580,6 +5588,16 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 let screenshot_active_now = pw.chart.panel_app.toolbar_state.screenshot_active();
                 if screenshot_active_now != pw.screenshot_active_prev {
                     pw.screenshot_active_prev = screenshot_active_now;
+                    pw.toolbar_dirty = true;
+                    pw.window.request_redraw();
+                }
+            }
+            // Unread system-events badge edge check (owner scope §8) — same
+            // "cached strip, no click to invalidate it" gap as the block above.
+            {
+                let unread_now = pw.chart.unread_count() > 0;
+                if unread_now != pw.unread_events_prev {
+                    pw.unread_events_prev = unread_now;
                     pw.toolbar_dirty = true;
                     pw.window.request_redraw();
                 }

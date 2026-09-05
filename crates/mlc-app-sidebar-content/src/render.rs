@@ -384,6 +384,7 @@ pub fn render_right_sidebar(
         RightSidebarPanel::SlotBigTrades => ("Big Trades",   Icon::SlotBigTrades),
         RightSidebarPanel::SlotLiq       => ("Liquidations", Icon::SlotLiq),
         RightSidebarPanel::Screener    => ("Screener",     Icon::Screener),
+        RightSidebarPanel::Events      => ("Events",       Icon::History),
         RightSidebarPanel::None        => return result, // unreachable
     };
 
@@ -488,6 +489,30 @@ pub fn render_right_sidebar(
             "alert_add_button".to_string(),
             WidgetRect::new(add_x, add_y, add_size, add_size),
         ));
+    }
+
+    // Events panel: "Mark all read" button to the left of the close button.
+    // No plain checkmark glyph exists in the icon registry and the action
+    // reads better as text anyway — same short-text-pill treatment as the
+    // Screener panel's "Scan" button below, not the Alerts add-icon.
+    if panel == RightSidebarPanel::Events {
+        let label = "Mark all read";
+        ctx.set_font("11px sans-serif");
+        let btn_w = ctx.measure_text(label) + 14.0;
+        let btn_h = 20.0;
+        let btn_x = close_x - btn_w - 8.0;
+        let btn_y = rect.y + (header_height - btn_h) / 2.0;
+        let btn_rect = WidgetRect::new(btn_x, btn_y, btn_w, btn_h);
+        let btn_hovered = input_coordinator
+            .is_hovered(&uzor::types::WidgetId::from("events_mark_all_read"));
+        ctx.set_fill_color(if btn_hovered { &toolbar_theme.item_bg_active } else { &toolbar_theme.item_bg_hover });
+        ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 4.0);
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, btn_x + btn_w / 2.0, btn_y + btn_h / 2.0);
+        input_coordinator.register("events_mark_all_read", btn_rect, uzor::input::Sense::CLICK);
+        result.item_rects.push(("events_mark_all_read".to_string(), btn_rect));
     }
 
     // Watchlist panel: "expand" button and "settings/columns" button.
@@ -686,6 +711,20 @@ pub fn render_right_sidebar(
 
         RightSidebarPanel::Alerts => {
             content_height = render_alert_items(
+                ctx,
+                rect,
+                content_y,
+                content_width,
+                scrollbar_width,
+                sidebar_state,
+                toolbar_theme,
+                &mut result,
+                input_coordinator,
+            );
+        }
+
+        RightSidebarPanel::Events => {
+            content_height = render_events_items(
                 ctx,
                 rect,
                 content_y,
@@ -2793,6 +2832,133 @@ fn render_alert_items(
 
         // Small gap between groups.
         current_y += 8.0;
+    }
+
+    current_y - content_y
+}
+
+// =============================================================================
+// Events panel (system event log — owner scope §8,
+// docs/mlc/plans/users-paid-features-scope-2026-09-05.md)
+// =============================================================================
+
+/// Format a `SystemEvent::at_ms` (unix ms) for one row: `HH:MM` (UTC) when
+/// the event happened the same UTC day as `now_ms`, `MM-DD HH:MM` otherwise.
+/// Dependency-free day-math (Howard Hinnant's `civil_from_days`) — same
+/// algorithm `mlc-app-layout`'s `missing_utc_days_label` uses, duplicated
+/// here rather than exposed cross-crate for one row label.
+fn format_event_time(at_ms: i64, now_ms: i64) -> String {
+    let day_ms: i64 = 86_400_000;
+    let event_day = at_ms.div_euclid(day_ms);
+    let now_day = now_ms.div_euclid(day_ms);
+    let secs_of_day = at_ms.rem_euclid(day_ms) / 1000;
+    let h = secs_of_day / 3600;
+    let m = (secs_of_day % 3600) / 60;
+    if event_day == now_day {
+        format!("{h:02}:{m:02}")
+    } else {
+        let z = event_day + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+        format!("{mo:02}-{d:02} {h:02}:{m:02}")
+    }
+}
+
+/// Render the Events panel's rows — one per `mlc_core::SystemEvent`, newest
+/// first (`state.system_event_items` is already ordered that way, see
+/// `ChartApp::stamp_active_right_toolbar_id`). Unread rows carry an accent
+/// left bar; clicking a row (`events:row:{id}`, dispatched in
+/// `mlc-app/src/input/panel_click.rs`) marks it read.
+fn render_events_items(
+    ctx: &mut dyn RenderContext,
+    rect: &LayoutRect,
+    content_y: f64,
+    content_width: f64,
+    _scrollbar_width: f64,
+    state: &SidebarState,
+    theme: &ToolbarTheme,
+    result: &mut RightSidebarResult,
+    input_coordinator: &mut InputCoordinator,
+) -> f64 {
+    if state.system_event_items.is_empty() {
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(&theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Top);
+        let msg = "Nothing yet — sign-ins, shares, tier changes and sync results land here.";
+        let lines = word_wrap_text(ctx, msg, (content_width - 32.0).max(60.0));
+        for (i, line) in lines.iter().enumerate() {
+            ctx.fill_text(line, rect.x + content_width / 2.0, content_y + i as f64 * 16.0);
+        }
+        return 60.0;
+    }
+
+    let now_ms = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+
+    let item_padding = 8.0;
+    let text_x = rect.x + item_padding + 12.0;
+    let body_max_w = (content_width - item_padding * 2.0 - 12.0).max(20.0);
+    let mut current_y = content_y;
+
+    for ev in &state.system_event_items {
+        let row_id = format!("events:row:{}", ev.id);
+        let body_lines = word_wrap_text(ctx, &ev.body, body_max_w);
+        let body_line_count = body_lines.len().min(2);
+        let item_height = 20.0 + 16.0 + body_line_count as f64 * 14.0 + item_padding * 2.0;
+
+        let item_rect = WidgetRect::new(rect.x + 4.0, current_y, content_width - 8.0, item_height);
+
+        result.item_rects.push((row_id.clone(), item_rect));
+        input_coordinator.register(row_id.as_str(), item_rect, uzor::input::Sense::CLICK);
+
+        let is_hovered = input_coordinator.is_hovered(&uzor::types::WidgetId::from(row_id.as_str()));
+        if is_hovered {
+            ctx.set_fill_color(&theme.item_bg_hover);
+            ctx.fill_rect(item_rect.x, item_rect.y, item_rect.width, item_rect.height);
+        }
+
+        // Unread accent bar — read rows carry no bar.
+        if !ev.read {
+            ctx.set_fill_color(&theme.accent);
+            ctx.fill_rect(rect.x + item_padding, current_y + 4.0, 4.0, item_height - 8.0);
+        }
+
+        // Line 1: kind tag + local (UTC) time, muted small text.
+        let kind_label = format!("{:?}", ev.kind);
+        let time_label = format_event_time(ev.at_ms, now_ms);
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(&theme.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(&format!("{kind_label}  ·  {time_label}"), text_x, current_y + 6.0);
+
+        // Line 2: title, bold.
+        ctx.set_font("bold 12px sans-serif");
+        ctx.set_fill_color(&theme.item_text);
+        ctx.fill_text(&ev.title, text_x, current_y + 20.0);
+
+        // Lines 3-4: body, wrapped to at most 2 lines (a 3rd+ line is
+        // collapsed into an ellipsis on the 2nd rendered line).
+        ctx.set_font("10px sans-serif");
+        ctx.set_fill_color(&theme.item_text_muted);
+        for (i, line) in body_lines.iter().take(2).enumerate() {
+            let rendered = if body_lines.len() > 2 && i == 1 {
+                format!("{}…", line.trim_end())
+            } else {
+                line.clone()
+            };
+            ctx.fill_text(&rendered, text_x, current_y + 34.0 + i as f64 * 14.0);
+        }
+
+        current_y += item_height + 2.0;
     }
 
     current_y - content_y

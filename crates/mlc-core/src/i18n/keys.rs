@@ -632,10 +632,13 @@ pub enum ToolbarTooltipKey {
     /// Top-toolbar globe button creating a public live-share link for the
     /// active preset (chart-sharing arc).
     ShareChart        = 48,
+    /// Bottom-of-right-toolbar button opening the system event log panel
+    /// (owner scope §8, `docs/mlc/plans/users-paid-features-scope-2026-09-05.md`).
+    Events            = 49,
 }
 
 impl ToolbarTooltipKey {
-    pub const COUNT: usize = 49;
+    pub const COUNT: usize = 50;
 
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {

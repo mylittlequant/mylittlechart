@@ -140,6 +140,23 @@ pub fn right_toolbar() -> PanelToolbarDef {
             ToolbarItemDef::icon_button("screener", ToolbarIconId::new("screener"))
                 .with_tooltip("Screener"),
         ]),
+        // System event log — pinned to the BOTTOM of the vertical rail via
+        // `SectionAlign::End` (owner scope §8, 2026-09-05). First vertical
+        // use of `SectionAlign::End`; the shared renderer
+        // (`draw_toolbar_with_icons`, `mlc-app-layout/src/ui/toolbar_core.rs`)
+        // already filters Start/End sections identically for both
+        // orientations — its vertical `end_start` branch is `rect.y +
+        // toolbar_main_size - end_reserved`, the same offset-from-the-far-
+        // edge math the horizontal bottom-toolbar clock already relies on —
+        // so this needed no renderer change.
+        {
+            let mut s = ToolbarSectionDef::new(vec![
+                ToolbarItemDef::icon_button("events", ToolbarIconId::new("History"))
+                    .with_tooltip(t_toolbar(TK::Events)),
+            ]);
+            s.align = SectionAlign::End;
+            s
+        },
     ]).with_size(crate::types::LEFT_TOOLBAR_WIDTH)
 }
 

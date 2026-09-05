@@ -1464,11 +1464,16 @@ impl ChartApp {
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
             }
-            // panel arc: handler (open the System Events panel) lands with
-            // the panel/toolbar-button follow-up — this arm only keeps the
-            // match exhaustive so `mlc-app` compiles against the new
-            // `ChartOutEvent` variant today.
-            ChartOutEvent::ToggleEvents => {}
+            ChartOutEvent::ToggleEvents => {
+                let result = self.sidebar_state.toggle_right_panel(
+                    mlc_app_sidebar_content::state::RightSidebarPanel::Events,
+                );
+                if let Some((opening, _width)) = result {
+                    eprintln!("[ChartApp] Events panel: {}", if opening { "opened" } else { "closed" });
+                }
+                self.sidebar_data_dirty = true;
+                self.persist_profile();
+            }
             ChartOutEvent::ToggleSlot(idx) => {
                 let panel = mlc_app_sidebar_content::state::RightSidebarPanel::from_slot_index(idx);
                 let was_open = self.sidebar_state.right_panel == panel;

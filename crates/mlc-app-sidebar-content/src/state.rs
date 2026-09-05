@@ -134,6 +134,14 @@ pub enum RightSidebarPanel {
     /// only (Mode 1, the primary/default mode; Mode 2 "global scanner" is a
     /// future optional module, never the default).
     Screener,
+    /// System event log — everything the system told the user (tier
+    /// changes, sign-in/out, shares, nick edits, sync status, memory
+    /// pressure, updates, alert deliveries). Data source is `ChartApp`'s
+    /// `SystemEventLog` (`mlc-app/src/system_events.rs`), copied per frame
+    /// into `SidebarState::system_event_items` — same "app populates,
+    /// sidebar-content only renders" split as `alert_items`. Owner scope §8,
+    /// `docs/mlc/plans/users-paid-features-scope-2026-09-05.md`.
+    Events,
 }
 
 impl RightSidebarPanel {
@@ -162,6 +170,7 @@ impl RightSidebarPanel {
             RightSidebarPanel::SlotBigTrades => "slot_big_trades",
             RightSidebarPanel::SlotLiq       => "slot_liq",
             RightSidebarPanel::Screener      => "screener",
+            RightSidebarPanel::Events        => "events",
         }
     }
 
@@ -262,6 +271,12 @@ pub struct SidebarState {
     pub object_tree_items: Vec<ObjectTreeItem>,
     /// Alert items for the Alerts panel (populated by app before render).
     pub alert_items: Vec<AlertItem>,
+    /// Events for the Events panel, newest first (populated by app before
+    /// render from `ChartApp::system_events().iter_newest_first()` every
+    /// frame — cheap enough (ring-capped at 200) to skip the `sidebar_data_
+    /// dirty` gate the heavier lists use, so a background-reported event
+    /// shows up without requiring an unrelated click first).
+    pub system_event_items: Vec<mlc_core::SystemEvent>,
     /// Currently hovered object tree item ID (for hover effects and delete button).
     pub hovered_object_tree_id: Option<String>,
     /// Currently hovered alert ID (for hover effects and buttons).
@@ -848,6 +863,7 @@ impl Default for SidebarState {
             screener_sort_asc: true,
             object_tree_items: Vec::new(),
             alert_items: Vec::new(),
+            system_event_items: Vec::new(),
             connector_items: Vec::new(),
             connector_expanded: HashMap::new(),
             connector_enabled: HashMap::new(),
@@ -1117,6 +1133,7 @@ mod typed_slot_tests {
             RightSidebarPanel::Monitoring,
             RightSidebarPanel::Agents,
             RightSidebarPanel::Screener,
+            RightSidebarPanel::Events,
         ];
         for panel in non_slots {
             assert_eq!(panel.slot_index(), None, "{:?} must not report a slot index", panel);

@@ -12753,6 +12753,15 @@ impl ChartApp {
                 P::Monitoring => Some("monitoring".to_string()),
                 p => Self::panel_to_str(p),
             };
+        // System event log (owner scope §8, 2026-09-05): the toolbar badge
+        // flag and the panel's own row data are both cheap (ring-capped at
+        // 200 events) and stamped unconditionally per frame here, same as
+        // `active_right_toolbar_id` above — unlike `alert_items` et al. this
+        // does NOT wait for `sidebar_data_dirty` so an event reported from a
+        // background path (sync/tier/update) shows up without an unrelated
+        // click first.
+        self.panel_app.toolbar_state.system_events_unread = self.system_events.unread_count() > 0;
+        self.sidebar_state.system_event_items = self.system_events.iter_newest_first().cloned().collect();
         self.stamp_settings_menu_state();
     }
 
@@ -12848,6 +12857,7 @@ impl ChartApp {
             RightSidebarPanel::SlotBigTrades => Some("slot_big_trades".to_string()),
             RightSidebarPanel::SlotLiq => Some("slot_liq".to_string()),
             RightSidebarPanel::Screener => Some("screener".to_string()),
+            RightSidebarPanel::Events => Some("events".to_string()),
         }
     }
 
@@ -12878,6 +12888,7 @@ impl ChartApp {
             "slot_big_trades" => RightSidebarPanel::SlotBigTrades,
             "slot_liq" => RightSidebarPanel::SlotLiq,
             "screener" => RightSidebarPanel::Screener,
+            "events" => RightSidebarPanel::Events,
             _ => RightSidebarPanel::None,
         }
     }

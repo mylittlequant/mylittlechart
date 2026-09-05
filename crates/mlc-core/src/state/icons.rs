@@ -187,6 +187,12 @@ pub enum Icon {
     // === UI Elements ===
     Search,
     Clock,
+    /// Clock face with a counter-clockwise arrow — system event log (bottom
+    /// of the right toolbar + the `Events` sidebar panel header). Added
+    /// 2026-09-05: "Bell" already means the Alerts panel and "List" already
+    /// means Watchlist, so neither reads as a distinct third icon; no
+    /// "Inbox"/"History" glyph existed in this registry before this one.
+    History,
     Watermark,
     Legend,
     Tooltip,
@@ -1619,6 +1625,15 @@ pub const ICON_CLOCK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox
   <path d="M12 6v6l4 2"/>
 </svg>"##;
 
+/// System event log glyph (Lucide "History" silhouette) — clock face plus a
+/// counter-clockwise sweep arrow, distinct from the plain `ICON_CLOCK` used
+/// by the timeframe selector / bottom clock.
+pub const ICON_HISTORY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/>
+  <path d="M3 3v5h5"/>
+  <path d="M12 7v5l4 2"/>
+</svg>"##;
+
 pub const ICON_WATERMARK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <rect x="3" y="3" width="18" height="18" rx="2"/>
   <path d="M7 12h10" stroke-opacity="0.5"/>
@@ -2166,6 +2181,7 @@ impl Icon {
             Icon::Layout => ICON_LAYOUT,
             Icon::Search => ICON_SEARCH,
             Icon::Clock => ICON_CLOCK,
+            Icon::History => ICON_HISTORY,
             Icon::Watermark => ICON_WATERMARK,
             Icon::Legend => ICON_LEGEND,
             Icon::Tooltip => ICON_TOOLTIP,
@@ -2358,6 +2374,7 @@ impl Icon {
             "palette" | "theme_settings" => Some(Icon::Palette),
             "search" => Some(Icon::Search),
             "clock" => Some(Icon::Clock),
+            "history" | "events" => Some(Icon::History),
             "watermark" => Some(Icon::Watermark),
             "legend" => Some(Icon::Legend),
             "tooltip" => Some(Icon::Tooltip),
@@ -2727,6 +2744,9 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "slot_big_trades" | "slotbigtrades" => Some(ICON_SLOT_BIG_TRADES),
         "slot_liq" | "slotliq" => Some(ICON_SLOT_LIQ),
         "screener" => Some(ICON_SCREENER),
+        // System event log button (bottom of the right toolbar, owner scope
+        // §8, 2026-09-05) — "bell"/"list" already mean Alerts/Watchlist.
+        "history" | "events" => Some(ICON_HISTORY),
 
         // Bottom toolbar zoom/screenshot buttons
         "zoom_in" | "zoomin" => Some(ICON_ZOOM_IN),

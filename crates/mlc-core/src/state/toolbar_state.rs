@@ -664,6 +664,12 @@ pub struct ChartToolbarState {
     /// accent-active so the open tab is visible at a glance (owner order
     /// 2026-07-31). Set per frame by the app from `sidebar_state`.
     pub active_right_toolbar_id: Option<String>,
+    /// True while `ChartApp::unread_count() > 0` — the "events" button paints
+    /// active whenever there is unread system-event-log content, independent
+    /// of whether the Events panel is the one currently open (owner scope
+    /// §8, 2026-09-05). Stamped per frame alongside `active_right_toolbar_id`
+    /// by `ChartApp::stamp_active_right_toolbar_id`.
+    pub system_events_unread: bool,
     /// Hovered bottom toolbar item
     pub hovered_bottom_toolbar_id: Option<String>,
     /// Currently open dropdown
@@ -784,6 +790,7 @@ impl Default for ChartToolbarState {
             hovered_top_toolbar_id: None,
             hovered_right_toolbar_id: None,
             active_right_toolbar_id: None,
+            system_events_unread: false,
             hovered_bottom_toolbar_id: None,
             open_dropdown_id: None,
             hovered_dropdown_item: None,

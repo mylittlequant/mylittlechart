@@ -919,6 +919,25 @@ pub fn chart_toolbar_render_toolbars(
                 }
             }
 
+            // Unread system-events badge (owner scope §8): the events button
+            // stays highlighted whenever there is unread log content, on top
+            // of (not instead of) the "panel is open" highlight above — no
+            // per-item hook for a numeric count exists in this renderer or in
+            // `uzor::panel_api::ToolbarItemDef`, so active-state-only is the
+            // whole badge (see `docs/mlc/plans/users-paid-features-scope-2026-09-05.md`
+            // §8 follow-up notes).
+            if tb.system_events_unread {
+                for section in &mut right_sections {
+                    for item in &mut section.items {
+                        if let TcToolbarItem::IconButton { id, active, .. } = item {
+                            if id == "events" {
+                                *active = true;
+                            }
+                        }
+                    }
+                }
+            }
+
             // Right toolbar uses sidebar_style so it renders with the sidebar variant.
             let right_theme = TcToolbarTheme {
                 sidebar_style: true,
