@@ -3557,6 +3557,35 @@ pub fn validate_nick(nick: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Local mirror of the server's `POST /api/forum/threads` title check
+/// (3–120 bytes) — same reasoning `validate_nick` gives: refuse obviously
+/// bad input before it ever leaves the device, the server re-checks
+/// regardless. Byte length, not char count, to match the server's own
+/// `title.len()` bound exactly.
+#[cfg(feature = "cloud")]
+pub fn validate_forum_title(title: &str) -> Result<(), String> {
+    let len = title.len();
+    if !(3..=120).contains(&len) {
+        return Err("Title must be 3-120 characters".to_string());
+    }
+    Ok(())
+}
+
+/// Local mirror of the server's `POST /api/forum/threads`/
+/// `.../replies` body check (1–8192 bytes) — see [`validate_forum_title`]'s
+/// own doc.
+#[cfg(feature = "cloud")]
+pub fn validate_forum_body(body: &str) -> Result<(), String> {
+    let len = body.len();
+    if len == 0 {
+        return Err("Body cannot be empty".to_string());
+    }
+    if len > 8192 {
+        return Err("Body is too long (max 8192 bytes)".to_string());
+    }
+    Ok(())
+}
+
 /// State for the User Settings modal.
 #[derive(Clone, Debug)]
 pub struct UserSettingsState {
@@ -4462,6 +4491,117 @@ impl CloudLoginState {
 // CloudOverlayState — News / Download overlays (cloud builds only)
 // =============================================================================
 
+// =============================================================================
+// Forum (News overlay, `NewsTab::Forum`, paid-only) — see the plan at
+// `docs/mlc/plans/web-surface-cleanup-and-in-app-blog-2026-09-05.md` phase 3
+// and the scope at `docs/mlc/plans/users-paid-features-scope-2026-09-05.md`
+// §4. Server: `GET/POST/DELETE /api/forum/*`, auth + paid required, 401
+// anonymous / 403 free.
+// =============================================================================
+
+/// One row of the Forum tab's thread list. A flat mirror of
+/// `mlc_cloud::ForumThreadSummary`, redeclared here for the same reason
+/// `CloudNewsPost` mirrors `mlc_cloud::BlogPost`: the layout crate must not
+/// depend on the cloud transport crate.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct CloudForumThreadSummary {
+    pub id: i64,
+    pub title: String,
+    pub author: String,
+    /// Whether the SIGNED-IN caller authored this thread — drives the
+    /// "Delete" affordance on the thread row/detail.
+    pub author_is_me: bool,
+    pub created_at: String,
+    pub last_reply_at: Option<String>,
+    pub reply_count: i64,
+    pub excerpt: String,
+}
+
+/// One reply under an open thread. A flat mirror of `mlc_cloud::ForumReply`.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct CloudForumReply {
+    pub id: i64,
+    pub author: String,
+    pub author_is_me: bool,
+    pub body: String,
+    pub created_at: String,
+}
+
+/// A thread with its replies, as shown in the Forum tab's reading view. A
+/// flat merge of `mlc_cloud::ForumThread` + `ForumThreadResponse::replies`
+/// — the wire shape keeps them as two sibling fields, this crate's shell
+/// callers combine them before writing this.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct CloudForumThread {
+    pub id: i64,
+    pub title: String,
+    pub author: String,
+    pub author_is_me: bool,
+    pub body: String,
+    pub created_at: String,
+    pub replies: Vec<CloudForumReply>,
+}
+
+/// Fetch state of the Forum tab's thread list — independent of
+/// [`ForumSubView`] so returning from a thread (or an abandoned compose)
+/// never re-fetches page one.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum ForumListState {
+    #[default]
+    Empty,
+    Loading,
+    Loaded {
+        threads: Vec<CloudForumThreadSummary>,
+        /// Pagination cursor for "Load more" — `None` once the list has
+        /// run out.
+        next_before: Option<String>,
+        /// A "Load more" page fetch is in flight — drawn as a disabled
+        /// button rather than removing the row, same reasoning
+        /// `cloud_login.rs`'s redeem button gives for its own `working`
+        /// flag: the row must not reflow under the cursor that just
+        /// clicked it.
+        loading_more: bool,
+    },
+    Error {
+        message: String,
+    },
+}
+
+/// Which Forum sub-view is showing: the list (default — reads
+/// [`CloudOverlayState::forum_list`]), one open thread, or the "new
+/// thread" compose form.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum ForumSubView {
+    #[default]
+    List,
+    Thread {
+        /// `None` while the `LoadThread` request is in flight.
+        thread: Option<CloudForumThread>,
+        loading: bool,
+        /// The thread load itself failed (wrong id, network, revoked
+        /// entitlement mid-session).
+        error: Option<String>,
+        /// A reply submission is in flight.
+        posting_reply: bool,
+        /// The last reply submission's refusal, if any — separate from
+        /// `error` because a reply can fail on an otherwise successfully
+        /// loaded thread.
+        reply_error: Option<String>,
+    },
+    Compose {
+        /// A create-thread submission is in flight.
+        posting: bool,
+        /// The last submission's refusal (server or local validation), if
+        /// any.
+        error: Option<String>,
+    },
+}
+
 /// Which cloud overlay is showing.
 #[cfg(feature = "cloud")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4602,6 +4742,13 @@ pub enum NewsTab {
     #[default]
     Posts,
     PatchNotes,
+    /// Paid-only communication board (`GET/POST/DELETE /api/forum/*`).
+    /// Drawn only when [`CloudOverlayState::forum_entitled`] is true — see
+    /// `cloud_overlay.rs`'s `news_tab_items`. Content lives in
+    /// [`CloudOverlayState::forum_list`]/`forum_view`, NOT `CloudOverlayState::
+    /// data` — switching to/from this tab must not discard (or be discarded
+    /// by) the blog feed the other two tabs share.
+    Forum,
 }
 
 #[cfg(feature = "cloud")]
@@ -4613,6 +4760,7 @@ impl NewsTab {
         match self {
             Self::Posts => "posts",
             Self::PatchNotes => "patch_notes",
+            Self::Forum => "forum",
         }
     }
 
@@ -4621,6 +4769,7 @@ impl NewsTab {
         match self {
             Self::Posts => "Posts",
             Self::PatchNotes => "Patch notes",
+            Self::Forum => "Forum",
         }
     }
 
@@ -4631,6 +4780,7 @@ impl NewsTab {
         match id {
             "posts" | "latest" => Some(Self::Posts),
             "patch_notes" | "all" => Some(Self::PatchNotes),
+            "forum" => Some(Self::Forum),
             _ => None,
         }
     }
@@ -4640,8 +4790,31 @@ impl NewsTab {
         match self {
             Self::Posts => 0,
             Self::PatchNotes => 1,
+            Self::Forum => 2,
         }
     }
+}
+
+/// A user-triggered Forum action — one-shot mailbox
+/// ([`CloudOverlayState::forum_request`]), same idiom as
+/// `CloudLoginState::redeem_requested`. The passive "fetch page one when
+/// the tab opens" case is NOT here: like News/Download, that is driven
+/// directly by the shell polling `forum_list == Empty`, not a click.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ForumRequest {
+    /// "Load more" on the thread list.
+    LoadMoreThreads { before: String },
+    /// A thread row was clicked.
+    LoadThread { id: i64 },
+    /// Compose view's Post button.
+    CreateThread { title: String, body: String },
+    /// Thread view's reply box submit.
+    Reply { thread_id: i64, body: String },
+    /// Thread view's Delete (own thread only).
+    DeleteThread { id: i64 },
+    /// A reply's Delete (own reply only).
+    DeleteReply { id: i64, thread_id: i64 },
 }
 
 /// State for the News / Download overlays (one open at a time).
@@ -4683,6 +4856,22 @@ pub struct CloudOverlayState {
     pub position: Option<(f64, f64)>,
     pub is_dragging: bool,
     pub drag_offset: Option<(f64, f64)>,
+    /// Whether `GET /api/entitlements`'s feature list carried `"forum"` for
+    /// THIS caller — the sole visibility switch for `NewsTab::Forum` and
+    /// every forum control under it. Written every frame by the shell
+    /// driver's entitlements-apply block (`cloud_session.rs`'s wasm side,
+    /// `main.rs`'s native side), the same cadence `UserSettingsState::
+    /// multi_profile` already gets — never inferred from `is_paid` alone,
+    /// since the feature list is what paid currently buys and moves
+    /// independently of the tier bit.
+    pub forum_entitled: bool,
+    /// Forum tab: thread-list fetch state — independent of `forum_view` so
+    /// returning from a thread or an abandoned compose never re-fetches it.
+    pub forum_list: ForumListState,
+    /// Forum tab: which sub-view is showing.
+    pub forum_view: ForumSubView,
+    /// One-shot mailbox for a Forum action the shell should perform.
+    pub forum_request: Option<ForumRequest>,
 }
 
 #[cfg(feature = "cloud")]
@@ -4701,6 +4890,10 @@ impl Default for CloudOverlayState {
             position: None,
             is_dragging: false,
             drag_offset: None,
+            forum_entitled: false,
+            forum_list: ForumListState::Empty,
+            forum_view: ForumSubView::List,
+            forum_request: None,
         }
     }
 }
@@ -4739,6 +4932,17 @@ impl CloudOverlayState {
         if !keep {
             self.data = CloudOverlayData::Empty;
         }
+        // Forum: always drop back to the list sub-view on reopen — a stale
+        // open thread or an abandoned compose form must not resurface.
+        // `forum_list` itself is kept when already `Loaded` (same "what to
+        // keep" reasoning as `data` above); `Loading`/`Error` reset to
+        // `Empty` so the driver fetches again rather than sitting on a
+        // fetch that was interrupted by the overlay closing mid-flight.
+        self.forum_view = ForumSubView::List;
+        if !matches!(self.forum_list, ForumListState::Loaded { .. }) {
+            self.forum_list = ForumListState::Empty;
+        }
+        self.forum_request = None;
     }
 
     pub fn close(&mut self) {
@@ -4750,6 +4954,10 @@ impl CloudOverlayState {
         self.scroll.reset();
         self.is_dragging = false;
         self.drag_offset = None;
+        // `forum_list`/`forum_view` deliberately survive a close — `open()`
+        // above decides what to keep on the way back in, same split `data`
+        // already has between the two methods.
+        self.forum_request = None;
     }
 
     pub fn toggle(&mut self, kind: CloudOverlayKind) {

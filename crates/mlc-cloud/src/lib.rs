@@ -156,3 +156,38 @@ pub fn nick_error_message(e: &CloudError) -> String {
         other => other.to_string(),
     }
 }
+
+/// The sentence to show someone whose forum action (thread create, reply,
+/// delete) was refused. Lives here for the same reason
+/// [`redeem_error_message`] does — see that function's own doc. 403 is
+/// stated outright as "not entitled" (signed in but not paid, or the
+/// feature is gated off) rather than passed through the raw HTTP
+/// description; 429 prefers the server's `retry_after_secs` over its own
+/// sentence when both are present.
+pub fn forum_error_message(e: &CloudError) -> String {
+    #[derive(serde::Deserialize)]
+    struct ErrorBody {
+        error: String,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct RateLimitBody {
+        #[serde(default)]
+        error: String,
+        #[serde(default)]
+        retry_after_secs: u64,
+    }
+    match e {
+        CloudError::Forbidden(_) => "Forum access requires a paid account".to_string(),
+        CloudError::Http { status: 400, body } => serde_json::from_str::<ErrorBody>(body)
+            .ok()
+            .map(|b| b.error)
+            .unwrap_or_else(|| "That isn't valid".to_string()),
+        CloudError::Http { status: 429, body } => match serde_json::from_str::<RateLimitBody>(body) {
+            Ok(b) if b.retry_after_secs > 0 => format!("Try again in {}s", b.retry_after_secs),
+            Ok(b) if !b.error.is_empty() => b.error,
+            _ => "Too many requests — try again shortly".to_string(),
+        },
+        CloudError::Unauthorized => "Sign in again, then retry".to_string(),
+        other => other.to_string(),
+    }
+}

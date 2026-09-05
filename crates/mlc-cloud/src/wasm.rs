@@ -457,4 +457,88 @@ impl FetchTransport {
         let feed: BlogFeed = self.decode_success(status, &body)?;
         Ok(feed.posts)
     }
+
+    // ── /api/forum/* (paid-only) ────────────────────────────────────────
+
+    /// `GET /api/forum/threads?limit=20&before=…` — `before` is the
+    /// previous page's `next_before` cursor (`None` for the first page).
+    /// 401 anonymous, 403 not paid (surfaced via [`crate::forum_error_message`]).
+    pub async fn forum_threads(&self, before: Option<&str>) -> Result<ForumThreadsResponse, CloudError> {
+        let path = match before {
+            Some(b) => format!("/api/forum/threads?limit=20&before={}", encode_query_component(b)),
+            None => "/api/forum/threads?limit=20".to_string(),
+        };
+        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/forum/threads/{id}` — the thread plus its replies, in order.
+    pub async fn forum_thread(&self, id: i64) -> Result<ForumThreadResponse, CloudError> {
+        let (status, body) = self
+            .exchange("GET", &format!("/api/forum/threads/{}", id), None, &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/forum/threads` — 400 title 3–120 / body 1–8192 bytes,
+    /// 429 at one thread per 60s.
+    pub async fn forum_create_thread(&self, title: &str, body: &str) -> Result<i64, CloudError> {
+        let payload = serde_json::to_string(&ForumCreateThreadRequest {
+            title: title.to_string(),
+            body: body.to_string(),
+        })
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, resp_body) = self
+            .exchange("POST", "/api/forum/threads", Some(payload), &[])
+            .await?;
+        let resp: ForumIdResponse = self.decode_success(status, &resp_body)?;
+        Ok(resp.id)
+    }
+
+    /// `POST /api/forum/threads/{id}/replies` — 429 at ten replies per 60s.
+    pub async fn forum_reply(&self, thread_id: i64, body: &str) -> Result<i64, CloudError> {
+        let payload = serde_json::to_string(&ForumReplyRequest { body: body.to_string() })
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, resp_body) = self
+            .exchange(
+                "POST",
+                &format!("/api/forum/threads/{}/replies", thread_id),
+                Some(payload),
+                &[],
+            )
+            .await?;
+        let resp: ForumIdResponse = self.decode_success(status, &resp_body)?;
+        Ok(resp.id)
+    }
+
+    /// `DELETE /api/forum/threads/{id}` — 204 for the author, 403 otherwise.
+    pub async fn forum_delete_thread(&self, id: i64) -> Result<(), CloudError> {
+        let (status, body) = self
+            .exchange("DELETE", &format!("/api/forum/threads/{}", id), None, &[])
+            .await?;
+        self.decode_success(status, &body).map(|_: serde_json::Value| ())
+    }
+
+    /// `DELETE /api/forum/replies/{id}` — 204 for the author, 403 otherwise.
+    pub async fn forum_delete_reply(&self, id: i64) -> Result<(), CloudError> {
+        let (status, body) = self
+            .exchange("DELETE", &format!("/api/forum/replies/{}", id), None, &[])
+            .await?;
+        self.decode_success(status, &body).map(|_: serde_json::Value| ())
+    }
+}
+
+/// Percent-encode a query-string component — used only for the `before`
+/// pagination cursor, which may carry an RFC3339 timestamp (`:`, `+`) that
+/// must not travel raw in a URL. No `url`/`percent-encoding` crate pulled in
+/// for one field.
+fn encode_query_component(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            _ => out.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    out
 }

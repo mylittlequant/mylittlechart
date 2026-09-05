@@ -181,6 +181,15 @@ fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
     // is still editable rather than silently truncated, and the
     // server normalises what finally arrives.
     tf.register(text_input::REDEEM_CODE, TextFieldConfig::text().with_max_len(32));
+    // Forum compose/reply fields (paid-only tab). Max lengths generous
+    // above the server's own bound (title 120, body 8192 — see
+    // `mlc_app_layout::ui::modal_settings::{validate_forum_title,
+    // validate_forum_body}`) so a pasted overlong value is still editable
+    // rather than silently truncated before the person sees the local
+    // validation error.
+    tf.register(text_input::FORUM_TITLE, TextFieldConfig::text().with_max_len(160));
+    tf.register(text_input::FORUM_BODY, TextFieldConfig::text().with_max_len(4000));
+    tf.register(text_input::FORUM_REPLY, TextFieldConfig::text().with_max_len(4000));
 }
 
 use std::cell::RefCell;
@@ -10668,6 +10677,36 @@ impl ChartApp {
                         &id,
                         (r.x, r.y, r.width, r.height),
                         cl.redeem_char_positions.clone(),
+                    );
+                }
+            }
+            // Forum tab's title/body (compose) / reply (thread) fields —
+            // same "no drag-selection, no click-to-position without this"
+            // reasoning as the gift-code box above.
+            #[cfg(feature = "cloud")]
+            if let Some(ref ov) = fr.cloud_overlay {
+                if let Some(r) = ov.forum_title_rect {
+                    let id = WidgetId::from(text_input::FORUM_TITLE);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id,
+                        (r.x, r.y, r.width, r.height),
+                        ov.forum_title_char_positions.clone(),
+                    );
+                }
+                if let Some(r) = ov.forum_body_rect {
+                    let id = WidgetId::from(text_input::FORUM_BODY);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id,
+                        (r.x, r.y, r.width, r.height),
+                        ov.forum_body_char_positions.clone(),
+                    );
+                }
+                if let Some(r) = ov.forum_reply_rect {
+                    let id = WidgetId::from(text_input::FORUM_REPLY);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id,
+                        (r.x, r.y, r.width, r.height),
+                        ov.forum_reply_char_positions.clone(),
                     );
                 }
             }

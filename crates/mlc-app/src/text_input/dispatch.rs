@@ -64,7 +64,8 @@ impl ChartApp {
     /// Returns true if the key was routed to a text field (caller should return early
     /// to prevent the key from reaching global shortcuts).
     ///
-    /// Covers (in order): ALERT_TG_TOKEN, REDEEM_CODE, CRED_WEBHOOK_URL,
+    /// Covers (in order): ALERT_TG_TOKEN, REDEEM_CODE, FORUM_TITLE,
+    /// FORUM_BODY, FORUM_REPLY, CRED_WEBHOOK_URL,
     /// CRED_ADD_EXCHANGE, CRED_ADD_LABEL, CRED_ADD_API_KEY,
     /// CRED_ADD_API_SECRET, CRED_ADD_PASSPHRASE, PROFILE_RENAME,
     /// ACCOUNT_NICK, NEW_PASSPHRASE, NEW_PROFILE_NAME, RECOVERY_KEY,
@@ -111,10 +112,14 @@ impl ChartApp {
                 | AGENT_CHAT
         );
         // The redeem field is early too, but it only exists in cloud builds
-        // and a `matches!` arm cannot carry a cfg of its own.
+        // and a `matches!` arm cannot carry a cfg of its own. The three
+        // Forum fields (paid-only tab) are the same shape.
         #[cfg(feature = "cloud")]
         {
-            is_early_field |= focused_id.as_str() == REDEEM_CODE;
+            is_early_field |= matches!(
+                focused_id.as_str(),
+                REDEEM_CODE | FORUM_TITLE | FORUM_BODY | FORUM_REPLY
+            );
         }
         if !is_early_field {
             return false;
@@ -260,6 +265,12 @@ impl ChartApp {
             AGENT_PTY                        => self.text_action_agent_pty(action),
             #[cfg(feature = "cloud")]
             REDEEM_CODE                      => self.text_action_redeem_code(ch, action),
+            #[cfg(feature = "cloud")]
+            FORUM_TITLE                      => self.text_action_forum_title(ch, action),
+            #[cfg(feature = "cloud")]
+            FORUM_BODY                        => self.text_action_forum_body(ch, action),
+            #[cfg(feature = "cloud")]
+            FORUM_REPLY                       => self.text_action_forum_reply(ch, action),
             ALERT_TG_TOKEN                   => self.text_action_alert_token(ch, action),
             CRED_WEBHOOK_URL                 => self.text_action_cred_webhook_url(ch, action),
             CRED_ADD_EXCHANGE                => self.text_action_cred_add_field(crate::input::credentials::CredAddField::Exchange, ch, action),
@@ -908,6 +919,182 @@ impl ChartApp {
             TextAction::Cancel => {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
+            _ => {}
+        }
+    }
+
+    /// Abandon the Forum compose form: back to the thread list, clear both
+    /// fields, drop focus. Used by `FORUM_TITLE`/`FORUM_BODY`'s own Escape
+    /// handling below. `panel_click.rs`'s `"forum:compose_cancel"` arm
+    /// inlines the same three steps rather than calling this — it already
+    /// holds a named `&mut` borrow of `cloud_overlay_state`
+    /// (`let st = &mut self.panel_app.cloud_overlay_state;`), and a method
+    /// call taking `&mut self` cannot run alongside that borrow. Keep the
+    /// two in sync by hand if this logic ever changes.
+    #[cfg(feature = "cloud")]
+    fn cancel_forum_compose(&mut self) {
+        self.panel_app.cloud_overlay_state.forum_view =
+            mlc_app_layout::ui::modal_settings::ForumSubView::List;
+        let mut tf = self.input_coordinator.borrow_mut();
+        let tf = tf.text_fields_mut();
+        tf.clear(&WidgetId::from(crate::text_input::FORUM_TITLE));
+        tf.clear(&WidgetId::from(crate::text_input::FORUM_BODY));
+        tf.blur();
+    }
+
+    /// Forum compose view's title field. Enter validates locally
+    /// (`validate_forum_title`) and, if it passes, moves focus to
+    /// `FORUM_BODY` — this field has no natural "next" key otherwise, so
+    /// Enter takes that role instead of submitting early on a form that
+    /// still needs a body. Escape abandons the whole compose form (see
+    /// `cancel_forum_compose`), not just this field — a title half-typed
+    /// into a form with nothing worth keeping is not something to leave
+    /// half-open.
+    #[cfg(feature = "cloud")]
+    fn text_action_forum_title(&mut self, ch: char, action: TextAction) {
+        let advance = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::FORUM_TITLE);
+            let title = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+            match mlc_app_layout::ui::modal_settings::validate_forum_title(&title) {
+                Ok(()) => {
+                    let body_wid = WidgetId::from(crate::text_input::FORUM_BODY);
+                    chart.input_coordinator.borrow_mut().text_fields_mut().focus(body_wid);
+                    if let mlc_app_layout::ui::modal_settings::ForumSubView::Compose { error, .. } =
+                        &mut chart.panel_app.cloud_overlay_state.forum_view
+                    {
+                        *error = None;
+                    }
+                }
+                Err(message) => {
+                    if let mlc_app_layout::ui::modal_settings::ForumSubView::Compose { error, .. } =
+                        &mut chart.panel_app.cloud_overlay_state.forum_view
+                    {
+                        *error = Some(message);
+                    }
+                }
+            }
+        };
+        if ch == '\r' || ch == '\n' {
+            advance(self);
+            return;
+        }
+        if ch == '\x1b' {
+            self.cancel_forum_compose();
+            return;
+        }
+        match action {
+            TextAction::Commit(_) => advance(self),
+            TextAction::Cancel => self.cancel_forum_compose(),
+            _ => {}
+        }
+    }
+
+    /// Forum compose view's body field — the form's last field, so Enter
+    /// here submits the whole thread (both fields' current text, re-read
+    /// from the store the same way `text_action_account_nick`'s `submit`
+    /// does). Escape abandons the compose form, same as `FORUM_TITLE`'s own
+    /// Escape.
+    #[cfg(feature = "cloud")]
+    fn text_action_forum_body(&mut self, ch: char, action: TextAction) {
+        let submit = |chart: &mut ChartApp| {
+            let title_wid = WidgetId::from(crate::text_input::FORUM_TITLE);
+            let body_wid = WidgetId::from(crate::text_input::FORUM_BODY);
+            let (title, body) = {
+                let coord = chart.input_coordinator.borrow();
+                let tf = coord.text_fields();
+                (tf.text(&title_wid).trim().to_string(), tf.text(&body_wid).trim().to_string())
+            };
+            let validated = mlc_app_layout::ui::modal_settings::validate_forum_title(&title)
+                .and_then(|()| mlc_app_layout::ui::modal_settings::validate_forum_body(&body));
+            match validated {
+                Ok(()) => {
+                    if let mlc_app_layout::ui::modal_settings::ForumSubView::Compose { posting, error } =
+                        &mut chart.panel_app.cloud_overlay_state.forum_view
+                    {
+                        *posting = true;
+                        *error = None;
+                    }
+                    chart.panel_app.cloud_overlay_state.forum_request =
+                        Some(mlc_app_layout::ui::modal_settings::ForumRequest::CreateThread { title, body });
+                }
+                Err(message) => {
+                    if let mlc_app_layout::ui::modal_settings::ForumSubView::Compose { error, .. } =
+                        &mut chart.panel_app.cloud_overlay_state.forum_view
+                    {
+                        *error = Some(message);
+                    }
+                }
+            }
+        };
+        if ch == '\r' || ch == '\n' {
+            submit(self);
+            return;
+        }
+        if ch == '\x1b' {
+            self.cancel_forum_compose();
+            return;
+        }
+        match action {
+            TextAction::Commit(_) => submit(self),
+            TextAction::Cancel => self.cancel_forum_compose(),
+            _ => {}
+        }
+    }
+
+    /// Forum thread view's reply field. Enter validates locally
+    /// (`validate_forum_body`) and, if it passes, arms
+    /// `ForumRequest::Reply` and marks the thread view `posting_reply` —
+    /// same submit-on-Enter idiom `text_action_redeem_code` uses. Escape
+    /// clears the field and drops focus WITHOUT leaving the thread (unlike
+    /// `FORUM_TITLE`/`FORUM_BODY`'s Escape, which abandons the whole
+    /// compose form) — there is no "form" here to abandon, just a reply
+    /// someone changed their mind about typing.
+    #[cfg(feature = "cloud")]
+    fn text_action_forum_reply(&mut self, ch: char, action: TextAction) {
+        let submit = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::FORUM_REPLY);
+            let body = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+            let thread_id = match &chart.panel_app.cloud_overlay_state.forum_view {
+                mlc_app_layout::ui::modal_settings::ForumSubView::Thread { thread: Some(t), .. } => t.id,
+                _ => return,
+            };
+            match mlc_app_layout::ui::modal_settings::validate_forum_body(&body) {
+                Ok(()) => {
+                    if let mlc_app_layout::ui::modal_settings::ForumSubView::Thread {
+                        posting_reply, reply_error, ..
+                    } = &mut chart.panel_app.cloud_overlay_state.forum_view
+                    {
+                        *posting_reply = true;
+                        *reply_error = None;
+                    }
+                    chart.panel_app.cloud_overlay_state.forum_request =
+                        Some(mlc_app_layout::ui::modal_settings::ForumRequest::Reply { thread_id, body });
+                }
+                Err(message) => {
+                    if let mlc_app_layout::ui::modal_settings::ForumSubView::Thread { reply_error, .. } =
+                        &mut chart.panel_app.cloud_overlay_state.forum_view
+                    {
+                        *reply_error = Some(message);
+                    }
+                }
+            }
+        };
+        let cancel = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::FORUM_REPLY);
+            chart.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+            chart.input_coordinator.borrow_mut().text_fields_mut().blur();
+        };
+        if ch == '\r' || ch == '\n' {
+            submit(self);
+            return;
+        }
+        if ch == '\x1b' {
+            cancel(self);
+            return;
+        }
+        match action {
+            TextAction::Commit(_) => submit(self),
+            TextAction::Cancel => cancel(self),
             _ => {}
         }
     }

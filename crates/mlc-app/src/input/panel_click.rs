@@ -5459,14 +5459,160 @@ impl ChartApp {
                 "header" => { /* drag start handled in mouse_down */ }
                 // News overlay's list-view tab bar (drawn by the modal shell
                 // itself, hence the `{ns}:tab:{id}` id it registers under).
+                // The Forum tab is refused here even if a stale click target
+                // somehow names it while `forum_entitled` is false — belt to
+                // the render side's own gate (`cloud_overlay.rs`'s
+                // `news_tab_items`), which never draws that tab's hit zone
+                // for an unentitled caller in the first place.
                 rest if rest.starts_with("tab:") => {
                     if let Some(tab) =
                         mlc_app_layout::ui::modal_settings::NewsTab::from_id(&rest["tab:".len()..])
                     {
-                        st.set_news_tab(tab);
+                        if tab != mlc_app_layout::ui::modal_settings::NewsTab::Forum || st.forum_entitled {
+                            st.set_news_tab(tab);
+                        }
                     }
                 }
                 rest if rest.starts_with("dimmer") => st.close(),
+                // === Forum tab clicks (paid-only) === All arms below use
+                // `st` (already borrowing `self.panel_app.cloud_overlay_
+                // state`) plus `self.input_coordinator` — a disjoint field,
+                // safe to touch alongside `st` — rather than a `&mut self`
+                // helper method, which `st` being live would refuse to let
+                // this arm call.
+                rest if rest.starts_with("forum:") => {
+                    use mlc_app_layout::ui::modal_settings::{ForumListState, ForumRequest, ForumSubView};
+                    let action = &rest["forum:".len()..];
+                    // Share-link paragraph inside a thread body/reply — the
+                    // url rides in the id's own tail (see `cloud_overlay.rs`'s
+                    // `draw_forum_blocks` doc); checked before the literal
+                    // arms below since none of them can ever contain the
+                    // `:link:` substring themselves.
+                    if let Some((_, url)) = action.split_once(":link:") {
+                        st.open_url_requested = Some(url.to_string());
+                        return;
+                    }
+                    match action {
+                        "new_thread" => {
+                            st.forum_view = ForumSubView::Compose { posting: false, error: None };
+                            let title_wid = uzor::WidgetId::from(crate::text_input::FORUM_TITLE);
+                            let body_wid = uzor::WidgetId::from(crate::text_input::FORUM_BODY);
+                            let mut tf = self.input_coordinator.borrow_mut();
+                            let tf = tf.text_fields_mut();
+                            tf.clear(&title_wid);
+                            tf.clear(&body_wid);
+                            tf.focus(title_wid);
+                        }
+                        "back" => {
+                            st.forum_view = ForumSubView::List;
+                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                        }
+                        "compose_cancel" => {
+                            st.forum_view = ForumSubView::List;
+                            let mut tf = self.input_coordinator.borrow_mut();
+                            let tf = tf.text_fields_mut();
+                            tf.clear(&uzor::WidgetId::from(crate::text_input::FORUM_TITLE));
+                            tf.clear(&uzor::WidgetId::from(crate::text_input::FORUM_BODY));
+                            tf.blur();
+                        }
+                        // Mirrors `FORUM_BODY`'s own Enter-submit
+                        // (`text_input::dispatch::text_action_forum_body`) —
+                        // clicking Post is the same action as hitting Enter
+                        // in the body field, so both re-read and validate
+                        // the same two fields the same way.
+                        "compose_post" => {
+                            let title_wid = uzor::WidgetId::from(crate::text_input::FORUM_TITLE);
+                            let body_wid = uzor::WidgetId::from(crate::text_input::FORUM_BODY);
+                            let (title, body) = {
+                                let coord = self.input_coordinator.borrow();
+                                let tf = coord.text_fields();
+                                (tf.text(&title_wid).trim().to_string(), tf.text(&body_wid).trim().to_string())
+                            };
+                            let validated = mlc_app_layout::ui::modal_settings::validate_forum_title(&title)
+                                .and_then(|()| mlc_app_layout::ui::modal_settings::validate_forum_body(&body));
+                            match validated {
+                                Ok(()) => {
+                                    if let ForumSubView::Compose { posting, error } = &mut st.forum_view {
+                                        *posting = true;
+                                        *error = None;
+                                    }
+                                    st.forum_request = Some(ForumRequest::CreateThread { title, body });
+                                }
+                                Err(message) => {
+                                    if let ForumSubView::Compose { error, .. } = &mut st.forum_view {
+                                        *error = Some(message);
+                                    }
+                                }
+                            }
+                        }
+                        rest2 if rest2.starts_with("thread:") => {
+                            if let Ok(id) = rest2["thread:".len()..].parse::<i64>() {
+                                st.forum_view = ForumSubView::Thread {
+                                    thread: None,
+                                    loading: true,
+                                    error: None,
+                                    posting_reply: false,
+                                    reply_error: None,
+                                };
+                                st.forum_request = Some(ForumRequest::LoadThread { id });
+                            }
+                        }
+                        "load_more" => {
+                            if let ForumListState::Loaded { next_before: Some(before), loading_more, .. } =
+                                &mut st.forum_list
+                            {
+                                if !*loading_more {
+                                    let before = before.clone();
+                                    *loading_more = true;
+                                    st.forum_request = Some(ForumRequest::LoadMoreThreads { before });
+                                }
+                            }
+                        }
+                        "delete_thread" => {
+                            if let ForumSubView::Thread { thread: Some(t), .. } = &st.forum_view {
+                                let id = t.id;
+                                st.forum_request = Some(ForumRequest::DeleteThread { id });
+                            }
+                        }
+                        rest2 if rest2.starts_with("delete_reply:") => {
+                            if let Ok(id) = rest2["delete_reply:".len()..].parse::<i64>() {
+                                if let ForumSubView::Thread { thread: Some(t), .. } = &st.forum_view {
+                                    let thread_id = t.id;
+                                    st.forum_request = Some(ForumRequest::DeleteReply { id, thread_id });
+                                }
+                            }
+                        }
+                        // Mirrors `FORUM_REPLY`'s own Enter-submit
+                        // (`text_input::dispatch::text_action_forum_reply`).
+                        "reply_submit" => {
+                            let wid = uzor::WidgetId::from(crate::text_input::FORUM_REPLY);
+                            let body = self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+                            let thread_id = match &st.forum_view {
+                                ForumSubView::Thread { thread: Some(t), .. } => t.id,
+                                _ => return,
+                            };
+                            match mlc_app_layout::ui::modal_settings::validate_forum_body(&body) {
+                                Ok(()) => {
+                                    if let ForumSubView::Thread { posting_reply, reply_error, .. } = &mut st.forum_view {
+                                        *posting_reply = true;
+                                        *reply_error = None;
+                                    }
+                                    st.forum_request = Some(ForumRequest::Reply { thread_id, body });
+                                }
+                                Err(message) => {
+                                    if let ForumSubView::Thread { reply_error, .. } = &mut st.forum_view {
+                                        *reply_error = Some(message);
+                                    }
+                                }
+                            }
+                        }
+                        // Claimed on mousedown by the store — same "nothing
+                        // to do here" idiom `redeem_input`/`account_nick_input`
+                        // already use.
+                        "title_input" | "body_input" | "reply_input" => { /* claimed on mousedown */ }
+                        _ => {}
+                    }
+                }
                 rest if rest.starts_with("link:") => {
                     let id = &rest["link:".len()..];
                     if let Some((_, _, url)) = mlc_app_layout::layout::modals::cloud_overlay::SOCIAL_LINKS

@@ -143,6 +143,28 @@ pub const ALERT_TG_TOKEN: &str = "alert_tg_token";
 /// ten-character code typed from a message wants.
 pub const REDEEM_CODE: &str = "redeem_code";
 
+/// Forum compose view's title field (cloud builds, paid-only tab). The
+/// shared `uzor::input::TextFieldStore` has no multi-line mode, so this and
+/// [`FORUM_BODY`]/[`FORUM_REPLY`] are single-line: a composed body/reply can
+/// only ever be one paragraph, never the blank-line-separated paragraphs a
+/// body FETCHED from the server may show (the reading view renders those
+/// fully — see `mlc_app_layout::layout::modals::cloud_overlay::
+/// draw_forum_blocks`). 3–120 chars, validated locally before submit
+/// (`mlc_app_layout::ui::modal_settings::validate_forum_title`) and again
+/// by the server. Enter moves focus to `FORUM_BODY` (mirrors the wizard's
+/// passphrase→confirm Tab-chain, but on Enter since this field has no
+/// natural "next" key otherwise).
+pub const FORUM_TITLE: &str = "forum_title";
+
+/// Forum compose view's body field — see [`FORUM_TITLE`]'s doc for the
+/// single-line limitation. 1–8192 bytes; Enter submits the new thread.
+pub const FORUM_BODY: &str = "forum_body";
+
+/// Forum thread view's reply field — same single-line limitation as
+/// [`FORUM_TITLE`]. Enter submits the reply, mirroring [`REDEEM_CODE`]'s
+/// own Enter-submits idiom.
+pub const FORUM_REPLY: &str = "forum_reply";
+
 /// Webhook URL input (credentials modal). Replaces the decorative field of
 /// the same name that used to live in the alert-settings Notifications tab
 /// (`alert_set:item:webhook_url`, whose click handler was a literal no-op) —

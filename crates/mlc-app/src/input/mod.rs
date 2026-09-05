@@ -2568,6 +2568,27 @@ impl ChartApp {
                     }
                 }
             }
+            // Cloud News/Download/Forum overlay — text select drag on
+            // whichever Forum field the compose/thread view is currently
+            // showing (title+body for Compose, reply for Thread). Same
+            // "every modal field needs its own arm" contract as the
+            // gift-code field above — each `Option<Rect>` is naturally
+            // `None` unless `cloud_overlay.rs` actually drew that field
+            // this frame, so no extra sub-view check is needed here beyond
+            // `is_open`.
+            #[cfg(feature = "cloud")]
+            if let Some(ref ov) = result.cloud_overlay {
+                if self.panel_app.cloud_overlay_state.is_open {
+                    let hit = [ov.forum_title_rect, ov.forum_body_rect, ov.forum_reply_rect]
+                        .into_iter()
+                        .flatten()
+                        .any(|r| r.contains(x, y));
+                    if hit {
+                        self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                        return false;
+                    }
+                }
+            }
             // Vault tab (User Settings) — text select drag on one of its own
             // text fields (webhook URL, or one of the add-key form's five
             // fields). `on_drag_start` does the real hit-test and cursor

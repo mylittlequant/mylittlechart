@@ -20,9 +20,11 @@ pub mod attest;
 pub mod entitlements;
 pub mod redeem;
 pub mod nick;
+pub mod forum;
 pub mod auth_probe;
 
-pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState, NickState};
+pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState, NickState, ForumCommand, ForumState};
+pub use forum::{ForumThreadSummary, ForumThread, ForumReply};
 
 /// Format current time as `HH:MM:SS` for log lines.
 pub fn now_ts() -> String {
@@ -198,6 +200,12 @@ pub fn start(
     // starts Idle, republished on every `SetNick` command.
     let (nick_tx, nick_rx) = watch::channel(state::NickState::Idle);
 
+    // Channel for the forum board — starts at the empty default, mutated in
+    // place and republished after every `Forum` command (see
+    // `state::ForumState`'s own doc for why this one is mutated rather than
+    // replaced wholesale like `redeem_tx`/`nick_tx`).
+    let (forum_tx, forum_rx) = watch::channel(state::ForumState::default());
+
     // Channel for cloud sync status — starts Idle, updated by the updater loop.
     let (sync_status_tx, sync_status_rx) = watch::channel(state::SyncStatus::Idle);
 
@@ -214,11 +222,12 @@ pub fn start(
         entitlements_rx,
         redeem_rx,
         nick_rx,
+        forum_rx,
         sync_status_rx,
         sync_checksums_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, redeem_tx, nick_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
+    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, redeem_tx, nick_tx, forum_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
 
     handle
 }
@@ -236,6 +245,7 @@ async fn updater_loop(
     entitlements_tx: watch::Sender<state::Entitlements>,
     redeem_tx: watch::Sender<state::RedeemState>,
     nick_tx: watch::Sender<state::NickState>,
+    forum_tx: watch::Sender<state::ForumState>,
     sync_status_tx: watch::Sender<state::SyncStatus>,
     sync_checksums_tx: watch::Sender<std::collections::HashMap<String, String>>,
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
@@ -329,6 +339,10 @@ async fn updater_loop(
     // when the user resolves them via UpdaterCommand::ResolveConflict.
     let mut pending_conflicts: std::collections::HashMap<String, state::SyncConflict> =
         std::collections::HashMap::new();
+
+    // Forum board state — mutated in place across `Forum` commands (see
+    // `state::ForumState`'s own doc).
+    let mut forum_state = state::ForumState::default();
 
     // Initial check on startup (with small delay to let the app initialize).
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
@@ -558,6 +572,126 @@ async fn updater_loop(
                                     message: "Sign in first".to_string(),
                                 });
                                 log::warn!("[Updater] set_nick failed: not signed in");
+                            }
+                        }
+                    }
+                    state::UpdaterCommand::Forum(forum_cmd) => {
+                        let token = token_store::load_token();
+                        let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
+                        match auth_header {
+                            None => {
+                                forum_state.last_error = Some("Sign in first".to_string());
+                                forum_state.busy = false;
+                                let _ = forum_tx.send(forum_state.clone());
+                                log::warn!("[Updater] forum command failed: not signed in");
+                            }
+                            Some(auth) => {
+                                forum_state.last_error = None;
+                                forum_state.busy = true;
+                                let _ = forum_tx.send(forum_state.clone());
+                                // Shared demotion: a rejected session during any
+                                // forum call gets the same treatment the
+                                // redeem/set_nick arms above already give it —
+                                // signed out now, not on the next unrelated
+                                // request.
+                                macro_rules! demote_if_rejected {
+                                    ($err:expr) => {{
+                                        if matches!(
+                                            auth_probe::probe(&http_client, &auth).await,
+                                            auth_probe::Verdict::Rejected
+                                        ) {
+                                            token_store::clear_token();
+                                            let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
+                                            eprintln!(
+                                                "[{} Updater] session rejected during forum call — signed out",
+                                                now_ts()
+                                            );
+                                        }
+                                        log::warn!("[Updater] forum call failed: {}", $err);
+                                        forum_state.last_error = Some($err);
+                                    }};
+                                }
+                                match forum_cmd {
+                                    state::ForumCommand::ListThreads { before } => {
+                                        match forum::list_threads(&http_client, &auth, before.as_deref()).await {
+                                            Ok((threads, next_before)) => {
+                                                if before.is_some() {
+                                                    forum_state.list.extend(threads);
+                                                } else {
+                                                    forum_state.list = threads;
+                                                }
+                                                forum_state.next_before = next_before;
+                                            }
+                                            Err(e) => demote_if_rejected!(e),
+                                        }
+                                    }
+                                    state::ForumCommand::LoadThread { id } => {
+                                        match forum::get_thread(&http_client, &auth, id).await {
+                                            Ok(thread) => forum_state.thread = Some(thread),
+                                            Err(e) => demote_if_rejected!(e),
+                                        }
+                                    }
+                                    state::ForumCommand::CreateThread { title, body } => {
+                                        match forum::create_thread(&http_client, &auth, &title, &body).await {
+                                            Ok(id) => {
+                                                log::info!("[Updater] forum: created thread {}", id);
+                                                // Land on the new thread and
+                                                // refresh page one so it also
+                                                // shows up in the list once the
+                                                // user goes back.
+                                                if let Ok((threads, next_before)) =
+                                                    forum::list_threads(&http_client, &auth, None).await
+                                                {
+                                                    forum_state.list = threads;
+                                                    forum_state.next_before = next_before;
+                                                }
+                                                if let Ok(thread) = forum::get_thread(&http_client, &auth, id).await {
+                                                    forum_state.thread = Some(thread);
+                                                }
+                                            }
+                                            Err(e) => demote_if_rejected!(e),
+                                        }
+                                    }
+                                    state::ForumCommand::Reply { thread_id, body } => {
+                                        match forum::create_reply(&http_client, &auth, thread_id, &body).await {
+                                            Ok(id) => {
+                                                log::info!("[Updater] forum: posted reply {} on thread {}", id, thread_id);
+                                                if let Ok(thread) = forum::get_thread(&http_client, &auth, thread_id).await {
+                                                    forum_state.thread = Some(thread);
+                                                }
+                                            }
+                                            Err(e) => demote_if_rejected!(e),
+                                        }
+                                    }
+                                    state::ForumCommand::DeleteThread { id } => {
+                                        match forum::delete_thread(&http_client, &auth, id).await {
+                                            Ok(()) => {
+                                                log::info!("[Updater] forum: deleted thread {}", id);
+                                                forum_state.thread = None;
+                                                if let Ok((threads, next_before)) =
+                                                    forum::list_threads(&http_client, &auth, None).await
+                                                {
+                                                    forum_state.list = threads;
+                                                    forum_state.next_before = next_before;
+                                                }
+                                            }
+                                            Err(e) => demote_if_rejected!(e),
+                                        }
+                                    }
+                                    state::ForumCommand::DeleteReply { id, thread_id } => {
+                                        match forum::delete_reply(&http_client, &auth, id).await {
+                                            Ok(()) => {
+                                                log::info!("[Updater] forum: deleted reply {}", id);
+                                                if let Ok(thread) = forum::get_thread(&http_client, &auth, thread_id).await {
+                                                    forum_state.thread = Some(thread);
+                                                }
+                                            }
+                                            Err(e) => demote_if_rejected!(e),
+                                        }
+                                    }
+                                }
+                                forum_state.busy = false;
+                                let _ = forum_tx.send(forum_state.clone());
                             }
                         }
                     }

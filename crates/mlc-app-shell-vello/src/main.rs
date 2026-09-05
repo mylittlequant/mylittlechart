@@ -771,6 +771,52 @@ async fn fetch_news_feed(
         .collect())
 }
 
+// ── Forum wire → UI mapping (native) ────────────────────────────────────
+// `mlc-app-layout` cannot depend on `mlc-updater` (the layout crate must not
+// depend on the updater — same split `CloudNewsPost`/`BlogPost` already
+// has), so this shell is where an updater row becomes the flat mirror the
+// overlay renders. Mirrors `mlc-app-shell-web`'s own `map_forum_summary`/
+// `map_forum_thread` (`cloud_session.rs`) field-for-field.
+
+fn map_forum_summary_native(
+    s: &mlc_updater::ForumThreadSummary,
+) -> mlc_app_layout::ui::modal_settings::CloudForumThreadSummary {
+    mlc_app_layout::ui::modal_settings::CloudForumThreadSummary {
+        id: s.id,
+        title: s.title.clone(),
+        author: s.author.clone(),
+        author_is_me: s.author_is_me,
+        created_at: s.created_at.clone(),
+        last_reply_at: s.last_reply_at.clone(),
+        reply_count: s.reply_count,
+        excerpt: s.excerpt.clone(),
+    }
+}
+
+fn map_forum_thread_native(
+    t: &mlc_updater::ForumThread,
+) -> mlc_app_layout::ui::modal_settings::CloudForumThread {
+    mlc_app_layout::ui::modal_settings::CloudForumThread {
+        id: t.id,
+        title: t.title.clone(),
+        author: t.author.clone(),
+        author_is_me: t.author_is_me,
+        body: t.body.clone(),
+        created_at: t.created_at.clone(),
+        replies: t
+            .replies
+            .iter()
+            .map(|r| mlc_app_layout::ui::modal_settings::CloudForumReply {
+                id: r.id,
+                author: r.author.clone(),
+                author_is_me: r.author_is_me,
+                body: r.body.clone(),
+                created_at: r.created_at.clone(),
+            })
+            .collect(),
+    }
+}
+
 /// Seed `core`'s domain managers (presets, templates, watchlists, snapshots,
 /// connector_enabled, recalc_mode, server_enabled, server_port,
 /// vault_key) from disk-loaded profile state.
@@ -4889,6 +4935,68 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
+        // ── Drain Forum tab (paid-only): explicit actions + passive fetch ──
+        // Goes through `mlc_updater` (auth + paid gate, same as
+        // redeem/set_nick), NOT the direct-fetch path News uses above — the
+        // forum endpoints require a bearer token the anonymous blog fetch
+        // never carries. `forum_rx`'s answer is applied further down,
+        // alongside `redeem_status`/`nick_status`.
+        #[cfg(feature = "cloud")]
+        {
+            use mlc_app_layout::ui::modal_settings::{CloudOverlayKind, ForumListState, ForumRequest, NewsTab};
+
+            let mut to_send: Vec<mlc_updater::ForumCommand> = Vec::new();
+            for pw in self.windows.values_mut() {
+                if let Some(req) = pw.chart.panel_app.cloud_overlay_state.forum_request.take() {
+                    to_send.push(match req {
+                        ForumRequest::LoadMoreThreads { before } => {
+                            mlc_updater::ForumCommand::ListThreads { before: Some(before) }
+                        }
+                        ForumRequest::LoadThread { id } => mlc_updater::ForumCommand::LoadThread { id },
+                        ForumRequest::CreateThread { title, body } => {
+                            mlc_updater::ForumCommand::CreateThread { title, body }
+                        }
+                        ForumRequest::Reply { thread_id, body } => {
+                            mlc_updater::ForumCommand::Reply { thread_id, body }
+                        }
+                        ForumRequest::DeleteThread { id } => mlc_updater::ForumCommand::DeleteThread { id },
+                        ForumRequest::DeleteReply { id, thread_id } => {
+                            mlc_updater::ForumCommand::DeleteReply { id, thread_id }
+                        }
+                    });
+                }
+            }
+            for cmd in to_send {
+                let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Forum(cmd));
+            }
+
+            // Passive: fetch page one the moment the tab is looked at with
+            // nothing loaded yet — same "Empty -> fire" idiom the News fetch
+            // above uses.
+            let needs_fetch = self.windows.values().any(|pw| {
+                let ov = &pw.chart.panel_app.cloud_overlay_state;
+                ov.is_open
+                    && ov.kind == CloudOverlayKind::News
+                    && ov.news_tab == NewsTab::Forum
+                    && matches!(ov.forum_list, ForumListState::Empty)
+            });
+            if needs_fetch {
+                for pw in self.windows.values_mut() {
+                    let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+                    if ov.is_open
+                        && ov.kind == CloudOverlayKind::News
+                        && ov.news_tab == NewsTab::Forum
+                        && matches!(ov.forum_list, ForumListState::Empty)
+                    {
+                        ov.forum_list = ForumListState::Loading;
+                    }
+                }
+                let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Forum(
+                    mlc_updater::ForumCommand::ListThreads { before: None },
+                ));
+            }
+        }
+
         // ── Drain agent commands every frame ─────────────────────────────
         self.drain_agent_commands();
 
@@ -5053,6 +5161,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 .entitlements_rx
                 .borrow()
                 .has("multi_profile");
+            // The Forum tab's sole visibility switch — same peek-cost
+            // reasoning as `multi_profile` above, read from the same
+            // channel so the two can never disagree about which
+            // entitlements answer they reflect.
+            #[cfg(feature = "cloud")]
+            let forum_entitled = self.updater_handle.entitlements_rx.borrow().has("forum");
             // The account overlay states the tier outright rather than
             // implying it from which surfaces are unlocked. Same channel, and
             // the server's own `paid` field — never a guess from the feature
@@ -5165,6 +5279,24 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     _ => {}
                 }
             }
+            // Forum board state — edge-triggered same as `redeem_rx`/
+            // `nick_rx` above, held as the raw `mlc_updater::ForumState`
+            // (not mapped into a UI shape here) because interpreting it
+            // needs each window's OWN `forum_view` for context — see the
+            // per-window apply block below for why. `busy` answers are
+            // skipped: this shell does not model an intermediate
+            // "Working" view for the Forum tab (the optimistic `loading`/
+            // `posting`/`posting_reply` flags the click handlers already
+            // set serve that purpose), so only a SETTLED answer is worth
+            // applying.
+            #[cfg(feature = "cloud")]
+            let forum_state: Option<mlc_updater::ForumState> =
+                if self.updater_handle.forum_rx.has_changed().unwrap_or(false) {
+                    let fs = self.updater_handle.forum_rx.borrow_and_update().clone();
+                    if fs.busy { None } else { Some(fs) }
+                } else {
+                    None
+                };
             // Cloud sync status → system event (owner ask 2026-09-05, scope
             // §8; recon: "sync_status_rx ... no shell reads it" — finally
             // drained). Edge-triggered same as `redeem_rx`/`nick_rx` above.
@@ -5216,6 +5348,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     let st = &mut pw.chart.panel_app.cloud_login_state;
                     st.is_paid = is_paid;
                     st.paid_until = paid_until.clone();
+                    pw.chart.panel_app.cloud_overlay_state.forum_entitled = forum_entitled;
                     if let Some(status) = redeem_status.as_ref() {
                         st.redeem_status = status.clone();
                         pw.overlay_dirty = true;
@@ -5232,6 +5365,134 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                     pw.overlay_dirty = true;
                     pw.window.request_redraw();
+                }
+                // Forum board — apply the settled `forum_state` answer onto
+                // whichever sub-view this window's overlay is CURRENTLY
+                // showing. The updater's `ForumState` does not tag which
+                // request it answers (unlike the web shell's per-action
+                // `FlowResult` variants), so the target is inferred from the
+                // optimistic flag each click handler already set before
+                // firing the request (`loading`/`posting`/`posting_reply`)
+                // — the same trick `panel_click.rs` uses to show "Working"
+                // immediately. One imprecision this inference cannot avoid:
+                // a failed `DeleteThread` looks identical to a failed
+                // `Reply`/`DeleteReply` (thread stays loaded, an error
+                // appears), so it also lands in `reply_error` rather than a
+                // dedicated slot — the message text itself still names what
+                // went wrong, only the highlighted row is generic.
+                #[cfg(feature = "cloud")]
+                if let Some(fs) = forum_state.as_ref() {
+                    use mlc_app_layout::ui::modal_settings::{ForumListState, ForumSubView};
+                    let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+                    if ov.is_open {
+                        let mapped_thread = fs.thread.as_ref().map(map_forum_thread_native);
+                        match &mut ov.forum_view {
+                            ForumSubView::Compose { posting: true, .. } => {
+                                match (&fs.last_error, &mapped_thread) {
+                                    (None, Some(t)) => {
+                                        ov.forum_view = ForumSubView::Thread {
+                                            thread: Some(t.clone()),
+                                            loading: false,
+                                            error: None,
+                                            posting_reply: false,
+                                            reply_error: None,
+                                        };
+                                        // A new thread now exists — invalidate
+                                        // the cached list page so Back
+                                        // re-fetches rather than showing a
+                                        // stale page missing it.
+                                        ov.forum_list = ForumListState::Empty;
+                                    }
+                                    (Some(e), _) => {
+                                        if let ForumSubView::Compose { posting, error } = &mut ov.forum_view {
+                                            *posting = false;
+                                            *error = Some(e.clone());
+                                        }
+                                    }
+                                    (None, None) => {}
+                                }
+                            }
+                            ForumSubView::Thread { loading: true, thread: None, .. } => {
+                                ov.forum_view = match (&fs.last_error, &mapped_thread) {
+                                    (None, Some(t)) => ForumSubView::Thread {
+                                        thread: Some(t.clone()),
+                                        loading: false,
+                                        error: None,
+                                        posting_reply: false,
+                                        reply_error: None,
+                                    },
+                                    (err, _) => ForumSubView::Thread {
+                                        thread: None,
+                                        loading: false,
+                                        error: Some(err.clone().unwrap_or_else(|| "Thread not found".to_string())),
+                                        posting_reply: false,
+                                        reply_error: None,
+                                    },
+                                };
+                            }
+                            ForumSubView::Thread { posting_reply: true, .. } => {
+                                match (&fs.last_error, &mapped_thread) {
+                                    (None, Some(t)) => {
+                                        ov.forum_view = ForumSubView::Thread {
+                                            thread: Some(t.clone()),
+                                            loading: false,
+                                            error: None,
+                                            posting_reply: false,
+                                            reply_error: None,
+                                        };
+                                    }
+                                    // Thread cleared with no error — a
+                                    // `DeleteThread` succeeded. Back to the
+                                    // list, refreshed from the same answer.
+                                    (None, None) => {
+                                        ov.forum_view = ForumSubView::List;
+                                        ov.forum_list = ForumListState::Loaded {
+                                            threads: fs.list.iter().map(map_forum_summary_native).collect(),
+                                            next_before: fs.next_before.clone(),
+                                            loading_more: false,
+                                        };
+                                    }
+                                    (Some(e), _) => {
+                                        if let ForumSubView::Thread { posting_reply, reply_error, .. } = &mut ov.forum_view {
+                                            *posting_reply = false;
+                                            *reply_error = Some(e.clone());
+                                        }
+                                    }
+                                }
+                            }
+                            ForumSubView::List => {
+                                if matches!(ov.forum_list, ForumListState::Loading) {
+                                    ov.forum_list = match &fs.last_error {
+                                        None => ForumListState::Loaded {
+                                            threads: fs.list.iter().map(map_forum_summary_native).collect(),
+                                            next_before: fs.next_before.clone(),
+                                            loading_more: false,
+                                        },
+                                        Some(e) => ForumListState::Error { message: e.clone() },
+                                    };
+                                } else if let ForumListState::Loaded { threads, next_before, loading_more } =
+                                    &mut ov.forum_list
+                                {
+                                    if *loading_more {
+                                        match &fs.last_error {
+                                            None => {
+                                                threads.extend(fs.list.iter().map(map_forum_summary_native));
+                                                *next_before = fs.next_before.clone();
+                                            }
+                                            // Load-more failure: the existing
+                                            // page stays up and usable — no
+                                            // dedicated UI slot for this.
+                                            Some(_) => {}
+                                        }
+                                        *loading_more = false;
+                                    }
+                                }
+                            }
+                            _ => {}
+                        }
+                        pw.overlay_dirty = true;
+                        pw.window.request_redraw();
+                    }
                 }
             }
 

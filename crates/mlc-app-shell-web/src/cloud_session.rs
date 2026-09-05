@@ -23,12 +23,14 @@ use wasm_bindgen_futures::{spawn_local, JsFuture};
 
 use mlc_app::ChartApp;
 use mlc_app_layout::ui::modal_settings::{
-    CloudLoginPhase, CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudReleaseEntry,
-    RedeemStatus,
+    CloudForumReply, CloudForumThread, CloudForumThreadSummary, CloudLoginPhase, CloudNewsPost,
+    CloudOverlayData, CloudOverlayKind, CloudReleaseEntry, ForumListState, ForumRequest,
+    ForumSubView, NewsTab, RedeemStatus,
 };
 use mlc_cloud::{
-    redeem_error_message, BuildAttestation, BlogPost, CloudConfig, DeviceAuthPoll,
-    EntitlementsResponse, FetchTransport, ReleaseEntry, StoredToken, VersionManifest,
+    forum_error_message, redeem_error_message, BuildAttestation, BlogPost, CloudConfig,
+    DeviceAuthPoll, EntitlementsResponse, FetchTransport, ForumThreadResponse, ForumThreadSummary,
+    ReleaseEntry, StoredToken, VersionManifest,
 };
 
 const TOKEN_KEY: &str = "mlc.cloud.token.v1";
@@ -62,6 +64,29 @@ enum FlowResult {
     /// A nickname submission came back accepted (the new effective label) or
     /// refused (the sentence to print).
     Nick(Result<String, String>),
+
+    // ── Forum tab (paid-only) ───────────────────────────────────────────
+    /// A thread-list page — the passive tab-open fetch (`append: false`) or
+    /// `ForumRequest::LoadMoreThreads` (`append: true`).
+    ForumThreads {
+        append: bool,
+        result: Result<(Vec<ForumThreadSummary>, Option<String>), String>,
+    },
+    /// `ForumRequest::LoadThread` — replaces the whole Forum sub-view with
+    /// this thread (or the failure to load it).
+    ForumThreadOpened(Result<ForumThreadResponse, String>),
+    /// `ForumRequest::CreateThread` — success lands on the new thread;
+    /// failure stays on the compose form with the sentence in
+    /// `ForumSubView::Compose::error`.
+    ForumThreadCreated(Result<ForumThreadResponse, String>),
+    /// `ForumRequest::Reply` or `DeleteReply` — success refreshes the
+    /// thread already open; failure sets `ForumSubView::Thread::
+    /// reply_error` and leaves the thread as-is.
+    ForumThreadRefreshed(Result<ForumThreadResponse, String>),
+    /// `ForumRequest::DeleteThread` — success clears the thread and
+    /// refreshes the list (back to `ForumSubView::List`); failure leaves
+    /// the thread view up with the sentence in `reply_error`.
+    ForumThreadDeleted(Result<(Vec<ForumThreadSummary>, Option<String>), String>),
 }
 
 struct Inner {
@@ -104,6 +129,12 @@ struct Inner {
     /// which is the only place `&mut ChartApp` is reachable — the upload's
     /// own `spawn_local` body cannot log a system event directly.
     share_result: Option<(&'static str, Result<String, String>)>,
+
+    // ── Forum tab (paid-only) ───────────────────────────────────────────
+    /// A forum request is in flight — separate from `in_flight` above so
+    /// the Forum tab never blocks (or gets blocked by) the login/News/
+    /// Download flow that field already gates.
+    forum_in_flight: bool,
 }
 
 pub struct CloudSession {
@@ -152,6 +183,7 @@ impl CloudSession {
                 entitlements_result: None,
                 prev_entitlements: None,
                 share_result: None,
+                forum_in_flight: false,
             })),
         }
     }
@@ -279,6 +311,11 @@ impl CloudSession {
                 match r {
                     Ok(resp) => {
                         chart.panel_app.user_settings_state.multi_profile = resp.has_multi_profile();
+                        // The Forum tab's sole visibility switch — written
+                        // every entitlements cycle, same cadence
+                        // `multi_profile` already gets (see
+                        // `CloudOverlayState::forum_entitled`'s own doc).
+                        chart.panel_app.cloud_overlay_state.forum_entitled = resp.has_forum();
                         // Tier transition → system event (owner ask
                         // 2026-09-05, scope §8): compare against the last
                         // APPLIED answer, not the live `cloud_login_state`
@@ -330,6 +367,7 @@ impl CloudSession {
                         chart.panel_app.user_settings_state.multi_profile = false;
                         chart.panel_app.cloud_login_state.is_paid = false;
                         chart.panel_app.cloud_login_state.paid_until = None;
+                        chart.panel_app.cloud_overlay_state.forum_entitled = false;
                         web_sys::console::warn_1(
                             &format!("[cloud] entitlements fetch failed: {}", e).into(),
                         );
@@ -549,6 +587,125 @@ impl CloudSession {
                         mlc_app_layout::ui::modal_settings::NickStatus::Failed { message: message.clone() };
                     chart.push_system_event(mlc_core::SystemEventKind::Nick, "Nickname not saved", message, false);
                 }
+                FlowResult::ForumThreads { append, result } => {
+                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    match result {
+                        Ok((threads, next_before)) => {
+                            let mapped: Vec<CloudForumThreadSummary> = threads.into_iter().map(map_forum_summary).collect();
+                            if append {
+                                if let ForumListState::Loaded { threads: existing, next_before: nb, loading_more } =
+                                    &mut ov.forum_list
+                                {
+                                    existing.extend(mapped);
+                                    *nb = next_before;
+                                    *loading_more = false;
+                                } else {
+                                    ov.forum_list = ForumListState::Loaded { threads: mapped, next_before, loading_more: false };
+                                }
+                            } else {
+                                ov.forum_list = ForumListState::Loaded { threads: mapped, next_before, loading_more: false };
+                            }
+                        }
+                        Err(e) => {
+                            if append {
+                                if let ForumListState::Loaded { loading_more, .. } = &mut ov.forum_list {
+                                    *loading_more = false;
+                                }
+                                // Load-more failure: the existing page stays
+                                // up and usable — no dedicated UI slot for
+                                // this, so it just goes to the console.
+                                web_sys::console::warn_1(&format!("[forum] load more failed: {}", e).into());
+                            } else {
+                                ov.forum_list = ForumListState::Error { message: e };
+                            }
+                        }
+                    }
+                    self.inner.borrow_mut().forum_in_flight = false;
+                }
+                FlowResult::ForumThreadOpened(result) => {
+                    chart.panel_app.cloud_overlay_state.forum_view = match result {
+                        Ok(resp) => ForumSubView::Thread {
+                            thread: Some(map_forum_thread(resp)),
+                            loading: false,
+                            error: None,
+                            posting_reply: false,
+                            reply_error: None,
+                        },
+                        Err(e) => ForumSubView::Thread {
+                            thread: None,
+                            loading: false,
+                            error: Some(e),
+                            posting_reply: false,
+                            reply_error: None,
+                        },
+                    };
+                    self.inner.borrow_mut().forum_in_flight = false;
+                }
+                FlowResult::ForumThreadCreated(result) => {
+                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    match result {
+                        Ok(resp) => {
+                            ov.forum_view = ForumSubView::Thread {
+                                thread: Some(map_forum_thread(resp)),
+                                loading: false,
+                                error: None,
+                                posting_reply: false,
+                                reply_error: None,
+                            };
+                            // A new thread now exists — invalidate the
+                            // cached list page so Back re-fetches rather
+                            // than showing a stale page missing it.
+                            ov.forum_list = ForumListState::Empty;
+                        }
+                        Err(e) => {
+                            if let ForumSubView::Compose { posting, error } = &mut ov.forum_view {
+                                *posting = false;
+                                *error = Some(e);
+                            }
+                        }
+                    }
+                    self.inner.borrow_mut().forum_in_flight = false;
+                }
+                FlowResult::ForumThreadRefreshed(result) => {
+                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    match result {
+                        Ok(resp) => {
+                            ov.forum_view = ForumSubView::Thread {
+                                thread: Some(map_forum_thread(resp)),
+                                loading: false,
+                                error: None,
+                                posting_reply: false,
+                                reply_error: None,
+                            };
+                        }
+                        Err(e) => {
+                            if let ForumSubView::Thread { posting_reply, reply_error, .. } = &mut ov.forum_view {
+                                *posting_reply = false;
+                                *reply_error = Some(e);
+                            }
+                        }
+                    }
+                    self.inner.borrow_mut().forum_in_flight = false;
+                }
+                FlowResult::ForumThreadDeleted(result) => {
+                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    match result {
+                        Ok((threads, next_before)) => {
+                            ov.forum_view = ForumSubView::List;
+                            ov.forum_list = ForumListState::Loaded {
+                                threads: threads.into_iter().map(map_forum_summary).collect(),
+                                next_before,
+                                loading_more: false,
+                            };
+                        }
+                        Err(e) => {
+                            if let ForumSubView::Thread { reply_error, .. } = &mut ov.forum_view {
+                                *reply_error = Some(format!("Delete failed: {}", e));
+                            }
+                        }
+                    }
+                    self.inner.borrow_mut().forum_in_flight = false;
+                }
                 FlowResult::Logout => {
                     // Local sign-out regardless of the server answer.
                     clear_token();
@@ -667,6 +824,92 @@ impl CloudSession {
                                     (Err(e), _) | (_, Err(e)) => Err(e),
                                 };
                                 inner.borrow_mut().result = Some(FlowResult::Updates(r));
+                            }
+                        }
+                    });
+                }
+            }
+        }
+
+        // ── Forum tab (paid-only): passive list fetch + explicit actions ──
+        {
+            let ov = &mut chart.panel_app.cloud_overlay_state;
+            let forum_active = ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Forum;
+
+            // Passive: fetch page one the moment the tab is looked at with
+            // nothing loaded yet — same "Empty -> fire" idiom News/Download
+            // use above, on its own `forum_in_flight` gate so it can never
+            // block (or be blocked by) that unrelated flow.
+            if forum_active && matches!(ov.forum_list, ForumListState::Empty) && !self.inner.borrow().forum_in_flight {
+                ov.forum_list = ForumListState::Loading;
+                self.inner.borrow_mut().forum_in_flight = true;
+                let inner = self.inner.clone();
+                let transport = self.inner.borrow().transport.snapshot();
+                spawn_local(async move {
+                    let r = transport
+                        .forum_threads(None)
+                        .await
+                        .map(|resp| (resp.threads, resp.next_before))
+                        .map_err(|e| forum_error_message(&e));
+                    inner.borrow_mut().result = Some(FlowResult::ForumThreads { append: false, result: r });
+                });
+            }
+
+            // Explicit user action — one-shot mailbox, same idiom as
+            // `redeem_requested`/`update_install_requested`. Dropped (not
+            // queued) if a forum request is already in flight; a doubled
+            // click on Load-more/Reply/Delete while one is running is not
+            // worth a request queue for.
+            if let Some(req) = ov.forum_request.take() {
+                if !self.inner.borrow().forum_in_flight {
+                    self.inner.borrow_mut().forum_in_flight = true;
+                    let inner = self.inner.clone();
+                    let transport = self.inner.borrow().transport.snapshot();
+                    spawn_local(async move {
+                        match req {
+                            ForumRequest::LoadMoreThreads { before } => {
+                                let r = transport
+                                    .forum_threads(Some(&before))
+                                    .await
+                                    .map(|resp| (resp.threads, resp.next_before))
+                                    .map_err(|e| forum_error_message(&e));
+                                inner.borrow_mut().result = Some(FlowResult::ForumThreads { append: true, result: r });
+                            }
+                            ForumRequest::LoadThread { id } => {
+                                let r = transport.forum_thread(id).await.map_err(|e| forum_error_message(&e));
+                                inner.borrow_mut().result = Some(FlowResult::ForumThreadOpened(r));
+                            }
+                            ForumRequest::CreateThread { title, body } => {
+                                let r = match transport.forum_create_thread(&title, &body).await {
+                                    Ok(id) => transport.forum_thread(id).await.map_err(|e| forum_error_message(&e)),
+                                    Err(e) => Err(forum_error_message(&e)),
+                                };
+                                inner.borrow_mut().result = Some(FlowResult::ForumThreadCreated(r));
+                            }
+                            ForumRequest::Reply { thread_id, body } => {
+                                let r = match transport.forum_reply(thread_id, &body).await {
+                                    Ok(_) => transport.forum_thread(thread_id).await.map_err(|e| forum_error_message(&e)),
+                                    Err(e) => Err(forum_error_message(&e)),
+                                };
+                                inner.borrow_mut().result = Some(FlowResult::ForumThreadRefreshed(r));
+                            }
+                            ForumRequest::DeleteThread { id } => {
+                                let r = match transport.forum_delete_thread(id).await {
+                                    Ok(()) => transport
+                                        .forum_threads(None)
+                                        .await
+                                        .map(|resp| (resp.threads, resp.next_before))
+                                        .map_err(|e| forum_error_message(&e)),
+                                    Err(e) => Err(forum_error_message(&e)),
+                                };
+                                inner.borrow_mut().result = Some(FlowResult::ForumThreadDeleted(r));
+                            }
+                            ForumRequest::DeleteReply { id, thread_id } => {
+                                let r = match transport.forum_delete_reply(id).await {
+                                    Ok(()) => transport.forum_thread(thread_id).await.map_err(|e| forum_error_message(&e)),
+                                    Err(e) => Err(forum_error_message(&e)),
+                                };
+                                inner.borrow_mut().result = Some(FlowResult::ForumThreadRefreshed(r));
                             }
                         }
                     });
@@ -795,6 +1038,47 @@ impl CloudSession {
             }
             _ => {}
         }
+    }
+}
+
+// ── Forum wire → UI mapping ────────────────────────────────────────────
+// `mlc-app-layout` cannot depend on `mlc-cloud` (the layout crate must not
+// depend on the transport crate — same split `CloudNewsPost`/`BlogPost`
+// already has), so the shell is where a wire row becomes the flat mirror
+// the overlay renders.
+
+fn map_forum_summary(s: ForumThreadSummary) -> CloudForumThreadSummary {
+    CloudForumThreadSummary {
+        id: s.id,
+        title: s.title,
+        author: s.author,
+        author_is_me: s.author_is_me,
+        created_at: s.created_at,
+        last_reply_at: s.last_reply_at,
+        reply_count: s.reply_count,
+        excerpt: s.excerpt,
+    }
+}
+
+fn map_forum_thread(resp: ForumThreadResponse) -> CloudForumThread {
+    CloudForumThread {
+        id: resp.thread.id,
+        title: resp.thread.title,
+        author: resp.thread.author,
+        author_is_me: resp.thread.author_is_me,
+        body: resp.thread.body,
+        created_at: resp.thread.created_at,
+        replies: resp
+            .replies
+            .into_iter()
+            .map(|r| CloudForumReply {
+                id: r.id,
+                author: r.author,
+                author_is_me: r.author_is_me,
+                body: r.body,
+                created_at: r.created_at,
+            })
+            .collect(),
     }
 }
 

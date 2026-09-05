@@ -236,10 +236,21 @@ pub struct EntitlementsResponse {
 impl EntitlementsResponse {
     /// Wire name of the multi-profile feature gate.
     pub const MULTI_PROFILE: &'static str = "multi_profile";
+    /// Wire name of the paid-only forum feature gate — never in the free
+    /// set by construction (unlike the other gates here, closed from day
+    /// one, see `docs/mlc/plans/web-surface-cleanup-and-in-app-blog-
+    /// 2026-09-05.md` phase 3).
+    pub const FORUM: &'static str = "forum";
 
     /// Whether the resolved feature set contains [`Self::MULTI_PROFILE`].
     pub fn has_multi_profile(&self) -> bool {
         self.features.iter().any(|f| f == Self::MULTI_PROFILE)
+    }
+
+    /// Whether the resolved feature set contains [`Self::FORUM`] — the
+    /// client's sole visibility switch for the Forum tab.
+    pub fn has_forum(&self) -> bool {
+        self.features.iter().any(|f| f == Self::FORUM)
     }
 }
 
@@ -436,6 +447,88 @@ fn default_blog_post_kind() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BlogFeed {
     pub posts: Vec<BlogPost>,
+}
+
+// =============================================================================
+// /api/forum/* shapes (paid-only communication board)
+//
+// Every route requires auth (cookie `session_id` or Bearer, same as sync)
+// AND a paid account: 401 anonymous, 403 free — bodies `{"error": …}`.
+// `GET /api/entitlements`'s `"forum"` feature is the client's visibility
+// switch (`EntitlementsResponse::has_forum`); these endpoints are never
+// called for a caller that switch says no to.
+// =============================================================================
+
+/// One row of `GET /api/forum/threads` (`ForumThreadsResponse::threads`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ForumThreadSummary {
+    pub id: i64,
+    pub title: String,
+    pub author: String,
+    pub author_is_me: bool,
+    pub created_at: String,
+    pub last_reply_at: Option<String>,
+    pub reply_count: i64,
+    pub excerpt: String,
+}
+
+/// Response body from `GET /api/forum/threads?limit=N&before=<activity>|<id>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForumThreadsResponse {
+    pub threads: Vec<ForumThreadSummary>,
+    pub next_before: Option<String>,
+}
+
+/// The thread itself, as nested in `ForumThreadResponse::thread` — never
+/// carries its replies (those are the sibling `replies` field).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ForumThread {
+    pub id: i64,
+    pub title: String,
+    pub author: String,
+    pub author_is_me: bool,
+    pub body: String,
+    pub created_at: String,
+}
+
+/// One reply, as returned in `ForumThreadResponse::replies`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ForumReply {
+    pub id: i64,
+    pub author: String,
+    pub author_is_me: bool,
+    pub body: String,
+    pub created_at: String,
+}
+
+/// Response body from `GET /api/forum/threads/{id}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForumThreadResponse {
+    pub thread: ForumThread,
+    pub replies: Vec<ForumReply>,
+}
+
+/// Request body for `POST /api/forum/threads`.
+/// (400 if `title` is not 3–120 bytes or `body` is not 1–8192 bytes;
+/// 429 with `{"error", "retry_after_secs"}` at one thread per 60s.)
+#[derive(Debug, Clone, Serialize)]
+pub struct ForumCreateThreadRequest {
+    pub title: String,
+    pub body: String,
+}
+
+/// Request body for `POST /api/forum/threads/{id}/replies`.
+/// (429 at ten replies per 60s.)
+#[derive(Debug, Clone, Serialize)]
+pub struct ForumReplyRequest {
+    pub body: String,
+}
+
+/// Response body from both `POST /api/forum/threads` and
+/// `POST /api/forum/threads/{id}/replies` — both answer just the new row's id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForumIdResponse {
+    pub id: i64,
 }
 
 /// Locally persisted auth token (wasm: localStorage; native: config dir).

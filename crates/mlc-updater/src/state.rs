@@ -144,6 +144,55 @@ pub enum NickState {
     Failed { message: String },
 }
 
+/// Commands for the paid-only forum board, wrapped in
+/// [`UpdaterCommand::Forum`].
+#[derive(Debug, Clone)]
+pub enum ForumCommand {
+    /// `GET /api/forum/threads?before=…` — `None` = first page (replaces
+    /// [`ForumState::list`] wholesale); `Some(cursor)` = "Load more"
+    /// (appends to it).
+    ListThreads { before: Option<String> },
+    /// `GET /api/forum/threads/{id}`.
+    LoadThread { id: i64 },
+    /// `POST /api/forum/threads`. On success the updater also re-lists
+    /// (page one) and loads the new thread, so the overlay can land
+    /// straight on it without a second click.
+    CreateThread { title: String, body: String },
+    /// `POST /api/forum/threads/{id}/replies`. On success the updater
+    /// reloads the thread so [`ForumState::thread`] carries the new reply.
+    Reply { thread_id: i64, body: String },
+    /// `DELETE /api/forum/threads/{id}`. On success the updater clears
+    /// [`ForumState::thread`] and re-lists page one.
+    DeleteThread { id: i64 },
+    /// `DELETE /api/forum/replies/{id}` — the endpoint itself takes only
+    /// the reply id; `thread_id` is client-side bookkeeping so the updater
+    /// knows which thread to reload on success.
+    DeleteReply { id: i64, thread_id: i64 },
+}
+
+/// Forum board state, broadcast via [`UpdaterHandle::forum_rx`] — mutated in
+/// place by the updater loop rather than replaced wholesale like
+/// [`RedeemState`]/[`NickState`], because the overlay needs `list` and
+/// `thread` to persist across unrelated actions (e.g. posting a reply must
+/// not blank the thread that reply belongs to).
+#[derive(Debug, Clone, Default)]
+pub struct ForumState {
+    /// Most recent thread list page(s) — see [`ForumCommand::ListThreads`].
+    pub list: Vec<crate::forum::ForumThreadSummary>,
+    /// Pagination cursor for the next "Load more" — `None` once the list
+    /// has run out (or nothing has been fetched yet).
+    pub next_before: Option<String>,
+    /// The thread currently open in the reading view, if any.
+    pub thread: Option<crate::forum::ForumThread>,
+    /// The most recent action's failure, if any. Cleared at the start of
+    /// every new [`ForumCommand`] (so a stale error from a screen the user
+    /// already left never lingers onto the next one) and set only if THAT
+    /// command's own request fails.
+    pub last_error: Option<String>,
+    /// A forum request is in flight.
+    pub busy: bool,
+}
+
 /// Information about an available update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateInfo {
@@ -211,6 +260,10 @@ pub enum UpdaterCommand {
     /// label picks it up the same frame. The outcome is broadcast via
     /// [`UpdaterHandle::nick_rx`].
     SetNick(String),
+    /// A paid-only forum board action. Requires a stored token — with none,
+    /// the updater publishes [`ForumState::last_error`] without making a
+    /// request. Outcomes are broadcast via [`UpdaterHandle::forum_rx`].
+    Forum(ForumCommand),
     /// Enable or disable cloud connectivity at runtime.
     /// `true` = cloud enabled (OTA, sync, telemetry),
     /// `false` = cloud disabled (stop all network activity).
@@ -361,6 +414,10 @@ pub struct UpdaterHandle {
     /// Same polling contract as [`Self::redeem_rx`]; starts at
     /// [`NickState::Idle`].
     pub nick_rx: watch::Receiver<NickState>,
+    /// Current forum board state — list/thread/error/busy, mutated in place
+    /// by the updater loop. Starts at [`ForumState::default`] (empty list,
+    /// no thread, no error, not busy).
+    pub forum_rx: watch::Receiver<ForumState>,
     /// Current cloud sync status.
     ///
     /// The UI polls `has_changed()` each frame and displays progress
