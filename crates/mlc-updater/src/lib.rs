@@ -23,6 +23,8 @@ pub mod nick;
 pub mod forum;
 pub mod share;
 pub mod auth_probe;
+pub mod me;
+pub mod tier_store;
 
 pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState, NickState, ForumCommand, ForumState, ShareState};
 pub use forum::{ForumThreadSummary, ForumThread, ForumReply};
@@ -295,13 +297,20 @@ async fn updater_loop(
             match auth_probe::probe(&http_client, &header).await {
                 auth_probe::Verdict::Rejected => {
                     token_store::clear_token();
+                    tier_store::clear_tier();
                     let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
                     eprintln!(
                         "[{} Updater] stored token rejected by the server — signed out",
                         now_ts()
                     );
                 }
-                auth_probe::Verdict::Valid => {}
+                // Confirmed live — a nick set on another device or via the
+                // API may already have changed what this token's label
+                // should be; ask once now (see `refresh_account_label`'s
+                // own doc).
+                auth_probe::Verdict::Valid => {
+                    refresh_account_label(&http_client, &auth_tx, &t).await;
+                }
                 // Offline, or the server is unwell. Says nothing about the
                 // token, so it changes nothing.
                 auth_probe::Verdict::Unknown => {}
@@ -470,6 +479,14 @@ async fn updater_loop(
                                     provider: token.provider,
                                     user_id: token.user_id,
                                 });
+                                // A fresh identity may already carry a nick
+                                // set elsewhere (another device, the API) —
+                                // ask once now rather than showing this
+                                // login's `display_name` until the next
+                                // re-login.
+                                if let Some(fresh) = token_store::load_token() {
+                                    refresh_account_label(&http_client, &auth_tx, &fresh).await;
+                                }
                             }
                             None => {
                                 // do_device_oauth already logged why (mint
@@ -481,6 +498,7 @@ async fn updater_loop(
                     }
                     state::UpdaterCommand::Logout => {
                         token_store::clear_token();
+                        tier_store::clear_tier();
                         // ...and signing out IS disabling it. No account, no
                         // cloud; the two are one fact, not two settings.
                         sync_state.enabled = false;
@@ -524,6 +542,7 @@ async fn updater_loop(
                                             auth_probe::Verdict::Rejected
                                         ) {
                                             token_store::clear_token();
+                                            tier_store::clear_tier();
                                             let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
                                             eprintln!(
                                                 "[{} Updater] session rejected during redeem — signed out",
@@ -554,6 +573,15 @@ async fn updater_loop(
                                             user_id: updated.user_id,
                                         });
                                         let _ = nick_tx.send(state::NickState::Saved { effective_label });
+                                        // Confirmatory refresh: the label just
+                                        // set is already the server's own
+                                        // computed value, so this is normally
+                                        // a no-op — kept for the same reason
+                                        // as the other activation sites (owner
+                                        // ask 2026-09-05): one path, not two.
+                                        if let Some(fresh) = token_store::load_token() {
+                                            refresh_account_label(&http_client, &auth_tx, &fresh).await;
+                                        }
                                     }
                                     Err(e) => {
                                         log::warn!("[Updater] set_nick failed: {}", e);
@@ -565,6 +593,7 @@ async fn updater_loop(
                                             auth_probe::Verdict::Rejected
                                         ) {
                                             token_store::clear_token();
+                                            tier_store::clear_tier();
                                             let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
                                             eprintln!(
                                                 "[{} Updater] session rejected during set_nick — signed out",
@@ -609,6 +638,7 @@ async fn updater_loop(
                                             auth_probe::Verdict::Rejected
                                         ) {
                                             token_store::clear_token();
+                                            tier_store::clear_tier();
                                             let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
                                             eprintln!(
                                                 "[{} Updater] session rejected during forum call — signed out",
@@ -732,6 +762,7 @@ async fn updater_loop(
                                             auth_probe::Verdict::Rejected
                                         ) {
                                             token_store::clear_token();
+                                            tier_store::clear_tier();
                                             let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
                                             eprintln!(
                                                 "[{} Updater] session rejected during share_live — signed out",
@@ -769,6 +800,7 @@ async fn updater_loop(
                                             auth_probe::Verdict::Rejected
                                         ) {
                                             token_store::clear_token();
+                                            tier_store::clear_tier();
                                             let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
                                             eprintln!(
                                                 "[{} Updater] session rejected during share_screenshot — signed out",
@@ -1398,6 +1430,45 @@ async fn do_check(
             eprintln!("[{} Updater] OTA check failed: {}", now_ts(), e);
             log::warn!("Update check failed: {}", e);
             let _ = status_tx.send(UpdateStatus::Idle);
+        }
+    }
+}
+
+/// Fetch `GET /api/auth/me` for `stored` and, if the server's
+/// `effective_label` (nick -> display_name -> public_id, server-computed)
+/// differs from what this client already has on disk, rewrite the stored
+/// token and republish [`state::AuthStatus::LoggedIn`] so the chrome
+/// repaints (owner ask 2026-09-05, mirrors the web shell's
+/// `cloud_session.rs::fire_me_fetch`). Called once per token activation —
+/// at boot right after the stored token passes [`auth_probe::probe`], and
+/// again right after a login lands — never polled.
+///
+/// Silent on every path except a changed label: no system event, no toast,
+/// and a failed fetch (logged at info level) changes nothing — this must
+/// never sign anybody out, unlike the demotion the redeem/set_nick/forum/
+/// share arms do on a *rejected* session.
+async fn refresh_account_label(
+    http_client: &reqwest::Client,
+    auth_tx: &watch::Sender<state::AuthStatus>,
+    stored: &token_store::StoredToken,
+) {
+    let header = format!("Bearer {}", stored.token);
+    match me::fetch(http_client, &header).await {
+        Ok(resp) => {
+            let label = resp.effective_label.unwrap_or(resp.display_name);
+            if label != stored.display_name {
+                let mut updated = stored.clone();
+                updated.display_name = label.clone();
+                let _ = token_store::save_token(&updated);
+                let _ = auth_tx.send(state::AuthStatus::LoggedIn {
+                    display_name: label,
+                    provider: updated.provider,
+                    user_id: updated.user_id,
+                });
+            }
+        }
+        Err(e) => {
+            log::info!("[Updater] me() fetch failed: {}", e);
         }
     }
 }

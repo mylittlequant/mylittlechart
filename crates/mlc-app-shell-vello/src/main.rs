@@ -468,8 +468,12 @@ struct App<'s> {
     /// against each edge-triggered `entitlements_rx` change to detect a
     /// paid⇄free transition (system-event-bus arc, 2026-09-05, owner scope
     /// `docs/mlc/plans/users-paid-features-scope-2026-09-05.md` §8). `None`
-    /// means no answer has landed yet this session; the first real answer
-    /// sets this without firing an event.
+    /// means no answer has landed yet THIS session — the first real answer
+    /// then falls back to `mlc_updater::tier_store::load_tier()` (same
+    /// identity only) as the baseline, so a tier change applied while the
+    /// app was closed still fires once instead of silently becoming the new
+    /// baseline (owner ask 2026-09-05, mirrors the web shell's
+    /// `cloud_session.rs::TIER_KEY`, commit fe955099).
     #[cfg(feature = "cloud")]
     prev_entitlements: Option<(bool, Option<String>)>,
     /// Memory-watchdog warning receiver (`mlc_shell_diagnostics::watchdog::start`,
@@ -5261,9 +5265,15 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // below), but the transition compare only runs — and
             // `self.prev_entitlements` only advances — on the edge, so a
             // window that just isn't looking this frame can never cause a
-            // missed or duplicate event. `None` in `prev_entitlements`
-            // means no answer has landed yet this session; the first real
-            // answer sets it without firing an event.
+            // missed or duplicate event. `None` in `prev_entitlements` means
+            // no answer has landed yet THIS session (boot, or a restart) —
+            // falls back to the last answer this device persisted via
+            // `mlc_updater::tier_store` for the SAME identity, so a tier
+            // change applied while the app was closed (a gift code redeemed
+            // via the API, a subscription that expired, then a restart)
+            // still surfaces once instead of silently becoming the new
+            // baseline. No stored record, or one for a different user, keeps
+            // the old behaviour: no event.
             #[cfg(feature = "cloud")]
             let (is_paid, paid_until, tier_event): (bool, Option<String>, Option<(&'static str, String)>) =
                 if self.updater_handle.entitlements_rx.has_changed().unwrap_or(false) {
@@ -5271,7 +5281,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         let ent = self.updater_handle.entitlements_rx.borrow_and_update();
                         (ent.paid, ent.paid_until.clone())
                     };
-                    let event = match self.prev_entitlements.replace((paid, until.clone())) {
+                    let current_user_id = match &*self.updater_handle.auth_rx.borrow() {
+                        mlc_updater::AuthStatus::LoggedIn { user_id, .. } => Some(*user_id),
+                        mlc_updater::AuthStatus::NotLoggedIn => None,
+                    };
+                    let prev = self.prev_entitlements.replace((paid, until.clone()));
+                    let baseline = prev.or_else(|| {
+                        let uid = current_user_id?;
+                        let stored = mlc_updater::tier_store::load_tier()?;
+                        (stored.user_id == uid).then_some((stored.paid, stored.paid_until))
+                    });
+                    let event = match baseline {
                         None => None,
                         Some((prev_paid, prev_until)) if prev_paid == paid && prev_until == until => None,
                         Some(_) if paid => Some((
@@ -5283,6 +5303,16 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         )),
                         Some(_) => Some(("Paid tier expired", "Your paid tier has expired.".to_string())),
                     };
+                    // Persist this APPLIED answer as the new baseline — only
+                    // when signed in; an anonymous entitlements answer has
+                    // no identity to key the record on.
+                    if let Some(uid) = current_user_id {
+                        mlc_updater::tier_store::save_tier(&mlc_updater::tier_store::StoredTier {
+                            user_id: uid,
+                            paid,
+                            paid_until: until.clone(),
+                        });
+                    }
                     (paid, until, event)
                 } else {
                     let ent = self.updater_handle.entitlements_rx.borrow();
