@@ -9,5 +9,7 @@
 
 mod manager;
 mod facade;
+mod catalogue_symbol;
 pub use manager::ExchangeSymbolsManager;
 pub use facade::{ExchangeSymbols, ExchangeSymbolsMut};
+pub use catalogue_symbol::CatalogueSymbol;

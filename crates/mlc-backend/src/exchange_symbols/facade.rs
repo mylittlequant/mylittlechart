@@ -9,9 +9,9 @@
 use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
 use digdigdig3::ExchangeId;
-use mlc_backend_data_bridge::SymbolInfo;
 
 use super::manager::ExchangeSymbolsManager;
+use super::CatalogueSymbol;
 
 /// Read-only facade over `ExchangeSymbolsManager`.
 pub struct ExchangeSymbols<'a> {
@@ -25,12 +25,12 @@ impl<'a> ExchangeSymbols<'a> {
 
     /// The whole catalogue by reference — for callers that scan across every
     /// exchange (symbol search result builder).
-    pub fn as_map(&self) -> &std::collections::HashMap<ExchangeId, Vec<SymbolInfo>> {
+    pub fn as_map(&self) -> &std::collections::HashMap<ExchangeId, Vec<CatalogueSymbol>> {
         self.mgr.as_map()
     }
 
     /// Symbols for one exchange.
-    pub fn symbols_for(&self, exchange_id: ExchangeId) -> Option<&[SymbolInfo]> {
+    pub fn symbols_for(&self, exchange_id: ExchangeId) -> Option<&[CatalogueSymbol]> {
         self.mgr.symbols_for(exchange_id)
     }
 
@@ -74,12 +74,12 @@ impl<'a> ExchangeSymbolsMut<'a> {
     }
 
     /// The whole catalogue by reference.
-    pub fn as_map(&self) -> &std::collections::HashMap<ExchangeId, Vec<SymbolInfo>> {
+    pub fn as_map(&self) -> &std::collections::HashMap<ExchangeId, Vec<CatalogueSymbol>> {
         self.mgr.as_map()
     }
 
     /// Symbols for one exchange.
-    pub fn symbols_for(&self, exchange_id: ExchangeId) -> Option<&[SymbolInfo]> {
+    pub fn symbols_for(&self, exchange_id: ExchangeId) -> Option<&[CatalogueSymbol]> {
         self.mgr.symbols_for(exchange_id)
     }
 
@@ -96,12 +96,12 @@ impl<'a> ExchangeSymbolsMut<'a> {
 
     /// Replace the whole catalogue for one exchange (`SymbolsLoaded` write
     /// site).
-    pub fn set_symbols(&mut self, exchange_id: ExchangeId, symbols: Vec<SymbolInfo>) {
+    pub fn set_symbols(&mut self, exchange_id: ExchangeId, symbols: Vec<CatalogueSymbol>) {
         self.mgr.set_symbols(exchange_id, symbols);
     }
 
     /// Replace the whole catalogue wholesale (startup seed).
-    pub fn replace_all(&mut self, by_exchange: std::collections::HashMap<ExchangeId, Vec<SymbolInfo>>) {
+    pub fn replace_all(&mut self, by_exchange: std::collections::HashMap<ExchangeId, Vec<CatalogueSymbol>>) {
         self.mgr.replace_all(by_exchange);
     }
 }

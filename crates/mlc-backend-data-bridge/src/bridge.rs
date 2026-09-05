@@ -56,7 +56,7 @@ pub type SharedOrderBookTracker = Arc<tokio::sync::RwLock<digdigdig3_station::or
 use tokio::sync::{broadcast, mpsc};
 
 use digdigdig3::{
-    ExchangeId, AccountType, SymbolInfo,
+    ExchangeId, AccountType,
     Order, Balance, Position,
     TradingCapabilities, AccountCapabilities,
     ExchangeError,
@@ -244,10 +244,21 @@ pub enum LiveUpdate {
         /// `None` when the event does not carry 24h stats.
         volume: Option<f64>,
     },
-    /// Exchange symbol list loaded from REST API.
+    /// Exchange symbol list loaded from REST API — notification only.
+    ///
+    /// This used to carry the whole `Vec<SymbolInfo>` catalogue by value —
+    /// for a 4000+-symbol venue that is a deep clone of every record
+    /// INCLUDING its raw `extra: serde_json::Value` native payload, twice
+    /// (once building this event, once in every receiver's `try_recv`).
+    /// Deribit's 11 720-symbol catalogue measured a 2.7s drain on that
+    /// clone alone (`docs/mlc/research/wasm-lag-measurements-2026-09-05.md`)
+    /// — on wasm's single thread that landed inside the render tick.
+    /// Consumers that need the catalogue now pull it lazily, off the tick,
+    /// through `BackendCore::ingest_catalogues` (a budget-sliced walk over
+    /// `Station::for_each_symbol`, which never clones `extra`).
     SymbolsLoaded {
         exchange_id: ExchangeId,
-        symbols: Vec<SymbolInfo>,
+        count: usize,
     },
     /// A connector was successfully initialized.
     ConnectorReady {
@@ -881,15 +892,21 @@ impl DataBridge {
                             }
                         }
                         Ok(digdigdig3_station::Event::SymbolsLoaded { exchange, .. }) => {
-                            // Emit the MERGED snapshot across account types
-                            // cached so far (the app overwrites its per-
-                            // exchange entry on every SymbolsLoaded, so each
-                            // later emit must be a superset of the earlier).
-                            let symbols = fwd_station.symbols(exchange);
-                            if !symbols.is_empty() {
+                            // Count-only walk (`for_each_symbol`, zero-clone)
+                            // — see `LiveUpdate::SymbolsLoaded`'s doc comment
+                            // for why this must never call `station.symbols()`
+                            // (deep-clones every record's `extra` JSON). The
+                            // count reflects the MERGED catalogue across
+                            // account types cached so far (the app overwrites
+                            // its per-exchange entry on every SymbolsLoaded,
+                            // so each later emit must describe a superset of
+                            // the earlier one).
+                            let mut count = 0usize;
+                            fwd_station.for_each_symbol(exchange, |_| count += 1);
+                            if count > 0 {
                                 let _ = fwd_tx.send(LiveUpdate::SymbolsLoaded {
                                     exchange_id: exchange,
-                                    symbols,
+                                    count,
                                 });
                             }
                         }
@@ -1164,31 +1181,6 @@ impl DataBridge {
     #[doc(hidden)]
     pub fn debug_broadcast_tx(&self) -> broadcast::Sender<LiveUpdate> {
         self.tx.clone()
-    }
-
-    /// Snapshot the bridge's per-exchange symbol cache.
-    ///
-    /// Returns every exchange whose REST `exchange_info` has already resolved
-    /// during this process — i.e. every `SymbolsLoaded` event ever broadcast.
-    /// New `ChartApp` instances (notably the live-window instance created
-    /// during skeleton→live promote) use this to seed their `exchange_symbols`
-    /// map without racing against the broadcast channel: the skeleton's
-    /// receiver caught every `SymbolsLoaded` between connect and promote, but
-    /// dropping the skeleton ChartApp dropped that map with it; the cache
-    /// itself lives on the bridge and survives.
-    pub fn symbols_snapshot(&self) -> HashMap<ExchangeId, Vec<SymbolInfo>> {
-        // Phase 2B: read straight from the station's exchange_info cache
-        // (populated by Station::warmup / request_symbols) — the bridge no
-        // longer keeps its own symbol cache.
-        let hub = self.station.hub();
-        let mut out = HashMap::new();
-        for eid in hub.list_connected() {
-            let syms = self.station.symbols(eid);
-            if !syms.is_empty() {
-                out.insert(eid, syms);
-            }
-        }
-        out
     }
 
     /// Preload `wire_symbol_cache` for every symbol in `exchange_id`'s
@@ -3368,16 +3360,20 @@ impl DataBridge {
         let station = self.station.clone();
         let tx = self.tx.clone();
 
-        // Instant cache hit from the station's exchange_info cache.
-        let cached = station.symbols(exchange_id);
-        if !cached.is_empty() {
+        // Instant cache hit from the station's exchange_info cache. Counts
+        // via `for_each_symbol` (zero-clone) — never `station.symbols()`,
+        // which deep-clones every record's raw `extra` JSON (see
+        // `LiveUpdate::SymbolsLoaded`'s doc comment).
+        let mut cached_count = 0usize;
+        station.for_each_symbol(exchange_id, |_| cached_count += 1);
+        if cached_count > 0 {
             crate::dlog!(
                 "[STARTUP-WAVE bridge] request_symbols CACHE-HIT {:?} t={}ms n={}",
-                exchange_id, crate::elapsed_ms(), cached.len()
+                exchange_id, crate::elapsed_ms(), cached_count
             );
             let _ = tx.send(LiveUpdate::SymbolsLoaded {
                 exchange_id,
-                symbols: cached,
+                count: cached_count,
             });
             return;
         }
@@ -3410,8 +3406,9 @@ impl DataBridge {
         let inflight_set = self.symbols_warmup_inflight.clone();
         self.spawn_bg(async move {
             let report = station.warmup(&[exchange_id]).await;
-            let symbols = station.symbols(exchange_id);
-            if symbols.is_empty() {
+            let mut count = 0usize;
+            station.for_each_symbol(exchange_id, |_| count += 1);
+            if count == 0 {
                 // Intentionally keep the in-flight marker set — see guard
                 // comment above (prevents retry storms on broken venues).
                 let failed_msg = report
@@ -3436,7 +3433,7 @@ impl DataBridge {
                 .remove(&exchange_id);
             let _ = tx.send(LiveUpdate::SymbolsLoaded {
                 exchange_id,
-                symbols,
+                count,
             });
         });
     }

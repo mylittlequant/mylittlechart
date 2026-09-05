@@ -11748,7 +11748,7 @@ impl ChartApp {
     pub(crate) fn build_symbol_search_results(
         query: &str,
         active_watchlist: Option<&mlc_core::WatchlistList>,
-        exchange_symbols: &std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_backend_data_bridge::SymbolInfo>>,
+        exchange_symbols: &std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_backend::CatalogueSymbol>>,
     ) -> Vec<mlc_core::state::modal_state::SearchResult> {
         use mlc_core::state::modal_state::SearchResult;
         use std::collections::HashMap;
@@ -11823,7 +11823,7 @@ impl ChartApp {
 
         /// Compute the canonical key for a symbol when base+quote are non-empty.
         /// Returns `None` when either asset field is empty (no canonicalization).
-        fn canonical_key(s: &mlc_backend_data_bridge::SymbolInfo) -> Option<String> {
+        fn canonical_key(s: &mlc_backend::CatalogueSymbol) -> Option<String> {
             if s.base_asset.is_empty() || s.quote_asset.is_empty() {
                 return None;
             }
@@ -11858,7 +11858,7 @@ impl ChartApp {
                     }
                 }
 
-                let filtered: Vec<&mlc_backend_data_bridge::SymbolInfo> = symbols
+                let filtered: Vec<&mlc_backend::CatalogueSymbol> = symbols
                     .iter()
                     .filter(|s| {
                         // Composite-query account-type filter ("...:S" / "...:F").
@@ -11951,7 +11951,7 @@ impl ChartApp {
     pub(crate) fn build_demo_symbol_results(
         query: &str,
         active_watchlist: Option<&mlc_core::WatchlistList>,
-        exchange_symbols: &std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_backend_data_bridge::SymbolInfo>>,
+        exchange_symbols: &std::collections::HashMap<digdigdig3::ExchangeId, Vec<mlc_backend::CatalogueSymbol>>,
     ) -> Vec<mlc_core::state::modal_state::SearchResult> {
         Self::build_symbol_search_results(query, active_watchlist, exchange_symbols)
     }

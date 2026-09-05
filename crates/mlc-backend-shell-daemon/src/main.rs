@@ -155,7 +155,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         loop {
             interval.tick().await;
             let now_ms = wall_clock_ms();
-            let events = tick_state.core.tick_writers(now_ms);
+            let mut events = tick_state.core.tick_writers(now_ms);
+            // Budget-sliced catalogue ingestion (owner ruling 2026-09-05,
+            // wasm-lag-measurements doc) — without this, `/v1/exchanges`
+            // would never populate: `tick_writers`' `SymbolsLoaded` arm only
+            // enqueues an exchange id now, `ingest_catalogues` does the
+            // actual `SymbolInfo` → `CatalogueSymbol` conversion. No render
+            // frame to protect here, so the native (larger) budget is fine.
+            events.extend(tick_state.core.ingest_catalogues(mlc_backend::CATALOGUE_INGEST_BUDGET_NATIVE));
             for e in events {
                 let _ = tick_state.events_tx.send(e);
             }

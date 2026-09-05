@@ -302,19 +302,24 @@ impl ChartApp {
             {
                 std::thread_local! {
                     static LAST_DUMP: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
-                    static FRAME_COUNT: std::cell::Cell<u32> = std::cell::Cell::new(0);
                 }
                 let joined = dump.join(" | ");
                 LAST_DUMP.with(|cell| {
                     let mut last = cell.borrow_mut();
                     let changed = last.as_ref().map_or(true, |s| s != &joined);
-                    FRAME_COUNT.with(|f| f.set(f.get().wrapping_add(1)));
-                    let every_sec = FRAME_COUNT.with(|f| f.get() % 120 == 0);
-                    if changed || every_sec {
-                        ::web_sys::console::log_1(&format!(
-                            "[prepare-bubble-map] containers={} {}",
-                            dump.len(), joined
-                        ).into());
+                    if changed {
+                        // State-change dump only — the unconditional
+                        // "every 120 frames" heartbeat (~2 s regardless of
+                        // whether anything changed) is gone; this is on-demand
+                        // now, same DEBUG switch the web shell's `?log=debug`
+                        // maps to (bridged via `tracing_log::LogTracer` — see
+                        // mlc-app-shell-web's `start()`).
+                        if log::log_enabled!(log::Level::Debug) {
+                            ::web_sys::console::log_1(&format!(
+                                "[prepare-bubble-map] containers={} {}",
+                                dump.len(), joined
+                            ).into());
+                        }
                         *last = Some(joined);
                     }
                 });

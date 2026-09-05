@@ -915,7 +915,17 @@ impl ChartApp {
                 let chart_type = chart_type_by_chart.get(cid_scroll).copied().unwrap_or("candles");
                 {
                     static SCROLL_DIAG: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-                    if SCROLL_DIAG.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 240 == 0 {
+                    // `sglog!` itself has no runtime gate (always emits, by
+                    // design — see its doc comment in lib.rs), which is why
+                    // this fired unconditionally every 240th iteration
+                    // regardless of console log level. Gate on the same
+                    // DEBUG switch the web shell's `?log=debug` maps to
+                    // (bridged via `tracing_log::LogTracer` — see
+                    // mlc-app-shell-web's `start()`), so the heartbeat is
+                    // opt-in instead of shipping to every visitor.
+                    if log::log_enabled!(log::Level::Debug)
+                        && SCROLL_DIAG.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 240 == 0
+                    {
                         crate::sglog!(
                             "[scroll_loop] cid={:?} ct={} bid={:?} series_len={:?}",
                             cid_scroll, chart_type,

@@ -1,18 +1,23 @@
 //! `ExchangeSymbolsManager` — per-exchange symbol catalogue cache.
 //!
-//! Wraps `HashMap<ExchangeId, Vec<SymbolInfo>>` (previously a bare field on
-//! `BackendCore`). Populated asynchronously from
-//! `LiveUpdate::SymbolsLoaded` (once per exchange); read frequently by the
-//! symbol search overlay and the watchlist. Never touches `DataBubble`.
+//! Wraps `HashMap<ExchangeId, Vec<CatalogueSymbol>>` (previously a bare
+//! field on `BackendCore`, and a raw `Vec<SymbolInfo>` before the
+//! 2026-09-05 lean-catalogue cutover — see `crate::catalogue_ingest`).
+//! `LiveUpdate::SymbolsLoaded` only enqueues the exchange id;
+//! `BackendCore::ingest_catalogues` is what actually calls `set_symbols`
+//! once an exchange's catalogue finishes its budget-sliced conversion.
+//! Read frequently by the symbol search overlay and the watchlist. Never
+//! touches `DataBubble`.
 
 use std::collections::HashMap;
 
 use digdigdig3::ExchangeId;
-use mlc_backend_data_bridge::SymbolInfo;
+
+use super::catalogue_symbol::{contract_size_key, CatalogueSymbol};
 
 #[derive(Debug, Default)]
 pub struct ExchangeSymbolsManager {
-    by_exchange: HashMap<ExchangeId, Vec<SymbolInfo>>,
+    by_exchange: HashMap<ExchangeId, Vec<CatalogueSymbol>>,
 }
 
 impl ExchangeSymbolsManager {
@@ -22,12 +27,12 @@ impl ExchangeSymbolsManager {
 
     /// The whole catalogue by reference — for callers that scan across every
     /// exchange (symbol search result builder).
-    pub fn as_map(&self) -> &HashMap<ExchangeId, Vec<SymbolInfo>> {
+    pub fn as_map(&self) -> &HashMap<ExchangeId, Vec<CatalogueSymbol>> {
         &self.by_exchange
     }
 
     /// Symbols for one exchange.
-    pub fn symbols_for(&self, exchange_id: ExchangeId) -> Option<&[SymbolInfo]> {
+    pub fn symbols_for(&self, exchange_id: ExchangeId) -> Option<&[CatalogueSymbol]> {
         self.by_exchange.get(&exchange_id).map(Vec::as_slice)
     }
 
@@ -82,15 +87,18 @@ impl ExchangeSymbolsManager {
     /// every genuine print at minimum radius).
     ///
     /// The multiplier is read from the venue's own exchange-info record —
-    /// `SymbolInfo.extra` keeps it verbatim — under the key that venue uses.
-    /// The key table is per-venue on purpose: a blind search for "any field
-    /// that looks like a multiplier" would find one on venues that quote in
-    /// base units and silently rescale correct data.
+    /// [`CatalogueSymbol::contract_multiplier`], extracted from the raw
+    /// `SymbolInfo.extra` payload ONCE at ingest — under the key that venue
+    /// uses. The key table is per-venue on purpose: a blind search for "any
+    /// field that looks like a multiplier" would find one on venues that
+    /// quote in base units and silently rescale correct data.
     pub fn contract_size_for(&self, label: &str, symbol: &str, futures: bool) -> f64 {
         if !futures {
             return 1.0;
         }
-        let Some(key) = contract_size_key(label) else { return 1.0 };
+        if contract_size_key(label).is_none() {
+            return 1.0;
+        }
         let Some(syms) = self.by_exchange.iter().find(|(eid, _)| eid.as_str() == label).map(|(_, v)| v)
         else { return 1.0 };
         let req = canonical_form(symbol);
@@ -103,28 +111,22 @@ impl ExchangeSymbolsManager {
         // base+quote reads "BTC_USDTUSDT". The normalizer knows both, plus
         // KuCoin's XBT alias and its `M` suffix.
         let native = native_futures_id(label, symbol);
-        let matches_symbol = |s: &SymbolInfo| {
+        let matches_symbol = |s: &CatalogueSymbol| {
             s.symbol == symbol
                 || native.as_deref() == Some(s.symbol.as_str())
                 || (req.is_some()
                     && (canonical_form(&s.symbol) == req || canonical_form_of(s) == req))
         };
-        let multiplier_of = |s: &SymbolInfo| {
-            s.extra
-                .get(key)
-                .and_then(|v| v.as_f64().or_else(|| v.as_str().and_then(|t| t.parse().ok())))
-                .filter(|m| m.is_finite() && *m > 0.0)
-        };
-        let is_futures = |s: &SymbolInfo| {
+        let is_futures = |s: &CatalogueSymbol| {
             !matches!(s.account_type, digdigdig3::AccountType::Spot | digdigdig3::AccountType::Margin)
         };
         // Prefer a futures record, but do not require one: only a
         // derivative record carries the multiplier field at all, so a
         // catalogue that mislabels the market type still resolves.
         syms.iter()
-            .find(|s| is_futures(s) && matches_symbol(s) && multiplier_of(s).is_some())
-            .or_else(|| syms.iter().find(|s| matches_symbol(s) && multiplier_of(s).is_some()))
-            .and_then(multiplier_of)
+            .find(|s| is_futures(s) && matches_symbol(s) && s.contract_multiplier.is_some())
+            .or_else(|| syms.iter().find(|s| matches_symbol(s) && s.contract_multiplier.is_some()))
+            .and_then(|s| s.contract_multiplier)
             .unwrap_or(1.0)
     }
 
@@ -141,12 +143,12 @@ impl ExchangeSymbolsManager {
 
     /// Replace the whole catalogue for one exchange (`SymbolsLoaded` write
     /// site).
-    pub fn set_symbols(&mut self, exchange_id: ExchangeId, symbols: Vec<SymbolInfo>) {
+    pub fn set_symbols(&mut self, exchange_id: ExchangeId, symbols: Vec<CatalogueSymbol>) {
         self.by_exchange.insert(exchange_id, symbols);
     }
 
     /// Replace the whole catalogue wholesale (startup seed).
-    pub fn replace_all(&mut self, by_exchange: HashMap<ExchangeId, Vec<SymbolInfo>>) {
+    pub fn replace_all(&mut self, by_exchange: HashMap<ExchangeId, Vec<CatalogueSymbol>>) {
         self.by_exchange = by_exchange;
     }
 }
@@ -180,33 +182,10 @@ fn native_futures_id(label: &str, symbol: &str) -> Option<String> {
     .ok()
 }
 
-/// The exchange-info field a venue reports its contract multiplier under,
-/// or `None` when the venue quotes derivative sizes in base units.
-///
-/// Verified against each venue's own raw record (`SymbolInfo.extra`):
-/// Gate `quanto_multiplier` ("0.0001" for BTC_USDT), OKX `ctVal` ("0.01"
-/// for BTC-USDT-SWAP), KuCoin `multiplier` (0.001 for XBTUSDTM), HTX
-/// `contract_size`. Binance and Bybit report base units on their USDⓈ-M
-/// perps and are deliberately absent.
-///
-/// INVERSE (coin-margined) contracts are a different question — there the
-/// size is quoted in QUOTE currency and a base-unit multiplier does not
-/// apply. Nothing here subscribes them today; a caller that starts to must
-/// handle that case rather than reuse this.
-fn contract_size_key(label: &str) -> Option<&'static str> {
-    match label {
-        "gateio" => Some("quanto_multiplier"),
-        "okx" => Some("ctVal"),
-        "kucoin" => Some("multiplier"),
-        "htx" => Some("contract_size"),
-        _ => None,
-    }
-}
-
 /// Canonical `BASE+QUOTE` key (uppercase, no separator) for a catalogue
 /// entry — `None` when either asset field is empty. Mirrors `ChartApp::
 /// build_symbol_search_results`'s local `canonical_key` helper (mlc-app).
-fn canonical_form_of(s: &SymbolInfo) -> Option<String> {
+fn canonical_form_of(s: &CatalogueSymbol) -> Option<String> {
     if s.base_asset.is_empty() || s.quote_asset.is_empty() {
         return None;
     }
@@ -232,9 +211,10 @@ fn canonical_form(symbol: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use digdigdig3::SymbolInfo;
 
-    fn sym(symbol: &str, tick_size: Option<f64>) -> SymbolInfo {
-        SymbolInfo {
+    fn sym(symbol: &str, tick_size: Option<f64>) -> CatalogueSymbol {
+        CatalogueSymbol {
             symbol: symbol.to_string(),
             tick_size,
             ..Default::default()
@@ -272,7 +252,9 @@ mod tests {
     #[test]
     fn contract_size_reads_gate_quanto_multiplier() {
         let mut mgr = ExchangeSymbolsManager::new();
-        let gate_btc = SymbolInfo {
+        // Raw station record, as the venue's exchange_info connector would
+        // hand it to the bridge — `extra` carries the native payload.
+        let gate_btc_raw = SymbolInfo {
             symbol: "BTC_USDT".to_string(),
             base_asset: "BTC_USDT".to_string(),
             quote_asset: "usdt".to_string(),
@@ -280,6 +262,10 @@ mod tests {
             extra: serde_json::json!({ "name": "BTC_USDT", "quanto_multiplier": "0.0001" }),
             ..Default::default()
         };
+        // `from_symbol_info` is the ONLY place `extra` is ever read (ingest
+        // time) — proves the multiplier survives the raw → lean conversion.
+        let gate_btc = CatalogueSymbol::from_symbol_info("gateio", &gate_btc_raw);
+        assert_eq!(gate_btc.contract_multiplier, Some(0.0001));
         mgr.set_symbols(ExchangeId::GateIO, vec![gate_btc]);
 
         assert_eq!(mgr.contract_size_for("gateio", "BTCUSDT", true), 0.0001);
@@ -296,7 +282,7 @@ mod tests {
     #[test]
     fn contract_size_reads_okx_ctval() {
         let mut mgr = ExchangeSymbolsManager::new();
-        let okx_btc = SymbolInfo {
+        let okx_btc_raw = SymbolInfo {
             symbol: "BTC-USDT-SWAP".to_string(),
             base_asset: String::new(),
             quote_asset: String::new(),
@@ -304,6 +290,8 @@ mod tests {
             extra: serde_json::json!({ "instId": "BTC-USDT-SWAP", "ctVal": "0.01" }),
             ..Default::default()
         };
+        let okx_btc = CatalogueSymbol::from_symbol_info("okx", &okx_btc_raw);
+        assert_eq!(okx_btc.contract_multiplier, Some(0.01));
         mgr.set_symbols(ExchangeId::OKX, vec![okx_btc]);
 
         assert_eq!(mgr.contract_size_for("okx", "BTCUSDT", true), 0.01);
@@ -318,7 +306,7 @@ mod tests {
     #[test]
     fn tick_size_for_tolerates_dash_native_symbol() {
         let mut mgr = ExchangeSymbolsManager::new();
-        let okx_eth = SymbolInfo {
+        let okx_eth = CatalogueSymbol {
             symbol: "ETH-USDT".to_string(),
             base_asset: "ETH".to_string(),
             quote_asset: "USDT".to_string(),

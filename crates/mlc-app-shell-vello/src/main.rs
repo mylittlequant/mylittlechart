@@ -844,10 +844,13 @@ impl App<'_> {
         // arc). Seed the exchange_symbols cache once here instead of per
         // window (previously each `new_window`/`new_empty` call re-seeded
         // its own fresh core from the bridge's session-long catalogue).
+        // `seed_exchange_symbols_from_bridge` walks the station's zero-clone
+        // `for_each_symbol` directly into lean `CatalogueSymbol`s — the old
+        // `bridge.symbols_snapshot()` deep-cloned every `SymbolInfo`
+        // (including its raw `extra` JSON) for every connected exchange.
         let live_data_rt = std::sync::Arc::new(live_data_rt);
-        let exchange_symbols_seed = bridge.symbols_snapshot();
         let core = mlc_backend::BackendCore::new_with_runtime(bridge.clone(), None, live_data_rt.clone());
-        core.exchange_symbols_mut().replace_all(exchange_symbols_seed);
+        core.seed_exchange_symbols_from_bridge();
         seed_core_from_profile(&core, &profile_manager);
 
         // Start the internal Agent API server on the DataBridge's tokio runtime.
@@ -5024,7 +5027,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // to run internally (viewport/indicator/panel reactions, alert
             // checking, scroll-fetch, etc) minus the drain itself.
             let frame_time = screenshot::now_ms();
-            let events = self.core.tick_writers(frame_time);
+            let mut events = self.core.tick_writers(frame_time);
+            // Budget-sliced catalogue ingestion (owner ruling 2026-09-05,
+            // wasm-lag-measurements doc): `tick_writers`' `SymbolsLoaded` arm
+            // only enqueues; this walks the pending queue a few symbols at a
+            // time so a large catalogue (Deribit, 11k+ symbols) never lands
+            // inside one frame. Native gets a larger budget than wasm — see
+            // `CATALOGUE_INGEST_BUDGET_NATIVE`'s doc comment.
+            events.extend(self.core.ingest_catalogues(mlc_backend::CATALOGUE_INGEST_BUDGET_NATIVE));
             for pw in self.windows.values_mut() {
                 // Skip tick for minimized windows — no point updating viewport
                 // or processing trades for an invisible surface.  On restore,

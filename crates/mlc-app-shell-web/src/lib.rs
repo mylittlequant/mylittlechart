@@ -919,6 +919,17 @@ fn run_render_loop(
                 .unwrap_or(0);
             let mut st = state_clone.borrow_mut();
             st.chart.tick(now_ms);
+            // Budget-sliced catalogue ingestion (owner ruling 2026-09-05,
+            // wasm-lag-measurements doc): `tick_writers`' `SymbolsLoaded` arm
+            // (run inside `chart.tick` above) only enqueues an exchange id —
+            // this walks the pending queue a few symbols at a time so a
+            // large catalogue (Deribit, 11k+ symbols) never lands inside one
+            // frame. Native equivalent: mlc-app-shell-vello/main.rs, right
+            // after its own `tick_writers` call.
+            let catalogue_events = st.chart.core.ingest_catalogues(mlc_backend::CATALOGUE_INGEST_BUDGET_WEB);
+            if !catalogue_events.is_empty() {
+                st.chart.react_to_events(&catalogue_events, now_ms);
+            }
             frame_timer.enter(perf::Phase::TickDrains);
             // Drain queued WatchlistActions into core.watchlist_manager + bridge.
             // Native equivalent: mlc-app-shell-vello/main.rs:2191-2360 (which writes
@@ -1758,12 +1769,16 @@ fn run_render_loop(
                 );
                 // Why a multiplier resolved to 1: how many records the
                 // catalogue holds for the venue, how many are derivative
-                // records, and how many carry ANY `extra` payload at all.
-                // "0 with extra" is a loader problem, not a lookup one.
-                // Every catalogued venue, not a hardcoded three: the old
-                // fixed ["gateio","okx","kucoin"] list stayed silent about
-                // every other venue, which reads as "that venue has no
+                // records, and how many resolved a contract multiplier at
+                // ingest. "0 with mult" is a loader problem, not a lookup
+                // one. Every catalogued venue, not a hardcoded three: the
+                // old fixed ["gateio","okx","kucoin"] list stayed silent
+                // about every other venue, which reads as "that venue has no
                 // catalogue" and cost a wrong diagnosis on 2026-08-30.
+                // (Was `!s.extra.is_null()` — the lean `CatalogueSymbol`
+                // record never stores the raw `extra` JSON at all;
+                // `contract_multiplier` is the one fact ever extracted from
+                // it, done once at ingest, see `mlc-backend::CatalogueSymbol`.)
                 let cat = {
                     let syms = st.chart.core.exchange_symbols();
                     let mut labels: Vec<String> = syms.exchange_labels().collect();
@@ -1772,7 +1787,7 @@ fn run_render_loop(
                         .iter()
                         .map(|label| {
                             let label = label.as_str();
-                            let (total, fut, with_extra) = syms
+                            let (total, fut, with_mult) = syms
                                 .find_by_label(label)
                                 .and_then(|eid| syms.symbols_for(eid))
                                 .map(|v| {
@@ -1786,11 +1801,11 @@ fn run_render_loop(
                                             )
                                         })
                                         .count();
-                                    let ex = v.iter().filter(|s| !s.extra.is_null()).count();
-                                    (v.len(), fut, ex)
+                                    let mult = v.iter().filter(|s| s.contract_multiplier.is_some()).count();
+                                    (v.len(), fut, mult)
                                 })
                                 .unwrap_or((0, 0, 0));
-                            format!("{}:{}/{}f/{}x", label, total, fut, with_extra)
+                            format!("{}:{}/{}f/{}x", label, total, fut, with_mult)
                         })
                         .collect::<Vec<_>>()
                 };

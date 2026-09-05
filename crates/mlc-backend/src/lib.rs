@@ -26,6 +26,7 @@
 
 pub mod bubble;
 pub mod alert;
+pub mod catalogue_ingest;
 pub mod chart_type;
 pub mod drawing;
 pub mod indicator;
@@ -41,6 +42,7 @@ pub mod screener;
 pub mod market_counters;
 
 pub use alert::{Alerts, AlertsMut};
+pub use catalogue_ingest::{CATALOGUE_INGEST_BUDGET_NATIVE, CATALOGUE_INGEST_BUDGET_WEB};
 pub use drawing::{Drawings, DrawingsMut, SwapSymbolResult};
 pub use bubble::{Bubbles, BubblesMut};
 pub use indicator::{IndicatorFullConfig, Indicators, IndicatorsMut};
@@ -50,7 +52,7 @@ pub use preset::{Presets, PresetsMut};
 pub use template::{Templates, TemplatesMut};
 pub use user::{User, UserMut};
 pub use trading::{Trading, TradingMut};
-pub use exchange_symbols::{ExchangeSymbols, ExchangeSymbolsMut};
+pub use exchange_symbols::{CatalogueSymbol, ExchangeSymbols, ExchangeSymbolsMut};
 
 use std::sync::Arc;
 use std::collections::HashMap;
@@ -739,6 +741,15 @@ pub struct BackendCore {
     /// doctrine cutover.
     exchange_symbols: std::sync::RwLock<ExchangeSymbolsManager>,
 
+    /// Per-frame-budgeted catalogue-ingest queue (owner ruling 2026-09-05,
+    /// `docs/mlc/research/wasm-lag-measurements-2026-09-05.md`). The
+    /// `LiveUpdate::SymbolsLoaded` arm below only enqueues an exchange id
+    /// here; `BackendCore::ingest_catalogues` (called once per frame by the
+    /// shell) does the actual `SymbolInfo` → `CatalogueSymbol` conversion, a
+    /// few symbols at a time, so a large catalogue never lands inside one
+    /// render tick. See `crate::catalogue_ingest`.
+    catalogue_ingest: std::sync::Mutex<catalogue_ingest::CatalogueIngestState>,
+
     /// Order routing + paper engine. `None` when trading is disabled.
     /// Wrapped in `Mutex` because `TradingManager` has `&mut self` methods
     /// (`on_connector_ready`, `tick`, `refresh_balances`, etc) and is mutated
@@ -894,6 +905,7 @@ impl BackendCore {
             market_counters: DashMap::new(),
             pending_bubble_events: std::sync::Mutex::new(Vec::new()),
             exchange_symbols: std::sync::RwLock::new(ExchangeSymbolsManager::new()),
+            catalogue_ingest: std::sync::Mutex::new(catalogue_ingest::CatalogueIngestState::default()),
             trading: trading.map(std::sync::Mutex::new),
             preset: std::sync::RwLock::new(PresetManager::new()),
             template: std::sync::RwLock::new(TemplateManager::new()),
@@ -1850,28 +1862,17 @@ impl BackendCore {
                 }
 
                 // ── SymbolsLoaded ───────────────────────────────────────────────
-                LiveUpdate::SymbolsLoaded { exchange_id, symbols } => {
-                    let count = symbols.len();
-                    // Split attribution (owner report 2026-09-05): station
-                    // warmup delivers this per exchange/account_type, and
-                    // the only sub-step with its own log
-                    // (`prewarm_wire_symbol_cache`) measured 16.7ms while the
-                    // whole tick was 2.2s long — so this arm, not just the
-                    // prewarm call, needed its own clock.
-                    let set_symbols_t0 = web_time::Instant::now();
-                    self.exchange_symbols_mut().set_symbols(exchange_id, symbols);
-                    let set_symbols_ms = set_symbols_t0.elapsed().as_secs_f64() * 1000.0;
-                    let prewarm_t0 = web_time::Instant::now();
-                    self.bridge.prewarm_wire_symbol_cache(exchange_id);
-                    let prewarm_ms = prewarm_t0.elapsed().as_secs_f64() * 1000.0;
-                    let total_ms = set_symbols_ms + prewarm_ms;
-                    if total_ms > 50.0 {
-                        mlc_backend_data_bridge::dlog!(
-                            "[SymbolsLoaded] {:?}: {} symbols set_symbols={:.1}ms prewarm={:.1}ms total={:.1}ms",
-                            exchange_id, count, set_symbols_ms, prewarm_ms, total_ms,
-                        );
-                    }
-                    events.push(BubbleEvent::SymbolsLoaded { exchange_id, count });
+                // Notification only (owner ruling 2026-09-05, wasm-lag-
+                // measurements doc): the broadcast no longer carries the
+                // catalogue itself, so this arm just enqueues the exchange
+                // for `ingest_catalogues` — the actual `SymbolInfo` →
+                // `CatalogueSymbol` conversion, `set_symbols`, and
+                // `prewarm_wire_symbol_cache` all move there, off the render
+                // tick, budget-sliced across frames. The `BubbleEvent`
+                // reactors used to see fires from here; they now fire once
+                // `ingest_catalogues` actually finishes that exchange.
+                LiveUpdate::SymbolsLoaded { exchange_id, count: _ } => {
+                    self.enqueue_catalogue_ingest(exchange_id);
                 }
 
                 // ── Error ───────────────────────────────────────────────────────
