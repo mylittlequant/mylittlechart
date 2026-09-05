@@ -40,6 +40,10 @@ pub struct AgentState {
     /// Connector status snapshot — updated periodically.
     pub connector_snapshot: RwLock<ConnectorSnapshot>,
 
+    /// Admin-tier UI test-hook snapshot (Phase 7) — updated periodically,
+    /// same cadence as the other four above.
+    pub ui_state_snapshot: RwLock<UiStateSnapshot>,
+
     /// Command queue — HTTP handlers push, render thread drains.
     pub command_queue: Mutex<Vec<AgentCommand>>,
 
@@ -81,6 +85,7 @@ impl AgentState {
             primitive_catalog: RwLock::new(PrimitiveCatalogSnapshot::default()),
             watchlist_snapshot: RwLock::new(WatchlistSnapshot::default()),
             connector_snapshot: RwLock::new(ConnectorSnapshot::default()),
+            ui_state_snapshot: RwLock::new(UiStateSnapshot::default()),
             command_queue: Mutex::new(Vec::new()),
             start_time: web_time::Instant::now(),
             last_agent_access_ms: AtomicU64::new(0),
@@ -410,6 +415,34 @@ pub enum AgentCommand {
     DeleteKey {
         label: String,
     },
+
+    // -- UI test hooks (Phase 7 — admin-tier automation, owner ruling
+    // 2026-09-05: the native control plane on `:17420` is the sanctioned
+    // way to drive the native app without a mouse) --
+    /// Dispatch a click as if it landed on the widget id `hit_id` — the
+    /// same entry point `ChartApp::dispatch_panel_click` mouse clicks reach
+    /// (toolbar ids and panel/overlay ids both flow through it). An id the
+    /// app's own match does not recognise is already a silent no-op there,
+    /// so this is applied unconditionally and the HTTP handler always
+    /// answers `202` with `{"accepted": true}`.
+    UiDispatch {
+        window_id: String,
+        hit_id: String,
+    },
+    /// Set a `TextFieldStore` field's text directly — the same effect as
+    /// typing into it. `field` must be one of `mlc_app::text_input::
+    /// known_field_ids()`; the render thread validates it (the only place
+    /// that list is reachable from — this crate never depends on
+    /// `ChartApp`) and answers through `response_tx` so the HTTP handler
+    /// can return `400` for an unknown field, mirroring how
+    /// `RequestScreenshot` above gets a real answer back from the render
+    /// thread instead of firing and forgetting.
+    UiSetText {
+        window_id: String,
+        field: String,
+        text: String,
+        response_tx: tokio::sync::oneshot::Sender<Result<(), String>>,
+    },
 }
 
 /// Style fields for a drawing primitive (used in commands and responses).
@@ -614,4 +647,108 @@ pub struct ConnectorEntry {
     pub ws_active: bool,
     /// Number of symbols tracked by this connector.
     pub symbol_count: usize,
+}
+
+// ===========================================================================
+// UI test-hook snapshot types (Phase 7 — admin-tier automation)
+// ===========================================================================
+
+/// Point-in-time snapshot of admin-tier UI test-hook state, one entry per
+/// open window. Built by `mlc-app-agent-api`'s `update_ui_state_snapshot`
+/// and served by `GET /api/v1/windows/:window_id/ui/state` (owner ruling
+/// 2026-09-05: the native control plane on `:17420` is the sanctioned way
+/// to drive/inspect the native app without a mouse).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UiStateSnapshot {
+    pub windows: Vec<WindowUiState>,
+}
+
+/// One window's admin-tier UI state.
+#[derive(Debug, Clone, Serialize)]
+pub struct WindowUiState {
+    pub window_id: String,
+    pub account: UiAccountState,
+    pub overlay: UiOverlayState,
+    /// `mlc_app::ChartApp::panel_to_str` spelling of `SidebarState::
+    /// right_panel`; `None` when no right-sidebar panel is open.
+    pub right_panel: Option<String>,
+    pub events: UiEventsState,
+    /// Events still waiting for a toast paint — a count, not a drain (the
+    /// snapshot must not consume the queue just by being read).
+    pub toasts_pending: usize,
+    /// `"clipboard"` / `"download_file"` / `"share_link"` — the same
+    /// `serde(rename_all = "snake_case")` spelling
+    /// `mlc_core::state::toolbar_state::ScreenshotDestination` already
+    /// serializes to in a saved profile.
+    pub screenshot_destination: String,
+}
+
+/// Signed-in / paid-tier facts, read from `UserSettingsState` +
+/// `CloudLoginState` + `CloudOverlayState` (cloud builds only for the last
+/// two — both default `false` in a non-cloud build).
+#[derive(Debug, Clone, Serialize)]
+pub struct UiAccountState {
+    pub signed_in: bool,
+    /// The account's current label (nick if set, else the OAuth display
+    /// name) — `None` when signed out.
+    pub label: Option<String>,
+    pub is_paid: bool,
+    pub forum_entitled: bool,
+}
+
+/// News/Download overlay state (cloud builds only — every field is the
+/// non-cloud default in a build without the `cloud` feature).
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UiOverlayState {
+    pub open: bool,
+    /// `"news"` / `"download"` — `None` in a non-cloud build.
+    pub kind: Option<String>,
+    /// `"posts"` / `"patch_notes"` / `"forum"` — `None` in a non-cloud
+    /// build. Same spelling `NewsTab::id()` (and the `cloud_overlay:tab:*`
+    /// widget ids) already use.
+    pub news_tab: Option<String>,
+    pub forum: UiForumState,
+}
+
+/// Forum tab sub-state — paid-only communication board.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct UiForumState {
+    /// `"list"` / `"thread"` / `"compose"` — `None` in a non-cloud build.
+    pub view: Option<String>,
+    /// Threads currently loaded in the thread-list fetch (`ForumListState::
+    /// Loaded`); `0` while empty, loading, or errored.
+    pub threads: usize,
+    /// The open thread's id, once loaded — `None` while loading or when
+    /// not in the thread view.
+    pub current_thread_id: Option<i64>,
+    /// The most relevant refusal currently showing: the open thread's load
+    /// error, the reply error, the compose error, or (failing all of
+    /// those) the thread-list fetch error — whichever surface actually has
+    /// one right now.
+    pub last_error: Option<String>,
+}
+
+/// System event log summary (`ChartApp::system_events`) — sign-in/tier/
+/// share/nick/sync/update/alert/memory facts, newest-first.
+#[derive(Debug, Clone, Serialize)]
+pub struct UiEventsState {
+    pub unread: usize,
+    pub total: usize,
+    /// Up to 5 newest events.
+    pub last: Vec<UiEventEntry>,
+}
+
+/// One system event, as shown in the Events panel.
+#[derive(Debug, Clone, Serialize)]
+pub struct UiEventEntry {
+    pub id: u64,
+    /// `Debug` spelling of `mlc_core::SystemEventKind` (`"Account"`,
+    /// `"Tier"`, `"Share"`, `"Nick"`, `"Sync"`, `"Update"`, `"Alert"`,
+    /// `"Memory"`, `"Info"`) — the same spelling the Events panel's own row
+    /// renderer already prints (`mlc-app-sidebar-content/src/render.rs`'s
+    /// `kind_label`).
+    pub kind: String,
+    pub title: String,
+    pub at_ms: i64,
+    pub read: bool,
 }

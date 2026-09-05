@@ -221,3 +221,56 @@ pub const PARAM_FAVORITE_INPUT: &str = "param_favorite_input";
 /// validation grammar — any text is a valid substring query, unlike
 /// `TF_FAVORITE_INPUT`'s `Timeframe::parse` gate).
 pub const SYMBOL_QUICK_SEARCH: &str = "symbol_quick_search";
+
+/// Every fixed-id `TextFieldStore` field declared above, for validating an
+/// admin-tier `AgentCommand::UiSetText` field id (owner ruling 2026-09-05:
+/// the native control plane on `:17420` may set any of these directly, the
+/// same effect as typing into them). Deliberately excludes
+/// [`DOM_DEPTH_PCT_PREFIX`], which is a prefix a per-panel id is appended
+/// to, not a field id on its own.
+pub fn known_field_ids() -> &'static [&'static str] {
+    &[
+        HEX_COLOR,
+        AGENT_PTY,
+        AGENT_CHAT,
+        BAR_MODE_PARAM,
+        WATERMARK_TEXT,
+        SYMBOL_SEARCH,
+        INDICATOR_SEARCH,
+        COMPARE_SEARCH,
+        CHART_BROWSER_SEARCH,
+        WATCHLIST_SEARCH,
+        WATCHLIST_GROUP_NAME,
+        PRESET_NAME_INPUT,
+        PRIMITIVE_SETTINGS_TEMPLATE_NAME,
+        INDICATOR_SETTINGS_TEMPLATE_NAME,
+        COMPARE_SETTINGS_TEMPLATE_NAME,
+        CHART_SETTINGS_TEMPLATE_NAME,
+        PRIMITIVE_SETTINGS_FIELD,
+        INDICATOR_SETTINGS_FIELD,
+        CHART_SETTINGS_FIELD,
+        COMPARE_SETTINGS_FIELD,
+        PRIM_INLINE_TEXT,
+        CHROME_TAB_RENAME,
+        NEW_PROFILE_NAME,
+        PROFILE_RENAME,
+        NEW_PASSPHRASE,
+        CONFIRM_PASSPHRASE,
+        RECOVERY_KEY,
+        ACCOUNT_NICK,
+        ALERT_TG_TOKEN,
+        REDEEM_CODE,
+        FORUM_TITLE,
+        FORUM_BODY,
+        FORUM_REPLY,
+        CRED_WEBHOOK_URL,
+        CRED_ADD_EXCHANGE,
+        CRED_ADD_LABEL,
+        CRED_ADD_API_KEY,
+        CRED_ADD_API_SECRET,
+        CRED_ADD_PASSPHRASE,
+        TF_FAVORITE_INPUT,
+        PARAM_FAVORITE_INPUT,
+        SYMBOL_QUICK_SEARCH,
+    ]
+}

@@ -74,6 +74,7 @@ cloud = [
     "mlc-app/cloud",
     "mlc-app-layout/cloud",
     "mlc-app-input-shell/cloud",
+    "mlc-app-agent-api/cloud",
 ]
 
 [lints]

@@ -160,6 +160,14 @@ impl SystemEventLog {
         self.events.iter().rev()
     }
 
+    /// Count of events still waiting for a toast paint, without draining
+    /// them — the read-only counterpart to [`Self::take_pending_toasts`],
+    /// for inspection surfaces (e.g. the admin-tier `GET .../ui/state` test
+    /// hook) that must not consume the queue just by looking at it.
+    pub fn pending_toast_count(&self) -> usize {
+        self.events.iter().filter(|e| e.toast_pending).count()
+    }
+
     /// One-shot drain of every event still waiting for a toast paint,
     /// oldest first. A second call — this frame or any later one — never
     /// returns an event already drained once, even if it is still unread.

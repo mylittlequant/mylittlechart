@@ -9,6 +9,7 @@ name = "mlc_app_agent_api"
 
 [dependencies]
 mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }
+mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-backend-shell-http = { path = "../mlc-backend-shell-http", package = "mylittlechart-backend-shell-http" }
 mlc-backend-indicator-engine = { path = "../mlc-backend-indicator-engine", package = "mylittlechart-backend-indicator-engine" }
@@ -17,6 +18,15 @@ mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "myli
 uzor = "=1.5.1"
 tokio = { version = "1", features = ["sync"] }
 serde_json = "1"
+
+[features]
+default = []
+# Forwarded by whichever shell wants the cloud-only slice of
+# `update_ui_state_snapshot` (account/overlay/forum) compiled in — mirrors
+# `mlc-app-shell-vello`'s own `cloud` feature exactly, same reasoning as
+# that crate's Cargo.toml doc: an opt-in flag nothing forwards is a switch
+# that silently strips the code from every shipped binary.
+cloud = ["mlc-app/cloud", "mlc-app-layout/cloud"]
 
 [lints]
 workspace = true

@@ -14,7 +14,11 @@ use mlc_backend_shell_http::state::{
     IndicatorSnapshot, IndicatorInstanceSnapshot, IndicatorOutputSnapshot,
     WatchlistSnapshot, WatchlistEntry, WatchlistItemEntry,
     ConnectorSnapshot, ConnectorEntry,
+    UiStateSnapshot, WindowUiState, UiAccountState, UiOverlayState,
+    UiEventsState, UiEventEntry,
 };
+#[cfg(feature = "cloud")]
+use mlc_backend_shell_http::state::UiForumState;
 use mlc_backend_indicator_engine::IndicatorParamValue;
 
 use crate::host::AgentHost;
@@ -320,5 +324,127 @@ pub fn update_connector_snapshot(agent_state: &AgentState) {
 
     if let Ok(mut snap) = agent_state.connector_snapshot.write() {
         *snap = ConnectorSnapshot { connectors };
+    }
+}
+
+/// Build the admin-tier UI test-hook snapshot (Phase 7 — automation, owner
+/// ruling 2026-09-05: the native control plane on `:17420` is the
+/// sanctioned way to drive/inspect the native app without a mouse) and
+/// store it on `agent_state`.
+pub fn update_ui_state_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState) {
+    let mut snap = UiStateSnapshot::default();
+
+    for w in host.windows() {
+        let chart = w.chart;
+        let panel_app = &chart.panel_app;
+
+        let signed_in = panel_app.user_settings_state.account_signed_in;
+        let label = if panel_app.user_settings_state.account_label.is_empty() {
+            None
+        } else {
+            Some(panel_app.user_settings_state.account_label.clone())
+        };
+        #[cfg(feature = "cloud")]
+        let (is_paid, forum_entitled) = (
+            panel_app.cloud_login_state.is_paid,
+            panel_app.cloud_overlay_state.forum_entitled,
+        );
+        #[cfg(not(feature = "cloud"))]
+        let (is_paid, forum_entitled) = (false, false);
+
+        let account = UiAccountState { signed_in, label, is_paid, forum_entitled };
+
+        #[cfg(feature = "cloud")]
+        let overlay = {
+            use mlc_app_layout::ui::modal_settings::{CloudOverlayKind, ForumListState, ForumSubView};
+
+            let cloud_overlay = &panel_app.cloud_overlay_state;
+
+            let kind = Some(match cloud_overlay.kind {
+                CloudOverlayKind::News => "news",
+                CloudOverlayKind::Download => "download",
+            }.to_string());
+            let news_tab = Some(cloud_overlay.news_tab.id().to_string());
+
+            let threads = match &cloud_overlay.forum_list {
+                ForumListState::Loaded { threads, .. } => threads.len(),
+                _ => 0,
+            };
+            let list_error = match &cloud_overlay.forum_list {
+                ForumListState::Error { message } => Some(message.clone()),
+                _ => None,
+            };
+
+            // The view-specific error (open thread's load/reply refusal,
+            // or the compose form's refusal) is the more relevant signal
+            // for whoever is driving this window; the thread-list fetch
+            // error is the fallback when no view is showing one of its own.
+            let (view, current_thread_id, view_error) = match &cloud_overlay.forum_view {
+                ForumSubView::List => (Some("list".to_string()), None, None),
+                ForumSubView::Thread { thread, error, .. } => (
+                    Some("thread".to_string()),
+                    thread.as_ref().map(|t| t.id),
+                    error.clone(),
+                ),
+                ForumSubView::Compose { error, .. } => {
+                    (Some("compose".to_string()), None, error.clone())
+                }
+            };
+
+            UiOverlayState {
+                open: cloud_overlay.is_open,
+                kind,
+                news_tab,
+                forum: UiForumState {
+                    view,
+                    threads,
+                    current_thread_id,
+                    last_error: view_error.or(list_error),
+                },
+            }
+        };
+        #[cfg(not(feature = "cloud"))]
+        let overlay = UiOverlayState::default();
+
+        let right_panel = mlc_app::ChartApp::panel_to_str(chart.sidebar_state.right_panel);
+
+        let last: Vec<UiEventEntry> = chart
+            .system_events()
+            .iter_newest_first()
+            .take(5)
+            .map(|ev| UiEventEntry {
+                id: ev.id,
+                kind: format!("{:?}", ev.kind),
+                title: ev.title.clone(),
+                at_ms: ev.at_ms,
+                read: ev.read,
+            })
+            .collect();
+
+        let events = UiEventsState {
+            unread: chart.unread_count(),
+            total: chart.system_events().events.len(),
+            last,
+        };
+
+        let screenshot_destination = match panel_app.toolbar_state.screenshot_destination {
+            mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard => "clipboard",
+            mlc_core::state::toolbar_state::ScreenshotDestination::DownloadFile => "download_file",
+            mlc_core::state::toolbar_state::ScreenshotDestination::ShareLink => "share_link",
+        }.to_string();
+
+        snap.windows.push(WindowUiState {
+            window_id: w.window_id.to_string(),
+            account,
+            overlay,
+            right_panel,
+            events,
+            toasts_pending: chart.pending_toast_count(),
+            screenshot_destination,
+        });
+    }
+
+    if let Ok(mut s) = agent_state.ui_state_snapshot.write() {
+        *s = snap;
     }
 }

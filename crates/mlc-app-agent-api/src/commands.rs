@@ -320,6 +320,38 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
             AgentCommand::DeleteKey { label } => {
                 eprintln!("[AgentCommand] DeleteKey ignored (auth removed): label={}", label);
             }
+
+            // ── UI test hooks (Phase 7 — admin-tier automation) ────────
+            AgentCommand::UiDispatch { window_id, hit_id } => {
+                let mut windows = host.windows_mut();
+                let Some(w) = windows.iter_mut().find(|w| w.window_id == window_id) else {
+                    eprintln!("[AgentCommand] UiDispatch: window not found: {}", window_id);
+                    continue;
+                };
+                // (0.0, 0.0): no real click position — see
+                // `ChartApp::dispatch_panel_click`'s own doc comment for the
+                // precedent (`clock_popup_state.toggle(0.0, 0.0)`).
+                w.chart.dispatch_panel_click(&hit_id, 0.0, 0.0);
+                eprintln!("[AgentCommand] UiDispatch: window={}, hit_id={}", window_id, hit_id);
+            }
+
+            AgentCommand::UiSetText { window_id, field, text, response_tx } => {
+                if !mlc_app::text_input::known_field_ids().contains(&field.as_str()) {
+                    eprintln!("[AgentCommand] UiSetText: unknown field id: {}", field);
+                    let _ = response_tx.send(Err(format!("unknown field id: {}", field)));
+                    continue;
+                }
+                let mut windows = host.windows_mut();
+                let Some(w) = windows.iter_mut().find(|w| w.window_id == window_id) else {
+                    eprintln!("[AgentCommand] UiSetText: window not found: {}", window_id);
+                    let _ = response_tx.send(Err(format!("window not found: {}", window_id)));
+                    continue;
+                };
+                let field_wid = uzor::WidgetId::from(field.as_str());
+                w.chart.input_coordinator.borrow_mut().text_fields_mut().set_text(&field_wid, &text);
+                eprintln!("[AgentCommand] UiSetText: window={}, field={}", window_id, field);
+                let _ = response_tx.send(Ok(()));
+            }
         }
     }
 }

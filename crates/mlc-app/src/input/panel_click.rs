@@ -274,7 +274,17 @@ impl ChartApp {
     /// the toolbar state's handler methods.  Modal widget clicks are logged
     /// but not fully wired — modal input routing would require a handle_input()
     /// on ChartPanelApp which does not exist at this checkpoint.
-    pub(crate) fn dispatch_panel_click(&mut self, widget_id: &str, x: f64, y: f64) {
+    ///
+    /// `pub` (not `pub(crate)`) since `mlc-app-agent-api`'s `AgentCommand::
+    /// UiDispatch` (admin-tier UI test hook, owner ruling 2026-09-05) reuses
+    /// this exact entry point to replay a click by widget id without a real
+    /// mouse — both toolbar ids and panel/overlay ids flow through it, and
+    /// an id the match below does not recognise is already a silent no-op
+    /// (see the `unhandled widget click` fallthrough), so it is safe to call
+    /// with an id an agent made up.  `x`/`y` are the real click position for
+    /// genuine mouse input; agent dispatch passes `(0.0, 0.0)`, the same
+    /// no-real-position sentinel `clock_popup_state.toggle` already uses.
+    pub fn dispatch_panel_click(&mut self, widget_id: &str, x: f64, y: f64) {
         // Standalone panel-settings surface (overlay gear, 2026-07-28) is
         // transient — any click outside it (and not on a gear that would
         // reopen it) dismisses it; the click then proceeds normally.

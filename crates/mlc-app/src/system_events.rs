@@ -44,6 +44,12 @@ impl ChartApp {
         self.system_events.unread_count()
     }
 
+    /// Number of events still waiting for a toast paint — read-only, does
+    /// not drain (see [`mlc_core::SystemEventLog::pending_toast_count`]).
+    pub fn pending_toast_count(&self) -> usize {
+        self.system_events.pending_toast_count()
+    }
+
     /// Mark every event read (panel's "mark all read" action) and persist —
     /// same dirty-flag pattern every other sidebar-state mutation uses.
     pub fn mark_all_system_events_read(&mut self) {

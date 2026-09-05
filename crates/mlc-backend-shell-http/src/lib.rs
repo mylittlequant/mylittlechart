@@ -58,6 +58,7 @@ pub fn start_server(
         .merge(routes::catalog::routes())
         .merge(routes::watchlists::routes())
         .merge(routes::connectors_status::routes())
+        .merge(routes::ui::routes())
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             track_access,

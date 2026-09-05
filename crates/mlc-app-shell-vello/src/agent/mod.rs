@@ -62,4 +62,8 @@ impl App<'_> {
     pub(crate) fn update_connector_snapshot(&self, agent_state: &AgentState) {
         snapshots::update_connector_snapshot(agent_state);
     }
+
+    pub(crate) fn update_ui_state_snapshot(&self, agent_state: &AgentState) {
+        snapshots::update_ui_state_snapshot(self, agent_state);
+    }
 }

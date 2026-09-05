@@ -5947,11 +5947,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // round-robin order so a single frame never pays for all four clones.
             if let Some(agent_state) = self.agent_state.clone() {
                 if agent_state.accessed_within(std::time::Duration::from_secs(5)) {
-                    match self.agent_snapshot_phase % 4 {
+                    match self.agent_snapshot_phase % 5 {
                         0 => self.update_indicator_snapshot(&agent_state),
                         1 => self.update_terminal_snapshot(&agent_state),
                         2 => self.update_watchlist_snapshot(&agent_state),
-                        _ => self.update_connector_snapshot(&agent_state),
+                        3 => self.update_connector_snapshot(&agent_state),
+                        _ => self.update_ui_state_snapshot(&agent_state),
                     }
                     self.agent_snapshot_phase = self.agent_snapshot_phase.wrapping_add(1);
                 }
