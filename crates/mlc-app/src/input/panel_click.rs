@@ -4044,6 +4044,25 @@ impl ChartApp {
                     return;
                 }
 
+                // Screenshot-destination ShareLink refusal (same-frame
+                // gating arc, 2026-09-06): the dropdown row is already
+                // hidden while signed out (`chart_toolbar_find_dropdown_items`),
+                // but a stale/already-open dropdown or the Agent API's
+                // `ui/dispatch` (`dropdown:screenshot:shot_share_link`) can
+                // still reach this generic fallback with no row ever having
+                // been drawn — same refusal style as `share_chart` above.
+                if dropdown_id == "screenshot"
+                    && item_id == "shot_share_link"
+                    && !self.panel_app.user_settings_state.account_signed_in
+                {
+                    eprintln!("[ChartApp] shot_share_link refused: account_signed_in=false");
+                    #[cfg(feature = "cloud")]
+                    {
+                        self.panel_app.cloud_login_state.open();
+                    }
+                    return;
+                }
+
                 let dropdown_id = dropdown_id.to_string();
                 let item_id = item_id.to_string();
 

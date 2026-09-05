@@ -3609,12 +3609,19 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     .cmd_tx
                     .send(mlc_updater::UpdaterCommand::Logout);
                 use mlc_app_layout::ui::modal_settings::{CloudLoginPhase, RedeemStatus};
+                use mlc_core::state::toolbar_state::ScreenshotDestination;
                 for pw in self.windows.values_mut() {
                     let st = &mut pw.chart.panel_app.cloud_login_state;
                     st.phase = CloudLoginPhase::ChooseProvider;
                     st.redeem_status = RedeemStatus::Idle;
                     st.is_paid = false;
                     st.paid_until = None;
+                    // Same-frame gating (owner ruling 2026-09-06): a
+                    // ShareLink pick made while signed in must not survive
+                    // sign-out and keep firing uploads afterward.
+                    if pw.chart.panel_app.toolbar_state.screenshot_destination == ScreenshotDestination::ShareLink {
+                        pw.chart.panel_app.toolbar_state.screenshot_destination = ScreenshotDestination::Clipboard;
+                    }
                     pw.chart_dirty = true;
                     pw.overlay_dirty = true;
                     pw.window.request_redraw();

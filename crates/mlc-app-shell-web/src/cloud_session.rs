@@ -914,6 +914,15 @@ impl CloudSession {
                         p.domain.sync_level = "local".to_string();
                     }
                     chart.profile_dirty = true;
+                    // Same-frame gating (owner ruling 2026-09-06): a
+                    // ShareLink pick made while signed in must not survive
+                    // sign-out and keep firing uploads afterward.
+                    if chart.panel_app.toolbar_state.screenshot_destination
+                        == mlc_core::state::toolbar_state::ScreenshotDestination::ShareLink
+                    {
+                        chart.panel_app.toolbar_state.screenshot_destination =
+                            mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard;
+                    }
                     st.phase = CloudLoginPhase::RequestCode;
                     // `st`'s last use above ends its borrow before this
                     // method call, same reordering as the sign-in arm.
