@@ -97,7 +97,26 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
                     }
                 }
                 if destination == ScreenshotDestination::ShareLink {
-                    eprintln!("[share] share-link upload lands in a later wave");
+                    // The clipboard already holds the pixels (the
+                    // `Clipboard | ShareLink` match above) — this is the
+                    // upload half: encode the same crop as PNG bytes and
+                    // hand them to `about_to_wait`, which owns
+                    // `UpdaterHandle` and sends `UpdaterCommand::
+                    // ShareScreenshot`. The clipboard is overwritten with
+                    // the public URL once that upload succeeds (see
+                    // `share_rx`'s apply block there).
+                    let title = pw
+                        .chart
+                        .core
+                        .presets()
+                        .get(&pw.chart.panel_app.active_preset_id)
+                        .map(|p| p.name.clone())
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| "chart".to_string());
+                    match screenshot::encode_png(&pixels, img_width, img_height) {
+                        Some(png_bytes) => pw.pending_share_screenshot = Some((title, png_bytes)),
+                        None => eprintln!("[share] screenshot PNG encoding failed"),
+                    }
                 }
             }
             None => eprintln!("[Screenshot] Capture failed"),
@@ -316,7 +335,26 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
                     }
                 }
                 if destination == ScreenshotDestination::ShareLink {
-                    eprintln!("[share] share-link upload lands in a later wave");
+                    // The clipboard already holds the pixels (the
+                    // `Clipboard | ShareLink` match above) — this is the
+                    // upload half: encode the same crop as PNG bytes and
+                    // hand them to `about_to_wait`, which owns
+                    // `UpdaterHandle` and sends `UpdaterCommand::
+                    // ShareScreenshot`. The clipboard is overwritten with
+                    // the public URL once that upload succeeds (see
+                    // `share_rx`'s apply block there).
+                    let title = pw
+                        .chart
+                        .core
+                        .presets()
+                        .get(&pw.chart.panel_app.active_preset_id)
+                        .map(|p| p.name.clone())
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| "chart".to_string());
+                    match screenshot::encode_png(&pixels, img_width, img_height) {
+                        Some(png_bytes) => pw.pending_share_screenshot = Some((title, png_bytes)),
+                        None => eprintln!("[share] screenshot PNG encoding failed"),
+                    }
                 }
             }
             None => eprintln!("[Screenshot] Capture failed"),

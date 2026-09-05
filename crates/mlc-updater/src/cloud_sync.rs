@@ -1535,7 +1535,11 @@ pub async fn do_zt_blob_push(
 ///
 /// Same stripping applied to compare-overlay series bars and to windows
 /// nested inside `sync_groups`.
-fn strip_preset_for_sync(raw_json: &str) -> String {
+///
+/// `pub` (not module-private) so `mlc-app-shell-vello`'s live-share drain can
+/// run the same belt-and-braces pass over the active preset before freezing
+/// it into a public link — see that call site's own doc for why.
+pub fn strip_preset_for_sync(raw_json: &str) -> String {
     let Ok(mut val) = serde_json::from_str::<serde_json::Value>(raw_json) else {
         return raw_json.to_string();
     };

@@ -183,6 +183,12 @@ struct PerWindowState {
     /// Accumulated by [`drain_agent_commands`] and processed at the end of
     /// each render pass, after the GPU frame has been submitted.
     pending_agent_screenshots: Vec<(u64, tokio::sync::oneshot::Sender<Result<mlc_backend_shell_http::state::ScreenshotData, String>>)>,
+    /// A `ScreenshotDestination::ShareLink` capture's PNG bytes plus the
+    /// title to upload it under, set by `gpu_submit`'s capture branch (which
+    /// has no `UpdaterHandle` — it runs on the GPU render thread/from a
+    /// per-window borrow, not `App`). Drained once per frame in `about_to_
+    /// wait`, which is where `self.updater_handle` is reachable.
+    pending_share_screenshot: Option<(String, Vec<u8>)>,
     modifiers: winit::keyboard::ModifiersState,
     drawing_capture: bool,
     // Chrome
@@ -1690,6 +1696,7 @@ impl App<'_> {
             screenshot_active_prev: false,
             unread_events_prev: false,
             pending_agent_screenshots: Vec::new(),
+            pending_share_screenshot: None,
             modifiers: winit::keyboard::ModifiersState::default(),
             drawing_capture: false,
             chrome_state: chrome::ChromeState::new("chart-app-vello"),
@@ -5279,6 +5286,41 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     _ => {}
                 }
             }
+            // Chart-share result → clipboard + system event. Edge-triggered
+            // off `share_rx` same as `redeem_rx`/`nick_rx` above. Mirrors
+            // `mlc-app-shell-web::cloud_session`'s own "── Chart-share
+            // result → system event" block: on success the URL goes to the
+            // clipboard (there: `crate::clipboard_write_text`; here:
+            // `arboard`, the same crate the clipboard-destination
+            // screenshot path already uses) and a toast names the link; on
+            // failure only the toast fires. No dedicated UI slot exists for
+            // this on either shell (there is no `ShareStatus` type) — the
+            // system-event log is the whole feedback surface.
+            if self.updater_handle.share_rx.has_changed().unwrap_or(false) {
+                let outcome = self.updater_handle.share_rx.borrow_and_update().clone();
+                match outcome {
+                    mlc_updater::ShareState::Created { url } => {
+                        match arboard::Clipboard::new() {
+                            Ok(mut cb) => {
+                                if let Err(e) = cb.set_text(&url) {
+                                    eprintln!("[share] clipboard copy failed: {}", e);
+                                }
+                            }
+                            Err(e) => eprintln!("[share] clipboard unavailable: {}", e),
+                        }
+                        let body = format!("Link copied to clipboard: {url}");
+                        if let Some(pw) = self.system_event_window_mut() {
+                            pw.chart.push_system_event(mlc_core::SystemEventKind::Share, "Chart shared", body, true);
+                        }
+                    }
+                    mlc_updater::ShareState::Failed { message } => {
+                        if let Some(pw) = self.system_event_window_mut() {
+                            pw.chart.push_system_event(mlc_core::SystemEventKind::Share, "Share failed", message, true);
+                        }
+                    }
+                    mlc_updater::ShareState::Idle | mlc_updater::ShareState::Working => {}
+                }
+            }
             // Forum board state — edge-triggered same as `redeem_rx`/
             // `nick_rx` above, held as the raw `mlc_updater::ForumState`
             // (not mapped into a UI shape here) because interpreting it
@@ -5865,12 +5907,50 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
 
             // Chart-sharing arc: the toolbar "share_chart" button sets this
-            // via `ChartOutEvent::ShareLiveChart`. The upload lives on the
-            // wasm shell (web is the share surface); native needs a new
-            // authed POST in mlc-updater first. Drain + log so the flag
-            // never sticks set.
+            // via `ChartOutEvent::ShareLiveChart`. Mirrors `mlc-app-shell-
+            // web`'s own drain (`crates/mlc-app-shell-web/src/lib.rs:2090`)
+            // — the registry preset is the restorable skeleton already
+            // (`bars` is `skip_serializing`), and `strip_preset_for_sync`
+            // runs over the serialized JSON anyway as the same belt-and-
+            // braces the sync path applies to on-disk presets that still
+            // carry `bars` from before that field existed. The upload
+            // itself, and the clipboard write on success, happen in the
+            // `share_rx` apply block below (a request here is fire-and-
+            // forget from this call site's point of view).
             if pw.chart.drain_pending_share_live() {
-                eprintln!("[share] live share requested but native upload is not wired yet (wasm-only for now)");
+                let id = pw.chart.panel_app.active_preset_id.clone();
+                match self.core.presets().get(&id) {
+                    Some(preset) => {
+                        let title = if preset.name.is_empty() { "chart".to_string() } else { preset.name.clone() };
+                        match serde_json::to_string(preset) {
+                            Ok(raw) => {
+                                let stripped = mlc_updater::cloud_sync::strip_preset_for_sync(&raw);
+                                match serde_json::from_str::<serde_json::Value>(&stripped) {
+                                    Ok(preset_json) => {
+                                        let _ = self.updater_handle.cmd_tx.send(
+                                            mlc_updater::UpdaterCommand::ShareLive { title, preset_json },
+                                        );
+                                    }
+                                    Err(e) => eprintln!("[share] stripped preset failed to re-parse: {}", e),
+                                }
+                            }
+                            Err(e) => eprintln!("[share] preset serialize failed: {}", e),
+                        }
+                    }
+                    None => eprintln!("[share] live share requested but no active preset"),
+                }
+            }
+
+            // Chart-sharing arc, screenshot leg: `gpu_submit`'s
+            // `ScreenshotDestination::ShareLink` capture branch has no
+            // `UpdaterHandle` (it runs off a bare `&mut PerWindowState`),
+            // so it stages the PNG bytes here instead of sending the
+            // command itself.
+            if let Some((title, png)) = pw.pending_share_screenshot.take() {
+                let _ = self
+                    .updater_handle
+                    .cmd_tx
+                    .send(mlc_updater::UpdaterCommand::ShareScreenshot { title, png });
             }
 
             // Tooltip tick — fires when cursor is stationary (no CursorMoved events)

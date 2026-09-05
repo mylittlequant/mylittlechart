@@ -21,9 +21,10 @@ pub mod entitlements;
 pub mod redeem;
 pub mod nick;
 pub mod forum;
+pub mod share;
 pub mod auth_probe;
 
-pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState, NickState, ForumCommand, ForumState};
+pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState, NickState, ForumCommand, ForumState, ShareState};
 pub use forum::{ForumThreadSummary, ForumThread, ForumReply};
 
 /// Format current time as `HH:MM:SS` for log lines.
@@ -206,6 +207,11 @@ pub fn start(
     // replaced wholesale like `redeem_tx`/`nick_tx`).
     let (forum_tx, forum_rx) = watch::channel(state::ForumState::default());
 
+    // Channel for the outcome of the most recent share-create request
+    // (live or screenshot) — starts Idle, republished on every
+    // `ShareLive`/`ShareScreenshot` command.
+    let (share_tx, share_rx) = watch::channel(state::ShareState::Idle);
+
     // Channel for cloud sync status — starts Idle, updated by the updater loop.
     let (sync_status_tx, sync_status_rx) = watch::channel(state::SyncStatus::Idle);
 
@@ -223,11 +229,12 @@ pub fn start(
         redeem_rx,
         nick_rx,
         forum_rx,
+        share_rx,
         sync_status_rx,
         sync_checksums_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, redeem_tx, nick_tx, forum_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
+    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, redeem_tx, nick_tx, forum_tx, share_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
 
     handle
 }
@@ -246,6 +253,7 @@ async fn updater_loop(
     redeem_tx: watch::Sender<state::RedeemState>,
     nick_tx: watch::Sender<state::NickState>,
     forum_tx: watch::Sender<state::ForumState>,
+    share_tx: watch::Sender<state::ShareState>,
     sync_status_tx: watch::Sender<state::SyncStatus>,
     sync_checksums_tx: watch::Sender<std::collections::HashMap<String, String>>,
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
@@ -692,6 +700,84 @@ async fn updater_loop(
                                 }
                                 forum_state.busy = false;
                                 let _ = forum_tx.send(forum_state.clone());
+                            }
+                        }
+                    }
+                    state::UpdaterCommand::ShareLive { title, preset_json } => {
+                        let token = token_store::load_token();
+                        let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
+                        match auth_header {
+                            None => {
+                                let _ = share_tx.send(state::ShareState::Failed {
+                                    message: "Sign in first".to_string(),
+                                });
+                                log::warn!("[Updater] share_live failed: not signed in");
+                            }
+                            Some(auth) => {
+                                let _ = share_tx.send(state::ShareState::Working);
+                                match share::share_live(&http_client, &auth, &title, preset_json).await {
+                                    Ok(created) => {
+                                        let url = format!("{}{}", UPDATE_SERVER, created.url_path);
+                                        log::info!("[Updater] share_live: ok, {}", url);
+                                        let _ = share_tx.send(state::ShareState::Created { url });
+                                    }
+                                    Err(e) => {
+                                        log::warn!("[Updater] share_live failed: {}", e);
+                                        // Same reasoning as the redeem/set_nick arms
+                                        // above: a rejected session should demote to
+                                        // signed-out now, not on the next unrelated
+                                        // request.
+                                        if matches!(
+                                            auth_probe::probe(&http_client, &auth).await,
+                                            auth_probe::Verdict::Rejected
+                                        ) {
+                                            token_store::clear_token();
+                                            let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
+                                            eprintln!(
+                                                "[{} Updater] session rejected during share_live — signed out",
+                                                now_ts()
+                                            );
+                                        }
+                                        let _ = share_tx.send(state::ShareState::Failed { message: e });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    state::UpdaterCommand::ShareScreenshot { title, png } => {
+                        let token = token_store::load_token();
+                        let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
+                        match auth_header {
+                            None => {
+                                let _ = share_tx.send(state::ShareState::Failed {
+                                    message: "Sign in first".to_string(),
+                                });
+                                log::warn!("[Updater] share_screenshot failed: not signed in");
+                            }
+                            Some(auth) => {
+                                let _ = share_tx.send(state::ShareState::Working);
+                                match share::share_screenshot(&http_client, &auth, &title, png).await {
+                                    Ok(created) => {
+                                        let url = format!("{}{}", UPDATE_SERVER, created.url_path);
+                                        log::info!("[Updater] share_screenshot: ok, {}", url);
+                                        let _ = share_tx.send(state::ShareState::Created { url });
+                                    }
+                                    Err(e) => {
+                                        log::warn!("[Updater] share_screenshot failed: {}", e);
+                                        if matches!(
+                                            auth_probe::probe(&http_client, &auth).await,
+                                            auth_probe::Verdict::Rejected
+                                        ) {
+                                            token_store::clear_token();
+                                            let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
+                                            eprintln!(
+                                                "[{} Updater] session rejected during share_screenshot — signed out",
+                                                now_ts()
+                                            );
+                                        }
+                                        let _ = share_tx.send(state::ShareState::Failed { message: e });
+                                    }
+                                }
                             }
                         }
                     }

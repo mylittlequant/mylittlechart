@@ -144,6 +144,25 @@ pub enum NickState {
     Failed { message: String },
 }
 
+/// Outcome of the most recent share-create request
+/// ([`UpdaterCommand::ShareLive`] / [`UpdaterCommand::ShareScreenshot`]),
+/// broadcast via a watch channel — same mailbox idiom as
+/// [`RedeemState`]/[`NickState`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum ShareState {
+    /// No share request since the last one settled (or was superseded).
+    #[default]
+    Idle,
+    /// A share-create upload is in flight.
+    Working,
+    /// Accepted; carries the absolute public URL (`UPDATE_SERVER` +
+    /// `url_path`) ready for the clipboard.
+    Created { url: String },
+    /// Refused — a 403 reads as the per-kind active-share ceiling; anything
+    /// else carries the server's or transport's own description.
+    Failed { message: String },
+}
+
 /// Commands for the paid-only forum board, wrapped in
 /// [`UpdaterCommand::Forum`].
 #[derive(Debug, Clone)]
@@ -264,6 +283,23 @@ pub enum UpdaterCommand {
     /// the updater publishes [`ForumState::last_error`] without making a
     /// request. Outcomes are broadcast via [`UpdaterHandle::forum_rx`].
     Forum(ForumCommand),
+    /// Freeze the active preset into a public link
+    /// (`POST /api/share/live`). Requires a stored token — with none, the
+    /// updater publishes [`ShareState::Failed`] without making a request.
+    /// Outcome broadcast via [`UpdaterHandle::share_rx`].
+    ShareLive {
+        title: String,
+        /// Serialized `ChartPreset` JSON — already stripped of device-local
+        /// fields by the caller (mirrors `cloud_sync::strip_preset_for_sync`).
+        preset_json: serde_json::Value,
+    },
+    /// Upload a cropped screenshot PNG as a public link
+    /// (`POST /api/share/screenshot`). Same auth/outcome contract as
+    /// [`ShareLive`](UpdaterCommand::ShareLive).
+    ShareScreenshot {
+        title: String,
+        png: Vec<u8>,
+    },
     /// Enable or disable cloud connectivity at runtime.
     /// `true` = cloud enabled (OTA, sync, telemetry),
     /// `false` = cloud disabled (stop all network activity).
@@ -418,6 +454,12 @@ pub struct UpdaterHandle {
     /// by the updater loop. Starts at [`ForumState::default`] (empty list,
     /// no thread, no error, not busy).
     pub forum_rx: watch::Receiver<ForumState>,
+    /// Outcome of the most recent [`UpdaterCommand::ShareLive`] /
+    /// [`UpdaterCommand::ShareScreenshot`] attempt.
+    ///
+    /// Same polling contract as [`Self::redeem_rx`]; starts at
+    /// [`ShareState::Idle`].
+    pub share_rx: watch::Receiver<ShareState>,
     /// Current cloud sync status.
     ///
     /// The UI polls `has_changed()` each frame and displays progress
