@@ -348,6 +348,14 @@ impl<T: ChronoKey> RawLayer<T> {
         self.points.clear();
     }
 
+    /// Drop every stored point AND actually frees the backing allocation,
+    /// unlike [`Self::clear`] (which leaves the `VecDeque`'s capacity
+    /// reserved) — use for the idle-tab-release path only; `clear()` stays
+    /// as-is for instrument reassignment, which expects an immediate refill.
+    pub fn release(&mut self) {
+        self.points = std::collections::VecDeque::new();
+    }
+
     /// Seed the layer with a fresh "right-edge" block (a Phase-A initial
     /// load / re-subscribe page — always the newest window for the
     /// instrument, not a scroll-left backfill page).

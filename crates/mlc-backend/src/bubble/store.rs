@@ -1049,8 +1049,9 @@ impl BubbleStore {
         }
     }
 
-    /// Drop every point from every kline ring on every bubble in this store,
-    /// returning the total point count actually dropped. Distinct from
+    /// Drop every point from every kline ring AND every displayed bar on
+    /// every bubble in this store, returning `(rings_dropped, bars_dropped,
+    /// skipped_alerted)`. Distinct from
     /// [`super::data_bubble::DataBubble::reset_raw_layers`]'s "genuine
     /// instrument reassignment" contract (module doc on
     /// [`super::raw_layer`]): that restriction protects an ACTIVE bubble's
@@ -1061,17 +1062,36 @@ impl BubbleStore {
     /// so "the same instrument, still being looked at" does not apply. Used
     /// by the idle-tab release sweep (`ChartApp::release_idle_parked_presets`)
     /// to give a long-parked tab's memory back; the refill on unpark is
-    /// unconditional (an empty ring already forces a full refetch), so there
-    /// is nothing here that needs preserving.
-    pub fn clear_all_kline_layers(&mut self) -> usize {
-        let mut dropped = 0usize;
+    /// unconditional (an empty ring/bars array already forces a full
+    /// refetch — see `has_bars` in
+    /// `mlc-app::input::chart_out_events::ChartOutEvent` handling), so there
+    /// is nothing here that needs preserving. Uses [`super::raw_layer::RawLayer::release`]
+    /// (not `clear`) so the ring's backing allocation is actually freed, and
+    /// [`super::data_bubble::DataBubble::clear_bars`] (bare field clear, no
+    /// derived-cache refresh — correct here, the bubble is off-screen) so a
+    /// reopened tab's `has_bars` check sees an empty array and forces a
+    /// refetch instead of showing stale bars.
+    ///
+    /// Skips any bubble with non-empty `alerts` entirely (forward-compatible
+    /// with Arc C3 landing "an alerted bubble must not be parked away") —
+    /// counted in `skipped_alerted`.
+    pub fn clear_all_kline_layers(&mut self) -> (usize, usize, usize) {
+        let mut rings_dropped = 0usize;
+        let mut bars_dropped = 0usize;
+        let mut skipped_alerted = 0usize;
         for bubble in self.bubbles.values_mut() {
-            for layer in bubble.kline_layers.values_mut() {
-                dropped += layer.len();
-                layer.clear();
+            if !bubble.alerts.is_empty() {
+                skipped_alerted += 1;
+                continue;
             }
+            for layer in bubble.kline_layers.values_mut() {
+                rings_dropped += layer.len();
+                layer.release();
+            }
+            bars_dropped += bubble.bars.len();
+            bubble.clear_bars();
         }
-        dropped
+        (rings_dropped, bars_dropped, skipped_alerted)
     }
 
     /// Set the price-scale corner mode of a bubble known by id directly.

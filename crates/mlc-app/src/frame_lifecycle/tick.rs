@@ -49,12 +49,12 @@ impl ChartApp {
             if state.bars_released || state.parked_at.elapsed() < IDLE_RELEASE_AFTER {
                 continue;
             }
-            let dropped = state.bubble_store.clear_all_kline_layers();
+            let (rings_dropped, bars_dropped, skipped_alerted) = state.bubble_store.clear_all_kline_layers();
             state.needs_initial_viewport_fit = true;
             state.bars_released = true;
             eprintln!(
-                "[ChartApp] Released idle preset '{}': dropped {} bars (parked {}s)",
-                id, dropped, state.parked_at.elapsed().as_secs(),
+                "[ChartApp] Released idle preset '{}': dropped {} ring points, {} bars, skipped {} alerted (parked {}s)",
+                id, rings_dropped, bars_dropped, skipped_alerted, state.parked_at.elapsed().as_secs(),
             );
         }
     }
@@ -68,12 +68,12 @@ impl ChartApp {
             if state.bars_released {
                 continue;
             }
-            let dropped = state.bubble_store.clear_all_kline_layers();
+            let (rings_dropped, bars_dropped, skipped_alerted) = state.bubble_store.clear_all_kline_layers();
             state.needs_initial_viewport_fit = true;
             state.bars_released = true;
             eprintln!(
-                "[ChartApp] Released parked preset '{}': dropped {} bars (manual)",
-                id, dropped,
+                "[ChartApp] Released parked preset '{}': dropped {} ring points, {} bars, skipped {} alerted (manual)",
+                id, rings_dropped, bars_dropped, skipped_alerted,
             );
         }
     }
