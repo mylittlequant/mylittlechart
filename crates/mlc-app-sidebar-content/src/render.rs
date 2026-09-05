@@ -1332,6 +1332,7 @@ const ALL_SLOT_SPAWN_ITEMS: &[(&str, &str)] = &[
     ("volume_profile",     "Volume Profile"),
     ("liquidity_heatmap",  "Liquidity Heatmap"),
     ("big_trades",         "Big Trades"),
+    ("liq_tape",           "Liquidations"),
     ("l2_tape",            "L2 Tape"),
     ("trade_tape",         "Trade Tape"),
     ("indicator_panel",    "Indicator"),
