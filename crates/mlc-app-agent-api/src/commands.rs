@@ -328,6 +328,27 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] UiDispatch: window not found: {}", window_id);
                     continue;
                 };
+                // The cloud overlay (News / Download) opens from the window
+                // chrome, not from a panel hit id — the chrome strip is drawn
+                // by the shell and its clicks never reach dispatch_panel_click
+                // (`mlc-app-input-shell/src/dispatch.rs`, ChromeHit::NewsButton).
+                // `overlay:news` / `overlay:download` do here what that chrome
+                // click does, so a test can reach the Forum tab.
+                #[cfg(feature = "cloud")]
+                if let Some(kind) = hit_id.strip_prefix("overlay:") {
+                    use mlc_app_layout::ui::modal_settings::CloudOverlayKind;
+                    let kind = match kind {
+                        "news" => Some(CloudOverlayKind::News),
+                        "download" => Some(CloudOverlayKind::Download),
+                        _ => None,
+                    };
+                    if let Some(kind) = kind {
+                        w.chart.panel_app.cloud_overlay_state.toggle(kind);
+                        w.chart.panel_app.cloud_login_state.close();
+                    }
+                    eprintln!("[AgentCommand] UiDispatch: window={}, overlay={}", window_id, hit_id);
+                    continue;
+                }
                 // (0.0, 0.0): no real click position — see
                 // `ChartApp::dispatch_panel_click`'s own doc comment for the
                 // precedent (`clock_popup_state.toggle(0.0, 0.0)`).
