@@ -867,6 +867,20 @@ impl ChartToolbarState {
             .unwrap_or(false)
     }
 
+    /// True while ANY chart-toolbar dropdown is open — the top-level
+    /// dropdown (`open_dropdown_id`, e.g. the camera button's destination
+    /// picker) or one of the floating inline-config pickers. Single source
+    /// so a toolbar-item tooltip never paints on top of an open dropdown
+    /// (production 0.5.595: double-click the camera button, "Screenshot"
+    /// tooltip painted over the destination dropdown's first row).
+    pub fn has_open_dropdown(&self) -> bool {
+        self.open_dropdown_id.is_some()
+            || self.open_inline_style_dropdown
+            || self.open_inline_width_dropdown
+            || self.open_inline_wave_dropdown
+            || self.open_inline_wave_next_dropdown
+    }
+
     /// Check if a toggle is on
     pub fn is_toggled(&self, id: &str) -> bool {
         match id {

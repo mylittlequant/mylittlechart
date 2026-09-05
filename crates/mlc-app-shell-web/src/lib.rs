@@ -2719,7 +2719,8 @@ fn render_frame(state: Rc<RefCell<WebAppState>>, timer: &mut perf::FrameTimer) -
         let (mx, my) = st.input.last_mouse_pos;
         mlc_app_input_shell::chrome::update_tooltip(&mut st.chrome, mx, my, time_ms);
         let hovered = st.toolbar_tooltip.hovered_widget().cloned();
-        st.toolbar_tooltip.update(hovered, time_ms);
+        let dropdown_open = st.chart.panel_app.toolbar_state.has_open_dropdown();
+        st.toolbar_tooltip.update(hovered, time_ms, dropdown_open);
     }
 
     // ── Chrome render ─────────────────────────────────────────────────────────

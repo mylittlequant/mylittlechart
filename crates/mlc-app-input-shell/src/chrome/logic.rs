@@ -439,7 +439,9 @@ pub fn update_tooltip(state: &mut ChromeState, cursor_x: f64, cursor_y: f64, tim
     let hit = state.hovered;
 
     let widget_id = widget_id_for_hit(hit).map(WidgetId::from);
-    state.tooltip.update(widget_id.clone(), time_ms);
+    // Window-chrome buttons (close/minimize/menu/...) never sit behind a
+    // chart-toolbar dropdown — no suppression applies here.
+    state.tooltip.update(widget_id.clone(), time_ms, false);
 
     if let (Some(wid), Some(text)) = (widget_id, tooltip_for_hit(hit, state.is_maximized)) {
         state.tooltip.request_tooltip(wid, text.to_string(), (cursor_x, cursor_y), time_ms);

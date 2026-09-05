@@ -303,12 +303,7 @@ pub fn process_event(
                     dirty.toolbar_dirty = true;
                 }
 
-                if chart.panel_app.toolbar_state.open_dropdown_id.is_some()
-                    || chart.panel_app.toolbar_state.open_inline_style_dropdown
-                    || chart.panel_app.toolbar_state.open_inline_width_dropdown
-                    || chart.panel_app.toolbar_state.open_inline_wave_dropdown
-                    || chart.panel_app.toolbar_state.open_inline_wave_next_dropdown
-                {
+                if chart.panel_app.toolbar_state.has_open_dropdown() {
                     dirty.toolbar_dirty = true;
                 }
 
@@ -377,13 +372,17 @@ pub fn process_event(
                 }
 
                 let time_ms = state.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;
+                // A chart-toolbar dropdown open answers the same hover a
+                // toolbar-item tooltip would explain — see
+                // `ChartToolbarState::has_open_dropdown` doc comment.
+                let dropdown_open = chart.panel_app.toolbar_state.has_open_dropdown();
                 let hovered_id = chart.panel_app.toolbar_state.hovered_top_toolbar_id.as_deref()
                     .or(chart.panel_app.toolbar_state.hovered_left_toolbar_id.as_deref())
                     .or(chart.panel_app.toolbar_state.hovered_right_toolbar_id.as_deref())
                     .or(chart.panel_app.toolbar_state.hovered_bottom_toolbar_id.as_deref());
                 if let Some(btn_id) = hovered_id {
                     let wid = uzor::WidgetId::from(format!("toolbar:{}", btn_id));
-                    toolbar_tooltip.update(Some(wid.clone()), time_ms);
+                    toolbar_tooltip.update(Some(wid.clone()), time_ms, dropdown_open);
                     if let Some(text) = mlc_core::toolbar::find_toolbar_tooltip(btn_id) {
                         toolbar_tooltip.request_tooltip(wid, text.to_string(), (x, y), time_ms);
                     }
@@ -416,7 +415,7 @@ pub fn process_event(
                                         };
                                         if let Some(tip_text) = tip_text {
                                             let wid = uzor::WidgetId::from(wid_str.as_str());
-                                            toolbar_tooltip.update(Some(wid.clone()), time_ms);
+                                            toolbar_tooltip.update(Some(wid.clone()), time_ms, dropdown_open);
                                             toolbar_tooltip.request_tooltip(wid, tip_text.to_string(), (x, y), time_ms);
                                             sidebar_tip = true;
                                             break;
@@ -427,7 +426,7 @@ pub fn process_event(
                         }
                     }
                     if !sidebar_tip {
-                        toolbar_tooltip.update(None, time_ms);
+                        toolbar_tooltip.update(None, time_ms, dropdown_open);
                     }
                 }
 

@@ -22,6 +22,13 @@ pub struct TooltipState {
     visible_start: f64,
     fade_in_duration_ms: f64,
     fade_opacity: f64,
+    /// True while a chart-toolbar dropdown is open. A dropdown answers the
+    /// same hover a tooltip would explain — showing both stacks the
+    /// tooltip on top of the dropdown's own rows (production 0.5.595:
+    /// double-click the camera button, the "Screenshot" tooltip painted
+    /// over the destination dropdown's first row). Fed in via `update()`
+    /// from the one place both shells already call.
+    suppressed: bool,
 }
 
 impl TooltipState {
@@ -36,6 +43,7 @@ impl TooltipState {
             visible_start: 0.0,
             fade_in_duration_ms: 150.0,
             fade_opacity: 0.0,
+            suppressed: false,
         }
     }
 
@@ -48,7 +56,26 @@ impl TooltipState {
     }
 
     /// Update state based on currently hovered widget. Call each frame.
-    pub fn update(&mut self, hovered_widget: Option<WidgetId>, time: f64) {
+    ///
+    /// `dropdown_open` is true while a chart-toolbar dropdown is open (see
+    /// `suppressed` on the struct). Entering suppression hides an already-
+    /// visible tooltip immediately; leaving it re-arms the hover from zero
+    /// so the tooltip needs its full dwell delay again rather than popping
+    /// back instantly.
+    pub fn update(&mut self, hovered_widget: Option<WidgetId>, time: f64, dropdown_open: bool) {
+        if dropdown_open {
+            if !self.suppressed {
+                self.suppressed = true;
+                self.visible = false;
+                self.visible_start = 0.0;
+                self.fade_opacity = 0.0;
+                self.active = None;
+            }
+        } else if self.suppressed {
+            self.suppressed = false;
+            self.hover_start = time;
+        }
+
         match (&self.hovered_widget, &hovered_widget) {
             (Some(old_id), Some(new_id)) if old_id != new_id => {
                 self.hovered_widget = Some(new_id.clone());
@@ -111,9 +138,12 @@ impl TooltipState {
         }
     }
 
-    /// Whether enough time has elapsed to show the tooltip.
+    /// Whether enough time has elapsed to show the tooltip. Always false
+    /// while suppressed (a chart-toolbar dropdown is open).
     pub fn should_show(&self, time: f64) -> bool {
-        self.hovered_widget.is_some() && (time - self.hover_start) >= self.show_delay_ms
+        !self.suppressed
+            && self.hovered_widget.is_some()
+            && (time - self.hover_start) >= self.show_delay_ms
     }
 
     /// Get the active tooltip request if visible.

@@ -5309,7 +5309,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 let chrome_was = pw.chrome_state.tooltip.is_visible();
                 chrome::update_tooltip(&mut pw.chrome_state, pw.last_mouse_pos.0, pw.last_mouse_pos.1, time_ms);
                 let toolbar_was = pw.toolbar_tooltip.is_visible();
-                pw.toolbar_tooltip.update(pw.toolbar_tooltip.hovered_widget().cloned(), time_ms);
+                let dropdown_open = pw.chart.panel_app.toolbar_state.has_open_dropdown();
+                pw.toolbar_tooltip.update(pw.toolbar_tooltip.hovered_widget().cloned(), time_ms, dropdown_open);
                 if (!chrome_was && pw.chrome_state.tooltip.is_visible())
                     || (!toolbar_was && pw.toolbar_tooltip.is_visible())
                 {
