@@ -745,4 +745,38 @@ mod cloud_tests {
         let news_mid = bp.login_left - CLOUD_ICON_BUTTON_WIDTH / 2.0;
         assert_eq!(hit_test(news_mid, 10.0, width, height, &state), ChromeHit::NewsButton);
     }
+
+    /// Owner report 2026-09-05: a long account nickname must be fit with an
+    /// ellipsis (render.rs), not grow the button. This is the layout half of
+    /// that ruling — `LOGIN_BUTTON_WIDTH` is a fixed cap regardless of
+    /// `account_label`'s length, so neither the button's own width nor the
+    /// tab strip's right limit may move when the nickname gets long.
+    #[test]
+    fn long_account_label_does_not_widen_button_or_move_tabs_limit() {
+        let width = 1200.0;
+        let mut short = native_state(ChromeUpdate::Idle);
+        short.account_label = Some("Al".to_string());
+        let mut long = native_state(ChromeUpdate::Idle);
+        long.account_label = Some("a".repeat(24));
+
+        let short_limit = tabs_right_limit(width, &short);
+        let long_limit = tabs_right_limit(width, &long);
+        assert_eq!(
+            short_limit, long_limit,
+            "account label length must not move the tab strip's right limit"
+        );
+
+        let bp_short = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&short));
+        let bp_long = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&long));
+        let button_w_short = bp_short.new_window_left - bp_short.login_left;
+        let button_w_long = bp_long.new_window_left - bp_long.login_left;
+        assert!(
+            (button_w_short - button_w_long).abs() < 0.001,
+            "account button width must not depend on label length"
+        );
+        assert!(
+            button_w_long <= LOGIN_BUTTON_WIDTH + 0.001,
+            "account button must stay within its cap regardless of label length"
+        );
+    }
 }

@@ -11,6 +11,9 @@ use mlc_core::state::icons::icon_svg;
 use mlc_app_layout::ui::widgets::{
     draw_input, draw_input_cursor, InputConfig, WidgetState, WidgetTheme,
 };
+// Only the account button (cloud builds) fits a label with an ellipsis today.
+#[cfg(feature = "cloud")]
+use mlc_app_layout::ui::widgets::fit_text_to_width;
 
 use super::types::{
     CHROME_HEIGHT, ChromeColors, ChromeContextMenu, ChromeFlavor, ChromeHit, ChromeState,
@@ -971,19 +974,29 @@ fn draw_account_button(
     }
     let label = state.account_label.as_deref().unwrap_or("Sign in");
     ctx.set_font("600 12px sans-serif");
-    ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
-    // "Sign in" was sized for this button; an account name was not, and a long
-    // handle would paint straight across the News/Download icons to its
-    // left. Clipped to the button, the same way a tab name is clipped to its
-    // tab.
+    // The button's width never grows with the label (LOGIN_BUTTON_WIDTH is a
+    // fixed cap, mirrored in logic.rs's `ButtonPositions`) — a long account
+    // nickname does not push the News/Download icons. What used to go wrong
+    // is the fit: centring `label` on the button's midpoint and relying on
+    // `clip_rect` to hide the overrun clips it on BOTH sides symmetrically
+    // (owner report 2026-09-05) instead of shortening it. A label that fits
+    // stays centred like "Sign in" always has; one that doesn't is fit to
+    // the padded width with an ellipsis and left-aligned, the same rule
+    // `fit_text_to_width` applies to every other fitted label in the app.
+    const TEXT_PADDING_X: f64 = 6.0;
+    let max_text_w = (LOGIN_BUTTON_WIDTH - TEXT_PADDING_X * 2.0).max(0.0);
+    let text_w = ctx.measure_text(label);
     ctx.save();
     ctx.clip_rect(bp.login_left, 0.0, LOGIN_BUTTON_WIDTH, CHROME_HEIGHT);
-    ctx.fill_text(
-        label,
-        bp.login_left + LOGIN_BUTTON_WIDTH / 2.0,
-        CHROME_HEIGHT / 2.0,
-    );
+    if text_w <= max_text_w {
+        ctx.set_text_align(TextAlign::Center);
+        ctx.fill_text(label, bp.login_left + LOGIN_BUTTON_WIDTH / 2.0, CHROME_HEIGHT / 2.0);
+    } else {
+        let fitted = fit_text_to_width(ctx, label, max_text_w);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.fill_text(&fitted, bp.login_left + TEXT_PADDING_X, CHROME_HEIGHT / 2.0);
+    }
     ctx.restore();
 }
 
