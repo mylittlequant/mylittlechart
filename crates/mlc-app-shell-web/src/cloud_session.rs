@@ -103,6 +103,18 @@ struct Inner {
     /// Previous frame's overlay open flag (edge detection).
     was_open: bool,
     result: Option<FlowResult>,
+    /// Set by any authed call's `spawn_local` body the instant it sees a
+    /// 401 (token invalid/expired/revoked) — `auth_me()`, the entitlements
+    /// fetch, share create, forum requests, nick, and redeem all write this
+    /// (via [`mark_unauthorized`]) before they turn the error into a
+    /// display string, since none of them keep the typed `CloudError` past
+    /// that point otherwise. Drained first thing in `drive()`, which drops
+    /// to signed-out the same frame the answer lands — "signed in" must
+    /// mean "the server still agrees", not just "a token is stored
+    /// locally" (Arc B1, 2026-09-06). Never set for a 403 (entitlement
+    /// refusal) or a network/transport failure — see
+    /// [`mark_unauthorized`]'s own doc.
+    unauthorized: bool,
 
     // ── Account label refresh (`GET /api/auth/me`) ─────────────────────
     // Fired once per token activation, never polled — a nick set from
@@ -200,6 +212,7 @@ impl CloudSession {
                 next_poll_ms: 0.0,
                 was_open: false,
                 result: None,
+                unauthorized: false,
                 me_in_flight: false,
                 me_result: None,
                 me_boot_checked: false,
@@ -251,9 +264,68 @@ impl CloudSession {
         let inner = self.inner.clone();
         let transport = self.inner.borrow().transport.snapshot();
         spawn_local(async move {
-            let r = transport.auth_me().await.map_err(|e| e.to_string());
-            inner.borrow_mut().me_result = Some(r);
+            let raw = transport.auth_me().await;
+            if let Err(e) = &raw {
+                mark_unauthorized(&inner, e);
+            }
+            inner.borrow_mut().me_result = Some(raw.map_err(|e| e.to_string()));
         });
+    }
+
+    /// Drop to signed-out — local state only, regardless of why. Factored
+    /// out of the original `FlowResult::Logout` arm (Arc B1, 2026-09-06) so
+    /// a server-rejected token (401 from `auth_me()`, the entitlements
+    /// fetch, share create, a forum request, nick, or redeem — see
+    /// [`mark_unauthorized`]) demotes through the exact same path an
+    /// explicit "Sign out" click does. `reason` is the toast body — the two
+    /// callers differ only in wording ("You have been logged out." vs the
+    /// server-rejected sentence).
+    fn apply_signed_out(&self, chart: &mut ChartApp, reason: &str) {
+        clear_token();
+        clear_tier();
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.transport.set_token(None);
+            inner.token = None;
+            // Drop straight to the free default rather than leaving the
+            // last identity's (possibly paid) answer on screen until the
+            // next scheduled re-ask — and re-ask right away so it reflects
+            // "no credential" rather than staying stuck on a stale cached
+            // TTL.
+            inner.next_entitlements_ms = 0.0;
+        }
+        chart.panel_app.user_settings_state.multi_profile = false;
+        chart.panel_app.user_settings_state.account_label = String::new();
+        chart.panel_app.user_settings_state.nick_edit_mode = false;
+        chart.panel_app.user_settings_state.nick_edit_focused = false;
+        chart.panel_app.user_settings_state.nick_status =
+            mlc_app_layout::ui::modal_settings::NickStatus::Idle;
+        // Same fields the entitlements Err path degrades to on a failed
+        // fetch (`drive()`'s entitlements block) — set here too so this
+        // does not wait out that fetch's own round trip to stop showing a
+        // paid/forum-entitled account that no longer exists.
+        chart.panel_app.cloud_overlay_state.forum_entitled = false;
+        chart.panel_app.cloud_login_state.is_paid = false;
+        chart.panel_app.cloud_login_state.paid_until = None;
+        {
+            let mut user = chart.core.user_mut();
+            let p = user.profile_mut();
+            p.domain.linked_account = None;
+            p.domain.cloud_enabled = false;
+            p.domain.sync_level = "local".to_string();
+        }
+        chart.profile_dirty = true;
+        // Same-frame gating (owner ruling 2026-09-06): a ShareLink pick
+        // made while signed in must not survive sign-out and keep firing
+        // uploads afterward.
+        if chart.panel_app.toolbar_state.screenshot_destination
+            == mlc_core::state::toolbar_state::ScreenshotDestination::ShareLink
+        {
+            chart.panel_app.toolbar_state.screenshot_destination =
+                mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard;
+        }
+        chart.panel_app.cloud_login_state.phase = CloudLoginPhase::RequestCode;
+        chart.push_system_event(mlc_core::SystemEventKind::Account, "Signed out", reason, true);
     }
 
     // ── Chart sharing (fire-and-forget) ──────────────────────────────────
@@ -284,6 +356,7 @@ impl CloudSession {
                     inner.borrow_mut().share_result = Some(("screenshot", Ok(url)));
                 }
                 Err(e) => {
+                    mark_unauthorized(&inner, &e);
                     let message = share_error_message("screenshot", &e);
                     log_share_error("screenshot", &e);
                     inner.borrow_mut().share_result = Some(("screenshot", Err(message)));
@@ -310,6 +383,7 @@ impl CloudSession {
                     inner.borrow_mut().share_result = Some(("live", Ok(url)));
                 }
                 Err(e) => {
+                    mark_unauthorized(&inner, &e);
                     let message = share_error_message("live", &e);
                     log_share_error("live", &e);
                     inner.borrow_mut().share_result = Some(("live", Err(message)));
@@ -319,6 +393,22 @@ impl CloudSession {
     }
 
     pub fn drive(&self, chart: &mut ChartApp, now_ms: f64) {
+        // ── Server-rejected token → signed-out (Arc B1, 2026-09-06) ───────
+        // Drained first thing, every frame: any authed call in this driver
+        // (boot/post-login `auth_me()`, the entitlements refresh, share
+        // create, forum requests, nick, redeem) flags `unauthorized` the
+        // instant its `spawn_local` body sees a 401 — see
+        // `mark_unauthorized`'s own doc. Runs ahead of the
+        // `account_signed_in`/`account_label` mirror just below so that
+        // mirror reads the already-cleared token this same frame.
+        let unauthorized = std::mem::take(&mut self.inner.borrow_mut().unauthorized);
+        if unauthorized {
+            self.apply_signed_out(
+                chart,
+                "The server no longer accepts this session — sign in again.",
+            );
+        }
+
         // Keep the profile header in sync with the active profile.
         let profile_id = chart.core.user().profile().domain.profile_id.clone();
         {
@@ -450,8 +540,11 @@ impl CloudSession {
                 let inner = self.inner.clone();
                 let transport = self.inner.borrow().transport.snapshot();
                 spawn_local(async move {
-                    let r = transport.entitlements().await.map_err(|e| e.to_string());
-                    inner.borrow_mut().entitlements_result = Some(r);
+                    let raw = transport.entitlements().await;
+                    if let Err(e) = &raw {
+                        mark_unauthorized(&inner, e);
+                    }
+                    inner.borrow_mut().entitlements_result = Some(raw.map_err(|e| e.to_string()));
                 });
             }
         }
@@ -887,51 +980,12 @@ impl CloudSession {
                     self.inner.borrow_mut().forum_in_flight = false;
                 }
                 FlowResult::Logout => {
-                    // Local sign-out regardless of the server answer.
-                    clear_token();
-                    clear_tier();
-                    let mut inner = self.inner.borrow_mut();
-                    inner.transport.set_token(None);
-                    inner.token = None;
-                    // Drop straight to the free default rather than leaving
-                    // last identity's (possibly paid) answer on screen until
-                    // the next scheduled re-ask — and re-ask right away so
-                    // it reflects "no credential" rather than staying stuck
-                    // on a stale cached TTL.
-                    inner.next_entitlements_ms = 0.0;
-                    drop(inner);
-                    chart.panel_app.user_settings_state.multi_profile = false;
-                    chart.panel_app.user_settings_state.account_label = String::new();
-                    chart.panel_app.user_settings_state.nick_edit_mode = false;
-                    chart.panel_app.user_settings_state.nick_edit_focused = false;
-                    chart.panel_app.user_settings_state.nick_status =
-                        mlc_app_layout::ui::modal_settings::NickStatus::Idle;
-                    {
-                        let mut user = chart.core.user_mut();
-                        let p = user.profile_mut();
-                        p.domain.linked_account = None;
-                        p.domain.cloud_enabled = false;
-                        p.domain.sync_level = "local".to_string();
-                    }
-                    chart.profile_dirty = true;
-                    // Same-frame gating (owner ruling 2026-09-06): a
-                    // ShareLink pick made while signed in must not survive
-                    // sign-out and keep firing uploads afterward.
-                    if chart.panel_app.toolbar_state.screenshot_destination
-                        == mlc_core::state::toolbar_state::ScreenshotDestination::ShareLink
-                    {
-                        chart.panel_app.toolbar_state.screenshot_destination =
-                            mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard;
-                    }
-                    st.phase = CloudLoginPhase::RequestCode;
-                    // `st`'s last use above ends its borrow before this
-                    // method call, same reordering as the sign-in arm.
-                    chart.push_system_event(
-                        mlc_core::SystemEventKind::Account,
-                        "Signed out",
-                        "You have been logged out.",
-                        true,
-                    );
+                    // Local sign-out regardless of the server answer. `st`
+                    // (borrowed above) is not touched on this arm's path —
+                    // `apply_signed_out` reaches `cloud_login_state` through
+                    // `chart` directly, same reordering the sign-in arm
+                    // already relies on.
+                    self.apply_signed_out(chart, "You have been logged out.");
                 }
             }
         }
@@ -962,9 +1016,11 @@ impl CloudSession {
                     let inner = self.inner.clone();
                     let transport = self.inner.borrow().transport.snapshot();
                     spawn_local(async move {
-                        let r = transport
-                            .set_nick(&nick)
-                            .await
+                        let raw = transport.set_nick(&nick).await;
+                        if let Err(e) = &raw {
+                            mark_unauthorized(&inner, e);
+                        }
+                        let r = raw
                             .map(|resp| resp.effective_label)
                             .map_err(|e| mlc_cloud::nick_error_message(&e));
                         inner.borrow_mut().result = Some(FlowResult::Nick(r));
@@ -1048,9 +1104,11 @@ impl CloudSession {
                 let inner = self.inner.clone();
                 let transport = self.inner.borrow().transport.snapshot();
                 spawn_local(async move {
-                    let r = transport
-                        .forum_threads(None)
-                        .await
+                    let raw = transport.forum_threads(None).await;
+                    if let Err(e) = &raw {
+                        mark_unauthorized(&inner, e);
+                    }
+                    let r = raw
                         .map(|resp| (resp.threads, resp.next_before))
                         .map_err(|e| forum_error_message(&e));
                     inner.borrow_mut().result = Some(FlowResult::ForumThreads { append: false, result: r });
@@ -1077,7 +1135,11 @@ impl CloudSession {
                         let inner = self.inner.clone();
                         let transport = self.inner.borrow().transport.snapshot();
                         spawn_local(async move {
-                            let r = transport.forum_thread(id).await.map_err(|e| forum_error_message(&e));
+                            let raw = transport.forum_thread(id).await;
+                            if let Err(e) = &raw {
+                                mark_unauthorized(&inner, e);
+                            }
+                            let r = raw.map_err(|e| forum_error_message(&e));
                             inner.borrow_mut().result = Some(FlowResult::ForumThreadOpened(r));
                         });
                     }
@@ -1097,46 +1159,85 @@ impl CloudSession {
                     spawn_local(async move {
                         match req {
                             ForumRequest::LoadMoreThreads { before } => {
-                                let r = transport
-                                    .forum_threads(Some(&before))
-                                    .await
+                                let raw = transport.forum_threads(Some(&before)).await;
+                                if let Err(e) = &raw {
+                                    mark_unauthorized(&inner, e);
+                                }
+                                let r = raw
                                     .map(|resp| (resp.threads, resp.next_before))
                                     .map_err(|e| forum_error_message(&e));
                                 inner.borrow_mut().result = Some(FlowResult::ForumThreads { append: true, result: r });
                             }
                             ForumRequest::LoadThread { id } => {
-                                let r = transport.forum_thread(id).await.map_err(|e| forum_error_message(&e));
+                                let raw = transport.forum_thread(id).await;
+                                if let Err(e) = &raw {
+                                    mark_unauthorized(&inner, e);
+                                }
+                                let r = raw.map_err(|e| forum_error_message(&e));
                                 inner.borrow_mut().result = Some(FlowResult::ForumThreadOpened(r));
                             }
                             ForumRequest::CreateThread { title, body } => {
                                 let r = match transport.forum_create_thread(&title, &body).await {
-                                    Ok(id) => transport.forum_thread(id).await.map_err(|e| forum_error_message(&e)),
-                                    Err(e) => Err(forum_error_message(&e)),
+                                    Ok(id) => {
+                                        let raw = transport.forum_thread(id).await;
+                                        if let Err(e) = &raw {
+                                            mark_unauthorized(&inner, e);
+                                        }
+                                        raw.map_err(|e| forum_error_message(&e))
+                                    }
+                                    Err(e) => {
+                                        mark_unauthorized(&inner, &e);
+                                        Err(forum_error_message(&e))
+                                    }
                                 };
                                 inner.borrow_mut().result = Some(FlowResult::ForumThreadCreated(r));
                             }
                             ForumRequest::Reply { thread_id, body } => {
                                 let r = match transport.forum_reply(thread_id, &body).await {
-                                    Ok(_) => transport.forum_thread(thread_id).await.map_err(|e| forum_error_message(&e)),
-                                    Err(e) => Err(forum_error_message(&e)),
+                                    Ok(_) => {
+                                        let raw = transport.forum_thread(thread_id).await;
+                                        if let Err(e) = &raw {
+                                            mark_unauthorized(&inner, e);
+                                        }
+                                        raw.map_err(|e| forum_error_message(&e))
+                                    }
+                                    Err(e) => {
+                                        mark_unauthorized(&inner, &e);
+                                        Err(forum_error_message(&e))
+                                    }
                                 };
                                 inner.borrow_mut().result = Some(FlowResult::ForumThreadRefreshed(r));
                             }
                             ForumRequest::DeleteThread { id } => {
                                 let r = match transport.forum_delete_thread(id).await {
-                                    Ok(()) => transport
-                                        .forum_threads(None)
-                                        .await
-                                        .map(|resp| (resp.threads, resp.next_before))
-                                        .map_err(|e| forum_error_message(&e)),
-                                    Err(e) => Err(forum_error_message(&e)),
+                                    Ok(()) => {
+                                        let raw = transport.forum_threads(None).await;
+                                        if let Err(e) = &raw {
+                                            mark_unauthorized(&inner, e);
+                                        }
+                                        raw.map(|resp| (resp.threads, resp.next_before))
+                                            .map_err(|e| forum_error_message(&e))
+                                    }
+                                    Err(e) => {
+                                        mark_unauthorized(&inner, &e);
+                                        Err(forum_error_message(&e))
+                                    }
                                 };
                                 inner.borrow_mut().result = Some(FlowResult::ForumThreadDeleted(r));
                             }
                             ForumRequest::DeleteReply { id, thread_id } => {
                                 let r = match transport.forum_delete_reply(id).await {
-                                    Ok(()) => transport.forum_thread(thread_id).await.map_err(|e| forum_error_message(&e)),
-                                    Err(e) => Err(forum_error_message(&e)),
+                                    Ok(()) => {
+                                        let raw = transport.forum_thread(thread_id).await;
+                                        if let Err(e) = &raw {
+                                            mark_unauthorized(&inner, e);
+                                        }
+                                        raw.map_err(|e| forum_error_message(&e))
+                                    }
+                                    Err(e) => {
+                                        mark_unauthorized(&inner, &e);
+                                        Err(forum_error_message(&e))
+                                    }
                                 };
                                 inner.borrow_mut().result = Some(FlowResult::ForumThreadRefreshed(r));
                             }
@@ -1201,9 +1302,11 @@ impl CloudSession {
                 let transport = self.inner.borrow().transport.snapshot();
                 self.inner.borrow_mut().in_flight = true;
                 spawn_local(async move {
-                    let r = transport
-                        .redeem(&code)
-                        .await
+                    let raw = transport.redeem(&code).await;
+                    if let Err(e) = &raw {
+                        mark_unauthorized(&inner, e);
+                    }
+                    let r = raw
                         .map(|resp| resp.paid_until)
                         .map_err(|e| redeem_error_message(&e));
                     inner.borrow_mut().result = Some(FlowResult::Redeem(r));
@@ -1346,6 +1449,19 @@ fn log_share_error(what: &str, e: &mlc_cloud::CloudError) {
         _ => {
             web_sys::console::error_1(&format!("[share] {message}").into());
         }
+    }
+}
+
+/// Flags [`Inner::unauthorized`] when `e` is a 401 (token invalid/expired/
+/// revoked) — called from inside a `spawn_local` body, before the typed
+/// `CloudError` is turned into a display string for its own mailbox, so
+/// `drive()` can drop to signed-out the same frame the answer lands (Arc
+/// B1, 2026-09-06: "signed in" means "the server agrees"). Deliberately
+/// does nothing for `CloudError::Forbidden` (403 is an entitlement
+/// refusal, not a rejected credential) or a network/transport failure.
+fn mark_unauthorized(inner: &Rc<RefCell<Inner>>, e: &mlc_cloud::CloudError) {
+    if e.is_unauthorized() {
+        inner.borrow_mut().unauthorized = true;
     }
 }
 
