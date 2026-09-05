@@ -50,6 +50,9 @@ web-sys              = { version = "0.3", features = [
     "Window",
     "Document",
     "Element",
+    # `Node::append_child` — used by `perf::Hud::create` to mount the
+    # `?perf=1` overlay `<div>` onto `document.body`.
+    "Node",
     "HtmlCanvasElement",
     "CanvasRenderingContext2d",
     "OffscreenCanvas",

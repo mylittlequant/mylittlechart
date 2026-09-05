@@ -37,6 +37,7 @@
 //! module additionally covers `profile.json` + watchlists + templates +
 //! snapshots + the full preset set, none of which shell-web wrote before.
 
+use crate::perf::{now_ms, PerfMeter};
 use mlc_app::ChartApp;
 
 /// First-run bootstrap: create a default profile + index entry if none
@@ -98,7 +99,18 @@ pub fn bootstrap_first_run() -> bool {
 /// concepts that don't exist on a single-canvas wasm page (OS window
 /// geometry sync, multi-window `last_focused` preference, `AppState`
 /// theme/device-name fields — shell-web has no `AppState`).
-pub fn save_persistent_state(chart: &mut ChartApp) {
+///
+/// Reports its own duration + successful write count into `perf` (wasm-only
+/// perf arc, 2026-09-05 — see `perf.rs` module doc): this is the exact call
+/// the owner's H1 hypothesis names (a click's dirty flags triggering a
+/// same-frame write of EVERY preset, not just the one that changed). Bytes
+/// are deliberately NOT counted — that would be a second serialization pass
+/// over the very data this function is suspected of serializing too much of,
+/// and an instrument must not inflate the thing it measures.
+pub fn save_persistent_state(chart: &mut ChartApp, perf: &mut PerfMeter) {
+    let perf_start_ms = now_ms();
+    let mut writes = 0usize;
+
     // 1. Drain PresetAction queue (populated by autosave_snapshot / preset
     //    edit handlers) into the shared core's in-memory preset registry.
     //    PresetManager::insert is RAM-only — the disk write happens in step 5.
@@ -190,6 +202,7 @@ pub fn save_persistent_state(chart: &mut ChartApp) {
     let vault_key = chart.core.user().vault_key();
     match mlc_core::save_profile(&profile, vault_key.as_ref()) {
         Ok(()) => {
+            writes += 1;
             // Guard rule: hoist the read BEFORE user_mut() — the receiver
             // (write guard) is evaluated before the argument expressions,
             // so a `user()` read inside the arg list is a same-thread
@@ -211,37 +224,66 @@ pub fn save_persistent_state(chart: &mut ChartApp) {
     // 4. Save watchlists — always plaintext.
     {
         let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
-        if let Err(e) = mlc_core::save_json(&watchlists_path, &chart.core.watchlists().snapshot(), None) {
-            web_sys::console::error_1(
-                &format!("[mlc-app-shell-web] failed to save watchlists: {}", e).into(),
-            );
+        let snapshot = chart.core.watchlists().snapshot();
+        match mlc_core::save_json(&watchlists_path, &snapshot, None) {
+            Ok(()) => {
+                writes += 1;
+            }
+            Err(e) => {
+                web_sys::console::error_1(
+                    &format!("[mlc-app-shell-web] failed to save watchlists: {}", e).into(),
+                );
+            }
         }
     }
 
     // 5. Save settings snapshots — always plaintext.
     {
         let path = mlc_core::active_profile_data_dir().join("settings_snapshots.json");
-        if let Err(e) = mlc_core::save_json(&path, chart.core.user().snapshots(), None) {
-            web_sys::console::error_1(
-                &format!("[mlc-app-shell-web] failed to save settings snapshots: {}", e).into(),
-            );
+        let user = chart.core.user();
+        let snapshots = user.snapshots();
+        match mlc_core::save_json(&path, snapshots, None) {
+            Ok(()) => {
+                writes += 1;
+            }
+            Err(e) => {
+                web_sys::console::error_1(
+                    &format!("[mlc-app-shell-web] failed to save settings snapshots: {}", e).into(),
+                );
+            }
         }
     }
 
     // 6. Save templates — single canonical source of truth in the shared core.
     let vault_key = chart.core.user().vault_key();
-    if let Err(e) = chart.core.templates().save_to_default_dir(vault_key.as_ref()) {
-        web_sys::console::error_1(
-            &format!("[mlc-app-shell-web] failed to save templates: {:?}", e).into(),
-        );
+    {
+        let templates = chart.core.templates();
+        match templates.save_to_default_dir(vault_key.as_ref()) {
+            Ok(()) => {
+                writes += 1;
+            }
+            Err(e) => {
+                web_sys::console::error_1(
+                    &format!("[mlc-app-shell-web] failed to save templates: {:?}", e).into(),
+                );
+            }
+        }
     }
 
-    // 7. Save every preset — single canonical source of truth in the shared core.
+    // 7. Save every preset — single canonical source of truth in the shared
+    //    core. THE call H1 names: one `save_preset` (one `localStorage.setItem`
+    //    per the module doc's write-up) for every preset in the registry, not
+    //    just the one a click just touched.
     for preset in chart.core.presets().values() {
-        if let Err(e) = mlc_core::preset::storage::save_preset(preset) {
-            web_sys::console::error_1(
-                &format!("[mlc-app-shell-web] failed to save preset {}: {}", preset.id, e).into(),
-            );
+        match mlc_core::preset::storage::save_preset(preset) {
+            Ok(_path) => {
+                writes += 1;
+            }
+            Err(e) => {
+                web_sys::console::error_1(
+                    &format!("[mlc-app-shell-web] failed to save preset {}: {}", preset.id, e).into(),
+                );
+            }
         }
     }
 
@@ -249,6 +291,8 @@ pub fn save_persistent_state(chart: &mut ChartApp) {
     chart.profile_dirty = false;
     chart.profile_geometry_dirty = false;
     chart.watchlists_dirty = false;
+
+    perf.record_persist(now_ms() - perf_start_ms, writes);
 }
 
 /// Request persistent storage from the browser (best-effort — eviction

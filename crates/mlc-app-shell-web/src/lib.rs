@@ -44,6 +44,8 @@
 #[cfg(target_arch = "wasm32")]
 mod context;
 #[cfg(target_arch = "wasm32")]
+mod perf;
+#[cfg(target_arch = "wasm32")]
 mod persistence;
 #[cfg(all(target_arch = "wasm32", feature = "cloud"))]
 mod cloud_session;
@@ -579,7 +581,12 @@ fn install_persistence_flush_hooks(
                 if !st.read_only
                     && mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
                 {
-                    persistence::save_persistent_state(&mut st.chart);
+                    // Reborrow once: `st.chart`/`st.perf` through two separate
+                    // `RefMut` derefs in the same call don't split as disjoint
+                    // fields (same trap `render_frame`'s tab-sync block below
+                    // already documents for `chrome`/`chart`).
+                    let st = &mut *st;
+                    persistence::save_persistent_state(&mut st.chart, &mut st.perf);
                 }
             }
             let station = bridge.station();
@@ -620,7 +627,12 @@ fn install_persistence_flush_hooks(
                 if !st.read_only
                     && mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
                 {
-                    persistence::save_persistent_state(&mut st.chart);
+                    // Reborrow once: `st.chart`/`st.perf` through two separate
+                    // `RefMut` derefs in the same call don't split as disjoint
+                    // fields (same trap `render_frame`'s tab-sync block below
+                    // already documents for `chrome`/`chart`).
+                    let st = &mut *st;
+                    persistence::save_persistent_state(&mut st.chart, &mut st.perf);
                 }
             }
             let station = bridge.station();
@@ -689,11 +701,21 @@ struct WebAppState {
     /// fanout to do on this shell since it hosts exactly one `ChartApp`.
     profile_manager:    mlc_app::user_manager::ProfileManager,
     /// Cloud session driver (sign-in overlay + sync transport). Cloud builds only.
-    /// `None` in a read-only viewer session: its init would persist a fresh
-    /// device id to localStorage and its drive() would poll entitlements —
-    /// both ruled out for a viewer (writes nothing, shares nobody's session).
+    /// Present in a `?share=` viewer session too (2026-09-05): the viewer's
+    /// read-only gate is about chart persistence, not about who is looking.
+    /// The first cut set this to `None` for a viewer, and the account button
+    /// then said "Sign in" to a signed-in owner opening his own share link,
+    /// which read as being signed out. Init writes only the device id, and
+    /// drive() polls entitlements — both fine for the visitor's own browser.
     #[cfg(feature = "cloud")]
     cloud:              Option<cloud_session::CloudSession>,
+    /// Always-on frame/persistence instrumentation (wasm-only perf arc,
+    /// 2026-09-05) — see `perf.rs` module doc for the phase boundaries and
+    /// why this exists. Long-frame `console.warn`/summary `console.info`
+    /// fire regardless of the `?perf=1` HUD; the field lives here (plain,
+    /// not its own `Rc<RefCell<_>>`) because it's touched from the same
+    /// `state.borrow_mut()` scopes every other per-frame field already is.
+    perf:               perf::PerfMeter,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -732,7 +754,8 @@ impl WebAppState {
             bridge,
             profile_manager,
             #[cfg(feature = "cloud")]
-            cloud: if read_only { None } else { Some(cloud_session::CloudSession::init("")) },
+            cloud: Some(cloud_session::CloudSession::init("")),
+            perf: perf::PerfMeter::new(),
         }
     }
 }
@@ -788,6 +811,9 @@ fn run_render_loop(
         // ── RAF-stall watchdog stamp ─────────────────────────────────────────
         last_frame_ms_for_raf.set(js_sys::Date::now());
 
+        // ── Perf: begin frame timer (see perf.rs module doc) ────────────────
+        let mut frame_timer = perf::FrameTimer::start();
+
         // ── Diag counter ─────────────────────────────────────────────────────
         if let Some(win) = web_sys::window() {
             let _ = js_sys::Reflect::set(
@@ -802,6 +828,7 @@ fn run_render_loop(
 
         // ── Process DOM events ────────────────────────────────────────────────
         let events = provider_clone.borrow_mut().poll_events();
+        frame_timer.set_events_drained(events.len());
         {
             let mut st = state_clone.borrow_mut();
             let canvas_id = st.canvas_id.clone();
@@ -809,6 +836,7 @@ fn run_render_loop(
                 dispatch_event(&mut st, event, &canvas_id);
             }
         }
+        frame_timer.enter(perf::Phase::Tick);
 
         // ── Tick ──────────────────────────────────────────────────────────────
         {
@@ -847,6 +875,7 @@ fn run_render_loop(
                 }
             }
         }
+        frame_timer.enter(perf::Phase::Drains);
 
         // ── Drain deferred cold-preset apply ─────────────────────────────────
         // Native equivalent: mlc-app-shell-vello/main.rs:4462-4482, gated on
@@ -1353,6 +1382,7 @@ fn run_render_loop(
         // already flips `load_state` back to `Live` once the real restore
         // finishes, so by the time this check runs post-drain the gate opens
         // on the SAME frame the cold apply completed.
+        frame_timer.enter(perf::Phase::Persist);
         {
             let mut st = state_clone.borrow_mut();
             let persist_safe = mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state);
@@ -1362,9 +1392,16 @@ fn run_render_loop(
                 && (st.chart.profile_dirty || st.chart.profile_geometry_dirty || st.chart.watchlists_dirty
                     || !st.chart.preset_actions.is_empty())
             {
-                persistence::save_persistent_state(&mut st.chart);
+                // Reborrow once — see the flush-hook call sites above for why
+                // `st.chart`/`st.perf` can't be split straight off a `RefMut`.
+                let st = &mut *st;
+                persistence::save_persistent_state(&mut st.chart, &mut st.perf);
             }
         }
+        // Diag block + `render_frame` below are bookkeeping/paint, not
+        // persistence — fold back into `Drains` until the render phase
+        // boundary explicitly reopens below (see perf.rs module doc).
+        frame_timer.enter(perf::Phase::Drains);
 
         // ── Diag: expose active bubble's last bar timestamp + bars count + close
         //     to JS so `dev-attach --eval window.MLC_DEBUG` can see whether the
@@ -1841,11 +1878,17 @@ fn run_render_loop(
             let _ = js_sys::Reflect::set(&win, &"MLC_DEBUG".into(), &dbg);
         }
 
+        frame_timer.enter(perf::Phase::Render);
         // ── Render frame ──────────────────────────────────────────────────────
         let render_result = render_frame(state_clone.clone());
         if let Err(e) = render_result {
             web_sys::console::error_1(&format!("[mlc-app-shell-web] render error: {:?}", e).into());
         }
+        // Screenshot/share/cure/background-warm below are post-render
+        // bookkeeping drains, not paint work — back into `Drains` (see
+        // perf.rs module doc: this bucket accumulates across three
+        // disjoint spans, of which this is the last).
+        frame_timer.enter(perf::Phase::Drains);
 
         // ── Screenshot capture ────────────────────────────────────────────────
         // Check AFTER render so the canvas contains the just-painted frame.
@@ -2012,6 +2055,12 @@ fn run_render_loop(
             let mut st = state_clone.borrow_mut();
             st.chart.seed_background_warm_if_idle();
             st.chart.drain_one_background_warm();
+        }
+
+        // ── Perf: close out the frame (see perf.rs module doc) ───────────────
+        {
+            let mut st = state_clone.borrow_mut();
+            frame_timer.finish(&mut st.perf);
         }
 
         // ── Schedule next frame ───────────────────────────────────────────────
@@ -2482,8 +2531,8 @@ fn render_frame(state: Rc<RefCell<WebAppState>>) -> Result<(), JsValue> {
         // the native shell does the same from `auth_rx`.
         #[cfg(feature = "cloud")]
         {
-            // `None` in a read-only viewer session — the strip keeps its
-            // anonymous "Sign in" label, matching the absent session.
+            // A `?share=` viewer keeps its session too, so a signed-in
+            // owner opening his own share link still sees his account here.
             let label = st.cloud.as_ref().and_then(|c| c.account_label());
             if st.chrome.account_label != label {
                 st.chrome.account_label = label;
