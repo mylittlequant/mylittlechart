@@ -1040,6 +1040,11 @@ fn draw_cloud_icon_buttons(
 ///
 /// On the web this is not an updater at all: the button is the release
 /// catalogue, so it is always drawn in its plain state.
+///
+/// Gated exactly like its only caller (`draw_cloud_icon_buttons`): the
+/// control reads `bp.download_left` and calls `logic::update_button_width`,
+/// both cloud-only, so without the feature this whole function is dead code.
+#[cfg(feature = "cloud")]
 fn draw_update_control(
     ctx: &mut dyn MlcRenderContext,
     state: &ChromeState,
