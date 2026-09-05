@@ -852,9 +852,11 @@ impl ChartToolbarState {
         if self.primed_id.as_deref() == Some(id) { return true; }
         if self.open_dropdown_id.as_deref() == Some(id) { return true; }
         if self.active_tool_id.as_deref() == Some(id) { return true; }
-        // Camera button's ~1s "just fired" active phase (owner ruling
-        // 2026-09-05) — visually active independent of the dropdown.
-        if id == "screenshot" && self.screenshot_active() { return true; }
+        // The camera button's ~1s "just fired" phase (`screenshot_active()`)
+        // is STATE only — it decides whether a second click opens the
+        // destination dropdown — and never paints the button active (owner
+        // ruling 2026-09-05 evening: one click = shot, two clicks = dropdown,
+        // no highlight; the earlier pulse stuck on until the next repaint).
         if let Some(ref active_tool) = self.active_tool_id {
             if let Some((tool_id, _icon)) = self.quick_select_memory.get(id) {
                 if tool_id == active_tool { return true; }
