@@ -109,6 +109,12 @@ pub struct ChartWindowRenderInputs<'a> {
 /// — that's normal, not stale, so they return `false` here. An
 /// unregistered/unknown chart_type id also returns `false` — nothing to
 /// compare against.
+///
+/// Only the `debug_assertions` twin below (and the tests) call this, so a
+/// release build would otherwise flag it dead — which the `--release` gates
+/// (owner rule 2026-09-05: no dev-profile checks on the box) turn into a
+/// hard error.
+#[cfg(any(debug_assertions, test))]
 fn is_bars_owned_chart_type(chart_type: &str) -> bool {
     mlc_core::chart_type::by_id(chart_type)
         .map(|d| d.series_variant == mlc_core::chart_type::SeriesVariant::Bars)
