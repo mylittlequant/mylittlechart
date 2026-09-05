@@ -2361,7 +2361,14 @@ fn map_platform_event_to_shell(
                 KeyCode::Escape    => LogicalKey::Escape,
                 KeyCode::Backspace => LogicalKey::Backspace,
                 KeyCode::Enter     => LogicalKey::Enter,
-                KeyCode::Space     => LogicalKey::Space,
+                // Space is NOT mapped: uzor-window-web already emits
+                // `TextInput { " " }` for it (single printable scalar), which
+                // lands below as ImeCommit → on_char_input(' '). Mapping it to
+                // LogicalKey::Space as well made the dispatcher insert a second
+                // space — every space typed into a web text field doubled
+                // (forum thread 3, 2026-09-05). Native has no IME commit for
+                // Space, which is why the dispatcher inserts on the key there.
+                KeyCode::Space     => LogicalKey::Other,
                 KeyCode::Tab       => LogicalKey::Tab,
                 KeyCode::Delete    => LogicalKey::Delete,
                 KeyCode::ArrowLeft  => LogicalKey::ArrowLeft,

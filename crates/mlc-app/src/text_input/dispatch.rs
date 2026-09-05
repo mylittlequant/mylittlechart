@@ -1067,6 +1067,12 @@ impl ChartApp {
                         *posting_reply = true;
                         *reply_error = None;
                     }
+                    // Same tag `panel_click.rs`'s Reply button click sets —
+                    // consumed by the shells' successful-apply code to know
+                    // whether to clear the reply box (see its doc for why
+                    // `posting_reply` alone cannot tell Reply apart from
+                    // DeleteReply/DeleteThread).
+                    chart.panel_app.cloud_overlay_state.forum_reply_pending = true;
                     chart.panel_app.cloud_overlay_state.forum_request =
                         Some(mlc_app_layout::ui::modal_settings::ForumRequest::Reply { thread_id, body });
                 }

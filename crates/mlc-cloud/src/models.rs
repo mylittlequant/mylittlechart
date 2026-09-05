@@ -192,7 +192,17 @@ pub struct MeResponse {
     pub user_id: i64,
     /// Non-sequential public identifier — safe to expose in APIs.
     pub public_id: String,
+    /// Provider-supplied name (e.g. the Google account name) — NOT what
+    /// other users see once a nick is set; that is `effective_label`.
     pub display_name: String,
+    /// The user's chosen nick, if any (`POST /api/account/nick`).
+    #[serde(default)]
+    pub nick: Option<String>,
+    /// Server-computed label shown to everyone: nick → display_name →
+    /// public_id. `Option` + default so a server predating nicks still
+    /// parses; callers fall back to `display_name`.
+    #[serde(default)]
+    pub effective_label: Option<String>,
     /// Primary provider (kept for backwards compatibility).
     pub provider: String,
     /// All providers linked to this account.

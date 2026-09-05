@@ -5480,6 +5480,14 @@ impl ChartApp {
                     {
                         if tab != mlc_app_layout::ui::modal_settings::NewsTab::Forum || st.forum_entitled {
                             st.set_news_tab(tab);
+                            // Switching TO the Forum tab must not show
+                            // whatever page was cached from a previous visit
+                            // — invalidate so the shell's passive fetch
+                            // reissues page one (see `invalidate_forum_list`
+                            // doc for the other call sites).
+                            if tab == mlc_app_layout::ui::modal_settings::NewsTab::Forum {
+                                st.invalidate_forum_list();
+                            }
                         }
                     }
                 }
@@ -5515,6 +5523,9 @@ impl ChartApp {
                         }
                         "back" => {
                             st.forum_view = ForumSubView::List;
+                            // The list may have gone stale (a reply landed)
+                            // while a thread was open — reissue page one.
+                            st.invalidate_forum_list();
                             self.input_coordinator.borrow_mut().text_fields_mut().blur();
                         }
                         "compose_cancel" => {
@@ -5564,6 +5575,12 @@ impl ChartApp {
                                     posting_reply: false,
                                     reply_error: None,
                                 };
+                                // A different thread (or the same one
+                                // reopened) — the periodic-refresh clock
+                                // restarts once THIS load lands.
+                                st.forum_thread_fetched_at = None;
+                                st.forum_thread_refreshing = false;
+                                st.forum_reply_pending = false;
                                 st.forum_request = Some(ForumRequest::LoadThread { id });
                             }
                         }
@@ -5581,6 +5598,19 @@ impl ChartApp {
                         "delete_thread" => {
                             if let ForumSubView::Thread { thread: Some(t), .. } = &st.forum_view {
                                 let id = t.id;
+                                // Same optimistic flag `reply_submit` sets —
+                                // native's apply block has no per-request
+                                // tag on its shared answer channel and
+                                // routes purely off this flag (see
+                                // `main.rs`'s forum-state apply doc). Without
+                                // it a successful delete lands with nothing
+                                // to route it to and the thread view never
+                                // returns to the list.
+                                if let ForumSubView::Thread { posting_reply, reply_error, .. } = &mut st.forum_view {
+                                    *posting_reply = true;
+                                    *reply_error = None;
+                                }
+                                st.forum_reply_pending = false;
                                 st.forum_request = Some(ForumRequest::DeleteThread { id });
                             }
                         }
@@ -5588,6 +5618,12 @@ impl ChartApp {
                             if let Ok(id) = rest2["delete_reply:".len()..].parse::<i64>() {
                                 if let ForumSubView::Thread { thread: Some(t), .. } = &st.forum_view {
                                     let thread_id = t.id;
+                                    // Same reasoning as `delete_thread` above.
+                                    if let ForumSubView::Thread { posting_reply, reply_error, .. } = &mut st.forum_view {
+                                        *posting_reply = true;
+                                        *reply_error = None;
+                                    }
+                                    st.forum_reply_pending = false;
                                     st.forum_request = Some(ForumRequest::DeleteReply { id, thread_id });
                                 }
                             }
@@ -5607,6 +5643,13 @@ impl ChartApp {
                                         *posting_reply = true;
                                         *reply_error = None;
                                     }
+                                    // Tags THIS in-flight request as the
+                                    // reply submit — consumed by the shells'
+                                    // successful-apply code to clear the
+                                    // reply box only once the server has the
+                                    // text, never on DeleteReply/DeleteThread
+                                    // (which also set `posting_reply`).
+                                    st.forum_reply_pending = true;
                                     st.forum_request = Some(ForumRequest::Reply { thread_id, body });
                                 }
                                 Err(message) => {

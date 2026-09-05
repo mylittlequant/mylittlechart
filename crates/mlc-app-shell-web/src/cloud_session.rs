@@ -30,11 +30,16 @@ use mlc_app_layout::ui::modal_settings::{
 use mlc_cloud::{
     forum_error_message, redeem_error_message, BuildAttestation, BlogPost, CloudConfig,
     DeviceAuthPoll, EntitlementsResponse, FetchTransport, ForumThreadResponse, ForumThreadSummary,
-    ReleaseEntry, StoredToken, VersionManifest,
+    MeResponse, ReleaseEntry, StoredToken, VersionManifest,
 };
 
 const TOKEN_KEY: &str = "mlc.cloud.token.v1";
 const DEVICE_KEY: &str = "mlc.cloud.device_id.v1";
+/// Last APPLIED entitlements answer this browser persisted, keyed by user —
+/// read back on the first entitlements answer of a NEW session so a tier
+/// change that landed while the page was closed still surfaces once (see
+/// `drive()`'s entitlements block).
+const TIER_KEY: &str = "mlc.cloud.tier.v1";
 const POLL_INTERVAL_MS: f64 = 2500.0;
 /// Backoff before retrying a failed entitlements fetch — short enough that a
 /// transient network blip self-heals within a session, long enough that a
@@ -98,6 +103,23 @@ struct Inner {
     /// Previous frame's overlay open flag (edge detection).
     was_open: bool,
     result: Option<FlowResult>,
+
+    // ── Account label refresh (`GET /api/auth/me`) ─────────────────────
+    // Fired once per token activation, never polled — a nick set from
+    // another device or by the API is otherwise invisible until re-login
+    // (owner, 2026-09-05). Own mailbox/in-flight pair, same reasoning as
+    // `entitlements_result`/`share_result`: none of this driver's
+    // concurrent fetches may block or overwrite another.
+    /// A fetch is already in flight.
+    me_in_flight: bool,
+    /// Mailbox for the `auth_me()` fetch.
+    me_result: Option<Result<MeResponse, String>>,
+    /// Whether the boot-time check (fire if a stored token is already
+    /// present) has run — true after the very first `drive()` call
+    /// regardless of outcome, so it can never re-fire on a later frame.
+    /// The post-login fetch is a separate, explicit call and does not use
+    /// this flag.
+    me_boot_checked: bool,
 
     // ── Entitlements ────────────────────────────────────────────────────
     // Runs on its own schedule, independent of the login/overlay phase
@@ -178,6 +200,9 @@ impl CloudSession {
                 next_poll_ms: 0.0,
                 was_open: false,
                 result: None,
+                me_in_flight: false,
+                me_result: None,
+                me_boot_checked: false,
                 entitlements_in_flight: false,
                 next_entitlements_ms: 0.0,
                 entitlements_result: None,
@@ -211,6 +236,24 @@ impl CloudSession {
     /// The provider that account signed in with, or `None` when signed out.
     pub fn account_provider(&self) -> Option<String> {
         self.inner.borrow().token.as_ref().map(|t| t.provider.clone())
+    }
+
+    /// Fire the single `GET /api/auth/me` fetch for the currently active
+    /// token — called once at boot (if a token is already stored) and
+    /// again right after a login resolves, never polled. Guarded by
+    /// `me_in_flight` so a second activation before the first fetch lands
+    /// cannot stack requests.
+    fn fire_me_fetch(&self) {
+        if self.inner.borrow().me_in_flight {
+            return;
+        }
+        self.inner.borrow_mut().me_in_flight = true;
+        let inner = self.inner.clone();
+        let transport = self.inner.borrow().transport.snapshot();
+        spawn_local(async move {
+            let r = transport.auth_me().await.map_err(|e| e.to_string());
+            inner.borrow_mut().me_result = Some(r);
+        });
     }
 
     // ── Chart sharing (fire-and-forget) ──────────────────────────────────
@@ -321,10 +364,22 @@ impl CloudSession {
                         // APPLIED answer, not the live `cloud_login_state`
                         // this same block is about to overwrite below.
                         // `None` means this is the first entitlements answer
-                        // of the session — never fires an event (a fresh
-                        // boot reading "free" is not a demotion).
+                        // of THIS session (boot or a reload) — fall back to
+                        // the last answer this browser persisted to
+                        // `TIER_KEY` for the SAME identity, so a tier change
+                        // applied while the page was closed (a gift code
+                        // redeemed via the API, then a reload) still
+                        // surfaces once instead of silently becoming the new
+                        // baseline. No stored record, or one for a
+                        // different user, keeps the old behaviour: no event.
+                        let current_user_id = inner.token.as_ref().map(|t| t.user_id);
                         let prev = inner.prev_entitlements.replace((resp.paid, resp.paid_until.clone()));
-                        if let Some((prev_paid, prev_until)) = prev {
+                        let baseline = prev.or_else(|| {
+                            let uid = current_user_id?;
+                            let stored = load_tier()?;
+                            (stored.user_id == uid).then_some((stored.paid, stored.paid_until))
+                        });
+                        if let Some((prev_paid, prev_until)) = baseline {
                             if prev_paid != resp.paid || prev_until != resp.paid_until {
                                 let (title, body) = if resp.paid {
                                     (
@@ -339,6 +394,16 @@ impl CloudSession {
                                 };
                                 chart.push_system_event(mlc_core::SystemEventKind::Tier, title, body, true);
                             }
+                        }
+                        // Persist this APPLIED answer as the new baseline —
+                        // only when signed in; an anonymous entitlements
+                        // answer has no identity to key the record on.
+                        if let Some(uid) = current_user_id {
+                            save_tier(&StoredTier {
+                                user_id: uid,
+                                paid: resp.paid,
+                                paid_until: resp.paid_until.clone(),
+                            });
                         }
                         // The account view states the tier outright; this is
                         // where that fact arrives. Read from the server's own
@@ -389,6 +454,60 @@ impl CloudSession {
                     inner.borrow_mut().entitlements_result = Some(r);
                 });
             }
+        }
+
+        // ── Account label refresh (`GET /api/auth/me`) ────────────────────
+        // Own block, independent of the login/overlay phase machine below —
+        // a nick set on another device or by the API must reach the
+        // chrome's account button without the person reopening the login
+        // overlay. Fired once per token activation: here at boot, and again
+        // right after a login resolves further down where the token is
+        // saved. Never polled — see `Inner::me_result`'s own doc.
+        {
+            let finished = self.inner.borrow_mut().me_result.take();
+            if let Some(r) = finished {
+                let mut inner = self.inner.borrow_mut();
+                inner.me_in_flight = false;
+                match r {
+                    Ok(resp) => {
+                        // The stored token's `display_name` is what the
+                        // account button paints, and it is the LABEL, not
+                        // the provider name: `effective_label` (nick →
+                        // display_name → public_id, server-computed) may
+                        // differ from it if a nick was set on another
+                        // device or via the API. Silent refresh: no system
+                        // event, no toast.
+                        let label = resp.effective_label.unwrap_or(resp.display_name);
+                        let stale = inner
+                            .token
+                            .as_ref()
+                            .map(|t| t.display_name != label)
+                            .unwrap_or(false);
+                        if stale {
+                            if let Some(t) = inner.token.as_mut() {
+                                t.display_name = label;
+                            }
+                            if let Some(t) = inner.token.clone() {
+                                save_token(&t);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        web_sys::console::debug_1(
+                            &format!("[cloud] me() fetch failed: {}", e).into(),
+                        );
+                    }
+                }
+            }
+
+            let due = {
+                let inner = self.inner.borrow();
+                !inner.me_boot_checked && !inner.me_in_flight && inner.token.is_some()
+            };
+            if due {
+                self.fire_me_fetch();
+            }
+            self.inner.borrow_mut().me_boot_checked = true;
         }
 
         // ── Chart-share result → system event (owner ask 2026-09-05) ──────
@@ -457,6 +576,11 @@ impl CloudSession {
                     // the previous (usually anonymous/free) answer's TTL.
                     inner.next_entitlements_ms = 0.0;
                     drop(inner);
+                    // A fresh identity may already carry a nick set
+                    // elsewhere (another device, the API) — ask once now
+                    // rather than showing this frame's login-time
+                    // `display_name` until the next re-login.
+                    self.fire_me_fetch();
                     // Link the account on the profile (persisted by the
                     // shell's per-frame dirty drain).
                     {
@@ -589,6 +713,7 @@ impl CloudSession {
                 }
                 FlowResult::ForumThreads { append, result } => {
                     let ov = &mut chart.panel_app.cloud_overlay_state;
+                    ov.forum_list_refreshing = false;
                     match result {
                         Ok((threads, next_before)) => {
                             let mapped: Vec<CloudForumThreadSummary> = threads.into_iter().map(map_forum_summary).collect();
@@ -604,6 +729,7 @@ impl CloudSession {
                                 }
                             } else {
                                 ov.forum_list = ForumListState::Loaded { threads: mapped, next_before, loading_more: false };
+                                ov.mark_forum_list_fetched();
                             }
                         }
                         Err(e) => {
@@ -615,6 +741,14 @@ impl CloudSession {
                                 // up and usable — no dedicated UI slot for
                                 // this, so it just goes to the console.
                                 web_sys::console::warn_1(&format!("[forum] load more failed: {}", e).into());
+                            } else if matches!(ov.forum_list, ForumListState::Loaded { .. }) {
+                                // A background due-refresh failed (the
+                                // initial-load path always flips `Loading`
+                                // before firing, so landing here with
+                                // `Loaded` means this was the quiet one) —
+                                // the existing page stays up, same tolerance
+                                // load-more failures get above.
+                                web_sys::console::warn_1(&format!("[forum] list refresh failed: {}", e).into());
                             } else {
                                 ov.forum_list = ForumListState::Error { message: e };
                             }
@@ -623,22 +757,36 @@ impl CloudSession {
                     self.inner.borrow_mut().forum_in_flight = false;
                 }
                 FlowResult::ForumThreadOpened(result) => {
-                    chart.panel_app.cloud_overlay_state.forum_view = match result {
-                        Ok(resp) => ForumSubView::Thread {
-                            thread: Some(map_forum_thread(resp)),
-                            loading: false,
-                            error: None,
-                            posting_reply: false,
-                            reply_error: None,
+                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    ov.forum_thread_refreshing = false;
+                    match result {
+                        Ok(resp) => {
+                            ov.forum_view = ForumSubView::Thread {
+                                thread: Some(map_forum_thread(resp)),
+                                loading: false,
+                                error: None,
+                                posting_reply: false,
+                                reply_error: None,
+                            };
+                            ov.mark_forum_thread_fetched();
+                        }
+                        Err(e) => if matches!(&ov.forum_view, ForumSubView::Thread { thread: Some(_), loading: false, .. }) {
+                            // A background due-refresh failed — the
+                            // initial-load path always sets `thread: None,
+                            // loading: true` before firing, so landing here
+                            // with a thread already showing means this was
+                            // the quiet one; it stays on screen as-is.
+                            web_sys::console::warn_1(&format!("[forum] thread refresh failed: {}", e).into());
+                        } else {
+                            ov.forum_view = ForumSubView::Thread {
+                                thread: None,
+                                loading: false,
+                                error: Some(e),
+                                posting_reply: false,
+                                reply_error: None,
+                            };
                         },
-                        Err(e) => ForumSubView::Thread {
-                            thread: None,
-                            loading: false,
-                            error: Some(e),
-                            posting_reply: false,
-                            reply_error: None,
-                        },
-                    };
+                    }
                     self.inner.borrow_mut().forum_in_flight = false;
                 }
                 FlowResult::ForumThreadCreated(result) => {
@@ -652,10 +800,24 @@ impl CloudSession {
                                 posting_reply: false,
                                 reply_error: None,
                             };
+                            ov.mark_forum_thread_fetched();
                             // A new thread now exists — invalidate the
                             // cached list page so Back re-fetches rather
                             // than showing a stale page missing it.
-                            ov.forum_list = ForumListState::Empty;
+                            ov.invalidate_forum_list();
+                            // Compose form is gone — clear its fields so a
+                            // later "New thread" does not resurrect this
+                            // post's text.
+                            let mut coord = chart.input_coordinator.borrow_mut();
+                            let tf = coord.text_fields_mut();
+                            let title_wid = uzor::WidgetId::from(mlc_app::text_input::FORUM_TITLE);
+                            let body_wid = uzor::WidgetId::from(mlc_app::text_input::FORUM_BODY);
+                            if !tf.text(&title_wid).is_empty() {
+                                tf.clear(&title_wid);
+                            }
+                            if !tf.text(&body_wid).is_empty() {
+                                tf.clear(&body_wid);
+                            }
                         }
                         Err(e) => {
                             if let ForumSubView::Compose { posting, error } = &mut ov.forum_view {
@@ -668,6 +830,7 @@ impl CloudSession {
                 }
                 FlowResult::ForumThreadRefreshed(result) => {
                     let ov = &mut chart.panel_app.cloud_overlay_state;
+                    let was_reply = std::mem::take(&mut ov.forum_reply_pending);
                     match result {
                         Ok(resp) => {
                             ov.forum_view = ForumSubView::Thread {
@@ -677,6 +840,19 @@ impl CloudSession {
                                 posting_reply: false,
                                 reply_error: None,
                             };
+                            ov.mark_forum_thread_fetched();
+                            // The reply (or delete) landed — the list's
+                            // `reply_count`/`last_reply_at` for this thread
+                            // are now stale.
+                            ov.invalidate_forum_list();
+                            if was_reply {
+                                let mut coord = chart.input_coordinator.borrow_mut();
+                                let tf = coord.text_fields_mut();
+                                let wid = uzor::WidgetId::from(mlc_app::text_input::FORUM_REPLY);
+                                if !tf.text(&wid).is_empty() {
+                                    tf.clear(&wid);
+                                }
+                            }
                         }
                         Err(e) => {
                             if let ForumSubView::Thread { posting_reply, reply_error, .. } = &mut ov.forum_view {
@@ -689,6 +865,9 @@ impl CloudSession {
                 }
                 FlowResult::ForumThreadDeleted(result) => {
                     let ov = &mut chart.panel_app.cloud_overlay_state;
+                    ov.forum_reply_pending = false;
+                    ov.forum_thread_fetched_at = None;
+                    ov.forum_thread_refreshing = false;
                     match result {
                         Ok((threads, next_before)) => {
                             ov.forum_view = ForumSubView::List;
@@ -697,6 +876,7 @@ impl CloudSession {
                                 next_before,
                                 loading_more: false,
                             };
+                            ov.mark_forum_list_fetched();
                         }
                         Err(e) => {
                             if let ForumSubView::Thread { reply_error, .. } = &mut ov.forum_view {
@@ -709,6 +889,7 @@ impl CloudSession {
                 FlowResult::Logout => {
                     // Local sign-out regardless of the server answer.
                     clear_token();
+                    clear_tier();
                     let mut inner = self.inner.borrow_mut();
                     inner.transport.set_token(None);
                     inner.token = None;
@@ -837,11 +1018,23 @@ impl CloudSession {
             let forum_active = ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Forum;
 
             // Passive: fetch page one the moment the tab is looked at with
-            // nothing loaded yet — same "Empty -> fire" idiom News/Download
-            // use above, on its own `forum_in_flight` gate so it can never
-            // block (or be blocked by) that unrelated flow.
-            if forum_active && matches!(ov.forum_list, ForumListState::Empty) && !self.inner.borrow().forum_in_flight {
-                ov.forum_list = ForumListState::Loading;
+            // nothing loaded yet, OR reissue it quietly once
+            // `forum_list_due_for_refresh()` says the cadence has elapsed on
+            // an already-loaded page — same "Empty -> fire" idiom
+            // News/Download use above, on its own `forum_in_flight` gate so
+            // it can never block (or be blocked by) that unrelated flow. The
+            // due-refresh case leaves the current page and scroll on screen
+            // (no `Loading` flip) — only the `FlowResult::ForumThreads`
+            // apply below swaps in the fresh page once it lands.
+            let needs_initial_fetch = matches!(ov.forum_list, ForumListState::Empty);
+            let needs_refresh =
+                matches!(ov.forum_list, ForumListState::Loaded { .. }) && ov.forum_list_due_for_refresh();
+            if forum_active && (needs_initial_fetch || needs_refresh) && !self.inner.borrow().forum_in_flight {
+                if needs_initial_fetch {
+                    ov.forum_list = ForumListState::Loading;
+                } else {
+                    ov.forum_list_refreshing = true;
+                }
                 self.inner.borrow_mut().forum_in_flight = true;
                 let inner = self.inner.clone();
                 let transport = self.inner.borrow().transport.snapshot();
@@ -853,6 +1046,33 @@ impl CloudSession {
                         .map_err(|e| forum_error_message(&e));
                     inner.borrow_mut().result = Some(FlowResult::ForumThreads { append: false, result: r });
                 });
+            }
+
+            // Passive: while a thread is open (fully loaded, not itself
+            // loading/posting/erroring), reissue `LoadThread` every
+            // `FORUM_REFRESH_MS` so another participant's reply shows up
+            // without the caller leaving and reopening the thread. Fires
+            // WITHOUT touching `forum_view` — unlike the click-triggered
+            // load, a background refresh must not blank the thread the
+            // caller is reading or reset its scroll; the reply box the
+            // caller may be mid-typing lives in the text-field store,
+            // untouched by any of this.
+            if forum_active {
+                if let ForumSubView::Thread { thread: Some(t), loading: false, posting_reply: false, .. } =
+                    &ov.forum_view
+                {
+                    if ov.forum_thread_due_for_refresh() && !self.inner.borrow().forum_in_flight {
+                        let id = t.id;
+                        ov.forum_thread_refreshing = true;
+                        self.inner.borrow_mut().forum_in_flight = true;
+                        let inner = self.inner.clone();
+                        let transport = self.inner.borrow().transport.snapshot();
+                        spawn_local(async move {
+                            let r = transport.forum_thread(id).await.map_err(|e| forum_error_message(&e));
+                            inner.borrow_mut().result = Some(FlowResult::ForumThreadOpened(r));
+                        });
+                    }
+                }
             }
 
             // Explicit user action — one-shot mailbox, same idiom as
@@ -1138,6 +1358,51 @@ fn save_token(token: &StoredToken) {
 fn clear_token() {
     if let Some(ls) = local_storage() {
         let _ = ls.remove_item(TOKEN_KEY);
+    }
+}
+
+/// Last APPLIED entitlements answer this browser persisted, keyed by the
+/// identity it was answered for — see `TIER_KEY`'s own doc and the
+/// entitlements block in `drive()`.
+///
+/// Built/read through `serde_json::Value` rather than derived (de)serialize
+/// impls: this crate depends on `serde_json` but not `serde` directly, and
+/// `StoredToken` (`mlc-cloud`) already carries the derive because it owns
+/// that dependency — this small local record does not need to add one.
+#[derive(Debug, Clone)]
+struct StoredTier {
+    user_id: i64,
+    paid: bool,
+    paid_until: Option<String>,
+}
+
+fn load_tier() -> Option<StoredTier> {
+    let raw = local_storage()?.get_item(TIER_KEY).ok().flatten()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    Some(StoredTier {
+        user_id: v.get("user_id")?.as_i64()?,
+        paid: v.get("paid")?.as_bool()?,
+        paid_until: v
+            .get("paid_until")
+            .and_then(|pu| pu.as_str())
+            .map(|s| s.to_string()),
+    })
+}
+
+fn save_tier(tier: &StoredTier) {
+    if let Some(ls) = local_storage() {
+        let json = serde_json::json!({
+            "user_id": tier.user_id,
+            "paid": tier.paid,
+            "paid_until": tier.paid_until,
+        });
+        let _ = ls.set_item(TIER_KEY, &json.to_string());
+    }
+}
+
+fn clear_tier() {
+    if let Some(ls) = local_storage() {
+        let _ = ls.remove_item(TIER_KEY);
     }
 }
 

@@ -4795,6 +4795,25 @@ impl NewsTab {
     }
 }
 
+/// Forum tab passive-refresh cadence, ms. Both the thread list (page one)
+/// and the currently open thread view re-fetch on this cadence while the
+/// Forum tab is visible, so another participant's reply or new thread shows
+/// up without the caller closing and reopening the overlay. Read by both
+/// shells' existing poll (`cloud_session.rs`, `main.rs`), next to the
+/// `forum_list == Empty` check that already drives the very first fetch —
+/// see [`CloudOverlayState::forum_list_due_for_refresh`]/
+/// [`CloudOverlayState::forum_thread_due_for_refresh`].
+#[cfg(feature = "cloud")]
+pub const FORUM_REFRESH_MS: u64 = 30_000;
+
+#[cfg(feature = "cloud")]
+fn now_ms() -> u64 {
+    web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// A user-triggered Forum action — one-shot mailbox
 /// ([`CloudOverlayState::forum_request`]), same idiom as
 /// `CloudLoginState::redeem_requested`. The passive "fetch page one when
@@ -4868,8 +4887,39 @@ pub struct CloudOverlayState {
     /// Forum tab: thread-list fetch state — independent of `forum_view` so
     /// returning from a thread or an abandoned compose never re-fetches it.
     pub forum_list: ForumListState,
+    /// Wall-clock ms ([`now_ms`]) `forum_list` last landed a successful page
+    /// one — `None` until the first page lands. Compared against
+    /// [`FORUM_REFRESH_MS`] by [`Self::forum_list_due_for_refresh`],
+    /// independent of `forum_list`'s own Empty/Loading/Loaded shape so a
+    /// `Loaded` page does not sit unrefreshed for as long as the tab stays
+    /// open.
+    pub forum_list_fetched_at: Option<u64>,
+    /// A background page-one refetch (due-for-refresh, NOT the first fetch
+    /// or an explicit Load-more) is in flight — the shells' own in-flight
+    /// gate (`forum_in_flight` on web, `ForumState::busy` on native) already
+    /// stops a doubled request, but the due-check itself needs this to know
+    /// not to re-fire every poll between "fired" and "landed".
+    pub forum_list_refreshing: bool,
     /// Forum tab: which sub-view is showing.
     pub forum_view: ForumSubView,
+    /// Same bookkeeping as `forum_list_fetched_at`, for the thread currently
+    /// open in `ForumSubView::Thread` — reset to `None` whenever a different
+    /// thread is opened (a fresh `LoadThread` always lands before this is
+    /// due again) or the overlay closes.
+    pub forum_thread_fetched_at: Option<u64>,
+    /// Same as `forum_list_refreshing`, for the open thread's background
+    /// refresh.
+    pub forum_thread_refreshing: bool,
+    /// The in-flight forum request targeting the open thread is specifically
+    /// `ForumRequest::Reply` — set by the reply-submit click handler
+    /// (`panel_click.rs`), consumed by the shells' successful-apply code to
+    /// know whether to clear the `FORUM_REPLY` text field. Distinct from
+    /// `ForumSubView::Thread::posting_reply`, which native's single-channel
+    /// updater answer shares across Reply/DeleteReply/DeleteThread (it
+    /// cannot otherwise tell which of the three just landed) — this flag is
+    /// never set by the other two, and is reset to `false` wherever it is
+    /// consumed, on success or failure alike.
+    pub forum_reply_pending: bool,
     /// One-shot mailbox for a Forum action the shell should perform.
     pub forum_request: Option<ForumRequest>,
 }
@@ -4892,7 +4942,12 @@ impl Default for CloudOverlayState {
             drag_offset: None,
             forum_entitled: false,
             forum_list: ForumListState::Empty,
+            forum_list_fetched_at: None,
+            forum_list_refreshing: false,
             forum_view: ForumSubView::List,
+            forum_thread_fetched_at: None,
+            forum_thread_refreshing: false,
+            forum_reply_pending: false,
             forum_request: None,
         }
     }
@@ -4939,9 +4994,14 @@ impl CloudOverlayState {
         // `Empty` so the driver fetches again rather than sitting on a
         // fetch that was interrupted by the overlay closing mid-flight.
         self.forum_view = ForumSubView::List;
+        self.forum_thread_fetched_at = None;
+        self.forum_thread_refreshing = false;
+        self.forum_reply_pending = false;
         if !matches!(self.forum_list, ForumListState::Loaded { .. }) {
             self.forum_list = ForumListState::Empty;
+            self.forum_list_fetched_at = None;
         }
+        self.forum_list_refreshing = false;
         self.forum_request = None;
     }
 
@@ -4956,7 +5016,13 @@ impl CloudOverlayState {
         self.drag_offset = None;
         // `forum_list`/`forum_view` deliberately survive a close — `open()`
         // above decides what to keep on the way back in, same split `data`
-        // already has between the two methods.
+        // already has between the two methods. The in-flight background
+        // bookkeeping below does NOT survive: a refresh whose result lands
+        // after the overlay is closed must not leave a flag stuck `true`
+        // that then blocks every future due-check.
+        self.forum_list_refreshing = false;
+        self.forum_thread_refreshing = false;
+        self.forum_reply_pending = false;
         self.forum_request = None;
     }
 
@@ -4976,6 +5042,53 @@ impl CloudOverlayState {
     pub fn set_news_tab(&mut self, tab: NewsTab) {
         self.news_tab = tab;
         self.scroll.reset();
+    }
+
+    /// Marks the cached thread list stale: resets it to `Empty` (and clears
+    /// its fetch timestamp) so the next poll's "fetch page one when nothing
+    /// is loaded" idiom fires again — WITHOUT touching `forum_view`, so a
+    /// caller mid-thread or mid-compose is not yanked back to the list just
+    /// because the list itself went stale. Call after any Forum action that
+    /// can change what the list shows (`CreateThread`/`DeleteThread`
+    /// succeeding, `Reply`/`DeleteReply` succeeding — a reply moves its
+    /// thread's `reply_count`/`last_reply_at`), plus `back` and switching TO
+    /// the Forum tab.
+    pub fn invalidate_forum_list(&mut self) {
+        self.forum_list = ForumListState::Empty;
+        self.forum_list_fetched_at = None;
+        self.forum_list_refreshing = false;
+    }
+
+    /// True once [`FORUM_REFRESH_MS`] has passed since the list last landed
+    /// a successful page one, and no background refresh is already in
+    /// flight. Read by both shells' passive-fetch poll alongside their
+    /// existing `forum_list == Empty` check to decide "reissue page one
+    /// quietly" for an already-`Loaded` page.
+    pub fn forum_list_due_for_refresh(&self) -> bool {
+        !self.forum_list_refreshing
+            && matches!(self.forum_list_fetched_at, Some(t) if now_ms().saturating_sub(t) >= FORUM_REFRESH_MS)
+    }
+
+    /// Stamps `forum_list` as freshly fetched — call once a page-one fetch
+    /// (passive, due-refresh, or a mutation's own follow-up read) lands.
+    pub fn mark_forum_list_fetched(&mut self) {
+        self.forum_list_fetched_at = Some(now_ms());
+        self.forum_list_refreshing = false;
+    }
+
+    /// Same cadence as [`Self::forum_list_due_for_refresh`], for the thread
+    /// currently open in `ForumSubView::Thread`.
+    pub fn forum_thread_due_for_refresh(&self) -> bool {
+        !self.forum_thread_refreshing
+            && matches!(self.forum_thread_fetched_at, Some(t) if now_ms().saturating_sub(t) >= FORUM_REFRESH_MS)
+    }
+
+    /// Stamps the open thread as freshly fetched — call once a `LoadThread`
+    /// (initial open, due-refresh, or a mutation's own follow-up read)
+    /// lands.
+    pub fn mark_forum_thread_fetched(&mut self) {
+        self.forum_thread_fetched_at = Some(now_ms());
+        self.forum_thread_refreshing = false;
     }
 
     pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {

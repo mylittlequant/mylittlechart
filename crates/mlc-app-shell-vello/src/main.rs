@@ -4950,7 +4950,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // alongside `redeem_status`/`nick_status`.
         #[cfg(feature = "cloud")]
         {
-            use mlc_app_layout::ui::modal_settings::{CloudOverlayKind, ForumListState, ForumRequest, NewsTab};
+            use mlc_app_layout::ui::modal_settings::{
+                CloudOverlayKind, ForumListState, ForumRequest, ForumSubView, NewsTab,
+            };
 
             let mut to_send: Vec<mlc_updater::ForumCommand> = Vec::new();
             for pw in self.windows.values_mut() {
@@ -4973,6 +4975,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     });
                 }
             }
+            let explicit_action_this_tick = !to_send.is_empty();
             for cmd in to_send {
                 let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Forum(cmd));
             }
@@ -5001,6 +5004,76 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Forum(
                     mlc_updater::ForumCommand::ListThreads { before: None },
                 ));
+            }
+
+            // Passive, same idiom: once `forum_list_due_for_refresh()`/
+            // `forum_thread_due_for_refresh()` says `FORUM_REFRESH_MS` has
+            // elapsed on an already-loaded page or the open thread, reissue
+            // the fetch quietly (no `Loading`/placeholder flip, so the
+            // visible page and its scroll stay put) so another
+            // participant's reply or new thread shows up without the
+            // caller leaving and reopening the overlay. One shared updater
+            // channel across every window (unlike the web shell's own
+            // per-driver `forum_in_flight`), so this gates on the settled
+            // `ForumState::busy` peeked here, and skips a tick that already
+            // sent an explicit action — avoids doubling a request the
+            // caller's own click just fired. List refresh takes priority
+            // over thread refresh when both are due the same tick; the
+            // other one waits for the next due tick.
+            let forum_busy = self.updater_handle.forum_rx.borrow().busy;
+            if !explicit_action_this_tick && !forum_busy && !needs_fetch {
+                let list_due = self.windows.values().any(|pw| {
+                    let ov = &pw.chart.panel_app.cloud_overlay_state;
+                    ov.is_open
+                        && ov.kind == CloudOverlayKind::News
+                        && ov.news_tab == NewsTab::Forum
+                        && matches!(ov.forum_list, ForumListState::Loaded { .. })
+                        && ov.forum_list_due_for_refresh()
+                });
+                if list_due {
+                    for pw in self.windows.values_mut() {
+                        let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+                        if ov.is_open
+                            && ov.kind == CloudOverlayKind::News
+                            && ov.news_tab == NewsTab::Forum
+                            && matches!(ov.forum_list, ForumListState::Loaded { .. })
+                            && ov.forum_list_due_for_refresh()
+                        {
+                            ov.forum_list_refreshing = true;
+                        }
+                    }
+                    let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Forum(
+                        mlc_updater::ForumCommand::ListThreads { before: None },
+                    ));
+                } else if let Some(id) = self.windows.values().find_map(|pw| {
+                    let ov = &pw.chart.panel_app.cloud_overlay_state;
+                    if !(ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Forum) {
+                        return None;
+                    }
+                    if let ForumSubView::Thread { thread: Some(t), loading: false, posting_reply: false, .. } =
+                        &ov.forum_view
+                    {
+                        if ov.forum_thread_due_for_refresh() {
+                            return Some(t.id);
+                        }
+                    }
+                    None
+                }) {
+                    for pw in self.windows.values_mut() {
+                        let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+                        let matches_due = matches!(
+                            &ov.forum_view,
+                            ForumSubView::Thread { thread: Some(t), loading: false, posting_reply: false, .. }
+                                if t.id == id
+                        ) && ov.forum_thread_due_for_refresh();
+                        if matches_due {
+                            ov.forum_thread_refreshing = true;
+                        }
+                    }
+                    let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Forum(
+                        mlc_updater::ForumCommand::LoadThread { id },
+                    ));
+                }
             }
         }
 
@@ -5425,9 +5498,37 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 #[cfg(feature = "cloud")]
                 if let Some(fs) = forum_state.as_ref() {
                     use mlc_app_layout::ui::modal_settings::{ForumListState, ForumSubView};
+                    let mapped_thread = fs.thread.as_ref().map(map_forum_thread_native);
+                    // Silent background thread refresh (30s cadence, fired
+                    // below alongside the list's own) — routed BEFORE the
+                    // optimistic-flag dispatch further down since the view
+                    // was never touched when this request went out (unlike
+                    // every other Forum action, which sets
+                    // `loading`/`posting`/`posting_reply` before firing), so
+                    // the answer landing must not touch the view beyond the
+                    // thread payload itself.
                     let ov = &mut pw.chart.panel_app.cloud_overlay_state;
-                    if ov.is_open {
-                        let mapped_thread = fs.thread.as_ref().map(map_forum_thread_native);
+                    if ov.is_open && ov.forum_thread_refreshing {
+                        ov.forum_thread_refreshing = false;
+                        if let (None, Some(t)) = (&fs.last_error, &mapped_thread) {
+                            let is_same_thread = matches!(
+                                &ov.forum_view,
+                                ForumSubView::Thread { thread: Some(existing), .. } if existing.id == t.id
+                            );
+                            if is_same_thread {
+                                if let ForumSubView::Thread { thread, .. } = &mut ov.forum_view {
+                                    *thread = Some(t.clone());
+                                }
+                                ov.mark_forum_thread_fetched();
+                            }
+                        }
+                        // Failure, or the caller switched threads/left the
+                        // view while this was in flight: leave the view
+                        // exactly as it is — same tolerance the list's own
+                        // background refresh gets below.
+                        pw.overlay_dirty = true;
+                        pw.window.request_redraw();
+                    } else if ov.is_open {
                         match &mut ov.forum_view {
                             ForumSubView::Compose { posting: true, .. } => {
                                 match (&fs.last_error, &mapped_thread) {
@@ -5439,11 +5540,25 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             posting_reply: false,
                                             reply_error: None,
                                         };
+                                        ov.mark_forum_thread_fetched();
                                         // A new thread now exists — invalidate
                                         // the cached list page so Back
                                         // re-fetches rather than showing a
                                         // stale page missing it.
-                                        ov.forum_list = ForumListState::Empty;
+                                        ov.invalidate_forum_list();
+                                        // Compose form is gone — clear its
+                                        // fields so a later "New thread" does
+                                        // not resurrect this post's text.
+                                        let mut coord = pw.chart.input_coordinator.borrow_mut();
+                                        let tf = coord.text_fields_mut();
+                                        let title_wid = uzor::WidgetId::from(mlc_app::text_input::FORUM_TITLE);
+                                        let body_wid = uzor::WidgetId::from(mlc_app::text_input::FORUM_BODY);
+                                        if !tf.text(&title_wid).is_empty() {
+                                            tf.clear(&title_wid);
+                                        }
+                                        if !tf.text(&body_wid).is_empty() {
+                                            tf.clear(&body_wid);
+                                        }
                                     }
                                     (Some(e), _) => {
                                         if let ForumSubView::Compose { posting, error } = &mut ov.forum_view {
@@ -5455,24 +5570,6 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 }
                             }
                             ForumSubView::Thread { loading: true, thread: None, .. } => {
-                                ov.forum_view = match (&fs.last_error, &mapped_thread) {
-                                    (None, Some(t)) => ForumSubView::Thread {
-                                        thread: Some(t.clone()),
-                                        loading: false,
-                                        error: None,
-                                        posting_reply: false,
-                                        reply_error: None,
-                                    },
-                                    (err, _) => ForumSubView::Thread {
-                                        thread: None,
-                                        loading: false,
-                                        error: Some(err.clone().unwrap_or_else(|| "Thread not found".to_string())),
-                                        posting_reply: false,
-                                        reply_error: None,
-                                    },
-                                };
-                            }
-                            ForumSubView::Thread { posting_reply: true, .. } => {
                                 match (&fs.last_error, &mapped_thread) {
                                     (None, Some(t)) => {
                                         ov.forum_view = ForumSubView::Thread {
@@ -5482,19 +5579,61 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             posting_reply: false,
                                             reply_error: None,
                                         };
+                                        ov.mark_forum_thread_fetched();
+                                    }
+                                    (err, _) => {
+                                        ov.forum_view = ForumSubView::Thread {
+                                            thread: None,
+                                            loading: false,
+                                            error: Some(err.clone().unwrap_or_else(|| "Thread not found".to_string())),
+                                            posting_reply: false,
+                                            reply_error: None,
+                                        };
+                                    }
+                                }
+                            }
+                            ForumSubView::Thread { posting_reply: true, .. } => {
+                                match (&fs.last_error, &mapped_thread) {
+                                    (None, Some(t)) => {
+                                        let clear_reply = ov.forum_reply_pending;
+                                        ov.forum_reply_pending = false;
+                                        ov.forum_view = ForumSubView::Thread {
+                                            thread: Some(t.clone()),
+                                            loading: false,
+                                            error: None,
+                                            posting_reply: false,
+                                            reply_error: None,
+                                        };
+                                        ov.mark_forum_thread_fetched();
+                                        // The reply (or delete) landed — the
+                                        // list's `reply_count`/`last_reply_at`
+                                        // for this thread are now stale.
+                                        ov.invalidate_forum_list();
+                                        if clear_reply {
+                                            let mut coord = pw.chart.input_coordinator.borrow_mut();
+                                            let tf = coord.text_fields_mut();
+                                            let wid = uzor::WidgetId::from(mlc_app::text_input::FORUM_REPLY);
+                                            if !tf.text(&wid).is_empty() {
+                                                tf.clear(&wid);
+                                            }
+                                        }
                                     }
                                     // Thread cleared with no error — a
                                     // `DeleteThread` succeeded. Back to the
                                     // list, refreshed from the same answer.
                                     (None, None) => {
+                                        ov.forum_reply_pending = false;
+                                        ov.forum_thread_fetched_at = None;
                                         ov.forum_view = ForumSubView::List;
                                         ov.forum_list = ForumListState::Loaded {
                                             threads: fs.list.iter().map(map_forum_summary_native).collect(),
                                             next_before: fs.next_before.clone(),
                                             loading_more: false,
                                         };
+                                        ov.mark_forum_list_fetched();
                                     }
                                     (Some(e), _) => {
+                                        ov.forum_reply_pending = false;
                                         if let ForumSubView::Thread { posting_reply, reply_error, .. } = &mut ov.forum_view {
                                             *posting_reply = false;
                                             *reply_error = Some(e.clone());
@@ -5512,6 +5651,22 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                         },
                                         Some(e) => ForumListState::Error { message: e.clone() },
                                     };
+                                    if fs.last_error.is_none() {
+                                        ov.mark_forum_list_fetched();
+                                    }
+                                } else if ov.forum_list_refreshing {
+                                    ov.forum_list_refreshing = false;
+                                    if fs.last_error.is_none() {
+                                        ov.forum_list = ForumListState::Loaded {
+                                            threads: fs.list.iter().map(map_forum_summary_native).collect(),
+                                            next_before: fs.next_before.clone(),
+                                            loading_more: false,
+                                        };
+                                        ov.mark_forum_list_fetched();
+                                    }
+                                    // Failure: the existing page stays up and
+                                    // usable — same tolerance load-more
+                                    // failures get below.
                                 } else if let ForumListState::Loaded { threads, next_before, loading_more } =
                                     &mut ov.forum_list
                                 {
