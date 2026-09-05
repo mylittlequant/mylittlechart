@@ -13,6 +13,7 @@ use crate::state::ewa_engine::EwaEngineConfig;
 use crate::state::candle_pattern_engine::CandlePatternEngineConfig;
 use crate::state::smc_engine::SmcEngineConfig;
 use crate::state::orderflow_engine::OrderFlowEngineConfig;
+use crate::system_event::SystemEventLog;
 
 // =============================================================================
 // Schema version
@@ -781,6 +782,18 @@ pub struct ProfileUiSettings {
     /// — no daemon/headless consumer reads this.
     #[serde(default = "default_true")]
     pub clock_glitch_enabled: bool,
+
+    /// System event log (system-event-bus arc, 2026-09-05, owner scope
+    /// `docs/mlc/plans/users-paid-features-scope-2026-09-05.md` §8) —
+    /// ring-capped (200) history of everything the system told the user:
+    /// tier changes, sign-in/out, shares, nick edits, sync status, memory
+    /// pressure, updates, alert deliveries. Per-device like the rest of
+    /// this struct (no sync category yet — owner's ruling: "later, if
+    /// needed between devices"). `#[serde(default)]` so profiles saved
+    /// before this field existed load with an empty log rather than
+    /// failing to parse.
+    #[serde(default)]
+    pub system_events: SystemEventLog,
 }
 
 fn default_true() -> bool {
@@ -835,6 +848,7 @@ impl ProfileUiSettings {
             drawings_locked: false,
             drawings_visible: true,
             clock_glitch_enabled: true,
+            system_events: SystemEventLog::new(),
         }
     }
 }

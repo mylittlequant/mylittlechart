@@ -451,6 +451,19 @@ struct App<'s> {
     toast_rx: Option<tokio::sync::mpsc::UnboundedReceiver<mlc_alert_delivery::ToastNotification>>,
     /// Active toast notifications to render as overlays.
     active_toasts: Vec<mlc_alert_delivery::ToastNotification>,
+    /// Last APPLIED entitlements answer `(paid, paid_until)` — compared
+    /// against each edge-triggered `entitlements_rx` change to detect a
+    /// paid⇄free transition (system-event-bus arc, 2026-09-05, owner scope
+    /// `docs/mlc/plans/users-paid-features-scope-2026-09-05.md` §8). `None`
+    /// means no answer has landed yet this session; the first real answer
+    /// sets this without firing an event.
+    #[cfg(feature = "cloud")]
+    prev_entitlements: Option<(bool, Option<String>)>,
+    /// Memory-watchdog warning receiver (`mlc_shell_diagnostics::watchdog::start`,
+    /// started once in `main()` before `App::new`). Drained every frame into
+    /// `Memory` system events — previously bound as `_mem_warnings` and
+    /// never consumed (warnings only reached `tracing`).
+    mem_warnings_rx: std::sync::mpsc::Receiver<mlc_shell_diagnostics::watchdog::MemoryWarning>,
 
     /// Frame timing — last frame's Instant for FPS calculation.
     last_frame_instant: web_time::Instant,
@@ -836,6 +849,7 @@ impl App<'_> {
         app_connector_ready_rx: mlc_backend_data_bridge::ConnectorReadyReceiver,
         is_first_run: bool,
         needs_vault_unlock: bool,
+        mem_warnings_rx: std::sync::mpsc::Receiver<mlc_shell_diagnostics::watchdog::MemoryWarning>,
     ) -> Self {
         let app_state = AppState::from_profile(&profile);
 
@@ -1160,6 +1174,9 @@ impl App<'_> {
             mlc_alert_delivery: Some(alert_delivery_engine),
             toast_rx: Some(toast_rx),
             active_toasts: Vec::new(),
+            #[cfg(feature = "cloud")]
+            prev_entitlements: None,
+            mem_warnings_rx,
             last_frame_instant: web_time::Instant::now(),
             fps_ema: 60.0,
             last_frame_time_ms: 16.0,
@@ -2292,6 +2309,20 @@ impl App<'_> {
     /// `window_states` — already-collected, exclusion-filtered window
     /// snapshots (callers differ on whether excluded/deleted windows are
     /// filtered, so collection stays at the call site).
+    /// The single window whose `ChartApp::system_events()` log records
+    /// process-level facts (tier transitions, sign-in/out, sync, memory,
+    /// update, alert deliveries) — same "one window speaks for the profile"
+    /// choice `build_profile_for_save` makes for `preferred_key` below
+    /// (last-focused, falling back to any open window). Owner ask
+    /// 2026-09-05: ONE place for everything the system told the user, not
+    /// one independent copy per OS window.
+    fn system_event_window_mut(&mut self) -> Option<&mut PerWindowState> {
+        let key = self.last_focused
+            .filter(|id| self.windows.contains_key(id))
+            .or_else(|| self.windows.keys().next().copied())?;
+        self.windows.get_mut(&key)
+    }
+
     fn build_profile_for_save(&self, window_states: Vec<mlc_core::WindowState>) -> mlc_core::UserProfile {
         let preferred_key = self.last_focused
             .filter(|id| self.windows.contains_key(id))
@@ -2379,6 +2410,12 @@ impl App<'_> {
                 // live toolbar-state value, same preferred-window carry as
                 // the favorites bar above.
                 profile.ui.screenshot_destination = pw.chart.panel_app.toolbar_state.screenshot_destination;
+                // System event log (system-event-bus arc, 2026-09-05) —
+                // same preferred-window carry as the screenshot destination
+                // above: `chart.system_events()` is the live value, mutated
+                // in place by `push_system_event`/
+                // `mark_all_system_events_read`, not by this snapshot.
+                profile.ui.system_events = pw.chart.system_events().clone();
                 if profile.ui.persist_toolbar_last_tools {
                     profile.ui.toolbar_last_tools = pw.chart.panel_app.toolbar_state.quick_select_memory
                         .iter()
@@ -3517,12 +3554,18 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     pw.overlay_dirty = true;
                     pw.window.request_redraw();
                 }
-                self.active_toasts.push(mlc_alert_delivery::ToastNotification {
-                    title: "Signed out".to_string(),
-                    message: "You have been logged out.".to_string(),
-                    timestamp: screenshot::now_ms(),
-                    duration_ms: 4000,
-                });
+                // Routed through the system-event bus (system-event-bus arc,
+                // 2026-09-05) instead of an ad-hoc `active_toasts` push —
+                // the toast still shows: the bus-toast drain loop below
+                // converts it into a `ToastNotification` the same frame.
+                if let Some(pw) = self.system_event_window_mut() {
+                    pw.chart.push_system_event(
+                        mlc_core::SystemEventKind::Account,
+                        "Signed out",
+                        "You have been logged out.",
+                        true,
+                    );
+                }
                 eprintln!("[App] sign out requested from the account overlay");
             }
         }
@@ -3605,6 +3648,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         pw.overlay_dirty = true;
                         pw.window.request_redraw();
                     }
+                    // Same status is applied to every window above (shared
+                    // account-level fact) — the event itself is logged once,
+                    // not toasted (the settings row already shows it inline).
+                    if let Some(pw) = self.system_event_window_mut() {
+                        pw.chart.push_system_event(
+                            mlc_core::SystemEventKind::Nick,
+                            "Nickname not saved",
+                            "Enter a nickname first.",
+                            false,
+                        );
+                    }
                 } else {
                     let _ = self
                         .updater_handle
@@ -3641,13 +3695,18 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     // background task processes the command. There is no
                     // ChartApp/BackendCore auth-status field to write here
                     // (shell contract forbids writing those directly anyway)
-                    // — App-owned toast overlay is the confirmation surface.
-                    self.active_toasts.push(mlc_alert_delivery::ToastNotification {
-                        title: "Signed out".to_string(),
-                        message: "You have been logged out.".to_string(),
-                        timestamp: screenshot::now_ms(),
-                        duration_ms: 4000,
-                    });
+                    // — routed through the system-event bus instead of an
+                    // ad-hoc `active_toasts` push (system-event-bus arc,
+                    // 2026-09-05); the toast still shows via the bus-toast
+                    // drain loop below.
+                    if let Some(pw) = self.system_event_window_mut() {
+                        pw.chart.push_system_event(
+                            mlc_core::SystemEventKind::Account,
+                            "Signed out",
+                            "You have been logged out.",
+                            true,
+                        );
+                    }
                     eprintln!("[App] logout requested — forwarded to updater");
                 } else if cmd_str == "start_device_auth" {
                     cmd_handled = true;
@@ -4857,6 +4916,32 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 *self.updater_handle.auth_rx.borrow(),
                 mlc_updater::AuthStatus::LoggedIn { .. }
             );
+            // Sign-in completed → system event (owner ask 2026-09-05, scope
+            // §8): edge off the same `auth_rx` channel `account_signed_in`/
+            // `account_label` read via plain `.borrow()` above/below —
+            // `has_changed()`/`borrow_and_update()` is the idiom
+            // `redeem_rx`/`nick_rx` already use below, so a transition fires
+            // exactly once. Sign-out is logged at its own two
+            // `UpdaterCommand::Logout` call sites instead (this only ever
+            // matches `LoggedIn` on its edge). Resolved to an owned
+            // `Option<String>` here (mirrors `redeem_status`/`nick_status`
+            // below) so the `watch::Ref` guard is gone before
+            // `system_event_window_mut()` needs `&mut self` again.
+            let newly_signed_in_as: Option<String> =
+                if self.updater_handle.auth_rx.has_changed().unwrap_or(false) {
+                    match &*self.updater_handle.auth_rx.borrow_and_update() {
+                        mlc_updater::AuthStatus::LoggedIn { display_name, .. } => Some(display_name.clone()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+            if let Some(display_name) = newly_signed_in_as {
+                let body = format!("Signed in as {display_name}.");
+                if let Some(pw) = self.system_event_window_mut() {
+                    pw.chart.push_system_event(mlc_core::SystemEventKind::Account, "Signed in", body, true);
+                }
+            }
             // The chrome's sign-in button reads the same channel, so the
             // strip cannot disagree with the settings modal about who is
             // signed in — one source, two readers.
@@ -4894,6 +4979,37 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     _ => ChromeUpdate::Idle,
                 }
             };
+            // Update available/downloaded → system event (owner ask
+            // 2026-09-05, scope §8): edge off the SAME `status_rx` channel
+            // `update_state` just read via `.borrow()` above —
+            // `has_changed()`/`borrow_and_update()` only fires once per
+            // transition, matching `redeem_rx`/`nick_rx`'s idiom below.
+            // Resolved to an owned tuple (mirrors `newly_signed_in_as`
+            // above) so the `watch::Ref` guard is gone before
+            // `system_event_window_mut()` needs `&mut self` again.
+            let new_update_event: Option<(&'static str, String, bool)> =
+                if self.updater_handle.status_rx.has_changed().unwrap_or(false) {
+                    match &*self.updater_handle.status_rx.borrow_and_update() {
+                        mlc_updater::UpdateStatus::UpdateAvailable(info) => Some((
+                            "Update available",
+                            format!("Version {} is available.", info.version),
+                            true,
+                        )),
+                        mlc_updater::UpdateStatus::RestartPending => Some((
+                            "Update downloaded",
+                            "Restart to finish installing the update.".to_string(),
+                            true,
+                        )),
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+            if let Some((title, body, toast)) = new_update_event {
+                if let Some(pw) = self.system_event_window_mut() {
+                    pw.chart.push_system_event(mlc_core::SystemEventKind::Update, title, body, toast);
+                }
+            }
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.account_signed_in = account_signed_in;
                 // Mirrors the chrome's own `account_label` below — the nick
@@ -4933,11 +5049,49 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // implying it from which surfaces are unlocked. Same channel, and
             // the server's own `paid` field — never a guess from the feature
             // list, which is what paid currently buys and will move.
+            // Tier transition → system event (owner ask 2026-09-05, scope
+            // §8): edge-triggered off `entitlements_rx` via
+            // `has_changed()`/`borrow_and_update()` — the sibling pattern
+            // `redeem_rx`/`nick_rx` already use below, which this channel
+            // previously did not (native's own gap, per recon). `is_paid`/
+            // `paid_until` still resolve every frame (a window opened
+            // between two publishes still needs the current value applied
+            // below), but the transition compare only runs — and
+            // `self.prev_entitlements` only advances — on the edge, so a
+            // window that just isn't looking this frame can never cause a
+            // missed or duplicate event. `None` in `prev_entitlements`
+            // means no answer has landed yet this session; the first real
+            // answer sets it without firing an event.
             #[cfg(feature = "cloud")]
-            let (is_paid, paid_until) = {
-                let ent = self.updater_handle.entitlements_rx.borrow();
-                (ent.paid, ent.paid_until.clone())
-            };
+            let (is_paid, paid_until, tier_event): (bool, Option<String>, Option<(&'static str, String)>) =
+                if self.updater_handle.entitlements_rx.has_changed().unwrap_or(false) {
+                    let (paid, until) = {
+                        let ent = self.updater_handle.entitlements_rx.borrow_and_update();
+                        (ent.paid, ent.paid_until.clone())
+                    };
+                    let event = match self.prev_entitlements.replace((paid, until.clone())) {
+                        None => None,
+                        Some((prev_paid, prev_until)) if prev_paid == paid && prev_until == until => None,
+                        Some(_) if paid => Some((
+                            "Paid tier active",
+                            match &until {
+                                Some(u) => format!("Active until {u}."),
+                                None => "Your paid tier is active.".to_string(),
+                            },
+                        )),
+                        Some(_) => Some(("Paid tier expired", "Your paid tier has expired.".to_string())),
+                    };
+                    (paid, until, event)
+                } else {
+                    let ent = self.updater_handle.entitlements_rx.borrow();
+                    (ent.paid, ent.paid_until.clone(), None)
+                };
+            #[cfg(feature = "cloud")]
+            if let Some((title, body)) = tier_event {
+                if let Some(pw) = self.system_event_window_mut() {
+                    pw.chart.push_system_event(mlc_core::SystemEventKind::Tier, title, body, true);
+                }
+            }
             // Outcome of the last submitted gift code. `RedeemState` is the
             // updater's word for it; `RedeemStatus` is the overlay's. They are
             // two crates that do not know each other, so the map is here.
@@ -4980,6 +5134,73 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                 })
             };
+            // Nick saved/failed → system event (owner ask 2026-09-05, scope
+            // §8): `nick_status` above is already edge-triggered (`None`
+            // unless `nick_rx` changed this frame) — no extra bookkeeping
+            // needed. Not toasted: the settings row already shows the
+            // outcome inline the same frame.
+            if let Some(status) = nick_status.as_ref() {
+                use mlc_app_layout::ui::modal_settings::NickStatus;
+                match status {
+                    NickStatus::Saved { effective_label } => {
+                        let body = format!("Now shown as {effective_label}.");
+                        if let Some(pw) = self.system_event_window_mut() {
+                            pw.chart.push_system_event(mlc_core::SystemEventKind::Nick, "Nickname saved", body, false);
+                        }
+                    }
+                    NickStatus::Failed { message } => {
+                        let body = message.clone();
+                        if let Some(pw) = self.system_event_window_mut() {
+                            pw.chart.push_system_event(mlc_core::SystemEventKind::Nick, "Nickname not saved", body, false);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            // Cloud sync status → system event (owner ask 2026-09-05, scope
+            // §8; recon: "sync_status_rx ... no shell reads it" — finally
+            // drained). Edge-triggered same as `redeem_rx`/`nick_rx` above.
+            // Only facts a person needs to react to surface here —
+            // `Idle`/`Syncing`/`Completed` are routine chatter, not events.
+            if self.updater_handle.sync_status_rx.has_changed().unwrap_or(false) {
+                let event: Option<(&'static str, String, bool)> =
+                    match &*self.updater_handle.sync_status_rx.borrow_and_update() {
+                        mlc_updater::SyncStatus::Error(message) => {
+                            Some(("Cloud sync error", message.clone(), true))
+                        }
+                        mlc_updater::SyncStatus::ConflictsDetected(conflicts) => Some((
+                            "Cloud sync conflicts",
+                            format!("{} item(s) changed on both this device and the cloud.", conflicts.len()),
+                            true,
+                        )),
+                        mlc_updater::SyncStatus::NeedsSetup => Some((
+                            "Cloud data found",
+                            "This account has cloud data from another device — open sync settings to decide.".to_string(),
+                            true,
+                        )),
+                        mlc_updater::SyncStatus::ProfileRestored { profile_id } => Some((
+                            "Profile restored",
+                            format!("Cloud profile {profile_id} was downloaded to this device."),
+                            true,
+                        )),
+                        mlc_updater::SyncStatus::ProfileRestoreError(message) => {
+                            Some(("Profile restore failed", message.clone(), true))
+                        }
+                        _ => None,
+                    };
+                if let Some((title, body, toast)) = event {
+                    if let Some(pw) = self.system_event_window_mut() {
+                        pw.chart.push_system_event(mlc_core::SystemEventKind::Sync, title, body, toast);
+                    }
+                }
+            }
+            // `sync_checksums_rx` carries `last_synced_checksums` — internal
+            // diff bookkeeping consumed by the NEXT sync cycle, not a fact a
+            // person recognizes (no meaningful title/body) — deliberately
+            // left undrained here. Wiring it into
+            // `profile_manager.profile.sync_state` persistence (per its own
+            // doc comment) is a separate, non-event concern outside this
+            // arc's scope.
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.multi_profile = multi_profile;
                 #[cfg(feature = "cloud")]
@@ -5248,11 +5469,71 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // so that alert screenshots can be captured and attached first.
 
         // ── Drain toast notifications for UI overlay ──────────────────────────
+        let mut drained_alert_toasts: Vec<mlc_alert_delivery::ToastNotification> = Vec::new();
         if let Some(ref mut rx) = self.toast_rx {
             while let Ok(toast) = rx.try_recv() {
-                self.active_toasts.push(toast);
+                drained_alert_toasts.push(toast);
             }
         }
+        // Every delivered alert is ALSO logged to the system-event bus
+        // (owner ask 2026-09-05, scope §8: "доставка алертов (Popup тоже
+        // пишется в лог)"). `toast=false` here — the alert's own toast is
+        // already visible via `active_toasts` below; this call only adds
+        // the history entry.
+        for toast in &drained_alert_toasts {
+            if let Some(pw) = self.system_event_window_mut() {
+                pw.chart.push_system_event(
+                    mlc_core::SystemEventKind::Alert,
+                    toast.title.clone(),
+                    toast.message.clone(),
+                    false,
+                );
+            }
+        }
+        self.active_toasts.extend(drained_alert_toasts);
+        // System-event bus toasts (tier/account/share/sync/update/...)
+        // surface on native too — converted into `ToastNotification`s here
+        // so `render_toasts` (which only knows this Vec) shows them the
+        // same as an alert-delivery toast (owner ask 2026-09-05, scope §8:
+        // "нейтив переводится на шину вместо своего Vec" — the simplest
+        // correct reading being that a bus toast ALSO reaches the Vec,
+        // rather than replacing it outright).
+        let drained_bus_toasts: Vec<mlc_core::SystemEvent> = self
+            .system_event_window_mut()
+            .map(|pw| pw.chart.drain_system_toasts())
+            .unwrap_or_default();
+        for event in drained_bus_toasts {
+            self.active_toasts.push(mlc_alert_delivery::ToastNotification {
+                title: event.title,
+                message: event.body,
+                timestamp: event.at_ms.max(0) as u64,
+                duration_ms: 5000,
+            });
+        }
+        // ── Drain memory-watchdog warnings into the system-event bus ───────────
+        // (owner ask 2026-09-05, scope §8; recon: "memory warnings are
+        // tracing-log-only, never surfaced to the user" — `mem_warnings_rx`
+        // was bound as `_mem_warnings` and never drained before this arc.)
+        // `toast=false`: a growing-RAM warning is exactly the kind of fact
+        // that belongs in history without demanding attention mid-session.
+        while let Ok(warning) = self.mem_warnings_rx.try_recv() {
+            let (title, available_mb, total_mb) = match warning {
+                mlc_shell_diagnostics::watchdog::MemoryWarning::Low { available_mb, total_mb } => {
+                    ("Memory low", available_mb, total_mb)
+                }
+                mlc_shell_diagnostics::watchdog::MemoryWarning::Critical { available_mb, total_mb } => {
+                    ("Memory critical", available_mb, total_mb)
+                }
+                mlc_shell_diagnostics::watchdog::MemoryWarning::Emergency { available_mb, total_mb } => {
+                    ("Memory emergency", available_mb, total_mb)
+                }
+            };
+            let body = format!("{available_mb} MB available of {total_mb} MB total.");
+            if let Some(pw) = self.system_event_window_mut() {
+                pw.chart.push_system_event(mlc_core::SystemEventKind::Memory, title, body, false);
+            }
+        }
+
         // Expire old toasts.
         let now_ms_val = web_time::SystemTime::now()
             .duration_since(web_time::UNIX_EPOCH)
@@ -5947,8 +6228,9 @@ fn main() {
     let _diagnostics = mlc_shell_diagnostics::init(&log_dir, env!("CARGO_PKG_VERSION"));
 
     // Start memory watchdog — logs warnings via tracing regardless of whether
-    // the receiver is consumed. UI toast support can be added later.
-    let _mem_warnings = mlc_shell_diagnostics::watchdog::start();
+    // the receiver is consumed. Drained every frame into `Memory` system
+    // events (system-event-bus arc, 2026-09-05) — see `App::mem_warnings_rx`.
+    let mem_warnings_rx = mlc_shell_diagnostics::watchdog::start();
 
     let event_loop: EventLoop<UserEvent> = EventLoop::with_user_event()
         .build()
@@ -6092,7 +6374,7 @@ fn main() {
     let profile = profile_manager.profile.clone();
     let saved_windows = profile.ui.windows.clone();
 
-    let mut app = App::new(bridge, live_data_rt, live_data_handle, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock);
+    let mut app = App::new(bridge, live_data_rt, live_data_handle, saved_windows, profile, profile_manager, connector_ready_rx, is_first_run, needs_vault_unlock, mem_warnings_rx);
     // Store the event-loop proxy so the promote worker can send PromoteReady
     // back to the main thread without polling.
     app.promote_proxy = Some(event_loop.create_proxy());

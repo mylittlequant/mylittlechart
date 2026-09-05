@@ -88,6 +88,22 @@ struct Inner {
     /// Mailbox for the entitlements fetch — separate from `result` above so
     /// a concurrent login/logout/overlay fetch can never overwrite it.
     entitlements_result: Option<Result<EntitlementsResponse, String>>,
+    /// Last APPLIED entitlements answer `(paid, paid_until)` — compared
+    /// against each new answer to detect a paid⇄free transition
+    /// (system-event-bus arc, 2026-09-05). `None` means no answer has
+    /// landed yet this session; the first real answer sets this without
+    /// firing an event (a fresh boot reading "free" is not a demotion).
+    prev_entitlements: Option<(bool, Option<String>)>,
+
+    // ── Chart sharing ───────────────────────────────────────────────────
+    /// Mailbox for the last `share_screenshot`/`share_live` upload's
+    /// outcome — separate from `result` above for the same reason
+    /// `entitlements_result` is: a concurrent login/logout/overlay fetch
+    /// must not overwrite it. `(kind, Ok(absolute_url) | Err(message))`
+    /// where `kind` is `"live"` or `"screenshot"`. Drained by `drive()`,
+    /// which is the only place `&mut ChartApp` is reachable — the upload's
+    /// own `spawn_local` body cannot log a system event directly.
+    share_result: Option<(&'static str, Result<String, String>)>,
 }
 
 pub struct CloudSession {
@@ -134,6 +150,8 @@ impl CloudSession {
                 entitlements_in_flight: false,
                 next_entitlements_ms: 0.0,
                 entitlements_result: None,
+                prev_entitlements: None,
+                share_result: None,
             })),
         }
     }
@@ -181,14 +199,20 @@ impl CloudSession {
             return;
         }
         let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
         spawn_local(async move {
             match transport.share_create_screenshot(&title, png).await {
                 Ok(resp) => {
                     let url = absolute_share_url(&resp.url_path);
                     crate::clipboard_write_text(&url);
                     web_sys::console::log_1(&format!("[share] screenshot shared: {}", url).into());
+                    inner.borrow_mut().share_result = Some(("screenshot", Ok(url)));
                 }
-                Err(e) => log_share_error("screenshot", &e),
+                Err(e) => {
+                    let message = share_error_message("screenshot", &e);
+                    log_share_error("screenshot", &e);
+                    inner.borrow_mut().share_result = Some(("screenshot", Err(message)));
+                }
             }
         });
     }
@@ -201,14 +225,20 @@ impl CloudSession {
             return;
         }
         let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
         spawn_local(async move {
             match transport.share_create_live(&title, preset).await {
                 Ok(resp) => {
                     let url = absolute_share_url(&resp.url_path);
                     crate::clipboard_write_text(&url);
                     web_sys::console::log_1(&format!("[share] live chart shared: {}", url).into());
+                    inner.borrow_mut().share_result = Some(("live", Ok(url)));
                 }
-                Err(e) => log_share_error("live", &e),
+                Err(e) => {
+                    let message = share_error_message("live", &e);
+                    log_share_error("live", &e);
+                    inner.borrow_mut().share_result = Some(("live", Err(message)));
+                }
             }
         });
     }
@@ -249,6 +279,30 @@ impl CloudSession {
                 match r {
                     Ok(resp) => {
                         chart.panel_app.user_settings_state.multi_profile = resp.has_multi_profile();
+                        // Tier transition → system event (owner ask
+                        // 2026-09-05, scope §8): compare against the last
+                        // APPLIED answer, not the live `cloud_login_state`
+                        // this same block is about to overwrite below.
+                        // `None` means this is the first entitlements answer
+                        // of the session — never fires an event (a fresh
+                        // boot reading "free" is not a demotion).
+                        let prev = inner.prev_entitlements.replace((resp.paid, resp.paid_until.clone()));
+                        if let Some((prev_paid, prev_until)) = prev {
+                            if prev_paid != resp.paid || prev_until != resp.paid_until {
+                                let (title, body) = if resp.paid {
+                                    (
+                                        "Paid tier active",
+                                        match &resp.paid_until {
+                                            Some(u) => format!("Active until {u}."),
+                                            None => "Your paid tier is active.".to_string(),
+                                        },
+                                    )
+                                } else {
+                                    ("Paid tier expired", "Your paid tier has expired.".to_string())
+                                };
+                                chart.push_system_event(mlc_core::SystemEventKind::Tier, title, body, true);
+                            }
+                        }
                         // The account view states the tier outright; this is
                         // where that fact arrives. Read from the server's own
                         // `paid` field, never inferred from which features
@@ -264,6 +318,12 @@ impl CloudSession {
                             (resp.expires_at as f64).max(now_ms + ENTITLEMENTS_MIN_REASK_MS);
                     }
                     Err(e) => {
+                        // Deliberately does NOT touch `inner.prev_entitlements`
+                        // (and fires no Tier event): a transient network
+                        // failure degrading the DISPLAYED tier to free is not
+                        // the same fact as the server actually reporting a
+                        // paid→free transition, and firing "Paid tier
+                        // expired" on every blip would be a false report.
                         // A failed or unanswered fetch degrades to the free
                         // set — never to the paid set, and never leaves the
                         // General tab locked on a stale answer either.
@@ -290,6 +350,27 @@ impl CloudSession {
                     let r = transport.entitlements().await.map_err(|e| e.to_string());
                     inner.borrow_mut().entitlements_result = Some(r);
                 });
+            }
+        }
+
+        // ── Chart-share result → system event (owner ask 2026-09-05) ──────
+        // `share_screenshot`/`share_live` are fire-and-forget (no `FlowResult`
+        // mailbox — see their own doc comment); this drains their own tiny
+        // mailbox, since `&mut ChartApp` is only reachable here.
+        if let Some((kind, result)) = self.inner.borrow_mut().share_result.take() {
+            match result {
+                Ok(url) => {
+                    let title = if kind == "live" { "Live chart shared" } else { "Screenshot shared" };
+                    chart.push_system_event(
+                        mlc_core::SystemEventKind::Share,
+                        title,
+                        format!("Link copied to clipboard: {url}"),
+                        true,
+                    );
+                }
+                Err(message) => {
+                    chart.push_system_event(mlc_core::SystemEventKind::Share, "Share failed", message, true);
+                }
             }
         }
 
@@ -354,7 +435,16 @@ impl CloudSession {
                         p.domain.sync_level = "cloud".to_string();
                     }
                     chart.profile_dirty = true;
-                    st.phase = CloudLoginPhase::Success { display_name };
+                    // `st`'s borrow (`&mut chart.panel_app.cloud_login_state`)
+                    // must end before `push_system_event` below takes `&mut
+                    // chart` — this is `st`'s last use on this arm's path.
+                    st.phase = CloudLoginPhase::Success { display_name: display_name.clone() };
+                    chart.push_system_event(
+                        mlc_core::SystemEventKind::Account,
+                        "Signed in",
+                        format!("Signed in as {display_name}."),
+                        true,
+                    );
                 }
                 FlowResult::Poll(Err(e)) => {
                     // Transient poll failure — keep waiting, but surface
@@ -444,11 +534,20 @@ impl CloudSession {
                     };
                     uss.nick_edit_mode = false;
                     uss.nick_edit_focused = false;
-                    uss.account_label = effective_label;
+                    uss.account_label = effective_label.clone();
+                    // `st`/`uss` are both done being used above — safe to
+                    // take `&mut chart` again here.
+                    chart.push_system_event(
+                        mlc_core::SystemEventKind::Nick,
+                        "Nickname saved",
+                        format!("Now shown as {effective_label}."),
+                        false,
+                    );
                 }
                 FlowResult::Nick(Err(message)) => {
                     chart.panel_app.user_settings_state.nick_status =
-                        mlc_app_layout::ui::modal_settings::NickStatus::Failed { message };
+                        mlc_app_layout::ui::modal_settings::NickStatus::Failed { message: message.clone() };
+                    chart.push_system_event(mlc_core::SystemEventKind::Nick, "Nickname not saved", message, false);
                 }
                 FlowResult::Logout => {
                     // Local sign-out regardless of the server answer.
@@ -478,6 +577,14 @@ impl CloudSession {
                     }
                     chart.profile_dirty = true;
                     st.phase = CloudLoginPhase::RequestCode;
+                    // `st`'s last use above ends its borrow before this
+                    // method call, same reordering as the sign-in arm.
+                    chart.push_system_event(
+                        mlc_core::SystemEventKind::Account,
+                        "Signed out",
+                        "You have been logged out.",
+                        true,
+                    );
                 }
             }
         }
@@ -503,6 +610,7 @@ impl CloudSession {
                         mlc_app_layout::ui::modal_settings::NickStatus::Failed {
                             message: "Sign in first".to_string(),
                         };
+                    chart.push_system_event(mlc_core::SystemEventKind::Nick, "Nickname not saved", "Sign in first.", false);
                 } else {
                     let inner = self.inner.clone();
                     let transport = self.inner.borrow().transport.snapshot();
@@ -702,21 +810,28 @@ fn absolute_share_url(url_path: &str) -> String {
     format!("{}{}", origin, url_path)
 }
 
-/// Word a failed share create for the console. 403 from either share-create
-/// endpoint is the per-kind active-share ceiling (free 1 live / 10
-/// screenshots, paid 10/100) — say so in words; anything else is the
-/// transport's own description.
-fn log_share_error(what: &str, e: &mlc_cloud::CloudError) {
+/// Word a failed share create for the console AND the system-event log
+/// (system-event-bus arc, 2026-09-05) — one wording, two destinations. 403
+/// from either share-create endpoint is the per-kind active-share ceiling
+/// (free 1 live / 10 screenshots, paid 10/100) — say so in words; anything
+/// else is the transport's own description.
+fn share_error_message(what: &str, e: &mlc_cloud::CloudError) -> String {
     match e {
         mlc_cloud::CloudError::Forbidden(_) => {
-            web_sys::console::warn_1(
-                &format!("[share] {} share limit reached — revoke an existing share or upgrade the account", what).into(),
-            );
+            format!("{what} share limit reached — revoke an existing share or upgrade the account")
         }
-        other => {
-            web_sys::console::error_1(
-                &format!("[share] {} share failed: {}", what, other).into(),
-            );
+        other => format!("{what} share failed: {other}"),
+    }
+}
+
+fn log_share_error(what: &str, e: &mlc_cloud::CloudError) {
+    let message = share_error_message(what, e);
+    match e {
+        mlc_cloud::CloudError::Forbidden(_) => {
+            web_sys::console::warn_1(&format!("[share] {message}").into());
+        }
+        _ => {
+            web_sys::console::error_1(&format!("[share] {message}").into());
         }
     }
 }

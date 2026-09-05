@@ -70,14 +70,23 @@ pub use convert::{
 static DEBUG_LOG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
 
 pub fn debug_log_enabled() -> bool {
-    // On wasm, std::env::var is unavailable and always returns Err — but we
-    // want bridge logs visible by default in the browser (no terminal to
-    // pipe MLC_PERF_LOG into). Default ON for wasm, OFF for native unless
-    // MLC_PERF_LOG is set.
+    // Native: OFF unless MLC_PERF_LOG is set. Wasm: OFF unless the shell
+    // called `enable_debug_log(true)` at boot — it does so when the page was
+    // opened with `?log=debug|trace` (or localStorage "mlc.log"). It used to
+    // be unconditionally ON in the browser ("no terminal to pipe into"),
+    // which shipped every `dlog!` line to every visitor's console; owner
+    // ruling 2026-09-05: diagnostics are opt-in, nothing prints by default.
     #[cfg(target_arch = "wasm32")]
-    { *DEBUG_LOG.get_or_init(|| true) }
+    { DEBUG_LOG.get().copied().unwrap_or(false) }
     #[cfg(not(target_arch = "wasm32"))]
     { *DEBUG_LOG.get_or_init(|| std::env::var("MLC_PERF_LOG").is_ok()) }
+}
+
+/// Wasm shells call this once at boot with the outcome of their `?log=`
+/// parsing; a second call is ignored (the gate is a `OnceLock`). Native
+/// ignores it too — the environment decides there.
+pub fn enable_debug_log(on: bool) {
+    let _ = DEBUG_LOG.set(on);
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -174,6 +174,11 @@ pub fn save_persistent_state(chart: &mut ChartApp, perf: &mut PerfMeter) {
     // state value, same carry as the favorites bar above; the camera
     // button's destination dropdown is the only writer.
     profile.ui.screenshot_destination = chart.panel_app.toolbar_state.screenshot_destination;
+    // System event log (system-event-bus arc, 2026-09-05) — same carry as
+    // the screenshot destination above: `chart.system_events()` is the live
+    // value, mutated in place by `push_system_event`/
+    // `mark_all_system_events_read`, not by this snapshot.
+    profile.ui.system_events = chart.system_events().clone();
     profile.ui.persist_toolbar_last_tools = chart.core.user().profile().ui.persist_toolbar_last_tools;
     profile.ui.persist_toolbar_toggles = chart.core.user().profile().ui.persist_toolbar_toggles;
     if profile.ui.persist_toolbar_last_tools {

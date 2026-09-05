@@ -38,6 +38,7 @@ pub mod panels_render;
 pub mod panels_store;
 pub mod scroll_dispatch;
 pub mod standalone_panel;
+pub mod system_events;
 pub mod tag_ui;
 pub mod text_input;
 pub mod trading_center_chart;
@@ -786,6 +787,16 @@ pub struct ChartApp {
 
     /// Sidebar panel state — tracks which right-side panel is open and its content.
     pub sidebar_state: mlc_app_sidebar_content::state::SidebarState,
+
+    /// System event log (system-event-bus arc, 2026-09-05, owner scope
+    /// `docs/mlc/plans/users-paid-features-scope-2026-09-05.md` §8) — one
+    /// durable per-profile record of everything the system told the user.
+    /// `ChartApp` is the single writer (doctrine): shells report facts
+    /// through [`Self::push_system_event`] (see `system_events.rs`), never
+    /// through this field directly — `pub(crate)` so persistence code in
+    /// this crate can read/restore it, but the shell↔app boundary stays
+    /// method-only.
+    pub(crate) system_events: mlc_core::SystemEventLog,
 
     /// Raw stored workspace focus (chart canvas vs. the Trading tab's
     /// container) — read via [`Self::workspace_focus`], never directly.
@@ -3338,6 +3349,7 @@ impl ChartApp {
             last_toolbar_result: None,
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
+            system_events: mlc_core::SystemEventLog::new(),
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
             // Corrected on first frame by `workspace_focus()`'s live
             // `active_container_id()` fallback — see field doc.
@@ -3719,6 +3731,7 @@ impl ChartApp {
             last_toolbar_result: None,
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
+            system_events: mlc_core::SystemEventLog::new(),
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
             // Corrected on first frame by `workspace_focus()`'s live
             // `active_container_id()` fallback — see field doc.
@@ -4257,6 +4270,7 @@ impl ChartApp {
             last_toolbar_result: None,
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
+            system_events: mlc_core::SystemEventLog::new(),
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
             // Corrected on first frame by `workspace_focus()`'s live
             // `active_container_id()` fallback — see field doc.
@@ -4978,6 +4992,12 @@ impl ChartApp {
         }
         self.panel_app.toolbar_state.favorites_bar_visible = profile.ui.favorites_bar_visible;
         self.panel_app.toolbar_state.screenshot_destination = profile.ui.screenshot_destination;
+
+        // System event log (system-event-bus arc, 2026-09-05, owner scope
+        // §8) — flat profile field, no per-window mirror (same class as the
+        // favorites bar above): restore the persisted ring so events survive
+        // a restart; new pushes append onto this live copy from here on.
+        self.system_events = profile.ui.system_events.clone();
 
         if profile.ui.persist_toolbar_last_tools {
             for (dropdown_id, tool_id) in &profile.ui.toolbar_last_tools {

@@ -181,6 +181,12 @@ impl ChartApp {
                 // this snapshot is built from live UI state and this is not
                 // UI state.
                 clock_glitch_enabled: existing.ui.clock_glitch_enabled,
+                // System event log (system-event-bus arc, 2026-09-05): the
+                // live value lives on `ChartApp` itself, mutated in place by
+                // `push_system_event`/`mark_all_system_events_read` — not by
+                // this snapshot builder, same preserve-live-value pattern as
+                // `favorite_primitives` above.
+                system_events: self.system_events.clone(),
             },
         }
     }
@@ -605,6 +611,10 @@ impl ChartApp {
                 }
                 self.panel_app.toolbar_state.favorites_bar_visible = profile.ui.favorites_bar_visible;
                 self.panel_app.toolbar_state.screenshot_destination = profile.ui.screenshot_destination;
+                // System event log (system-event-bus arc, 2026-09-05):
+                // restore the persisted ring into live app state so events
+                // survive a restart; new pushes append onto this.
+                self.system_events = profile.ui.system_events.clone();
             }
             Err(e) => {
                 eprintln!("[UserProfile] Failed to load profile: {}", e);

@@ -180,6 +180,10 @@ pub fn start() {
             .set_max_level(log_level)
             .build(),
     );
+    // The data bridge's `dlog!` lines (`[catalogue] …`, `[tick_writers] …`,
+    // prewarm timings) follow the same switch: on unless the page asked for
+    // DEBUG or TRACE, they stay silent — they used to print for everyone.
+    mlc_backend_data_bridge::enable_debug_log(log_level >= tracing::Level::DEBUG);
     web_sys::console::log_1(&"[mlc-app-shell-web] booting".into());
     apply_dev_proxy_gate_from_url();
     // `?share=<token>` viewer mode (chart-sharing arc) — parsed next to the
@@ -755,6 +759,13 @@ struct WebAppState {
     /// not its own `Rc<RefCell<_>>`) because it's touched from the same
     /// `state.borrow_mut()` scopes every other per-frame field already is.
     perf:               perf::PerfMeter,
+    /// Transient system-event toast stack (system-event-bus arc,
+    /// 2026-09-05) — this shell's sibling of native's `active_toasts`,
+    /// sourced from `chart.drain_system_toasts()` instead of an
+    /// `mlc-alert-delivery` channel (this shell has none). `(event,
+    /// shown_at_ms)`; painted top-right, newest of the visible stack at the
+    /// bottom, same 5s fade as native's `render_toasts`.
+    system_toasts:      Vec<(mlc_core::SystemEvent, f64)>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -795,6 +806,7 @@ impl WebAppState {
             #[cfg(feature = "cloud")]
             cloud: Some(cloud_session::CloudSession::init("")),
             perf: perf::PerfMeter::new(),
+            system_toasts: Vec::new(),
         }
     }
 }
@@ -2676,6 +2688,23 @@ fn render_frame(state: Rc<RefCell<WebAppState>>, timer: &mut perf::FrameTimer) -
         mlc_app_input_shell::update_tab_widths(&mut ctx, &mut st.chrome, css_w as f64, &st.chart.input_coordinator);
     }
 
+    // ── System event bus: drain bus toasts into the transient stack ───────────
+    // (system-event-bus arc, 2026-09-05) — `chart.drain_system_toasts()` is
+    // one-shot, so this must run exactly once per frame regardless of
+    // whether the toast painter below actually gets to draw (screenshot
+    // capture skips painting, never draining — a toast must not vanish
+    // because a screenshot happened to land on its frame).
+    {
+        let mut st = state.borrow_mut();
+        let drained = st.chart.drain_system_toasts();
+        for event in drained {
+            st.system_toasts.push((event, now_ms as f64));
+        }
+        const TOAST_DURATION_MS: f64 = 5000.0;
+        let now = now_ms as f64;
+        st.system_toasts.retain(|(_, shown_at)| now - *shown_at < TOAST_DURATION_MS);
+    }
+
     // ── Chart render ──────────────────────────────────────────────────────────
     // Translate by CHROME_HEIGHT so chart's local (0,0) is just below the chrome
     // strip — mirrors native scene_builder.rs:131-138 (chart_ctx y_offset =
@@ -2754,6 +2783,14 @@ fn render_frame(state: Rc<RefCell<WebAppState>>, timer: &mut perf::FrameTimer) -
             mlc_app_input_shell::chrome::render_backdrop_dim(&mut ctx, css_w as f64, st.chrome.flavor, &backdrop);
         }
         mlc_app_input_shell::render_tab_list(&mut ctx, &st.chrome, css_w as f64);
+        // System-event toasts (system-event-bus arc, 2026-09-05) — this
+        // shell's only toast surface (no `mlc-alert-delivery` transport
+        // here). Painted after the chrome strip/tab list, before tooltips,
+        // same screenshot gate as the tooltip layer below: a toast must
+        // never bleed into a captured chart PNG.
+        if !st.chart.is_capturing_screenshot() {
+            render_system_toasts(&mut ctx, &st.system_toasts, &st.chrome.colors, now_ms as f64, css_w as f64);
+        }
         // Tooltips are the last layer and float over the chart rect — a
         // toolbar-button tooltip ("Screenshot", of all things) was captured
         // into the PNG on 2026-09-05. Both tooltip painters skip the frame a
@@ -2780,6 +2817,61 @@ fn render_frame(state: Rc<RefCell<WebAppState>>, timer: &mut perf::FrameTimer) -
     }
 
     Ok(())
+}
+
+/// Transient system-event toast stack for the web shell (system-event-bus
+/// arc, 2026-09-05) — native's own `render_toasts`
+/// (`mlc-app-shell-vello/src/main.rs`) has no wasm sibling; this paints the
+/// same 5s fade-and-stack, sourced from `ChartApp::drain_system_toasts()`
+/// instead of an `mlc-alert-delivery` channel (this shell has none). Colors
+/// come from the live chrome theme (`st.chrome.colors`) rather than native's
+/// hardcoded navy/blue — this painter is new, not a port.
+#[cfg(target_arch = "wasm32")]
+fn render_system_toasts(
+    ctx: &mut dyn uzor::render::RenderContext,
+    toasts: &[(mlc_core::SystemEvent, f64)],
+    colors: &mlc_app_input_shell::ChromeColors,
+    now_ms: f64,
+    window_width: f64,
+) {
+    const DURATION_MS: f64 = 5000.0;
+    const MAX_VISIBLE: usize = 3;
+    let toast_width = 320.0_f64;
+    let toast_height = 64.0_f64;
+    let padding = 12.0_f64;
+    let margin = 8.0_f64;
+
+    let start_x = window_width - toast_width - margin;
+    let start_y = mlc_app_input_shell::CHROME_HEIGHT + margin;
+
+    // Only the MAX_VISIBLE most recently pushed toasts stack, oldest of
+    // that recent set on top — same insertion-order stacking native's
+    // `active_toasts` Vec paints.
+    let visible_start = toasts.len().saturating_sub(MAX_VISIBLE);
+    for (i, (event, shown_at_ms)) in toasts[visible_start..].iter().enumerate() {
+        let elapsed = (now_ms - shown_at_ms).max(0.0);
+        let remaining = ((DURATION_MS - elapsed) / DURATION_MS).clamp(0.0, 1.0);
+        let alpha = if remaining < 0.2 { remaining / 0.2 } else { 1.0 };
+        if alpha <= 0.0 {
+            continue;
+        }
+        let y = start_y + (i as f64) * (toast_height + margin);
+
+        ctx.set_fill_color(&mlc_core::apply_opacity(&colors.tooltip_bg, alpha * 0.95));
+        ctx.fill_rect(start_x, y, toast_width, toast_height);
+        ctx.set_fill_color(&mlc_core::apply_opacity(&colors.tab_accent, alpha * 0.7));
+        ctx.fill_rect(start_x, y, toast_width, 1.0);
+
+        ctx.set_font("bold 12px sans-serif");
+        ctx.set_fill_color(&mlc_core::apply_opacity(&colors.tab_accent, alpha));
+        ctx.set_text_align(uzor::render::TextAlign::Left);
+        ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
+        ctx.fill_text(&event.title, start_x + padding, y + padding + 6.0);
+
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&mlc_core::apply_opacity(&colors.tooltip_text, alpha * 0.9));
+        ctx.fill_text(&event.body, start_x + padding, y + padding + 6.0 + 18.0);
+    }
 }
 
 /// Write `text` to the OS clipboard through the async Clipboard API.

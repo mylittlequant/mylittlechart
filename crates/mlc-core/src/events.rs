@@ -61,6 +61,13 @@ pub enum ChartOutEvent {
     /// Performance panels/buttons, merged 2026-07-18).
     ToggleMonitoring,
     ToggleAgents,
+    /// Toggle the System Events panel — bottom-of-right-toolbar bell icon
+    /// (system-event-bus arc, owner scope
+    /// `docs/mlc/plans/users-paid-features-scope-2026-09-05.md` §8). The
+    /// bus itself (`ChartApp::push_system_event`/`system_events`/
+    /// `unread_count`/`mark_all_system_events_read`) lands with this
+    /// variant; the panel/toolbar button that emits it is a follow-up arc.
+    ToggleEvents,
     /// Toggle a typed slot sidebar (0..=4: Trading, Dom, Tape, L2, BigTrades —
     /// see `mlc_app_sidebar_content::free_slot::SlotKind`). Each slot hosts a
     /// chart-preset-scoped `DockingManager<Panel>` locked to its own panel

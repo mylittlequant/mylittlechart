@@ -108,6 +108,12 @@ pub mod indicator_types;
 // Pure value-types for alerts shared between backend and app.
 pub mod alert;
 
+// System event bus — one durable per-profile log of everything the system
+// told the user (tier/account/share/nick/sync/memory/update/alert facts),
+// plus a one-shot toast queue for the shells' transient toast painters.
+// Scope/decision: docs/mlc/plans/users-paid-features-scope-2026-09-05.md §8.
+pub mod system_event;
+
 // Canonical instrument key (exchange, symbol, account_type) — see
 // docs/mlc/plans/doctrine-cutover-2026-06-27.md §1C.
 pub mod instrument;
@@ -383,6 +389,9 @@ pub use data_provider::{DataProvider, SharedDataProvider, NullDataProvider};
 
 // Chart output events
 pub use events::ChartOutEvent;
+
+// System event bus (see the `system_event` module doc for scope).
+pub use system_event::{SystemEvent, SystemEventKind, SystemEventLog, SYSTEM_EVENT_LOG_CAPACITY};
 
 // Chart-local modal state
 pub use modal::ChartOpenModal;
