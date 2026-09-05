@@ -919,25 +919,6 @@ pub fn chart_toolbar_render_toolbars(
                 }
             }
 
-            // Unread system-events badge (owner scope §8): the events button
-            // stays highlighted whenever there is unread log content, on top
-            // of (not instead of) the "panel is open" highlight above — no
-            // per-item hook for a numeric count exists in this renderer or in
-            // `uzor::panel_api::ToolbarItemDef`, so active-state-only is the
-            // whole badge (see `docs/mlc/plans/users-paid-features-scope-2026-09-05.md`
-            // §8 follow-up notes).
-            if tb.system_events_unread {
-                for section in &mut right_sections {
-                    for item in &mut section.items {
-                        if let TcToolbarItem::IconButton { id, active, .. } = item {
-                            if id == "events" {
-                                *active = true;
-                            }
-                        }
-                    }
-                }
-            }
-
             // Right toolbar uses sidebar_style so it renders with the sidebar variant.
             let right_theme = TcToolbarTheme {
                 sidebar_style: true,
@@ -976,6 +957,35 @@ pub fn chart_toolbar_render_toolbars(
         } else {
             TcToolbarResult::default()
         };
+
+        // Unread system-events badge (owner defect 2026-09-05): a small
+        // accent dot at the top-right corner of the "events" button while
+        // `tb.system_events_unread` is true — drawn AFTER the right toolbar
+        // so it sits on top of the icon, and independent of the "panel is
+        // open" highlight above (that highlight is the ONLY source of
+        // `active` again; reusing it as an unread cue painted the button
+        // active all the time, owner bug report 2026-09-05). Unread stays
+        // lit while the panel is open too — it means "unread", not "closed".
+        // Geometry comes from `right_tc_result.item_rects` (real per-item
+        // rect from this frame's layout), never hardcoded.
+        if tb.system_events_unread {
+            if let Some((_, item_rect)) = right_tc_result.item_rects.iter().find(|(id, _)| id == "events") {
+                let dot_r = 3.0;
+                let ring_r = dot_r + 1.0;
+                let cx = item_rect.x + item_rect.width - ring_r - 2.0;
+                let cy = item_rect.y + ring_r + 2.0;
+                ctx.set_fill_color(&theme.background);
+                ctx.begin_path();
+                ctx.arc(cx, cy, ring_r, 0.0, std::f64::consts::TAU);
+                ctx.close_path();
+                ctx.fill();
+                ctx.set_fill_color(&theme.accent);
+                ctx.begin_path();
+                ctx.arc(cx, cy, dot_r, 0.0, std::f64::consts::TAU);
+                ctx.close_path();
+                ctx.fill();
+            }
+        }
 
         // --- Bottom toolbar (horizontal, bottom) ---
         let bottom_tc_result = if toolbar_config.bottom.is_some() {
