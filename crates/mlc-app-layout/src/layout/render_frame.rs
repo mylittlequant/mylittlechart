@@ -591,6 +591,10 @@ pub struct ChartModalRenderResult {
     pub sync_color_grid: Option<crate::ui::sync_color_grid::SyncColorGridDrawResult>,
     /// Preset name input modal result (if open).
     pub preset_name_input: Option<crate::layout::modals::preset_name_input::PresetNameInputResult>,
+    /// "Open shared chart…" overlay result (if open, native-share-viewer
+    /// arc, 2026-09-06). Never `cfg(feature = "cloud")` — reading a share
+    /// is public.
+    pub share_open: Option<crate::layout::modals::share_open::ShareOpenResult>,
     /// Chart browser modal result (if open).
     pub chart_browser: Option<crate::layout::modals::chart_browser::ChartBrowserResult>,
     /// Alert settings modal result (if open).

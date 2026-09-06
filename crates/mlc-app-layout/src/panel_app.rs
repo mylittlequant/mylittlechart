@@ -3414,6 +3414,20 @@ fn chart_toolbar_find_dropdown_items(
             return Some(items);
         }
 
+        // Special case: share_chart (globe) is an icon_button that opens a
+        // dropdown on double-click — same shape as magnet/screenshot above
+        // (native-share-viewer arc, 2026-09-06). The single-click action
+        // stays "Share live chart"; the second row opens the "Open shared
+        // chart…" overlay via `mlc_core::toolbar::OPEN_SHARE_ACTION_ID` (see
+        // that constant's own doc for why this builder, not static
+        // `ToolbarItemDef` data, owns the row list).
+        if dropdown_id == "share_chart" {
+            return Some(vec![
+                DropdownItemDef::action("share_chart", "Share live chart").with_icon(ToolbarIconId::new("Globe")),
+                DropdownItemDef::action(mlc_core::toolbar::OPEN_SHARE_ACTION_ID, "Open shared chart…"),
+            ]);
+        }
+
         // Special case: the favorites bar's "+" picker (favorite-primitives
         // arc) — a FLAT list of every drawing tool, built from the
         // `DRAWING_FLYOUT_IDS` flyout defs of the canonical left toolbar so

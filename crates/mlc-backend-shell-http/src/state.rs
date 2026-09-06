@@ -193,6 +193,37 @@ impl AgentState {
         self.core.lock().ok().and_then(|g| g.as_ref().cloned())
     }
 
+    /// Resolve the account-wide alert store's scope key for the attached
+    /// backend — `profile.identity.public_id` when the live profile has a
+    /// linked account, else the anonymous local fallback. Mirrors
+    /// `mlc-app`'s `ChartApp::alert_account_id`
+    /// (`mlc-app/src/persistence/profile.rs`), itself a byte-for-byte copy
+    /// of `mlc-backend`'s crate-private `alert::manager::
+    /// LOCAL_SHIM_ACCOUNT_ID` literal (see that method's own doc: the
+    /// literal is `pub(crate)`/private in both places by doctrine — app/
+    /// backend code goes through the account-wide facade, never a raw
+    /// scope string — so this is the third intentional copy, not drift).
+    /// Lives here (rather than in `mlc-app-agent-api`) because this crate
+    /// already depends on `mlc-backend` directly; `mlc-app-agent-api`'s
+    /// alert commands call this instead of naming `BackendCore` themselves.
+    ///
+    /// Returns `None` only when no backend is attached at all.
+    pub fn alert_account_id(&self) -> Option<String> {
+        const ANONYMOUS_ALERT_ACCOUNT_ID: &str = "local";
+        let core = self.core()?;
+        let user = core.user();
+        let profile = user.profile();
+        Some(
+            profile
+                .domain
+                .linked_account
+                .as_ref()
+                .map(|linked| linked.public_id.clone())
+                .filter(|id| !id.is_empty())
+                .unwrap_or_else(|| ANONYMOUS_ALERT_ACCOUNT_ID.to_string()),
+        )
+    }
+
     /// Record that an Agent API request was just served (called by middleware).
     pub fn bump_access(&self) {
         let ms = self.start_time.elapsed().as_millis() as u64;
@@ -554,6 +585,117 @@ pub enum AgentCommand {
         window_id: String,
         token: String,
     },
+
+    // -- Alerts (Arc C3, alerts-account-wide-and-telegram-delivery-2026-09-06) --
+    /// Create an account-wide alert. The render thread resolves the
+    /// caller's account id (`AgentState::alert_account_id`), stamps a live
+    /// subscription bubble via `BackendCore::ensure_alert_bubble`, and
+    /// persists the account-wide store to `alerts.json`. Answers with the
+    /// new alert's id so the HTTP handler can return `201` synchronously
+    /// instead of firing and forgetting.
+    CreateAlert {
+        address: AlertAddressDto,
+        condition: AlertConditionDto,
+        response_tx: tokio::sync::oneshot::Sender<Result<u64, String>>,
+    },
+    /// List every alert belonging to the caller's account, across every
+    /// instrument.
+    ListAlerts {
+        response_tx: tokio::sync::oneshot::Sender<Result<Vec<AlertListEntry>, String>>,
+    },
+    /// Remove an alert by its global id. `Ok(true)` = removed, `Ok(false)`
+    /// = no alert with that id.
+    DeleteAlert {
+        id: u64,
+        response_tx: tokio::sync::oneshot::Sender<Result<bool, String>>,
+    },
+    /// Send a Telegram test message through the existing Vault-tab
+    /// send-test path (`tg_test_pending`, `mlc-app-shell-vello/src/
+    /// main.rs`'s Telegram test block) rather than duplicating the send
+    /// logic here.
+    TestAlertDelivery {
+        response_tx: tokio::sync::oneshot::Sender<Result<(), TestAlertDeliveryError>>,
+    },
+}
+
+/// Why [`AgentCommand::TestAlertDelivery`] could not be queued, distinguished
+/// so the HTTP handler can answer a different status per cause (`423` for a
+/// sealed vault, `400` for a configured-but-empty bot token) instead of a
+/// generic failure.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TestAlertDeliveryError {
+    /// The native alert-secrets vault sidecar is sealed — mirrors the Vault
+    /// tab's own gate ("own bot = signed-in, vault-backed").
+    Sealed,
+    /// The vault is unlocked but no Telegram bot token has been set yet.
+    NoToken,
+    /// No window is open to carry the UI-state mirror the existing
+    /// `tg_test_pending` send path drains. Cannot happen while the Agent
+    /// API server itself is running (it starts alongside the first
+    /// window), handled rather than panicking.
+    NoWindow,
+}
+
+/// The instrument an alert watches — field-compatible with
+/// `mylittlechart-server`'s `mlc-alert-daemon` `alert_item.rs` wire shape
+/// (`{exchange, symbol, account_type}`) so the same JSON can later be
+/// pushed as an `alerts`-category sync item (plan §2/C3.4). `account_type`
+/// is accepted/echoed on every surface but only fully honored by
+/// `AgentCommand::ListAlerts`/`DeleteAlert` today — see `AgentCommand::
+/// CreateAlert`'s handler doc in `mlc-app-agent-api::commands` for why
+/// creation cannot yet stamp a non-Spot account type.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertAddressDto {
+    pub exchange: String,
+    pub symbol: String,
+    #[serde(default)]
+    pub account_type: String,
+}
+
+/// The condition that fires an alert — a flat (not internally-tagged)
+/// struct that serializes to the SAME JSON shape as `mlc-alert-daemon`'s
+/// internally-tagged `ConditionWire` for the `"price_cross"` case
+/// (`{"kind":"price_cross","price":...,"direction":"up"}`), while also
+/// covering every other native `mlc_core::alert::AlertCondition` kind for
+/// `GET .../alerts` (that daemon only evaluates Price-source crossings —
+/// the honest subset — so its own type never needs `price2`/`percentage` at
+/// all; unknown extra fields are tolerated by its `#[serde(tag = "kind")]`
+/// deserializer regardless).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlertConditionDto {
+    /// `"price_cross"` for a `CreateAlert` request (the only kind that
+    /// route accepts); one of `"price_cross"`, `"greater_than"`,
+    /// `"less_than"`, `"entering_range"`, `"exiting_range"`,
+    /// `"inside_range"`, `"outside_range"`, `"moving_up"`, `"moving_down"`,
+    /// `"moving_up_or_down"` on a `ListAlerts` response.
+    pub kind: String,
+    pub price: f64,
+    /// `"up"` / `"down"` / `"either"` — only meaningful (and only ever
+    /// present) for `kind: "price_cross"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<String>,
+    /// Second price for a range condition — only present for
+    /// `entering_range`/`exiting_range`/`inside_range`/`outside_range`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price2: Option<f64>,
+    /// Percentage for a `moving_*` condition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub percentage: Option<f64>,
+}
+
+/// One alert in a `GET .../alerts` response.
+#[derive(Debug, Clone, Serialize)]
+pub struct AlertListEntry {
+    pub id: u64,
+    pub address: AlertAddressDto,
+    pub condition: AlertConditionDto,
+    /// `true` when `AlertStatus::Active` — a paused/triggered/expired
+    /// alert answers `false`.
+    pub enabled: bool,
+    /// Unix timestamp millis.
+    pub created_at: u64,
+    /// Unix timestamp millis of the last trigger, if any.
+    pub last_fired: Option<u64>,
 }
 
 /// Style fields for a drawing primitive (used in commands and responses).
@@ -797,6 +939,20 @@ pub struct WindowUiState {
     /// resulting tab landed read-only (or writable, for a clone) without a
     /// second round trip to the server.
     pub active_preset: ActivePresetUiState,
+    /// Account-wide alert summary (alerts-account-wide-and-telegram-
+    /// delivery-2026-09-06 plan §5) — cheap enough to build every `ui/
+    /// state` snapshot cycle rather than needing its own endpoint.
+    pub alerts: AlertsUiState,
+}
+
+/// Account-wide alert summary shown on `GET .../ui/state`.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct AlertsUiState {
+    /// Total alerts for the caller's account, across every instrument.
+    pub count: usize,
+    /// Unix timestamp millis of the most recent trigger across every alert
+    /// in the account, if any has fired at all.
+    pub last_fired_at: Option<u64>,
 }
 
 /// The window's active preset tab: id, whether `ChartApp::is_readonly_tab`

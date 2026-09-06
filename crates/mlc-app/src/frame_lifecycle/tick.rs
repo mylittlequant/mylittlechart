@@ -776,13 +776,26 @@ impl ChartApp {
                         Some(bid) => self.with_bubble(bid, |b| b.bars.last().map(|bar| bar.close)).flatten().unwrap_or(0.0),
                         None => 0.0,
                     };
+                    let message = format!("{} {} @ {:.8}",
+                        alert.source.display_name(),
+                        alert.condition.display_name(),
+                        price);
+                    // Fires the moment the condition is met, independent of
+                    // whether any transport actually delivers it — the
+                    // vello shell's delivery drain reports Telegram
+                    // success/failure separately once that resolves
+                    // (`alerts-account-wide-and-telegram-delivery-2026-09-06`
+                    // plan §4).
+                    self.push_system_event(
+                        mlc_core::SystemEventKind::Alert,
+                        format!("Alert fired: {} {}", alert.symbol(), alert.condition.display_name()),
+                        message.clone(),
+                        true,
+                    );
                     self.pending_delivery_events.push(mlc_alert_delivery::DeliveryEvent {
                         alert_name: alert.name.clone(),
                         symbol: alert.symbol().to_string(),
-                        message: format!("{} {} @ {:.8}",
-                            alert.source.display_name(),
-                            alert.condition.display_name(),
-                            price),
+                        message,
                         price,
                         timestamp: now,
                         screenshot: None,

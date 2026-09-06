@@ -193,6 +193,15 @@ impl ChartApp {
     /// and updates both the `chart_settings_state` cached flags and the active
     /// chart window's live state.
     fn apply_chart_template(&mut self, tmpl: &mlc_core::templates::ChartTemplate) {
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
+        // — the single chokepoint behind both the "Reset to developer
+        // defaults" and "template_option:" footer actions; template apply
+        // mutates chart state exactly like any other click-driven edit, see
+        // `edit_primitive_recorded`'s twin comment (`input/mod.rs`).
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] apply_chart_template refused: active tab is read-only (shared chart)");
+            return;
+        }
         use mlc_app_layout::layout::modals::chart_settings::{
             InstrumentSettings, ScalesLinesSettings, StatusLineSettings,
         };
@@ -2733,6 +2742,12 @@ impl ChartApp {
                 mlc_core::templates::PrimitiveTemplate::resolve_system(tmpl_id, factory.as_ref())
             });
             if let Some(tmpl) = tmpl_opt {
+                // Shared-viewer read-only gate (native-share-viewer arc,
+                // 2026-09-06) — see `apply_chart_template`'s twin comment.
+                if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                    eprintln!("[ChartApp] prim_settings template apply refused: active tab is read-only (shared chart)");
+                    return;
+                }
                 self.panel_app.primitive_settings_state.template_dropdown_open = false;
                 // Apply the template to the primitive — flat style fields,
                 // level ladder (if the template carries one), and typed
@@ -3480,6 +3495,13 @@ impl ChartApp {
                         eprintln!("[ChartApp] ind_settings template save-as opened");
                     }
                     "template_default" => {
+                        // Shared-viewer read-only gate (native-share-viewer
+                        // arc, 2026-09-06) — see `apply_chart_template`'s
+                        // twin comment.
+                        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                            eprintln!("[ChartApp] ind_settings template reset refused: active tab is read-only (shared chart)");
+                            return;
+                        }
                         self.panel_app.indicator_settings_state.template_dropdown_open = false;
                         self.panel_app.indicator_settings_state.applied_template_id = None;
                         if let Some(ind_id) = self.panel_app.indicator_settings_state.indicator_id {
@@ -3508,6 +3530,13 @@ impl ChartApp {
                         let tmpl_id = &btn_id["template_option:".len()..];
                         let tmpl_opt = self.core.templates().get_indicator_template(tmpl_id).cloned();
                         if let Some(tmpl) = tmpl_opt {
+                            // Shared-viewer read-only gate (native-share-viewer
+                            // arc, 2026-09-06) — see `apply_chart_template`'s
+                            // twin comment.
+                            if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                                eprintln!("[ChartApp] ind_settings template apply refused: active tab is read-only (shared chart)");
+                                return;
+                            }
                             self.panel_app.indicator_settings_state.applied_template_id = Some(tmpl.id.clone());
                             self.panel_app.indicator_settings_state.template_dropdown_open = false;
                             // Apply params from template to the indicator instance

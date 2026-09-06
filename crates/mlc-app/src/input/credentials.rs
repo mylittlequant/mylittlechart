@@ -11,11 +11,13 @@
 //! # Which vault-key source this tab drives off
 //!
 //! `mlc-vault::store::SecretStore` is the newer, TTL-bounded, zeroize-on-seal
-//! design — but nothing in this app constructs one yet, and swapping
-//! `BackendCore::UserProfileManager::vault_key` for it is its own piece of
-//! work, out of scope here. This tab drives off the vault key that IS
-//! already wired end to end: `self.core.user().vault_key()` (the same
-//! `Option<VaultKey>` `AlertSettingsState::secrets_available` already
+//! design — this app now constructs TWO of them, `agent_key_store` and
+//! `alert_secrets_store` (see [`ChartApp::vault_key_sidecars`]), but the
+//! Vault tab's own status row still does NOT drive off either: swapping
+//! `BackendCore::UserProfileManager::vault_key` for a `SecretStore` is its
+//! own piece of work, out of scope here. This tab drives off the vault key
+//! that IS already wired end to end: `self.core.user().vault_key()` (the
+//! same `Option<VaultKey>` `AlertSettingsState::secrets_available` already
 //! mirrors from `ChartApp::apply_profile_state`). There is therefore no TTL
 //! to show — see `render_vault_tab` (the render side, in `mlc-app-layout`)
 //! for why that is a deliberate absence, not an oversight.
@@ -151,28 +153,80 @@ impl ChartApp {
         self.input_coordinator.borrow_mut().text_fields_mut().set_text(&wid, &webhook_url);
     }
 
-    /// Seal the wired agent-key `SecretStore` (if the host set one via
-    /// [`ChartApp::set_agent_key_store`]) — the counterpart of
-    /// [`Self::sync_agent_key_store`], called from every path that seals
-    /// the main vault so the Agent API's key store never outlives it.
-    fn seal_agent_key_store(&self) {
-        if let Some(store) = &self.agent_key_store {
+    /// Every RAM-only vault-keyed `SecretStore` sidecar this window's
+    /// `ChartApp` holds — the agent-key store and the alert-secrets store —
+    /// one list [`Self::seal_vault_sidecars`] and [`Self::sync_vault_sidecars`]
+    /// both iterate, so a THIRD sidecar (should one ever join these two)
+    /// needs one new entry here rather than a new copy of every call-out
+    /// below. `None` entries (a shell that never wired a given store) are
+    /// filtered out by the callers, not here.
+    fn vault_key_sidecars(&self) -> [Option<&std::sync::Arc<mlc_vault::SecretStore>>; 2] {
+        [self.agent_key_store.as_ref(), self.alert_secrets_store.as_ref()]
+    }
+
+    /// Seal every store in [`Self::vault_key_sidecars`] — the counterpart of
+    /// [`Self::sync_vault_sidecars`], called from every path that seals the
+    /// main vault so no sidecar outlives it.
+    fn seal_vault_sidecars(&self) {
+        for store in self.vault_key_sidecars().into_iter().flatten() {
             store.seal();
         }
     }
 
-    /// Refresh the wired agent-key `SecretStore` (if any) off the SAME
-    /// `VaultKey` that just unlocked the main vault — called from every
-    /// path that derives or restores one (`finish_credentials_unlock`,
+    /// Refresh every store in [`Self::vault_key_sidecars`] off the SAME
+    /// `VaultKey` that just unlocked the main vault — called from every path
+    /// that derives or restores one (`finish_credentials_unlock`,
     /// `apply_vault_setup`'s fresh-setup branch, `apply_recovery_unlock`).
     /// `unlock_with_key` skips PBKDF2 entirely (the render thread already
     /// holds the derived key here, never a passphrase to re-derive from).
-    fn sync_agent_key_store(&self, vault_key: &mlc_vault::vault::VaultKey) {
-        if let Some(store) = &self.agent_key_store {
+    fn sync_vault_sidecars(&self, vault_key: &mlc_vault::vault::VaultKey) {
+        for store in self.vault_key_sidecars().into_iter().flatten() {
             if let Err(e) = store.unlock_with_key(vault_key) {
-                eprintln!("[ChartApp] agent key store: failed to unlock alongside vault: {}", e);
+                eprintln!("[ChartApp] secret store: failed to unlock alongside vault: {}", e);
             }
         }
+    }
+
+    /// One-time migration seed (alerts-account-wide-and-telegram-delivery
+    /// plan §3): a profile unlocked before `alert_secrets.enc` existed still
+    /// carries its Telegram bot token, subscriber list and webhook URL
+    /// inside `VaultSecrets` (decrypted into `profile.domain.
+    /// notification_secrets` by `unseal_vault` just above). Copies whatever
+    /// is there into the sidecar and clears the field from `VaultSecrets` —
+    /// idempotent by construction: once cleared, the next unlock finds
+    /// nothing to migrate, so this never fires twice for the same profile.
+    /// Call right after [`Self::sync_vault_sidecars`] has unlocked the
+    /// sidecar off the same key.
+    ///
+    /// Boot-time auto-unlock needs no separate call site: `ProfileManager::
+    /// load` only ever receives an already-derived `VaultKey` when an
+    /// earlier call-out in THIS same run already unlocked (and therefore
+    /// already migrated) it — a cold boot always starts sealed and reaches
+    /// this via [`Self::finish_credentials_unlock`] or
+    /// [`Self::apply_recovery_unlock`], the two paths that actually decrypt
+    /// a fresh `VaultSecrets` from disk.
+    fn migrate_notification_secrets_into_sidecar(&mut self, vault_key: &mlc_vault::vault::VaultKey) {
+        if self.alert_secrets_store.is_none() {
+            return;
+        }
+        let legacy = self.core.user().profile().domain.notification_secrets.clone();
+        let has_secret = !legacy.telegram.bot_token.is_empty()
+            || !legacy.telegram.subscribers.is_empty()
+            || !legacy.webhook.url.is_empty();
+        if !has_secret {
+            return;
+        }
+        let alert_secrets_path = mlc_core::active_profile_data_dir().join("alert_secrets.enc");
+        if let Err(e) = mlc_vault::vault::save_encrypted(vault_key, &alert_secrets_path, &legacy) {
+            eprintln!("[ChartApp] alert secrets: migration write failed, leaving the token in vault.enc: {}", e);
+            return;
+        }
+        self.core.user_mut().profile_mut().domain.notification_secrets = Default::default();
+        self.persist_profile();
+        // Re-read the freshly-written payload into the sidecar's RAM cache —
+        // it was unlocked (off the same key) before this write landed.
+        self.sync_vault_sidecars(vault_key);
+        eprintln!("[ChartApp] alert secrets: migrated Telegram/webhook secrets from vault.enc into alert_secrets.enc (one-time)");
     }
 
     /// Seal the vault deliberately (the "Lock" button) — the counterpart a
@@ -180,7 +234,7 @@ impl ChartApp {
     /// now there was only ever unlock.
     fn lock_vault(&mut self) {
         self.core.user_mut().seal_vault();
-        self.seal_agent_key_store();
+        self.seal_vault_sidecars();
 
         // The alert-settings mirror holds its own copy of the same secrets
         // (telegram bot token, webhook url) — sealing must wipe it too, and
@@ -368,20 +422,9 @@ impl ChartApp {
     /// (`List` or `AddKey`) that asked for the unlock.
     fn finish_credentials_unlock(&mut self, key: mlc_vault::vault::VaultKey, secrets: mlc_core::user_profile::VaultSecrets) {
         self.core.user_mut().unseal_vault(key, secrets);
-        self.sync_agent_key_store(&key);
-
-        let (notification_secrets, bot_token) = {
-            let user = self.core.user();
-            let ns = user.profile().domain.notification_secrets.clone();
-            let token = ns.telegram.bot_token.clone();
-            (ns, token)
-        };
-        self.panel_app.alert_settings_state.secrets_available = true;
-        self.panel_app.alert_settings_state.notification_secrets = notification_secrets;
-        {
-            let tg_wid = uzor::WidgetId::from(text_input::ALERT_TG_TOKEN);
-            self.input_coordinator.borrow_mut().text_fields_mut().set_text(&tg_wid, &bot_token);
-        }
+        self.sync_vault_sidecars(&key);
+        self.migrate_notification_secrets_into_sidecar(&key);
+        self.refresh_alert_secrets_mirror();
 
         self.sync_credentials_from_core();
 
@@ -554,8 +597,8 @@ impl ChartApp {
             // credentials-modal reseal command already does — reuse it
             // rather than re-deriving/decrypting a second time in this file.
             // `try_unlock_credentials` → `finish_credentials_unlock` already
-            // syncs the agent-key store off this same key on success, so
-            // this branch does not need its own `sync_agent_key_store` call.
+            // syncs every vault-key sidecar off this same key on success, so
+            // this branch does not need its own `sync_vault_sidecars` call.
             return match self.try_unlock_credentials(passphrase) {
                 Ok(()) => {
                     if let Some(key) = self.core.user().vault_key() {
@@ -572,7 +615,7 @@ impl ChartApp {
             Ok(key) => {
                 self.core.user_mut().set_vault_key(Some(key));
                 self.core.templates_mut().set_vault_key(Some(key));
-                self.sync_agent_key_store(&key);
+                self.sync_vault_sidecars(&key);
                 // The whole point of this call: a vault key now exists but
                 // `vault.enc` itself does not yet — nothing else about this
                 // profile changed, so nothing else would mark it dirty.
@@ -655,7 +698,9 @@ impl ChartApp {
         .map_err(|e| format!("Recovered key did not decrypt the vault: {}", e))?;
 
         self.core.user_mut().unseal_vault(vault_key, secrets);
-        self.sync_agent_key_store(&vault_key);
+        self.sync_vault_sidecars(&vault_key);
+        self.migrate_notification_secrets_into_sidecar(&vault_key);
+        self.refresh_alert_secrets_mirror();
         profile_manager.set_vault_key(vault_key);
         self.panel_app.user_settings_state.needs_vault_unlock = false;
         Ok(())
@@ -675,13 +720,15 @@ impl ChartApp {
     /// show it once (`ProfileManagerPage::ShowRecoveryKey` or
     /// `CredentialsView::ShowRecoveryKey`, same host test as above).
     ///
-    /// Also re-encrypts the `agent_keys.enc` sidecar under the new
-    /// `VaultKey` (piece 3 of the agent-api-auth-and-secret-store plan left
-    /// this as a documented gap — closed here, in piece 4): `rekey_vault`
-    /// re-encrypts `vault.enc` synchronously, but without this, any agent
-    /// key minted before the re-key would survive on disk yet go unreadable
-    /// by `agent_key_store` (and by the render thread's own load-append-save
-    /// mint/revoke path) until the next full unlock happened to re-sync it.
+    /// Also re-encrypts every sidecar in [`Self::vault_key_sidecars`]
+    /// (`agent_keys.enc`, `alert_secrets.enc`) under the new `VaultKey`
+    /// (piece 3 of the agent-api-auth-and-secret-store plan left the
+    /// agent-key half of this as a documented gap — closed in piece 4,
+    /// extended to the alert-secrets sidecar here): `rekey_vault`
+    /// re-encrypts `vault.enc` synchronously, but without this, any secret
+    /// written to a sidecar before the re-key would survive on disk yet go
+    /// unreadable by that sidecar's `SecretStore` until the next full
+    /// unlock happened to re-sync it.
     pub fn apply_new_passphrase(
         &mut self,
         new_passphrase: &str,
@@ -692,7 +739,7 @@ impl ChartApp {
         if let Some(new_key) = profile_manager.vault_key {
             self.core.user_mut().set_vault_key(Some(new_key));
             self.core.templates_mut().set_vault_key(Some(new_key));
-            self.rekey_agent_key_store(old_key, &new_key);
+            self.rekey_secret_sidecars(old_key, &new_key);
             // `rekey_vault` already re-encrypted `vault.enc` synchronously
             // under the new key, but `templates/*` on disk are still under
             // the OLD one — both shells' persistence drains re-save
@@ -707,38 +754,49 @@ impl ChartApp {
         Ok(formatted)
     }
 
-    /// Re-encrypt the `agent_keys.enc` sidecar from `old_key` to `new_key`
-    /// after [`Self::apply_new_passphrase`] re-keys the main vault, then
-    /// re-syncs the wired [`Self::agent_key_store`] off the new key so a
-    /// live session keeps working with its already-issued keys instead of
-    /// finding them unreadable until the next full unlock. `old_key` is
-    /// `None` only if the vault was never unlocked to begin with, in which
-    /// case `rekey_vault` itself would already have refused — kept as a
-    /// guard rather than an `expect`, not a path this is expected to take.
+    /// Re-encrypt every sidecar in [`Self::vault_key_sidecars`] from
+    /// `old_key` to `new_key`, one filename per store, after
+    /// [`Self::apply_new_passphrase`] re-keys the main vault, then re-syncs
+    /// each store off the new key so a live session keeps working with its
+    /// already-written contents instead of finding them unreadable until
+    /// the next full unlock. `old_key` is `None` only if the vault was
+    /// never unlocked to begin with, in which case `rekey_vault` itself
+    /// would already have refused — kept as a guard rather than an
+    /// `expect`, not a path this is expected to take.
     ///
-    /// A profile that never minted a key has no sidecar file at all; that
+    /// A store that never wrote anything has no sidecar file at all; that
     /// read failure (not just a wrong key) is treated the same as "nothing
-    /// to carry forward" — the main vault's own re-key already succeeded by
-    /// the time this runs, and a missing sidecar is not a reason to undo it.
-    fn rekey_agent_key_store(
+    /// to carry forward for THIS store" and does not stop the others — the
+    /// main vault's own re-key already succeeded by the time this runs, and
+    /// a missing sidecar is not a reason to undo it.
+    fn rekey_secret_sidecars(
         &self,
         old_key: Option<mlc_vault::vault::VaultKey>,
         new_key: &mlc_vault::vault::VaultKey,
     ) {
         let Some(old_key) = old_key else { return };
-        let vault_path = mlc_core::active_profile_data_dir().join("agent_keys.enc");
-        let records = match mlc_vault::vault::load_encrypted::<serde_json::Value>(&old_key, &vault_path) {
-            Ok(records) => records,
-            Err(e) => {
-                eprintln!("[ChartApp] agent key store: agent_keys.enc not re-keyed ({}) — likely no keys minted yet", e);
-                return;
+        let dir = mlc_core::active_profile_data_dir();
+        for (filename, store) in [
+            ("agent_keys.enc", self.agent_key_store.as_ref()),
+            ("alert_secrets.enc", self.alert_secrets_store.as_ref()),
+        ] {
+            let Some(store) = store else { continue };
+            let vault_path = dir.join(filename);
+            let records = match mlc_vault::vault::load_encrypted::<serde_json::Value>(&old_key, &vault_path) {
+                Ok(records) => records,
+                Err(e) => {
+                    eprintln!("[ChartApp] secret store: {filename} not re-keyed ({}) — likely nothing stored yet", e);
+                    continue;
+                }
+            };
+            if let Err(e) = mlc_vault::vault::save_encrypted(new_key, &vault_path, &records) {
+                eprintln!("[ChartApp] secret store: failed to re-key {filename}: {}", e);
+                continue;
             }
-        };
-        if let Err(e) = mlc_vault::vault::save_encrypted(new_key, &vault_path, &records) {
-            eprintln!("[ChartApp] agent key store: failed to re-key agent_keys.enc: {}", e);
-            return;
+            if let Err(e) = store.unlock_with_key(new_key) {
+                eprintln!("[ChartApp] secret store: {filename} failed to unlock after re-key: {}", e);
+            }
         }
-        self.sync_agent_key_store(new_key);
     }
 }
 

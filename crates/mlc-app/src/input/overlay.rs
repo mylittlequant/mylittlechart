@@ -919,6 +919,14 @@ impl ChartApp {
     /// of the same `type_id` across ALL group member windows are removed so that
     /// peer windows do not keep stale renders alive.
     pub(crate) fn delete_indicator_instance(&mut self, id: u64) {
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
+        // — the single chokepoint behind every indicator-delete surface
+        // (legend gear, object tree, context menu, trading-center aux
+        // chart); see `edit_indicator_recorded`'s twin comment (`input/mod.rs`).
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] delete_indicator_instance refused: active tab is read-only (shared chart)");
+            return;
+        }
         // Bound first so the `indicators()` read guard drops before the match
         // body runs (clippy::significant_drop_in_scrutinee).
         let indicator_type_id = self.core.indicators().type_id_of(id);

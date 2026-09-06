@@ -774,7 +774,18 @@ fn render_notifications_tab(
     );
     y += ROW_H + ITEM_PADDING;
 
-    if ns.telegram.enabled && !state.secrets_available {
+    if ns.telegram.enabled && !state.account_signed_in {
+        // Native Telegram delivery is "own bot, signed-in, vault-backed"
+        // (alerts-account-wide-and-telegram-delivery plan §3): signed out,
+        // there is no account to hold the `alert_secrets.enc` sidecar's
+        // `VaultKey` against, so the whole secret-bearing surface (token,
+        // subscribers, test button) collapses to this one line — even
+        // `send_screenshots` (a plain preference otherwise shown regardless
+        // of vault-lock state below) stays hidden, since there is nothing
+        // for it to configure yet.
+        draw_locked_notice(ctx, "Sign in to deliver alerts to Telegram.", y);
+        y += ROW_H + ITEM_PADDING;
+    } else if ns.telegram.enabled && !state.secrets_available {
         // Vault locked — the bot token and subscriber list live in the
         // vault and cannot be shown. `send_screenshots` is a plain
         // preference (no secret in it) so it still renders and edits

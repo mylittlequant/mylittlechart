@@ -72,6 +72,7 @@ pub fn start_server(
         .merge(tier_gate(routes::connectors_status::routes(), Tier::SignedIn))
         .merge(tier_gate(routes::ui::routes(), Tier::SignedIn))
         .merge(tier_gate(routes::share::routes(), Tier::SignedIn))
+        .merge(tier_gate(routes::alerts::routes(), Tier::SignedIn))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             track_access,

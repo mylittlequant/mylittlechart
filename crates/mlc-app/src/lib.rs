@@ -1462,6 +1462,15 @@ pub struct ChartApp {
     /// wires an Agent API — today, `mlc-app-shell-web`'s wasm build (see
     /// that shell's own `mlc-app-agent-api` doc note).
     pub(crate) agent_key_store: Option<std::sync::Arc<mlc_vault::SecretStore>>,
+
+    /// Handle to the native host's RAM-only Telegram/webhook delivery
+    /// `SecretStore` sidecar (`alert_secrets.enc`) — same shape and same
+    /// seal/unlock lockstep as [`Self::agent_key_store`] (see
+    /// `input/credentials.rs`'s `vault_key_sidecars`), just holding
+    /// [`mlc_alert_delivery::NotificationSecrets`] instead of agent-key
+    /// records. `None` on any shell that never wires native delivery —
+    /// today, `mlc-app-shell-web`'s wasm build.
+    pub(crate) alert_secrets_store: Option<std::sync::Arc<mlc_vault::SecretStore>>,
 }
 
 /// An action that mutates the app-level watchlist.
@@ -3531,6 +3540,7 @@ impl ChartApp {
             watchlist_warmup_budget: std::collections::HashMap::new(),
             watchlist_warmed: std::collections::HashSet::new(),
             agent_key_store: None,
+            alert_secrets_store: None,
         };
 
         // Trading snapshots are per-panel now (`(exchange, account_type)`
@@ -3921,6 +3931,7 @@ impl ChartApp {
             watchlist_warmup_budget: std::collections::HashMap::new(),
             watchlist_warmed: std::collections::HashSet::new(),
             agent_key_store: None,
+            alert_secrets_store: None,
         };
 
         app.core.watchlists_mut().replace_all(mlc_backend::watchlist::WatchlistManager::default_seed());
@@ -3961,6 +3972,53 @@ impl ChartApp {
     /// default `None` — every seal/unlock call-out is a no-op then.
     pub fn set_agent_key_store(&mut self, store: std::sync::Arc<mlc_vault::SecretStore>) {
         self.agent_key_store = Some(store);
+    }
+
+    /// Wire the native host's alert-secrets `SecretStore` sidecar
+    /// (`alert_secrets.enc`) — same contract as [`Self::set_agent_key_store`],
+    /// just for the Telegram/webhook delivery payload instead of agent-key
+    /// records. Call once, right after the host constructs the store.
+    pub fn set_alert_secrets_store(&mut self, store: std::sync::Arc<mlc_vault::SecretStore>) {
+        self.alert_secrets_store = Some(store);
+    }
+
+    /// Snapshot of [`Self::alert_secrets_store`]'s live payload — `Some` only
+    /// while wired AND unlocked; `None` covers both "no sidecar on this
+    /// shell" and "sealed", which every caller here already treats the same
+    /// way (fall back to an empty [`mlc_alert_delivery::NotificationSecrets`]).
+    /// Shared by [`Self::refresh_alert_secrets_mirror`] and
+    /// `input/credentials.rs`'s post-unlock migration check so the decode
+    /// step lives in one place.
+    pub(crate) fn alert_secrets_snapshot(&self) -> Option<mlc_alert_delivery::NotificationSecrets> {
+        let bytes = self.alert_secrets_store.as_ref()?.get().ok()?;
+        serde_json::from_slice(&bytes).ok()
+    }
+
+    /// Re-seed `AlertSettingsState`'s delivery-secrets mirror from
+    /// [`Self::alert_secrets_store`] — the host's counterpart of
+    /// `input/credentials.rs`'s own post-unlock refresh, for the ONE moment
+    /// that refresh cannot cover itself: right after [`Self::new_window`]
+    /// (whose internal `apply_profile_state` call seeds this mirror from
+    /// `profile.domain.notification_secrets`, the pre-sidecar source, before
+    /// the caller has had a chance to call [`Self::set_alert_secrets_store`]
+    /// on the freshly-built window) wires a store that is already unlocked
+    /// this session. A shell with no sidecar (`alert_secrets_store: None`,
+    /// e.g. `mlc-app-shell-web`'s wasm build) never calls this — its windows
+    /// keep the `apply_profile_state` seed as their only source, exactly as
+    /// before this sidecar existed.
+    pub fn refresh_alert_secrets_mirror(&mut self) {
+        match self.alert_secrets_snapshot() {
+            Some(secrets) => {
+                let tg_wid = uzor::WidgetId::from(crate::text_input::ALERT_TG_TOKEN);
+                self.input_coordinator.borrow_mut().text_fields_mut().set_text(&tg_wid, &secrets.telegram.bot_token);
+                self.panel_app.alert_settings_state.notification_secrets = secrets;
+                self.panel_app.alert_settings_state.secrets_available = true;
+            }
+            None => {
+                self.panel_app.alert_settings_state.notification_secrets = mlc_alert_delivery::NotificationSecrets::default();
+                self.panel_app.alert_settings_state.secrets_available = false;
+            }
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -4471,6 +4529,7 @@ impl ChartApp {
             watchlist_warmup_budget: std::collections::HashMap::new(),
             watchlist_warmed: std::collections::HashSet::new(),
             agent_key_store: None,
+            alert_secrets_store: None,
         };
 
         // Initialize watchlist with a minimal default — overwritten by load_watchlists below.
@@ -9742,6 +9801,41 @@ impl ChartApp {
         let frame_theme = self.panel_app.frame_theme_for_render();
         let toolbar_theme = self.panel_app.toolbar_theme_for_render();
         let toolbar_state = ToolbarState::default();
+
+        // Shared-chart viewer row (native-share-viewer arc, 2026-09-06) —
+        // a slim "Shared by <owner>" banner atop the chart canvas, drawn
+        // here (not in `mlc-app-layout`) because `ChartApp` is the only
+        // layer holding both `is_readonly_tab` and `shared_chart_meta`
+        // (see `share_viewer.rs`'s own module doc). `render_modal_layer`
+        // is called by every shell every frame (same contract as
+        // `render_panel_overlay_popups`), so this needs no separate
+        // shell wiring the way a brand-new host method would.
+        // `draw_share_viewer_row` itself draws nothing and registers no
+        // widget when the link carries no "clone" right — an anonymous
+        // viewer only ever sees the label.
+        {
+            let active_preset_id = self.panel_app.active_preset_id.clone();
+            if self.is_readonly_tab(&active_preset_id) {
+                if let Some(meta) = self.shared_chart_meta(&active_preset_id) {
+                    let owner_label = meta.owner_label.clone();
+                    let can_clone = meta.has_right("clone");
+                    let row_rect = uzor::types::Rect::new(
+                        content_rect.x, content_rect.y, content_rect.width, 28.0,
+                    );
+                    let mut coord = self.input_coordinator.borrow_mut();
+                    mlc_app_layout::ui::share_viewer_row::draw_share_viewer_row(
+                        ctx,
+                        &mut coord,
+                        &uzor::input::LayerId::new("toolbar"),
+                        row_rect,
+                        &active_preset_id,
+                        &owner_label,
+                        can_clone,
+                        &toolbar_theme,
+                    );
+                }
+            }
+        }
 
         // 5. Render chart-level modals (primitive settings, indicator settings,
         //    chart settings, compare settings, etc.)

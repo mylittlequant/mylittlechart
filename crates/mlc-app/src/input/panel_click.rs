@@ -2689,6 +2689,13 @@ impl ChartApp {
         // === Alert panel clicks ===
         // Pattern: "alert_delete_{id}"
         if widget_id.starts_with("alert_delete_") {
+            // Shared-viewer read-only gate (native-share-viewer arc,
+            // 2026-09-06) — see `edit_primitive_recorded`'s twin comment
+            // (`input/mod.rs`).
+            if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                eprintln!("[ChartApp] alert_delete refused: active tab is read-only (shared chart)");
+                return;
+            }
             if let Some(id) = widget_id.strip_prefix("alert_delete_").and_then(|s| s.parse::<u64>().ok()) {
                 let found = self.core.alerts().find_owner(id).map(|(bid, a)| (bid, a));
                 if let Some((bid, snapshot)) = found {
@@ -2910,6 +2917,13 @@ impl ChartApp {
 
         // --- Compare delete ---
         if widget_id.contains("_cmp_delete_") || widget_id.starts_with("cmp_delete_") {
+            // Shared-viewer read-only gate (native-share-viewer arc,
+            // 2026-09-06) — see `edit_primitive_recorded`'s twin comment
+            // (`input/mod.rs`).
+            if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                eprintln!("[ChartApp] cmp_delete refused: active tab is read-only (shared chart)");
+                return;
+            }
             if let Some(idx) = widget_id.rsplit("cmp_delete_").next()
                 .and_then(|s| s.parse::<usize>().ok())
             {
@@ -2933,6 +2947,13 @@ impl ChartApp {
         }
         // --- Compare visibility toggle ---
         if widget_id.contains("_cmp_vis_") || widget_id.starts_with("cmp_vis_") {
+            // Shared-viewer read-only gate (native-share-viewer arc,
+            // 2026-09-06) — see `edit_primitive_recorded`'s twin comment
+            // (`input/mod.rs`).
+            if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                eprintln!("[ChartApp] cmp_vis refused: active tab is read-only (shared chart)");
+                return;
+            }
             if let Some(idx) = widget_id.rsplit("cmp_vis_").next()
                 .and_then(|s| s.parse::<usize>().ok())
             {
@@ -3632,7 +3653,15 @@ impl ChartApp {
             // freezes the active preset into a public link. Anonymous clicks
             // get the same refusal style as the multiprofile gate below:
             // logged, plus the sign-in overlay the chrome's own account
-            // button opens (cloud builds only).
+            // button opens (cloud builds only). Camera-style double-click
+            // (native-share-viewer arc, 2026-09-06): a second click within
+            // the window opens the `"share_chart"` dropdown ("Share live
+            // chart" / "Open shared chart…") instead of firing again —
+            // `ChartToolbarState::handle_share_click` owns the timing, the
+            // same way `"screenshot"`'s arm in `handle_toolbar_click_with_
+            // chart` owns the camera button's own double-click, just
+            // factored out here because the account-signed-in gate above
+            // must run BEFORE it.
             if item_id == "share_chart" {
                 if !self.panel_app.user_settings_state.account_signed_in {
                     eprintln!("[ChartApp] share_chart refused: account_signed_in=false");
@@ -3640,6 +3669,10 @@ impl ChartApp {
                     {
                         self.panel_app.cloud_login_state.open();
                     }
+                    return;
+                }
+                if self.panel_app.toolbar_state.handle_share_click() {
+                    eprintln!("[ChartApp] share_chart double-click — open dropdown");
                     return;
                 }
                 self.process_chart_out_event(mlc_core::events::ChartOutEvent::ShareLiveChart);
@@ -3887,6 +3920,30 @@ impl ChartApp {
                         self.trading_header_tb.open_dropdown_id = None;
                         return;
                     }
+                }
+
+                // Share-chart dropdown (camera-style double-click on the
+                // globe button, native-share-viewer arc, 2026-09-06) —
+                // "Share live chart" fires the existing action, "Open
+                // shared chart…" opens the token-entry overlay. Neither row
+                // reaches `handle_dropdown_select_with_chart`'s generic
+                // fallback below: `share_chart`'s account-signed-in gate is
+                // enforced up top (this dropdown only opens once that gate
+                // already passed), and `open_share` is public regardless of
+                // sign-in.
+                if dropdown_id == "share_chart" {
+                    if item_id == "share_chart" {
+                        self.process_chart_out_event(mlc_core::events::ChartOutEvent::ShareLiveChart);
+                    } else if item_id == mlc_core::toolbar::OPEN_SHARE_ACTION_ID {
+                        self.panel_app.share_open_state.open();
+                        let field_id = WidgetId::from(crate::text_input::SHARE_OPEN_INPUT);
+                        let mut coord = self.input_coordinator.borrow_mut();
+                        let tf = coord.text_fields_mut();
+                        tf.set_text(&field_id, "");
+                        tf.begin_edit(&field_id);
+                        tf.focus(crate::text_input::SHARE_OPEN_INPUT);
+                    }
+                    return;
                 }
 
                 // Delete actions — routed here (instead of the generic
@@ -5156,6 +5213,72 @@ impl ChartApp {
                 }
                 _ => {
                     eprintln!("[ChartApp] preset_name_input unhandled: {}", rest);
+                }
+            }
+            return;
+        }
+
+        // === "Open shared chart…" overlay clicks (native-share-viewer arc,
+        // 2026-09-06) — public even signed-out, so no account gate here
+        // (that gate lives on the `share_chart` button's OWN single-click
+        // action above).
+        if let Some(rest) = widget_id.strip_prefix("share_open:") {
+            match rest {
+                "submit" => {
+                    let field_id = WidgetId::from(crate::text_input::SHARE_OPEN_INPUT);
+                    let token = self.input_coordinator.borrow().text_fields().text(&field_id).trim().to_string();
+                    if !token.is_empty() {
+                        self.request_open_share(&token);
+                    }
+                    self.panel_app.share_open_state.close();
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    eprintln!("[ChartApp] share_open submitted");
+                }
+                "cancel" | "close" => {
+                    self.panel_app.share_open_state.close();
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    eprintln!("[ChartApp] share_open closed ({})", rest);
+                }
+                "input" => {
+                    // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
+                    // via the global path in mod.rs::on_drag_end (line ~3614).
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                }
+                "modal_bg" => {
+                    // No-op — absorb click to prevent fall-through.
+                }
+                _ => {
+                    eprintln!("[ChartApp] share_open unhandled: {}", rest);
+                }
+            }
+            return;
+        }
+
+        // === Shared-chart viewer row "Clone to my charts" click
+        // (native-share-viewer arc, 2026-09-06) — `mlc-app-layout`'s
+        // `ui::share_viewer_row::draw_share_viewer_row` own `share:clone:
+        // <preset_id>` hit-id contract; only ever drawn when
+        // `shared_chart_meta(id).has_right("clone")` is true, but a signed-
+        // out session still needs its own gate here (mirrors `share_chart`'s
+        // own single-click account gate above) since cloning writes a new
+        // preset under this account, unlike opening the read-only tab
+        // itself, which is public.
+        if let Some(preset_id) = widget_id.strip_prefix("share:clone:") {
+            if !self.panel_app.user_settings_state.account_signed_in {
+                eprintln!("[ChartApp] share:clone refused: account_signed_in=false");
+                #[cfg(feature = "cloud")]
+                {
+                    self.panel_app.cloud_login_state.open();
+                }
+                return;
+            }
+            match self.shared_chart_meta(preset_id).map(|m| m.token.clone()) {
+                Some(token) => {
+                    self.request_clone_share(&token);
+                    eprintln!("[ChartApp] share:clone requested for preset '{}'", preset_id);
+                }
+                None => {
+                    eprintln!("[ChartApp] share:clone: no shared_chart_meta for preset '{}'", preset_id);
                 }
             }
             return;

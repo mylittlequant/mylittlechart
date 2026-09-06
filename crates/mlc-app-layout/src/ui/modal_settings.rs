@@ -257,6 +257,41 @@ impl PresetNameInputState {
 }
 
 // =============================================================================
+// Share-Open Overlay State
+// =============================================================================
+
+/// State for the "Open shared chart…" overlay (native-share-viewer arc,
+/// 2026-09-06) — reached from the `share_chart` (globe) toolbar button's
+/// camera-style double-click dropdown by selecting
+/// `mlc_core::toolbar::OPEN_SHARE_ACTION_ID`. One text field
+/// (`mlc_app::text_input::SHARE_OPEN_INPUT`) plus Open/Cancel — no drag, no
+/// tabs, no remembered position: the smallest shape a submit-a-token dialog
+/// needs. Never gated by the `cloud` feature: reading a share link is
+/// public, so a signed-out session may open one exactly like a signed-in
+/// one (unlike `share_chart`'s OWN single-click action, which does gate on
+/// sign-in).
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ShareOpenState {
+    /// Whether the overlay is currently open.
+    pub is_open: bool,
+}
+
+impl ShareOpenState {
+    /// Open the overlay. The caller (the dropdown-select click handler)
+    /// still owns seeding the `SHARE_OPEN_INPUT` field — this struct holds
+    /// no text of its own, the same split every other modal field in this
+    /// crate follows.
+    pub fn open(&mut self) {
+        self.is_open = true;
+    }
+
+    /// Close the overlay.
+    pub fn close(&mut self) {
+        self.is_open = false;
+    }
+}
+
+// =============================================================================
 // Slider Drag State
 // =============================================================================
 
@@ -2388,6 +2423,14 @@ pub struct AlertSettingsState {
     /// whether the profile vault is unlocked this session. Set by
     /// `ChartApp::apply_profile_state`.
     pub secrets_available: bool,
+    /// Whether the active account is signed in — native Telegram delivery
+    /// is "own bot, signed-in, vault-backed" (alerts-account-wide-and-
+    /// telegram-delivery plan §3): the token/subscriber/test-button surface
+    /// gates on this FIRST, `secrets_available` second. Mirrors
+    /// `UserSettingsState::account_signed_in`, set from the same
+    /// `auth_rx`-derived flag every frame (`mlc-app-shell-vello`'s
+    /// `about_to_wait`).
+    pub account_signed_in: bool,
     /// Render-time snapshot of the Telegram bot token input (populated from TextFieldStore by ChartApp).
     pub tg_token_render: ActiveFieldRender,
     /// Detected users from getUpdates: (chat_id, display_name, username).
@@ -2448,6 +2491,7 @@ impl Default for AlertSettingsState {
             notification_settings: NotificationSettings::default(),
             notification_secrets: NotificationSecrets::default(),
             secrets_available: false,
+            account_signed_in: false,
             tg_token_render: ActiveFieldRender::default(),
             tg_detected_users: Vec::new(),
             tg_status_message: String::new(),

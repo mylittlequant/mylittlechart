@@ -35,7 +35,7 @@
 //! async fn main() {
 //!     let prefs = NotificationSettings::default();
 //!     let secrets = NotificationSecrets::default(); // vault locked — no secrets yet
-//!     let (delivery, mut toasts) = AlertDelivery::new(prefs, secrets);
+//!     let (delivery, mut toasts, mut _outcomes) = AlertDelivery::new(prefs, secrets);
 //!
 //!     delivery.deliver(DeliveryEvent {
 //!         alert_name: "Price Cross".into(),
@@ -238,6 +238,31 @@ pub struct ToastNotification {
     pub duration_ms: u64,
 }
 
+/// Result of one [`DeliveryEvent`]'s Telegram send, reported after the
+/// background worker finishes dispatching it — [`AlertDelivery::deliver`]
+/// itself is fire-and-forget, so this is the only way a caller learns
+/// whether the send actually reached Telegram
+/// (`alerts-account-wide-and-telegram-delivery-2026-09-06` plan §4).
+///
+/// Only emitted when a Telegram send was actually attempted (delivery
+/// enabled, non-empty bot token, at least one active subscriber) — nothing
+/// is reported when Telegram delivery is simply not configured.
+#[derive(Debug, Clone)]
+pub enum DeliveryOutcome {
+    /// Every active subscriber's send for this alert succeeded.
+    TelegramDelivered {
+        /// Mirrors the originating [`DeliveryEvent::alert_name`].
+        alert_name: String,
+    },
+    /// At least one active subscriber's send failed.
+    TelegramFailed {
+        /// Mirrors the originating [`DeliveryEvent::alert_name`].
+        alert_name: String,
+        /// The first error encountered across all subscribers.
+        reason: String,
+    },
+}
+
 // ── Delivery engine ───────────────────────────────────────────────────────────
 
 /// The alert delivery engine.
@@ -263,14 +288,21 @@ impl AlertDelivery {
     /// silently skipped until the caller pushes real secrets via
     /// [`Self::update_settings`]).
     ///
-    /// Returns `(engine, toast_rx)`. The caller must hold `toast_rx` and poll
-    /// it (e.g. in the UI event loop) to receive [`ToastNotification`] items.
+    /// Returns `(engine, toast_rx, outcome_rx)`. The caller must hold
+    /// `toast_rx` and poll it (e.g. in the UI event loop) to receive
+    /// [`ToastNotification`] items, and should poll `outcome_rx` to receive
+    /// [`DeliveryOutcome`]s reflecting each Telegram send's actual result.
     pub fn new(
         prefs: NotificationSettings,
         secrets: NotificationSecrets,
-    ) -> (Self, mpsc::UnboundedReceiver<ToastNotification>) {
+    ) -> (
+        Self,
+        mpsc::UnboundedReceiver<ToastNotification>,
+        mpsc::UnboundedReceiver<DeliveryOutcome>,
+    ) {
         let (cmd_tx, cmd_rx) = mpsc::unbounded_channel();
         let (toast_tx, toast_rx) = mpsc::unbounded_channel();
+        let (outcome_tx, outcome_rx) = mpsc::unbounded_channel();
 
         // `.timeout()` is native-only on the reqwest builder; on wasm the
         // browser owns request lifetimes.
@@ -282,6 +314,7 @@ impl AlertDelivery {
         let worker = DeliveryWorker {
             cmd_rx,
             toast_tx,
+            outcome_tx,
             prefs,
             secrets,
             http_client,
@@ -292,7 +325,7 @@ impl AlertDelivery {
         #[cfg(target_arch = "wasm32")]
         wasm_bindgen_futures::spawn_local(worker.run());
 
-        (Self { tx: cmd_tx }, toast_rx)
+        (Self { tx: cmd_tx }, toast_rx, outcome_rx)
     }
 
     /// Queue an alert event for delivery through all enabled transports.
@@ -318,6 +351,7 @@ impl AlertDelivery {
 struct DeliveryWorker {
     cmd_rx: mpsc::UnboundedReceiver<DeliveryCommand>,
     toast_tx: mpsc::UnboundedSender<ToastNotification>,
+    outcome_tx: mpsc::UnboundedSender<DeliveryOutcome>,
     prefs: NotificationSettings,
     secrets: NotificationSecrets,
     http_client: reqwest::Client,
@@ -366,9 +400,16 @@ impl DeliveryWorker {
             });
         }
 
-        // Telegram — send to all active subscribers.
+        // Telegram — send to all active subscribers. Tracks the first error
+        // (if any) across every subscriber into `telegram_outcome`, reported
+        // once via `outcome_tx` below — `deliver()` itself is fire-and-
+        // forget, so this is the only way a caller learns whether the send
+        // actually reached Telegram (`DeliveryOutcome`, alerts-account-wide-
+        // and-telegram-delivery-2026-09-06 plan §4).
+        let mut telegram_outcome: Option<Result<(), String>> = None;
         if tg_prefs.enabled && !tg_secrets.bot_token.is_empty() && !active_ids.is_empty() {
             let text = telegram::format_alert_message(&event);
+            let mut first_error: Option<String> = None;
 
             for chat_id in &active_ids {
                 if tg_prefs.send_screenshots {
@@ -394,6 +435,7 @@ impl DeliveryWorker {
                             .await
                             {
                                 eprintln!("[alert-delivery] Telegram sendMessage fallback error ({chat_id}): {e2}");
+                                first_error.get_or_insert(e2);
                             }
                         }
                     } else {
@@ -407,6 +449,7 @@ impl DeliveryWorker {
                         .await
                         {
                             eprintln!("[alert-delivery] Telegram sendMessage error ({chat_id}): {e}");
+                            first_error.get_or_insert(e);
                         }
                     }
                 } else if let Err(e) = telegram::send_message(
@@ -418,8 +461,27 @@ impl DeliveryWorker {
                 .await
                 {
                     eprintln!("[alert-delivery] Telegram sendMessage error ({chat_id}): {e}");
+                    first_error.get_or_insert(e);
                 }
             }
+
+            telegram_outcome = Some(match first_error {
+                Some(reason) => Err(reason),
+                None => Ok(()),
+            });
+        }
+
+        if let Some(result) = telegram_outcome {
+            let outcome = match result {
+                Ok(()) => DeliveryOutcome::TelegramDelivered {
+                    alert_name: event.alert_name.clone(),
+                },
+                Err(reason) => DeliveryOutcome::TelegramFailed {
+                    alert_name: event.alert_name.clone(),
+                    reason,
+                },
+            };
+            let _ = self.outcome_tx.send(outcome);
         }
 
         // Webhook

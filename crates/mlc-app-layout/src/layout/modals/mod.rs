@@ -48,6 +48,8 @@ pub mod panel_color_tag;
 pub mod search_overlay;
 pub mod chart_settings;
 pub mod preset_name_input;
+pub mod share_open;
+pub use share_open::{render_share_open_overlay, ShareOpenResult};
 pub mod chart_browser;
 pub mod tags_tabs_modal;
 pub mod panel_settings_popup;

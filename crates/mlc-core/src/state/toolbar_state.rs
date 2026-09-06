@@ -717,6 +717,13 @@ pub struct ChartToolbarState {
     /// Set by the camera button's destination dropdown; read by the shells
     /// when draining the pending-screenshot flag.
     pub screenshot_destination: ScreenshotDestination,
+    /// Timestamp of the last `share_chart` (globe) button click — same
+    /// double-click-opens-dropdown detection as `last_screenshot_click_time`
+    /// (native-share-viewer arc, 2026-09-06). `mlc-app`'s account-signed-in
+    /// gate for `share_chart` runs BEFORE this field is ever touched (see
+    /// `handle_share_click`'s own doc), so it only ever advances on a click
+    /// that already passed that gate.
+    pub last_share_click_time: Option<Instant>,
     /// Floating inline config toolbar state (position, dock edge, drag state).
     pub floating_inline_bar: FloatingInlineBar,
     /// Floating favorites quick-pick bar state (favorite-primitives arc) —
@@ -821,6 +828,7 @@ impl Default for ChartToolbarState {
             last_magnet_click_time: None,
             last_screenshot_click_time: None,
             screenshot_destination: ScreenshotDestination::default(),
+            last_share_click_time: None,
             floating_inline_bar: FloatingInlineBar::default(),
             favorites_bar: FloatingInlineBar::default(),
             favorites_bar_visible: false,
@@ -1037,6 +1045,39 @@ impl ChartToolbarState {
     /// expires — unlike magnet's active state, it is not a persistent
     /// toggle. See `screenshot_active()` and the `"screenshot"` arm below.
     const SCREENSHOT_ACTIVE_MS: u64 = 1000;
+
+    /// Window (ms) for the `share_chart` (globe) button's double-click-
+    /// opens-dropdown detection — same shape as `SCREENSHOT_ACTIVE_MS`, no
+    /// visual "just fired" pulse needed since sharing has no persistent
+    /// active state to paint.
+    const SHARE_DROPDOWN_MS: u64 = 1000;
+
+    /// Handle a click on the `share_chart` (globe) toolbar button.
+    ///
+    /// Returns `true` on the SECOND click within `SHARE_DROPDOWN_MS` — the
+    /// caller must open the `"share_chart"` dropdown (`"Share live chart"` /
+    /// `"Open shared chart…"`) instead of firing another share. Returns
+    /// `false` on the first click, where the caller fires
+    /// `ChartOutEvent::ShareLiveChart` exactly as before this arc.
+    ///
+    /// Factored out of `handle_toolbar_click_with_chart` (unlike magnet/
+    /// screenshot, whose double-click arms live inline there) because
+    /// `mlc-app`'s account-signed-in gate for `share_chart` must run BEFORE
+    /// this call — a signed-out click never reaches here at all, so this
+    /// method never needs to know about sign-in.
+    pub fn handle_share_click(&mut self) -> bool {
+        let now = Instant::now();
+        let is_double_click = self.last_share_click_time
+            .map(|t| now.duration_since(t).as_millis() < Self::SHARE_DROPDOWN_MS as u128)
+            .unwrap_or(false);
+        if is_double_click {
+            self.last_share_click_time = None;
+            self.open_dropdown_id = Some("share_chart".to_string());
+        } else {
+            self.last_share_click_time = Some(now);
+        }
+        is_double_click
+    }
 
     /// Handle a toolbar click, executing chart-internal actions and returning app-level events.
     ///

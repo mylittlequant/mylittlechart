@@ -16,6 +16,7 @@ use mlc_backend_shell_http::state::{
     ConnectorSnapshot, ConnectorEntry,
     UiStateSnapshot, WindowUiState, UiAccountState, UiOverlayState,
     UiEventsState, UiEventEntry, ActivePresetUiState, SharedChartUiState,
+    AlertsUiState,
 };
 #[cfg(feature = "cloud")]
 use mlc_backend_shell_http::state::UiForumState;
@@ -334,6 +335,23 @@ pub fn update_connector_snapshot(agent_state: &AgentState) {
 pub fn update_ui_state_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState) {
     let mut snap = UiStateSnapshot::default();
 
+    // Account-wide, not per-window (`AccountAlertStore` keys on
+    // `(account_id, InstrumentAddress, condition)`, never a window/bubble
+    // id) — computed once and mirrored onto every window's own
+    // `WindowUiState` below, same value everywhere under the shared-
+    // BackendCore arc.
+    let alerts_ui = agent_state
+        .core()
+        .zip(agent_state.alert_account_id())
+        .map(|(core, account_id)| {
+            let items = core.alerts().for_account(&account_id);
+            AlertsUiState {
+                count: items.len(),
+                last_fired_at: items.iter().filter_map(|a| a.last_triggered_at).max(),
+            }
+        })
+        .unwrap_or_default();
+
     for w in host.windows() {
         let chart = w.chart;
         let panel_app = &chart.panel_app;
@@ -453,6 +471,7 @@ pub fn update_ui_state_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
             toasts_pending: chart.pending_toast_count(),
             screenshot_destination,
             active_preset,
+            alerts: alerts_ui.clone(),
         });
     }
 

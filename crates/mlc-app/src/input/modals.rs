@@ -104,6 +104,13 @@ impl ChartApp {
 
             // ── Delete ───────────────────────────────────────────────────────
             "inline:delete" => {
+                // Shared-viewer read-only gate (native-share-viewer arc,
+                // 2026-09-06) — see `edit_primitive_recorded`'s twin comment
+                // (`input/mod.rs`).
+                if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                    eprintln!("[ChartApp] inline:delete refused: active tab is read-only (shared chart)");
+                    return;
+                }
                 if let Some(bid) = active_bid_inline {
                     self.core.drawings_mut().delete(bid, prim_id);
                     eprintln!("[ChartApp] inline: deleted selected primitive");
@@ -470,6 +477,14 @@ impl ChartApp {
     /// "clone" handler (`on_context_menu_action`) — same sequence every
     /// other programmatically-created primitive takes.
     fn create_wave_child_and_record(&mut self, bid: Option<BubbleId>, prim_id: u64, slot_id: &str, kind_id: &str) {
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06):
+        // refuse BEFORE the facade creates the child so a read-only tab's
+        // drawings are provably untouched — see `edit_primitive_recorded`'s
+        // twin comment (`input/mod.rs`).
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] create_wave_child refused: active tab is read-only (shared chart)");
+            return;
+        }
         use mlc_core::drawing::primitives_v2::elliott::WaveSlot;
         let Some(slot) = WaveSlot::from_id(slot_id) else {
             eprintln!("[ChartApp] inline: unknown wave slot id '{}'", slot_id);
@@ -502,6 +517,12 @@ impl ChartApp {
     /// it (`link`) — see `create_wave_successor`'s own doc for why that is
     /// a different call, not the same one with a different argument.
     fn create_wave_successor_and_record(&mut self, bid: Option<BubbleId>, prev_id: u64, type_id: &str) {
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
+        // — see `create_wave_child_and_record`'s twin comment.
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] create_wave_successor refused: active tab is read-only (shared chart)");
+            return;
+        }
         let new_id = bid.and_then(|bid| self.core.drawings_mut().create_wave_successor(bid, prev_id, type_id));
         match new_id {
             Some(new_id) => {
@@ -534,6 +555,12 @@ impl ChartApp {
     /// overwrites `next_id`'s own `follows`), so undo can put back
     /// whatever `next_id` already followed, if anything.
     fn create_wave_predecessor_and_record(&mut self, bid: Option<BubbleId>, next_id: u64, type_id: &str) {
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
+        // — see `create_wave_child_and_record`'s twin comment.
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] create_wave_predecessor refused: active tab is read-only (shared chart)");
+            return;
+        }
         let Some(bid) = bid else { return };
         let previous_follows = self.core.drawings().primitives(bid).iter()
             .find(|p| p.data().id == next_id)
@@ -568,6 +595,12 @@ impl ChartApp {
     /// selects the new parent on success so the caller's own UI (inline
     /// toolbar / settings modal) immediately reflects what is now selected.
     fn promote_wave_chain_and_record(&mut self, bid: BubbleId, prim_id: u64) {
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
+        // — see `create_wave_child_and_record`'s twin comment.
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] promote_wave_chain refused: active tab is read-only (shared chart)");
+            return;
+        }
         let result = self.core.drawings_mut().promote_wave_chain(bid, prim_id);
         match result {
             Some((parent_id, members)) => {
@@ -599,6 +632,12 @@ impl ChartApp {
     /// snapshots and the child slot remap a `Command::ConvertPrimitiveKind`
     /// needs directly — no second query.
     fn convert_primitive_kind_and_record(&mut self, bid: Option<BubbleId>, prim_id: u64, kind_id: &str) {
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
+        // — see `create_wave_child_and_record`'s twin comment.
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] convert_primitive_kind refused: active tab is read-only (shared chart)");
+            return;
+        }
         let result = bid.and_then(|bid| self.core.drawings_mut().convert_primitive_kind(bid, prim_id, kind_id));
         match result {
             Some((before, after, children)) => {
@@ -848,6 +887,15 @@ impl ChartApp {
     /// Deploy an indicator set by its ID: replace all current indicators with
     /// the set's indicators (exclusive — like a preset, only one set active).
     pub(super) fn deploy_indicator_set(&mut self, set_id: &str) {
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
+        // — a bulk indicator-set deploy is exactly the "indicator add from
+        // the modal" mutation this arc must refuse on a read-only tab, same
+        // as the single-indicator add path below (`OpenModal::
+        // IndicatorSearch` in `handle_search_modal_click`).
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] deploy_indicator_set refused: active tab is read-only (shared chart)");
+            return;
+        }
         let set = self.core.templates().indicator_sets()
             .iter()
             .find(|s| s.id == set_id)
@@ -1145,6 +1193,18 @@ impl ChartApp {
                         self.modal_state.close();
                     }
                     OpenModal::IndicatorSearch => {
+                        // Shared-viewer read-only gate (native-share-viewer
+                        // arc, 2026-09-06) — "indicator add from the modal"
+                        // is a chart-content mutation like any other; refuse
+                        // BEFORE either add() path below runs (trading-panel
+                        // aux chart and main chart), same as
+                        // `deploy_indicator_set`'s own gate for the bulk
+                        // "sets" tab of this same modal.
+                        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                            eprintln!("[ChartApp] indicator add refused: active tab is read-only (shared chart)");
+                            self.modal_state.close();
+                            return;
+                        }
                         // Opaque host-driven overlays (Volume Profile / TPO Profile /
                         // OI Delta / Funding Rate / DOM Heatmap) are catalog entries
                         // for discoverability only — they carry no `machine_id` in
@@ -1764,6 +1824,16 @@ impl ChartApp {
             .clone()
             .filter(|id| !mlc_core::toolbar::is_cursor_tool(id));
         if let Some(ref _tool_id) = tool_id_opt {
+            // Shared-viewer read-only gate (native-share-viewer arc,
+            // 2026-09-06) — this is the click-based drawing tools' own
+            // creation path (`on_click`'s release-path canvas click AND
+            // `on_drag_start`'s mouse-press call for click-based tools both
+            // land here). Refuse BEFORE `on_canvas_click` places a point so
+            // a read-only tab never grows a new primitive from either path.
+            if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                eprintln!("[ChartApp] drawing-tool click refused: active tab is read-only (shared chart)");
+                return;
+            }
             // Read the frame-cached layout so we get the exact same main_chart rect
             // that render_full_chart_panel uses.  This accounts for sub-panes
             // (RSI, MACD, …) that reduce the main chart height below
@@ -2352,6 +2422,12 @@ impl ChartApp {
                     self.panel_app.preset_name_input.close();
                     eprintln!("[ChartApp] close_topmost_modal_layer: preset_name_input closed");
                 }
+                // "Open shared chart…" overlay (native-share-viewer arc, 2026-09-06).
+                "share_open" => {
+                    self.panel_app.share_open_state.close();
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    eprintln!("[ChartApp] close_topmost_modal_layer: share_open closed");
+                }
                 // Watchlist group name input L2 modal — close only this layer.
                 "wl_group_name_input" => {
                     self.standalone_panels.wl_group_name_input.close();
@@ -2454,6 +2530,13 @@ impl ChartApp {
                         }
                     }
                     "clone" => {
+                        // Shared-viewer read-only gate (native-share-viewer
+                        // arc, 2026-09-06) — see `edit_primitive_recorded`'s
+                        // twin comment (`input/mod.rs`).
+                        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                            eprintln!("[ChartApp] context-menu clone refused: active tab is read-only (shared chart)");
+                            return;
+                        }
                         let cloned_id = active_bid_ctx
                             .and_then(|bid| self.core.drawings_mut().clone_primitive(bid, prim_id));
                         if let Some(new_id) = cloned_id {
@@ -2480,6 +2563,13 @@ impl ChartApp {
                         }
                     }
                     "toggle_lock" => {
+                        // Shared-viewer read-only gate (native-share-viewer
+                        // arc, 2026-09-06) — see `edit_primitive_recorded`'s
+                        // twin comment (`input/mod.rs`).
+                        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                            eprintln!("[ChartApp] context-menu toggle_lock refused: active tab is read-only (shared chart)");
+                            return;
+                        }
                         // Read current state BEFORE mutating.
                         let previous = active_bid_ctx
                             .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
@@ -2497,6 +2587,13 @@ impl ChartApp {
                         self.sidebar_data_dirty = true;
                     }
                     "toggle_visibility" => {
+                        // Shared-viewer read-only gate (native-share-viewer
+                        // arc, 2026-09-06) — see `edit_primitive_recorded`'s
+                        // twin comment (`input/mod.rs`).
+                        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                            eprintln!("[ChartApp] context-menu toggle_visibility refused: active tab is read-only (shared chart)");
+                            return;
+                        }
                         // Read current state BEFORE mutating.
                         let previous = active_bid_ctx
                             .and_then(|bid| self.core.drawings().get_data(bid, prim_id))
@@ -2819,6 +2916,15 @@ impl ChartApp {
     /// step instead of silently losing every child a single-primitive
     /// snapshot could never have named.
     pub(super) fn delete_primitive_with_undo(&mut self, bid: mlc_core::BubbleId, prim_id: u64) {
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
+        // — the single chokepoint behind the right-click "delete" action,
+        // the Delete hotkey, the toolbar "Delete selected" dropdown item AND
+        // the object tree's own delete button; see `edit_primitive_recorded`'s
+        // twin comment (`input/mod.rs`).
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] delete_primitive_with_undo refused: active tab is read-only (shared chart)");
+            return;
+        }
         let deleted = self.core.drawings_mut().delete_with_snapshot(bid, prim_id);
         match deleted {
             Some(d) => {
@@ -2849,6 +2955,12 @@ impl ChartApp {
     /// so a single Ctrl+Z restores the whole set — used by the toolbar
     /// "Delete all" dropdown item.
     pub(super) fn delete_all_primitives_with_undo(&mut self, bid: mlc_core::BubbleId) {
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
+        // — see `delete_primitive_with_undo`'s twin comment.
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] delete_all_primitives_with_undo refused: active tab is read-only (shared chart)");
+            return;
+        }
         let (ids, primitives): (Vec<u64>, Vec<mlc_core::drawing::PrimitiveSnapshot>) = {
             let guard = self.core.drawings();
             guard.primitive_list(bid).into_iter()
@@ -2910,6 +3022,12 @@ impl ChartApp {
     /// is empty, a text field is focused, or a blocking modal is open.
     pub(super) fn paste_primitive_from_clipboard(&mut self) {
         if self.primitive_hotkeys_blocked() {
+            return;
+        }
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
+        // — see `edit_primitive_recorded`'s twin comment (`input/mod.rs`).
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] paste_primitive_from_clipboard refused: active tab is read-only (shared chart)");
             return;
         }
         let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else { return };
@@ -3006,6 +3124,12 @@ impl ChartApp {
     pub(super) fn paste_primitive_at_cursor(&mut self) {
         if self.primitive_hotkeys_blocked() {
             sglog!("[ChartApp] PastePrimitive blocked (text field focused or blocking modal)");
+            return;
+        }
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
+        // — see `edit_primitive_recorded`'s twin comment (`input/mod.rs`).
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] paste_primitive_at_cursor refused: active tab is read-only (shared chart)");
             return;
         }
         if self.primitive_clipboard.is_none() {

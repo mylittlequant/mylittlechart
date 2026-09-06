@@ -26,7 +26,7 @@ use mlc_app_layout::ui::modal_settings::{
     PrimitiveSettingsState, IndicatorSettingsState, ChartSettingsState,
     IndicatorOverlayState, OverlaySettingsState, TagsTabsState,
     PresetNameInputState, ChartBrowserState, AlertSettingsState,
-    CompareSettingsState, CredentialsState,
+    CompareSettingsState, CredentialsState, ShareOpenState,
 };
 use mlc_app_layout::ui::context_menu::ContextMenuState;
 use mlc_app_layout::layout::render_frame::{ChartModalRenderResult, ChartModalLayout};
@@ -131,6 +131,10 @@ pub struct ChartPanelApp {
     pub open_tabs: Vec<String>,
     /// Preset name input modal state (Save As / Rename).
     pub preset_name_input: PresetNameInputState,
+    /// "Open shared chart…" overlay state (native-share-viewer arc,
+    /// 2026-09-06). Not `cfg(feature = "cloud")` — reading a share is
+    /// public, so signed-out sessions open it too.
+    pub share_open_state: ShareOpenState,
     /// Chart browser modal state (Open Chart).
     pub chart_browser: ChartBrowserState,
     /// Whether autosave is enabled for presets.
@@ -174,6 +178,7 @@ impl ChartPanelApp {
             active_preset_id: "__default__".to_string(),
             open_tabs: Vec::new(),
             preset_name_input: PresetNameInputState::default(),
+            share_open_state: ShareOpenState::default(),
             chart_browser: ChartBrowserState::default(),
             autosave_enabled: true,
         }
@@ -815,6 +820,23 @@ impl ChartPanelApp {
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
                 &self.preset_name_input,
+                frame_theme,
+                toolbar_theme,
+                current_time_ms,
+                input_coordinator,
+            ));
+        }
+
+        // "Open shared chart…" overlay (native-share-viewer arc,
+        // 2026-09-06) — public even for signed-out sessions (reading a
+        // share is public), so unlike the cloud overlays below this is
+        // never `cfg(feature = "cloud")`.
+        if self.share_open_state.is_open {
+            use mlc_app_layout::layout::modals::share_open::render_share_open_overlay;
+            result.share_open = Some(render_share_open_overlay(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
                 frame_theme,
                 toolbar_theme,
                 current_time_ms,

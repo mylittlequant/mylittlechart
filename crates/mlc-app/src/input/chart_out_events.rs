@@ -1162,6 +1162,13 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::AddCompareSymbol { symbol, exchange, account_type } => {
+                // Shared-viewer read-only gate (native-share-viewer arc,
+                // 2026-09-06) — see `edit_primitive_recorded`'s twin comment
+                // (`input/mod.rs`).
+                if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                    eprintln!("[ChartApp] AddCompareSymbol refused: active tab is read-only (shared chart)");
+                    return;
+                }
                 // Canonical compare-add path (2026-07-16 hard cutover — moved
                 // verbatim from `modals.rs`'s `OpenModal::CompareSearch`
                 // click arm, which is now a thin re-dispatch onto this
@@ -1721,6 +1728,15 @@ impl ChartApp {
             }
             // === Presets (in-memory HashMap) ===
             ChartOutEvent::SavePreset { name } => {
+                // Shared-viewer read-only gate (native-share-viewer arc,
+                // 2026-09-06) — "Save As" from a read-only tab is refused
+                // rather than silently forking a writable copy the user
+                // never asked to create; see `edit_primitive_recorded`'s
+                // twin comment (`input/mod.rs`).
+                if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                    eprintln!("[ChartApp] SavePreset (save-as) refused: active tab is read-only (shared chart)");
+                    return;
+                }
                 // "Save As"  -  create a new named preset from current state.
                 use mlc_core::preset::preset::unix_timestamp_parts;
                 let (secs, nanos) = unix_timestamp_parts();
@@ -2100,6 +2116,14 @@ impl ChartApp {
             }
 
             ChartOutEvent::RenamePreset { id, new_name } => {
+                // Shared-viewer read-only gate (native-share-viewer arc,
+                // 2026-09-06) — a rename mutates the shared preset's own
+                // name in place; see `edit_primitive_recorded`'s twin
+                // comment (`input/mod.rs`).
+                if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                    eprintln!("[ChartApp] RenamePreset refused: active tab is read-only (shared chart)");
+                    return;
+                }
                 // Resolve the target preset: empty id means "active preset".
                 let target_id = if id.is_empty() {
                     self.panel_app.active_preset_id.clone()

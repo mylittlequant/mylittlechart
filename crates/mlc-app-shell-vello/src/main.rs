@@ -471,8 +471,30 @@ struct App<'s> {
     mlc_alert_delivery: Option<mlc_alert_delivery::AlertDelivery>,
     /// Receiver for toast notifications from the delivery engine.
     toast_rx: Option<tokio::sync::mpsc::UnboundedReceiver<mlc_alert_delivery::ToastNotification>>,
+    /// Receiver for per-attempt Telegram delivery outcomes (alerts-account-
+    /// wide-and-telegram-delivery-2026-09-06 plan §4) — `deliver()` itself
+    /// is fire-and-forget, so this is the only way the drain loop learns
+    /// whether a send actually reached Telegram. Drained unconditionally
+    /// every frame (not gated on this tick having fired a new alert): a
+    /// previous tick's `deliver()` call resolves asynchronously, often
+    /// several frames later.
+    alert_outcome_rx: Option<tokio::sync::mpsc::UnboundedReceiver<mlc_alert_delivery::DeliveryOutcome>>,
     /// Active toast notifications to render as overlays.
     active_toasts: Vec<mlc_alert_delivery::ToastNotification>,
+    /// RAM-only `SecretStore` sidecar (`alert_secrets.enc`) holding the
+    /// Telegram bot token + subscribers + webhook URL — same construction
+    /// and same seal/unlock lockstep as `agent_state.agent_key_store` (see
+    /// `build_secret_sidecar`, `seal_secret_sidecars`), just for native
+    /// alert delivery instead of the Agent API. Always constructed (never
+    /// `Option`): unlike the agent-key store it is not conditional on the
+    /// Agent API being wired.
+    alert_secrets_store: std::sync::Arc<mlc_vault::SecretStore>,
+    /// Set once a delivery event fires while `alert_secrets_store` is
+    /// sealed, so the "unlock the vault to deliver alerts" system event
+    /// fires once per seal rather than once per tick; cleared the moment
+    /// the store is next observed unlocked. See the drain loop in
+    /// `about_to_wait`.
+    alert_delivery_seal_notice_shown: bool,
     /// Last APPLIED entitlements answer `(paid, paid_until)` — compared
     /// against each edge-triggered `entitlements_rx` change to detect a
     /// paid⇄free transition (system-event-bus arc, 2026-09-05, owner scope
@@ -922,6 +944,45 @@ fn seed_core_from_profile(
     core.user_mut().set_vault_key(profile_manager.vault_key);
 }
 
+/// Build one RAM-only, vault-keyed `SecretStore` sidecar and, if the main
+/// vault is already unlocked this boot (`initial_key`), unlock it off that
+/// SAME key immediately — shared by the agent-key store and the
+/// alert-secrets store so their construction never drifts apart (both use
+/// `with_ttls`, idle:none, absolute:24h; see `mlc_backend_shell_http::
+/// auth::agent_keys_paths`'s doc for why the salt file is always the
+/// profile's own `salt.hex`). `label` only decorates the startup-failure
+/// log line.
+fn build_secret_sidecar(
+    salt_path: std::path::PathBuf,
+    vault_path: std::path::PathBuf,
+    initial_key: Option<&mlc_vault::vault::VaultKey>,
+    label: &str,
+) -> std::sync::Arc<mlc_vault::SecretStore> {
+    let store = std::sync::Arc::new(mlc_vault::SecretStore::with_ttls(
+        salt_path,
+        vault_path,
+        None,
+        std::time::Duration::from_secs(24 * 60 * 60),
+    ));
+    if let Some(vault_key) = initial_key {
+        if let Err(e) = store.unlock_with_key(vault_key) {
+            eprintln!("[App] {label} store: failed to unlock at startup: {}", e);
+        }
+    }
+    store
+}
+
+/// Decode `store`'s live payload into [`mlc_alert_delivery::
+/// NotificationSecrets`] — `None` while sealed (or never written, which
+/// unlocks to `b"{}"` and decodes to the all-default value, itself `Some`,
+/// not `None` — see [`mlc_vault::SecretStore::unlock`]'s doc). Shared by
+/// every read site in this file (`AlertDelivery::new`'s initial secrets,
+/// the delivery drain loop's sealed check) so the decode step lives once.
+fn alert_secrets_snapshot(store: &mlc_vault::SecretStore) -> Option<mlc_alert_delivery::NotificationSecrets> {
+    let bytes = store.get().ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
 use render::scene_builder::build_window_scene;
 use render::gpu_submit::submit_window_gpu_from_gpu_scene;
 impl App<'_> {
@@ -960,28 +1021,35 @@ impl App<'_> {
         // `AgentState` below AND to every window's `ChartApp` via
         // `set_agent_key_store` (`create_window`/`start_promote_async`), so
         // the HTTP-facing copy and the render thread's mint/revoke path
-        // never drift onto two different stores.
-        let agent_key_store = {
-            let (salt_path, vault_path) = mlc_backend_shell_http::auth::agent_keys_paths(
-                &mlc_core::active_profile_data_dir(),
-            );
-            let store = std::sync::Arc::new(mlc_vault::SecretStore::with_ttls(
-                salt_path,
-                vault_path,
-                None,
-                std::time::Duration::from_secs(24 * 60 * 60),
-            ));
-            // `seed_core_from_profile` above already retained whatever
-            // `VaultKey` the boot flow derived — if the main vault is
-            // already unlocked at this point, unlock the sidecar off the
-            // SAME key now so a running session does not start sealed.
-            if let Some(vault_key) = core.user().vault_key() {
-                if let Err(e) = store.unlock_with_key(&vault_key) {
-                    eprintln!("[App] agent key store: failed to unlock at startup: {}", e);
-                }
-            }
-            store
-        };
+        // never drift onto two different stores. `seed_core_from_profile`
+        // above already retained whatever `VaultKey` the boot flow derived —
+        // `build_secret_sidecar` unlocks off it immediately if present, so a
+        // running session does not start sealed.
+        let vault_key_at_boot = core.user().vault_key();
+        let (agent_keys_salt_path, agent_keys_vault_path) = mlc_backend_shell_http::auth::agent_keys_paths(
+            &mlc_core::active_profile_data_dir(),
+        );
+        let agent_key_store = build_secret_sidecar(
+            agent_keys_salt_path,
+            agent_keys_vault_path,
+            vault_key_at_boot.as_ref(),
+            "agent key",
+        );
+
+        // Alert-secrets `SecretStore` sidecar (`alert_secrets.enc`) — same
+        // shape as `agent_key_store` above, holding
+        // `mlc_alert_delivery::NotificationSecrets` (Telegram bot token,
+        // subscribers, webhook URL) instead of agent-key records. Handed to
+        // every window's `ChartApp` via `set_alert_secrets_store`, same
+        // wiring call-outs as `agent_key_store` (see
+        // `input/credentials.rs::vault_key_sidecars`).
+        let alert_secrets_dir = mlc_core::active_profile_data_dir();
+        let alert_secrets_store = build_secret_sidecar(
+            alert_secrets_dir.join("salt.hex"),
+            alert_secrets_dir.join("alert_secrets.enc"),
+            vault_key_at_boot.as_ref(),
+            "alert secrets",
+        );
 
         // Start the internal Agent API server on the DataBridge's tokio runtime.
         let agent_state = std::sync::Arc::new(mlc_backend_shell_http::AgentState::with_agent_key_store(
@@ -1175,14 +1243,16 @@ impl App<'_> {
 
         // Initialize alert delivery engine. AlertDelivery::new spawns a tokio
         // task, so we must enter the live-data runtime context first.
-        // `notification_secrets` is whatever the vault yielded at load time —
-        // empty if the vault was still locked when `profile` was built, which
-        // is fine: delivery already no-ops on an empty bot token/URL.
-        let (alert_delivery_engine, toast_rx) = {
+        // Secrets now come from `alert_secrets_store` (unlocked above, off
+        // `vault_key_at_boot`, if the vault was already open this boot) —
+        // `None` (sealed, or the vault was still locked at boot) becomes an
+        // empty snapshot, which is fine: delivery already no-ops on an empty
+        // bot token/URL.
+        let (alert_delivery_engine, toast_rx, alert_outcome_rx) = {
             let _guard = live_data_handle.enter();
             mlc_alert_delivery::AlertDelivery::new(
                 profile.domain.notification_settings.clone(),
-                profile.domain.notification_secrets.clone(),
+                alert_secrets_snapshot(&alert_secrets_store).unwrap_or_default(),
             )
         };
 
@@ -1286,7 +1356,10 @@ impl App<'_> {
             agent_snapshot_phase: 0,
             mlc_alert_delivery: Some(alert_delivery_engine),
             toast_rx: Some(toast_rx),
+            alert_outcome_rx: Some(alert_outcome_rx),
             active_toasts: Vec::new(),
+            alert_secrets_store,
+            alert_delivery_seal_notice_shown: false,
             #[cfg(feature = "cloud")]
             prev_entitlements: None,
             mem_warnings_rx,
@@ -1589,6 +1662,13 @@ impl App<'_> {
             agent_state.attach_core(chart.core.clone());
             chart.set_agent_key_store(agent_state.agent_key_store.clone());
         }
+        // Same wiring for the alert-secrets sidecar (see `alert_secrets_store`'s
+        // own doc) — `refresh_alert_secrets_mirror` re-seeds this window's
+        // `AlertSettingsState` from the store now that it is wired, since
+        // `new_window()`'s own `apply_profile_state` call ran before this
+        // point and could only seed from the pre-sidecar `VaultSecrets` copy.
+        chart.set_alert_secrets_store(self.alert_secrets_store.clone());
+        chart.refresh_alert_secrets_mirror();
         // Apply the app-level theme so new windows start with the correct preset.
         if !self.app_state.theme_preset.is_empty() {
             chart.panel_app.theme_manager.set_preset(&self.app_state.theme_preset);
@@ -2032,6 +2112,11 @@ impl App<'_> {
         // for the worker thread so a promoted window's ChartApp is wired
         // exactly like one built through `create_window`.
         let agent_key_store = self.agent_state.as_ref().map(|s| s.agent_key_store.clone());
+        // Alert-secrets `SecretStore` — same `Arc` every other window
+        // already carries (see `alert_secrets_store`'s own doc), cloned for
+        // the worker thread so a promoted window's ChartApp is wired
+        // exactly like one built through `create_window`.
+        let alert_secrets_store = self.alert_secrets_store.clone();
 
         // Capture window sizes now (on the main thread — winit Arc<Window> is !Send).
         let window_sizes: Vec<(u32, u32, f64)> = window_ids.iter().map(|wid| {
@@ -2082,6 +2167,8 @@ impl App<'_> {
                 if let Some(ref store) = agent_key_store {
                     chart.set_agent_key_store(store.clone());
                 }
+                chart.set_alert_secrets_store(alert_secrets_store.clone());
+                chart.refresh_alert_secrets_mirror();
 
                 // Apply the app-level theme.
                 if !theme_preset.is_empty() {
@@ -2468,6 +2555,22 @@ impl App<'_> {
             .filter(|id| self.windows.contains_key(id))
             .or_else(|| self.windows.keys().next().copied())?;
         self.windows.get_mut(&key)
+    }
+
+    /// Seal every RAM-only vault-keyed `SecretStore` sidecar this host
+    /// holds — `agent_state.agent_key_store` (if the Agent API is wired)
+    /// and `alert_secrets_store` — from the two edges that must drop both
+    /// together without going through any live window's `ChartApp`
+    /// (sign-out, `vault_skip_to_wizard`'s fresh-profile reset). Per-window
+    /// seal/unlock lockstep for the SAME two stores is
+    /// `input/credentials.rs::seal_vault_sidecars`/`sync_vault_sidecars`
+    /// (`mlc-app` crate) — this is the host-level counterpart for the two
+    /// call-outs that run before or without one.
+    fn seal_secret_sidecars(&self) {
+        if let Some(ref agent_state) = self.agent_state {
+            agent_state.agent_key_store.seal();
+        }
+        self.alert_secrets_store.seal();
     }
 
     fn build_profile_for_save(&self, window_states: Vec<mlc_core::WindowState>) -> mlc_core::UserProfile {
@@ -4733,14 +4836,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             self.profile = self.profile_manager.profile.clone();
                             // Reset shared app state + shared core from the old profile.
                             self.core.user_mut().set_vault_key(None);
-                            // The fresh profile has no vault yet — seal the
-                            // agent-key store rather than leave the OLD
+                            // The fresh profile has no vault yet — seal every
+                            // secret-store sidecar rather than leave the OLD
                             // profile's RAM copy reachable under a new
                             // identity (every `set_vault_key(..)` site keeps
-                            // the store in sync; `None` means seal).
-                            if let Some(ref agent_state) = self.agent_state {
-                                agent_state.agent_key_store.seal();
-                            }
+                            // them in sync; `None` means seal).
+                            self.seal_secret_sidecars();
                             self.core.presets_mut().replace_all(std::collections::HashMap::new());
                             self.preset_dirty_ids.clear();
                         }
@@ -4897,20 +4998,34 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     if let Some(ref delivery) = self.mlc_alert_delivery {
                         delivery.update_settings(prefs.clone(), secrets.clone());
                     }
-                    // Persist to profile on disk. Preferences always follow
-                    // the edit. Secrets only follow when the vault is
-                    // unlocked this session — otherwise `secrets` is an
-                    // empty snapshot and writing it would wipe whatever is
-                    // already held in RAM from a prior unlock; save_profile
-                    // never touches vault.enc without a key anyway, so the
-                    // on-disk file is safe either way.
+                    // Preferences are plaintext profile content — always
+                    // persist, vault key or not.
                     self.profile.domain.notification_settings = prefs;
-                    if secrets_available {
-                        self.profile.domain.notification_secrets = secrets;
-                    }
                     let vault_key = self.core.user().vault_key();
                     if let Err(e) = mlc_core::save_profile(&self.profile, vault_key.as_ref()) {
                         eprintln!("[App] Failed to persist notification settings: {}", e);
+                    }
+                    // Secrets now live in the `alert_secrets.enc` sidecar
+                    // (alerts-account-wide-and-telegram-delivery plan §3),
+                    // not `VaultSecrets` — write there directly, only while
+                    // unlocked this session (an empty snapshot while locked
+                    // must never overwrite what a prior unlock already put
+                    // on disk). Re-unlocking the sidecar off the same key
+                    // right after the write refreshes its RAM cache, so a
+                    // later `get()` this same session sees the new value
+                    // instead of the one cached at the last full unlock.
+                    if secrets_available {
+                        if let Some(ref key) = vault_key {
+                            let alert_secrets_path = mlc_core::active_profile_data_dir().join("alert_secrets.enc");
+                            match mlc_vault::vault::save_encrypted(key, &alert_secrets_path, &secrets) {
+                                Ok(()) => {
+                                    if let Err(e) = self.alert_secrets_store.unlock_with_key(key) {
+                                        eprintln!("[App] alert secrets store: failed to refresh after save: {}", e);
+                                    }
+                                }
+                                Err(e) => eprintln!("[App] Failed to persist alert secrets: {}", e),
+                            }
+                        }
                     }
                 }
                 // Clear dirty flag on all windows
@@ -5295,16 +5410,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     pw.chart.push_system_event(mlc_core::SystemEventKind::Account, "Signed in", body, true);
                 }
             }
-            // Seal the agent-key SecretStore on sign-out — a signed-out
-            // session must not keep an unlocked RAM copy of it, even though
-            // the listener start/stop edge just below already stops the
-            // server on this same transition (`seal()` is idempotent, so a
-            // stray fire on the very first frame — before this receiver has
-            // ever seen a real change — costs nothing).
+            // Seal every secret-store sidecar on sign-out — a signed-out
+            // session must not keep an unlocked RAM copy of either, even
+            // though the listener start/stop edge just below already stops
+            // the Agent API server on this same transition (`seal()` is
+            // idempotent, so a stray fire on the very first frame — before
+            // this receiver has ever seen a real change — costs nothing).
+            // Native Telegram delivery is signed-in-only (alerts-account-
+            // wide-and-telegram-delivery plan §3), so `alert_secrets_store`
+            // belongs in this same edge, not just the agent-key store.
             if just_signed_out {
-                if let Some(ref agent_state) = self.agent_state {
-                    agent_state.agent_key_store.seal();
-                }
+                self.seal_secret_sidecars();
             }
             // Agent API listener start/stop: the port only ever binds for a
             // signed-in session with the Server-tab toggle on — never at
@@ -5439,6 +5555,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
             for pw in self.windows.values_mut() {
                 pw.chart.panel_app.user_settings_state.account_signed_in = account_signed_in;
+                // Same mirror for the alert-settings modal's Telegram gate
+                // (alerts-account-wide-and-telegram-delivery plan §3) —
+                // native delivery is "own bot, signed-in, vault-backed".
+                pw.chart.panel_app.alert_settings_state.account_signed_in = account_signed_in;
                 // `Server` tab is not drawn while signed out
                 // (`UserSettingsTab::visible`) — force off it here too, so a
                 // sign-out that happens while the tab is open does not leave
@@ -6739,10 +6859,70 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         }
 
         // Step 2: drain alert delivery events (screenshots attached by GPU thread).
-        if let Some(ref delivery) = self.mlc_alert_delivery {
+        //
+        // `self.mlc_alert_delivery.is_some()` (a bool check, no live borrow)
+        // gates the whole block instead of `if let Some(ref delivery) = ...`
+        // — the sealed-notice branch below needs `self.system_event_window_
+        // mut()` (`&mut self`), which cannot run while `delivery` still
+        // holds an immutable borrow of `self.mlc_alert_delivery`. The actual
+        // `&self.mlc_alert_delivery` borrow for `.deliver()` is taken fresh,
+        // after that branch has already returned it.
+        if self.mlc_alert_delivery.is_some() {
+            let mut events: Vec<mlc_alert_delivery::DeliveryEvent> = Vec::new();
             for pw in self.windows.values_mut() {
-                for event in pw.chart.pending_delivery_events.drain(..) {
-                    delivery.deliver(event);
+                events.extend(pw.chart.pending_delivery_events.drain(..));
+            }
+            if !events.is_empty() {
+                // `alert_secrets_store.get()` is the literal "delivery reads
+                // the token from the sidecar" check (alerts-account-wide-
+                // and-telegram-delivery plan §3) — `delivery.deliver` below
+                // already no-ops on an empty bot token regardless, so this
+                // gates only the user-facing notice, once per seal rather
+                // than once per tick: `alert_delivery_seal_notice_shown`
+                // resets the moment the store is next observed unlocked.
+                if self.alert_secrets_store.get().is_err() {
+                    if !self.alert_delivery_seal_notice_shown {
+                        self.alert_delivery_seal_notice_shown = true;
+                        if let Some(pw) = self.system_event_window_mut() {
+                            pw.chart.push_system_event(
+                                mlc_core::SystemEventKind::Alert,
+                                "Unlock the vault to deliver alerts",
+                                "An alert fired while the vault was locked — Telegram delivery is skipped until you unlock it.",
+                                true,
+                            );
+                        }
+                    }
+                } else {
+                    self.alert_delivery_seal_notice_shown = false;
+                }
+                if let Some(ref delivery) = self.mlc_alert_delivery {
+                    for event in events {
+                        delivery.deliver(event);
+                    }
+                }
+            }
+
+            // Drain per-attempt Telegram delivery outcomes — independent of
+            // whether THIS tick fired any new events: a previous tick's
+            // `deliver()` call resolves asynchronously, often several
+            // frames later (`alert_outcome_rx`'s own doc).
+            if let Some(ref mut rx) = self.alert_outcome_rx {
+                let mut outcomes: Vec<mlc_alert_delivery::DeliveryOutcome> = Vec::new();
+                while let Ok(outcome) = rx.try_recv() {
+                    outcomes.push(outcome);
+                }
+                for outcome in outcomes {
+                    let (title, body, toast) = match outcome {
+                        mlc_alert_delivery::DeliveryOutcome::TelegramDelivered { alert_name } => {
+                            ("Delivered to Telegram".to_string(), alert_name, false)
+                        }
+                        mlc_alert_delivery::DeliveryOutcome::TelegramFailed { alert_name, reason } => {
+                            (format!("Delivery failed: {}", reason), alert_name, true)
+                        }
+                    };
+                    if let Some(pw) = self.system_event_window_mut() {
+                        pw.chart.push_system_event(mlc_core::SystemEventKind::Alert, title, body, toast);
+                    }
                 }
             }
         }

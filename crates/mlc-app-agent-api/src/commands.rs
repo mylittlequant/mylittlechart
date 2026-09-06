@@ -11,7 +11,9 @@ use rand::RngCore;
 
 use mlc_backend_shell_http::auth::{agent_keys_paths, AgentKeyRecord};
 use mlc_backend_shell_http::AgentState;
-use mlc_backend_shell_http::state::AgentCommand;
+use mlc_backend_shell_http::state::{
+    AgentCommand, AlertAddressDto, AlertConditionDto, AlertListEntry, TestAlertDeliveryError,
+};
 use mlc_backend_indicator_engine::IndicatorParamValue;
 
 use crate::host::AgentHost;
@@ -560,6 +562,189 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                 w.chart.request_clone_share(&token);
                 eprintln!("[AgentCommand] CloneShare: window={}", window_id);
             }
+
+            // ── Alerts (Arc C3, alerts-account-wide-and-telegram-delivery-
+            // 2026-09-06) — all four operate on the shared `Arc<BackendCore>`
+            // (`agent_state.core()`), never a specific window: alerts are
+            // account-wide, not window/chart-scoped. Only `TestAlertDelivery`
+            // needs `host.windows_mut()`, to reach the UI-state mirror the
+            // existing Vault-tab send-test path drains. ──────────────────
+            AgentCommand::CreateAlert { address, condition, response_tx } => {
+                let Some(core) = agent_state.core() else {
+                    eprintln!("[AgentCommand] CreateAlert: no backend core attached");
+                    let _ = response_tx.send(Err("no backend attached".to_string()));
+                    continue;
+                };
+                let Some(account_id) = agent_state.alert_account_id() else {
+                    eprintln!("[AgentCommand] CreateAlert: no backend core attached");
+                    let _ = response_tx.send(Err("no backend attached".to_string()));
+                    continue;
+                };
+
+                let alert_condition = match condition.direction.as_deref() {
+                    Some("up") => mlc_core::alert::AlertCondition::CrossingUp,
+                    Some("down") => mlc_core::alert::AlertCondition::CrossingDown,
+                    _ => mlc_core::alert::AlertCondition::Crossing,
+                };
+                let mut spec = mlc_core::alert::AlertSpec::price_default();
+                spec.source = mlc_core::alert::AlertSource::Price { symbol: address.symbol.clone() };
+                spec.condition = alert_condition;
+                spec.price = condition.price;
+                spec.exchange = address.exchange.clone();
+                spec.name = format!("{} {}", address.symbol, alert_condition.display_name());
+
+                let id = core.alerts_mut().add_for_account(account_id, spec);
+
+                // `AlertItem::from_spec` always stamps `AccountType::
+                // default()` (Spot) for a Price-source alert regardless of
+                // what `AlertSpec` carries — no create path has ever
+                // threaded a real account type through (see `AlertItem::
+                // targets_instrument`'s own doc). The subscription bubble
+                // is therefore ensured on the SAME Spot address the stored
+                // item actually carries, not on whatever `address.
+                // account_type` the caller asked for — using the caller's
+                // value here would silently subscribe the wrong bubble,
+                // one `tick.rs`'s own evaluation walk would never resolve
+                // this alert against. `account_type` is still accepted and
+                // echoed on the wire for forward-compatibility with the
+                // sync-item shape (plan §2/C3.4); it just is not honored by
+                // creation yet.
+                let instrument = mlc_core::instrument::InstrumentAddress::new(
+                    address.exchange.clone(),
+                    address.symbol.clone(),
+                    mlc_core::instrument::AccountType::default(),
+                );
+                core.ensure_alert_bubble(&instrument);
+
+                let items = core.alerts().items_all();
+                let path = mlc_core::active_profile_data_dir().join("alerts.json");
+                if let Err(e) = mlc_core::save_json(&path, &items, None) {
+                    eprintln!("[AgentCommand] CreateAlert: failed to persist alerts.json: {}", e);
+                }
+
+                eprintln!(
+                    "[AgentCommand] CreateAlert: id={} {}/{} price={}",
+                    id, address.exchange, address.symbol, condition.price,
+                );
+                let _ = response_tx.send(Ok(id));
+            }
+
+            AgentCommand::ListAlerts { response_tx } => {
+                let Some(core) = agent_state.core() else {
+                    eprintln!("[AgentCommand] ListAlerts: no backend core attached");
+                    let _ = response_tx.send(Err("no backend attached".to_string()));
+                    continue;
+                };
+                let Some(account_id) = agent_state.alert_account_id() else {
+                    eprintln!("[AgentCommand] ListAlerts: no backend core attached");
+                    let _ = response_tx.send(Err("no backend attached".to_string()));
+                    continue;
+                };
+
+                let entries: Vec<AlertListEntry> = core
+                    .alerts()
+                    .for_account(&account_id)
+                    .iter()
+                    .map(alert_item_to_list_entry)
+                    .collect();
+                let count = entries.len();
+                let _ = response_tx.send(Ok(entries));
+                eprintln!("[AgentCommand] ListAlerts: {} alert(s) for account", count);
+            }
+
+            AgentCommand::DeleteAlert { id, response_tx } => {
+                let Some(core) = agent_state.core() else {
+                    eprintln!("[AgentCommand] DeleteAlert: no backend core attached");
+                    let _ = response_tx.send(Err("no backend attached".to_string()));
+                    continue;
+                };
+
+                let removed = core.alerts_mut().remove_by_id(id);
+                if removed {
+                    let items = core.alerts().items_all();
+                    let path = mlc_core::active_profile_data_dir().join("alerts.json");
+                    if let Err(e) = mlc_core::save_json(&path, &items, None) {
+                        eprintln!("[AgentCommand] DeleteAlert: failed to persist alerts.json: {}", e);
+                    }
+                }
+                eprintln!("[AgentCommand] DeleteAlert: id={} removed={}", id, removed);
+                let _ = response_tx.send(Ok(removed));
+            }
+
+            AgentCommand::TestAlertDelivery { response_tx } => {
+                let mut windows = host.windows_mut();
+                let Some(w) = windows.first_mut() else {
+                    eprintln!("[AgentCommand] TestAlertDelivery: no window open");
+                    let _ = response_tx.send(Err(TestAlertDeliveryError::NoWindow));
+                    continue;
+                };
+                let chart: &mut mlc_app::ChartApp = &mut *w.chart;
+                let alert_settings = &mut chart.panel_app.alert_settings_state;
+                if !alert_settings.secrets_available {
+                    eprintln!("[AgentCommand] TestAlertDelivery: vault sealed, refusing");
+                    let _ = response_tx.send(Err(TestAlertDeliveryError::Sealed));
+                    continue;
+                }
+                if alert_settings.notification_secrets.telegram.bot_token.is_empty() {
+                    eprintln!("[AgentCommand] TestAlertDelivery: no bot token configured");
+                    let _ = response_tx.send(Err(TestAlertDeliveryError::NoToken));
+                    continue;
+                }
+                // Reuses the Vault tab's own send-test path
+                // (`mlc-app-shell-vello/src/main.rs`'s Telegram test block,
+                // which already watches this flag across every window) —
+                // no Telegram call is duplicated here.
+                alert_settings.tg_test_pending = true;
+                eprintln!("[AgentCommand] TestAlertDelivery: queued Telegram test message");
+                let _ = response_tx.send(Ok(()));
+            }
         }
+    }
+}
+
+/// Convert one account-wide `AlertItem` into the Agent API's wire shape —
+/// field-compatible with `mylittlechart-server`'s `mlc-alert-daemon`
+/// `alert_item.rs` (`{id, address{exchange,symbol,account_type}, condition{
+/// kind, price, direction}, enabled, created_at}`) for the `price_cross`
+/// case, plus `last_fired` for this endpoint's own operational use — extra
+/// fields are tolerated by that daemon's internally-tagged `ConditionWire`
+/// deserializer, so this stays forward-compatible with pushing the same
+/// shape as an `alerts`-category sync item later (plan §2/C3.4).
+fn alert_item_to_list_entry(alert: &mlc_core::alert::AlertItem) -> AlertListEntry {
+    use mlc_core::alert::AlertCondition;
+
+    let (kind, direction, price2, percentage): (&str, Option<&str>, Option<f64>, Option<f64>) =
+        match alert.condition {
+            AlertCondition::CrossingUp => ("price_cross", Some("up"), None, None),
+            AlertCondition::CrossingDown => ("price_cross", Some("down"), None, None),
+            AlertCondition::Crossing => ("price_cross", Some("either"), None, None),
+            AlertCondition::GreaterThan => ("greater_than", None, None, None),
+            AlertCondition::LessThan => ("less_than", None, None, None),
+            AlertCondition::EnteringRange => ("entering_range", None, Some(alert.price2), None),
+            AlertCondition::ExitingRange => ("exiting_range", None, Some(alert.price2), None),
+            AlertCondition::InsideRange => ("inside_range", None, Some(alert.price2), None),
+            AlertCondition::OutsideRange => ("outside_range", None, Some(alert.price2), None),
+            AlertCondition::MovingUp => ("moving_up", None, None, Some(alert.percentage)),
+            AlertCondition::MovingDown => ("moving_down", None, None, Some(alert.percentage)),
+            AlertCondition::MovingUpOrDown => ("moving_up_or_down", None, None, Some(alert.percentage)),
+        };
+
+    AlertListEntry {
+        id: alert.id,
+        address: AlertAddressDto {
+            exchange: alert.exchange().to_string(),
+            symbol: alert.symbol().to_string(),
+            account_type: alert.account_type().as_label().to_string(),
+        },
+        condition: AlertConditionDto {
+            kind: kind.to_string(),
+            price: alert.price,
+            direction: direction.map(str::to_string),
+            price2,
+            percentage,
+        },
+        enabled: matches!(alert.status, mlc_core::alert::AlertStatus::Active),
+        created_at: alert.created_at,
+        last_fired: alert.last_triggered_at,
     }
 }
