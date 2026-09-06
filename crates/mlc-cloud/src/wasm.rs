@@ -424,6 +424,18 @@ impl FetchTransport {
         self.decode_success(status, &body)
     }
 
+    /// `POST /api/share/{token}/clone` (auth required) — clone a shared
+    /// chart into the caller's own presets, already stripped server-side of
+    /// any indicator instance the caller holds no license for (rights v1,
+    /// plan §3). 403 is "this link has no clone right" — the caller words
+    /// it for the user.
+    pub async fn share_clone(&self, token: &str) -> Result<ClonePresetResponse, CloudError> {
+        let (status, body) = self
+            .exchange("POST", &format!("/api/share/{}/clone", token), None, &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
     // ── /api/updates/* (anonymous) ────────────────────────────────────────
 
     /// `GET /api/updates/latest?platform=…` — release manifest for the

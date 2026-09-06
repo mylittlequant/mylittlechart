@@ -280,6 +280,16 @@ pub fn save_persistent_state(chart: &mut ChartApp, perf: &mut PerfMeter) {
     //    per the module doc's write-up) for every preset in the registry, not
     //    just the one a click just touched.
     for preset in chart.core.presets().values() {
+        // A shared/read-only viewer preset (`ChartApp::is_readonly_tab`)
+        // never reaches local preset storage — it is not the visitor's own
+        // asset, and persisting it would let it survive a reload as an
+        // ordinary WRITABLE tab (`readonly_preset_ids` is RAM-only, reset on
+        // every fresh `ChartApp::new_window`), silently losing its
+        // read-only status. `apply_cloned_preset` never marks its id
+        // readonly, so a clone saves normally like any other preset.
+        if chart.is_readonly_tab(&preset.id) {
+            continue;
+        }
         match mlc_core::preset::storage::save_preset(preset) {
             Ok(_path) => {
                 writes += 1;

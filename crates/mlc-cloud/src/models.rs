@@ -307,6 +307,13 @@ pub enum SharePublicResponse {
         preset: serde_json::Value,
         created_at: String,
         expires_at: String,
+        /// Effective rights for this caller (rights v1, plan §2 of
+        /// `docs/mlc/plans/native-share-viewer-and-chart-rights-2026-09-06.md`):
+        /// `["read"]` plus `"clone"` when the link's `clone_allowed` is set.
+        /// `#[serde(default)]` for a server predating rights v1, which never
+        /// sent this field at all.
+        #[serde(default)]
+        rights: Vec<String>,
     },
     Screenshot {
         title: String,

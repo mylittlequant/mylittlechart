@@ -164,6 +164,20 @@ struct Inner {
     /// own `spawn_local` body cannot log a system event directly.
     share_result: Option<(&'static str, Result<String, String>)>,
 
+    // ── Chart-share clone (shared-viewer arc, 2026-09-06) ────────────────
+    // `ChartApp::request_clone_share` is a one-shot mailbox a "Clone to my
+    // charts" click arms; the round trip outlives one frame, so this needs
+    // its own in-flight gate and mailbox, same shape as `share_result`
+    // above but distinct from it (clone is its own endpoint, not a share
+    // create).
+    /// A `/api/share/{token}/clone` request is in flight.
+    clone_in_flight: bool,
+    /// Mailbox for the last clone outcome: the cloned preset's raw JSON plus
+    /// the server's stripped-indicator list, or the failure sentence.
+    /// Applied in `drive()`, the only place `&mut ChartApp` — and therefore
+    /// `ChartApp::apply_cloned_preset` — is reachable.
+    clone_result: Option<Result<(serde_json::Value, Vec<mlc_cloud::StrippedIndicator>), String>>,
+
     // ── Forum tab (paid-only) ───────────────────────────────────────────
     /// A forum request is in flight — separate from `in_flight` above so
     /// the Forum tab never blocks (or gets blocked by) the login/News/
@@ -221,6 +235,8 @@ impl CloudSession {
                 entitlements_result: None,
                 prev_entitlements: None,
                 share_result: None,
+                clone_in_flight: false,
+                clone_result: None,
                 forum_in_flight: false,
             })),
         }
@@ -620,6 +636,71 @@ impl CloudSession {
                 }
                 Err(message) => {
                     chart.push_system_event(mlc_core::SystemEventKind::Share, "Share failed", message, true);
+                }
+            }
+        }
+
+        // ── Chart-share clone (shared-viewer arc, 2026-09-06) ──────────────
+        // `ChartApp::request_clone_share` is the one-shot mailbox a "Clone to
+        // my charts" click on a read-only viewer tab arms
+        // (`ChartApp::dispatch_panel_click`'s `share:clone:` arm); drained
+        // here because `&mut ChartApp` — and `apply_cloned_preset`, which
+        // needs it — is only reachable inside `drive()`.
+        if let Some(token) = chart.take_pending_clone_share() {
+            if !self.is_signed_in() {
+                // Belt-and-braces (plan §3/§5): the effective-rights answer
+                // never carries `"clone"` for a caller who isn't signed in,
+                // so the button that arms this request is never shown to
+                // one — this only fires if something else triggers the
+                // request anyway. Open the sign-in overlay instead of firing
+                // a POST that would just 401.
+                chart.panel_app.cloud_login_state.is_open = true;
+            } else if self.inner.borrow().clone_in_flight {
+                // Doubled trigger while one is already in flight — dropped,
+                // same tolerance the Forum tab's own request mailbox gives a
+                // doubled click (not worth a request queue for).
+                web_sys::console::warn_1(&"[share] clone request dropped: one is already in flight".into());
+            } else {
+                self.inner.borrow_mut().clone_in_flight = true;
+                let transport = self.inner.borrow().transport.snapshot();
+                let inner = self.inner.clone();
+                spawn_local(async move {
+                    let raw = transport.share_clone(&token).await;
+                    if let Err(e) = &raw {
+                        mark_unauthorized(&inner, e);
+                    }
+                    let r = raw
+                        .map(|resp| (resp.preset, resp.stripped))
+                        .map_err(|e| clone_error_message(&e));
+                    inner.borrow_mut().clone_result = Some(r);
+                });
+            }
+        }
+
+        if let Some(result) = self.inner.borrow_mut().clone_result.take() {
+            self.inner.borrow_mut().clone_in_flight = false;
+            match result {
+                Ok((preset_value, stripped)) => {
+                    match serde_json::from_value::<mlc_core::preset::preset::ChartPreset>(preset_value) {
+                        Ok(preset) => {
+                            let stripped = stripped
+                                .into_iter()
+                                .map(|s| mlc_app::StrippedIndicator { type_id: s.type_id, name: s.name })
+                                .collect();
+                            chart.apply_cloned_preset(preset, stripped);
+                        }
+                        Err(e) => {
+                            chart.push_system_event(
+                                mlc_core::SystemEventKind::Share,
+                                "Clone failed",
+                                format!("The server's cloned chart did not parse: {e}"),
+                                true,
+                            );
+                        }
+                    }
+                }
+                Err(message) => {
+                    chart.push_system_event(mlc_core::SystemEventKind::Share, "Clone failed", message, true);
                 }
             }
         }
@@ -1449,6 +1530,18 @@ fn log_share_error(what: &str, e: &mlc_cloud::CloudError) {
         _ => {
             web_sys::console::error_1(&format!("[share] {message}").into());
         }
+    }
+}
+
+/// Word a failed `/api/share/{token}/clone` for the system-event log. 403 is
+/// "this link has no clone right" (the owner left `clone_allowed` off, or
+/// the caller's effective rights never granted it) — say so in the server's
+/// own sentence rather than the transport's raw status; anything else is
+/// the transport's own description.
+fn clone_error_message(e: &mlc_cloud::CloudError) -> String {
+    match e {
+        mlc_cloud::CloudError::Forbidden(_) => "This chart cannot be cloned".to_string(),
+        other => format!("Clone failed: {other}"),
     }
 }
 

@@ -278,8 +278,10 @@ enum ShareBoot {
     /// Screenshot share — the browser was redirected to the PNG; the app
     /// never boots (v1 viewer for screenshots, per the sharing spec).
     Redirect,
-    /// Live share — boot read-only on the frozen preset.
-    Live(mlc_core::preset::preset::ChartPreset),
+    /// Live share — the frozen preset plus the meta
+    /// `ChartApp::open_shared_preset` needs to label the tab and gate the
+    /// Clone action: token, title, owner, kind, effective rights, expiry.
+    Live(mlc_core::preset::preset::ChartPreset, mlc_app::SharedChartMeta),
 }
 
 /// Resolve a `?share=<token>` boot BEFORE any chart state exists.
@@ -309,13 +311,21 @@ async fn resolve_share_boot(token: Option<String>) -> ShareBoot {
             }
             ShareBoot::Redirect
         }
-        Ok(mlc_cloud::SharePublicResponse::Live { preset, title, .. }) => {
+        Ok(mlc_cloud::SharePublicResponse::Live { preset, title, owner, expires_at, rights, .. }) => {
             match serde_json::from_value::<mlc_core::preset::preset::ChartPreset>(preset) {
                 Ok(p) if p.version == mlc_core::preset::preset::PRESET_VERSION => {
                     web_sys::console::log_1(
-                        &format!("[share] viewer boot on shared preset '{}' ({})", title, p.id).into(),
+                        &format!("[share] viewer boot on shared preset '{}' ({}), owner {}", title, p.id, owner).into(),
                     );
-                    ShareBoot::Live(p)
+                    let meta = mlc_app::SharedChartMeta {
+                        token,
+                        title,
+                        owner_label: owner,
+                        kind: "live".to_string(),
+                        rights,
+                        expires_at,
+                    };
+                    ShareBoot::Live(p, meta)
                 }
                 Ok(p) => {
                     web_sys::console::error_1(
@@ -377,28 +387,30 @@ fn write_boot_bg(bg: &str) {
 #[cfg(target_arch = "wasm32")]
 async fn run(share_token: Option<String>) -> Result<(), JsValue> {
     // `?share=` viewer boot (chart-sharing arc) — resolved FIRST so a
-    // screenshot share redirects without paying the bridge/app startup, and
-    // a live share knows it is a read-only viewer before anything writes.
+    // screenshot share redirects without paying the bridge/app startup.
+    // Unlike the pre-rights-v1 cut, resolving a live share no longer freezes
+    // this whole session into a bare, no-persistence viewer: the visitor's
+    // own profile boots exactly as it does without the query param (commit
+    // 794818a0's "a share viewer keeps its session", extended here from just
+    // the cloud session to the whole boot), and the shared chart is layered
+    // on afterward as one more read-only tab via `ChartApp::
+    // open_shared_preset`. `ChartApp::is_readonly_tab` (per preset id,
+    // `mlc-app/src/share_viewer.rs`) is what protects that one tab from
+    // edits/autosave/persistence from here on — there is no shell-wide
+    // read-only flag anymore.
     #[cfg(feature = "cloud")]
     let share_boot = resolve_share_boot(share_token).await;
     #[cfg(not(feature = "cloud"))]
-    let read_only = {
-        if share_token.is_some() {
-            web_sys::console::warn_1(
-                &"[share] ?share= ignored — this build has no cloud support".into(),
-            );
-        }
-        false
-    };
-    #[cfg(feature = "cloud")]
-    {
-        if matches!(share_boot, ShareBoot::Redirect) {
-            // The browser is navigating to the PNG; never boot the app.
-            return Ok(());
-        }
+    if share_token.is_some() {
+        web_sys::console::warn_1(
+            &"[share] ?share= ignored — this build has no cloud support".into(),
+        );
     }
     #[cfg(feature = "cloud")]
-    let read_only = matches!(share_boot, ShareBoot::Live(_));
+    if matches!(share_boot, ShareBoot::Redirect) {
+        // The browser is navigating to the PNG; never boot the app.
+        return Ok(());
+    }
 
     let (bridge, live_rx, _connector_ready_rx) = DataBridge::new().await;
     // 2026-06-24: do NOT hold the first receiver alive — `broadcast::Sender`
@@ -420,23 +432,18 @@ async fn run(share_token: Option<String>) -> Result<(), JsValue> {
     // just happened so the welcome wizard can be raised below once `app`
     // exists. Returning visits are a no-op here; `ProfileManager::load`
     // below resolves the existing profile either way.
-    // Viewer sessions (`?share=` live) write NOTHING to localStorage — the
-    // bootstrap's create_profile is itself a write, so it is skipped along
-    // with every save below (all gated on `read_only`).
-    let is_first_run = if read_only {
-        false
-    } else {
-        persistence::bootstrap_first_run()
-    };
+    // A `?share=` boot goes through this exactly like any other boot (see
+    // `run`'s own doc above) — the visitor's own profile is created/loaded/
+    // saved the same as always; only the shared preset layered on further
+    // down is protected, per-preset, via `is_readonly_tab`.
+    let is_first_run = persistence::bootstrap_first_run();
 
     let mut profile_manager = mlc_app::user_manager::ProfileManager::load(None);
     profile_manager.profile.record_launch(env!("CARGO_PKG_VERSION"));
-    if !read_only {
-        if let Err(e) = profile_manager.save_profile() {
-            web_sys::console::error_1(
-                &format!("[mlc-app-shell-web] failed to save profile at startup: {:?}", e).into(),
-            );
-        }
+    if let Err(e) = profile_manager.save_profile() {
+        web_sys::console::error_1(
+            &format!("[mlc-app-shell-web] failed to save profile at startup: {:?}", e).into(),
+        );
     }
 
     // Best-effort: ask the browser not to evict localStorage under storage
@@ -503,20 +510,29 @@ async fn run(share_token: Option<String>) -> Result<(), JsValue> {
     // the wrong theme.
     write_boot_bg(&app.panel_app.theme_manager.current().chart.background);
 
-    // Live-share viewer: register the frozen preset into the shared core and
-    // switch this window onto it — the same `LoadPreset` path a chrome tab
-    // click takes (`ChartApp::load_preset`). Runs AFTER `new_window`'s own
-    // restore so the viewer preset wins the tab strip; persistence is off
-    // (`read_only`), so the switch never reaches localStorage. The wizard
-    // below is skipped for viewer sessions (`is_first_run` is false there).
+    // Live-share viewer: layer the frozen preset on as a fresh, read-only
+    // tab via the shared restore path both shells call (`ChartApp::
+    // open_shared_preset`, `mlc-app/src/share_viewer.rs`) — inserts under a
+    // fresh id, marks it read-only, stores `meta` for the tab chrome, and
+    // switches this window onto it (`ChartApp::load_preset` under the hood),
+    // the same restore path a chrome tab click takes. Runs AFTER
+    // `new_window`'s own restore so the shared tab wins the strip; the
+    // visitor's OWN tabs, if any, stay exactly as restored.
     #[cfg(feature = "cloud")]
-    if let ShareBoot::Live(preset) = share_boot {
-        let id = preset.id.clone();
-        web_sys::console::log_1(
-            &format!("[share] opening shared preset '{}' ({})", preset.name, id).into(),
-        );
-        app.core.presets_mut().insert(id.clone(), preset);
-        app.load_preset(&id);
+    if let ShareBoot::Live(preset, meta) = share_boot {
+        let title = meta.title.clone();
+        match app.open_shared_preset(meta, preset) {
+            Ok(id) => {
+                web_sys::console::log_1(
+                    &format!("[share] opened shared preset '{}' ({}) as a read-only tab", title, id).into(),
+                );
+            }
+            Err(e) => {
+                web_sys::console::error_1(
+                    &format!("[share] failed to open shared preset '{}': {} — staying on the restored tab", title, e).into(),
+                );
+            }
+        }
     }
 
     // First-run courtesy (owner's ruling 2026-08-31): `bootstrap_first_run`
@@ -574,7 +590,7 @@ async fn run(share_token: Option<String>) -> Result<(), JsValue> {
         .map_err(|e| JsValue::from_str(&e))?;
 
     web_sys::console::log_1(&"[mlc-app-shell-web] render loop running".into());
-    run_render_loop(app, provider, bridge, profile_manager, read_only)
+    run_render_loop(app, provider, bridge, profile_manager)
 }
 
 /// Flush both persistence layers on tab close/hide.
@@ -618,10 +634,15 @@ fn install_persistence_flush_hooks(
             // per-frame drain in `run_render_loop`: a tab hidden mid-cold-
             // load must not persist the pre-restore placeholder window.
             if let Ok(mut st) = state.try_borrow_mut() {
-                // `read_only` (`?share=` viewer): no localStorage writes,
-                // ever. The OPFS market-data flush below stays ungated —
+                // Per-tab, not shell-wide (`ChartApp::is_readonly_tab`,
+                // `mlc-app/src/share_viewer.rs`): a shared, read-only tab
+                // never reaches localStorage, but switching to one of the
+                // visitor's OWN tabs resumes normal saves the same frame —
+                // a shell-wide flag used to block saves for the whole
+                // session merely because a share link was ever opened. The
+                // OPFS market-data flush below stays ungated regardless —
                 // it is not localStorage.
-                if !st.read_only
+                if !st.chart.is_readonly_tab(&st.chart.panel_app.active_preset_id)
                     && mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
                 {
                     // Reborrow once: `st.chart`/`st.perf` through two separate
@@ -664,10 +685,15 @@ fn install_persistence_flush_hooks(
             // Best-effort — same try_borrow + is_persist_safe rationale as
             // the visibilitychange hook above.
             if let Ok(mut st) = state.try_borrow_mut() {
-                // `read_only` (`?share=` viewer): no localStorage writes,
-                // ever. The OPFS market-data flush below stays ungated —
+                // Per-tab, not shell-wide (`ChartApp::is_readonly_tab`,
+                // `mlc-app/src/share_viewer.rs`): a shared, read-only tab
+                // never reaches localStorage, but switching to one of the
+                // visitor's OWN tabs resumes normal saves the same frame —
+                // a shell-wide flag used to block saves for the whole
+                // session merely because a share link was ever opened. The
+                // OPFS market-data flush below stays ungated regardless —
                 // it is not localStorage.
-                if !st.read_only
+                if !st.chart.is_readonly_tab(&st.chart.panel_app.active_preset_id)
                     && mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
                 {
                     // Reborrow once: `st.chart`/`st.perf` through two separate
@@ -702,11 +728,6 @@ struct WebAppState {
     out:                mlc_app_input_shell::DispatchOut,
     toolbar_tooltip:    mlc_app_input_shell::TooltipState,
     screenshot_pending: bool,
-    /// Read-only `?share=` live-viewer session (chart-sharing arc): renders
-    /// the shared preset but writes NOTHING to localStorage — the per-frame
-    /// save drain, the visibilitychange/beforeunload flush hooks and the
-    /// boot-time `save_profile` are all gated on this flag.
-    read_only:          bool,
     /// DOM canvas element for cursor CSS updates.
     canvas_id:          String,
     /// Settle-debounce for `chart.resize` (audit D2).  `canvas.client_width()/
@@ -775,7 +796,6 @@ impl WebAppState {
         canvas_id: &str,
         bridge: Arc<mlc_backend_data_bridge::DataBridge>,
         profile_manager: mlc_app::user_manager::ProfileManager,
-        read_only: bool,
     ) -> Self {
         let mut input = mlc_app_input_shell::InputState::default();
         // Web shell renders chrome — offset chart by chrome height.
@@ -794,7 +814,6 @@ impl WebAppState {
             // shells via `ChromeState::new()`.
             toolbar_tooltip:    mlc_app_input_shell::TooltipState::with_delay(700.0),
             screenshot_pending: false,
-            read_only,
             canvas_id:          canvas_id.to_string(),
             last_measured:      None,
             last_applied:       None,
@@ -819,9 +838,8 @@ fn run_render_loop(
     provider: WebWindowProvider,
     bridge: Arc<mlc_backend_data_bridge::DataBridge>,
     profile_manager: mlc_app::user_manager::ProfileManager,
-    read_only: bool,
 ) -> Result<(), JsValue> {
-    let state = Rc::new(RefCell::new(WebAppState::new(app, "chart", bridge.clone(), profile_manager, read_only)));
+    let state = Rc::new(RefCell::new(WebAppState::new(app, "chart", bridge.clone(), profile_manager)));
 
     // ── Perf snapshot export (owner ruling 2026-09-05: the chart keeps the
     // MEASUREMENT only; display/collection moved to dig2browser's CDP driver,
@@ -1484,9 +1502,17 @@ fn run_render_loop(
         {
             let mut st = state_clone.borrow_mut();
             let persist_safe = mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state);
-            // `read_only` (`?share=` viewer) is the hard gate: a viewer
-            // session writes NOTHING to localStorage, dirty flags or not.
-            if !st.read_only && persist_safe
+            // Per-tab hard gate (`ChartApp::is_readonly_tab`, `mlc-app/src/
+            // share_viewer.rs`): a shared, read-only tab must never persist,
+            // dirty flags or not — but this is keyed to whichever preset is
+            // ACTIVE right now, not a shell-wide flag frozen at boot, so
+            // switching away to one of the visitor's own tabs resumes normal
+            // saves the same frame. `save_persistent_state`'s own preset
+            // loop additionally skips any readonly preset's body regardless
+            // of which tab is active, so a shared preset can never reach
+            // local preset storage even via an unrelated dirty flag.
+            let active_readonly = st.chart.is_readonly_tab(&st.chart.panel_app.active_preset_id);
+            if !active_readonly && persist_safe
                 && (st.chart.profile_dirty || st.chart.profile_geometry_dirty || st.chart.watchlists_dirty
                     || !st.chart.preset_actions.is_empty())
             {
