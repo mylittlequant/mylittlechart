@@ -1003,28 +1003,57 @@ impl ChartApp {
                     // Step 8: Restore alerts
                     // ----------------------------------------------------------------
                     let _t_alerts = web_time::Instant::now();
-                    // Alerts are now stored per-bubble via DataBubbleSnapshot.alerts.
-                    // The legacy flat preset.alerts list is distributed to the appropriate
-                    // bubble by group_id, or to the active bubble as a fallback.
+                    // Account-wide fold (Arc C3.3, owner ruling 2026-09-06
+                    // §2): alerts are no longer bubble-scoped, so this
+                    // preset's legacy flat `preset.alerts` list folds into
+                    // the shared `AccountAlertStore` via `restore_item`,
+                    // keyed by this window's resolved account — never by
+                    // `group_id`/bubble. `SyncGroupSnapshot.alerts`
+                    // (`DataBubbleSnapshot.alerts` on-disk) is NOT folded
+                    // here: it has never been an independent write target
+                    // (see `mlc-backend/src/bubble/data_bubble.rs`'s own
+                    // comment) — the flat list is the complete source.
+                    //
+                    // `apply_preset_cold` re-runs on every tab switch, not
+                    // just first boot, and the store now OUTLIVES a single
+                    // preset load — so this loop dedups against whatever the
+                    // account already holds (including rows
+                    // `load_user_profile` already restored from
+                    // `alerts.json`) by `(exchange, symbol, condition)`, else
+                    // reopening the same tab N times would keep restoring
+                    // the same alert N times.
                     {
+                        let account_id = self.alert_account_id();
+                        let mut existing: Vec<mlc_core::alert::AlertItem> = self.core.alerts().for_account(&account_id);
                         let mut total_restored = 0usize;
-                        for alert in preset.alerts.clone() {
-                            let target_bid = alert.group_id
-                                .map(mlc_core::ids::BubbleId)
-                                .or_else(|| {
-                                    // Fall back to the first available bubble.
-                                    self.core.bubbles().bubble_ids().next()
-                                });
-                            if let Some(bid) = target_bid {
-                                self.core.alerts_mut().restore_one(bid, alert);
-                                total_restored += 1;
+                        let mut total_skipped_dup = 0usize;
+                        for mut alert in preset.alerts.clone() {
+                            if alert.account_id.is_empty() {
+                                alert.account_id = account_id.clone();
                             }
+                            let is_dup = existing.iter().any(|e| {
+                                e.exchange() == alert.exchange()
+                                    && e.symbol() == alert.symbol()
+                                    && e.condition == alert.condition
+                            });
+                            if is_dup {
+                                total_skipped_dup += 1;
+                                continue;
+                            }
+                            existing.push(alert.clone());
+                            self.core.alerts_mut().restore_item(alert);
+                            total_restored += 1;
                         }
                         eprintln!(
-                            "[ChartApp] restored {} alerts (per-bubble, {} total now in store)",
+                            "[ChartApp] restored {} alerts into account '{}' ({} duplicate, {} total now in store)",
                             total_restored,
+                            account_id,
+                            total_skipped_dup,
                             self.core.alerts().len_total(),
                         );
+                        if total_restored > 0 {
+                            self.persist_alerts();
+                        }
                     }
                     let alerts_us = _t_alerts.elapsed().as_micros();
 

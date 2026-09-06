@@ -586,6 +586,7 @@ impl ChartApp {
             || self.panel_app.compare_settings_state.is_open()
             || self.panel_app.chart_settings_state.is_open
             || self.panel_app.preset_name_input.is_open
+            || self.panel_app.share_open_state.is_open
             || self.panel_app.chart_browser.is_open
             || self.panel_app.overlay_settings_state.is_open
             || self.panel_app.tags_tabs_state.is_open
@@ -9525,7 +9526,12 @@ impl ChartApp {
             }
         }
 
-        // Snapshot alerts — flatten across all bubbles for the legacy flat-list preset field.
+        // Snapshot alerts — compatibility mirror only (Arc C3.3): the
+        // account-wide `AccountAlertStore` is the actual source of truth
+        // now, persisted separately to its own `alerts.json`
+        // (`ChartApp::persist_alerts`, `mlc-app/src/persistence/profile.rs`).
+        // Kept here so a preset file read directly by an older client still
+        // carries every alert, same precedent as `IndicatorSnapshot::values`.
         preset.alerts = self.core.alerts().items_all();
 
         // Snapshot leaf_color_tags

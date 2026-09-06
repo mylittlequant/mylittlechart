@@ -635,53 +635,68 @@ impl ChartApp {
             }
         }
 
-        // ── Alert checker: detect price crossings for every visible bubble ────
+        // ── Alert checker: evaluate every account-wide SUBSCRIPTION, not the
+        // view (Arc C3.1, `docs/mlc/plans/alerts-account-wide-and-telegram-
+        // delivery-2026-09-06.md` §2). An alert's instrument may have no
+        // open window at all: the alert set to check is
+        // `core.alerts().for_account(id)`, each resolved to a live bubble via
+        // `BackendCore::ensure_alert_bubble` (get-or-create, short kline
+        // tail) — never `panel_grid.containers()`. Parked tabs no longer
+        // matter: whether a bubble backs a visible window or only an alert
+        // subscription is invisible from here.
         // Skip entirely when no trade arrived this tick — nothing changed.
         if had_trade_update {
-            // Collect per-bubble alert data: bubble_id, current_price, current_bar, drawing_points.
-            // De-duplicate by bubble_id so shared bubbles are only checked once.
-            let mut seen_bids: std::collections::HashSet<mlc_core::ids::BubbleId> = std::collections::HashSet::new();
+            let alert_account_id = self.alert_account_id();
+            let account_alerts: Vec<mlc_core::alert::AlertItem> = self.core.alerts().for_account(&alert_account_id);
+
+            // Resolve/ensure one live bubble per distinct instrument this
+            // account's ACTIVE alerts target. De-duplicated by address so an
+            // account with several alerts on the same instrument only
+            // ensures/reads it once. Paused/Triggered/Expired alerts need no
+            // subscription — `AlertManager::on_tick` never evaluates them.
             struct BubbleAlertData {
                 bid: mlc_core::ids::BubbleId,
                 current_price: f64,
                 current_bar: f64,
                 drawing_points: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)>,
             }
-            let bubble_data: Vec<BubbleAlertData> = self.panel_app.panel_grid.containers()
-                .iter()
-                .filter_map(|(_cid, window)| {
-                    let bid = window.current_tag_id;
-                    if !seen_bids.insert(bid) {
-                        return None;
-                    }
-                    let bubble_bars_alert: Vec<mlc_core::Bar> = self.with_bubble(bid, |b| b.bars.clone()).unwrap_or_default();
-                    let current_price = bubble_bars_alert.last().map(|b| b.close).unwrap_or(0.0);
-                    let current_bar = bubble_bars_alert.len().saturating_sub(1) as f64;
-                    let drawing_points: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)> = {
-                        let guard = self.core.drawings();
-                        guard.primitives(bid).iter()
-                            .map(|p| {
-                                let pts_bar: Vec<(f64, f64)> = p.points()
-                                    .into_iter()
-                                    .map(|(ts_ms, price)| (timestamp_ms_to_bar_f64(&bubble_bars_alert, ts_ms), price))
-                                    .collect();
-                                (p.data().id, pts_bar, mlc_core::alert::DrawingExtendMode::from_u8(p.extend_mode_raw()))
-                            })
-                            .collect()
-                    };
-                    Some(BubbleAlertData {
-                        bid,
-                        current_price,
-                        current_bar,
-                        drawing_points,
-                    })
-                })
-                .collect();
+            let mut seen_addresses: std::collections::HashSet<mlc_core::instrument::InstrumentAddress> =
+                std::collections::HashSet::new();
+            let mut bubble_data: Vec<BubbleAlertData> = Vec::new();
+            for alert in &account_alerts {
+                if alert.status != mlc_core::alert::AlertStatus::Active {
+                    continue;
+                }
+                let address = mlc_core::instrument::InstrumentAddress::new(
+                    alert.exchange().to_string(),
+                    alert.symbol().to_string(),
+                    alert.address.account_type,
+                );
+                if !seen_addresses.insert(address.clone()) {
+                    continue;
+                }
+                let bid = self.core.ensure_alert_bubble(&address);
+                let bubble_bars_alert: Vec<mlc_core::Bar> = self.with_bubble(bid, |b| b.bars.clone()).unwrap_or_default();
+                let current_price = bubble_bars_alert.last().map(|b| b.close).unwrap_or(0.0);
+                let current_bar = bubble_bars_alert.len().saturating_sub(1) as f64;
+                let drawing_points: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)> = {
+                    let guard = self.core.drawings();
+                    guard.primitives(bid).iter()
+                        .map(|p| {
+                            let pts_bar: Vec<(f64, f64)> = p.points()
+                                .into_iter()
+                                .map(|(ts_ms, price)| (timestamp_ms_to_bar_f64(&bubble_bars_alert, ts_ms), price))
+                                .collect();
+                            (p.data().id, pts_bar, mlc_core::alert::DrawingExtendMode::from_u8(p.extend_mode_raw()))
+                        })
+                        .collect()
+                };
+                bubble_data.push(BubbleAlertData { bid, current_price, current_bar, drawing_points });
+            }
 
-            // Build indicator values from all bubbles' alerts combined.
-            let all_alerts_snapshot: Vec<mlc_core::alert::AlertItem> = self.core.alerts().items_all();
+            // Build indicator values from this account's own alerts.
             let indicator_values = Self::build_indicator_values_for_alerts(
-                &all_alerts_snapshot,
+                &account_alerts,
                 &self.core.indicators(),
             );
 
@@ -733,18 +748,11 @@ impl ChartApp {
                 .map(|(id, _)| id)
                 .collect();
 
-            // Use the active window's price for delivery event messages.
-            let current_price = self.panel_app.panel_grid.active_container()
-                .map(|w| w.current_tag_id)
-                .and_then(|bid| self.with_bubble(bid, |b| b.bars.last().map(|bar| bar.close)).flatten())
-                .unwrap_or(0.0);
-
-            // Build delivery events for triggered alerts.
+            // Build delivery events for triggered alerts — priced off EACH
+            // alert's own instrument, never the active window's: a fired
+            // alert may have no open window on its instrument at all
+            // (Arc C3.1/C3.2).
             if !triggered_ids.is_empty() {
-                let symbol = self.panel_app.panel_grid.active_container_id()
-                    .and_then(|cid| self.symbol_for_chart(cid))
-                    .map(String::from)
-                    .unwrap_or_default();
                 let now = web_time::SystemTime::now()
                     .duration_since(web_time::UNIX_EPOCH)
                     .map(|d| d.as_millis() as u64)
@@ -758,14 +766,24 @@ impl ChartApp {
                     }).collect()
                 };
                 for alert in &triggered_alerts {
+                    let address = mlc_core::instrument::InstrumentAddress::new(
+                        alert.exchange().to_string(),
+                        alert.symbol().to_string(),
+                        alert.address.account_type,
+                    );
+                    let target_bid = self.core.bubbles().get_by_address(&address);
+                    let price = match target_bid {
+                        Some(bid) => self.with_bubble(bid, |b| b.bars.last().map(|bar| bar.close)).flatten().unwrap_or(0.0),
+                        None => 0.0,
+                    };
                     self.pending_delivery_events.push(mlc_alert_delivery::DeliveryEvent {
                         alert_name: alert.name.clone(),
-                        symbol: symbol.clone(),
+                        symbol: alert.symbol().to_string(),
                         message: format!("{} {} @ {:.8}",
                             alert.source.display_name(),
                             alert.condition.display_name(),
-                            current_price),
-                        price: current_price,
+                            price),
+                        price,
                         timestamp: now,
                         screenshot: None,
                     });
@@ -773,6 +791,10 @@ impl ChartApp {
 
                 self.pending_alert_screenshot = true;
                 self.sidebar_data_dirty = true;
+                // Persist the trigger-state change (status flip, trigger_count,
+                // last_triggered) — infrequent event, synchronous write is
+                // cheap here (Arc C3.3 own-file persistence).
+                self.persist_alerts();
             }
         }
 

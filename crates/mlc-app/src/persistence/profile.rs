@@ -398,20 +398,37 @@ impl ChartApp {
         );
         let bubble_ids = Self::bubble_ids_for_panel_grid(&panel_grid);
         let pk_grid_us = t0.elapsed().as_micros();
+
+        // Arc C3.2 park guard: an alerted bubble IS the live subscription
+        // for its instrument (`BackendCore::ensure_alert_bubble`'s own doc)
+        // — parking it into this window's per-tab cache, which the tick
+        // loop never walks, would silently stop that alert from firing
+        // until the tab is reopened. Exclude any bid whose
+        // `has_active_alerts` mirror (kept fresh by
+        // `AlertManager::resync_has_alerts` on every `AccountAlertStore`
+        // mutation) is set from every extraction list below — it stays live
+        // in the shared BackendCore store, park or no park, exactly like an
+        // alert on an instrument with no window at all.
+        let extract_ids: Vec<mlc_core::ids::BubbleId> = bubble_ids
+            .iter()
+            .copied()
+            .filter(|&bid| !self.with_bubble(bid, |b| b.has_active_alerts).unwrap_or(false))
+            .collect();
+
         let t0 = web_time::Instant::now();
-        let bubble_store = self.core.bubbles_mut().extract_bubbles(&bubble_ids);
-        let tag_manager = self.core.tags_mut().extract_tags_for_bubbles(&bubble_ids);
+        let bubble_store = self.core.bubbles_mut().extract_bubbles(&extract_ids);
+        let tag_manager = self.core.tags_mut().extract_tags_for_bubbles(&extract_ids);
         let pk_bubble_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        let indicator_manager = self.core.indicators_mut().extract_for_bubbles(&bubble_ids);
+        let indicator_manager = self.core.indicators_mut().extract_for_bubbles(&extract_ids);
         let pk_ind_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         // Per-bubble drawing sessions (Step 3.1) must travel with
         // tag_manager since both are keyed by the same BubbleIds.
-        let alert_manager = self.core.alerts_mut().extract_for_bubbles(&bubble_ids);
+        let alert_manager = self.core.alerts_mut().extract_for_bubbles(&extract_ids);
         let pk_alert_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
-        let drawing_manager = self.core.drawings_mut().extract_for_bubbles(&bubble_ids);
+        let drawing_manager = self.core.drawings_mut().extract_for_bubbles(&extract_ids);
         let pk_drawing_us = t0.elapsed().as_micros();
         let t0 = web_time::Instant::now();
         let leaf_color_tags = std::mem::take(&mut self.panel_app.leaf_color_tags);
@@ -545,6 +562,54 @@ impl ChartApp {
         }
     }
 
+    /// Anonymous/local scope for the account-wide alert store
+    /// (`mlc-backend`'s `AccountAlertStore`, keyed `(account_id,
+    /// InstrumentAddress, condition)` — Arc C3, owner ruling 2026-09-06 §2).
+    /// Mirrors `mlc-backend`'s crate-private `alert::manager::
+    /// LOCAL_SHIM_ACCOUNT_ID` literal by value: that constant is
+    /// `pub(crate)` by doctrine (app code goes through the account-wide
+    /// facade, never a raw scope string), and every alert the piece-1
+    /// bid-based shim already stamped (`AlertManager::add`/`restore_one`) is
+    /// stamped under this EXACT literal — a different anonymous fallback
+    /// here would silently orphan them the moment the user signs out.
+    const ANONYMOUS_ALERT_ACCOUNT_ID: &'static str = "local";
+
+    /// Resolve this window's `AccountAlertStore` scope key: the signed-in
+    /// account's public id when the live profile has a linked account, else
+    /// [`Self::ANONYMOUS_ALERT_ACCOUNT_ID`]. Used by the account-wide
+    /// evaluation walk (`frame_lifecycle/tick.rs`) and the legacy-alert
+    /// migration fold (`hydration_impl.rs`).
+    pub(crate) fn alert_account_id(&self) -> String {
+        let user = self.core.user();
+        let profile = user.profile();
+        if let Some(linked) = profile.domain.linked_account.as_ref() {
+            if !linked.public_id.is_empty() {
+                return linked.public_id.clone();
+            }
+        }
+        Self::ANONYMOUS_ALERT_ACCOUNT_ID.to_string()
+    }
+
+    /// Persist the account-wide alert store to its own file (`alerts.json`,
+    /// Arc C3.3) — synchronous, immediate write, same pattern as
+    /// `persist_templates` above rather than the dirty-flag `save_all()`
+    /// indirection `persist_profile`/`persist_watchlists` use: under the
+    /// shared-BackendCore arc, `core.alerts()` is already the ONE
+    /// process-wide store every window reads and writes through, so there is
+    /// no multi-window aggregation step to wait for.
+    ///
+    /// `preset.alerts` (the legacy flat field, `input/mod.rs`'s save path)
+    /// keeps being written on every preset save too — a compatibility mirror
+    /// for older clients reading a preset file directly, not this store's
+    /// source of truth anymore.
+    pub fn persist_alerts(&self) {
+        let items = self.core.alerts().items_all();
+        let path = mlc_core::active_profile_data_dir().join("alerts.json");
+        if let Err(e) = mlc_core::save_json(&path, &items, None) {
+            eprintln!("[persist] alerts: {:?}", e);
+        }
+    }
+
     /// Load and apply a previously saved user profile from `user_data/profile.json`.
     ///
     /// Also restores the [`mlc_app_sidebar_content::watchlist::WatchlistManager`] from
@@ -633,6 +698,27 @@ impl ChartApp {
             Ok(manager) => self.adopt_loaded_watchlists(manager),
             Err(e) => {
                 eprintln!("[UserProfile] no saved watchlists ({}) — keeping defaults", e);
+            }
+        }
+
+        // Restore the account-wide alert store (Arc C3.3) from its own
+        // file — same shape as watchlists.json above. `load_user_profile` is
+        // called once at process startup, never per-window (see
+        // `load_watchlists`'s own doc), so the shared-BackendCore
+        // `AccountAlertStore` is seeded exactly once; every later
+        // `apply_preset_cold` migration fold (`hydration_impl.rs`) dedups
+        // against whatever already landed here.
+        let alerts_path = mlc_core::active_profile_data_dir().join("alerts.json");
+        match mlc_core::load_json::<Vec<mlc_core::alert::AlertItem>>(&alerts_path, None) {
+            Ok(items) => {
+                let restored = items.len();
+                for item in items {
+                    self.core.alerts_mut().restore_item(item);
+                }
+                eprintln!("[UserProfile] restored {} alerts from alerts.json", restored);
+            }
+            Err(e) => {
+                eprintln!("[UserProfile] no saved alerts.json ({}) — starting empty", e);
             }
         }
     }
