@@ -538,6 +538,212 @@ impl FetchTransport {
             .await?;
         self.decode_success(status, &body).map(|_: serde_json::Value| ())
     }
+
+    // ── /api/forum/* v2 (public boards, role-gated) ─────────────────────
+
+    /// `GET /api/forum/boards` — boards the caller can read. Goes out with
+    /// whatever bearer is configured (may be none — a `public` board
+    /// answers a signed-out caller too).
+    pub async fn forum_boards(&self) -> Result<Vec<ForumBoard>, CloudError> {
+        let (status, body) = self.exchange("GET", "/api/forum/boards", None, &[]).await?;
+        let resp: ForumBoardsResponse = self.decode_success(status, &body)?;
+        Ok(resp.boards)
+    }
+
+    /// `GET /api/forum/boards/{slug}/threads?limit=50&before=…` — `before`
+    /// is the previous page's `next_before` cursor (`None` for the first
+    /// page). 404 unknown slug, or a board the caller cannot read.
+    pub async fn forum_board_threads(
+        &self,
+        slug: &str,
+        before: Option<&str>,
+    ) -> Result<ForumBoardThreadsResponse, CloudError> {
+        let path = match before {
+            Some(b) => format!(
+                "/api/forum/boards/{}/threads?limit=50&before={}",
+                slug,
+                encode_query_component(b)
+            ),
+            None => format!("/api/forum/boards/{}/threads?limit=50", slug),
+        };
+        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/forum/boards/{slug}/threads` — 401 anonymous, 403 the
+    /// board's write class is not met, 429 at one thread per 60s.
+    pub async fn forum_create_thread_v2(&self, slug: &str, title: &str, body: &str) -> Result<i64, CloudError> {
+        let payload = serde_json::to_string(&ForumCreateThreadV2Request {
+            title: title.to_string(),
+            body: body.to_string(),
+        })
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, resp_body) = self
+            .exchange("POST", &format!("/api/forum/boards/{}/threads", slug), Some(payload), &[])
+            .await?;
+        let resp: ForumIdResponse = self.decode_success(status, &resp_body)?;
+        Ok(resp.id)
+    }
+
+    /// `GET /api/forum/v2/threads/{id}` — the thread plus its reply tree.
+    pub async fn forum_thread_v2(&self, id: i64) -> Result<ForumThreadV2Response, CloudError> {
+        let (status, body) = self
+            .exchange("GET", &format!("/api/forum/v2/threads/{}", id), None, &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/forum/v2/threads/{id}/replies` — `parent_reply_id` nests
+    /// under an existing (visible, same-thread) reply; `None` posts a
+    /// top-level reply. 429 at ten replies per 60s, 403 if the thread is
+    /// locked or the write class is not met.
+    pub async fn forum_reply_v2(
+        &self,
+        thread_id: i64,
+        body: &str,
+        parent_reply_id: Option<i64>,
+    ) -> Result<i64, CloudError> {
+        let payload = serde_json::to_string(&ForumReplyV2Request {
+            body: body.to_string(),
+            parent_reply_id,
+        })
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, resp_body) = self
+            .exchange(
+                "POST",
+                &format!("/api/forum/v2/threads/{}/replies", thread_id),
+                Some(payload),
+                &[],
+            )
+            .await?;
+        let resp: ForumIdResponse = self.decode_success(status, &resp_body)?;
+        Ok(resp.id)
+    }
+
+    /// `DELETE /api/forum/v2/replies/{id}` — 204 for the author or a
+    /// moderator/admin, 403 otherwise.
+    pub async fn forum_delete_reply_v2(&self, id: i64) -> Result<(), CloudError> {
+        let (status, body) = self
+            .exchange("DELETE", &format!("/api/forum/v2/replies/{}", id), None, &[])
+            .await?;
+        self.decode_success(status, &body).map(|_: serde_json::Value| ())
+    }
+
+    /// `GET /api/forum/search?q=&board=` — FTS5 search, restricted to
+    /// boards the caller can read; `board` filters to one slug when set.
+    pub async fn forum_search(&self, q: &str, board: Option<&str>) -> Result<Vec<ForumSearchHit>, CloudError> {
+        let mut path = format!("/api/forum/search?q={}", encode_query_component(q));
+        if let Some(b) = board {
+            path.push_str(&format!("&board={}", encode_query_component(b)));
+        }
+        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
+        let resp: ForumSearchResponse = self.decode_success(status, &body)?;
+        Ok(resp.results)
+    }
+
+    /// `POST /api/forum/v2/threads/{id}/moderate` — moderator/admin only
+    /// (403 otherwise). `action` is one of hide|unhide|lock|unlock|pin|
+    /// unpin|move; `board` names the target slug for `"move"`.
+    pub async fn forum_moderate(&self, thread_id: i64, action: &str, board: Option<&str>) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&ForumModerateAction {
+            action: action.to_string(),
+            board: board.map(|s| s.to_string()),
+        })
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange(
+                "POST",
+                &format!("/api/forum/v2/threads/{}/moderate", thread_id),
+                Some(payload),
+                &[],
+            )
+            .await?;
+        self.decode_success(status, &body).map(|_: serde_json::Value| ())
+    }
+
+    // ── /api/dm/* (paid, end-to-end encrypted) ──────────────────────────
+
+    /// `PUT /api/dm/identity` — publish/rotate the caller's DM public key.
+    /// Returns the fingerprint; 400 if `public_key_b64` decodes to the
+    /// wrong length, 403 not paid.
+    pub async fn dm_put_identity(&self, public_key_b64: &str) -> Result<String, CloudError> {
+        let payload = serde_json::to_string(&DmPublishIdentityRequest {
+            public_key_b64: public_key_b64.to_string(),
+        })
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.exchange("PUT", "/api/dm/identity", Some(payload), &[]).await?;
+        let resp: DmPublishIdentityResponse = self.decode_success(status, &body)?;
+        Ok(resp.fingerprint)
+    }
+
+    /// `GET /api/dm/identity/{public_id_or_nick}` — 404 if `label` names no
+    /// user, or the user has never published a DM identity key.
+    pub async fn dm_get_identity(&self, label: &str) -> Result<DmIdentityResponse, CloudError> {
+        let (status, body) = self
+            .exchange(
+                "GET",
+                &format!("/api/dm/identity/{}", encode_query_component(label)),
+                None,
+                &[],
+            )
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/dm/conversations` — the caller's own, newest activity first.
+    pub async fn dm_conversations(&self) -> Result<Vec<DmConversation>, CloudError> {
+        let (status, body) = self.exchange("GET", "/api/dm/conversations", None, &[]).await?;
+        let resp: DmConversationsResponse = self.decode_success(status, &body)?;
+        Ok(resp.conversations)
+    }
+
+    /// `POST /api/dm/conversations` — `{"with": <public_id_or_nick>}` ->
+    /// existing or new conversation. 404 unknown peer, 403 the peer is not
+    /// currently paid.
+    pub async fn dm_open_conversation(&self, with: &str) -> Result<DmConversation, CloudError> {
+        let payload = serde_json::to_string(&DmCreateConversationRequest { with: with.to_string() })
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.exchange("POST", "/api/dm/conversations", Some(payload), &[]).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/dm/conversations/{id}/messages?after=&limit=` — 404 if the
+    /// conversation does not exist or the caller is not a party.
+    pub async fn dm_messages(&self, id: i64, after: Option<i64>, limit: i64) -> Result<DmMessagesResponse, CloudError> {
+        let path = match after {
+            Some(a) => format!("/api/dm/conversations/{}/messages?after={}&limit={}", id, a, limit),
+            None => format!("/api/dm/conversations/{}/messages?limit={}", id, limit),
+        };
+        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/dm/conversations/{id}/messages` — sealed message, opaque
+    /// to the server (see [`crate::models`]'s dm section doc). 403 if the
+    /// other party is not currently paid, 413 if the ciphertext exceeds the
+    /// server's cap, 429 at the per-sender daily send limit.
+    pub async fn dm_send(&self, id: i64, nonce_b64: &str, ciphertext_b64: &str) -> Result<DmSendMessageResponse, CloudError> {
+        let payload = serde_json::to_string(&DmSendMessageRequest {
+            nonce_b64: nonce_b64.to_string(),
+            ciphertext_b64: ciphertext_b64.to_string(),
+        })
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", &format!("/api/dm/conversations/{}/messages", id), Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/dm/conversations/{id}/read` — marks every message from
+    /// the other party with `id <= up_to` as read.
+    pub async fn dm_mark_read(&self, id: i64, up_to: i64) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&DmMarkReadRequest { up_to_id: up_to })
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", &format!("/api/dm/conversations/{}/read", id), Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body).map(|_: serde_json::Value| ())
+    }
 }
 
 /// Percent-encode a query-string component — used only for the `before`

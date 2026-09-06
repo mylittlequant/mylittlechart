@@ -21,14 +21,18 @@ pub mod entitlements;
 pub mod redeem;
 pub mod nick;
 pub mod forum;
+pub mod forum_v2;
+pub mod dm;
 pub mod share;
 pub mod auth_probe;
 pub mod me;
 pub mod tier_store;
 
-pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState, NickState, ForumCommand, ForumState, ShareState, ShareOpenState};
+pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState, NickState, ForumCommand, ForumState, ForumV2Request, ForumV2State, DmRequest, DmState, ShareState, ShareOpenState};
 pub use share::{SharedChartResponse, SharedChartMetaWire, ClonePresetResponse, StrippedIndicatorWire};
 pub use forum::{ForumThreadSummary, ForumThread, ForumReply};
+pub use forum_v2::{ForumBoard, ForumThreadV2Summary, ForumThreadV2, ForumReplyNode, ForumSearchHit};
+pub use dm::{DmIdentity, DmConversation, DmConversationPeer, DmMessage};
 
 /// Format current time as `HH:MM:SS` for log lines.
 pub fn now_ts() -> String {
@@ -210,6 +214,14 @@ pub fn start(
     // replaced wholesale like `redeem_tx`/`nick_tx`).
     let (forum_tx, forum_rx) = watch::channel(state::ForumState::default());
 
+    // Channel for the outcome of the most recent forum-v2 request — starts
+    // Idle, republished on every `ForumV2` command.
+    let (forum_v2_tx, forum_v2_rx) = watch::channel(state::ForumV2State::Idle);
+
+    // Channel for the outcome of the most recent DM request — starts Idle,
+    // republished on every `Dm` command.
+    let (dm_tx, dm_rx) = watch::channel(state::DmState::Idle);
+
     // Channel for the outcome of the most recent share-create request
     // (live or screenshot) — starts Idle, republished on every
     // `ShareLive`/`ShareScreenshot` command.
@@ -236,13 +248,15 @@ pub fn start(
         redeem_rx,
         nick_rx,
         forum_rx,
+        forum_v2_rx,
+        dm_rx,
         share_rx,
         share_open_rx,
         sync_status_rx,
         sync_checksums_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, redeem_tx, nick_tx, forum_tx, share_tx, share_open_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
+    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, redeem_tx, nick_tx, forum_tx, forum_v2_tx, dm_tx, share_tx, share_open_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
 
     handle
 }
@@ -261,6 +275,8 @@ async fn updater_loop(
     redeem_tx: watch::Sender<state::RedeemState>,
     nick_tx: watch::Sender<state::NickState>,
     forum_tx: watch::Sender<state::ForumState>,
+    forum_v2_tx: watch::Sender<state::ForumV2State>,
+    dm_tx: watch::Sender<state::DmState>,
     share_tx: watch::Sender<state::ShareState>,
     share_open_tx: watch::Sender<state::ShareOpenState>,
     sync_status_tx: watch::Sender<state::SyncStatus>,
@@ -737,6 +753,237 @@ async fn updater_loop(
                                 }
                                 forum_state.busy = false;
                                 let _ = forum_tx.send(forum_state.clone());
+                            }
+                        }
+                    }
+                    state::UpdaterCommand::ForumV2(req) => {
+                        let token = token_store::load_token();
+                        let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
+                        // Anonymous-ok reads: ListBoards, ListBoardThreads,
+                        // LoadThread, Search. Everything else requires a
+                        // stored token — see `ForumV2Request`'s own doc.
+                        let requires_auth = matches!(
+                            req,
+                            state::ForumV2Request::CreateThread { .. }
+                                | state::ForumV2Request::Reply { .. }
+                                | state::ForumV2Request::DeleteReply { .. }
+                                | state::ForumV2Request::Moderate { .. }
+                        );
+                        if requires_auth && auth_header.is_none() {
+                            let _ = forum_v2_tx.send(state::ForumV2State::Failed {
+                                message: "Sign in first".to_string(),
+                            });
+                            log::warn!("[Updater] forum_v2 command failed: not signed in");
+                        } else {
+                            let _ = forum_v2_tx.send(state::ForumV2State::Working);
+                            // Shared demotion: same posture as v1's Forum arm
+                            // above, but only run when a token was actually
+                            // sent — an anonymous GET failing says nothing
+                            // about a session that was never presented.
+                            macro_rules! demote_if_rejected_v2 {
+                                ($err:expr) => {{
+                                    if let Some(auth) = auth_header.as_deref() {
+                                        if matches!(
+                                            auth_probe::probe(&http_client, auth).await,
+                                            auth_probe::Verdict::Rejected
+                                        ) {
+                                            token_store::clear_token();
+                                            tier_store::clear_tier();
+                                            let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
+                                            eprintln!(
+                                                "[{} Updater] session rejected during forum_v2 call — signed out",
+                                                now_ts()
+                                            );
+                                        }
+                                    }
+                                    log::warn!("[Updater] forum_v2 call failed: {}", $err);
+                                    let _ = forum_v2_tx.send(state::ForumV2State::Failed { message: $err });
+                                }};
+                            }
+                            match req {
+                                state::ForumV2Request::ListBoards => {
+                                    match forum_v2::list_boards(&http_client, auth_header.as_deref()).await {
+                                        Ok(boards) => {
+                                            let _ = forum_v2_tx.send(state::ForumV2State::Boards(boards));
+                                        }
+                                        Err(e) => demote_if_rejected_v2!(e),
+                                    }
+                                }
+                                state::ForumV2Request::ListBoardThreads { slug, before } => {
+                                    match forum_v2::list_board_threads(
+                                        &http_client,
+                                        auth_header.as_deref(),
+                                        &slug,
+                                        before.as_deref(),
+                                    )
+                                    .await
+                                    {
+                                        Ok((threads, next_before)) => {
+                                            let _ = forum_v2_tx.send(state::ForumV2State::BoardThreads {
+                                                threads,
+                                                next_before,
+                                            });
+                                        }
+                                        Err(e) => demote_if_rejected_v2!(e),
+                                    }
+                                }
+                                state::ForumV2Request::CreateThread { slug, title, body } => {
+                                    if let Some(auth) = auth_header.as_deref() {
+                                        match forum_v2::create_thread(&http_client, auth, &slug, &title, &body).await {
+                                            Ok(id) => {
+                                                log::info!("[Updater] forum_v2: created thread {} on board {}", id, slug);
+                                                let _ = forum_v2_tx.send(state::ForumV2State::ThreadCreated { id });
+                                            }
+                                            Err(e) => demote_if_rejected_v2!(e),
+                                        }
+                                    }
+                                }
+                                state::ForumV2Request::LoadThread { id } => {
+                                    match forum_v2::get_thread(&http_client, auth_header.as_deref(), id).await {
+                                        Ok(thread) => {
+                                            let _ = forum_v2_tx.send(state::ForumV2State::Thread(thread));
+                                        }
+                                        Err(e) => demote_if_rejected_v2!(e),
+                                    }
+                                }
+                                state::ForumV2Request::Reply { thread_id, body, parent_reply_id } => {
+                                    if let Some(auth) = auth_header.as_deref() {
+                                        match forum_v2::create_reply(&http_client, auth, thread_id, &body, parent_reply_id).await {
+                                            Ok(id) => {
+                                                log::info!("[Updater] forum_v2: posted reply {} on thread {}", id, thread_id);
+                                                let _ = forum_v2_tx.send(state::ForumV2State::ReplyPosted { id });
+                                            }
+                                            Err(e) => demote_if_rejected_v2!(e),
+                                        }
+                                    }
+                                }
+                                state::ForumV2Request::DeleteReply { id } => {
+                                    if let Some(auth) = auth_header.as_deref() {
+                                        match forum_v2::delete_reply(&http_client, auth, id).await {
+                                            Ok(()) => {
+                                                log::info!("[Updater] forum_v2: deleted reply {}", id);
+                                                let _ = forum_v2_tx.send(state::ForumV2State::ReplyDeleted);
+                                            }
+                                            Err(e) => demote_if_rejected_v2!(e),
+                                        }
+                                    }
+                                }
+                                state::ForumV2Request::Search { q, board } => {
+                                    match forum_v2::search(&http_client, auth_header.as_deref(), &q, board.as_deref()).await {
+                                        Ok(results) => {
+                                            let _ = forum_v2_tx.send(state::ForumV2State::SearchResults(results));
+                                        }
+                                        Err(e) => demote_if_rejected_v2!(e),
+                                    }
+                                }
+                                state::ForumV2Request::Moderate { thread_id, action, board } => {
+                                    if let Some(auth) = auth_header.as_deref() {
+                                        match forum_v2::moderate(&http_client, auth, thread_id, &action, board.as_deref()).await {
+                                            Ok(()) => {
+                                                log::info!("[Updater] forum_v2: moderated thread {} ({})", thread_id, action);
+                                                let _ = forum_v2_tx.send(state::ForumV2State::Moderated);
+                                            }
+                                            Err(e) => demote_if_rejected_v2!(e),
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    state::UpdaterCommand::Dm(req) => {
+                        let token = token_store::load_token();
+                        let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
+                        match auth_header {
+                            None => {
+                                let _ = dm_tx.send(state::DmState::Failed {
+                                    message: "Sign in first".to_string(),
+                                });
+                                log::warn!("[Updater] dm command failed: not signed in");
+                            }
+                            Some(auth) => {
+                                let _ = dm_tx.send(state::DmState::Working);
+                                // Shared demotion: same posture as the other
+                                // authed command arms above.
+                                macro_rules! demote_if_rejected_dm {
+                                    ($err:expr) => {{
+                                        if matches!(
+                                            auth_probe::probe(&http_client, &auth).await,
+                                            auth_probe::Verdict::Rejected
+                                        ) {
+                                            token_store::clear_token();
+                                            tier_store::clear_tier();
+                                            let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
+                                            eprintln!(
+                                                "[{} Updater] session rejected during dm call — signed out",
+                                                now_ts()
+                                            );
+                                        }
+                                        log::warn!("[Updater] dm call failed: {}", $err);
+                                        let _ = dm_tx.send(state::DmState::Failed { message: $err });
+                                    }};
+                                }
+                                match req {
+                                    state::DmRequest::PublishIdentity { public_key_b64 } => {
+                                        match dm::publish_identity(&http_client, &auth, &public_key_b64).await {
+                                            Ok(fingerprint) => {
+                                                log::info!("[Updater] dm: published identity, fingerprint {}", fingerprint);
+                                                let _ = dm_tx.send(state::DmState::Identity { fingerprint });
+                                            }
+                                            Err(e) => demote_if_rejected_dm!(e),
+                                        }
+                                    }
+                                    state::DmRequest::GetIdentity { label } => {
+                                        match dm::get_identity(&http_client, &auth, &label).await {
+                                            Ok(identity) => {
+                                                let _ = dm_tx.send(state::DmState::PeerIdentity(identity));
+                                            }
+                                            Err(e) => demote_if_rejected_dm!(e),
+                                        }
+                                    }
+                                    state::DmRequest::ListConversations => {
+                                        match dm::list_conversations(&http_client, &auth).await {
+                                            Ok(conversations) => {
+                                                let _ = dm_tx.send(state::DmState::Conversations(conversations));
+                                            }
+                                            Err(e) => demote_if_rejected_dm!(e),
+                                        }
+                                    }
+                                    state::DmRequest::OpenConversation { with } => {
+                                        match dm::open_conversation(&http_client, &auth, &with).await {
+                                            Ok(conversation) => {
+                                                log::info!("[Updater] dm: opened conversation {}", conversation.id);
+                                                let _ = dm_tx.send(state::DmState::ConversationOpened(conversation));
+                                            }
+                                            Err(e) => demote_if_rejected_dm!(e),
+                                        }
+                                    }
+                                    state::DmRequest::ListMessages { id, after, limit } => {
+                                        match dm::list_messages(&http_client, &auth, id, after, limit).await {
+                                            Ok((messages, next_after)) => {
+                                                let _ = dm_tx.send(state::DmState::Messages { messages, next_after });
+                                            }
+                                            Err(e) => demote_if_rejected_dm!(e),
+                                        }
+                                    }
+                                    state::DmRequest::Send { id, nonce_b64, ciphertext_b64 } => {
+                                        match dm::send_message(&http_client, &auth, id, &nonce_b64, &ciphertext_b64).await {
+                                            Ok((msg_id, created_at)) => {
+                                                log::info!("[Updater] dm: sent message {} in conversation {}", msg_id, id);
+                                                let _ = dm_tx.send(state::DmState::Sent { id: msg_id, created_at });
+                                            }
+                                            Err(e) => demote_if_rejected_dm!(e),
+                                        }
+                                    }
+                                    state::DmRequest::MarkRead { id, up_to } => {
+                                        match dm::mark_read(&http_client, &auth, id, up_to).await {
+                                            Ok(()) => {
+                                                log::info!("[Updater] dm: marked conversation {} read up to {}", id, up_to);
+                                                let _ = dm_tx.send(state::DmState::Read);
+                                            }
+                                            Err(e) => demote_if_rejected_dm!(e),
+                                        }
+                                    }
+                                }
                             }
                         }
                     }

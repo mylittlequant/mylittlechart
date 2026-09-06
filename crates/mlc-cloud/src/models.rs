@@ -587,6 +587,282 @@ pub struct ForumIdResponse {
     pub id: i64,
 }
 
+// =============================================================================
+// /api/forum/* v2 shapes (public boards, role-gated read/write, threaded
+// replies, moderation, search) — mirrors `mylittlechart-server/crates/
+// server/src/routes/forum_v2.rs` + `social_db.rs`. NOT every route here
+// requires a paid account: a board's own `read_class`/`write_class` decide
+// per board (wire names from `social_db::Class::as_str`: "public"|"user"|
+// "paid"|"moderator"|"admin"), and a `public` board answers a signed-out
+// caller. Distinct from the v1 forum shapes above, which stay untouched.
+// =============================================================================
+
+/// One row of `GET /api/forum/boards` (`ForumBoardsResponse::boards`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ForumBoard {
+    pub id: i64,
+    pub slug: String,
+    pub title: String,
+    pub description: String,
+    /// Wire name of the read-access class gate — see this section's doc.
+    pub read_class: String,
+    /// Wire name of the write-access class gate — see this section's doc.
+    pub write_class: String,
+    pub position: i64,
+}
+
+/// Response body from `GET /api/forum/boards`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForumBoardsResponse {
+    pub boards: Vec<ForumBoard>,
+}
+
+/// One row of `GET /api/forum/boards/{slug}/threads`
+/// (`ForumBoardThreadsResponse::threads`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ForumThreadV2Summary {
+    pub id: i64,
+    pub board_id: i64,
+    pub title: String,
+    pub author: String,
+    pub author_is_me: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_reply_at: Option<String>,
+    pub reply_count: i64,
+    pub pinned: bool,
+    pub locked: bool,
+}
+
+/// Response body from
+/// `GET /api/forum/boards/{slug}/threads?limit=N&before=<activity>|<id>`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForumBoardThreadsResponse {
+    pub threads: Vec<ForumThreadV2Summary>,
+    pub next_before: Option<String>,
+}
+
+/// The thread itself, as nested in `ForumThreadV2Response::thread` — never
+/// carries its replies (those are the sibling `replies` field).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ForumThreadV2 {
+    pub id: i64,
+    pub board_id: i64,
+    pub title: String,
+    pub author: String,
+    pub author_is_me: bool,
+    pub body: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub pinned: bool,
+    pub locked: bool,
+    /// Always `false` for a caller this response was ever returned to — a
+    /// hidden thread reads as 404 for anyone but a moderator/admin, and the
+    /// server sends the true value only to them
+    /// (`routes::forum_v2::get_thread`).
+    pub hidden: bool,
+}
+
+/// One reply node in `ForumThreadV2Response::replies` — a tree, not a flat
+/// list: `children` nests replies posted under this one
+/// (`parent_reply_id`), the same shape `social_db::ReplyNode`/
+/// `routes::forum_v2::render_reply_tree` build server-side.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ForumReplyNode {
+    pub id: i64,
+    pub parent_reply_id: Option<i64>,
+    pub depth: i64,
+    pub author: String,
+    pub author_is_me: bool,
+    pub body: String,
+    pub created_at: String,
+    /// `true` only reaches this caller when they are a moderator/admin — a
+    /// hidden reply is omitted from the tree entirely for everyone else,
+    /// same as a hidden thread.
+    pub hidden: bool,
+    pub children: Vec<ForumReplyNode>,
+}
+
+/// Response body from `GET /api/forum/v2/threads/{id}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForumThreadV2Response {
+    pub thread: ForumThreadV2,
+    pub replies: Vec<ForumReplyNode>,
+}
+
+/// Request body for `POST /api/forum/boards/{slug}/threads`.
+/// (400 if `title` is not 3-120 bytes or `body` is not 1-8192 bytes; 401
+/// anonymous; 403 write class too low; 429 at one thread per 60s.)
+#[derive(Debug, Clone, Serialize)]
+pub struct ForumCreateThreadV2Request {
+    pub title: String,
+    pub body: String,
+}
+
+/// Request body for `POST /api/forum/v2/threads/{id}/replies`.
+/// `parent_reply_id = None` posts a top-level reply; `Some(id)` nests under
+/// an existing (visible, same-thread) reply. (429 at ten replies per 60s;
+/// 403 if the thread is locked or write class too low.)
+#[derive(Debug, Clone, Serialize)]
+pub struct ForumReplyV2Request {
+    pub body: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_reply_id: Option<i64>,
+}
+
+/// One hit in `GET /api/forum/search`'s `results` array — either a thread
+/// (`kind == "thread"`, `title` set) or a reply (`kind == "reply"`,
+/// `reply_id` set, `title` absent).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ForumSearchHit {
+    pub kind: String,
+    pub board_id: i64,
+    pub thread_id: i64,
+    pub reply_id: Option<i64>,
+    pub title: Option<String>,
+    pub snippet: String,
+    pub author: String,
+    pub created_at: String,
+}
+
+/// Response body from `GET /api/forum/search?q=&board=`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForumSearchResponse {
+    pub results: Vec<ForumSearchHit>,
+}
+
+/// Request body for `POST /api/forum/v2/threads/{id}/moderate` — moderator
+/// or admin only (403 otherwise). `action` is one of hide|unhide|lock|
+/// unlock|pin|unpin|move; `board` names the target slug for `"move"` and is
+/// ignored otherwise.
+#[derive(Debug, Clone, Serialize)]
+pub struct ForumModerateAction {
+    pub action: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub board: Option<String>,
+}
+
+// =============================================================================
+// /api/dm/* shapes (paid, end-to-end encrypted direct messages)
+//
+// Mirrors `mylittlechart-server/crates/server/src/routes/dm.rs` +
+// `dm_db.rs`. Every route requires an authenticated AND paid caller
+// (401 anonymous, 403 free); several also require the NAMED peer to be
+// currently paid (403 with a different sentence — see `dm_error_message`
+// in `lib.rs`). `nonce_b64`/`ciphertext_b64` are opaque base64 to this
+// crate: the caller (vault layer) already produced/consumes them — nothing
+// here encodes, decodes, or inspects the bytes inside.
+// =============================================================================
+
+/// Request body for `PUT /api/dm/identity`.
+#[derive(Debug, Clone, Serialize)]
+pub struct DmPublishIdentityRequest {
+    pub public_key_b64: String,
+}
+
+/// Response body from `PUT /api/dm/identity`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DmPublishIdentityResponse {
+    pub fingerprint: String,
+}
+
+/// Response body from `GET /api/dm/identity/{public_id_or_nick}`. 404 if
+/// the label names no user, or the user exists but has never published a
+/// DM identity key — the two cases are indistinguishable to the caller.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DmIdentityResponse {
+    pub public_id: String,
+    pub label: String,
+    pub public_key_b64: String,
+    pub fingerprint: String,
+}
+
+/// Request body for `POST /api/dm/conversations`.
+#[derive(Debug, Clone, Serialize)]
+pub struct DmCreateConversationRequest {
+    pub with: String,
+}
+
+/// The other party to a [`DmConversation`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DmConversationPeer {
+    pub label: String,
+    pub public_id: String,
+    /// `None` when the peer has never published a DM identity key. Also
+    /// always absent on `GET /api/dm/conversations`'s list shape — only
+    /// `POST /api/dm/conversations`'s creation response sends this field
+    /// at all.
+    #[serde(default)]
+    pub fingerprint: Option<String>,
+}
+
+/// One conversation — the shape both `POST /api/dm/conversations`
+/// (creation) and `GET /api/dm/conversations` (listing) answer with, though
+/// the two omit different optional fields (see each field's own doc).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DmConversation {
+    pub id: i64,
+    pub peer: DmConversationPeer,
+    /// Absent on `POST /api/dm/conversations`'s creation response (a brand
+    /// new conversation has no messages yet); present on the list response.
+    #[serde(default)]
+    pub last_message_at: Option<String>,
+    /// Absent on the creation response; wire name is `unread_count` on the
+    /// list response.
+    #[serde(default, rename = "unread_count")]
+    pub unread: i64,
+}
+
+/// Response body from `GET /api/dm/conversations`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DmConversationsResponse {
+    pub conversations: Vec<DmConversation>,
+}
+
+/// One row of `GET /api/dm/conversations/{id}/messages`
+/// (`DmMessagesResponse::messages`). `nonce_b64`/`ciphertext_b64` are opaque
+/// to this crate — see this section's doc.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DmMessage {
+    pub id: i64,
+    pub sender_public_id: String,
+    #[serde(default)]
+    pub sender_is_me: bool,
+    pub nonce_b64: String,
+    pub ciphertext_b64: String,
+    pub created_at: String,
+    #[serde(default)]
+    pub read_at: Option<String>,
+}
+
+/// Response body from
+/// `GET /api/dm/conversations/{id}/messages?after=&limit=`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DmMessagesResponse {
+    pub messages: Vec<DmMessage>,
+    pub next_after: Option<i64>,
+}
+
+/// Request body for `POST /api/dm/conversations/{id}/messages`.
+#[derive(Debug, Clone, Serialize)]
+pub struct DmSendMessageRequest {
+    pub nonce_b64: String,
+    pub ciphertext_b64: String,
+}
+
+/// Response body from `POST /api/dm/conversations/{id}/messages`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DmSendMessageResponse {
+    pub id: i64,
+    pub created_at: String,
+}
+
+/// Request body for `POST /api/dm/conversations/{id}/read`.
+#[derive(Debug, Clone, Serialize)]
+pub struct DmMarkReadRequest {
+    pub up_to_id: i64,
+}
+
 /// Locally persisted auth token (wasm: localStorage; native: config dir).
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StoredToken {

@@ -253,6 +253,144 @@ pub struct ForumState {
     pub busy: bool,
 }
 
+/// Commands for forum engine v2 (public boards, role-gated read/write,
+/// threaded replies, moderation, search), wrapped in
+/// [`UpdaterCommand::ForumV2`]. Unlike v1's [`ForumCommand`] (paid-only,
+/// always requires a stored token), several of these run anonymously —
+/// `updater_loop` sends a request with no bearer at all for
+/// `ListBoards`/`ListBoardThreads`/`LoadThread`/`Search` when no token is
+/// stored; `CreateThread`/`Reply`/`DeleteReply`/`Moderate` still require one
+/// and refuse locally with "Sign in first" otherwise.
+#[derive(Debug, Clone)]
+pub enum ForumV2Request {
+    /// `GET /api/forum/boards`.
+    ListBoards,
+    /// `GET /api/forum/boards/{slug}/threads?before=…`.
+    ListBoardThreads { slug: String, before: Option<String> },
+    /// `POST /api/forum/boards/{slug}/threads`.
+    CreateThread { slug: String, title: String, body: String },
+    /// `GET /api/forum/v2/threads/{id}`.
+    LoadThread { id: i64 },
+    /// `POST /api/forum/v2/threads/{id}/replies`. `parent_reply_id = None`
+    /// posts a top-level reply.
+    Reply {
+        thread_id: i64,
+        body: String,
+        parent_reply_id: Option<i64>,
+    },
+    /// `DELETE /api/forum/v2/replies/{id}`.
+    DeleteReply { id: i64 },
+    /// `GET /api/forum/search?q=&board=`.
+    Search { q: String, board: Option<String> },
+    /// `POST /api/forum/v2/threads/{id}/moderate` — moderator/admin only,
+    /// enforced server-side.
+    Moderate {
+        thread_id: i64,
+        action: String,
+        board: Option<String>,
+    },
+}
+
+/// Outcome of the most recent [`ForumV2Request`], broadcast via
+/// [`UpdaterHandle::forum_v2_rx`] — one mailbox for every v2 forum action,
+/// same idiom as [`RedeemState`]/[`NickState`]/[`ShareState`] rather than
+/// v1's mutate-in-place [`ForumState`]: nothing here needs a list/thread
+/// pair to persist across unrelated actions the way the v1 reading view
+/// does, so there is nothing to preserve between requests.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum ForumV2State {
+    /// No v2 forum request since the last one settled (or was superseded).
+    #[default]
+    Idle,
+    /// A request is in flight.
+    Working,
+    /// `ListBoards` succeeded.
+    Boards(Vec<crate::forum_v2::ForumBoard>),
+    /// `ListBoardThreads` succeeded.
+    BoardThreads {
+        threads: Vec<crate::forum_v2::ForumThreadV2Summary>,
+        next_before: Option<String>,
+    },
+    /// `CreateThread` succeeded; carries the new thread's id.
+    ThreadCreated { id: i64 },
+    /// `LoadThread` succeeded.
+    Thread(crate::forum_v2::ForumThreadV2),
+    /// `Reply` succeeded; carries the new reply's id.
+    ReplyPosted { id: i64 },
+    /// `DeleteReply` succeeded.
+    ReplyDeleted,
+    /// `Search` succeeded.
+    SearchResults(Vec<crate::forum_v2::ForumSearchHit>),
+    /// `Moderate` succeeded.
+    Moderated,
+    /// Refused — "Sign in first" for a write action with no stored token, or
+    /// the server's/transport's own description otherwise.
+    Failed { message: String },
+}
+
+/// Commands for direct messages (paid, end-to-end encrypted), wrapped in
+/// [`UpdaterCommand::Dm`]. Every route requires an authenticated AND paid
+/// caller — unlike [`ForumV2Request`] there is no anonymous-ok path here at
+/// all; `updater_loop` refuses every variant locally with "Sign in first"
+/// when no token is stored.
+#[derive(Debug, Clone)]
+pub enum DmRequest {
+    /// `PUT /api/dm/identity`.
+    PublishIdentity { public_key_b64: String },
+    /// `GET /api/dm/identity/{public_id_or_nick}`.
+    GetIdentity { label: String },
+    /// `GET /api/dm/conversations`.
+    ListConversations,
+    /// `POST /api/dm/conversations` — `{"with": …}`.
+    OpenConversation { with: String },
+    /// `GET /api/dm/conversations/{id}/messages?after=&limit=`.
+    ListMessages {
+        id: i64,
+        after: Option<i64>,
+        limit: i64,
+    },
+    /// `POST /api/dm/conversations/{id}/messages`.
+    Send {
+        id: i64,
+        nonce_b64: String,
+        ciphertext_b64: String,
+    },
+    /// `POST /api/dm/conversations/{id}/read`.
+    MarkRead { id: i64, up_to: i64 },
+}
+
+/// Outcome of the most recent [`DmRequest`], broadcast via
+/// [`UpdaterHandle::dm_rx`] — one mailbox for every DM action, same idiom
+/// as [`ForumV2State`].
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum DmState {
+    /// No DM request since the last one settled (or was superseded).
+    #[default]
+    Idle,
+    /// A request is in flight.
+    Working,
+    /// `PublishIdentity` succeeded; carries the new fingerprint.
+    Identity { fingerprint: String },
+    /// `GetIdentity` succeeded.
+    PeerIdentity(crate::dm::DmIdentity),
+    /// `ListConversations` succeeded.
+    Conversations(Vec<crate::dm::DmConversation>),
+    /// `OpenConversation` succeeded.
+    ConversationOpened(crate::dm::DmConversation),
+    /// `ListMessages` succeeded.
+    Messages {
+        messages: Vec<crate::dm::DmMessage>,
+        next_after: Option<i64>,
+    },
+    /// `Send` succeeded; carries the new message's id and server timestamp.
+    Sent { id: i64, created_at: String },
+    /// `MarkRead` succeeded.
+    Read,
+    /// Refused — "Sign in first" with no stored token, or the server's/
+    /// transport's own description otherwise.
+    Failed { message: String },
+}
+
 /// Information about an available update.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UpdateInfo {
@@ -324,6 +462,15 @@ pub enum UpdaterCommand {
     /// the updater publishes [`ForumState::last_error`] without making a
     /// request. Outcomes are broadcast via [`UpdaterHandle::forum_rx`].
     Forum(ForumCommand),
+    /// A forum-v2 action (public boards, threaded replies, moderation,
+    /// search). Several variants of [`ForumV2Request`] run anonymously —
+    /// see that type's own doc. Outcomes are broadcast via
+    /// [`UpdaterHandle::forum_v2_rx`].
+    ForumV2(ForumV2Request),
+    /// A direct-message action. Requires a stored token — with none, the
+    /// updater publishes [`DmState::Failed`] without making a request.
+    /// Outcomes are broadcast via [`UpdaterHandle::dm_rx`].
+    Dm(DmRequest),
     /// Freeze the active preset into a public link
     /// (`POST /api/share/live`). Requires a stored token — with none, the
     /// updater publishes [`ShareState::Failed`] without making a request.
@@ -510,6 +657,16 @@ pub struct UpdaterHandle {
     /// by the updater loop. Starts at [`ForumState::default`] (empty list,
     /// no thread, no error, not busy).
     pub forum_rx: watch::Receiver<ForumState>,
+    /// Outcome of the most recent [`UpdaterCommand::ForumV2`] request.
+    ///
+    /// Same polling contract as [`Self::redeem_rx`]; starts at
+    /// [`ForumV2State::Idle`].
+    pub forum_v2_rx: watch::Receiver<ForumV2State>,
+    /// Outcome of the most recent [`UpdaterCommand::Dm`] request.
+    ///
+    /// Same polling contract as [`Self::redeem_rx`]; starts at
+    /// [`DmState::Idle`].
+    pub dm_rx: watch::Receiver<DmState>,
     /// Outcome of the most recent [`UpdaterCommand::ShareLive`] /
     /// [`UpdaterCommand::ShareScreenshot`] attempt.
     ///

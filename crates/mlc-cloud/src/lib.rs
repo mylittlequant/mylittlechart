@@ -191,3 +191,89 @@ pub fn forum_error_message(e: &CloudError) -> String {
         other => other.to_string(),
     }
 }
+
+/// The sentence to show someone whose forum-v2 action (board thread create,
+/// reply, delete, moderate) was refused. Lives here for the same reason
+/// [`redeem_error_message`] does — see that function's own doc. Unlike v1's
+/// [`forum_error_message`], 403 reads the server's own body when present:
+/// a v2 board's write-class refusal and a moderate action's role refusal
+/// carry different sentences, not one fixed "requires a paid account" (a
+/// v2 board may not even be paid-gated at all). 404 covers an unknown
+/// board/thread/reply, and 429 prefers the server's `retry_after_secs` the
+/// same way [`forum_error_message`] does.
+pub fn forum_v2_error_message(e: &CloudError) -> String {
+    #[derive(serde::Deserialize)]
+    struct ErrorBody {
+        error: String,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct RateLimitBody {
+        #[serde(default)]
+        error: String,
+        #[serde(default)]
+        retry_after_secs: u64,
+    }
+    match e {
+        CloudError::Forbidden(body) => serde_json::from_str::<ErrorBody>(body)
+            .ok()
+            .map(|b| b.error)
+            .unwrap_or_else(|| "You don't have write access to this board".to_string()),
+        CloudError::Http { status: 400, body } => serde_json::from_str::<ErrorBody>(body)
+            .ok()
+            .map(|b| b.error)
+            .unwrap_or_else(|| "That isn't valid".to_string()),
+        CloudError::Http { status: 404, .. } => "Not found".to_string(),
+        CloudError::Http { status: 429, body } => match serde_json::from_str::<RateLimitBody>(body) {
+            Ok(b) if b.retry_after_secs > 0 => format!("Try again in {}s", b.retry_after_secs),
+            Ok(b) if !b.error.is_empty() => b.error,
+            _ => "Too many requests — try again shortly".to_string(),
+        },
+        CloudError::Unauthorized => "Sign in again, then retry".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// The sentence to show someone whose direct-message action (publish
+/// identity, open a conversation, send a message, mark read) was refused.
+/// Lives here for the same reason [`redeem_error_message`] does — see that
+/// function's own doc. 403 covers two distinct refusals the server words
+/// itself (the caller is not paid, or the named peer is not paid) — this
+/// reads the server's own body when present rather than picking one fixed
+/// sentence for both. 413 is the ciphertext-too-large cap
+/// (`dm_db::DM_MAX_CIPHERTEXT_BYTES`); 429 is the per-sender daily send
+/// limit, worded from `retry_after_secs` when the server sends one.
+pub fn dm_error_message(e: &CloudError) -> String {
+    #[derive(serde::Deserialize)]
+    struct ErrorBody {
+        error: String,
+    }
+    #[derive(serde::Deserialize, Default)]
+    struct RateLimitBody {
+        #[serde(default)]
+        error: String,
+        #[serde(default)]
+        retry_after_secs: u64,
+    }
+    match e {
+        CloudError::Forbidden(body) => serde_json::from_str::<ErrorBody>(body)
+            .ok()
+            .map(|b| b.error)
+            .unwrap_or_else(|| "Direct messages require a paid account".to_string()),
+        CloudError::Http { status: 400, body } => serde_json::from_str::<ErrorBody>(body)
+            .ok()
+            .map(|b| b.error)
+            .unwrap_or_else(|| "That isn't valid".to_string()),
+        CloudError::Http { status: 404, .. } => "Not found".to_string(),
+        CloudError::Http { status: 413, body } => serde_json::from_str::<ErrorBody>(body)
+            .ok()
+            .map(|b| b.error)
+            .unwrap_or_else(|| "Message is too large".to_string()),
+        CloudError::Http { status: 429, body } => match serde_json::from_str::<RateLimitBody>(body) {
+            Ok(b) if b.retry_after_secs > 0 => format!("Try again in {}s", b.retry_after_secs),
+            Ok(b) if !b.error.is_empty() => b.error,
+            _ => "Too many messages today — try again tomorrow".to_string(),
+        },
+        CloudError::Unauthorized => "Sign in again, then retry".to_string(),
+        other => other.to_string(),
+    }
+}
