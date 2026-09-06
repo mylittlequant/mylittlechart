@@ -630,6 +630,20 @@ struct App<'s> {
     /// True when the user confirms they have saved the new recovery key after a
     /// recovery re-key.  Skeleton promote is deferred until this flag is set.
     pending_promote_after_recovery_key: bool,
+
+    /// Raw share token/URL/deep-link parsed from argv at startup (native-
+    /// share-viewer arc, 2026-09-06) — drained once the first window exists
+    /// (`ChartApp::request_open_share` needs a live window to queue onto).
+    /// See `main()`'s own comment for the parse rule and the single-instance
+    /// gap this leaves open.
+    pending_deep_link_share: Option<String>,
+    /// Bare token of the most recent `UpdaterCommand::OpenShare` this shell
+    /// sent — `mlc_updater::ShareOpenState::Opened` carries no token of its
+    /// own (the mailbox is one-shot, mirroring `ShareState`), so this is
+    /// where the apply block reads it back to fill
+    /// `share_viewer::SharedChartMeta::token`. Only ever one open request in
+    /// flight at a time, same assumption `ShareOpenState`'s own doc makes.
+    pending_open_share_token: Option<String>,
 }
 
 /// Snapshot of system CPU/RAM metrics produced by the background sampler thread.
@@ -1329,6 +1343,8 @@ impl App<'_> {
             pending_switch_after_recovery: None,
             pending_recovery_master_key: None,
             pending_promote_after_recovery_key: false,
+            pending_deep_link_share: None,
+            pending_open_share_token: None,
         }
     }
 
@@ -2681,8 +2697,20 @@ impl App<'_> {
             eprintln!("[App] Failed to save templates: {:?}", e);
         }
 
-        // 9. Save all presets from the shared core (single canonical source of truth).
+        // 9. Save all presets from the shared core (single canonical source of truth),
+        // except read-only shared-viewer tabs (native-share-viewer arc,
+        // 2026-09-06). This is the sync hand-off: `mlc-updater::cloud_sync`
+        // never sees `ChartApp` — it just reads every `*.json` under the
+        // on-disk `presets/` directory (`collect_local_items`) — so writing
+        // a shared preset here at all is what would hand it to the next
+        // sync cycle as an ordinary preset, the server's own frozen copy
+        // pushed straight back at it. `is_readonly_tab` is per-preset-id on
+        // `ChartApp` (see that method's own doc), so this checks every open
+        // window rather than reading a shell-global flag.
         for preset in self.core.presets().values() {
+            if self.windows.values().any(|pw| pw.chart.is_readonly_tab(&preset.id)) {
+                continue;
+            }
             if let Err(e) = mlc_core::preset::storage::save_preset(preset) {
                 eprintln!("[App] failed to save preset {}: {}", preset.id, e);
             }
@@ -2749,6 +2777,20 @@ impl ApplicationHandler<UserEvent> for App<'_> {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // ── Native share deep link — apply once the first window exists ────
+        // `main()` parses argv into `pending_deep_link_share` before any
+        // window is created (`ChartApp::request_open_share` needs a live
+        // `ChartApp` to queue onto). One-shot via `.take()`; the per-window
+        // drain further down (next to `drain_pending_share_live`) picks up
+        // the resulting `pending_open_share` and sends the actual command.
+        if self.pending_deep_link_share.is_some() && !self.windows.is_empty() {
+            if let Some(raw) = self.pending_deep_link_share.take() {
+                if let Some(pw) = self.system_event_window_mut() {
+                    pw.chart.request_open_share(&raw);
+                }
+            }
+        }
+
         // ── Agents panel: drain PTY events (non-blocking, before FPS cap) ───
         // PTY data arrives on a background broadcast channel. We drain it
         // every wake-up so bytes don't pile up, but rendering is still
@@ -5627,6 +5669,90 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     mlc_updater::ShareState::Idle | mlc_updater::ShareState::Working => {}
                 }
             }
+            // Outcome of the most recent open/clone-share request —
+            // edge-triggered off `share_open_rx` same as `share_rx` above,
+            // but applied to a tab (`ChartApp::open_shared_preset`/
+            // `apply_cloned_preset`) on the active window
+            // (`system_event_window_mut`, same "one window speaks for the
+            // profile" choice that helper's own doc explains) rather than
+            // just a clipboard write + a generic toast.
+            if self.updater_handle.share_open_rx.has_changed().unwrap_or(false) {
+                let outcome = self.updater_handle.share_open_rx.borrow_and_update().clone();
+                match outcome {
+                    mlc_updater::ShareOpenState::Opened { meta, preset_json } => {
+                        // `Opened` carries no token of its own (one-shot
+                        // mailbox) — read back what the drain above sent.
+                        let token = self.pending_open_share_token.take().unwrap_or_default();
+                        let outcome: Result<(), String> = if meta.kind != "live" {
+                            Err("this share has no chart to open".to_string())
+                        } else {
+                            match preset_json {
+                                None => Err("server sent no preset for a live share".to_string()),
+                                Some(value) => match serde_json::from_value::<mlc_core::preset::preset::ChartPreset>(value) {
+                                    Err(e) => Err(format!("could not read shared preset: {}", e)),
+                                    Ok(preset) => {
+                                        let shared_meta = mlc_app::SharedChartMeta {
+                                            token,
+                                            title: meta.title,
+                                            owner_label: meta.owner_label,
+                                            kind: meta.kind,
+                                            rights: meta.rights,
+                                            expires_at: meta.expires_at,
+                                        };
+                                        match self.system_event_window_mut() {
+                                            None => Err("no window to open the shared chart in".to_string()),
+                                            Some(pw) => pw.chart.open_shared_preset(shared_meta, preset).map(|_| ()),
+                                        }
+                                    }
+                                },
+                            }
+                        };
+                        let (title, body) = match outcome {
+                            Ok(()) => (
+                                "Shared chart opened",
+                                "Read-only — use Clone to make it yours.".to_string(),
+                            ),
+                            Err(message) => ("Could not open shared chart", message),
+                        };
+                        if let Some(pw) = self.system_event_window_mut() {
+                            pw.chart.push_system_event(mlc_core::SystemEventKind::Share, title, body, true);
+                        }
+                    }
+                    mlc_updater::ShareOpenState::Cloned { preset_json, stripped } => {
+                        match serde_json::from_value::<mlc_core::preset::preset::ChartPreset>(preset_json) {
+                            Ok(preset) => {
+                                let stripped: Vec<mlc_app::StrippedIndicator> = stripped
+                                    .into_iter()
+                                    .map(|s| mlc_app::StrippedIndicator { type_id: s.type_id, name: s.name })
+                                    .collect();
+                                // `apply_cloned_preset` pushes its own
+                                // "Chart cloned" system event (naming any
+                                // stripped indicator) — nothing more to do
+                                // on success.
+                                if let Some(pw) = self.system_event_window_mut() {
+                                    pw.chart.apply_cloned_preset(preset, stripped);
+                                }
+                            }
+                            Err(e) => {
+                                if let Some(pw) = self.system_event_window_mut() {
+                                    pw.chart.push_system_event(
+                                        mlc_core::SystemEventKind::Share,
+                                        "Clone failed",
+                                        format!("could not read cloned preset: {}", e),
+                                        true,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    mlc_updater::ShareOpenState::Failed { message } => {
+                        if let Some(pw) = self.system_event_window_mut() {
+                            pw.chart.push_system_event(mlc_core::SystemEventKind::Share, "Share failed", message, true);
+                        }
+                    }
+                    mlc_updater::ShareOpenState::Idle | mlc_updater::ShareOpenState::Working => {}
+                }
+            }
             // Forum board state — edge-triggered same as `redeem_rx`/
             // `nick_rx` above, held as the raw `mlc_updater::ForumState`
             // (not mapped into a UI shape here) because interpreting it
@@ -6341,6 +6467,30 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     .send(mlc_updater::UpdaterCommand::ShareScreenshot { title, png });
             }
 
+            // Native share-viewer arc: open/clone requests queued by
+            // `ChartApp::request_open_share`/`request_clone_share` (the
+            // deep-link drain above, or a future toolbar/Agent-API caller)
+            // — same "ChartApp does no network IO itself" hand-off the
+            // `drain_pending_share_live` block above already makes.
+            // `ShareOpenState::Opened` carries no token of its own (one-shot
+            // mailbox, mirroring `ShareState`), so the bare token is
+            // remembered here for the apply block below to read back.
+            if let Some(raw) = pw.chart.take_pending_open_share() {
+                let token = extract_share_token(&raw);
+                self.pending_open_share_token = Some(token.clone());
+                let _ = self
+                    .updater_handle
+                    .cmd_tx
+                    .send(mlc_updater::UpdaterCommand::OpenShare { token });
+            }
+            if let Some(raw) = pw.chart.take_pending_clone_share() {
+                let token = extract_share_token(&raw);
+                let _ = self
+                    .updater_handle
+                    .cmd_tx
+                    .send(mlc_updater::UpdaterCommand::CloneShare { token });
+            }
+
             // Tooltip tick — fires when cursor is stationary (no CursorMoved events)
             {
                 let time_ms = pw.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;
@@ -6929,6 +7079,43 @@ impl ApplicationHandler<UserEvent> for App<'_> {
     }
 }
 
+/// Parse a native share deep link off argv — `mylittlechart://share/<token>`
+/// or a bare `https://chart.example/?share=<token>` passed as a whole
+/// argument (native-share-viewer arc, `docs/mlc/plans/native-share-viewer-
+/// and-chart-rights-2026-09-06.md` §1). Checked next to `--wait-pid` because
+/// both are OS-launch-time inputs read before any window exists — unlike
+/// `--wait-pid` this one is a single self-contained argument, not a
+/// `--flag value` pair, so a plain `find` over `std::env::args()` is enough.
+///
+/// v1 gap, not solved here (per the plan): the single-instance mutex below
+/// exits this whole process before this function's result is ever applied
+/// when another instance is already running, so a link clicked while the
+/// app is already open is silently dropped — there is no IPC to a running
+/// instance yet (a pipe relay is a follow-up).
+fn parse_deep_link_share_argv() -> Option<String> {
+    std::env::args().find(|a| a.starts_with("mylittlechart://share/") || a.contains("?share="))
+}
+
+/// Normalize a raw share reference down to the bare token the server's
+/// `/api/share/{token}` routes take — a bare token, a full
+/// `https://chart.example/?share=<token>` URL, and a
+/// `mylittlechart://share/<token>` deep link all resolve here.
+/// `ChartApp::request_open_share`'s own doc names all three as accepted
+/// input; this is the one place the stripping happens, so the argv parse
+/// above and the future "Open shared chart…" overlay's submit button never
+/// duplicate the rule.
+fn extract_share_token(raw: &str) -> String {
+    let raw = raw.trim();
+    if let Some(rest) = raw.strip_prefix("mylittlechart://share/") {
+        return rest.split(['?', '#']).next().unwrap_or(rest).trim_end_matches('/').to_string();
+    }
+    if let Some(idx) = raw.find("?share=") {
+        let after = &raw[idx + "?share=".len()..];
+        return after.split('&').next().unwrap_or(after).to_string();
+    }
+    raw.to_string()
+}
+
 fn main() {
     // ── Single-instance guard (Windows named mutex) ──────────────────
     // If another mylittlechart process is already running, exit immediately
@@ -7126,5 +7313,8 @@ fn main() {
     // Store the event-loop proxy so the promote worker can send PromoteReady
     // back to the main thread without polling.
     app.promote_proxy = Some(event_loop.create_proxy());
+    // Native share deep link (see `parse_deep_link_share_argv`'s own doc) —
+    // applied once the first window exists, in `about_to_wait`.
+    app.pending_deep_link_share = parse_deep_link_share_argv();
     event_loop.run_app(&mut app).expect("Event loop error");
 }

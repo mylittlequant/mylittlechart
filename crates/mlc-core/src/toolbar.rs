@@ -39,6 +39,22 @@ pub const FAVORITES_BAR_GRIP_ITEM_ID: &str = "__grip__";
 /// `FAVORITES_ADD_DROPDOWN_ID` flat all-drawing-tools picker next to the bar.
 pub const FAVORITES_BAR_ADD_ITEM_ID: &str = "__add__";
 
+/// Dropdown-item id for "Open shared chart…" — the second row of the
+/// `share_chart` toolbar button's planned camera-style double-click dropdown
+/// (native-share-viewer arc, `docs/mlc/plans/native-share-viewer-and-chart-
+/// rights-2026-09-06.md` §1/§6 step 4). Single-click keeps firing the
+/// existing `share_chart` action (`ChartOutEvent::ShareLiveChart`) — same
+/// choice the plan calls for when a dropdown would otherwise steal the
+/// click. Mirrors `"screenshot"`/`"magnet"`: this button's dropdown row LIST
+/// is built as a special case in `mlc-app-layout::panel_app::
+/// chart_toolbar_find_dropdown_items`, not as static `ToolbarItemDef` data
+/// in this file, so this constant is the one thing that builder and the
+/// `panel_click.rs` dispatch for it need to agree on — both outside this
+/// crate's toolbar-definition file. Selecting this row is meant to open an
+/// overlay hosting the `mlc-app::text_input::SHARE_OPEN_INPUT` field and,
+/// on submit, call `ChartApp::request_open_share`.
+pub const OPEN_SHARE_ACTION_ID: &str = "open_share";
+
 /// True when `id` is a real favorite tool slot (not grip / empty / add / bg).
 pub fn is_favorites_bar_tool_id(id: &str) -> bool {
     id != FAVORITES_BAR_EMPTY_ITEM_ID
@@ -252,7 +268,10 @@ pub fn standalone_top_toolbar() -> PanelToolbarDef {
                 .with_tooltip(t_toolbar(TK::Screenshot)),
         ]),
         // 10. Share chart (live-share link; anonymous sessions are refused
-        // at the click site, panel_click.rs)
+        // at the click site, panel_click.rs). A camera-style double-click
+        // dropdown carrying an `OPEN_SHARE_ACTION_ID` "Open shared chart…"
+        // row is planned (native-share-viewer arc) — see that constant's
+        // own doc; not yet wired here.
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::icon_button("share_chart", ToolbarIconId::new("Globe"))
                 .with_tooltip(t_toolbar(TK::ShareChart)),

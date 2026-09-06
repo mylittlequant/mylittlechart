@@ -215,6 +215,12 @@ pub const PARAM_FAVORITE_INPUT: &str = "param_favorite_input";
 /// empty label refuses the create rather than being rejected by this field.
 pub const KEY_LABEL_INPUT: &str = "key_label_input";
 
+/// Token/URL input in the "Open shared chart…" overlay (native-share-viewer
+/// arc, 2026-09-06). Accepts a bare token, a full share URL, or a
+/// `mylittlechart://share/<token>` deep link — `ChartApp::request_open_share`
+/// does the stripping.
+pub const SHARE_OPEN_INPUT: &str = "share_open_input";
+
 /// Inline fast-search text field hosted in the `symbol_selector` toolbar
 /// dropdown (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner spec
 /// 2026-07-16, `ProfileUiSettings::symbol_quick_search`). Mirrors
@@ -278,5 +284,6 @@ pub fn known_field_ids() -> &'static [&'static str] {
         PARAM_FAVORITE_INPUT,
         SYMBOL_QUICK_SEARCH,
         KEY_LABEL_INPUT,
+        SHARE_OPEN_INPUT,
     ]
 }

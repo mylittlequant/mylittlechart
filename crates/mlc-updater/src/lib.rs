@@ -26,7 +26,8 @@ pub mod auth_probe;
 pub mod me;
 pub mod tier_store;
 
-pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState, NickState, ForumCommand, ForumState, ShareState};
+pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState, NickState, ForumCommand, ForumState, ShareState, ShareOpenState};
+pub use share::{SharedChartResponse, SharedChartMetaWire, ClonePresetResponse, StrippedIndicatorWire};
 pub use forum::{ForumThreadSummary, ForumThread, ForumReply};
 
 /// Format current time as `HH:MM:SS` for log lines.
@@ -214,6 +215,10 @@ pub fn start(
     // `ShareLive`/`ShareScreenshot` command.
     let (share_tx, share_rx) = watch::channel(state::ShareState::Idle);
 
+    // Channel for the outcome of the most recent open/clone-share request —
+    // starts Idle, republished on every `OpenShare`/`CloneShare` command.
+    let (share_open_tx, share_open_rx) = watch::channel(state::ShareOpenState::Idle);
+
     // Channel for cloud sync status — starts Idle, updated by the updater loop.
     let (sync_status_tx, sync_status_rx) = watch::channel(state::SyncStatus::Idle);
 
@@ -232,11 +237,12 @@ pub fn start(
         nick_rx,
         forum_rx,
         share_rx,
+        share_open_rx,
         sync_status_rx,
         sync_checksums_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, redeem_tx, nick_tx, forum_tx, share_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
+    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, redeem_tx, nick_tx, forum_tx, share_tx, share_open_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
 
     handle
 }
@@ -256,6 +262,7 @@ async fn updater_loop(
     nick_tx: watch::Sender<state::NickState>,
     forum_tx: watch::Sender<state::ForumState>,
     share_tx: watch::Sender<state::ShareState>,
+    share_open_tx: watch::Sender<state::ShareOpenState>,
     sync_status_tx: watch::Sender<state::SyncStatus>,
     sync_checksums_tx: watch::Sender<std::collections::HashMap<String, String>>,
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
@@ -808,6 +815,102 @@ async fn updater_loop(
                                             );
                                         }
                                         let _ = share_tx.send(state::ShareState::Failed { message: e });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    state::UpdaterCommand::OpenShare { token } => {
+                        // Anonymous-ok: the token is the capability
+                        // (`routes/share.rs`'s own doc) — a stored token, if
+                        // any, is sent so the server can resolve `"clone"`/
+                        // `"edit"` rights for this caller, but its absence
+                        // is not a refusal the way it is for every other
+                        // authed command in this loop.
+                        let stored = token_store::load_token();
+                        let auth_header = stored.as_ref().map(|t| format!("Bearer {}", t.token));
+                        let _ = share_open_tx.send(state::ShareOpenState::Working);
+                        match share::get_share(&http_client, auth_header.as_deref(), &token).await {
+                            Ok(resp) => {
+                                log::info!("[Updater] open_share: ok, kind={}", resp.kind);
+                                let share::SharedChartResponse { kind, title, owner, preset, expires_at, rights } = resp;
+                                let meta = share::SharedChartMetaWire {
+                                    kind,
+                                    title,
+                                    owner_label: owner,
+                                    rights,
+                                    expires_at,
+                                };
+                                let _ = share_open_tx.send(state::ShareOpenState::Opened { meta, preset_json: preset });
+                            }
+                            Err(e) => {
+                                log::warn!("[Updater] open_share failed: {}", e);
+                                // Only a signed-in caller's rejected session is
+                                // worth demoting — an anonymous GET failing
+                                // (unknown token, expired share, network
+                                // error) says nothing about the stored
+                                // session, same distinction `auth_header`'s
+                                // optionality draws above.
+                                if let Some(auth) = auth_header.as_deref() {
+                                    if matches!(
+                                        auth_probe::probe(&http_client, auth).await,
+                                        auth_probe::Verdict::Rejected
+                                    ) {
+                                        token_store::clear_token();
+                                        tier_store::clear_tier();
+                                        let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
+                                        eprintln!(
+                                            "[{} Updater] session rejected during open_share — signed out",
+                                            now_ts()
+                                        );
+                                    }
+                                }
+                                let _ = share_open_tx.send(state::ShareOpenState::Failed { message: e });
+                            }
+                        }
+                    }
+                    state::UpdaterCommand::CloneShare { token } => {
+                        let stored = token_store::load_token();
+                        let auth_header = stored.as_ref().map(|t| format!("Bearer {}", t.token));
+                        match auth_header {
+                            None => {
+                                let _ = share_open_tx.send(state::ShareOpenState::Failed {
+                                    message: "Sign in first".to_string(),
+                                });
+                                log::warn!("[Updater] clone_share failed: not signed in");
+                            }
+                            Some(auth) => {
+                                let _ = share_open_tx.send(state::ShareOpenState::Working);
+                                match share::clone_share(&http_client, &auth, &token).await {
+                                    Ok(resp) => {
+                                        log::info!(
+                                            "[Updater] clone_share: ok, {} stripped",
+                                            resp.stripped.len()
+                                        );
+                                        let _ = share_open_tx.send(state::ShareOpenState::Cloned {
+                                            preset_json: resp.preset,
+                                            stripped: resp.stripped,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        log::warn!("[Updater] clone_share failed: {}", e);
+                                        // Same reasoning as the redeem/set_nick/
+                                        // share_live arms above: a rejected
+                                        // session should demote to signed-out
+                                        // now, not on the next unrelated request.
+                                        if matches!(
+                                            auth_probe::probe(&http_client, &auth).await,
+                                            auth_probe::Verdict::Rejected
+                                        ) {
+                                            token_store::clear_token();
+                                            tier_store::clear_tier();
+                                            let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
+                                            eprintln!(
+                                                "[{} Updater] session rejected during clone_share — signed out",
+                                                now_ts()
+                                            );
+                                        }
+                                        let _ = share_open_tx.send(state::ShareOpenState::Failed { message: e });
                                     }
                                 }
                             }

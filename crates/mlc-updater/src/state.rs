@@ -163,6 +163,47 @@ pub enum ShareState {
     Failed { message: String },
 }
 
+/// Outcome of the most recent [`UpdaterCommand::OpenShare`] /
+/// [`UpdaterCommand::CloneShare`] attempt, broadcast via
+/// [`UpdaterHandle::share_open_rx`] — same mailbox idiom as
+/// [`RedeemState`]/[`NickState`]/[`ShareState`]. `OpenShare` and
+/// `CloneShare` share one channel (never both in flight from one click) the
+/// same way [`ShareState`] already covers both `ShareLive` and
+/// `ShareScreenshot`. Payload types (`share::SharedChartMetaWire`,
+/// `share::StrippedIndicatorWire`) live in [`crate::share`], not here —
+/// same split [`ForumState::list`] already draws with
+/// `crate::forum::ForumThreadSummary`: the leaf transport module owns its
+/// own wire shapes, this module only owns the mailbox they travel in.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum ShareOpenState {
+    /// No open/clone request since the last one settled (or was superseded).
+    #[default]
+    Idle,
+    /// A request is in flight.
+    Working,
+    /// `OpenShare` succeeded — `preset_json` is the still-serialized
+    /// `ChartPreset` the shell deserializes and hands to
+    /// `ChartApp::open_shared_preset` alongside a `SharedChartMeta` built
+    /// from `meta`. `None` when `meta.kind != "live"` (a screenshot share
+    /// has nothing to open as a chart).
+    Opened {
+        meta: crate::share::SharedChartMetaWire,
+        preset_json: Option<serde_json::Value>,
+    },
+    /// `CloneShare` succeeded — `preset_json` is the cloned (already
+    /// stripped) preset; `stripped` names what the server removed for a
+    /// missing license, for `ChartApp::apply_cloned_preset`'s toast.
+    Cloned {
+        preset_json: serde_json::Value,
+        stripped: Vec<crate::share::StrippedIndicatorWire>,
+    },
+    /// Refused — "Sign in first" for `CloneShare` with no stored token
+    /// (`OpenShare`'s `GET` runs anonymously instead of refusing), a 403/404
+    /// wording from `crate::share`'s own error formatting, or a transport
+    /// error.
+    Failed { message: String },
+}
+
 /// Commands for the paid-only forum board, wrapped in
 /// [`UpdaterCommand::Forum`].
 #[derive(Debug, Clone)]
@@ -300,6 +341,21 @@ pub enum UpdaterCommand {
         title: String,
         png: Vec<u8>,
     },
+    /// `GET /api/share/{token}` — fetch a share link's metadata and (for a
+    /// `"live"` share) its frozen preset. Runs ANONYMOUSLY when no token is
+    /// stored — the token is the capability, per `routes/share.rs`'s own
+    /// doc — so unlike every other authed command here this one never
+    /// publishes a "Sign in first" [`ShareOpenState::Failed`] for a missing
+    /// token; it just sends the request without a bearer. Outcome broadcast
+    /// via [`UpdaterHandle::share_open_rx`].
+    OpenShare { token: String },
+    /// `POST /api/share/{token}/clone` — requires a stored token (the server
+    /// route itself requires auth) and the `clone` right on the token; with
+    /// no stored token the updater publishes [`ShareOpenState::Failed`]
+    /// without making a request, same contract as
+    /// `UpdaterCommand::RedeemCode`. Outcome broadcast via
+    /// [`UpdaterHandle::share_open_rx`].
+    CloneShare { token: String },
     /// Enable or disable cloud connectivity at runtime.
     /// `true` = cloud enabled (OTA, sync, telemetry),
     /// `false` = cloud disabled (stop all network activity).
@@ -460,6 +516,12 @@ pub struct UpdaterHandle {
     /// Same polling contract as [`Self::redeem_rx`]; starts at
     /// [`ShareState::Idle`].
     pub share_rx: watch::Receiver<ShareState>,
+    /// Outcome of the most recent [`UpdaterCommand::OpenShare`] /
+    /// [`UpdaterCommand::CloneShare`] attempt.
+    ///
+    /// Same polling contract as [`Self::redeem_rx`]; starts at
+    /// [`ShareOpenState::Idle`].
+    pub share_open_rx: watch::Receiver<ShareOpenState>,
     /// Current cloud sync status.
     ///
     /// The UI polls `has_changed()` each frame and displays progress
