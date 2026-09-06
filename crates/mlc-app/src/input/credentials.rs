@@ -216,12 +216,16 @@ impl ChartApp {
     ///
     /// This ALWAYS lands on the Vault tab's own page (`CredentialsState::
     /// view`), never on the standalone profile-manager modal
-    /// (`show_profile_manager`) — every caller here is already inside that
-    /// tab (the "Unlock"/"Set up" status button, or "+ Add key" while
-    /// sealed), so popping the standalone modal on top of it would be
-    /// exactly the modal-on-modal navigation dead end the tab move exists to
-    /// close.
-    fn route_credentials_to_unlock(&mut self, return_to: CredentialsView) {
+    /// (`show_profile_manager`) — most callers are already inside that tab
+    /// (the "Unlock"/"Set up" status button, or "+ Add key" while sealed),
+    /// so popping the standalone modal on top of it would be exactly the
+    /// modal-on-modal navigation dead end the tab move exists to close. The
+    /// one caller that is NOT already on the Vault tab — the Server tab's
+    /// "Set up a vault passphrase" button, offered when there is no vault to
+    /// mint an agent key against (agent-api-auth-and-secret-store plan,
+    /// piece 4 follow-up) — is fine too: this function switches
+    /// `active_tab` to `Vault` itself below, unconditionally.
+    pub(super) fn route_credentials_to_unlock(&mut self, return_to: CredentialsView) {
         self.panel_app.credentials_state.pending_unlock_return = Some(return_to);
 
         let target_id = self.panel_app.user_settings_state.runtime_profile_id.clone();

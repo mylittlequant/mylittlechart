@@ -2773,7 +2773,44 @@ fn render_server_tab(
 
     let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
 
-    if state.agent_keys_sealed {
+    // Same predicate `route_credentials_to_unlock`'s (`mlc-app/src/input/
+    // credentials.rs`) "Set up" vs "Unlock" status-row split uses — a
+    // profile with no vault at all is not the same fact as one that is
+    // merely sealed, and a "sealed" answer to the agent-API sidecar (no
+    // sidecar file to unlock either way) would say the wrong thing to a
+    // profile that never set up a vault.
+    let has_vault = state.profiles_with_vault_status
+        .iter()
+        .find(|(id, _, _, _)| *id == state.runtime_profile_id)
+        .map(|(_, _, _, has_vault)| *has_vault)
+        .unwrap_or(false);
+
+    if state.agent_keys_sealed && !has_vault {
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Set up a vault passphrase to create API keys.", x, cy + row_h / 2.0);
+        cy += row_h + 8.0;
+
+        // Same flow the Vault tab's own "Set up" status button uses
+        // (`route_credentials_to_unlock` — lands on `CreatePassphrase`
+        // since `has_vault` is false — and switches to that tab itself).
+        let btn_w = 140.0;
+        let btn_rect = WidgetRect::new(x, cy, btn_w, row_h);
+        let btn_hovered = state.hovered_item_id.as_deref() == Some("key_setup_vault");
+        ctx.set_fill_color(if btn_hovered { &toolbar_theme.accent_hover } else { &toolbar_theme.accent });
+        ctx.fill_rounded_rect(x, cy, btn_w, row_h, 4.0);
+        ctx.set_fill_color(&toolbar_theme.item_text_active);
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text("Set up vault", x + btn_w / 2.0, cy + row_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+        result.content_items.push(("key_setup_vault".to_string(), btn_rect));
+        input_coordinator.register_on_layer("user_settings:key_setup_vault", btn_rect, Sense::CLICK | Sense::HOVER, layer_id);
+        cy += row_h;
+    } else if state.agent_keys_sealed {
         ctx.set_fill_color(&toolbar_theme.item_text_muted);
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Left);

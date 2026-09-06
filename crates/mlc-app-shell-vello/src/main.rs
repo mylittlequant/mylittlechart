@@ -1886,6 +1886,23 @@ impl App<'_> {
             }
             self.profile = self.profile_manager.profile.clone();
             self.core.user_mut().set_vault_key(Some(key));
+            // Every `set_vault_key(Some(..))` site must also unlock the
+            // agent-key store off the same key (agent-api-auth-and-secret-
+            // store plan, follow-up) — this one previously left it sealed
+            // through an entire profile switch.
+            //
+            // NOTE: `agent_state.agent_key_store`'s `salt_path`/`vault_path`
+            // are bound to whatever profile was active at `App::new()` — a
+            // multi-profile hot-reload switch (paid feature) does not
+            // re-point them at the new profile's `agent_keys.enc`. This call
+            // therefore still targets the ORIGINAL profile's sidecar; a
+            // store rebuilt per profile switch is a separate follow-up, not
+            // this one.
+            if let Some(ref agent_state) = self.agent_state {
+                if let Err(e) = agent_state.agent_key_store.unlock_with_key(&key) {
+                    eprintln!("[App] agent key store: failed to unlock after profile-switch pre-validation: {}", e);
+                }
+            }
             self.needs_vault_unlock = false;
             eprintln!("[App] hot-reload: pre-validated vault key injected — skipping unlock screen");
         }
@@ -4410,6 +4427,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                         }
                                                         self.core.user_mut().set_vault_key(Some(vault_key));
                                                         self.core.templates_mut().set_vault_key(Some(vault_key));
+                                                        if let Some(ref agent_state) = self.agent_state {
+                                                            if let Err(e) = agent_state.agent_key_store.unlock_with_key(&vault_key) {
+                                                                eprintln!("[App] agent key store: failed to unlock after recovery-key unlock: {}", e);
+                                                            }
+                                                        }
                                                         self.profile_manager.vault_key = Some(vault_key);
                                                         self.profile = self.profile_manager.profile.clone();
                                                         self.needs_vault_unlock = false;
@@ -4669,6 +4691,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             self.profile = self.profile_manager.profile.clone();
                             // Reset shared app state + shared core from the old profile.
                             self.core.user_mut().set_vault_key(None);
+                            // The fresh profile has no vault yet — seal the
+                            // agent-key store rather than leave the OLD
+                            // profile's RAM copy reachable under a new
+                            // identity (every `set_vault_key(..)` site keeps
+                            // the store in sync; `None` means seal).
+                            if let Some(ref agent_state) = self.agent_state {
+                                agent_state.agent_key_store.seal();
+                            }
                             self.core.presets_mut().replace_all(std::collections::HashMap::new());
                             self.preset_dirty_ids.clear();
                         }

@@ -5740,7 +5740,7 @@ impl ChartApp {
 
         // === User settings modal clicks ===
         if let Some(action) = widget_id.strip_prefix("user_settings:") {
-            use mlc_app_layout::ui::modal_settings::UserSettingsTab;
+            use mlc_app_layout::ui::modal_settings::{CredentialsView, UserSettingsTab};
             match action {
                 // Every edit here applies as it is made, so OK and the ✕ are
                 // the same action: leave. The footer button is the shell's,
@@ -5945,6 +5945,12 @@ impl ChartApp {
                 // `VAULT_TEXT_FIELDS` block) — nothing left to do here.
                 "key_label" => {}
                 "key_create" => self.submit_key_create_request(),
+                // No vault yet — nothing to mint an agent key against.
+                // Routes to the same vault-setup page the Vault tab's own
+                // "Set up" status button uses (`route_credentials_to_unlock`
+                // resolves `CreatePassphrase` vs `UnlockPassphrase` off
+                // `has_vault` itself, and switches to the Vault tab too).
+                "key_setup_vault" => self.route_credentials_to_unlock(CredentialsView::List),
                 rest if rest.starts_with("key_delete:") => {
                     let fingerprint_hex = rest["key_delete:".len()..].to_string();
                     self.key_delete_request = Some(fingerprint_hex.clone());

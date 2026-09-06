@@ -139,9 +139,13 @@ pub fn agent_keys_paths(profile_dir: &std::path::Path) -> (std::path::PathBuf, s
 /// unit test with nothing more than a `SecretStore` pointed at a temp
 /// directory (see the `tests` module below).
 ///
-/// - Sealed store (`agent_key_store.get()` → `Err(Sealed)`) → `423`.
-/// - No `Authorization: Bearer` token, or a token whose fingerprint matches
-///   no record → `401`.
+/// - No `Authorization: Bearer` token at all (missing header, or a header
+///   that is not the `Bearer <token>` shape) → `401`, checked BEFORE the
+///   store is ever touched — an unauthenticated caller must not learn
+///   whether the store is sealed or unlocked.
+/// - Only once a well-formed bearer token is in hand: sealed store
+///   (`agent_key_store.get()` → `Err(Sealed)`) → `423`.
+/// - A well-formed bearer whose fingerprint matches no record → `401`.
 /// - A mutating method (`POST`/`PUT`/`PATCH`/`DELETE`) presented by a
 ///   [`AgentKeyRole::ReadOnly`] key → `403`.
 /// - Otherwise: [`CallerTier`] + [`CallerRole`] extensions are inserted and
@@ -151,11 +155,6 @@ pub async fn auth_middleware(
     mut req: Request,
     next: Next,
 ) -> Response {
-    let bytes = match agent_key_store.get() {
-        Ok(bytes) => bytes,
-        Err(Sealed) => return error_response(StatusCode::LOCKED, "vault sealed"),
-    };
-
     let bearer = req
         .headers()
         .get(header::AUTHORIZATION)
@@ -165,6 +164,11 @@ pub async fn auth_middleware(
 
     let Some(bearer) = bearer else {
         return error_response(StatusCode::UNAUTHORIZED, "unauthorized");
+    };
+
+    let bytes = match agent_key_store.get() {
+        Ok(bytes) => bytes,
+        Err(Sealed) => return error_response(StatusCode::LOCKED, "vault sealed"),
     };
 
     let fingerprint_hex = hex::encode(fingerprint_sha256(bearer.as_bytes()));
@@ -326,6 +330,17 @@ mod tests {
     #[tokio::test]
     async fn missing_bearer_answers_401() {
         let store = unlocked_store_with("auth_mw_missing_bearer", &[]);
+        let router = test_router(store, Tier::SignedIn);
+        let res = router.oneshot(get_request(None)).await.expect("dispatch");
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn missing_bearer_on_sealed_store_answers_401_not_423() {
+        // The header check must run BEFORE the store is ever touched — an
+        // unauthenticated caller must not be able to distinguish a sealed
+        // store from an unlocked one just by omitting the header.
+        let store = sealed_store("auth_mw_missing_bearer_sealed");
         let router = test_router(store, Tier::SignedIn);
         let res = router.oneshot(get_request(None)).await.expect("dispatch");
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
