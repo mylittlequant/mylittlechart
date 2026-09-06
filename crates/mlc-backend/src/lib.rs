@@ -632,11 +632,12 @@ pub struct BackendCore {
     /// `bubbles_mut`) — Step 7 doctrine cutover.
     bubble: std::sync::RwLock<BubbleStore>,
 
-    /// Alert manager — owns the per-bubble last-tick-price cache used for
-    /// crossing detection (`AlertManager::on_tick`). Alert *data*
-    /// (`alerts`, `alert_next_id`) lives on `DataBubble`, mutated through
-    /// this manager via the `Alerts` / `AlertsMut` facade
-    /// (`BackendCore::alerts` / `alerts_mut`).
+    /// Alert manager — owns the account-wide, address-keyed
+    /// `AccountAlertStore` plus the per-bubble last-tick-price cache used
+    /// for crossing detection (`AlertManager::on_tick`). Mutated through
+    /// the `Alerts` / `AlertsMut` facade (`BackendCore::alerts` /
+    /// `alerts_mut`). `DataBubble` no longer carries alert data — only a
+    /// `has_active_alerts` mirror the C1 release guard consults.
     ///
     /// LOCK ORDER: every facade/accessor that takes both `bubble` and
     /// `alert` MUST acquire `bubble` first, then `alert` — see
@@ -1150,6 +1151,29 @@ impl BackendCore {
         let bubbles = self.bubble.write().expect("BackendCore.bubble poisoned (write)");
         let mgr = self.alert.write().expect("BackendCore.alert poisoned (write)");
         AlertsMut::new(mgr, bubbles)
+    }
+
+    /// Get-or-create the bubble backing `address`'s live subscription — a
+    /// `DataBubble` for `address` IS the subscription handle here (Arc
+    /// C3.2: "watches regardless of any window" means "a bubble for that
+    /// address exists"), so creating an alert on an address with no open
+    /// chart needs one exactly like this.
+    ///
+    /// Reuses the existing `create_bubble_auto` invisible-bubble path (no
+    /// color tag in the UI) with a short `kline_layer_capacity`
+    /// (`alert::ALERT_BUBBLE_KLINE_LAYER_CAPACITY`) instead of the
+    /// 200k-bar default — an alert only ever needs the live tick, never
+    /// display-depth history. See
+    /// `docs/mlc/plans/alerts-account-wide-and-telegram-delivery-2026-09-06.md` §2.
+    pub fn ensure_alert_bubble(&self, address: &mlc_core::instrument::InstrumentAddress) -> BubbleId {
+        if let Some(bid) = self.bubbles().get_by_address(address) {
+            return bid;
+        }
+        let bid = self.bubbles_mut().create_bubble_auto(address.symbol.clone(), Timeframe::m1());
+        self.set_layer_capacities(bid, crate::alert::ALERT_BUBBLE_KLINE_LAYER_CAPACITY);
+        self.bubbles_mut().set_bubble_instrument(bid, address.exchange.clone(), address.account_type.as_label().to_string());
+        self.tags_mut().insert(mlc_core::tag::Tag::new_auto(bid, [0.0, 0.0, 0.0, 0.0]));
+        bid
     }
 
     /// Read-only facade over the trading manager. Returns `None` if trading
@@ -3288,5 +3312,73 @@ mod trade_built_kline_gap_fill_tests {
 
         let bars = core.bubbles().with_bubble(bid, |b| b.bars.clone()).unwrap_or_default();
         assert!(!bars.is_empty(), "bubble.bars must not be wiped by the reinstall+reseed FIX 4 leaves reachable for an already-active runtime");
+    }
+}
+
+#[cfg(test)]
+mod ensure_alert_bubble_tests {
+    //! Coverage for `BackendCore::ensure_alert_bubble` (Arc C3.2,
+    //! `docs/mlc/plans/alerts-account-wide-and-telegram-delivery-2026-09-06.md` §2):
+    //! get-or-create semantics, the short kline_layer_capacity, and the
+    //! full instrument identity landing on the created bubble.
+
+    use super::*;
+
+    fn build_core() -> Arc<BackendCore> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio rt");
+        let (bridge, _live_rx, _connector_ready_rx) = rt.block_on(DataBridge::new());
+        BackendCore::new(Arc::new(bridge), None)
+    }
+
+    #[test]
+    fn creates_an_invisible_bubble_with_a_short_kline_capacity() {
+        let core = build_core();
+        let address = mlc_core::instrument::InstrumentAddress::new(
+            "binance", "BTCUSDT", mlc_core::instrument::AccountType::FuturesCross,
+        );
+
+        let bid = core.ensure_alert_bubble(&address);
+
+        assert_eq!(core.bubbles().symbol(bid), Some("BTCUSDT"));
+        assert_eq!(core.bubbles().exchange(bid), Some("binance"));
+        assert_eq!(core.bubbles().account_type_typed(bid), Some(mlc_core::instrument::AccountType::FuturesCross));
+        let cap = core.bubbles().with_bubble(bid, |b| b.kline_layer_capacity).unwrap_or(0);
+        assert_eq!(cap, crate::alert::ALERT_BUBBLE_KLINE_LAYER_CAPACITY);
+        assert!(
+            cap < crate::bubble::DEFAULT_KLINE_LAYER_CAPACITY,
+            "an alert-only bubble must not carry the 200k-bar display default"
+        );
+    }
+
+    #[test]
+    fn is_idempotent_for_the_same_address() {
+        let core = build_core();
+        let address = mlc_core::instrument::InstrumentAddress::new(
+            "binance", "ETHUSDT", mlc_core::instrument::AccountType::Spot,
+        );
+
+        let first = core.ensure_alert_bubble(&address);
+        let second = core.ensure_alert_bubble(&address);
+
+        assert_eq!(first, second, "an existing subscription for the same instrument must be reused, not duplicated");
+        assert_eq!(core.bubbles().bubble_ids().count(), 1);
+    }
+
+    #[test]
+    fn reuses_a_bubble_a_real_window_already_opened_on_the_same_instrument() {
+        let core = build_core();
+        let bid = core.bubbles_mut().create_bubble("SOLUSDT".to_string(), Timeframe::m1());
+        core.bubbles_mut().set_bubble_instrument(bid, "bybit".to_string(), "S".to_string());
+
+        let address = mlc_core::instrument::InstrumentAddress::new(
+            "bybit", "SOLUSDT", mlc_core::instrument::AccountType::Spot,
+        );
+        let ensured = core.ensure_alert_bubble(&address);
+
+        assert_eq!(ensured, bid, "an alert on an instrument with an already-open window must reuse that bubble, not spawn a second one");
+        assert_eq!(core.bubbles().bubble_ids().count(), 1);
     }
 }

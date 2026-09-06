@@ -323,21 +323,30 @@ pub struct DataBubble {
     pub liq_tape: Option<mlc_core::chart::liquidations::LiquidationTape>,
 
     // =========================================================================
-    // === Alert storage (Step 3.0 doctrine cutover) ===========================
+    // === Alert release-guard mirror (Arc C3, account-wide alerts) ===========
     // =========================================================================
-    // Alerts are bubble data: persisted user-authored rows + the per-bubble
-    // identity allocator.  The tick-to-tick last-price cache used for
-    // crossing detection is manager state — it lives on
-    // `AlertManager.last_price`, keyed by `BubbleId` (see
-    // `crates/mlc-backend/src/alert/manager.rs`).
+    // Alert data (`alerts`/`alert_next_id`, retired here) moved off
+    // `DataBubble` into the account-wide, address-keyed
+    // `AccountAlertStore` (`crates/mlc-backend/src/alert/store.rs`) —
+    // `BubbleId` is process-local and re-minted every cold load, so it
+    // cannot be a stable alert key. This bubble now only mirrors "does ANY
+    // account have a live alert on my instrument?" — see
+    // `has_active_alerts`'s own doc.
     // =========================================================================
 
-    /// Alerts attached to this bubble.  Each alert targets data inside this
-    /// bubble (price levels, drawings, indicators).  Persisted with the bubble.
-    pub alerts: Vec<mlc_core::alert::AlertItem>,
-
-    /// Per-bubble next-id counter for alerts.
-    pub alert_next_id: u64,
+    /// Mirror of "does ANY account have a live alert targeting this
+    /// bubble's instrument?", kept in sync by `AlertManager`'s create/
+    /// remove/restore operations (`crate::alert::manager::AlertManager::
+    /// resync_has_alerts`) every time the `AccountAlertStore` changes for
+    /// this instrument. Exists so `BubbleStore::clear_all_kline_layers`'s
+    /// C1 release guard can answer "is this bubble alerted?" without a
+    /// second lock: the parked-tab release path
+    /// (`ChartApp::release_idle_parked_presets`) only ever holds an
+    /// extracted, standalone `BubbleStore` — no live `AlertManager`
+    /// reference to query. Not persisted — alert presence is re-derived
+    /// from `AccountAlertStore` on the next mutation, same as `bars_source`/
+    /// `history_depth` are runtime-only.
+    pub has_active_alerts: bool,
 
     // =========================================================================
     // === In-flight guards (F4/F5, viewport doctrine audit 2026-07-07) =======
@@ -548,8 +557,15 @@ impl DataBubble {
             dom_heatmap: None,
             dom_trade_dots: None,
             liq_tape: None,
-            alerts: snap.alerts.clone(),
-            alert_next_id: snap.alerts.iter().map(|a| a.id).max().unwrap_or(0) + 1,
+            // `snap.alerts` (on-disk key "SyncGroupSnapshot.alerts") is NOT
+            // folded here — it is a subset of the flat `preset.alerts` list
+            // (`preset.alerts = core.alerts().items_all()` on every save,
+            // `mlc-app/src/input/mod.rs`), whose own restore loop
+            // (`hydration_impl.rs`) already reconstructs every row via
+            // `AlertsMut::restore_one`. Step 2 of
+            // `docs/mlc/plans/alerts-account-wide-and-telegram-delivery-2026-09-06.md`
+            // replaces that loop's dedup with the account-wide fold.
+            has_active_alerts: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
             scroll_prefetch_done: false,
@@ -1046,8 +1062,7 @@ impl Clone for DataBubble {
             dom_heatmap: self.dom_heatmap.clone(),
             dom_trade_dots: self.dom_trade_dots.clone(),
             liq_tape: self.liq_tape.clone(),
-            alerts: self.alerts.clone(),
-            alert_next_id: self.alert_next_id,
+            has_active_alerts: self.has_active_alerts,
             scroll_fetch_in_flight: self.scroll_fetch_in_flight,
             scroll_fetch_started: self.scroll_fetch_started,
             scroll_prefetch_done: self.scroll_prefetch_done,

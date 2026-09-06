@@ -92,7 +92,13 @@ pub fn to_snapshot(bubble: &DataBubble, tag: &Tag, synced_panels: &[SyncMemberId
         command_history: Some(bubble.command_history.clone()),
         auto_created: tag.auto_created,
         last_used_style,
-        alerts: bubble.alerts.clone(),
+        // Always empty going forward: alert data moved off `DataBubble`
+        // into the account-wide `AccountAlertStore` (Arc C3). Nothing is
+        // lost — the flat `preset.alerts` field is refreshed from
+        // `core.alerts().items_all()` on every save
+        // (`mlc-app/src/input/mod.rs`), a strict superset of what any
+        // single bubble's own slice ever held.
+        alerts: Vec::new(),
     }
 }
 

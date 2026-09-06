@@ -200,6 +200,13 @@ impl<'a> Bubbles<'a> {
         self.store.bubbles_for_instrument(exchange, account_type, symbol)
     }
 
+    /// Resolve the bubble matching `address` exactly (exchange, symbol AND
+    /// account_type) — the "does a subscription already exist for this
+    /// instrument?" check `BackendCore::ensure_alert_bubble` uses.
+    pub fn get_by_address(&self, address: &mlc_core::instrument::InstrumentAddress) -> Option<BubbleId> {
+        self.store.get_by_address(address)
+    }
+
     // ---- Reads ------------------------------------------------------------
 
     pub fn bars(&self, bid: BubbleId) -> &[mlc_core::Bar] {

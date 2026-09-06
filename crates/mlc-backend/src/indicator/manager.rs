@@ -32,12 +32,12 @@ pub struct IndicatorManager {
     /// Instances by bubble_id (= color tag / sync group id / home auto-bubble id).
     /// Instances with `bubble_id = None` (legacy/unscoped) are indexed under key 0.
     by_bubble_id: HashMap<u64, Vec<u64>>,
-    /// Next instance ID. Global, not per-bubble — unlike `AlertManager.alert_next_id`
-    /// (per-bubble, alerts never move bubbles), instance identity can migrate
-    /// across bubbles via `assign_bubble`/`reassign_bubble`, so a per-bubble
-    /// counter would have to be re-keyed on every reassignment. Single global
-    /// counter is the correct shape for an identity space instances can move
-    /// across bubbles within (design: `docs/mlc/plans/step-3.3-indicator-watchlist-design.md` §6.1).
+    /// Next instance ID. Global, not per-bubble: instance identity can
+    /// migrate across bubbles via `assign_bubble`/`reassign_bubble`, so a
+    /// per-bubble counter would have to be re-keyed on every reassignment.
+    /// Single global counter is the correct shape for an identity space
+    /// instances can move across bubbles within (design:
+    /// `docs/mlc/plans/step-3.3-indicator-watchlist-design.md` §6.1).
     next_id: u64,
 
     // ── Recalculation scheduling ──────────────────────────────────────────────

@@ -12,6 +12,7 @@ use std::sync::{RwLockReadGuard, RwLockWriteGuard};
 
 use mlc_core::alert::{AlertItem, AlertPatch, AlertSpec, AlertStatus, DrawingExtendMode};
 use mlc_core::ids::BubbleId;
+use mlc_core::instrument::InstrumentAddress;
 
 use crate::bubble::BubbleStore;
 
@@ -28,35 +29,46 @@ impl<'a> Alerts<'a> {
         Self { mgr, bubbles }
     }
 
-    /// All alert items on one bubble.
-    pub fn items(&self, bid: BubbleId) -> &[AlertItem] {
+    /// All alert items targeting one bubble's instrument.
+    pub fn items(&self, bid: BubbleId) -> Vec<AlertItem> {
         self.mgr.items(&self.bubbles, bid)
     }
 
-    /// All alert items across every bubble.
+    /// All alert items across every account.
     pub fn items_all(&self) -> Vec<AlertItem> {
-        self.mgr.items_all(&self.bubbles)
+        self.mgr.items_all()
     }
 
-    /// Find an alert by ID on a known bubble.
+    /// Find an alert by ID, scoped to a known bubble's instrument.
     pub fn get(&self, bid: BubbleId, id: u64) -> Option<&AlertItem> {
         self.mgr.get(&self.bubbles, bid, id)
     }
 
-    /// Search every bubble for an alert id; returns the owning bubble plus
-    /// a clone of the alert.
+    /// Search the whole store for an alert id; returns the live bubble (if
+    /// any) whose instrument it targets, plus a clone of the alert.
     pub fn find_owner(&self, id: u64) -> Option<(BubbleId, AlertItem)> {
         self.mgr.find_owner(&self.bubbles, id)
     }
 
-    /// Clone of all alerts on one bubble (for preset save).
+    /// Clone of every alert targeting one bubble's instrument (for preset save).
     pub fn snapshot_for_bid(&self, bid: BubbleId) -> Vec<AlertItem> {
         self.mgr.snapshot_for_bid(&self.bubbles, bid)
     }
 
-    /// Total alert count across every bubble.
+    /// Total alert count across every account.
     pub fn len_total(&self) -> usize {
-        self.mgr.len_total(&self.bubbles)
+        self.mgr.len_total()
+    }
+
+    /// Every alert belonging to `account_id`, across every instrument
+    /// (account-wide surface, Arc C3).
+    pub fn for_account(&self, account_id: &str) -> Vec<AlertItem> {
+        self.mgr.for_account(account_id)
+    }
+
+    /// Every alert belonging to `account_id` on `address`.
+    pub fn for_address(&self, account_id: &str, address: &InstrumentAddress) -> Vec<AlertItem> {
+        self.mgr.for_address(account_id, address)
     }
 }
 
@@ -78,7 +90,7 @@ impl<'a> AlertsMut<'a> {
 
     /// Apply a partial update to an existing alert. Returns `true` if found.
     pub fn update(&mut self, bid: BubbleId, id: u64, patch: AlertPatch) -> bool {
-        self.mgr.update(&mut self.bubbles, bid, id, patch)
+        self.mgr.update(&self.bubbles, bid, id, patch)
     }
 
     /// Remove an alert by ID. Returns `true` if found and removed.
@@ -88,7 +100,7 @@ impl<'a> AlertsMut<'a> {
 
     /// Flip `Active <-> Paused`. Returns the new status, or `None` if not found.
     pub fn toggle_pause(&mut self, bid: BubbleId, id: u64) -> Option<AlertStatus> {
-        self.mgr.toggle_pause(&mut self.bubbles, bid, id)
+        self.mgr.toggle_pause(&self.bubbles, bid, id)
     }
 
     /// Check all active alerts on `bid` using dynamic price resolution.
@@ -101,13 +113,13 @@ impl<'a> AlertsMut<'a> {
         drawing_points: &[(u64, Vec<(f64, f64)>, DrawingExtendMode)],
         indicator_values: &[(u64, usize, Vec<f64>)],
     ) -> Vec<u64> {
-        self.mgr.on_tick(&mut self.bubbles, bid, current_price, current_bar, drawing_points, indicator_values)
+        self.mgr.on_tick(&self.bubbles, bid, current_price, current_bar, drawing_points, indicator_values)
     }
 
     /// Check all active `Signal`-source alerts on `bid` against a batch of
     /// newly-emitted signals. Returns the list of triggered alert IDs.
     pub fn on_signals(&mut self, bid: BubbleId, new_signals: &[(u64, usize, i8, u8, String)]) -> Vec<u64> {
-        self.mgr.on_signals(&mut self.bubbles, bid, new_signals)
+        self.mgr.on_signals(&self.bubbles, bid, new_signals)
     }
 
     /// Remove every alert attached to `primitive_id`, across all bubbles.
@@ -125,6 +137,31 @@ impl<'a> AlertsMut<'a> {
     /// Insert a single alert item verbatim (undo/redo restore, preset restore).
     pub fn restore_one(&mut self, bid: BubbleId, item: AlertItem) {
         self.mgr.restore_one(&mut self.bubbles, bid, item)
+    }
+
+    /// Create a new alert for `account_id` from an [`AlertSpec`] — own
+    /// counter, address-keyed (account-wide surface, Arc C3). The caller
+    /// ensures a subscription exists first via
+    /// `BackendCore::ensure_alert_bubble`. Returns the new alert's id.
+    pub fn add_for_account(&mut self, account_id: impl Into<String>, spec: AlertSpec) -> u64 {
+        self.mgr.add_for_account(&mut self.bubbles, account_id, spec)
+    }
+
+    /// Apply a partial update to an existing alert by its global id.
+    /// Returns `true` if found.
+    pub fn update_by_id(&mut self, id: u64, patch: AlertPatch) -> bool {
+        self.mgr.update_by_id(id, patch)
+    }
+
+    /// Remove an alert by its global id. Returns `true` if found and removed.
+    pub fn remove_by_id(&mut self, id: u64) -> bool {
+        self.mgr.remove_by_id(&mut self.bubbles, id)
+    }
+
+    /// Insert a single alert item verbatim under its own `account_id`
+    /// (migration fold + sync-pull entry, Arc C3.3/C3.4).
+    pub fn restore_item(&mut self, item: AlertItem) {
+        self.mgr.restore_item(&mut self.bubbles, item)
     }
 
     /// Remove and return only the `last_price` entries for `bubble_ids` as a

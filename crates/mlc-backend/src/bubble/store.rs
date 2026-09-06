@@ -148,8 +148,7 @@ impl BubbleStore {
             dom_heatmap: None,
             dom_trade_dots: None,
             liq_tape: None,
-            alerts: Vec::new(),
-            alert_next_id: 1,
+            has_active_alerts: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
             scroll_prefetch_done: false,
@@ -212,8 +211,7 @@ impl BubbleStore {
             dom_heatmap: None,
             dom_trade_dots: None,
             liq_tape: None,
-            alerts: Vec::new(),
-            alert_next_id: 1,
+            has_active_alerts: false,
             scroll_fetch_in_flight: false,
             scroll_fetch_started: None,
             scroll_prefetch_done: false,
@@ -306,6 +304,38 @@ impl BubbleStore {
             (b.address.exchange == exchange && b.address.account_type == at && b.address.symbol == symbol)
                 .then_some(*id)
         })
+    }
+
+    /// Resolve the bubble matching `address` exactly (exchange, symbol AND
+    /// account_type). General-purpose registry lookup — for alert
+    /// resolution (which must tolerate `AlertItem`'s always-Spot-defaulted
+    /// `account_type`, see `AlertItem::targets_instrument`'s own doc) use
+    /// `AlertManager`'s own loose matching instead, not this.
+    ///
+    /// `pub(crate)` — never crosses the `Bubbles` facade directly (it would
+    /// leak `&DataBubble`); [`Self::get_by_address`] is the `pub`
+    /// id-only counterpart external callers use.
+    pub(crate) fn bubble_for_address(&self, address: &InstrumentAddress) -> Option<&DataBubble> {
+        self.bubbles.values().find(|b| &b.address == address)
+    }
+
+    /// Id-only counterpart of [`Self::bubble_for_address`] — the "does a
+    /// bubble already exist for this exact instrument?" check
+    /// `BackendCore::ensure_alert_bubble` uses before creating one.
+    pub fn get_by_address(&self, address: &InstrumentAddress) -> Option<BubbleId> {
+        self.bubble_for_address(address).map(|b| b.id)
+    }
+
+    /// Set the alert release-guard mirror ([`super::data_bubble::DataBubble::
+    /// has_active_alerts`]) on every bubble matching `address` — called by
+    /// `AlertManager::resync_has_alerts` after any `AccountAlertStore`
+    /// mutation that could change alert presence for that instrument.
+    pub(crate) fn set_has_active_alerts(&mut self, address: &InstrumentAddress, value: bool) {
+        for b in self.bubbles.values_mut() {
+            if &b.address == address {
+                b.has_active_alerts = value;
+            }
+        }
     }
 
     /// All bubbles whose `(exchange, account_type, symbol)` matches.
@@ -1072,15 +1102,15 @@ impl BubbleStore {
     /// reopened tab's `has_bars` check sees an empty array and forces a
     /// refetch instead of showing stale bars.
     ///
-    /// Skips any bubble with non-empty `alerts` entirely (forward-compatible
-    /// with Arc C3 landing "an alerted bubble must not be parked away") —
-    /// counted in `skipped_alerted`.
+    /// Skips any bubble with `has_active_alerts` set (Arc C3.2: "an alerted
+    /// bubble must not be parked away" — a live bubble IS an alert's
+    /// subscription handle) — counted in `skipped_alerted`.
     pub fn clear_all_kline_layers(&mut self) -> (usize, usize, usize) {
         let mut rings_dropped = 0usize;
         let mut bars_dropped = 0usize;
         let mut skipped_alerted = 0usize;
         for bubble in self.bubbles.values_mut() {
-            if !bubble.alerts.is_empty() {
+            if bubble.has_active_alerts {
                 skipped_alerted += 1;
                 continue;
             }

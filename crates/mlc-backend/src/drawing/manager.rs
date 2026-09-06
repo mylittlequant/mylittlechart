@@ -3,8 +3,10 @@
 //!
 //! The drawing *data* (`primitives: Vec<Box<dyn Primitive>>`) lives on
 //! `DataBubble.primitives` — this manager mutates it through `&mut
-//! BubbleStore`, exactly the same shape as `AlertManager` mutating
-//! `DataBubble.alerts`. Only cross-call editing-session bookkeeping (active
+//! BubbleStore`. (Alert data used to be the same shape, on
+//! `DataBubble.alerts`; Arc C3 moved it off the bubble into the
+//! account-wide `AccountAlertStore` — see `crate::alert::store`.) Only
+//! cross-call editing-session bookkeeping (active
 //! tool, drag, hover, in-progress multipoint, last-used style, selection)
 //! lives on `BubbleDrawingSession`.
 //!

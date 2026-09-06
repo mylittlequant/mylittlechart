@@ -406,6 +406,15 @@ pub struct AlertItem {
     /// `AlertItem::symbol()`).
     #[serde(flatten)]
     pub address: InstrumentAddress,
+
+    /// Owning account: `profile.identity.public_id` when signed in, else the
+    /// local pre-sign-in `profile_id` — never a `BubbleId` (process-local,
+    /// re-minted every cold load, so it cannot be a stable key). Part of the
+    /// `(account_id, InstrumentAddress, condition)` key `AccountAlertStore`
+    /// indexes on (`mlc-backend/src/alert/store.rs`).
+    /// `#[serde(default)]` so pre-account-wide saves (empty string) still load.
+    #[serde(default)]
+    pub account_id: String,
 }
 
 impl AlertItem {
@@ -454,6 +463,9 @@ impl AlertItem {
             window_id_hint: spec.window_id_hint,
             timeframe: spec.timeframe,
             address: InstrumentAddress::new(spec.exchange, symbol, crate::instrument::AccountType::default()),
+            // Caller (`AccountAlertStore::add`) stamps the real account_id
+            // right after construction — see that method's own doc.
+            account_id: String::new(),
         }
     }
 
@@ -488,6 +500,7 @@ impl AlertItem {
             window_id_hint: None,
             timeframe: String::new(),
             address: InstrumentAddress::new(String::new(), String::new(), crate::instrument::AccountType::default()),
+            account_id: String::new(),
         }
     }
 
@@ -591,6 +604,23 @@ impl AlertItem {
         } else {
             format!("{}:{}:{}", self.address.exchange, sym, self.address.account_type)
         }
+    }
+
+    /// Returns `true` when this alert targets the same `(exchange, symbol)`
+    /// pair as `address` — the loose match `AccountAlertStore`/`AlertManager`
+    /// use to resolve an alert to a bubble (`mlc-backend/src/alert/store.rs`).
+    ///
+    /// Deliberately ignores `account_type`: no create path has ever threaded
+    /// a real account type through — `AlertSpec` carries none, so
+    /// [`Self::from_spec`] always stamps `AccountType::default()` (Spot)
+    /// regardless of the window's actual account type. A strict
+    /// `InstrumentAddress` equality would silently drop every alert created
+    /// on a non-Spot window; this is the pre-existing limitation
+    /// `AlertSource::matches_window` already has for the same reason (its
+    /// `account_type` branch can never take the "empty = match any" path
+    /// either, since `AccountType::as_label()` never returns `""`).
+    pub fn targets_instrument(&self, address: &InstrumentAddress) -> bool {
+        self.exchange() == address.exchange && self.symbol() == address.symbol
     }
 
     /// Returns true when this alert should be shown on a window with
