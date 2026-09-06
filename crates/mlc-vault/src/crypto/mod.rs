@@ -28,6 +28,12 @@ pub const HKDF_SYNC_INFO: &[u8] = b"mylittlechart-sync-v1";
 /// HKDF info string binding a recovery key to a wrapped master key.
 pub const HKDF_RECOVERY_INFO: &[u8] = b"mylittlechart-recovery-v1";
 
+/// HKDF info string prefix binding a derived key to one DM conversation —
+/// see [`crate::dm::conversation_key`]. The conversation id is appended
+/// after this prefix so each conversation gets a distinct derived key even
+/// when both parties' identity keys are reused across many conversations.
+pub const HKDF_DM_INFO: &[u8] = b"mylittlechart-dm-v1";
+
 /// AES-GCM nonce size in bytes.
 const NONCE_SIZE: usize = 12;
 

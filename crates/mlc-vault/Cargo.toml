@@ -33,6 +33,15 @@ web-time = "1"
 # Ct-choice internals), so depending on it directly here adds no new
 # supply-chain surface — same reasoning as the zeroize note above.
 subtle = "2"
+# X25519 (DM identity keys + per-conversation ECDH, `src/dm.rs`) via
+# `MontgomeryPoint::{mul_clamped, mul_base_clamped}` + `scalar::clamp_integer`
+# — the whole X25519 primitive, RFC-7748 clamping included. `x25519-dalek`
+# is NOT in the workspace Cargo.lock; `curve25519-dalek` already resolves to
+# 4.1.3 there as a transitive dep of `ed25519-dalek` (update-signature
+# verification elsewhere in the workspace), so depending on it directly here
+# promotes an already-vetted, already-locked crate rather than adding a
+# second curve implementation for the same math.
+curve25519-dalek = "4"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["Window", "Storage"] }
