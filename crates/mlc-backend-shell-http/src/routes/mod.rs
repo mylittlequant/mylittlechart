@@ -8,6 +8,7 @@ pub mod indicators;
 pub mod indicators_crud;
 pub mod primitives;
 pub mod screenshot;
+pub mod share;
 pub mod ui;
 pub mod viewport;
 pub mod watchlists;

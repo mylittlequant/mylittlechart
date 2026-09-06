@@ -28,6 +28,29 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// True when `chart`'s active tab is a read-only shared chart
+/// (`ChartApp::is_readonly_tab`, native-share-viewer arc 2026-09-06).
+///
+/// Checked before every command below that would mutate the active
+/// preset's own content — indicator/primitive CRUD, symbol/timeframe/
+/// chart-type switches, and `UiDispatch`'s generic click path. This sits
+/// ON TOP OF (not instead of) the gate `ChartApp` already enforces on its
+/// own mouse-click path (`edit_indicator_recorded`/`edit_primitive_recorded`,
+/// `mlc-app/src/input/mod.rs`): the commands here reach
+/// `chart.core.indicators_mut()`/`drawings_mut()` directly and never pass
+/// through those wrappers, so without this check a leaked bearer would be
+/// the only thing standing between an agent and a "read-only" shared
+/// chart's content — plan §5: "the gate lives at the `ChartApp` boundary,
+/// holding even if a bearer leaks."
+///
+/// None of the commands guarded by this check carry a `response_tx` today
+/// (all fire-and-forget `202`s), so a refusal always logs and drops; a
+/// future guarded command with a synchronous response should send
+/// `Err("read-only shared chart".to_string())` through it instead.
+fn active_preset_is_readonly(chart: &mlc_app::ChartApp) -> bool {
+    chart.is_readonly_tab(&chart.panel_app.active_preset_id)
+}
+
 /// Drain agent commands pushed by HTTP handlers and apply them to the chart
 /// state held by `host`. Call this once per tick / frame.
 pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentState>) {
@@ -68,6 +91,10 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] SwitchSymbol: window not found: {}", window_id);
                     continue;
                 };
+                if active_preset_is_readonly(w.chart) {
+                    eprintln!("[AgentCommand] SwitchSymbol refused: active tab is read-only (shared chart)");
+                    continue;
+                }
                 if !timeframe.is_empty() {
                     w.chart.change_timeframe(&timeframe);
                 }
@@ -87,6 +114,10 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] SwitchChartType: window not found: {}", window_id);
                     continue;
                 };
+                if active_preset_is_readonly(w.chart) {
+                    eprintln!("[AgentCommand] SwitchChartType refused: active tab is read-only (shared chart)");
+                    continue;
+                }
                 w.chart.change_chart_type(&chart_type);
                 eprintln!("[AgentCommand] SwitchChartType: window={}, type={}", window_id, chart_type);
             }
@@ -97,6 +128,10 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] SwitchTimeframe: window not found: {}", window_id);
                     continue;
                 };
+                if active_preset_is_readonly(w.chart) {
+                    eprintln!("[AgentCommand] SwitchTimeframe refused: active tab is read-only (shared chart)");
+                    continue;
+                }
                 w.chart.change_timeframe(&timeframe_id);
                 eprintln!("[AgentCommand] SwitchTimeframe: window={}, tf={}", window_id, timeframe_id);
             }
@@ -132,6 +167,10 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                         eprintln!("[AgentCommand] AddIndicator: window not found: {}", window_id);
                         continue;
                     };
+                    if active_preset_is_readonly(w.chart) {
+                        eprintln!("[AgentCommand] AddIndicator refused: active tab is read-only (shared chart)");
+                        continue;
+                    }
                     w.chart as *mut _
                 };
                 // SAFETY: the host owns the ChartApp; we held a &mut to it just above
@@ -185,6 +224,10 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                         eprintln!("[AgentCommand] UpdateIndicator: window not found: {}", window_id);
                         continue;
                     };
+                    if active_preset_is_readonly(w.chart) {
+                        eprintln!("[AgentCommand] UpdateIndicator refused: active tab is read-only (shared chart)");
+                        continue;
+                    }
                     w.chart as *mut _
                 };
                 // SAFETY: see AddIndicator above.
@@ -229,6 +272,10 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] RemoveIndicator: window not found: {}", window_id);
                     continue;
                 };
+                if active_preset_is_readonly(w.chart) {
+                    eprintln!("[AgentCommand] RemoveIndicator refused: active tab is read-only (shared chart)");
+                    continue;
+                }
                 if w.chart.core.indicators_mut().remove(indicator_id).is_some() {
                     w.chart.sync_sub_panes_from_manager();
                     eprintln!("[AgentCommand] RemoveIndicator: id={}", indicator_id);
@@ -244,6 +291,10 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] AddPrimitive: window not found: {}", window_id);
                     continue;
                 };
+                if active_preset_is_readonly(w.chart) {
+                    eprintln!("[AgentCommand] AddPrimitive refused: active tab is read-only (shared chart)");
+                    continue;
+                }
                 let chart = &mut *w.chart;
                 let pts: Vec<(i64, f64)> = points.iter().map(|p| (p[0] as i64, p[1])).collect();
                 let color_str = style.color.clone();
@@ -276,6 +327,10 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] UpdatePrimitive: window not found: {}", window_id);
                     continue;
                 };
+                if active_preset_is_readonly(w.chart) {
+                    eprintln!("[AgentCommand] UpdatePrimitive refused: active tab is read-only (shared chart)");
+                    continue;
+                }
                 let chart = &mut *w.chart;
                 let cw_bid = chart.panel_app.panel_grid.containers().values()
                     .find(|cw| cw.id.0 == chart_id)
@@ -310,6 +365,10 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] RemovePrimitive: window not found: {}", window_id);
                     continue;
                 };
+                if active_preset_is_readonly(w.chart) {
+                    eprintln!("[AgentCommand] RemovePrimitive refused: active tab is read-only (shared chart)");
+                    continue;
+                }
                 let chart = &mut *w.chart;
                 let cw_bid = chart.panel_app.panel_grid.containers().values()
                     .find(|cw| cw.id.0 == chart_id)
@@ -437,6 +496,21 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] UiDispatch: window={}, overlay={}", window_id, hit_id);
                     continue;
                 }
+                // Read-only guard (native-share-viewer arc, 2026-09-06):
+                // the overlay branch above already returned for chrome
+                // News/Download toggles, and tab switching is its own
+                // command (`AgentCommand::SwitchPreset`, never routed
+                // through here) — so everything left reaching
+                // `dispatch_panel_click` is a panel/toolbar click that CAN
+                // edit the active preset (indicator/primitive settings,
+                // drawing placement, ...), and none of it funnels through
+                // `ChartApp`'s own `edit_indicator_recorded`/
+                // `edit_primitive_recorded` wrappers from this entry point
+                // any more reliably than the CRUD commands above do.
+                if active_preset_is_readonly(w.chart) {
+                    eprintln!("[AgentCommand] UiDispatch refused: active tab is read-only (shared chart), hit_id={}", hit_id);
+                    continue;
+                }
                 // (0.0, 0.0): no real click position — see
                 // `ChartApp::dispatch_panel_click`'s own doc comment for the
                 // precedent (`clock_popup_state.toggle(0.0, 0.0)`).
@@ -460,6 +534,31 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                 w.chart.input_coordinator.borrow_mut().text_fields_mut().set_text(&field_wid, &text);
                 eprintln!("[AgentCommand] UiSetText: window={}, field={}", window_id, field);
                 let _ = response_tx.send(Ok(()));
+            }
+
+            // ── Share viewer (native-share-viewer arc, 2026-09-06) ─────
+            // Neither of these touches the window's CURRENT active preset
+            // — `request_open_share`/`request_clone_share` only queue a
+            // token for the shell to resolve into a NEW tab — so neither
+            // needs the read-only guard the commands above carry.
+            AgentCommand::OpenShare { window_id, token } => {
+                let mut windows = host.windows_mut();
+                let Some(w) = windows.iter_mut().find(|w| w.window_id == window_id) else {
+                    eprintln!("[AgentCommand] OpenShare: window not found: {}", window_id);
+                    continue;
+                };
+                w.chart.request_open_share(&token);
+                eprintln!("[AgentCommand] OpenShare: window={}", window_id);
+            }
+
+            AgentCommand::CloneShare { window_id, token } => {
+                let mut windows = host.windows_mut();
+                let Some(w) = windows.iter_mut().find(|w| w.window_id == window_id) else {
+                    eprintln!("[AgentCommand] CloneShare: window not found: {}", window_id);
+                    continue;
+                };
+                w.chart.request_clone_share(&token);
+                eprintln!("[AgentCommand] CloneShare: window={}", window_id);
             }
         }
     }

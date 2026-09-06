@@ -15,7 +15,7 @@ use mlc_backend_shell_http::state::{
     WatchlistSnapshot, WatchlistEntry, WatchlistItemEntry,
     ConnectorSnapshot, ConnectorEntry,
     UiStateSnapshot, WindowUiState, UiAccountState, UiOverlayState,
-    UiEventsState, UiEventEntry,
+    UiEventsState, UiEventEntry, ActivePresetUiState, SharedChartUiState,
 };
 #[cfg(feature = "cloud")]
 use mlc_backend_shell_http::state::UiForumState;
@@ -433,6 +433,17 @@ pub fn update_ui_state_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
             mlc_core::state::toolbar_state::ScreenshotDestination::ShareLink => "share_link",
         }.to_string();
 
+        let active_preset_id = panel_app.active_preset_id.clone();
+        let active_preset = ActivePresetUiState {
+            readonly: chart.is_readonly_tab(&active_preset_id),
+            shared: chart.shared_chart_meta(&active_preset_id).map(|meta| SharedChartUiState {
+                token: meta.token.clone(),
+                owner_label: meta.owner_label.clone(),
+                rights: meta.rights.clone(),
+            }),
+            id: active_preset_id,
+        };
+
         snap.windows.push(WindowUiState {
             window_id: w.window_id.to_string(),
             account,
@@ -441,6 +452,7 @@ pub fn update_ui_state_snapshot<H: AgentHost>(host: &H, agent_state: &AgentState
             events,
             toasts_pending: chart.pending_toast_count(),
             screenshot_destination,
+            active_preset,
         });
     }
 

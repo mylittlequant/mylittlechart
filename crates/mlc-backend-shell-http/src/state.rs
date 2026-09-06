@@ -534,6 +534,26 @@ pub enum AgentCommand {
         text: String,
         response_tx: tokio::sync::oneshot::Sender<Result<(), String>>,
     },
+
+    // -- Share viewer (native-share-viewer arc, 2026-09-06) --
+    /// Open a share link's frozen preset as a new, read-only tab in
+    /// `window_id`. Routed to `ChartApp::request_open_share` (`mlc-app`'s
+    /// `share_viewer` module); the shell drains the pending request and
+    /// does the actual network fetch + `open_shared_preset` call, same as
+    /// the toolbar's own "open" dropdown item.
+    OpenShare {
+        window_id: String,
+        token: String,
+    },
+    /// Clone a share link into a new, writable preset of the caller's own
+    /// in `window_id`. Routed to `ChartApp::request_clone_share`; the
+    /// shell drains it, calls `POST /api/share/{token}/clone`, and applies
+    /// the result via `apply_cloned_preset`. `right ⊇ {read, clone}` gates
+    /// this at the server (plan §5); no bespoke gate lives here.
+    CloneShare {
+        window_id: String,
+        token: String,
+    },
 }
 
 /// Style fields for a drawing primitive (used in commands and responses).
@@ -772,6 +792,34 @@ pub struct WindowUiState {
     /// `mlc_core::state::toolbar_state::ScreenshotDestination` already
     /// serializes to in a saved profile.
     pub screenshot_destination: String,
+    /// The window's active tab (native-share-viewer arc, 2026-09-06) — an
+    /// agent driving `share/open`/`share/clone` reads this to confirm the
+    /// resulting tab landed read-only (or writable, for a clone) without a
+    /// second round trip to the server.
+    pub active_preset: ActivePresetUiState,
+}
+
+/// The window's active preset tab: id, whether `ChartApp::is_readonly_tab`
+/// holds for it, and — only for a shared/read-only tab — the share it came
+/// from.
+#[derive(Debug, Clone, Serialize)]
+pub struct ActivePresetUiState {
+    pub id: String,
+    pub readonly: bool,
+    /// `None` for an ordinary (non-shared) tab, `Some` for a tab opened via
+    /// `ChartApp::open_shared_preset` — mirrors `ChartApp::shared_chart_meta`.
+    pub shared: Option<SharedChartUiState>,
+}
+
+/// The share a read-only tab was opened from — the subset of
+/// `mlc_app::SharedChartMeta` the UI/agent surface needs: enough to label
+/// the tab and gate the "Clone" action on `rights` without exposing
+/// `title`/`kind`/`expires_at` this snapshot has no other use for.
+#[derive(Debug, Clone, Serialize)]
+pub struct SharedChartUiState {
+    pub token: String,
+    pub owner_label: String,
+    pub rights: Vec<String>,
 }
 
 /// Signed-in / paid-tier facts, read from `UserSettingsState` +
