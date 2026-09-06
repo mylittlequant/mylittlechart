@@ -165,6 +165,15 @@ pub const FORUM_BODY: &str = "forum_body";
 /// own Enter-submits idiom.
 pub const FORUM_REPLY: &str = "forum_reply";
 
+/// Forum v2 Boards view's search box (`mlc_app_layout::layout::modals::
+/// forum_v2_overlay`). Enter submits the query.
+pub const FORUM_SEARCH: &str = "forum_search";
+
+/// DM Conversation view's draft box (`mlc_app_layout::layout::modals::
+/// dm_overlay`) — plaintext only, encrypted by the shell before it ever
+/// reaches the wire. Enter sends.
+pub const DM_DRAFT: &str = "dm_draft";
+
 /// Webhook URL input (credentials modal). Replaces the decorative field of
 /// the same name that used to live in the alert-settings Notifications tab
 /// (`alert_set:item:webhook_url`, whose click handler was a literal no-op) —
@@ -274,6 +283,8 @@ pub fn known_field_ids() -> &'static [&'static str] {
         FORUM_TITLE,
         FORUM_BODY,
         FORUM_REPLY,
+        FORUM_SEARCH,
+        DM_DRAFT,
         CRED_WEBHOOK_URL,
         CRED_ADD_EXCHANGE,
         CRED_ADD_LABEL,

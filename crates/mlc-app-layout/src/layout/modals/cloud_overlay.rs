@@ -26,41 +26,47 @@ use uzor::types::Rect as WidgetRect;
 use uzor::WidgetId;
 
 use crate::layout::render_chart::FrameTheme;
-use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::modal_settings::{
-    CloudForumThreadSummary, CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudOverlayState,
-    CloudReleaseEntry, ForumListState, ForumSubView, NewsTab, UpdateOverlayPhase,
+    CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudOverlayState, CloudReleaseEntry,
+    NewsTab, UpdateOverlayPhase,
 };
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig, ScrollableResult};
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{
-    draw_input, draw_input_cursor, register_dimmer_zones, render_modal_shell, InputConfig,
-    ModalPlacement, ModalShell, ModalShellSpec, ModalTab, ModalTabs, ModalTheme, TabFit,
-    SETTINGS_BUTTON_RADIUS,
+    register_dimmer_zones, render_modal_shell, ModalPlacement, ModalShell, ModalShellSpec,
+    ModalTab, ModalTabs, ModalTheme, TabFit, SETTINGS_BUTTON_RADIUS,
 };
-use crate::ui::widgets::types::{WidgetState, WidgetTheme};
+use crate::ui::widgets::types::WidgetTheme;
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
 
-const GOLD: &str = "#f4cd63";
+/// Accent colour shared by every overlay in this file family — also read by
+/// `forum_v2_overlay`/`dm_overlay` (siblings under `layout::modals`).
+pub(crate) const GOLD: &str = "#f4cd63";
 
 const MODAL_W: f64 = 420.0;
-const ROW_H: f64 = 40.0;
+pub(crate) const ROW_H: f64 = 40.0;
 /// Gap between stacked rows.
-const ROW_GAP: f64 = 6.0;
+pub(crate) const ROW_GAP: f64 = 6.0;
 /// Text field height — mirrors `cloud_login.rs`'s own `FIELD_H`, used by
-/// the Forum tab's title/body/reply fields so every text field in this
-/// overlay family is the same height.
-const FIELD_H: f64 = 32.0;
-/// Gap between the Post/Cancel pair in the Forum compose view.
-const FORUM_BTN_GAP: f64 = 10.0;
+/// every text field in this overlay family (Forum v2's title/body/reply/
+/// search, DM's draft box) so they are all the same height.
+pub(crate) const FIELD_H: f64 = 32.0;
+/// Gap between a Post/Cancel (or similar) button pair.
+pub(crate) const ACTION_BTN_GAP: f64 = 10.0;
 /// Mirrors `mlc_app::text_input::{FORUM_TITLE, FORUM_BODY, FORUM_REPLY}` —
 /// this crate cannot depend on `mlc-app` (dependency direction is the other
 /// way), so the literal ids are spelled here too, same split
 /// `cloud_login.rs`'s own `REDEEM_FIELD` already has for `REDEEM_CODE`.
-const FORUM_TITLE_FIELD: &str = "forum_title";
-const FORUM_BODY_FIELD: &str = "forum_body";
-const FORUM_REPLY_FIELD: &str = "forum_reply";
+/// Forum v2's compose view reuses `FORUM_TITLE`/`FORUM_BODY`; its thread
+/// view's reply box reuses `FORUM_REPLY` — same one-`TextFieldStore`-field-
+/// per-purpose idiom v1 used, just pointed at the new views.
+pub(crate) const FORUM_TITLE_FIELD: &str = "forum_title";
+pub(crate) const FORUM_BODY_FIELD: &str = "forum_body";
+pub(crate) const FORUM_REPLY_FIELD: &str = "forum_reply";
+/// Forum v2's search box — new field, added to `mlc_app::text_input::
+/// known_field_ids` alongside this pass.
+pub(crate) const FORUM_SEARCH_FIELD: &str = "forum_search";
 
 /// Social/project links shown in the News overlay's LINKS section (id,
 /// label, URL). Keep in sync with the landing footer. The click handler
@@ -122,6 +128,18 @@ pub struct CloudOverlayResult {
     /// `forum_title_rect`.
     pub forum_reply_rect: Option<WidgetRect>,
     pub forum_reply_char_positions: Vec<f64>,
+    /// Forum v2 Boards view's search box geometry — same contract as
+    /// `forum_title_rect` above. Backs `mlc_app::text_input::FORUM_SEARCH`
+    /// (new this pass); full `mlc-app` click/drag wiring for it is a
+    /// follow-up outside this pass, same gap `scroll_viewport_rect`'s own
+    /// doc already names for the scrollbar.
+    pub forum_search_rect: Option<WidgetRect>,
+    pub forum_search_char_positions: Vec<f64>,
+    /// DM Conversation view's draft box geometry — same contract as
+    /// `forum_search_rect`. Backs `mlc_app::text_input::DM_DRAFT` (new this
+    /// pass).
+    pub dm_draft_rect: Option<WidgetRect>,
+    pub dm_draft_char_positions: Vec<f64>,
 }
 
 fn title_for(state: &CloudOverlayState) -> &'static str {
@@ -201,9 +219,9 @@ fn links_section_h() -> f64 {
 
 /// The News overlay's list-view tabs — `Posts` (the default glance: up to
 /// `MAX_NEWS_POSTS` editorial entries + LINKS), `PatchNotes` (the full
-/// release-note history, no LINKS), and `Forum` (paid-only, see
-/// `NEWS_TAB_ITEMS_ALL`/`news_tab_items` further down). Drawn only over the
-/// list view: the in-modal reading view (`state.selected_post.is_some()`)
+/// release-note history, no LINKS), `Forum` and `Messages` (both paid-only,
+/// see `NEWS_TAB_ITEMS_ALL`/`news_tab_items` further down). Drawn only over
+/// the list view: the in-modal reading view (`state.selected_post.is_some()`)
 /// and the Download overlay have nothing to switch between, so neither
 /// carries a tab bar at all.
 
@@ -227,10 +245,10 @@ fn news_list_h(tab: NewsTab, posts: &[CloudNewsPost]) -> f64 {
         }
         NewsTab::PatchNotes => posts.iter().filter(|p| is_patch(p)).map(post_block_h).sum(),
         // Never actually reached — `content_height`/`draw_body` branch off
-        // to `forum_view_h`/`draw_forum_view` before either call site here
+        // to `forum_v2_overlay`/`dm_overlay` before either call site here
         // runs. Kept exhaustive rather than `unreachable!()` so a future
         // caller of this function cannot panic by forgetting that split.
-        NewsTab::Forum => 0.0,
+        NewsTab::Forum | NewsTab::Messages => 0.0,
     }
 }
 
@@ -297,7 +315,8 @@ fn content_height(state: &CloudOverlayState) -> f64 {
             ),
             _ => DOWNLOAD_STATUS_H,
         },
-        CloudOverlayKind::News if state.news_tab == NewsTab::Forum => forum_view_h(state),
+        CloudOverlayKind::News if state.news_tab == NewsTab::Forum => super::forum_v2_overlay::height(state),
+        CloudOverlayKind::News if state.news_tab == NewsTab::Messages => super::dm_overlay::height(state),
         CloudOverlayKind::News => match &state.data {
             CloudOverlayData::News { posts } => {
                 // Reading view: one post, expanded — no tabs over it (the
@@ -316,10 +335,11 @@ fn content_height(state: &CloudOverlayState) -> f64 {
 }
 
 /// Render the cloud overlay (News, which carries the LINKS section, Forum
-/// tab and Download). `current_time_ms` drives the Forum tab's relative
-/// timestamps and its text fields' caret blink — the News/Download kinds
-/// never needed a clock before this (unlike `render_cloud_login_modal`,
-/// which has taken one since the gift-code field).
+/// and Messages tabs, and Download). `current_time_ms` drives the Forum/
+/// Messages tabs' relative timestamps and their text fields' caret blink —
+/// the News/Download kinds never needed a clock before this (unlike
+/// `render_cloud_login_modal`, which has taken one since the gift-code
+/// field).
 pub fn render_cloud_overlay(
     ctx: &mut dyn RenderContext,
     window_w: f64,
@@ -346,19 +366,20 @@ pub fn render_cloud_overlay(
             content_height(state),
         )
     };
-    // Tabs only over the News list view (incl. the Forum tab) — a reading
-    // view or the Download overlay has nothing to switch between, so
-    // `spec.tabs` stays `None` and the shell draws no tab bar (and charges
-    // the frame no `TAB_BAR_H`) for either of them. The Forum tab itself is
-    // gated by `forum_entitled` OR already being the active tab — kept
+    // Tabs only over the News list view (incl. the Forum/Messages tabs) — a
+    // reading view or the Download overlay has nothing to switch between,
+    // so `spec.tabs` stays `None` and the shell draws no tab bar (and
+    // charges the frame no `TAB_BAR_H`) for either of them. Forum/Messages
+    // are gated by `forum_entitled` OR already being the active tab — kept
     // shown once selected even if entitlement is re-asked mid-session and
     // (implausibly) comes back false, rather than yanking the tab bar out
-    // from under an open thread.
+    // from under an open thread/conversation.
+    let on_paid_tab = matches!(state.news_tab, NewsTab::Forum | NewsTab::Messages);
     let show_news_tabs = state.kind == CloudOverlayKind::News
         && state.selected_post.is_none()
-        && (matches!(&state.data, CloudOverlayData::News { .. }) || state.news_tab == NewsTab::Forum);
+        && (matches!(&state.data, CloudOverlayData::News { .. }) || on_paid_tab);
     if show_news_tabs {
-        let items = news_tab_items(state.forum_entitled || state.news_tab == NewsTab::Forum);
+        let items = news_tab_items(state.forum_entitled || on_paid_tab);
         spec = spec.with_tabs(ModalTabs::Horizontal {
             items,
             active: state.news_tab.index(),
@@ -366,8 +387,9 @@ pub fn render_cloud_overlay(
         });
         // The News list view is the one whose content is unbounded (the
         // `PatchNotes` tab, a long history under `Posts`'s LINKS section,
-        // and now the Forum thread list/thread body) — cap it here and let
-        // `draw_body`'s scroll container reach the rest.
+        // the Forum board/thread list/thread body, and the DM conversation
+        // list/history) — cap it here and let `draw_body`'s scroll
+        // container reach the rest.
         spec = spec.with_max_content_height(NEWS_LIST_MAX_BODY_H);
     }
     // The Download body is the OTHER unbounded view (the release catalogue
@@ -409,15 +431,16 @@ pub fn render_cloud_overlay(
     result
 }
 
-/// The News overlay's tab strip: `Posts`/`PatchNotes` always, `Forum` only
-/// when `with_forum` (entitlement, or already the active tab — see
-/// `render_cloud_overlay`'s own call site). A fixed 3-slot array sliced
-/// down rather than two separate `const`s, so the first two entries can
-/// never drift between the gated and ungated form.
-const NEWS_TAB_ITEMS_ALL: [ModalTab<'static>; 3] = [
+/// The News overlay's tab strip: `Posts`/`PatchNotes` always, `Forum` and
+/// `Messages` only when `with_forum` (entitlement, or either one already
+/// being the active tab — see `render_cloud_overlay`'s own call site). A
+/// fixed 4-slot array sliced down rather than separate `const`s, so the
+/// first two entries can never drift between the gated and ungated form.
+const NEWS_TAB_ITEMS_ALL: [ModalTab<'static>; 4] = [
     ModalTab { id: "posts", label: "Posts", icon: None },
     ModalTab { id: "patch_notes", label: "Patch notes", icon: None },
     ModalTab { id: "forum", label: "Forum", icon: None },
+    ModalTab { id: "messages", label: "Messages", icon: None },
 ];
 
 fn news_tab_items(with_forum: bool) -> &'static [ModalTab<'static>] {
@@ -430,8 +453,9 @@ fn news_tab_items(with_forum: bool) -> &'static [ModalTab<'static>] {
 
 /// Scrollbar geometry shared by every `ScrollableContainer` in this file —
 /// same 8px handle + 4px padding, auto-hidden while content fits, that
-/// `chart_settings.rs` uses for its own tab bodies.
-fn scroll_config() -> ScrollableConfig {
+/// `chart_settings.rs` uses for its own tab bodies. Also used by
+/// `forum_v2_overlay`/`dm_overlay`'s own scroll containers.
+pub(crate) fn scroll_config() -> ScrollableConfig {
     ScrollableConfig {
         scrollbar_width: 8.0,
         scrollbar_padding: 4.0,
@@ -443,9 +467,10 @@ fn scroll_config() -> ScrollableConfig {
 /// target) and track (for a jump-to-position click) — the same wiring every
 /// other scrollable modal in this crate uses (`chart_settings`,
 /// `user_settings`, `trading_container_modal`, ...). One
-/// `cloud_overlay:scrollbar_*` id pair regardless of which of the two views
-/// drew it, since only one is ever on screen at a time.
-fn register_scrollbar_hit_zones(
+/// `cloud_overlay:scrollbar_*` id pair regardless of which view drew it,
+/// since only one is ever on screen at a time. Also used by
+/// `forum_v2_overlay`/`dm_overlay`'s own scroll containers.
+pub(crate) fn register_scrollbar_hit_zones(
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
     scroll_result: &ScrollableResult,
@@ -542,7 +567,11 @@ fn draw_body(
         }
 
         CloudOverlayKind::News if state.news_tab == NewsTab::Forum => {
-            draw_forum_view(ctx, coord, layer_id, x, y, w, viewport_h, state, ft, tt, current_time_ms, result);
+            super::forum_v2_overlay::draw(ctx, coord, layer_id, x, y, w, viewport_h, state, ft, tt, current_time_ms, result);
+        }
+
+        CloudOverlayKind::News if state.news_tab == NewsTab::Messages => {
+            super::dm_overlay::draw(ctx, coord, layer_id, x, y, w, viewport_h, state, ft, tt, current_time_ms, result);
         }
 
         CloudOverlayKind::News => match &state.data {
@@ -656,11 +685,11 @@ fn draw_news_list(
                 );
             }
         }
-        // Never reached — `draw_body` branches to `draw_forum_view` before
-        // this function is ever called with `NewsTab::Forum`. Kept
-        // exhaustive rather than `unreachable!()`, same reasoning as
-        // `news_list_h`'s own Forum arm above.
-        NewsTab::Forum => {}
+        // Never reached — `draw_body` branches to `forum_v2_overlay`/
+        // `dm_overlay` before this function is ever called with either tab.
+        // Kept exhaustive rather than `unreachable!()`, same reasoning as
+        // `news_list_h`'s own arm above.
+        NewsTab::Forum | NewsTab::Messages => {}
     }
 }
 
@@ -835,8 +864,9 @@ fn parse_rfc3339_unix_secs(s: &str) -> Option<i64> {
 
 /// `"just now"` / `"5m ago"` / `"3h ago"` / `"2d ago"` / the trimmed date
 /// past 30 days — `now_ms` is `current_time_ms`, the same clock every other
-/// overlay timestamp compares against.
-fn relative_time(iso: &str, now_ms: u64) -> String {
+/// overlay timestamp compares against. Also used by `forum_v2_overlay`/
+/// `dm_overlay` for their own timestamps.
+pub(crate) fn relative_time(iso: &str, now_ms: u64) -> String {
     let fallback = || iso.split('T').next().unwrap_or(iso).to_string();
     let Some(secs) = parse_rfc3339_unix_secs(iso) else {
         return fallback();
@@ -850,730 +880,6 @@ fn relative_time(iso: &str, now_ms: u64) -> String {
         86400..=2591999 => format!("{}d ago", delta / 86400),
         _ => fallback(),
     }
-}
-
-/// One rendered block of a forum body/reply — split on blank lines exactly
-/// like the News reading view's `post.body` (`draw_news_detail`). The one
-/// extra rule: a paragraph consisting of nothing but a single `http(s)://`
-/// URL renders as a clickable row instead of wrapped text (owner scope:
-/// bodies "may contain share links ... render those as clickable rows that
-/// open the link in a new tab").
-enum ForumBlock<'a> {
-    Text(Vec<String>),
-    Link(&'a str),
-}
-
-fn forum_blocks(text: &str) -> Vec<ForumBlock<'_>> {
-    text.split("\n\n")
-        .map(|par| {
-            let trimmed = par.trim();
-            let is_link = trimmed.lines().count() == 1
-                && (trimmed.starts_with("http://") || trimmed.starts_with("https://"))
-                && !trimmed.contains(char::is_whitespace);
-            if is_link {
-                ForumBlock::Link(trimmed)
-            } else {
-                ForumBlock::Text(wrap_text(trimmed, 62))
-            }
-        })
-        .collect()
-}
-
-/// Height of one link block — a plain row, same height every other action/
-/// link row in this file uses.
-const FORUM_LINK_ROW_H: f64 = ROW_H;
-
-/// Total height `text`'s blocks take — shared by `forum_thread_view_h`/
-/// `forum_compose_h`'s callers and `draw_forum_blocks`, so the frame and
-/// what actually gets painted can never disagree.
-fn forum_blocks_h(text: &str) -> f64 {
-    forum_blocks(text)
-        .iter()
-        .map(|b| match b {
-            ForumBlock::Text(lines) => lines.len() as f64 * 16.0 + 10.0,
-            ForumBlock::Link(_) => FORUM_LINK_ROW_H,
-        })
-        .sum()
-}
-
-/// Paint `text`'s blocks starting at `(x, y)`, width `w` — plain paragraphs
-/// as wrapped text, share-link paragraphs as a clickable row registered
-/// under `{widget_prefix}:link:{url}`. Returns the height consumed (matches
-/// `forum_blocks_h`'s own sum for the same `text`).
-#[allow(clippy::too_many_arguments)]
-fn draw_forum_blocks(
-    ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
-    layer_id: &LayerId,
-    widget_prefix: &str,
-    x: f64,
-    y: f64,
-    w: f64,
-    text: &str,
-    tt: &ToolbarTheme,
-) -> f64 {
-    let mut ly = y;
-    for block in forum_blocks(text) {
-        match block {
-            ForumBlock::Text(lines) => {
-                ctx.set_font("12px sans-serif");
-                ctx.set_fill_color(&tt.item_text);
-                ctx.set_text_align(TextAlign::Left);
-                ctx.set_text_baseline(TextBaseline::Top);
-                for line in &lines {
-                    ctx.fill_text(line, x, ly);
-                    ly += 16.0;
-                }
-                ly += 10.0;
-            }
-            ForumBlock::Link(url) => {
-                let rect = WidgetRect::new(x, ly, w, FORUM_LINK_ROW_H - ROW_GAP);
-                // The URL itself rides in the widget id's tail (past
-                // `:link:`) rather than a block index — `panel_click.rs`
-                // opens it directly with no lookup table to keep in sync
-                // (unlike `SOCIAL_LINKS`' id→url table, there is no fixed
-                // set of forum share links to look one up in).
-                draw_link_row(
-                    ctx,
-                    coord,
-                    layer_id,
-                    &format!("{}:link:{}", widget_prefix, url),
-                    rect,
-                    url,
-                    Icon::Globe,
-                    tt,
-                );
-                ly += FORUM_LINK_ROW_H;
-            }
-        }
-    }
-    ly - y
-}
-
-/// Fixed height of one thread-list row: title + meta (author · relative
-/// time · reply count) + excerpt + breathing room. The server-truncated
-/// `excerpt` is assumed to fit one line (`fit_text_to_width` clips it
-/// defensively if not) — unlike blog summaries, which wrap up to two.
-const FORUM_ROW_H: f64 = 64.0;
-
-/// Height of the Forum tab's list sub-view: the New-thread row, then either
-/// a loading/error/empty line or the thread rows plus — only once the
-/// server says there is more — a Load-more row. Shared with
-/// `draw_forum_list` so the frame and what actually gets painted can never
-/// disagree (`post_block_h`'s own doctrine, applied to the Forum tab).
-fn forum_list_h(list: &ForumListState) -> f64 {
-    let new_thread_h = ROW_H + 8.0;
-    match list {
-        ForumListState::Empty | ForumListState::Loading => new_thread_h + 24.0,
-        ForumListState::Error { .. } => new_thread_h + 44.0,
-        ForumListState::Loaded { threads, next_before, .. } => {
-            if threads.is_empty() {
-                new_thread_h + 24.0
-            } else {
-                let load_more_h = if next_before.is_some() { ROW_H } else { 0.0 };
-                new_thread_h + threads.len() as f64 * FORUM_ROW_H + load_more_h
-            }
-        }
-    }
-}
-
-/// Height of the Forum tab's thread sub-view — back row, then either
-/// loading/error, or title + meta + optional Delete (own thread) + body +
-/// replies (each with an optional own-reply Delete) + reply box. Shared
-/// with `draw_forum_thread`.
-fn forum_thread_view_h(view: &ForumSubView) -> f64 {
-    let ForumSubView::Thread { thread, loading, error, reply_error, .. } = view else {
-        return 0.0;
-    };
-    let back_h = 36.0;
-    let Some(t) = thread else {
-        return back_h + if *loading { 24.0 } else { 24.0 + error.as_ref().map(|_| 20.0).unwrap_or(0.0) };
-    };
-    let header_h = 16.0 + 26.0; // meta line + title line
-    let delete_h = if t.author_is_me { ROW_H } else { 0.0 };
-    let body_h = forum_blocks_h(&t.body) + 12.0;
-    let replies_heading_h = 24.0;
-    let replies_h: f64 = t
-        .replies
-        .iter()
-        .map(|r| {
-            16.0 // meta line
-                + forum_blocks_h(&r.body)
-                + if r.author_is_me { ROW_H } else { 0.0 }
-                + 14.0 // gap after this reply
-        })
-        .sum();
-    let reply_error_h = if reply_error.is_some() { 20.0 } else { 0.0 };
-    let reply_box_h = 4.0 + 16.0 + FIELD_H + 8.0 + ROW_H;
-    back_h + header_h + delete_h + body_h + replies_heading_h + replies_h + reply_error_h + reply_box_h
-}
-
-/// Height of the Forum tab's compose sub-view — back row, title field,
-/// body field, optional server/validation error, Post/Cancel row. Shared
-/// with `draw_forum_compose`.
-fn forum_compose_h(view: &ForumSubView) -> f64 {
-    let ForumSubView::Compose { error, .. } = view else {
-        return 0.0;
-    };
-    let back_h = 36.0;
-    let title_h = 16.0 + FIELD_H + 12.0;
-    let body_h = 16.0 + FIELD_H + 12.0;
-    let error_h = if error.is_some() { 20.0 } else { 0.0 };
-    let action_h = ROW_H;
-    back_h + title_h + body_h + error_h + action_h
-}
-
-/// Body height for the whole Forum tab — dispatches on `forum_view`. Used
-/// by `content_height`, mirrored by `draw_forum_view`'s own `drawn_h`.
-fn forum_view_h(state: &CloudOverlayState) -> f64 {
-    match &state.forum_view {
-        ForumSubView::List => forum_list_h(&state.forum_list),
-        v @ ForumSubView::Thread { .. } => forum_thread_view_h(v),
-        v @ ForumSubView::Compose { .. } => forum_compose_h(v),
-    }
-}
-
-/// Draw the Forum tab: whichever sub-view `state.forum_view` says, inside
-/// the same scroll-container contract every other unbounded body in this
-/// file uses (`draw_body`'s Download arm, the News list arm).
-#[allow(clippy::too_many_arguments)]
-fn draw_forum_view(
-    ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
-    layer_id: &LayerId,
-    x: f64,
-    y: f64,
-    w: f64,
-    viewport_h: f64,
-    state: &CloudOverlayState,
-    ft: &FrameTheme,
-    tt: &ToolbarTheme,
-    current_time_ms: u64,
-    result: &mut CloudOverlayResult,
-) {
-    let drawn_h = forum_view_h(state);
-    let viewport_rect = WidgetRect::new(x, y, w, viewport_h);
-    coord.register_on_layer("cloud_overlay:scroll_viewport", viewport_rect, Sense::SCROLL, layer_id);
-    let scrollable = ScrollableContainer::new(viewport_rect, &state.scroll, Some(scroll_config()));
-    scrollable.begin(ctx);
-    let sx = x;
-    let sy = scrollable.content_y();
-    let sw = scrollable.content_width();
-
-    match &state.forum_view {
-        ForumSubView::List => {
-            draw_forum_list(ctx, coord, layer_id, sx, sy, sw, &state.forum_list, current_time_ms, tt)
-        }
-        ForumSubView::Thread { .. } => draw_forum_thread(
-            ctx,
-            coord,
-            layer_id,
-            sx,
-            sy,
-            sw,
-            &state.forum_view,
-            ft,
-            tt,
-            current_time_ms,
-            result,
-        ),
-        ForumSubView::Compose { .. } => draw_forum_compose(
-            ctx,
-            coord,
-            layer_id,
-            sx,
-            sy,
-            sw,
-            &state.forum_view,
-            ft,
-            tt,
-            current_time_ms,
-            result,
-        ),
-    }
-
-    let widget_theme = WidgetTheme::default();
-    let scroll_result = scrollable.end(ctx, drawn_h, &widget_theme);
-    result.total_content_height = Some(drawn_h);
-    result.viewport_height = Some(viewport_h);
-    result.scroll_viewport_rect = Some(viewport_rect);
-    result.scrollbar_handle_rect = scroll_result.handle_rect;
-    result.scrollbar_track_rect = scroll_result.track_rect;
-    register_scrollbar_hit_zones(coord, layer_id, &scroll_result);
-}
-
-/// The Forum tab's list sub-view: "New thread" row, then either an empty
-/// state, an error, a loading line, or the thread rows plus an optional
-/// "Load more" row.
-#[allow(clippy::too_many_arguments)]
-fn draw_forum_list(
-    ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
-    layer_id: &LayerId,
-    x: f64,
-    y: f64,
-    w: f64,
-    list: &ForumListState,
-    current_time_ms: u64,
-    tt: &ToolbarTheme,
-) {
-    let mut py = y;
-    draw_action_row(
-        ctx,
-        coord,
-        layer_id,
-        "cloud_overlay:forum:new_thread",
-        WidgetRect::new(x, py, w, ROW_H - ROW_GAP),
-        "New thread",
-        tt,
-    );
-    py += ROW_H + 8.0;
-
-    match list {
-        ForumListState::Empty | ForumListState::Loading => {
-            draw_status(ctx, tt, x, py, w, "Loading threads…", None);
-        }
-        ForumListState::Error { message } => {
-            draw_status(ctx, tt, x, py, w, "Failed to load threads", Some(message));
-        }
-        ForumListState::Loaded { threads, next_before, loading_more } => {
-            if threads.is_empty() {
-                draw_status(ctx, tt, x, py, w, "No threads yet — start one.", None);
-                return;
-            }
-            for t in threads {
-                py += draw_forum_thread_row(ctx, coord, layer_id, x, py, w, t, current_time_ms, tt);
-            }
-            if next_before.is_some() {
-                let label = if *loading_more { "Loading…" } else { "Load more" };
-                draw_expand_row(
-                    ctx,
-                    coord,
-                    layer_id,
-                    "cloud_overlay:forum:load_more",
-                    WidgetRect::new(x, py, w, ROW_H - ROW_GAP),
-                    label,
-                    false,
-                    tt,
-                );
-            }
-        }
-    }
-}
-
-/// One row in the Forum tab's thread list: title, then a meta line
-/// (author · relative time of last activity · reply count), then the
-/// server-supplied excerpt, each clipped to one line. Returns the height
-/// consumed (must match `FORUM_ROW_H`).
-#[allow(clippy::too_many_arguments)]
-fn draw_forum_thread_row(
-    ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
-    layer_id: &LayerId,
-    x: f64,
-    y: f64,
-    w: f64,
-    t: &CloudForumThreadSummary,
-    current_time_ms: u64,
-    tt: &ToolbarTheme,
-) -> f64 {
-    let widget_id = format!("cloud_overlay:forum:thread:{}", t.id);
-    let rect = WidgetRect::new(x, y, w, FORUM_ROW_H - ROW_GAP);
-    let hovered = coord.is_hovered(&WidgetId::from(widget_id.as_str()));
-    if hovered {
-        ctx.set_fill_color(&tt.item_bg_hover);
-        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
-    }
-
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.set_font("600 13px sans-serif");
-    ctx.set_fill_color(if hovered { GOLD } else { &tt.item_text });
-    let title = crate::ui::widgets::fit_text_to_width(ctx, &t.title, w - 16.0);
-    ctx.fill_text(&title, x + 8.0, y + 4.0);
-
-    let activity = t.last_reply_at.as_deref().unwrap_or(&t.created_at);
-    let replies = if t.reply_count == 1 {
-        "1 reply".to_string()
-    } else {
-        format!("{} replies", t.reply_count)
-    };
-    let meta = format!("{} · {} · {}", t.author, relative_time(activity, current_time_ms), replies);
-    ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    let meta = crate::ui::widgets::fit_text_to_width(ctx, &meta, w - 16.0);
-    ctx.fill_text(&meta, x + 8.0, y + 24.0);
-
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(&tt.item_text_muted);
-    let excerpt = crate::ui::widgets::fit_text_to_width(ctx, &t.excerpt, w - 16.0);
-    ctx.fill_text(&excerpt, x + 8.0, y + 42.0);
-
-    coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
-    FORUM_ROW_H
-}
-
-/// Draw one Forum text field (title, body, or reply) — same idiom
-/// `cloud_login.rs`'s own redeem-code field uses: `draw_input` + blinking
-/// caret + a click zone registered for the mousedown-claims-the-store path
-/// (`mlc-app`'s `on_drag_start`; see `CloudOverlayResult::forum_reply_rect`'s
-/// own doc for the rest of that wiring). Returns the field's rect and char
-/// boundary positions for the caller to store on `CloudOverlayResult`.
-#[allow(clippy::too_many_arguments)]
-fn draw_forum_field(
-    ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
-    layer_id: &LayerId,
-    widget_id: &str,
-    field_id: &str,
-    rect: WidgetRect,
-    placeholder: &str,
-    ft: &FrameTheme,
-    tt: &ToolbarTheme,
-    current_time_ms: u64,
-) -> (WidgetRect, Vec<f64>) {
-    let wid = WidgetId::from(field_id);
-    let text = coord.text_fields().text(&wid).to_string();
-    let cursor = coord.text_fields().cursor(&wid);
-    let (sel_start, sel_end) = match coord.text_fields().selection_range(&wid) {
-        Some((lo, hi)) => (Some(lo), Some(hi)),
-        None => (None, None),
-    };
-    let engaged = coord.text_fields().is_engaged(&wid);
-    let widget_theme = toolbar_to_widget_theme(tt, ft);
-    let cfg = InputConfig::new(&text)
-        .with_focused(engaged)
-        .with_cursor(cursor)
-        .with_selection(sel_start, sel_end);
-    let cfg = if engaged || !text.is_empty() {
-        cfg
-    } else {
-        cfg.with_placeholder(placeholder)
-    };
-    let input_result = draw_input(ctx, &cfg, WidgetState::Normal, rect, &widget_theme);
-    if engaged && coord.text_fields().cursor_visible(current_time_ms) {
-        draw_input_cursor(
-            ctx,
-            input_result.cursor_x,
-            input_result.cursor_y,
-            input_result.cursor_height,
-            &tt.item_text,
-        );
-    }
-    coord.register_on_layer(widget_id, rect, Sense::CLICK, layer_id);
-    (rect, input_result.char_x_positions)
-}
-
-/// A destructive action row (own-thread/own-reply Delete) — neutral surface
-/// (not `draw_action_row`'s gold, which reads as affirmative) with the
-/// delete icon and a muted-red label.
-fn draw_delete_row(
-    ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
-    layer_id: &LayerId,
-    widget_id: &str,
-    rect: WidgetRect,
-    label: &str,
-    tt: &ToolbarTheme,
-) {
-    let hovered = coord.is_hovered(&WidgetId::from(widget_id));
-    ctx.set_fill_color(if hovered { &tt.item_bg_hover } else { &tt.dropdown_bg });
-    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
-    draw_svg_icon(
-        ctx,
-        Icon::Delete.svg(),
-        rect.x + 10.0,
-        rect.y + (rect.height - 16.0) / 2.0,
-        16.0,
-        16.0,
-        "#e5484d",
-    );
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color("#e5484d");
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(label, rect.x + 34.0, rect.center_y());
-    coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
-}
-
-/// The Forum tab's thread sub-view: back row, then either loading/error, or
-/// title + author/time meta + optional Delete (own thread) + body +
-/// replies (each with an optional own-reply Delete) + reply box. Writes the
-/// reply field's geometry into `result` for `mlc-app`'s text-field wiring.
-#[allow(clippy::too_many_arguments)]
-fn draw_forum_thread(
-    ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
-    layer_id: &LayerId,
-    x: f64,
-    y: f64,
-    w: f64,
-    view: &ForumSubView,
-    ft: &FrameTheme,
-    tt: &ToolbarTheme,
-    current_time_ms: u64,
-    result: &mut CloudOverlayResult,
-) {
-    let ForumSubView::Thread { thread, loading, error, posting_reply, reply_error } = view else {
-        return;
-    };
-
-    let back_rect = WidgetRect::new(x, y, w, 28.0);
-    let hovered = coord.is_hovered(&WidgetId::from("cloud_overlay:forum:back"));
-    if hovered {
-        ctx.set_fill_color(&tt.item_bg_hover);
-        ctx.fill_rounded_rect(back_rect.x, back_rect.y, back_rect.width, back_rect.height, SETTINGS_BUTTON_RADIUS);
-    }
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(if hovered { &tt.item_text } else { &tt.item_text_muted });
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("← Forum", x + 8.0, y + 14.0);
-    coord.register_on_layer("cloud_overlay:forum:back", back_rect, Sense::CLICK | Sense::HOVER, layer_id);
-
-    let mut ly = y + 36.0;
-
-    let Some(t) = thread else {
-        if *loading {
-            draw_status(ctx, tt, x, ly, w, "Loading thread…", None);
-        } else {
-            draw_status(ctx, tt, x, ly, w, "Failed to load thread", error.as_deref());
-        }
-        return;
-    };
-
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.set_font("10px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.fill_text(&format!("{} · {}", t.author, relative_time(&t.created_at, current_time_ms)), x, ly);
-    ly += 16.0;
-
-    ctx.set_font("600 14px sans-serif");
-    ctx.set_fill_color(GOLD);
-    ctx.fill_text(&t.title, x, ly);
-    ly += 26.0;
-
-    if t.author_is_me {
-        draw_delete_row(
-            ctx,
-            coord,
-            layer_id,
-            "cloud_overlay:forum:delete_thread",
-            WidgetRect::new(x, ly, w, ROW_H - ROW_GAP),
-            "Delete thread",
-            tt,
-        );
-        ly += ROW_H;
-    }
-
-    ly += draw_forum_blocks(ctx, coord, layer_id, "cloud_overlay:forum:body", x, ly, w, &t.body, tt);
-    ly += 12.0;
-
-    ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    let replies_label = if t.replies.is_empty() {
-        "NO REPLIES YET".to_string()
-    } else if t.replies.len() == 1 {
-        "1 REPLY".to_string()
-    } else {
-        format!("{} REPLIES", t.replies.len())
-    };
-    ctx.fill_text(&replies_label, x, ly);
-    ly += 24.0;
-
-    for r in &t.replies {
-        ctx.set_font("10px monospace");
-        ctx.set_fill_color(&tt.item_text_muted);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(&format!("{} · {}", r.author, relative_time(&r.created_at, current_time_ms)), x, ly);
-        ly += 16.0;
-        ly += draw_forum_blocks(
-            ctx,
-            coord,
-            layer_id,
-            &format!("cloud_overlay:forum:reply:{}", r.id),
-            x,
-            ly,
-            w,
-            &r.body,
-            tt,
-        );
-        if r.author_is_me {
-            draw_delete_row(
-                ctx,
-                coord,
-                layer_id,
-                &format!("cloud_overlay:forum:delete_reply:{}", r.id),
-                WidgetRect::new(x, ly, w, ROW_H - ROW_GAP),
-                "Delete reply",
-                tt,
-            );
-            ly += ROW_H;
-        }
-        ly += 14.0;
-    }
-
-    if let Some(msg) = reply_error {
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("#e5484d");
-        let m = crate::ui::widgets::fit_text_to_width(ctx, msg, w);
-        ctx.fill_text(&m, x, ly);
-        ly += 20.0;
-    }
-
-    ly += 4.0;
-    ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("REPLY", x, ly);
-    ly += 16.0;
-
-    let field_rect = WidgetRect::new(x, ly, w, FIELD_H);
-    let (rect, char_positions) = draw_forum_field(
-        ctx,
-        coord,
-        layer_id,
-        "cloud_overlay:forum:reply_input",
-        FORUM_REPLY_FIELD,
-        field_rect,
-        "Write a reply…",
-        ft,
-        tt,
-        current_time_ms,
-    );
-    result.forum_reply_rect = Some(rect);
-    result.forum_reply_char_positions = char_positions;
-    ly += FIELD_H + 8.0;
-
-    let submit_label = if *posting_reply { "Posting…" } else { "Reply" };
-    draw_action_row(
-        ctx,
-        coord,
-        layer_id,
-        "cloud_overlay:forum:reply_submit",
-        WidgetRect::new(x, ly, w, ROW_H - ROW_GAP),
-        submit_label,
-        tt,
-    );
-}
-
-/// The Forum tab's compose sub-view: back row, title field, body field
-/// (single paragraph — the shared `TextFieldStore` has no multi-line
-/// support; see `mlc-app/src/text_input/mod.rs`'s `FORUM_BODY` doc),
-/// server/validation error (if any), Post/Cancel. Writes both fields'
-/// geometry into `result` for `mlc-app`'s text-field wiring.
-#[allow(clippy::too_many_arguments)]
-fn draw_forum_compose(
-    ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
-    layer_id: &LayerId,
-    x: f64,
-    y: f64,
-    w: f64,
-    view: &ForumSubView,
-    ft: &FrameTheme,
-    tt: &ToolbarTheme,
-    current_time_ms: u64,
-    result: &mut CloudOverlayResult,
-) {
-    let ForumSubView::Compose { posting, error } = view else {
-        return;
-    };
-
-    let back_rect = WidgetRect::new(x, y, w, 28.0);
-    let hovered = coord.is_hovered(&WidgetId::from("cloud_overlay:forum:back"));
-    if hovered {
-        ctx.set_fill_color(&tt.item_bg_hover);
-        ctx.fill_rounded_rect(back_rect.x, back_rect.y, back_rect.width, back_rect.height, SETTINGS_BUTTON_RADIUS);
-    }
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(if hovered { &tt.item_text } else { &tt.item_text_muted });
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("← Forum", x + 8.0, y + 14.0);
-    coord.register_on_layer("cloud_overlay:forum:back", back_rect, Sense::CLICK | Sense::HOVER, layer_id);
-
-    let mut ly = y + 36.0;
-
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.fill_text("TITLE", x, ly);
-    ly += 16.0;
-    let title_rect = WidgetRect::new(x, ly, w, FIELD_H);
-    let (rect, chars) = draw_forum_field(
-        ctx,
-        coord,
-        layer_id,
-        "cloud_overlay:forum:title_input",
-        FORUM_TITLE_FIELD,
-        title_rect,
-        "3–120 characters",
-        ft,
-        tt,
-        current_time_ms,
-    );
-    result.forum_title_rect = Some(rect);
-    result.forum_title_char_positions = chars;
-    ly += FIELD_H + 12.0;
-
-    ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    // States the single-paragraph limitation right on the field: this
-    // `TextFieldStore` has no multi-line mode, so a body typed here can
-    // never contain the blank-line paragraph breaks a reply/body FETCHED
-    // from the server may show (`draw_forum_blocks` renders those fully;
-    // only composing one is limited).
-    ctx.fill_text("BODY (single paragraph)", x, ly);
-    ly += 16.0;
-    let body_rect = WidgetRect::new(x, ly, w, FIELD_H);
-    let (rect, chars) = draw_forum_field(
-        ctx,
-        coord,
-        layer_id,
-        "cloud_overlay:forum:body_input",
-        FORUM_BODY_FIELD,
-        body_rect,
-        "What's on your mind?",
-        ft,
-        tt,
-        current_time_ms,
-    );
-    result.forum_body_rect = Some(rect);
-    result.forum_body_char_positions = chars;
-    ly += FIELD_H + 12.0;
-
-    if let Some(msg) = error {
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("#e5484d");
-        let m = crate::ui::widgets::fit_text_to_width(ctx, msg, w);
-        ctx.fill_text(&m, x, ly);
-        ly += 20.0;
-    }
-
-    let post_w = (w - FORUM_BTN_GAP) / 2.0;
-    let post_label = if *posting { "Posting…" } else { "Post" };
-    draw_action_row(
-        ctx,
-        coord,
-        layer_id,
-        "cloud_overlay:forum:compose_post",
-        WidgetRect::new(x, ly, post_w, ROW_H - ROW_GAP),
-        post_label,
-        tt,
-    );
-    draw_expand_row(
-        ctx,
-        coord,
-        layer_id,
-        "cloud_overlay:forum:compose_cancel",
-        WidgetRect::new(x + post_w + FORUM_BTN_GAP, ly, post_w, ROW_H - ROW_GAP),
-        "Cancel",
-        false,
-        tt,
-    );
 }
 
 /// The Download overlay on a desktop build: the in-process updater's state.
@@ -1704,8 +1010,9 @@ fn draw_update_phase(
 
 /// A row that DOES something in this window, as opposed to [`draw_link_row`],
 /// which leaves for a URL. Gold surface, centred label, no external glyph —
-/// the glyph is the whole difference the user reads.
-fn draw_action_row(
+/// the glyph is the whole difference the user reads. Also used by
+/// `forum_v2_overlay`/`dm_overlay`.
+pub(crate) fn draw_action_row(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
@@ -2036,7 +1343,7 @@ fn format_release_date(created_at: &str) -> &str {
 /// with the state (that glyph would be a lie here: nothing leaves the
 /// window).
 #[allow(clippy::too_many_arguments)]
-fn draw_expand_row(
+pub(crate) fn draw_expand_row(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
@@ -2074,7 +1381,7 @@ fn draw_expand_row(
 /// One clickable row: SVG icon + label + trailing "opens externally" glyph,
 /// with the standard hover surface.
 #[allow(clippy::too_many_arguments)]
-fn draw_link_row(
+pub(crate) fn draw_link_row(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
@@ -2118,7 +1425,7 @@ fn draw_link_row(
     coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
 }
 
-fn draw_status(
+pub(crate) fn draw_status(
     ctx: &mut dyn RenderContext,
     tt: &ToolbarTheme,
     x: f64,
@@ -2141,7 +1448,7 @@ fn draw_status(
     }
 }
 
-fn wrap_text(text: &str, width: usize) -> Vec<String> {
+pub(crate) fn wrap_text(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     for raw in text.lines() {
         let mut rest = raw.trim();

@@ -86,6 +86,10 @@ pub use cloud_login::render_cloud_login_modal;
 pub mod cloud_overlay;
 #[cfg(feature = "cloud")]
 pub use cloud_overlay::render_cloud_overlay;
+#[cfg(feature = "cloud")]
+pub mod forum_v2_overlay;
+#[cfg(feature = "cloud")]
+pub mod dm_overlay;
 
 pub use indicator_settings::*;
 pub use context_menu::*;

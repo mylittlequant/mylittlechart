@@ -4832,13 +4832,24 @@ pub enum NewsTab {
     #[default]
     Posts,
     PatchNotes,
-    /// Paid-only communication board (`GET/POST/DELETE /api/forum/*`).
-    /// Drawn only when [`CloudOverlayState::forum_entitled`] is true — see
+    /// Paid-only communication board — forum v2 (`GET/POST/DELETE
+    /// /api/forum/*`, `routes::forum_v2`). Drawn only when
+    /// [`CloudOverlayState::forum_entitled`] is true — see
     /// `cloud_overlay.rs`'s `news_tab_items`. Content lives in
-    /// [`CloudOverlayState::forum_list`]/`forum_view`, NOT `CloudOverlayState::
-    /// data` — switching to/from this tab must not discard (or be discarded
-    /// by) the blog feed the other two tabs share.
+    /// [`CloudOverlayState::forum2`], NOT `CloudOverlayState::data` —
+    /// switching to/from this tab must not discard (or be discarded by) the
+    /// blog feed the other two tabs share. The v1 forum fields
+    /// (`forum_list`/`forum_view`/`forum_request`/`CloudForumThread*`)
+    /// still exist on `CloudOverlayState` — kept only so a shell mid-upgrade
+    /// still compiles against them — but this tab no longer renders from
+    /// them; see `CloudOverlayState::forum2`'s own doc.
     Forum,
+    /// Paid-only direct messages (`GET/PUT/POST /api/dm/*`, `routes::dm`).
+    /// Same `forum_entitled` gate as `Forum` — the server names the DM gate
+    /// `Feature::Forum` too (`routes::dm`'s own doc: "Feature::Forum today
+    /// stands for the paid social tier"). Content lives in
+    /// [`CloudOverlayState::dm`].
+    Messages,
 }
 
 #[cfg(feature = "cloud")]
@@ -4851,6 +4862,7 @@ impl NewsTab {
             Self::Posts => "posts",
             Self::PatchNotes => "patch_notes",
             Self::Forum => "forum",
+            Self::Messages => "messages",
         }
     }
 
@@ -4860,6 +4872,7 @@ impl NewsTab {
             Self::Posts => "Posts",
             Self::PatchNotes => "Patch notes",
             Self::Forum => "Forum",
+            Self::Messages => "Messages",
         }
     }
 
@@ -4871,6 +4884,7 @@ impl NewsTab {
             "posts" | "latest" => Some(Self::Posts),
             "patch_notes" | "all" => Some(Self::PatchNotes),
             "forum" => Some(Self::Forum),
+            "messages" => Some(Self::Messages),
             _ => None,
         }
     }
@@ -4881,6 +4895,7 @@ impl NewsTab {
             Self::Posts => 0,
             Self::PatchNotes => 1,
             Self::Forum => 2,
+            Self::Messages => 3,
         }
     }
 }
@@ -5012,6 +5027,12 @@ pub struct CloudOverlayState {
     pub forum_reply_pending: bool,
     /// One-shot mailbox for a Forum action the shell should perform.
     pub forum_request: Option<ForumRequest>,
+    /// Forum v2 (boards/threads/search) — what `NewsTab::Forum` actually
+    /// renders now. See [`ForumV2State`]'s own doc.
+    pub forum2: ForumV2State,
+    /// Direct messages — what `NewsTab::Messages` renders. See [`DmState`]'s
+    /// own doc.
+    pub dm: DmState,
 }
 
 #[cfg(feature = "cloud")]
@@ -5039,6 +5060,8 @@ impl Default for CloudOverlayState {
             forum_thread_refreshing: false,
             forum_reply_pending: false,
             forum_request: None,
+            forum2: ForumV2State::default(),
+            dm: DmState::default(),
         }
     }
 }
@@ -5093,6 +5116,10 @@ impl CloudOverlayState {
         }
         self.forum_list_refreshing = false;
         self.forum_request = None;
+        // Forum v2 / DMs: same "drop to the landing view, keep what is
+        // already loaded" rule as the v1 fields above.
+        self.forum2.reset_to_boards();
+        self.dm.reset_to_list();
     }
 
     pub fn close(&mut self) {
@@ -5114,6 +5141,16 @@ impl CloudOverlayState {
         self.forum_thread_refreshing = false;
         self.forum_reply_pending = false;
         self.forum_request = None;
+        // Same split as the v1 fields above: the view/boards/conversations
+        // survive a close (so reopening onto an unentitled tab briefly, then
+        // back, is not a full refetch), only in-flight bookkeeping resets.
+        self.forum2.boards_refreshing = false;
+        self.forum2.board_threads_refreshing = false;
+        self.forum2.thread_refreshing = false;
+        self.forum2.request = None;
+        self.dm.conversations_refreshing = false;
+        self.dm.messages_refreshing = false;
+        self.dm.request = None;
     }
 
     pub fn toggle(&mut self, kind: CloudOverlayKind) {
@@ -5194,5 +5231,496 @@ impl CloudOverlayState {
 
     pub fn end_drag(&mut self) {
         self.is_dragging = false;
+    }
+}
+// =============================================================================
+// Forum v2 (paid boards, `NewsTab::Forum`) — server: `routes::forum_v2` +
+// `social_db.rs` (`docs/mlc/plans/social-sharing-access-gates-and-agent-
+// control-2026-09-05.md` §4-6). What `NewsTab::Forum` now renders in place
+// of the v1 types above (which stay declared for shell-compat — see
+// `CloudOverlayState::forum2`'s own doc). UI-side mirrors of the wire
+// shapes only: this crate must not depend on the cloud transport crate,
+// same reason `CloudForumThreadSummary` mirrors `mlc_cloud::
+// ForumThreadSummary` above.
+// =============================================================================
+
+/// One row of the Boards view. A flat mirror of `routes::forum_v2::
+/// board_json`'s shape. `can_write` is resolved by the shell from the
+/// caller's own classes against `write_class` (`social_db::can_write`) —
+/// this crate never computes the class ranking itself.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct BoardUi {
+    pub slug: String,
+    pub title: String,
+    pub description: String,
+    pub read_class: String,
+    pub write_class: String,
+    /// Whether the calling account may post a new thread/reply on this
+    /// board — drives the "New thread" row and the lock glyph on the
+    /// board's own list row.
+    pub can_write: bool,
+}
+
+/// One row of a board's thread list. A flat mirror of `routes::forum_v2::
+/// list_board_threads`'s per-thread JSON.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForumThreadV2Ui {
+    pub id: i64,
+    pub title: String,
+    pub author: String,
+    pub author_is_me: bool,
+    pub created_at: String,
+    pub updated_at: String,
+    pub last_reply_at: Option<String>,
+    pub reply_count: i64,
+    pub pinned: bool,
+    pub locked: bool,
+}
+
+/// One reply node in a thread's reply TREE (`social_db::assemble_reply_tree`
+/// via `routes::forum_v2::render_reply_tree`) — `children` carries direct
+/// replies to THIS reply, already nested by the server; the reading view
+/// walks it recursively, indenting by `depth`.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForumReplyV2Ui {
+    pub id: i64,
+    pub parent_reply_id: Option<i64>,
+    pub depth: i64,
+    pub author: String,
+    pub author_is_me: bool,
+    pub body: String,
+    pub created_at: String,
+    /// Hidden by a moderator — the server omits a hidden reply's CHILDREN
+    /// entirely for a non-moderator caller (`social_db::list_replies_v2`),
+    /// but still returns the hidden node itself so the thread does not show
+    /// a gap in the tree; a moderator caller sees it in full.
+    pub hidden: bool,
+    pub children: Vec<ForumReplyV2Ui>,
+}
+
+/// A thread's own header fields, read by the Thread view — separate from
+/// [`ForumThreadV2Ui`] (the list row) because `routes::forum_v2::get_thread`
+/// returns a few fields the list endpoint does not (`body`, `hidden`).
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForumThreadV2Detail {
+    pub id: i64,
+    pub board_id: i64,
+    pub title: String,
+    pub author: String,
+    pub author_is_me: bool,
+    pub body: String,
+    pub created_at: String,
+    pub updated_at: String,
+    pub pinned: bool,
+    pub locked: bool,
+    pub hidden: bool,
+}
+
+/// One `GET /api/forum/search` hit. A flat mirror of `social_db::SearchHit`
+/// plus its resolved author label. `reply_id`/`title` are mutually
+/// exclusive per `kind` (`"thread"` carries `title`, no `reply_id`;
+/// `"reply"` carries `reply_id`, no `title`) — mirrored here as `Option`
+/// rather than two hit types, since the reading view only ever needs
+/// "which thread does this open", not a kind-specific shape.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForumSearchHitUi {
+    pub kind: String,
+    pub board_id: i64,
+    pub thread_id: i64,
+    pub reply_id: Option<i64>,
+    pub title: Option<String>,
+    pub snippet: String,
+    pub author: String,
+    pub created_at: String,
+}
+
+/// Which Forum-v2 sub-view is showing.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum ForumV2View {
+    /// The board list — the tab's own default landing view.
+    #[default]
+    Boards,
+    /// One board's thread list, paged.
+    BoardThreads {
+        slug: String,
+        threads: Vec<ForumThreadV2Ui>,
+        /// Pagination cursor for "Load more" — `None` once the board has
+        /// run out (same cursor shape as v1's own `next_before`:
+        /// `"<last_activity>|<id>"`).
+        next_before: Option<String>,
+    },
+    /// One open thread: header + reply tree. `thread` is `None` while the
+    /// `OpenThread` request is in flight — same "loading" idiom v1's own
+    /// `ForumSubView::Thread` uses.
+    Thread {
+        id: i64,
+        thread: Option<ForumThreadV2Detail>,
+        replies_tree: Vec<ForumReplyV2Ui>,
+        /// The reply currently targeted by the "Reply" row under a specific
+        /// reply node — `None` means the reply box posts a top-level reply
+        /// (`parent_reply_id: None`); `Some(id)` nests it under that reply.
+        reply_to: Option<i64>,
+    },
+    /// Search results for `q` (optionally board-scoped — see
+    /// `ForumV2Request::Search`).
+    Search { q: String, hits: Vec<ForumSearchHitUi> },
+    /// New-thread compose form for `slug`'s board — reuses the shared
+    /// `TextFieldStore` fields `mlc_app::text_input::{FORUM_TITLE,
+    /// FORUM_BODY}`, same as v1's own compose view.
+    Compose { slug: String },
+}
+
+/// A user-triggered Forum-v2 action — one-shot mailbox
+/// ([`ForumV2State::request`]), same idiom as v1's own [`ForumRequest`].
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub enum ForumV2Request {
+    /// Fetch the board list. The passive "fetch when nothing is loaded" case
+    /// is driven by the shell polling [`ForumV2State::boards_fetched_at`],
+    /// not by this — same split v1 has between its own passive fetch and
+    /// `ForumRequest`'s click-only variants.
+    LoadBoards,
+    /// Fetch (or page through) one board's thread list.
+    LoadBoard { slug: String, before: Option<String> },
+    /// A thread row (list or search hit) was clicked.
+    OpenThread { id: i64 },
+    /// Compose view's Post button.
+    CreateThread { slug: String, title: String, body: String },
+    /// Reply box submit — nested under `parent_reply_id` when the caller
+    /// picked a specific reply's "Reply" row first.
+    Reply { thread_id: i64, body: String, parent_reply_id: Option<i64> },
+    /// A reply's Delete (own reply, or moderator/admin).
+    DeleteReply { id: i64 },
+    /// Search box submit.
+    Search { q: String, board: Option<String> },
+    /// A moderation row action (`hide`/`unhide`/`lock`/`unlock`/`pin`/
+    /// `unpin`/`move`) — `board` only matters for `move`, naming the target
+    /// board's slug (`routes::forum_v2::ModerateRequest::board`).
+    Moderate { thread_id: i64, action: String, board: Option<String> },
+}
+
+/// State for the Forum-v2 boards/threads/search UI (`NewsTab::Forum`).
+///
+/// Same mailbox contract as [`CloudOverlayState`] itself: pure UI state +
+/// flags, effects and fetches in the shell driver.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug)]
+pub struct ForumV2State {
+    /// Boards the caller can READ (server already filters unreadable ones
+    /// out — `routes::forum_v2::list_boards`). Kept flat (not wrapped in a
+    /// Loading/Loaded enum like v1's `ForumListState`): freshness is tracked
+    /// by `boards_fetched_at`/`boards_refreshing` below instead, so an
+    /// already-`Loaded` page is never discarded just because a background
+    /// refresh is in flight.
+    pub boards: Vec<BoardUi>,
+    pub view: ForumV2View,
+    /// One-shot mailbox for a Forum-v2 action the shell should perform.
+    pub request: Option<ForumV2Request>,
+    /// Moderator/admin role names the calling account holds
+    /// (`social_db::Role::from_wire_name`'s own wire values — `"moderator"`/
+    /// `"admin"`), filled every frame by the shell driver next to
+    /// `CloudOverlayState::forum_entitled`. Drives the moderation row on the
+    /// Thread view ([`Self::is_moderator_or_admin`]).
+    pub caller_roles: Vec<String>,
+    /// The last Forum-v2 request's server refusal (validation, rate limit,
+    /// forbidden, not found), if any — read by whichever view drew the
+    /// action that set it; cleared by the click handler on the next attempt.
+    pub last_error: Option<String>,
+    /// Wall-clock ms ([`now_ms`]) `boards` last landed a successful fetch —
+    /// `None` until the first page lands, read by the shell's passive-fetch
+    /// poll to know whether to issue `LoadBoards` at all.
+    pub boards_fetched_at: Option<u64>,
+    /// A background boards refetch (due-for-refresh, not the first fetch)
+    /// is in flight.
+    pub boards_refreshing: bool,
+    /// Same bookkeeping as `boards_fetched_at`, for the currently open
+    /// board's thread list (`ForumV2View::BoardThreads`) — reset whenever a
+    /// DIFFERENT board is opened.
+    pub board_threads_fetched_at: Option<u64>,
+    pub board_threads_refreshing: bool,
+    /// Same bookkeeping, for the currently open thread
+    /// (`ForumV2View::Thread`) — reset whenever a different thread is
+    /// opened.
+    pub thread_fetched_at: Option<u64>,
+    pub thread_refreshing: bool,
+}
+
+#[cfg(feature = "cloud")]
+impl Default for ForumV2State {
+    fn default() -> Self {
+        Self {
+            boards: Vec::new(),
+            view: ForumV2View::default(),
+            request: None,
+            caller_roles: Vec::new(),
+            last_error: None,
+            boards_fetched_at: None,
+            boards_refreshing: false,
+            board_threads_fetched_at: None,
+            board_threads_refreshing: false,
+            thread_fetched_at: None,
+            thread_refreshing: false,
+        }
+    }
+}
+
+#[cfg(feature = "cloud")]
+impl ForumV2State {
+    pub fn is_moderator_or_admin(&self) -> bool {
+        self.caller_roles.iter().any(|r| r == "moderator" || r == "admin")
+    }
+
+    /// Drop back to the board list — called when the overlay (re)opens
+    /// (mirrors v1's own `CloudOverlayState::open` resetting `forum_view`)
+    /// and by the "back" row from any deeper view. `boards` itself and its
+    /// freshness bookkeeping survive; the transient per-board/per-thread
+    /// bookkeeping below it does not, same split v1 has for its own
+    /// `forum_thread_fetched_at`.
+    pub fn reset_to_boards(&mut self) {
+        self.view = ForumV2View::Boards;
+        self.board_threads_fetched_at = None;
+        self.board_threads_refreshing = false;
+        self.thread_fetched_at = None;
+        self.thread_refreshing = false;
+        self.last_error = None;
+        self.request = None;
+    }
+
+    pub fn invalidate_boards(&mut self) {
+        self.boards_fetched_at = None;
+        self.boards_refreshing = false;
+    }
+
+    pub fn boards_due_for_refresh(&self) -> bool {
+        !self.boards_refreshing
+            && matches!(self.boards_fetched_at, Some(t) if now_ms().saturating_sub(t) >= FORUM_REFRESH_MS)
+    }
+
+    pub fn mark_boards_fetched(&mut self) {
+        self.boards_fetched_at = Some(now_ms());
+        self.boards_refreshing = false;
+    }
+
+    pub fn invalidate_board_threads(&mut self) {
+        self.board_threads_fetched_at = None;
+        self.board_threads_refreshing = false;
+    }
+
+    pub fn board_threads_due_for_refresh(&self) -> bool {
+        !self.board_threads_refreshing
+            && matches!(self.board_threads_fetched_at, Some(t) if now_ms().saturating_sub(t) >= FORUM_REFRESH_MS)
+    }
+
+    pub fn mark_board_threads_fetched(&mut self) {
+        self.board_threads_fetched_at = Some(now_ms());
+        self.board_threads_refreshing = false;
+    }
+
+    pub fn invalidate_thread(&mut self) {
+        self.thread_fetched_at = None;
+        self.thread_refreshing = false;
+    }
+
+    pub fn thread_due_for_refresh(&self) -> bool {
+        !self.thread_refreshing
+            && matches!(self.thread_fetched_at, Some(t) if now_ms().saturating_sub(t) >= FORUM_REFRESH_MS)
+    }
+
+    pub fn mark_thread_fetched(&mut self) {
+        self.thread_fetched_at = Some(now_ms());
+        self.thread_refreshing = false;
+    }
+}
+
+// =============================================================================
+// Direct messages (paid, end-to-end encrypted — `NewsTab::Messages`).
+// Server: `routes::dm` + `dm_db.rs`. The shell owns the crypto
+// (`mlc_vault::dm`) end to end: this state only ever carries PLAINTEXT
+// already decrypted by the shell (or the literal string `"<cannot
+// decrypt>"` when it could not be) — never ciphertext, never a key.
+// =============================================================================
+
+/// One row of the conversation list. A flat mirror of `routes::dm::
+/// list_conversations`'s per-row JSON, plus the peer's DM identity
+/// fingerprint (fetched alongside, same as `routes::dm::create_conversation`
+/// already returns it) so the Conversation view's header can show it without
+/// a second round trip.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DmConversationUi {
+    pub id: i64,
+    pub peer_label: String,
+    pub peer_fingerprint: Option<String>,
+    pub last_message_at: Option<String>,
+    pub unread_count: i64,
+}
+
+/// One message bubble. `text` is already-decrypted plaintext (or
+/// `"<cannot decrypt>"`) — see this section's own doc for why the server
+/// contract (`nonce_b64`/`ciphertext_b64`) never appears here at all.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DmMessageUi {
+    pub id: i64,
+    pub mine: bool,
+    pub text: String,
+    pub created_at: String,
+    pub read_at: Option<String>,
+}
+
+/// Which DM sub-view is showing.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq, Default)]
+pub enum DmView {
+    #[default]
+    List,
+    /// One open conversation — peer label/fingerprint are read from the
+    /// matching row in [`DmState::conversations`] by `id`, not duplicated
+    /// here, so the two can never disagree about who the peer is.
+    Conversation {
+        id: i64,
+        messages: Vec<DmMessageUi>,
+        /// The `TextFieldStore` id backing the draft box — always
+        /// `mlc_app::text_input::DM_DRAFT` in practice (one shared field,
+        /// same reuse `FORUM_REPLY` gets across every open thread); carried
+        /// on the view rather than hardcoded at the draw site so a future
+        /// per-conversation field id needs no shape change here.
+        draft_field_id: String,
+    },
+}
+
+/// A user-triggered DM action — one-shot mailbox ([`DmState::request`]),
+/// same idiom as [`ForumV2Request`].
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub enum DmRequest {
+    /// "Publish my key" button (`PUT /dm/identity`) — the shell generates
+    /// (or reuses) the local keypair and publishes the public half; this
+    /// crate never sees the key material itself.
+    PublishIdentity,
+    LoadConversations,
+    /// Start (or resume) a conversation with a `public_id`/nick — no button
+    /// in this pass draws it (see the rendering report), but the request
+    /// shape exists for a future entry point (e.g. a "Message" action on a
+    /// forum post's author).
+    Open { with_label: String },
+    LoadMessages { id: i64, after: Option<i64> },
+    /// Send box submit — `plaintext` is the RAW text the shell must encrypt
+    /// before it ever reaches the wire (`mlc_vault::dm`); this crate hands
+    /// it over exactly as typed.
+    Send { id: i64, plaintext: String },
+    MarkRead { id: i64, up_to: i64 },
+}
+
+/// State for the Direct Messages UI (`NewsTab::Messages`).
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug)]
+pub struct DmState {
+    /// This account's own published DM identity fingerprint — `None` means
+    /// no key has been published yet, which is the sole gate for the
+    /// "Publish my key" button (every DM action otherwise requires one).
+    pub identity_fingerprint: Option<String>,
+    pub conversations: Vec<DmConversationUi>,
+    pub view: DmView,
+    pub request: Option<DmRequest>,
+    pub last_error: Option<String>,
+    pub conversations_fetched_at: Option<u64>,
+    pub conversations_refreshing: bool,
+    /// Same bookkeeping, for the currently open conversation's message page
+    /// — reset whenever a different conversation is opened.
+    pub messages_fetched_at: Option<u64>,
+    pub messages_refreshing: bool,
+}
+
+#[cfg(feature = "cloud")]
+impl Default for DmState {
+    fn default() -> Self {
+        Self {
+            identity_fingerprint: None,
+            conversations: Vec::new(),
+            view: DmView::default(),
+            request: None,
+            last_error: None,
+            conversations_fetched_at: None,
+            conversations_refreshing: false,
+            messages_fetched_at: None,
+            messages_refreshing: false,
+        }
+    }
+}
+
+#[cfg(feature = "cloud")]
+impl DmState {
+    /// Open (or resume) a conversation by id, seeding the draft field id to
+    /// `mlc_app::text_input::DM_DRAFT` — the literal is spelled here too
+    /// (this crate cannot depend on `mlc-app`), same split the layout
+    /// crate's own `FORUM_TITLE_FIELD`/`FORUM_BODY_FIELD`/`FORUM_REPLY_FIELD`
+    /// already have for `mlc_app::text_input`'s matching consts. `messages`
+    /// starts empty (`None` freshness stamp below is what tells the shell to
+    /// issue `DmRequest::LoadMessages`), and any different conversation's
+    /// freshness bookkeeping is cleared, mirroring
+    /// `ForumV2State::reset_to_boards`'s own "opening something new resets
+    /// the narrower bookkeeping" rule.
+    pub fn open_conversation(&mut self, id: i64) {
+        self.view = DmView::Conversation { id, messages: Vec::new(), draft_field_id: "dm_draft".to_string() };
+        self.messages_fetched_at = None;
+        self.messages_refreshing = false;
+        self.last_error = None;
+        self.request = None;
+    }
+
+    /// Drop back to the conversation list — same "reopen always lands here"
+    /// rule v1's own `CloudOverlayState::open` applies to `forum_view`.
+    pub fn reset_to_list(&mut self) {
+        self.view = DmView::List;
+        self.messages_fetched_at = None;
+        self.messages_refreshing = false;
+        self.last_error = None;
+        self.request = None;
+    }
+
+    /// The peer row for the conversation currently open in
+    /// `DmView::Conversation`, if any — the header reads this rather than
+    /// duplicating peer label/fingerprint onto the view itself (see
+    /// `DmView::Conversation`'s own doc).
+    pub fn open_peer(&self) -> Option<&DmConversationUi> {
+        let DmView::Conversation { id, .. } = &self.view else { return None };
+        self.conversations.iter().find(|c| c.id == *id)
+    }
+
+    pub fn invalidate_conversations(&mut self) {
+        self.conversations_fetched_at = None;
+        self.conversations_refreshing = false;
+    }
+
+    pub fn conversations_due_for_refresh(&self) -> bool {
+        !self.conversations_refreshing
+            && matches!(self.conversations_fetched_at, Some(t) if now_ms().saturating_sub(t) >= FORUM_REFRESH_MS)
+    }
+
+    pub fn mark_conversations_fetched(&mut self) {
+        self.conversations_fetched_at = Some(now_ms());
+        self.conversations_refreshing = false;
+    }
+
+    pub fn invalidate_messages(&mut self) {
+        self.messages_fetched_at = None;
+        self.messages_refreshing = false;
+    }
+
+    pub fn messages_due_for_refresh(&self) -> bool {
+        !self.messages_refreshing
+            && matches!(self.messages_fetched_at, Some(t) if now_ms().saturating_sub(t) >= FORUM_REFRESH_MS)
+    }
+
+    pub fn mark_messages_fetched(&mut self) {
+        self.messages_fetched_at = Some(now_ms());
+        self.messages_refreshing = false;
     }
 }
