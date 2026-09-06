@@ -8780,11 +8780,21 @@ impl ChartApp {
     /// Snapshots the whole instance before and after — parameters, outputs,
     /// venues — so every field of the settings modal is covered by one
     /// command, and nothing is recorded when nothing moved.
-    pub(crate) fn edit_indicator_recorded<R>(
+    pub(crate) fn edit_indicator_recorded<R: Default>(
         &mut self,
         instance_id: u64,
         edit: impl FnOnce(&mut Self) -> R,
     ) -> R {
+        // Shared-viewer read-only gate (native-share-viewer arc,
+        // 2026-09-06): every settings-modal / drag-driven indicator edit
+        // funnels through here — refuse BEFORE `edit` runs so a read-only
+        // tab's indicators are provably untouched, not just untracked by
+        // undo. Every call site here returns `()`, so `R::default()` never
+        // fabricates a value the caller would mistake for real data.
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] indicator edit refused: active tab is read-only (shared chart)");
+            return R::default();
+        }
         if self.edit_recording_depth > 0 {
             return edit(self);
         }
@@ -8853,11 +8863,19 @@ impl ChartApp {
     /// Snapshots the primitive's whole JSON before and after, so this covers
     /// colour, width, style, text AND type-specific state (fib levels and the
     /// like) with a single command, and records nothing when nothing moved.
-    pub(crate) fn edit_primitive_recorded<R>(
+    pub(crate) fn edit_primitive_recorded<R: Default>(
         &mut self,
         prim_id: u64,
         edit: impl FnOnce(&mut Self) -> R,
     ) -> R {
+        // Shared-viewer read-only gate (native-share-viewer arc,
+        // 2026-09-06) — see `edit_indicator_recorded`'s twin comment: refuse
+        // BEFORE `edit` runs so a read-only tab's drawings are provably
+        // untouched.
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] primitive edit refused: active tab is read-only (shared chart)");
+            return R::default();
+        }
         if self.edit_recording_depth > 0 {
             return edit(self); // an inner wrapper — the outermost one records
         }
@@ -9124,6 +9142,13 @@ impl ChartApp {
         let Some(target_id) = self.pending_autosave.take() else { return; };
 
         if !self.panel_app.autosave_enabled { return; }
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06):
+        // a read-only tab's edits must never reach disk/localStorage. This is
+        // the ONE place every preset id's autosave funnels through for both
+        // shells, so the check lives here rather than at each click site.
+        if self.is_readonly_tab(&target_id) {
+            return;
+        }
         // LoadState gate. While a cold hydrate is in flight, `panel_grid`
         // has been parked into `ChartPanelGrid::placeholder()` and the new
         // `active_preset_id` is already set. Snapshot-and-Upsert here would

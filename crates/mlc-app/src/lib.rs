@@ -37,6 +37,7 @@ pub mod panel_grid;
 pub mod panels_render;
 pub mod panels_store;
 pub mod scroll_dispatch;
+pub mod share_viewer;
 pub mod standalone_panel;
 pub mod system_events;
 pub mod tag_ui;
@@ -51,6 +52,7 @@ pub mod watchlist_ui;
 pub mod workspace;
 
 pub use panels_store::TradingPanelsStore;
+pub use share_viewer::{PresetId, SharedChartMeta, StrippedIndicator};
 
 pub use input::KeyPress;
 pub use input::VaultSetupOutcome;
@@ -957,6 +959,32 @@ pub struct ChartApp {
     /// (viewport pan, scale, drawings made just before the switch) were
     /// silently lost — visible to owner as "data disappears on switch".
     pub pending_autosave: Option<String>,
+
+    /// Preset ids currently open as read-only shared-chart tabs (native
+    /// share-viewer arc, 2026-09-06) — set by `share_viewer::open_shared_preset`.
+    /// Per-preset-id, NOT a shell-global flag: native holds several tabs at
+    /// once and only the ones opened from a share link are read-only.
+    /// Checked by every mutation site that writes drawings, indicators, or
+    /// preset state before it writes — see
+    /// [`share_viewer`]'s `ChartApp::is_readonly_tab`.
+    pub(crate) readonly_preset_ids: std::collections::HashSet<String>,
+
+    /// Metadata (owner label, rights, expiry) for every id in
+    /// `readonly_preset_ids` — the tab chrome reads this for the label and
+    /// the "Clone" action. An entry here always implies membership there;
+    /// kept as a separate map (not one enum-valued map) because
+    /// `is_readonly_tab` is a hot-path check (autosave, edit recording) and
+    /// this metadata is cold, chrome-render-only.
+    pub(crate) shared_chart_meta: std::collections::HashMap<String, share_viewer::SharedChartMeta>,
+
+    /// Pending "open this share" request — set by
+    /// `share_viewer::ChartApp::request_open_share`, drained by the shell,
+    /// which owns the HTTP fetch (`ChartApp` does no network IO — SWC crate
+    /// contract). Mirror of `pending_share_live`'s create-side mailbox.
+    pub(crate) pending_open_share: Option<String>,
+
+    /// Pending "clone this share" request — mirror of `pending_open_share`.
+    pub(crate) pending_clone_share: Option<String>,
 
     /// Queued settings snapshot mutations — drained by App each frame and applied to AppState.
     pub snapshot_actions: Vec<SnapshotAction>,
@@ -3405,6 +3433,10 @@ impl ChartApp {
             connector_actions: Vec::new(),
             preset_actions: Vec::new(),
             pending_autosave: None,
+            readonly_preset_ids: std::collections::HashSet::new(),
+            shared_chart_meta: std::collections::HashMap::new(),
+            pending_open_share: None,
+            pending_clone_share: None,
             snapshot_actions: Vec::new(),
             template_actions: Vec::new(),
             perf_actions: Vec::new(),
@@ -3791,6 +3823,10 @@ impl ChartApp {
             connector_actions: Vec::new(),
             preset_actions: Vec::new(),
             pending_autosave: None,
+            readonly_preset_ids: std::collections::HashSet::new(),
+            shared_chart_meta: std::collections::HashMap::new(),
+            pending_open_share: None,
+            pending_clone_share: None,
             snapshot_actions: Vec::new(),
             template_actions: Vec::new(),
             perf_actions: Vec::new(),
@@ -4337,6 +4373,10 @@ impl ChartApp {
             connector_actions: Vec::new(),
             preset_actions: Vec::new(),
             pending_autosave: None,
+            readonly_preset_ids: std::collections::HashSet::new(),
+            shared_chart_meta: std::collections::HashMap::new(),
+            pending_open_share: None,
+            pending_clone_share: None,
             snapshot_actions: Vec::new(),
             template_actions: Vec::new(),
             perf_actions: Vec::new(),

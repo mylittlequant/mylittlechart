@@ -337,6 +337,45 @@ pub struct ShareListResponse {
     pub shares: Vec<ShareListEntry>,
 }
 
+/// Metadata describing a share link — the shape `GET /api/share/{token}`
+/// grows once rights v1 lands (plan §2, `docs/mlc/plans/
+/// native-share-viewer-and-chart-rights-2026-09-06.md`): `rights` answers
+/// `["read"]` plus `"clone"` when the link's `clone_allowed` is set. Not yet
+/// emitted by `SharePublicResponse` above — added ahead of the server change
+/// so `mlc_app::share_viewer::SharedChartMeta` (the app-side mirror the
+/// native/web shells construct from this) and this wire shape share one
+/// field contract from day one.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedChartMeta {
+    pub token: String,
+    pub title: String,
+    pub owner_label: String,
+    /// `"live"` or `"screenshot"` — mirrors `SharePublicResponse`'s `kind` tag.
+    pub kind: String,
+    #[serde(default)]
+    pub rights: Vec<String>,
+    pub expires_at: String,
+}
+
+/// One indicator instance `POST /api/share/{token}/clone` dropped from the
+/// cloned preset because its `type_id` names a paid/private vendor
+/// indicator the recipient holds no grant for (plan §3).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StrippedIndicator {
+    pub type_id: String,
+    pub name: String,
+}
+
+/// Response body from `POST /api/share/{token}/clone` (auth required).
+/// `preset` is the cloned `ChartPreset` JSON, already stripped of any
+/// indicator instance the caller has no license for.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClonePresetResponse {
+    pub preset: serde_json::Value,
+    #[serde(default)]
+    pub stripped: Vec<StrippedIndicator>,
+}
+
 /// Response body from `POST /api/account/redeem` on success.
 ///
 /// The failure side is not a shape at all — the server answers 404 for an
