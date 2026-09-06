@@ -3405,6 +3405,22 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 }
             }
 
+            // ── Alerts sync-dirty drain ────────────────────────────────
+            // `persist_alerts()` (mlc-app) already wrote alerts.json
+            // synchronously — this only tells the updater to run a sync
+            // cycle now rather than waiting for the next unrelated trigger
+            // (ForceSync / sign-in / SetSyncEnabled). See
+            // `ChartApp::alerts_sync_dirty`'s own doc.
+            let any_alerts_sync_dirty = self.windows.values().any(|pw| pw.chart.alerts_sync_dirty);
+            if any_alerts_sync_dirty {
+                let _ = self.updater_handle.cmd_tx.send(
+                    mlc_updater::UpdaterCommand::SyncPushChanged(vec!["alerts".to_string()]),
+                );
+                for pw in self.windows.values_mut() {
+                    pw.chart.alerts_sync_dirty = false;
+                }
+            }
+
             // ── Flush dirty settings snapshots to disk ───────────────────
             // Same durability class as preset/watchlist dirty-drain above —
             // closes the gap where settings_snapshots.json only ever wrote

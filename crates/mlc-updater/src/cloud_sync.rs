@@ -433,6 +433,86 @@ pub fn collect_local_items(data_dir: &Path) -> LocalItems {
         }
     }
 
+    // Account-wide alerts (Arc C3.3) — `alerts.json` holds every alert for
+    // this profile as one JSON array (`ChartApp::persist_alerts`'s own
+    // doc). The server's alert daemon evaluates a much narrower slice: one
+    // sync item PER Price-source crossing alert, category `"alerts"`,
+    // `sync_id = "alert-{id}"` (`mylittlechart-server`'s
+    // `mlc-alert-daemon/src/alert_item.rs`, its own module doc — that
+    // crate cannot depend on `mlc-core` at all, so this hand-written shape
+    // is a deliberately narrow subset, not a mirror, of
+    // `mlc_core::alert::AlertItem`).
+    //
+    // Drawing/Indicator/Signal/CrossingPair sources are skipped outright —
+    // the daemon has no price feed for anything but a plain symbol.
+    // Within Price-source alerts, only the three crossing-EDGE conditions
+    // (`CrossingUp`/`CrossingDown`/`Crossing`) have a wire representation:
+    // `GreaterThan`/`LessThan` are stateless thresholds with no prev-price
+    // edge (`mlc-backend/src/alert/manager.rs`'s own evaluation — `current
+    // > level`, never `prev < level && current >= level`), so mapping them
+    // onto `price_cross` would silently change when the alert fires; the
+    // range (`Entering/Exiting/Inside/OutsideRange`) and percentage
+    // (`MovingUp`/`MovingDown`/`MovingUpOrDown`) conditions carry a second
+    // price or a percentage the wire has no field for at all. Both groups
+    // are skipped rather than misrepresented.
+    //
+    // Deletions: this file's alert ids naturally drop out of the array
+    // when an alert is deleted client-side, so the next cycle's
+    // `local_index` here simply no longer contains `alert-{id}` — the
+    // generic tombstone pass in `do_cloud_sync` (see its `alert-` prefix
+    // case) turns that absence into a `deleted: true` push, same as every
+    // other category.
+    {
+        let path = data_dir.join("alerts.json");
+        if let Ok(raw) = std::fs::read_to_string(&path) {
+            match serde_json::from_str::<Vec<mlc_core::alert::AlertItem>>(&raw) {
+                Ok(alerts) => {
+                    let mtime = file_modified_ms(&path);
+                    for alert in &alerts {
+                        if !matches!(&alert.source, mlc_core::alert::AlertSource::Price { .. }) {
+                            continue;
+                        }
+                        let direction = match alert.condition {
+                            mlc_core::alert::AlertCondition::CrossingUp => "up",
+                            mlc_core::alert::AlertCondition::CrossingDown => "down",
+                            mlc_core::alert::AlertCondition::Crossing => "either",
+                            _ => continue,
+                        };
+                        let wire = serde_json::json!({
+                            "id": alert.id,
+                            "address": {
+                                "exchange": alert.exchange(),
+                                "symbol": alert.symbol(),
+                                "account_type": alert.account_type().as_label(),
+                            },
+                            "condition": {
+                                "kind": "price_cross",
+                                "price": alert.price,
+                                "direction": direction,
+                            },
+                            "enabled": alert.is_active(),
+                            "created_at": alert.created_at,
+                        });
+                        let content = wire.to_string();
+                        let checksum = sha256_hex(&content);
+                        items.push(LocalItem {
+                            sync_id: format!("alert-{}", alert.id),
+                            category: "alerts".to_string(),
+                            name: alert.id.to_string(),
+                            content,
+                            checksum,
+                            modified_at: mtime,
+                            tier: SyncTier::CloudSync,
+                        });
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[CloudSync] alerts.json parse failed — skipping: {}", e);
+                }
+            }
+        }
+    }
+
     // --- ZtBlob tier ---
 
     {
@@ -1262,6 +1342,8 @@ pub async fn do_cloud_sync(
                 ("template_chart".to_string(), rest.to_string())
             } else if let Some(rest) = id.strip_prefix("preset_") {
                 ("preset".to_string(), rest.to_string())
+            } else if let Some(rest) = id.strip_prefix("alert-") {
+                ("alerts".to_string(), rest.to_string())
             } else {
                 (id.clone(), id.clone())
             };

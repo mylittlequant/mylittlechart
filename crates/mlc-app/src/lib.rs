@@ -935,6 +935,17 @@ pub struct ChartApp {
     /// Checked and cleared by App each frame.
     pub watchlists_dirty: bool,
 
+    /// Set to true whenever [`Self::persist_alerts`] runs — i.e. the
+    /// account-wide alert store changed and `alerts.json` was just
+    /// rewritten. Checked and cleared by App each frame, same drain
+    /// idiom as `profile_dirty`/`watchlists_dirty` above, except this one
+    /// does not gate a disk write (alerts.json is already written
+    /// synchronously by `persist_alerts` itself) — it only tells the shell
+    /// to push a `SyncPushChanged(["alerts"])` command to the updater so a
+    /// changed/deleted alert reaches the server without waiting on the
+    /// next unrelated sync trigger.
+    pub alerts_sync_dirty: bool,
+
     /// Queued watchlist mutations — drained by App each frame and applied to AppState.
     /// Windows never mutate watchlist directly; they push actions here.
     pub watchlist_actions: Vec<WatchlistAction>,
@@ -3438,6 +3449,7 @@ impl ChartApp {
             shift_held: false,
             profile_geometry_dirty: false,
             watchlists_dirty: false,
+            alerts_sync_dirty: false,
             watchlist_actions: Vec::new(),
             connector_actions: Vec::new(),
             preset_actions: Vec::new(),
@@ -3829,6 +3841,7 @@ impl ChartApp {
             shift_held: false,
             profile_geometry_dirty: false,
             watchlists_dirty: false,
+            alerts_sync_dirty: false,
             watchlist_actions: Vec::new(),
             connector_actions: Vec::new(),
             preset_actions: Vec::new(),
@@ -4427,6 +4440,7 @@ impl ChartApp {
             shift_held: false,
             profile_geometry_dirty: false,
             watchlists_dirty: false,
+            alerts_sync_dirty: false,
             watchlist_actions: Vec::new(),
             connector_actions: Vec::new(),
             preset_actions: Vec::new(),

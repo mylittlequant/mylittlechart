@@ -602,12 +602,15 @@ impl ChartApp {
     /// keeps being written on every preset save too — a compatibility mirror
     /// for older clients reading a preset file directly, not this store's
     /// source of truth anymore.
-    pub fn persist_alerts(&self) {
+    pub fn persist_alerts(&mut self) {
         let items = self.core.alerts().items_all();
         let path = mlc_core::active_profile_data_dir().join("alerts.json");
         if let Err(e) = mlc_core::save_json(&path, &items, None) {
             eprintln!("[persist] alerts: {:?}", e);
         }
+        // Tell the shell's per-frame drain to push an alerts sync cycle —
+        // see `alerts_sync_dirty`'s own doc.
+        self.alerts_sync_dirty = true;
     }
 
     /// Load and apply a previously saved user profile from `user_data/profile.json`.
