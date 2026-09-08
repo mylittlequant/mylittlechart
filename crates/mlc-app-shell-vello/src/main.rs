@@ -301,6 +301,70 @@ struct SpawnRequest {
     cascade_from: Option<WindowId>,
 }
 
+/// What `about_to_wait`'s forum-v2 drain does with the next value the
+/// single, process-wide `forum_v2_rx` channel settles into.
+///
+/// Every window shares ONE `mlc_updater` background task, unlike the web
+/// shell's own per-tab-instance mailbox — so at most one forum-v2 action is
+/// ever in flight system-wide (`App::forum2_pending` tracks it), and a
+/// multi-step action (create/reply/delete/moderate, none of which return
+/// the thread's own content) is driven across TWO settles: the write's own
+/// ack, then a follow-up `LoadThread` this chain fires once that ack lands.
+#[cfg(feature = "cloud")]
+enum Forum2Chain {
+    /// `Boards` / `Thread` (an `OpenThread` click or a passive background
+    /// refresh) / `SearchResults` — apply directly; each `ForumV2State`
+    /// variant is already self-describing.
+    Direct,
+    /// `LoadBoard` — `append` distinguishes "Load more" from a fresh open
+    /// or a passive due-refresh (both replace the page in place).
+    BoardThreads { append: bool },
+    /// `CreateThread`/`Reply`/`DeleteReply`/`Moderate` is in flight.
+    /// `thread_id_hint` is the thread to reload once the write's ack
+    /// lands — known up front for `Reply`/`DeleteReply`/`Moderate` (read
+    /// from the window's own open thread before firing), `None` for
+    /// `CreateThread` (the new thread's id is the ack's own payload).
+    AwaitingWriteAck { thread_id_hint: Option<i64> },
+    /// The write's own follow-up `LoadThread` is in flight — the `Thread`
+    /// this settles into is applied UNCONDITIONALLY (forces the view,
+    /// invalidates the board's thread list, clears the compose/reply
+    /// fields), unlike the tolerant [`Self::Direct`] apply for a plain
+    /// `OpenThread`/background refresh.
+    ReloadAfterWrite,
+}
+
+/// Same single-in-flight idiom as [`Forum2Chain`], for the shared `dm_rx`
+/// channel. `DmRequest::Open` is a two-step action (`GetIdentity` then
+/// `OpenConversation`, neither call the server exposes as one route); every
+/// other request is one wire call.
+#[cfg(feature = "cloud")]
+enum DmChain {
+    /// `PublishIdentity` (the broadcast case, applied before the tracked
+    /// window is even looked up — see `apply_dm_result`'s own doc) /
+    /// `ListConversations` / `MarkRead` — apply directly.
+    Direct,
+    /// `LoadMessages` is in flight — `append` distinguishes "Load more"
+    /// (`after: Some(_)`, extends the page) from a fresh open or a passive
+    /// due-refresh (`after: None`, replaces it), same split
+    /// [`Forum2Chain::BoardThreads`] draws for its own pagination.
+    LoadingMessages { append: bool },
+    /// A `Send` is in flight — `plaintext` rides along so the settled
+    /// `Sent { id, created_at }` can be turned into an optimistic message
+    /// bubble without a second round trip to re-fetch what was just sent.
+    Sending { plaintext: String },
+    /// `Open{with_label}` step 1: `GetIdentity` is in flight for the peer.
+    OpeningPeerLookup,
+    /// `Open{with_label}` step 2: `OpenConversation` is in flight — the
+    /// peer's public key (decoded from step 1's answer) is carried along
+    /// so it can be cached under the conversation id once this settles.
+    OpeningConversation { peer_public_key: [u8; 32] },
+    /// Backfilling a LIST-sourced conversation's peer fingerprint/key
+    /// (`GetIdentity` for a conversation reached via `ListConversations`,
+    /// which does not carry either) — `conversation_id` names the row to
+    /// update once the answer lands.
+    BackfillPeerKey { conversation_id: i64 },
+}
+
 
 /// Minimum interval between two `templates/*` disk writes triggered by the
 /// per-frame dirty drain. Template writes are heavier than a single-preset
@@ -507,6 +571,42 @@ struct App<'s> {
     /// `cloud_session.rs::TIER_KEY`, commit fe955099).
     #[cfg(feature = "cloud")]
     prev_entitlements: Option<(bool, Option<String>)>,
+
+    // ── Forum v2 (public boards) ────────────────────────────────────────
+    /// Which window (and what to do with the answer) the single shared
+    /// `forum_v2_rx` channel's next settled value belongs to — see
+    /// [`Forum2Chain`]'s own doc. `None` means no forum-v2 request is in
+    /// flight; both the passive fetch and the explicit-action drain in
+    /// `about_to_wait` gate on this being `None` before sending another.
+    #[cfg(feature = "cloud")]
+    forum2_pending: Option<(WindowId, Forum2Chain)>,
+
+    // ── Direct messages (paid, end-to-end encrypted) ────────────────────
+    /// This profile's DM identity keypair — loaded from (or generated and
+    /// saved to) the `dm_identity.enc` sidecar under the profile's
+    /// `VaultKey` the first time the Messages tab is opened while the vault
+    /// is unsealed. `None` while the vault is sealed, or before Messages
+    /// has ever been opened this session.
+    #[cfg(feature = "cloud")]
+    dm_identity: Option<mlc_vault::dm::DmIdentity>,
+    /// Peer public keys, cached per conversation id — populated by
+    /// `DmRequest::Open`'s `GetIdentity` step and by the list-page
+    /// backfill (`dm_backfill_queue`) for a conversation reached via
+    /// `GET /api/dm/conversations` instead, which does not carry the
+    /// peer's key. Needed to derive `conversation_key` for both sending
+    /// and decrypting.
+    #[cfg(feature = "cloud")]
+    dm_peer_keys: std::collections::HashMap<i64, [u8; 32]>,
+    /// Same single-in-flight tracking as `forum2_pending`, for the shared
+    /// `dm_rx` channel — see [`DmChain`]'s own doc.
+    #[cfg(feature = "cloud")]
+    dm_pending: Option<(WindowId, DmChain)>,
+    /// Conversations loaded via `ListConversations` (the list endpoint,
+    /// which never carries the peer's key or fingerprint) whose peer key
+    /// is not yet cached — `(conversation_id, peer_label)`, drained one at
+    /// a time via `DmChain::BackfillPeerKey` whenever `dm_pending` is free.
+    #[cfg(feature = "cloud")]
+    dm_backfill_queue: std::collections::VecDeque<(i64, String)>,
     /// Memory-watchdog warning receiver (`mlc_shell_diagnostics::watchdog::start`,
     /// started once in `main()` before `App::new`). Drained every frame into
     /// `Memory` system events — previously bound as `_mem_warnings` and
@@ -870,6 +970,203 @@ fn map_forum_thread_native(
             })
             .collect(),
     }
+}
+
+// ── Forum v2 wire → UI mapping (native) ─────────────────────────────────
+// Same split as the v1 mapping above, mirroring `mlc-app-shell-web`'s own
+// `map_forum_board`/`map_forum_thread_v2_summary`/etc. (`cloud_session.rs`)
+// field-for-field.
+
+/// Same ranking `mlc-app-shell-web`'s own `forum2_class_rank` uses — see
+/// that function's own doc for why moderator/admin cap the caller's rank
+/// at "paid" rather than resolving from `caller_roles`.
+#[cfg(feature = "cloud")]
+fn forum2_class_rank_native(class: &str) -> u8 {
+    match class {
+        "public" => 0,
+        "user" => 1,
+        "paid" => 2,
+        "moderator" => 3,
+        "admin" => 4,
+        _ => 0,
+    }
+}
+
+#[cfg(feature = "cloud")]
+fn forum2_can_write_native(write_class: &str, signed_in: bool, paid: bool) -> bool {
+    let caller_rank = if paid { 2 } else if signed_in { 1 } else { 0 };
+    caller_rank >= forum2_class_rank_native(write_class)
+}
+
+#[cfg(feature = "cloud")]
+fn map_forum2_board_native(
+    b: mlc_updater::ForumBoard,
+    signed_in: bool,
+    paid: bool,
+) -> mlc_app_layout::ui::modal_settings::BoardUi {
+    let can_write = forum2_can_write_native(&b.write_class, signed_in, paid);
+    mlc_app_layout::ui::modal_settings::BoardUi {
+        slug: b.slug,
+        title: b.title,
+        description: b.description,
+        read_class: b.read_class,
+        write_class: b.write_class,
+        can_write,
+    }
+}
+
+#[cfg(feature = "cloud")]
+fn map_forum2_thread_summary_native(
+    s: mlc_updater::ForumThreadV2Summary,
+) -> mlc_app_layout::ui::modal_settings::ForumThreadV2Ui {
+    mlc_app_layout::ui::modal_settings::ForumThreadV2Ui {
+        id: s.id,
+        title: s.title,
+        author: s.author,
+        author_is_me: s.author_is_me,
+        created_at: s.created_at,
+        updated_at: s.updated_at,
+        last_reply_at: s.last_reply_at,
+        reply_count: s.reply_count,
+        pinned: s.pinned,
+        locked: s.locked,
+    }
+}
+
+#[cfg(feature = "cloud")]
+fn map_forum2_reply_node_native(
+    r: mlc_updater::ForumReplyNode,
+) -> mlc_app_layout::ui::modal_settings::ForumReplyV2Ui {
+    mlc_app_layout::ui::modal_settings::ForumReplyV2Ui {
+        id: r.id,
+        parent_reply_id: r.parent_reply_id,
+        depth: r.depth,
+        author: r.author,
+        author_is_me: r.author_is_me,
+        body: r.body,
+        created_at: r.created_at,
+        hidden: r.hidden,
+        children: r.children.into_iter().map(map_forum2_reply_node_native).collect(),
+    }
+}
+
+/// Maps only the flat header fields — unlike the web transport's
+/// `ForumThreadV2Response{thread, replies}` split, native's own
+/// `mlc_updater::ForumThreadV2` already merges `replies` into itself (see
+/// that type's own doc); the caller maps `.replies` separately with
+/// [`map_forum2_reply_node_native`] after reading this.
+#[cfg(feature = "cloud")]
+fn map_forum2_thread_detail_native(
+    t: &mlc_updater::ForumThreadV2,
+) -> mlc_app_layout::ui::modal_settings::ForumThreadV2Detail {
+    mlc_app_layout::ui::modal_settings::ForumThreadV2Detail {
+        id: t.id,
+        board_id: t.board_id,
+        title: t.title.clone(),
+        author: t.author.clone(),
+        author_is_me: t.author_is_me,
+        body: t.body.clone(),
+        created_at: t.created_at.clone(),
+        updated_at: t.updated_at.clone(),
+        pinned: t.pinned,
+        locked: t.locked,
+        hidden: t.hidden,
+    }
+}
+
+#[cfg(feature = "cloud")]
+fn map_forum2_search_hit_native(
+    h: mlc_updater::ForumSearchHit,
+) -> mlc_app_layout::ui::modal_settings::ForumSearchHitUi {
+    mlc_app_layout::ui::modal_settings::ForumSearchHitUi {
+        kind: h.kind,
+        board_id: h.board_id,
+        thread_id: h.thread_id,
+        reply_id: h.reply_id,
+        title: h.title,
+        snippet: h.snippet,
+        author: h.author,
+        created_at: h.created_at,
+    }
+}
+
+// ── Direct-message crypto helpers (native) ──────────────────────────────
+// The shell owns the crypto end to end (`mlc_vault::dm`'s own module doc);
+// this crate is where it is actually called from — `mlc-app-layout`'s
+// `DmMessageUi::text` only ever holds plaintext or the literal
+// `"<cannot decrypt>"`, never ciphertext or a key.
+
+/// AAD binding for one DM message's seal/open — conversation id plus the
+/// SENDING identity's own key fingerprint (not the server's `public_id`:
+/// native's stored auth token carries no `public_id` field to seal with
+/// before the message round-trips even once — see this crate's own report
+/// for why). Both sides always land on the same value for the same
+/// message: whichever side sealed it used their own identity's
+/// fingerprint, and any later reader — the peer, or the sender re-reading
+/// their own history — resolves "whose key signed this" from the same
+/// fixed pair of identities the conversation already pins (their own, and
+/// the cached peer key), never from a value that has to round-trip through
+/// the server first.
+#[cfg(feature = "cloud")]
+fn dm_aad(conversation_id: i64, sender_fingerprint: &str) -> Vec<u8> {
+    format!("{}|{}", conversation_id, sender_fingerprint).into_bytes()
+}
+
+#[cfg(feature = "cloud")]
+fn dm_decode_public_key(public_key_b64: &str) -> Option<[u8; 32]> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(public_key_b64).ok()?;
+    bytes.try_into().ok()
+}
+
+#[cfg(feature = "cloud")]
+fn dm_decode_nonce(nonce_b64: &str) -> Option<[u8; 12]> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(nonce_b64).ok()?;
+    bytes.try_into().ok()
+}
+
+#[cfg(feature = "cloud")]
+fn dm_encode(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// Decrypt one wire `DmMessage` into the plaintext (or the literal
+/// `"<cannot decrypt>"`) `DmMessageUi::text` carries — see this module's
+/// own crypto-helpers doc. `ctx = (conversation_key, my_public, peer_public)`,
+/// `None` when either this profile's identity or the conversation's cached
+/// peer key is missing (sealed vault, or the peer key has not been
+/// resolved/backfilled yet).
+#[cfg(feature = "cloud")]
+fn decrypt_dm_message_native(
+    ctx: Option<&([u8; 32], [u8; 32], [u8; 32])>,
+    conversation_id: i64,
+    m: &mlc_updater::DmMessage,
+) -> String {
+    const CANNOT_DECRYPT: &str = "<cannot decrypt>";
+    let Some((key, my_public, peer_public)) = ctx else {
+        return CANNOT_DECRYPT.to_string();
+    };
+    let Some(nonce) = dm_decode_nonce(&m.nonce_b64) else {
+        return CANNOT_DECRYPT.to_string();
+    };
+    let Some(ciphertext) = base64_decode(&m.ciphertext_b64) else {
+        return CANNOT_DECRYPT.to_string();
+    };
+    let sender_public = if m.sender_is_me { my_public } else { peer_public };
+    let aad = dm_aad(conversation_id, &mlc_vault::dm::fingerprint(sender_public));
+    let sealed = mlc_vault::dm::DmCiphertext { nonce, ciphertext };
+    match mlc_vault::dm::open_message(key, &sealed, &aad) {
+        Ok(plaintext) => String::from_utf8_lossy(&plaintext).into_owned(),
+        Err(_) => CANNOT_DECRYPT.to_string(),
+    }
+}
+
+#[cfg(feature = "cloud")]
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(s).ok()
 }
 
 /// Seed `core`'s domain managers (presets, templates, watchlists, snapshots,
@@ -1362,6 +1659,16 @@ impl App<'_> {
             alert_delivery_seal_notice_shown: false,
             #[cfg(feature = "cloud")]
             prev_entitlements: None,
+            #[cfg(feature = "cloud")]
+            forum2_pending: None,
+            #[cfg(feature = "cloud")]
+            dm_identity: None,
+            #[cfg(feature = "cloud")]
+            dm_peer_keys: std::collections::HashMap::new(),
+            #[cfg(feature = "cloud")]
+            dm_pending: None,
+            #[cfg(feature = "cloud")]
+            dm_backfill_queue: std::collections::VecDeque::new(),
             mem_warnings_rx,
             last_frame_instant: web_time::Instant::now(),
             fps_ema: 60.0,
@@ -2571,6 +2878,678 @@ impl App<'_> {
             agent_state.agent_key_store.seal();
         }
         self.alert_secrets_store.seal();
+    }
+
+    /// Load this profile's DM identity from its `dm_identity.enc` sidecar
+    /// under `vault_key`, generating and saving a fresh one on first use.
+    /// Sets `self.dm_identity`; leaves it `None` (retrying next call) on a
+    /// disk failure rather than silently generating a replacement for an
+    /// existing-but-unreadable sidecar — that would orphan every message
+    /// already exchanged under the old key.
+    ///
+    /// Same known limitation as `agent_key_store`/`alert_secrets_store`
+    /// (see their own doc at `App::new`): the path is resolved from
+    /// `mlc_core::active_profile_data_dir()` at call time, which is not
+    /// re-pointed by a multi-profile hot-reload switch's own bookkeeping —
+    /// a store rebuilt per profile switch is a follow-up, not this pass.
+    #[cfg(feature = "cloud")]
+    fn load_or_generate_dm_identity(&mut self, vault_key: &mlc_vault::vault::VaultKey) {
+        let path = mlc_core::active_profile_data_dir().join(mlc_vault::dm::DM_IDENTITY_FILE_NAME);
+        self.dm_identity = if path.exists() {
+            match mlc_vault::dm::DmIdentity::load_from_vault(vault_key, &path) {
+                Ok(id) => Some(id),
+                Err(e) => {
+                    eprintln!("[App] dm identity: failed to load sidecar: {} — leaving unset", e);
+                    None
+                }
+            }
+        } else {
+            let fresh = mlc_vault::dm::DmIdentity::generate();
+            match fresh.save_to_vault(vault_key, &path) {
+                Ok(()) => Some(fresh),
+                Err(e) => {
+                    eprintln!("[App] dm identity: failed to save new sidecar: {}", e);
+                    None
+                }
+            }
+        };
+    }
+
+    /// Applies the single, process-wide `forum_v2_rx` channel's next
+    /// settled value — see [`Forum2Chain`]'s own doc for why one channel
+    /// shared across every window needs a tracked in-flight marker instead
+    /// of the web shell's own per-tab-instance mailbox.
+    #[cfg(feature = "cloud")]
+    fn apply_forum2_result(&mut self, win_id: WindowId, chain: Forum2Chain, state: mlc_updater::ForumV2State) {
+        use mlc_app_layout::ui::modal_settings::ForumV2View;
+
+        let signed_in = matches!(*self.updater_handle.auth_rx.borrow(), mlc_updater::AuthStatus::LoggedIn { .. });
+        let Some(pw) = self.windows.get_mut(&win_id) else {
+            // The window closed while the request was in flight — nothing
+            // to apply to; the request itself already landed server-side.
+            return;
+        };
+        let paid = pw.chart.panel_app.cloud_login_state.is_paid;
+
+        let mut reload_after: Option<i64> = None;
+        let mut write_failure: Option<String> = None;
+
+        {
+            let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+            ov.forum2.boards_refreshing = false;
+            ov.forum2.board_threads_refreshing = false;
+            ov.forum2.thread_refreshing = false;
+
+            match (chain, state) {
+                (_, mlc_updater::ForumV2State::Idle) | (_, mlc_updater::ForumV2State::Working) => {}
+                (Forum2Chain::Direct, mlc_updater::ForumV2State::Boards(boards)) => {
+                    ov.forum2.boards = boards
+                        .into_iter()
+                        .map(|b| map_forum2_board_native(b, signed_in, paid))
+                        .collect();
+                    ov.forum2.mark_boards_fetched();
+                }
+                (Forum2Chain::BoardThreads { append }, mlc_updater::ForumV2State::BoardThreads { threads, next_before }) => {
+                    let mapped: Vec<_> = threads.into_iter().map(map_forum2_thread_summary_native).collect();
+                    if let ForumV2View::BoardThreads { threads: existing, next_before: nb, .. } = &mut ov.forum2.view {
+                        if append {
+                            existing.extend(mapped);
+                        } else {
+                            *existing = mapped;
+                        }
+                        *nb = next_before;
+                        ov.forum2.mark_board_threads_fetched();
+                    }
+                    // Else: the view moved on before this landed — dropped,
+                    // same tolerance an interrupted v1 fetch gets.
+                }
+                (Forum2Chain::Direct, mlc_updater::ForumV2State::Thread(t)) => {
+                    let detail = map_forum2_thread_detail_native(&t);
+                    let id = detail.id;
+                    let replies_tree: Vec<_> = t.replies.into_iter().map(map_forum2_reply_node_native).collect();
+                    if let ForumV2View::Thread { id: existing_id, thread, replies_tree: rt, .. } = &mut ov.forum2.view {
+                        if *existing_id == id {
+                            *thread = Some(detail);
+                            *rt = replies_tree;
+                            ov.forum2.mark_thread_fetched();
+                        }
+                        // Else: landed for a thread the caller already
+                        // navigated away from — dropped.
+                    }
+                }
+                (Forum2Chain::Direct, mlc_updater::ForumV2State::SearchResults(hits)) => {
+                    if let ForumV2View::Search { hits: h, .. } = &mut ov.forum2.view {
+                        *h = hits.into_iter().map(map_forum2_search_hit_native).collect();
+                    }
+                }
+                (Forum2Chain::AwaitingWriteAck { thread_id_hint: _ }, mlc_updater::ForumV2State::ThreadCreated { id }) => {
+                    ov.forum2.invalidate_board_threads();
+                    reload_after = Some(id);
+                }
+                (Forum2Chain::AwaitingWriteAck { thread_id_hint }, mlc_updater::ForumV2State::ReplyPosted { .. })
+                | (Forum2Chain::AwaitingWriteAck { thread_id_hint }, mlc_updater::ForumV2State::ReplyDeleted)
+                | (Forum2Chain::AwaitingWriteAck { thread_id_hint }, mlc_updater::ForumV2State::Moderated) => {
+                    ov.forum2.invalidate_board_threads();
+                    reload_after = thread_id_hint;
+                }
+                (Forum2Chain::ReloadAfterWrite, mlc_updater::ForumV2State::Thread(t)) => {
+                    let detail = map_forum2_thread_detail_native(&t);
+                    let id = detail.id;
+                    let replies_tree: Vec<_> = t.replies.into_iter().map(map_forum2_reply_node_native).collect();
+                    let reply_to = match &ov.forum2.view {
+                        ForumV2View::Thread { id: existing_id, reply_to, .. } if *existing_id == id => *reply_to,
+                        _ => None,
+                    };
+                    ov.forum2.view = ForumV2View::Thread { id, thread: Some(detail), replies_tree, reply_to };
+                    ov.forum2.mark_thread_fetched();
+                    // Compose/reply forms are gone — clear the shared
+                    // fields, mirroring v1's own `ForumThreadCreated`/
+                    // `ForumThreadRefreshed` arms (empty clears to empty,
+                    // harmless for a `DeleteReply`/`Moderate` write).
+                    let mut coord = pw.chart.input_coordinator.borrow_mut();
+                    let tf = coord.text_fields_mut();
+                    for field in [mlc_app::text_input::FORUM_TITLE, mlc_app::text_input::FORUM_BODY, mlc_app::text_input::FORUM_REPLY] {
+                        let wid = uzor::WidgetId::from(field);
+                        if !tf.text(&wid).is_empty() {
+                            tf.clear(&wid);
+                        }
+                    }
+                }
+                (chain, mlc_updater::ForumV2State::Failed { message }) => {
+                    ov.forum2.last_error = Some(message.clone());
+                    if matches!(chain, Forum2Chain::AwaitingWriteAck { .. } | Forum2Chain::ReloadAfterWrite) {
+                        write_failure = Some(message);
+                    }
+                }
+                // Any other (chain, state) pairing should not occur given
+                // the strict single-in-flight sequencing above — dropped
+                // rather than panicking on a defect elsewhere.
+                _ => {}
+            }
+        }
+
+        if let Some(id) = reload_after {
+            let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::ForumV2(
+                mlc_updater::ForumV2Request::LoadThread { id },
+            ));
+            self.forum2_pending = Some((win_id, Forum2Chain::ReloadAfterWrite));
+        }
+        if let Some(message) = write_failure {
+            pw.chart.push_system_event(mlc_core::SystemEventKind::Info, "Forum post failed", message, true);
+        }
+        pw.overlay_dirty = true;
+        pw.window.request_redraw();
+    }
+
+    /// Applies the single, process-wide `dm_rx` channel's next settled
+    /// value — same in-flight-tracking reason as [`Self::apply_forum2_result`].
+    /// Never called with `DmState::Identity`: that variant is an
+    /// account-level fact `drive_dm` broadcasts to every window directly,
+    /// before this per-window lookup is even reachable (same as
+    /// `forum_entitled`/`is_paid` elsewhere in this file).
+    #[cfg(feature = "cloud")]
+    fn apply_dm_result(&mut self, win_id: WindowId, chain: DmChain, state: mlc_updater::DmState) {
+        use mlc_app_layout::ui::modal_settings::{DmConversationUi, DmMessageUi, DmView};
+
+        let Some(pw) = self.windows.get_mut(&win_id) else {
+            return;
+        };
+
+        let mut write_failure: Option<String> = None;
+        let mut new_backfill_candidates: Vec<(i64, String)> = Vec::new();
+        let mut open_conversation_target: Option<(String, [u8; 32])> = None;
+        let mut opened: Option<(mlc_updater::DmConversation, [u8; 32])> = None;
+        let mut backfilled: Option<(i64, [u8; 32], String)> = None;
+
+        {
+            let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+            ov.dm.conversations_refreshing = false;
+            ov.dm.messages_refreshing = false;
+
+            match (chain, state) {
+                (_, mlc_updater::DmState::Idle) | (_, mlc_updater::DmState::Working) => {}
+
+                (DmChain::Direct, mlc_updater::DmState::Conversations(conversations)) => {
+                    let mut mapped: Vec<DmConversationUi> = Vec::with_capacity(conversations.len());
+                    for c in conversations {
+                        new_backfill_candidates.push((c.id, c.peer.label.clone()));
+                        mapped.push(DmConversationUi {
+                            id: c.id,
+                            peer_label: c.peer.label,
+                            peer_fingerprint: c.peer.fingerprint,
+                            last_message_at: c.last_message_at,
+                            unread_count: c.unread,
+                        });
+                    }
+                    ov.dm.conversations = mapped;
+                    ov.dm.mark_conversations_fetched();
+                }
+                (DmChain::OpeningPeerLookup, mlc_updater::DmState::PeerIdentity(identity)) => {
+                    match dm_decode_public_key(&identity.public_key_b64) {
+                        Some(peer_public_key) => {
+                            open_conversation_target = Some((identity.public_id, peer_public_key));
+                        }
+                        None => {
+                            ov.dm.last_error = Some("That account's messaging key is malformed".to_string());
+                        }
+                    }
+                }
+                (DmChain::BackfillPeerKey { conversation_id }, mlc_updater::DmState::PeerIdentity(identity)) => {
+                    if let Some(key) = dm_decode_public_key(&identity.public_key_b64) {
+                        backfilled = Some((conversation_id, key, identity.fingerprint));
+                    }
+                    // A malformed key here just leaves the row without a
+                    // fingerprint/cached key — Send/decrypt refuse locally
+                    // until a later attempt succeeds.
+                }
+                (DmChain::OpeningConversation { peer_public_key }, mlc_updater::DmState::ConversationOpened(conversation)) => {
+                    opened = Some((conversation, peer_public_key));
+                }
+                (DmChain::LoadingMessages { append }, mlc_updater::DmState::Messages { messages, next_after }) => {
+                    let view_id = match &ov.dm.view {
+                        DmView::Conversation { id, .. } => Some(*id),
+                        _ => None,
+                    };
+                    if let Some(conv_id) = view_id {
+                        // `key` is deref'd out of `conversation_key`'s
+                        // `Zeroizing` wrapper immediately (`[u8; 32]` is
+                        // `Copy`) so this crate never needs to spell the
+                        // `zeroize` crate's own type name — see the module
+                        // doc's own note on what `Zeroizing` does and does
+                        // not cover for exactly this class of stack copy.
+                        let crypto_ctx: Option<([u8; 32], [u8; 32], [u8; 32])> =
+                            match (&self.dm_identity, self.dm_peer_keys.get(&conv_id)) {
+                                (Some(identity), Some(peer_public)) => {
+                                    let key: [u8; 32] =
+                                        *mlc_vault::dm::conversation_key(&identity.secret, peer_public, &conv_id.to_string());
+                                    Some((key, identity.public, *peer_public))
+                                }
+                                _ => None,
+                            };
+                        let mapped: Vec<DmMessageUi> = messages
+                            .into_iter()
+                            .map(|m| {
+                                let text = decrypt_dm_message_native(crypto_ctx.as_ref(), conv_id, &m);
+                                DmMessageUi {
+                                    id: m.id,
+                                    mine: m.sender_is_me,
+                                    text,
+                                    created_at: m.created_at,
+                                    read_at: m.read_at,
+                                }
+                            })
+                            .collect();
+                        if let DmView::Conversation { id: existing_id, messages: msgs, .. } = &mut ov.dm.view {
+                            if *existing_id == conv_id {
+                                if append {
+                                    msgs.extend(mapped);
+                                } else {
+                                    *msgs = mapped;
+                                }
+                                ov.dm.mark_messages_fetched();
+                            }
+                        }
+                        let _ = next_after;
+                    }
+                }
+                (DmChain::Sending { plaintext }, mlc_updater::DmState::Sent { id, created_at }) => {
+                    if let DmView::Conversation { messages, .. } = &mut ov.dm.view {
+                        messages.push(DmMessageUi { id, mine: true, text: plaintext, created_at, read_at: None });
+                    }
+                }
+                (DmChain::Direct, mlc_updater::DmState::Read) => {
+                    if let DmView::Conversation { id, .. } = &ov.dm.view {
+                        let id = *id;
+                        if let Some(row) = ov.dm.conversations.iter_mut().find(|c| c.id == id) {
+                            row.unread_count = 0;
+                        }
+                    }
+                }
+                (chain, mlc_updater::DmState::Failed { message }) => {
+                    ov.dm.last_error = Some(message.clone());
+                    if matches!(chain, DmChain::Sending { .. }) {
+                        write_failure = Some(message);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        for (id, label) in new_backfill_candidates {
+            if !self.dm_peer_keys.contains_key(&id) {
+                self.dm_backfill_queue.push_back((id, label));
+            }
+        }
+
+        if let Some((public_id, peer_public_key)) = open_conversation_target {
+            let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
+                mlc_updater::DmRequest::OpenConversation { with: public_id },
+            ));
+            self.dm_pending = Some((win_id, DmChain::OpeningConversation { peer_public_key }));
+        }
+
+        if let Some((conversation, peer_public_key)) = opened {
+            self.dm_peer_keys.insert(conversation.id, peer_public_key);
+            let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+            let row = DmConversationUi {
+                id: conversation.id,
+                peer_label: conversation.peer.label,
+                peer_fingerprint: conversation.peer.fingerprint,
+                last_message_at: conversation.last_message_at,
+                unread_count: conversation.unread,
+            };
+            if let Some(existing) = ov.dm.conversations.iter_mut().find(|c| c.id == row.id) {
+                *existing = row;
+            } else {
+                ov.dm.conversations.push(row);
+            }
+            ov.dm.open_conversation(conversation.id);
+        }
+
+        if let Some((conversation_id, key, fingerprint)) = backfilled {
+            self.dm_peer_keys.insert(conversation_id, key);
+            let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+            if let Some(row) = ov.dm.conversations.iter_mut().find(|c| c.id == conversation_id) {
+                row.peer_fingerprint = Some(fingerprint);
+            }
+        }
+
+        if let Some(message) = write_failure {
+            pw.chart.push_system_event(mlc_core::SystemEventKind::Info, "Message not sent", message, true);
+        }
+
+        pw.overlay_dirty = true;
+        pw.window.request_redraw();
+    }
+
+    /// Per-frame drive for the Forum-v2 tab: applies the shared
+    /// `forum_v2_rx` channel's settled answer (if any), then — only when
+    /// nothing is in flight — drains one explicit user action or fires one
+    /// passive fetch. Called from `about_to_wait`, right where v1's own
+    /// Forum block already lives.
+    #[cfg(feature = "cloud")]
+    fn drive_forum2(&mut self) {
+        use mlc_app_layout::ui::modal_settings::{
+            CloudOverlayKind, ForumV2Request as UiForumV2Request, ForumV2View, NewsTab,
+        };
+
+        if self.updater_handle.forum_v2_rx.has_changed().unwrap_or(false) {
+            let state = self.updater_handle.forum_v2_rx.borrow_and_update().clone();
+            if !matches!(state, mlc_updater::ForumV2State::Idle | mlc_updater::ForumV2State::Working) {
+                if let Some((win_id, chain)) = self.forum2_pending.take() {
+                    self.apply_forum2_result(win_id, chain, state);
+                }
+            }
+        }
+
+        if self.forum2_pending.is_some() {
+            return;
+        }
+
+        // Explicit user action — drained from the first window that has one
+        // armed (one shared channel across every window — see
+        // `Forum2Chain`'s own doc for why only one action is ever in flight
+        // at a time).
+        let drained = self.windows.iter_mut().find_map(|(id, pw)| {
+            pw.chart.panel_app.cloud_overlay_state.forum2.request.take().map(|r| (*id, r))
+        });
+        if let Some((win_id, req)) = drained {
+            // Optimistic view pre-set, and the thread-id inference
+            // `DeleteReply` needs (it carries no thread_id of its own) —
+            // both read/written before firing.
+            let mut thread_id_hint = None;
+            if let Some(pw) = self.windows.get_mut(&win_id) {
+                let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+                match &req {
+                    UiForumV2Request::LoadBoard { slug, before } if before.is_none() => {
+                        ov.forum2.view = ForumV2View::BoardThreads {
+                            slug: slug.clone(),
+                            threads: Vec::new(),
+                            next_before: None,
+                        };
+                    }
+                    UiForumV2Request::OpenThread { id } => {
+                        ov.forum2.view = ForumV2View::Thread {
+                            id: *id,
+                            thread: None,
+                            replies_tree: Vec::new(),
+                            reply_to: None,
+                        };
+                    }
+                    _ => {}
+                }
+                thread_id_hint = match &ov.forum2.view {
+                    ForumV2View::Thread { id, .. } => Some(*id),
+                    _ => None,
+                };
+            }
+
+            let (cmd, chain) = match req {
+                UiForumV2Request::LoadBoards => (mlc_updater::ForumV2Request::ListBoards, Forum2Chain::Direct),
+                UiForumV2Request::LoadBoard { slug, before } => {
+                    let append = before.is_some();
+                    (
+                        mlc_updater::ForumV2Request::ListBoardThreads { slug, before },
+                        Forum2Chain::BoardThreads { append },
+                    )
+                }
+                UiForumV2Request::OpenThread { id } => {
+                    (mlc_updater::ForumV2Request::LoadThread { id }, Forum2Chain::Direct)
+                }
+                UiForumV2Request::CreateThread { slug, title, body } => (
+                    mlc_updater::ForumV2Request::CreateThread { slug, title, body },
+                    Forum2Chain::AwaitingWriteAck { thread_id_hint: None },
+                ),
+                UiForumV2Request::Reply { thread_id, body, parent_reply_id } => (
+                    mlc_updater::ForumV2Request::Reply { thread_id, body, parent_reply_id },
+                    Forum2Chain::AwaitingWriteAck { thread_id_hint: Some(thread_id) },
+                ),
+                UiForumV2Request::DeleteReply { id } => (
+                    mlc_updater::ForumV2Request::DeleteReply { id },
+                    Forum2Chain::AwaitingWriteAck { thread_id_hint },
+                ),
+                UiForumV2Request::Search { q, board } => {
+                    (mlc_updater::ForumV2Request::Search { q, board }, Forum2Chain::Direct)
+                }
+                UiForumV2Request::Moderate { thread_id, action, board } => (
+                    mlc_updater::ForumV2Request::Moderate { thread_id, action, board },
+                    Forum2Chain::AwaitingWriteAck { thread_id_hint: Some(thread_id) },
+                ),
+            };
+            let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::ForumV2(cmd));
+            self.forum2_pending = Some((win_id, chain));
+            return;
+        }
+
+        // Passive: boards / a board's threads / the open thread — first
+        // window found needing one. Two-pass (scan read-only, then mutate
+        // + send) rather than acting inside the scan loop, so nothing here
+        // has to reason about mutating `self.forum2_pending`/sending on
+        // `self.updater_handle` while `self.windows` is mid-iteration.
+        enum Passive {
+            Boards,
+            BoardThreads(String),
+            Thread(i64),
+        }
+        let mut found: Option<(WindowId, Passive)> = None;
+        'scan: for (win_id, pw) in self.windows.iter() {
+            let ov = &pw.chart.panel_app.cloud_overlay_state;
+            if !(ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Forum) {
+                continue;
+            }
+            let boards_needs_fetch = ov.forum2.boards.is_empty() && ov.forum2.boards_fetched_at.is_none();
+            if boards_needs_fetch || (!ov.forum2.boards.is_empty() && ov.forum2.boards_due_for_refresh()) {
+                found = Some((*win_id, Passive::Boards));
+                break 'scan;
+            }
+            if let ForumV2View::BoardThreads { slug, threads, .. } = &ov.forum2.view {
+                let stale = threads.is_empty() && ov.forum2.board_threads_fetched_at.is_none();
+                if stale || ov.forum2.board_threads_due_for_refresh() {
+                    found = Some((*win_id, Passive::BoardThreads(slug.clone())));
+                    break 'scan;
+                }
+            }
+            if let ForumV2View::Thread { id, thread: Some(_), .. } = &ov.forum2.view {
+                if ov.forum2.thread_due_for_refresh() {
+                    found = Some((*win_id, Passive::Thread(*id)));
+                    break 'scan;
+                }
+            }
+        }
+        if let Some((win_id, passive)) = found {
+            if let Some(pw) = self.windows.get_mut(&win_id) {
+                let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+                match &passive {
+                    Passive::Boards => ov.forum2.boards_refreshing = true,
+                    Passive::BoardThreads(_) => ov.forum2.board_threads_refreshing = true,
+                    Passive::Thread(_) => ov.forum2.thread_refreshing = true,
+                }
+            }
+            let (cmd, chain) = match passive {
+                Passive::Boards => (mlc_updater::ForumV2Request::ListBoards, Forum2Chain::Direct),
+                Passive::BoardThreads(slug) => (
+                    mlc_updater::ForumV2Request::ListBoardThreads { slug, before: None },
+                    Forum2Chain::BoardThreads { append: false },
+                ),
+                Passive::Thread(id) => (mlc_updater::ForumV2Request::LoadThread { id }, Forum2Chain::Direct),
+            };
+            let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::ForumV2(cmd));
+            self.forum2_pending = Some((win_id, chain));
+        }
+    }
+
+    /// Per-frame drive for the Messages tab: identity load/publish, the
+    /// shared `dm_rx` channel's settled answer, then — only when nothing
+    /// is in flight — the backfill queue, one explicit user action, or one
+    /// passive fetch. Same structure as [`Self::drive_forum2`].
+    #[cfg(feature = "cloud")]
+    fn drive_dm(&mut self) {
+        use mlc_app_layout::ui::modal_settings::{CloudOverlayKind, DmRequest as UiDmRequest, NewsTab};
+
+        // The window (if any) currently showing Messages — used both as the
+        // gate below and as the routing target for actions that are not
+        // tied to a specific request (auto-publish, backfill).
+        let messages_window: Option<WindowId> = self.windows.iter().find_map(|(id, pw)| {
+            let ov = &pw.chart.panel_app.cloud_overlay_state;
+            (ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Messages).then_some(*id)
+        });
+        let Some(messages_window) = messages_window else {
+            return;
+        };
+
+        let vault_key = self.core.user().vault_key();
+        let Some(vault_key) = vault_key else {
+            if let Some(pw) = self.windows.get_mut(&messages_window) {
+                pw.chart.panel_app.cloud_overlay_state.dm.last_error =
+                    Some("Unlock the vault to use messages".to_string());
+            }
+            return;
+        };
+
+        if self.dm_identity.is_none() {
+            self.load_or_generate_dm_identity(&vault_key);
+        }
+
+        if self.updater_handle.dm_rx.has_changed().unwrap_or(false) {
+            let state = self.updater_handle.dm_rx.borrow_and_update().clone();
+            match state {
+                mlc_updater::DmState::Idle | mlc_updater::DmState::Working => {}
+                // Account-level fact — broadcast to every window regardless
+                // of `dm_pending` (the auto-publish below never sets it at
+                // all), rather than routed like every other answer.
+                mlc_updater::DmState::Identity { fingerprint } => {
+                    for pw in self.windows.values_mut() {
+                        pw.chart.panel_app.cloud_overlay_state.dm.identity_fingerprint = Some(fingerprint.clone());
+                        pw.overlay_dirty = true;
+                    }
+                }
+                settled => {
+                    if let Some((win_id, chain)) = self.dm_pending.take() {
+                        self.apply_dm_result(win_id, chain, settled);
+                    }
+                }
+            }
+        }
+
+        // Auto-publish this profile's key the first time Messages is open
+        // with no confirmed fingerprint yet — the explicit "Publish my key"
+        // row (`UiDmRequest::PublishIdentity`) stays wired below too, as an
+        // idempotent retry if this one somehow never landed.
+        if self.dm_pending.is_none() {
+            let needs_publish = self
+                .windows
+                .get(&messages_window)
+                .is_some_and(|pw| pw.chart.panel_app.cloud_overlay_state.dm.identity_fingerprint.is_none());
+            if needs_publish {
+                if let Some(identity) = &self.dm_identity {
+                    let public_key_b64 = dm_encode(&identity.public);
+                    let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
+                        mlc_updater::DmRequest::PublishIdentity { public_key_b64 },
+                    ));
+                    // No window to route the answer to — `Identity` is
+                    // broadcast unconditionally above regardless of
+                    // `dm_pending`, so this is left `None`.
+                }
+            }
+        }
+
+        if self.dm_pending.is_some() {
+            return;
+        }
+
+        // Explicit user action.
+        let drained = self.windows.iter_mut().find_map(|(id, pw)| {
+            pw.chart.panel_app.cloud_overlay_state.dm.request.take().map(|r| (*id, r))
+        });
+        if let Some((win_id, req)) = drained {
+            match req {
+                UiDmRequest::PublishIdentity => {
+                    if let Some(identity) = &self.dm_identity {
+                        let public_key_b64 = dm_encode(&identity.public);
+                        let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
+                            mlc_updater::DmRequest::PublishIdentity { public_key_b64 },
+                        ));
+                    }
+                }
+                UiDmRequest::LoadConversations => {
+                    if let Some(pw) = self.windows.get_mut(&win_id) {
+                        pw.chart.panel_app.cloud_overlay_state.dm.conversations_refreshing = true;
+                    }
+                    let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
+                        mlc_updater::DmRequest::ListConversations,
+                    ));
+                    self.dm_pending = Some((win_id, DmChain::Direct));
+                }
+                UiDmRequest::Open { with_label } => {
+                    let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
+                        mlc_updater::DmRequest::GetIdentity { label: with_label },
+                    ));
+                    self.dm_pending = Some((win_id, DmChain::OpeningPeerLookup));
+                }
+                UiDmRequest::LoadMessages { id, after } => {
+                    if let Some(pw) = self.windows.get_mut(&win_id) {
+                        pw.chart.panel_app.cloud_overlay_state.dm.messages_refreshing = true;
+                    }
+                    let append = after.is_some();
+                    let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
+                        mlc_updater::DmRequest::ListMessages { id, after, limit: 50 },
+                    ));
+                    self.dm_pending = Some((win_id, DmChain::LoadingMessages { append }));
+                }
+                UiDmRequest::Send { id, plaintext } => {
+                    let Some(identity) = &self.dm_identity else {
+                        if let Some(pw) = self.windows.get_mut(&win_id) {
+                            pw.chart.panel_app.cloud_overlay_state.dm.last_error =
+                                Some("Unlock the vault to send messages".to_string());
+                        }
+                        return;
+                    };
+                    let Some(peer_public) = self.dm_peer_keys.get(&id).copied() else {
+                        if let Some(pw) = self.windows.get_mut(&win_id) {
+                            pw.chart.panel_app.cloud_overlay_state.dm.last_error =
+                                Some("Open this conversation again to send".to_string());
+                        }
+                        return;
+                    };
+                    let key: [u8; 32] = *mlc_vault::dm::conversation_key(&identity.secret, &peer_public, &id.to_string());
+                    let my_fingerprint = mlc_vault::dm::fingerprint(&identity.public);
+                    let aad = dm_aad(id, &my_fingerprint);
+                    let sealed = mlc_vault::dm::seal_message(&key, plaintext.as_bytes(), &aad);
+                    let nonce_b64 = dm_encode(&sealed.nonce);
+                    let ciphertext_b64 = dm_encode(&sealed.ciphertext);
+                    let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
+                        mlc_updater::DmRequest::Send { id, nonce_b64, ciphertext_b64 },
+                    ));
+                    self.dm_pending = Some((win_id, DmChain::Sending { plaintext }));
+                }
+                UiDmRequest::MarkRead { id, up_to } => {
+                    let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
+                        mlc_updater::DmRequest::MarkRead { id, up_to },
+                    ));
+                    self.dm_pending = Some((win_id, DmChain::Direct));
+                }
+            }
+            return;
+        }
+
+        if self.dm_pending.is_some() {
+            return;
+        }
+
+        // Backfill: one peer-key lookup at a time for a LIST-sourced
+        // conversation the `Open` flow never touched. Routed to
+        // `messages_window` — the only window this pass ever touches (see
+        // that binding's own doc).
+        while let Some((conversation_id, label)) = self.dm_backfill_queue.pop_front() {
+            if self.dm_peer_keys.contains_key(&conversation_id) {
+                continue;
+            }
+            let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
+                mlc_updater::DmRequest::GetIdentity { label },
+            ));
+            self.dm_pending = Some((messages_window, DmChain::BackfillPeerKey { conversation_id }));
+            break;
+        }
     }
 
     fn build_profile_for_save(&self, window_states: Vec<mlc_core::WindowState>) -> mlc_core::UserProfile {
@@ -5358,6 +6337,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     ));
                 }
             }
+        }
+
+        // ── Drain Forum v2 tab (public boards) + Messages tab (DM) ─────────
+        #[cfg(feature = "cloud")]
+        {
+            self.drive_forum2();
+            self.drive_dm();
         }
 
         // ── Drain agent commands every frame ─────────────────────────────

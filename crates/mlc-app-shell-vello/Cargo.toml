@@ -47,6 +47,7 @@ uzor-render-vello-hybrid = "=1.5.1"
 vello_hybrid = { version = "0.0.9", features = ["wgpu"] }
 mlc-app-render-context-tiny-skia = { path = "../mlc-app-render-context-tiny-skia", package = "mylittlechart-app-render-context-tiny-skia" }
 keyring = "3"
+base64.workspace = true
 
 [build-dependencies]
 winresource = "0.1"

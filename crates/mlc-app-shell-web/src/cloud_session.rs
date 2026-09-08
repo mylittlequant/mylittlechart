@@ -23,15 +23,25 @@ use wasm_bindgen_futures::{spawn_local, JsFuture};
 
 use mlc_app::ChartApp;
 use mlc_app_layout::ui::modal_settings::{
-    CloudForumReply, CloudForumThread, CloudForumThreadSummary, CloudLoginPhase, CloudNewsPost,
-    CloudOverlayData, CloudOverlayKind, CloudReleaseEntry, ForumListState, ForumRequest,
-    ForumSubView, NewsTab, RedeemStatus,
+    BoardUi, CloudForumReply, CloudForumThread, CloudForumThreadSummary, CloudLoginPhase,
+    CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudReleaseEntry, ForumListState,
+    ForumReplyV2Ui, ForumRequest, ForumSearchHitUi, ForumSubView, ForumThreadV2Detail,
+    ForumThreadV2Ui, ForumV2Request, ForumV2View, NewsTab, RedeemStatus,
 };
 use mlc_cloud::{
-    forum_error_message, redeem_error_message, BuildAttestation, BlogPost, CloudConfig,
-    DeviceAuthPoll, EntitlementsResponse, FetchTransport, ForumThreadResponse, ForumThreadSummary,
-    MeResponse, ReleaseEntry, StoredToken, VersionManifest,
+    forum_error_message, forum_v2_error_message, redeem_error_message, BuildAttestation,
+    BlogPost, CloudConfig, DeviceAuthPoll, EntitlementsResponse, FetchTransport, ForumBoard,
+    ForumReplyNode, ForumSearchHit, ForumThreadResponse, ForumThreadSummary, ForumThreadV2Response,
+    ForumThreadV2Summary, MeResponse, ReleaseEntry, StoredToken, VersionManifest,
 };
+
+/// The Messages tab (`NewsTab::Messages`) has no vault key to hold a DM
+/// identity on this shell — see this crate's own doc on why direct messages
+/// stay desktop-only for now. Set into `CloudOverlayState::dm.last_error`
+/// every frame the tab is active (idempotent — there is nothing else this
+/// shell could ever put there instead) and every `dm.request` is dropped
+/// without a network call.
+const WEB_DM_UNAVAILABLE: &str = "Direct messages are available in the desktop app for now.";
 
 const TOKEN_KEY: &str = "mlc.cloud.token.v1";
 const DEVICE_KEY: &str = "mlc.cloud.device_id.v1";
@@ -92,6 +102,35 @@ enum FlowResult {
     /// refreshes the list (back to `ForumSubView::List`); failure leaves
     /// the thread view up with the sentence in `reply_error`.
     ForumThreadDeleted(Result<(Vec<ForumThreadSummary>, Option<String>), String>),
+
+    // ── Forum v2 tab (public boards, `NewsTab::Forum`) ──────────────────
+    /// `ForumV2Request::LoadBoards` (passive first fetch, a background
+    /// due-refresh, or the explicit "back to boards" reload).
+    Forum2Boards(Result<Vec<ForumBoard>, String>),
+    /// `ForumV2Request::LoadBoard` — `append: false` is the first page (or a
+    /// background due-refresh); `append: true` is "Load more".
+    Forum2BoardThreads {
+        append: bool,
+        result: Result<(Vec<ForumThreadV2Summary>, Option<String>), String>,
+    },
+    /// `ForumV2Request::OpenThread`, a background thread refresh, or the
+    /// follow-up read after `CreateThread`/`Reply`/`DeleteReply`/`Moderate`
+    /// succeeds — applied identically to `ForumV2View::Thread`, same
+    /// "infer from the current view" idiom v1's `ForumThreadOpened` uses.
+    Forum2Thread(Result<ForumThreadV2Response, String>),
+    /// The follow-up read after `CreateThread`/`Reply`/`DeleteReply`/
+    /// `Moderate` succeeds — unlike [`Self::Forum2Thread`], applies
+    /// unconditionally (forces the view to the target thread, invalidates
+    /// the board's thread list, clears the compose/reply fields) rather
+    /// than only when the caller is still looking at that thread. Same
+    /// three-way split v1 draws between `ForumThreadOpened` and
+    /// `ForumThreadCreated`/`ForumThreadRefreshed`.
+    Forum2ThreadAfterWrite(Result<ForumThreadV2Response, String>),
+    /// `ForumV2Request::Search` — `q` rides alongside so the applied
+    /// `ForumV2View::Search` always shows the query that was actually
+    /// asked, never a guess reconstructed from whatever view happens to be
+    /// showing when the answer lands.
+    Forum2Search { q: String, result: Result<Vec<ForumSearchHit>, String> },
 }
 
 struct Inner {
@@ -183,6 +222,12 @@ struct Inner {
     /// the Forum tab never blocks (or gets blocked by) the login/News/
     /// Download flow that field already gates.
     forum_in_flight: bool,
+
+    // ── Forum v2 tab (public boards) ────────────────────────────────────
+    /// A forum-v2 request is in flight — separate from `forum_in_flight`
+    /// above (v1 and v2 forums are unrelated request streams) so neither
+    /// tab's fetch can block or be blocked by the other's.
+    forum2_in_flight: bool,
 }
 
 pub struct CloudSession {
@@ -238,6 +283,7 @@ impl CloudSession {
                 clone_in_flight: false,
                 clone_result: None,
                 forum_in_flight: false,
+                forum2_in_flight: false,
             })),
         }
     }
@@ -1060,6 +1106,149 @@ impl CloudSession {
                     }
                     self.inner.borrow_mut().forum_in_flight = false;
                 }
+                FlowResult::Forum2Boards(result) => {
+                    let signed_in = self.inner.borrow().token.is_some();
+                    let paid = st.is_paid;
+                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    ov.forum2.boards_refreshing = false;
+                    match result {
+                        Ok(boards) => {
+                            ov.forum2.boards = boards
+                                .into_iter()
+                                .map(|b| map_forum_board(b, signed_in, paid))
+                                .collect();
+                            ov.forum2.mark_boards_fetched();
+                        }
+                        Err(e) => {
+                            if ov.forum2.boards.is_empty() {
+                                ov.forum2.last_error = Some(e);
+                            } else {
+                                web_sys::console::warn_1(&format!("[forum2] boards refresh failed: {}", e).into());
+                            }
+                        }
+                    }
+                    self.inner.borrow_mut().forum2_in_flight = false;
+                }
+                FlowResult::Forum2BoardThreads { append, result } => {
+                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    ov.forum2.board_threads_refreshing = false;
+                    match result {
+                        Ok((threads, next_before)) => {
+                            let mapped: Vec<ForumThreadV2Ui> =
+                                threads.into_iter().map(map_forum_thread_v2_summary).collect();
+                            if let ForumV2View::BoardThreads { threads: existing, next_before: nb, .. } =
+                                &mut ov.forum2.view
+                            {
+                                if append {
+                                    existing.extend(mapped);
+                                } else {
+                                    *existing = mapped;
+                                }
+                                *nb = next_before;
+                                ov.forum2.mark_board_threads_fetched();
+                            }
+                            // Else: the view moved on before this landed
+                            // (back to boards, opened a thread, ...) — the
+                            // page is dropped, same tolerance v1 gives an
+                            // interrupted fetch.
+                        }
+                        Err(e) => {
+                            web_sys::console::warn_1(&format!("[forum2] board threads failed: {}", e).into());
+                            ov.forum2.last_error = Some(e);
+                        }
+                    }
+                    self.inner.borrow_mut().forum2_in_flight = false;
+                }
+                FlowResult::Forum2Thread(result) => {
+                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    ov.forum2.thread_refreshing = false;
+                    match result {
+                        Ok(resp) => {
+                            let detail = map_forum_thread_v2_detail(&resp);
+                            let id = detail.id;
+                            let replies_tree: Vec<ForumReplyV2Ui> =
+                                resp.replies.into_iter().map(map_forum_reply_node).collect();
+                            if let ForumV2View::Thread { id: existing_id, thread, replies_tree: rt, .. } =
+                                &mut ov.forum2.view
+                            {
+                                if *existing_id == id {
+                                    *thread = Some(detail);
+                                    *rt = replies_tree;
+                                    ov.forum2.mark_thread_fetched();
+                                }
+                                // Else: landed for a thread the caller
+                                // already navigated away from — dropped.
+                            }
+                        }
+                        Err(e) => {
+                            ov.forum2.last_error = Some(e);
+                        }
+                    }
+                    self.inner.borrow_mut().forum2_in_flight = false;
+                }
+                FlowResult::Forum2ThreadAfterWrite(result) => {
+                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    match result {
+                        Ok(resp) => {
+                            let detail = map_forum_thread_v2_detail(&resp);
+                            let id = detail.id;
+                            let replies_tree: Vec<ForumReplyV2Ui> =
+                                resp.replies.into_iter().map(map_forum_reply_node).collect();
+                            let reply_to = match &ov.forum2.view {
+                                ForumV2View::Thread { id: existing_id, reply_to, .. } if *existing_id == id => {
+                                    *reply_to
+                                }
+                                _ => None,
+                            };
+                            ov.forum2.view = ForumV2View::Thread {
+                                id,
+                                thread: Some(detail),
+                                replies_tree,
+                                reply_to,
+                            };
+                            ov.forum2.mark_thread_fetched();
+                            // A write landed — the board's own thread list
+                            // (`reply_count`/`last_reply_at`, or a brand new
+                            // thread) is now stale.
+                            ov.forum2.invalidate_board_threads();
+                            // Compose/reply forms are gone — clear the
+                            // shared fields the same way v1's own
+                            // `ForumThreadCreated`/`ForumThreadRefreshed`
+                            // arms do (an empty field clears to empty, so
+                            // this is harmless when the write was a
+                            // `Moderate`/`DeleteReply` rather than a text
+                            // submission).
+                            let mut coord = chart.input_coordinator.borrow_mut();
+                            let tf = coord.text_fields_mut();
+                            for field in [mlc_app::text_input::FORUM_TITLE, mlc_app::text_input::FORUM_BODY, mlc_app::text_input::FORUM_REPLY] {
+                                let wid = uzor::WidgetId::from(field);
+                                if !tf.text(&wid).is_empty() {
+                                    tf.clear(&wid);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            ov.forum2.last_error = Some(e.clone());
+                            chart.push_system_event(mlc_core::SystemEventKind::Info, "Forum post failed", e, true);
+                        }
+                    }
+                    self.inner.borrow_mut().forum2_in_flight = false;
+                }
+                FlowResult::Forum2Search { q, result } => {
+                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    match result {
+                        Ok(hits) => {
+                            ov.forum2.view = ForumV2View::Search {
+                                q,
+                                hits: hits.into_iter().map(map_forum_search_hit).collect(),
+                            };
+                        }
+                        Err(e) => {
+                            ov.forum2.last_error = Some(e);
+                        }
+                    }
+                    self.inner.borrow_mut().forum2_in_flight = false;
+                }
                 FlowResult::Logout => {
                     // Local sign-out regardless of the server answer. `st`
                     // (borrowed above) is not touched on this arm's path —
@@ -1328,6 +1517,259 @@ impl CloudSession {
             }
         }
 
+        // ── Forum v2 tab (public boards): passive loads + explicit actions ─
+        {
+            let ov = &mut chart.panel_app.cloud_overlay_state;
+            let forum2_active = ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Forum;
+
+            // Passive: boards, the moment the tab is looked at with nothing
+            // loaded, or once `boards_due_for_refresh()` says the cadence
+            // elapsed — same "Empty -> fire" idiom the v1 Forum tab uses.
+            let boards_needs_fetch = ov.forum2.boards.is_empty() && ov.forum2.boards_fetched_at.is_none();
+            let boards_due = !ov.forum2.boards.is_empty() && ov.forum2.boards_due_for_refresh();
+            if forum2_active && (boards_needs_fetch || boards_due) && !self.inner.borrow().forum2_in_flight {
+                ov.forum2.boards_refreshing = true;
+                self.inner.borrow_mut().forum2_in_flight = true;
+                let inner = self.inner.clone();
+                let transport = self.inner.borrow().transport.snapshot();
+                spawn_local(async move {
+                    let raw = transport.forum_boards().await;
+                    if let Err(e) = &raw {
+                        mark_unauthorized(&inner, e);
+                    }
+                    let r = raw.map_err(|e| forum_v2_error_message(&e));
+                    inner.borrow_mut().result = Some(FlowResult::Forum2Boards(r));
+                });
+            }
+
+            // Passive: a board's threads, once its view is entered with
+            // nothing loaded yet (a click on a board row already arms its
+            // own `LoadBoard` request below, so this only fires for a view
+            // that landed on `BoardThreads` some other way — e.g. restored
+            // — with nothing loaded).
+            if forum2_active && !self.inner.borrow().forum2_in_flight {
+                let board_threads_stale = ov.forum2.board_threads_fetched_at.is_none();
+                let board_threads_due = ov.forum2.board_threads_due_for_refresh();
+                let due = match &ov.forum2.view {
+                    ForumV2View::BoardThreads { slug, threads, .. }
+                        if (threads.is_empty() && board_threads_stale) || board_threads_due =>
+                    {
+                        Some(slug.clone())
+                    }
+                    _ => None,
+                };
+                if let Some(slug) = due {
+                    ov.forum2.board_threads_refreshing = true;
+                    self.inner.borrow_mut().forum2_in_flight = true;
+                    let inner = self.inner.clone();
+                    let transport = self.inner.borrow().transport.snapshot();
+                    spawn_local(async move {
+                        let raw = transport.forum_board_threads(&slug, None).await;
+                        if let Err(e) = &raw {
+                            mark_unauthorized(&inner, e);
+                        }
+                        let r = raw
+                            .map(|resp| (resp.threads, resp.next_before))
+                            .map_err(|e| forum_v2_error_message(&e));
+                        inner.borrow_mut().result = Some(FlowResult::Forum2BoardThreads { append: false, result: r });
+                    });
+                }
+            }
+
+            // Passive: the open thread, once `thread_due_for_refresh()`
+            // says the cadence elapsed — same idiom as v1's own thread
+            // refresh, silent (no view flip) so it never disturbs scroll or
+            // an in-progress reply draft.
+            if forum2_active && !self.inner.borrow().forum2_in_flight {
+                if let ForumV2View::Thread { id, thread: Some(_), .. } = &ov.forum2.view {
+                    if ov.forum2.thread_due_for_refresh() {
+                        let id = *id;
+                        ov.forum2.thread_refreshing = true;
+                        self.inner.borrow_mut().forum2_in_flight = true;
+                        let inner = self.inner.clone();
+                        let transport = self.inner.borrow().transport.snapshot();
+                        spawn_local(async move {
+                            let raw = transport.forum_thread_v2(id).await;
+                            if let Err(e) = &raw {
+                                mark_unauthorized(&inner, e);
+                            }
+                            let r = raw.map_err(|e| forum_v2_error_message(&e));
+                            inner.borrow_mut().result = Some(FlowResult::Forum2Thread(r));
+                        });
+                    }
+                }
+            }
+
+            // Explicit user action — one-shot mailbox, dropped (not queued)
+            // if a forum-v2 request is already in flight, same tolerance
+            // the v1 Forum tab gives a doubled click.
+            if let Some(req) = ov.forum2.request.take() {
+                if !self.inner.borrow().forum2_in_flight {
+                    // Optimistic view transitions before firing — mirrors
+                    // v1's own `Loading`/`thread: None` flips, and gives
+                    // `Forum2Thread`/`Forum2BoardThreads` above a view to
+                    // match against the instant the answer lands.
+                    match &req {
+                        ForumV2Request::LoadBoard { slug, before } if before.is_none() => {
+                            ov.forum2.view = ForumV2View::BoardThreads {
+                                slug: slug.clone(),
+                                threads: Vec::new(),
+                                next_before: None,
+                            };
+                        }
+                        ForumV2Request::OpenThread { id } => {
+                            ov.forum2.view = ForumV2View::Thread {
+                                id: *id,
+                                thread: None,
+                                replies_tree: Vec::new(),
+                                reply_to: None,
+                            };
+                        }
+                        _ => {}
+                    }
+                    // `DeleteReply` carries no thread_id of its own — read
+                    // it from the view it was clicked from.
+                    let delete_reply_thread_id = if matches!(&req, ForumV2Request::DeleteReply { .. }) {
+                        match &ov.forum2.view {
+                            ForumV2View::Thread { id, .. } => Some(*id),
+                            _ => None,
+                        }
+                    } else {
+                        None
+                    };
+                    self.inner.borrow_mut().forum2_in_flight = true;
+                    let inner = self.inner.clone();
+                    let transport = self.inner.borrow().transport.snapshot();
+                    spawn_local(async move {
+                        match req {
+                            ForumV2Request::LoadBoards => {
+                                let raw = transport.forum_boards().await;
+                                if let Err(e) = &raw {
+                                    mark_unauthorized(&inner, e);
+                                }
+                                let r = raw.map_err(|e| forum_v2_error_message(&e));
+                                inner.borrow_mut().result = Some(FlowResult::Forum2Boards(r));
+                            }
+                            ForumV2Request::LoadBoard { slug, before } => {
+                                let raw = transport.forum_board_threads(&slug, before.as_deref()).await;
+                                if let Err(e) = &raw {
+                                    mark_unauthorized(&inner, e);
+                                }
+                                let r = raw
+                                    .map(|resp| (resp.threads, resp.next_before))
+                                    .map_err(|e| forum_v2_error_message(&e));
+                                inner.borrow_mut().result =
+                                    Some(FlowResult::Forum2BoardThreads { append: before.is_some(), result: r });
+                            }
+                            ForumV2Request::OpenThread { id } => {
+                                let raw = transport.forum_thread_v2(id).await;
+                                if let Err(e) = &raw {
+                                    mark_unauthorized(&inner, e);
+                                }
+                                let r = raw.map_err(|e| forum_v2_error_message(&e));
+                                inner.borrow_mut().result = Some(FlowResult::Forum2Thread(r));
+                            }
+                            ForumV2Request::CreateThread { slug, title, body } => {
+                                let r = match transport.forum_create_thread_v2(&slug, &title, &body).await {
+                                    Ok(id) => {
+                                        let raw = transport.forum_thread_v2(id).await;
+                                        if let Err(e) = &raw {
+                                            mark_unauthorized(&inner, e);
+                                        }
+                                        raw.map_err(|e| forum_v2_error_message(&e))
+                                    }
+                                    Err(e) => {
+                                        mark_unauthorized(&inner, &e);
+                                        Err(forum_v2_error_message(&e))
+                                    }
+                                };
+                                inner.borrow_mut().result = Some(FlowResult::Forum2ThreadAfterWrite(r));
+                            }
+                            ForumV2Request::Reply { thread_id, body, parent_reply_id } => {
+                                let r = match transport.forum_reply_v2(thread_id, &body, parent_reply_id).await {
+                                    Ok(_) => {
+                                        let raw = transport.forum_thread_v2(thread_id).await;
+                                        if let Err(e) = &raw {
+                                            mark_unauthorized(&inner, e);
+                                        }
+                                        raw.map_err(|e| forum_v2_error_message(&e))
+                                    }
+                                    Err(e) => {
+                                        mark_unauthorized(&inner, &e);
+                                        Err(forum_v2_error_message(&e))
+                                    }
+                                };
+                                inner.borrow_mut().result = Some(FlowResult::Forum2ThreadAfterWrite(r));
+                            }
+                            ForumV2Request::DeleteReply { id } => {
+                                let Some(thread_id) = delete_reply_thread_id else {
+                                    inner.borrow_mut().result = Some(FlowResult::Forum2ThreadAfterWrite(Err(
+                                        "No thread is open to delete this reply from".to_string(),
+                                    )));
+                                    return;
+                                };
+                                let r = match transport.forum_delete_reply_v2(id).await {
+                                    Ok(()) => {
+                                        let raw = transport.forum_thread_v2(thread_id).await;
+                                        if let Err(e) = &raw {
+                                            mark_unauthorized(&inner, e);
+                                        }
+                                        raw.map_err(|e| forum_v2_error_message(&e))
+                                    }
+                                    Err(e) => {
+                                        mark_unauthorized(&inner, &e);
+                                        Err(forum_v2_error_message(&e))
+                                    }
+                                };
+                                inner.borrow_mut().result = Some(FlowResult::Forum2ThreadAfterWrite(r));
+                            }
+                            ForumV2Request::Search { q, board } => {
+                                let raw = transport.forum_search(&q, board.as_deref()).await;
+                                if let Err(e) = &raw {
+                                    mark_unauthorized(&inner, e);
+                                }
+                                let r = raw.map_err(|e| forum_v2_error_message(&e));
+                                inner.borrow_mut().result = Some(FlowResult::Forum2Search { q, result: r });
+                            }
+                            ForumV2Request::Moderate { thread_id, action, board } => {
+                                let r = match transport.forum_moderate(thread_id, &action, board.as_deref()).await {
+                                    Ok(()) => {
+                                        let raw = transport.forum_thread_v2(thread_id).await;
+                                        if let Err(e) = &raw {
+                                            mark_unauthorized(&inner, e);
+                                        }
+                                        raw.map_err(|e| forum_v2_error_message(&e))
+                                    }
+                                    Err(e) => {
+                                        mark_unauthorized(&inner, &e);
+                                        Err(forum_v2_error_message(&e))
+                                    }
+                                };
+                                inner.borrow_mut().result = Some(FlowResult::Forum2ThreadAfterWrite(r));
+                            }
+                        }
+                    });
+                }
+            }
+        }
+
+        // ── Messages tab: no vault key on this shell — desktop-only for
+        // now (see `WEB_DM_UNAVAILABLE`'s own doc). Every `dm.request` is
+        // dropped without a network call.
+        {
+            let ov = &mut chart.panel_app.cloud_overlay_state;
+            let messages_active = ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Messages;
+            if messages_active {
+                ov.dm.last_error = Some(WEB_DM_UNAVAILABLE.to_string());
+            }
+            if ov.dm.request.take().is_some() {
+                web_sys::console::warn_1(
+                    &"[dm] direct messages are not available on the web build — request dropped".into(),
+                );
+                ov.dm.last_error = Some(WEB_DM_UNAVAILABLE.to_string());
+            }
+        }
+
         let st = &mut chart.panel_app.cloud_login_state;
 
         // ── Open-edge: pick the initial phase from auth state ────────────
@@ -1492,6 +1934,115 @@ fn map_forum_thread(resp: ForumThreadResponse) -> CloudForumThread {
                 created_at: r.created_at,
             })
             .collect(),
+    }
+}
+
+// ── Forum v2 wire → UI mapping ─────────────────────────────────────────
+// Same split as the v1 mapping above: `mlc-app-layout` cannot depend on
+// `mlc-cloud`, so the shell turns a wire row into the UI mirror.
+
+/// Coarse class ranking for [`forum2_can_write`] — public < user < paid <
+/// moderator < admin, matching `social_db::Class`'s own ordering
+/// (`forum_v2_overlay`'s doc names it, this crate does not depend on the
+/// server crate to read it directly).
+fn forum2_class_rank(class: &str) -> u8 {
+    match class {
+        "public" => 0,
+        "user" => 1,
+        "paid" => 2,
+        "moderator" => 3,
+        "admin" => 4,
+        _ => 0,
+    }
+}
+
+/// Whether the calling account may write to a board with `write_class`.
+/// Capped at "paid" — moderator/admin membership is never resolved
+/// client-side (`ForumV2State::caller_roles` has no "me" endpoint to fill
+/// it from yet, per that field's own doc), so a moderator-or-higher board
+/// always reads `false` here even for an actual moderator. That is the
+/// safe default: it hides a button the server would refuse anyway rather
+/// than showing one that always 403s. The server remains the real
+/// enforcement point regardless of what this resolves to.
+fn forum2_can_write(write_class: &str, signed_in: bool, paid: bool) -> bool {
+    let caller_rank = if paid {
+        2
+    } else if signed_in {
+        1
+    } else {
+        0
+    };
+    caller_rank >= forum2_class_rank(write_class)
+}
+
+fn map_forum_board(b: ForumBoard, signed_in: bool, paid: bool) -> BoardUi {
+    let can_write = forum2_can_write(&b.write_class, signed_in, paid);
+    BoardUi {
+        slug: b.slug,
+        title: b.title,
+        description: b.description,
+        read_class: b.read_class,
+        write_class: b.write_class,
+        can_write,
+    }
+}
+
+fn map_forum_thread_v2_summary(s: ForumThreadV2Summary) -> ForumThreadV2Ui {
+    ForumThreadV2Ui {
+        id: s.id,
+        title: s.title,
+        author: s.author,
+        author_is_me: s.author_is_me,
+        created_at: s.created_at,
+        updated_at: s.updated_at,
+        last_reply_at: s.last_reply_at,
+        reply_count: s.reply_count,
+        pinned: s.pinned,
+        locked: s.locked,
+    }
+}
+
+fn map_forum_reply_node(r: ForumReplyNode) -> ForumReplyV2Ui {
+    ForumReplyV2Ui {
+        id: r.id,
+        parent_reply_id: r.parent_reply_id,
+        depth: r.depth,
+        author: r.author,
+        author_is_me: r.author_is_me,
+        body: r.body,
+        created_at: r.created_at,
+        hidden: r.hidden,
+        children: r.children.into_iter().map(map_forum_reply_node).collect(),
+    }
+}
+
+fn map_forum_thread_v2_detail(resp: &ForumThreadV2Response) -> ForumThreadV2Detail {
+    let t = &resp.thread;
+    ForumThreadV2Detail {
+        id: t.id,
+        board_id: t.board_id,
+        title: t.title.clone(),
+        author: t.author.clone(),
+        author_is_me: t.author_is_me,
+        body: t.body.clone(),
+        created_at: t.created_at.clone(),
+        updated_at: t.updated_at.clone(),
+        pinned: t.pinned,
+        locked: t.locked,
+        hidden: t.hidden,
+    }
+}
+
+fn map_forum_search_hit(h: ForumSearchHit) -> ForumSearchHitUi {
+    ForumSearchHitUi {
+        kind: h.kind,
+        board_id: h.board_id,
+        thread_id: h.thread_id,
+        reply_id: h.reply_id,
+        title: h.title,
+        snippet: h.snippet,
+        author: h.author,
+        created_at: h.created_at,
     }
 }
 
