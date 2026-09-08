@@ -3400,11 +3400,16 @@ impl App<'_> {
         let vault_key = self.core.user().vault_key();
         let Some(vault_key) = vault_key else {
             if let Some(pw) = self.windows.get_mut(&messages_window) {
+                pw.chart.panel_app.cloud_overlay_state.dm.available = false;
                 pw.chart.panel_app.cloud_overlay_state.dm.last_error =
                     Some("Unlock the vault to use messages".to_string());
             }
             return;
         };
+
+        if let Some(pw) = self.windows.get_mut(&messages_window) {
+            pw.chart.panel_app.cloud_overlay_state.dm.available = true;
+        }
 
         if self.dm_identity.is_none() {
             self.load_or_generate_dm_identity(&vault_key);

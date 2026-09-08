@@ -5662,6 +5662,16 @@ pub struct DmState {
     /// code to know whether to clear `DM_DRAFT`, reset to `false` wherever
     /// it is consumed, on success or failure alike.
     pub send_pending: bool,
+    /// Whether DM controls (Publish my key, open-peer, conversations,
+    /// draft/send) can actually work in this shell. The web shell never sets
+    /// this — no DM identity plumbing exists there, and drawing those
+    /// controls anyway invited clicks that could never do anything (`dm.
+    /// last_error`'s own notice already tells the web user why). The native
+    /// shell sets it once the DM identity is loadable (vault unsealed) and
+    /// clears it while sealed, alongside its own "Unlock the vault…"
+    /// notice. Defaults `false` — a shell must opt in explicitly rather
+    /// than draw live controls before it can back them.
+    pub available: bool,
 }
 
 #[cfg(feature = "cloud")]
@@ -5678,6 +5688,7 @@ impl Default for DmState {
             messages_fetched_at: None,
             messages_refreshing: false,
             send_pending: false,
+            available: false,
         }
     }
 }

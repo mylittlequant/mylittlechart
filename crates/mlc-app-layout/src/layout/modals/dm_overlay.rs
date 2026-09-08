@@ -38,6 +38,9 @@ const BUBBLE_MIN_W: f64 = 120.0;
 // =============================================================================
 
 pub(crate) fn height(state: &CloudOverlayState) -> f64 {
+    if !state.dm.available {
+        return if state.dm.last_error.is_some() { 20.0 } else { 0.0 };
+    }
     match &state.dm.view {
         DmView::List => list_h(&state.dm),
         DmView::Conversation { .. } => conversation_h(&state.dm),
@@ -68,11 +71,17 @@ pub(crate) fn draw(
     let sy = scrollable.content_y();
     let sw = scrollable.content_width();
 
-    match &state.dm.view {
-        DmView::List => draw_list(ctx, coord, layer_id, sx, sy, sw, state, ft, tt, current_time_ms, result),
-        DmView::Conversation { id, messages, draft_field_id } => draw_conversation(
-            ctx, coord, layer_id, sx, sy, sw, state, *id, messages, draft_field_id, ft, tt, current_time_ms, result,
-        ),
+    if !state.dm.available {
+        if let Some(err) = &state.dm.last_error {
+            draw_error_line(ctx, sw, sx, sy, err);
+        }
+    } else {
+        match &state.dm.view {
+            DmView::List => draw_list(ctx, coord, layer_id, sx, sy, sw, state, ft, tt, current_time_ms, result),
+            DmView::Conversation { id, messages, draft_field_id } => draw_conversation(
+                ctx, coord, layer_id, sx, sy, sw, state, *id, messages, draft_field_id, ft, tt, current_time_ms, result,
+            ),
+        }
     }
 
     let widget_theme = WidgetTheme::default();

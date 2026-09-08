@@ -6006,6 +6006,9 @@ impl ChartApp {
                     if !st.forum_entitled {
                         return;
                     }
+                    if !st.dm.available {
+                        return;
+                    }
                     use mlc_app_layout::ui::modal_settings::{DmRequest, DmView};
                     let action = &rest["dm:".len()..];
                     match action {
