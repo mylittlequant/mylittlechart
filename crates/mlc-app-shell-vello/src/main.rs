@@ -331,6 +331,13 @@ enum Forum2Chain {
     /// fields), unlike the tolerant [`Self::Direct`] apply for a plain
     /// `OpenThread`/background refresh.
     ReloadAfterWrite,
+    /// `Me` is in flight — never reaches `apply_forum2_result`: the settle
+    /// drain intercepts `ForumV2State::Me` and broadcasts it to every
+    /// window directly (same idiom `DmState::Identity` uses for its own
+    /// account-level fact), clearing `forum2_pending` itself. Exists here
+    /// only so `drive_forum2`'s passive-fetch fire has a chain value to
+    /// record while the request is in flight.
+    Me,
 }
 
 /// Same single-in-flight idiom as [`Forum2Chain`], for the shared `dm_rx`
@@ -977,9 +984,7 @@ fn map_forum_thread_native(
 // `map_forum_board`/`map_forum_thread_v2_summary`/etc. (`cloud_session.rs`)
 // field-for-field.
 
-/// Same ranking `mlc-app-shell-web`'s own `forum2_class_rank` uses — see
-/// that function's own doc for why moderator/admin cap the caller's rank
-/// at "paid" rather than resolving from `caller_roles`.
+/// Same ranking `mlc-app-shell-web`'s own `forum2_class_rank` uses.
 #[cfg(feature = "cloud")]
 fn forum2_class_rank_native(class: &str) -> u8 {
     match class {
@@ -993,18 +998,17 @@ fn forum2_class_rank_native(class: &str) -> u8 {
 }
 
 #[cfg(feature = "cloud")]
-fn forum2_can_write_native(write_class: &str, signed_in: bool, paid: bool) -> bool {
-    let caller_rank = if paid { 2 } else if signed_in { 1 } else { 0 };
+fn forum2_can_write_native(write_class: &str, caller_classes: &[String]) -> bool {
+    let caller_rank = caller_classes.iter().map(|c| forum2_class_rank_native(c)).max().unwrap_or(0);
     caller_rank >= forum2_class_rank_native(write_class)
 }
 
 #[cfg(feature = "cloud")]
 fn map_forum2_board_native(
     b: mlc_updater::ForumBoard,
-    signed_in: bool,
-    paid: bool,
+    caller_classes: &[String],
 ) -> mlc_app_layout::ui::modal_settings::BoardUi {
-    let can_write = forum2_can_write_native(&b.write_class, signed_in, paid);
+    let can_write = forum2_can_write_native(&b.write_class, caller_classes);
     mlc_app_layout::ui::modal_settings::BoardUi {
         slug: b.slug,
         title: b.title,
@@ -1967,7 +1971,7 @@ impl App<'_> {
         // Arc<BackendCore>, so the last writer wins safely.
         if let Some(ref agent_state) = self.agent_state {
             agent_state.attach_core(chart.core.clone());
-            chart.set_agent_key_store(agent_state.agent_key_store.clone());
+            chart.set_agent_key_store(agent_state.agent_key_store());
         }
         // Same wiring for the alert-secrets sidecar (see `alert_secrets_store`'s
         // own doc) — `refresh_alert_secrets_mirror` re-seeds this window's
@@ -2281,17 +2285,32 @@ impl App<'_> {
         //     own `set_alert_secrets_store` call), so rebuilding it here,
         //     before step 7 runs, is sufficient to reach every window —
         //     there is no live window left to walk at this point (step 3
-        //     already dropped all of them). `agent_key_store` cannot be
-        //     rebuilt the same way — see `vault_key_sidecars`'s doc; it
-        //     stays sealed here (from 3b) and is re-unlocked in place, same
-        //     `Arc`, still against the ORIGINAL profile's `agent_keys.enc`,
-        //     in 6b below.
+        //     already dropped all of them). `agent_key_store` gets the same
+        //     treatment now that `AgentState::agent_key_store` is
+        //     re-pointable (`AgentState::set_agent_key_store`): a fresh,
+        //     sealed store bound to the NEW profile's `agent_keys.enc`,
+        //     swapped into the shared `AgentState` so every subsequent
+        //     Agent API request — and every window recreated in step 7,
+        //     via `create_window`'s own `agent_state.agent_key_store()`
+        //     read — sees the switched-to profile's keys, not the one
+        //     active at process boot (or the previously switched-to one).
         self.alert_secrets_store = build_secret_sidecar(
             new_profile_dir.join("salt.hex"),
             new_profile_dir.join("alert_secrets.enc"),
             None,
             "alert secrets",
         );
+        if let Some(ref agent_state) = self.agent_state {
+            let (agent_keys_salt_path, agent_keys_vault_path) =
+                mlc_backend_shell_http::auth::agent_keys_paths(&new_profile_dir);
+            let new_agent_key_store = build_secret_sidecar(
+                agent_keys_salt_path,
+                agent_keys_vault_path,
+                None,
+                "agent key",
+            );
+            agent_state.set_agent_key_store(new_agent_key_store);
+        }
 
         // 5. Load the new profile from disk.
         //    active_profile_data_dir() reads the index we just updated, so it
@@ -2331,13 +2350,11 @@ impl App<'_> {
             // `ChartApp::sync_vault_sidecars`.
             //
             // `alert_secrets_store` was rebuilt against `new_profile_dir` in
-            // 4a above, so this now correctly unlocks the SWITCHED-TO
-            // profile's own `alert_secrets.enc`. `agent_key_store` cannot be
-            // rebuilt the same way (see `vault_key_sidecars`'s doc) — this
-            // still unlocks the SAME `Arc<SecretStore>`, bound to the
-            // ORIGINAL profile's `agent_keys.enc`; repointing or replacing
-            // it is a separate follow-up gated on a change to
-            // `mlc-backend-shell-http` (out of scope here).
+            // 4a above, and `agent_key_store` was re-pointed at a fresh
+            // store against the same directory in that same step (via
+            // `AgentState::set_agent_key_store`) — so this now correctly
+            // unlocks BOTH sidecars' SWITCHED-TO copies, not a stale
+            // original-profile store.
             self.sync_secret_sidecars(&key);
             self.needs_vault_unlock = false;
             eprintln!("[App] hot-reload: pre-validated vault key injected — skipping unlock screen");
@@ -2451,7 +2468,7 @@ impl App<'_> {
         // piece 4) — same `Arc` every other window already carries, cloned
         // for the worker thread so a promoted window's ChartApp is wired
         // exactly like one built through `create_window`.
-        let agent_key_store = self.agent_state.as_ref().map(|s| s.agent_key_store.clone());
+        let agent_key_store = self.agent_state.as_ref().map(|s| s.agent_key_store());
         // Alert-secrets `SecretStore` — same `Arc` every other window
         // already carries (see `alert_secrets_store`'s own doc), cloned for
         // the worker thread so a promoted window's ChartApp is wired
@@ -2900,15 +2917,19 @@ impl App<'_> {
     /// Every RAM-only vault-keyed `SecretStore` sidecar this HOST holds —
     /// mirrors `ChartApp::vault_key_sidecars` (`input/credentials.rs`,
     /// `mlc-app` crate) one level up, so a host-level seal or re-unlock
-    /// never forgets one. `agent_key_store` (if the Agent API is wired)
-    /// still lives inside `Arc<AgentState>` as a plain `Arc<SecretStore>`
-    /// field with no setter (`mlc-backend-shell-http` is out of scope for
-    /// the profile-switch rebuild below) — it is always the SAME `Arc`
-    /// here, seal/unlock only, never replaced.
-    fn vault_key_sidecars(&self) -> [Option<&std::sync::Arc<mlc_vault::SecretStore>>; 2] {
+    /// never forgets one. `agent_key_store` reads through
+    /// `AgentState::agent_key_store()` (a cheap `Arc` clone under
+    /// `AgentState`'s own internal `RwLock`) rather than a direct field
+    /// borrow — it CAN be re-pointed at a different `SecretStore` mid-session
+    /// now (`AgentState::set_agent_key_store`, called from
+    /// `execute_profile_switch`'s step 4a), so returning owned `Arc`s here
+    /// rather than references is what makes that safe: nothing here can end
+    /// up holding a reference into a store a concurrent re-point already
+    /// swapped out from under it.
+    fn vault_key_sidecars(&self) -> [Option<std::sync::Arc<mlc_vault::SecretStore>>; 2] {
         [
-            self.agent_state.as_ref().map(|s| &s.agent_key_store),
-            Some(&self.alert_secrets_store),
+            self.agent_state.as_ref().map(|s| s.agent_key_store()),
+            Some(self.alert_secrets_store.clone()),
         ]
     }
 
@@ -2983,13 +3004,11 @@ impl App<'_> {
     fn apply_forum2_result(&mut self, win_id: WindowId, chain: Forum2Chain, state: mlc_updater::ForumV2State) {
         use mlc_app_layout::ui::modal_settings::ForumV2View;
 
-        let signed_in = matches!(*self.updater_handle.auth_rx.borrow(), mlc_updater::AuthStatus::LoggedIn { .. });
         let Some(pw) = self.windows.get_mut(&win_id) else {
             // The window closed while the request was in flight — nothing
             // to apply to; the request itself already landed server-side.
             return;
         };
-        let paid = pw.chart.panel_app.cloud_login_state.is_paid;
 
         let mut reload_after: Option<i64> = None;
         let mut write_failure: Option<String> = None;
@@ -3003,9 +3022,10 @@ impl App<'_> {
             match (chain, state) {
                 (_, mlc_updater::ForumV2State::Idle) | (_, mlc_updater::ForumV2State::Working) => {}
                 (Forum2Chain::Direct, mlc_updater::ForumV2State::Boards(boards)) => {
+                    let caller_classes = ov.forum2.caller_classes.clone();
                     ov.forum2.boards = boards
                         .into_iter()
-                        .map(|b| map_forum2_board_native(b, signed_in, paid))
+                        .map(|b| map_forum2_board_native(b, &caller_classes))
                         .collect();
                     ov.forum2.mark_boards_fetched();
                 }
@@ -3295,9 +3315,33 @@ impl App<'_> {
 
         if self.updater_handle.forum_v2_rx.has_changed().unwrap_or(false) {
             let state = self.updater_handle.forum_v2_rx.borrow_and_update().clone();
-            if !matches!(state, mlc_updater::ForumV2State::Idle | mlc_updater::ForumV2State::Working) {
-                if let Some((win_id, chain)) = self.forum2_pending.take() {
-                    self.apply_forum2_result(win_id, chain, state);
+            match state {
+                mlc_updater::ForumV2State::Idle | mlc_updater::ForumV2State::Working => {}
+                // Account-level fact — broadcast to every window directly,
+                // before `apply_forum2_result` (the single tracked window)
+                // is even reached, same idiom `DmState::Identity` uses for
+                // its own broadcast fact.
+                mlc_updater::ForumV2State::Me { classes, roles } => {
+                    for pw in self.windows.values_mut() {
+                        let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+                        ov.forum2.caller_roles = roles.clone();
+                        // Recompute `can_write` on whatever boards this
+                        // window already has loaded — a `Me` answer landing
+                        // after `Boards` must not wait for a second boards
+                        // fetch to reflect it.
+                        for b in ov.forum2.boards.iter_mut() {
+                            b.can_write = forum2_can_write_native(&b.write_class, &classes);
+                        }
+                        ov.forum2.caller_classes = classes.clone();
+                        ov.forum2.mark_me_fetched();
+                        pw.overlay_dirty = true;
+                    }
+                    self.forum2_pending = None;
+                }
+                settled => {
+                    if let Some((win_id, chain)) = self.forum2_pending.take() {
+                        self.apply_forum2_result(win_id, chain, settled);
+                    }
                 }
             }
         }
@@ -3387,6 +3431,7 @@ impl App<'_> {
         // has to reason about mutating `self.forum2_pending`/sending on
         // `self.updater_handle` while `self.windows` is mid-iteration.
         enum Passive {
+            Me,
             Boards,
             BoardThreads(String),
             Thread(i64),
@@ -3396,6 +3441,14 @@ impl App<'_> {
             let ov = &pw.chart.panel_app.cloud_overlay_state;
             if !(ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Forum) {
                 continue;
+            }
+            // Once per tab-open (and again after a sign-in/sign-out edge
+            // invalidates it — see the `auth_rx` edge block in
+            // `about_to_wait`) — no refresh cadence of its own, see
+            // `ForumV2State::me_fetched_at`'s own doc.
+            if ov.forum2.me_fetched_at.is_none() {
+                found = Some((*win_id, Passive::Me));
+                break 'scan;
             }
             let boards_needs_fetch = ov.forum2.boards.is_empty() && ov.forum2.boards_fetched_at.is_none();
             if boards_needs_fetch || (!ov.forum2.boards.is_empty() && ov.forum2.boards_due_for_refresh()) {
@@ -3420,12 +3473,14 @@ impl App<'_> {
             if let Some(pw) = self.windows.get_mut(&win_id) {
                 let ov = &mut pw.chart.panel_app.cloud_overlay_state;
                 match &passive {
+                    Passive::Me => ov.forum2.me_refreshing = true,
                     Passive::Boards => ov.forum2.boards_refreshing = true,
                     Passive::BoardThreads(_) => ov.forum2.board_threads_refreshing = true,
                     Passive::Thread(_) => ov.forum2.thread_refreshing = true,
                 }
             }
             let (cmd, chain) = match passive {
+                Passive::Me => (mlc_updater::ForumV2Request::Me, Forum2Chain::Me),
                 Passive::Boards => (mlc_updater::ForumV2Request::ListBoards, Forum2Chain::Direct),
                 Passive::BoardThreads(slug) => (
                     mlc_updater::ForumV2Request::ListBoardThreads { slug, before: None },
@@ -5633,7 +5688,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                         self.core.user_mut().set_vault_key(Some(vault_key));
                                                         self.core.templates_mut().set_vault_key(Some(vault_key));
                                                         if let Some(ref agent_state) = self.agent_state {
-                                                            if let Err(e) = agent_state.agent_key_store.unlock_with_key(&vault_key) {
+                                                            if let Err(e) = agent_state.agent_key_store().unlock_with_key(&vault_key) {
                                                                 eprintln!("[App] agent key store: failed to unlock after recovery-key unlock: {}", e);
                                                             }
                                                         }
@@ -6471,6 +6526,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 } else {
                     (None, false)
                 };
+            // Forum-v2 `caller_roles`/`caller_classes` belong to a specific
+            // identity (or the signed-out default) — either edge off the
+            // SAME `has_changed()` read above invalidates them, so the
+            // passive fetch in `drive_forum2` re-asks under whichever
+            // identity answers next. Computed before `newly_signed_in_as`
+            // is consumed just below.
+            #[cfg(feature = "cloud")]
+            let auth_identity_changed = newly_signed_in_as.is_some() || just_signed_out;
             if let Some(display_name) = newly_signed_in_as {
                 let body = format!("Signed in as {display_name}.");
                 if let Some(pw) = self.system_event_window_mut() {
@@ -6488,6 +6551,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // belongs in this same edge, not just the agent-key store.
             if just_signed_out {
                 self.seal_secret_sidecars();
+            }
+            #[cfg(feature = "cloud")]
+            if auth_identity_changed {
+                for pw in self.windows.values_mut() {
+                    pw.chart.panel_app.cloud_overlay_state.forum2.invalidate_me();
+                }
             }
             // Agent API listener start/stop: the port only ever binds for a
             // signed-in session with the Server-tab toggle on — never at

@@ -31,8 +31,9 @@ use mlc_app_layout::ui::modal_settings::{
 use mlc_cloud::{
     forum_error_message, forum_v2_error_message, redeem_error_message, BuildAttestation,
     BlogPost, CloudConfig, DeviceAuthPoll, EntitlementsResponse, FetchTransport, ForumBoard,
-    ForumReplyNode, ForumSearchHit, ForumThreadResponse, ForumThreadSummary, ForumThreadV2Response,
-    ForumThreadV2Summary, MeResponse, ReleaseEntry, StoredToken, VersionManifest,
+    ForumMeResponse, ForumReplyNode, ForumSearchHit, ForumThreadResponse, ForumThreadSummary,
+    ForumThreadV2Response, ForumThreadV2Summary, MeResponse, ReleaseEntry, StoredToken,
+    VersionManifest,
 };
 
 /// The Messages tab (`NewsTab::Messages`) has no vault key to hold a DM
@@ -131,6 +132,10 @@ enum FlowResult {
     /// asked, never a guess reconstructed from whatever view happens to be
     /// showing when the answer lands.
     Forum2Search { q: String, result: Result<Vec<ForumSearchHit>, String> },
+    /// `GET /api/forum/me` — passive, once per tab-open (and again after a
+    /// sign-in/sign-out edge invalidates it) — see
+    /// `ForumV2State::me_fetched_at`'s own doc.
+    Forum2Me(Result<ForumMeResponse, String>),
 }
 
 struct Inner {
@@ -369,6 +374,10 @@ impl CloudSession {
         chart.panel_app.cloud_overlay_state.forum_entitled = false;
         chart.panel_app.cloud_login_state.is_paid = false;
         chart.panel_app.cloud_login_state.paid_until = None;
+        // The signed-out answer to `GET /api/forum/me` is not the same as
+        // whatever identity just left — clear it so the passive fetch
+        // re-asks under the new (anonymous) caller.
+        chart.panel_app.cloud_overlay_state.forum2.invalidate_me();
         {
             let mut user = chart.core.user_mut();
             let p = user.profile_mut();
@@ -801,6 +810,11 @@ impl CloudSession {
                     // rather than showing this frame's login-time
                     // `display_name` until the next re-login.
                     self.fire_me_fetch();
+                    // The forum-v2 `caller_roles`/`caller_classes` answer, if
+                    // any was already fetched, belongs to whoever was signed
+                    // in (or nobody) BEFORE this login — clear it so the
+                    // passive fetch re-asks for the new identity.
+                    chart.panel_app.cloud_overlay_state.forum2.invalidate_me();
                     // Link the account on the profile (persisted by the
                     // shell's per-frame dirty drain).
                     {
@@ -1107,15 +1121,14 @@ impl CloudSession {
                     self.inner.borrow_mut().forum_in_flight = false;
                 }
                 FlowResult::Forum2Boards(result) => {
-                    let signed_in = self.inner.borrow().token.is_some();
-                    let paid = st.is_paid;
                     let ov = &mut chart.panel_app.cloud_overlay_state;
                     ov.forum2.boards_refreshing = false;
                     match result {
                         Ok(boards) => {
+                            let caller_classes = ov.forum2.caller_classes.clone();
                             ov.forum2.boards = boards
                                 .into_iter()
-                                .map(|b| map_forum_board(b, signed_in, paid))
+                                .map(|b| map_forum_board(b, &caller_classes))
                                 .collect();
                             ov.forum2.mark_boards_fetched();
                         }
@@ -1244,6 +1257,29 @@ impl CloudSession {
                             };
                         }
                         Err(e) => {
+                            ov.forum2.last_error = Some(e);
+                        }
+                    }
+                    self.inner.borrow_mut().forum2_in_flight = false;
+                }
+                FlowResult::Forum2Me(result) => {
+                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    ov.forum2.me_refreshing = false;
+                    match result {
+                        Ok(me) => {
+                            ov.forum2.caller_roles = me.roles;
+                            // Recompute `can_write` on whatever boards are
+                            // already loaded — a `Me` answer arriving after
+                            // `Forum2Boards` must not wait for a second
+                            // boards fetch to reflect it.
+                            for b in ov.forum2.boards.iter_mut() {
+                                b.can_write = forum2_can_write(&b.write_class, &me.classes);
+                            }
+                            ov.forum2.caller_classes = me.classes;
+                            ov.forum2.mark_me_fetched();
+                        }
+                        Err(e) => {
+                            web_sys::console::warn_1(&format!("[forum2] me() failed: {}", e).into());
                             ov.forum2.last_error = Some(e);
                         }
                     }
@@ -1539,6 +1575,26 @@ impl CloudSession {
                     }
                     let r = raw.map_err(|e| forum_v2_error_message(&e));
                     inner.borrow_mut().result = Some(FlowResult::Forum2Boards(r));
+                });
+            }
+
+            // Passive: the caller's forum roles/classes, once per tab-open —
+            // no refresh cadence (unlike boards/threads below): this is an
+            // account-level fact that only changes on a sign-in/sign-out
+            // edge, which already calls `forum2.invalidate_me()` explicitly
+            // (`apply_signed_out`, the login-confirm arm further down).
+            if forum2_active && ov.forum2.me_fetched_at.is_none() && !self.inner.borrow().forum2_in_flight {
+                ov.forum2.me_refreshing = true;
+                self.inner.borrow_mut().forum2_in_flight = true;
+                let inner = self.inner.clone();
+                let transport = self.inner.borrow().transport.snapshot();
+                spawn_local(async move {
+                    let raw = transport.forum_me().await;
+                    if let Err(e) = &raw {
+                        mark_unauthorized(&inner, e);
+                    }
+                    let r = raw.map_err(|e| forum_v2_error_message(&e));
+                    inner.borrow_mut().result = Some(FlowResult::Forum2Me(r));
                 });
             }
 
@@ -1956,27 +2012,22 @@ fn forum2_class_rank(class: &str) -> u8 {
     }
 }
 
-/// Whether the calling account may write to a board with `write_class`.
-/// Capped at "paid" — moderator/admin membership is never resolved
-/// client-side (`ForumV2State::caller_roles` has no "me" endpoint to fill
-/// it from yet, per that field's own doc), so a moderator-or-higher board
-/// always reads `false` here even for an actual moderator. That is the
-/// safe default: it hides a button the server would refuse anyway rather
-/// than showing one that always 403s. The server remains the real
-/// enforcement point regardless of what this resolves to.
-fn forum2_can_write(write_class: &str, signed_in: bool, paid: bool) -> bool {
-    let caller_rank = if paid {
-        2
-    } else if signed_in {
-        1
-    } else {
-        0
-    };
+/// Whether the calling account may write to a board with `write_class`,
+/// resolved from the server's own `GET /api/forum/me` answer
+/// (`ForumV2State::caller_classes`) rather than a client-side `signed_in`/
+/// `paid` guess — `caller_classes` is empty until that fetch lands (or
+/// after a sign-in/sign-out edge invalidates it), which reads as rank 0
+/// here, the same safe default the old guess used before the first
+/// answer: it hides a button the server would refuse anyway rather than
+/// showing one that always 403s. The server remains the real enforcement
+/// point regardless of what this resolves to.
+fn forum2_can_write(write_class: &str, caller_classes: &[String]) -> bool {
+    let caller_rank = caller_classes.iter().map(|c| forum2_class_rank(c)).max().unwrap_or(0);
     caller_rank >= forum2_class_rank(write_class)
 }
 
-fn map_forum_board(b: ForumBoard, signed_in: bool, paid: bool) -> BoardUi {
-    let can_write = forum2_can_write(&b.write_class, signed_in, paid);
+fn map_forum_board(b: ForumBoard, caller_classes: &[String]) -> BoardUi {
+    let can_write = forum2_can_write(&b.write_class, caller_classes);
     BoardUi {
         slug: b.slug,
         title: b.title,

@@ -31,7 +31,7 @@ pub mod tier_store;
 pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState, NickState, ForumCommand, ForumState, ForumV2Request, ForumV2State, DmRequest, DmState, ShareState, ShareOpenState};
 pub use share::{SharedChartResponse, SharedChartMetaWire, ClonePresetResponse, StrippedIndicatorWire};
 pub use forum::{ForumThreadSummary, ForumThread, ForumReply};
-pub use forum_v2::{ForumBoard, ForumThreadV2Summary, ForumThreadV2, ForumReplyNode, ForumSearchHit};
+pub use forum_v2::{ForumBoard, ForumThreadV2Summary, ForumThreadV2, ForumReplyNode, ForumSearchHit, ForumMe};
 pub use dm::{DmIdentity, DmConversation, DmConversationPeer, DmMessage};
 
 /// Format current time as `HH:MM:SS` for log lines.
@@ -760,7 +760,7 @@ async fn updater_loop(
                         let token = token_store::load_token();
                         let auth_header = token.as_ref().map(|t| format!("Bearer {}", t.token));
                         // Anonymous-ok reads: ListBoards, ListBoardThreads,
-                        // LoadThread, Search. Everything else requires a
+                        // LoadThread, Search, Me. Everything else requires a
                         // stored token — see `ForumV2Request`'s own doc.
                         let requires_auth = matches!(
                             req,
@@ -885,6 +885,17 @@ async fn updater_loop(
                                             }
                                             Err(e) => demote_if_rejected_v2!(e),
                                         }
+                                    }
+                                }
+                                state::ForumV2Request::Me => {
+                                    match forum_v2::me(&http_client, auth_header.as_deref()).await {
+                                        Ok(me) => {
+                                            let _ = forum_v2_tx.send(state::ForumV2State::Me {
+                                                classes: me.classes,
+                                                roles: me.roles,
+                                            });
+                                        }
+                                        Err(e) => demote_if_rejected_v2!(e),
                                     }
                                 }
                             }

@@ -641,6 +641,14 @@ impl FetchTransport {
         Ok(resp.results)
     }
 
+    /// `GET /api/forum/me` — the caller's resolved forum classes/roles.
+    /// Goes out with whatever bearer is configured (possibly none — see
+    /// [`ForumMeResponse`]'s own doc).
+    pub async fn forum_me(&self) -> Result<ForumMeResponse, CloudError> {
+        let (status, body) = self.exchange("GET", "/api/forum/me", None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
     /// `POST /api/forum/v2/threads/{id}/moderate` — moderator/admin only
     /// (403 otherwise). `action` is one of hide|unhide|lock|unlock|pin|
     /// unpin|move; `board` names the target slug for `"move"`.

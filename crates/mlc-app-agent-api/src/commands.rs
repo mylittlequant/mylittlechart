@@ -427,7 +427,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] CreateKey: failed to save agent_keys.enc: {}", e);
                     continue;
                 }
-                if let Err(e) = agent_state.agent_key_store.unlock_with_key(&vault_key) {
+                if let Err(e) = agent_state.agent_key_store().unlock_with_key(&vault_key) {
                     eprintln!("[AgentCommand] CreateKey: minted '{}' but failed to refresh the RAM store: {}", label, e);
                     continue;
                 }
@@ -463,7 +463,7 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     eprintln!("[AgentCommand] DeleteKey: failed to save agent_keys.enc: {}", e);
                     continue;
                 }
-                if let Err(e) = agent_state.agent_key_store.unlock_with_key(&vault_key) {
+                if let Err(e) = agent_state.agent_key_store().unlock_with_key(&vault_key) {
                     eprintln!("[AgentCommand] DeleteKey: revoked '{}' but failed to refresh the RAM store: {}", fingerprint_hex, e);
                     continue;
                 }

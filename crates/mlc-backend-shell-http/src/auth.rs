@@ -23,7 +23,7 @@
 //! string-typed `tier`/`admin` permission table — `AgentKeyRole` (`Control`/
 //! `ReadOnly`) plus a route-level [`Tier`] replace it.
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use axum::{
     extract::{Request, State},
@@ -133,11 +133,18 @@ pub fn agent_keys_paths(profile_dir: &std::path::Path) -> (std::path::PathBuf, s
 
 /// Outermost Agent API middleware (see `lib.rs`'s wiring order).
 ///
-/// Takes `Arc<SecretStore>` directly as its captured middleware state —
-/// deliberately not the full `Arc<AgentState>` — so this decision has no
-/// dependency on the data bridge / backend core and can be exercised in a
-/// unit test with nothing more than a `SecretStore` pointed at a temp
-/// directory (see the `tests` module below).
+/// Takes `Arc<RwLock<Arc<SecretStore>>>` directly as its captured
+/// middleware state — deliberately not the full `Arc<AgentState>` — so this
+/// decision has no dependency on the data bridge / backend core and can be
+/// exercised in a unit test with nothing more than a `SecretStore` pointed
+/// at a temp directory (see the `tests` module below). The `RwLock` layer
+/// is what lets a profile switch RE-POINT the store this middleware checks
+/// against ([`crate::AgentState::set_agent_key_store`]) without rebuilding
+/// the router: `lib.rs` clones the SAME `Arc<RwLock<..>>` out of
+/// `AgentState::agent_key_store` (an `Arc` pointer copy) into this
+/// middleware's state, so the two always agree — a read here takes the
+/// lock fresh on every request rather than trusting a snapshot captured
+/// once at router-build time.
 ///
 /// - No `Authorization: Bearer` token at all (missing header, or a header
 ///   that is not the `Bearer <token>` shape) → `401`, checked BEFORE the
@@ -151,7 +158,7 @@ pub fn agent_keys_paths(profile_dir: &std::path::Path) -> (std::path::PathBuf, s
 /// - Otherwise: [`CallerTier`] + [`CallerRole`] extensions are inserted and
 ///   the request proceeds to the per-module [`tier_gate`] check.
 pub async fn auth_middleware(
-    State(agent_key_store): State<Arc<SecretStore>>,
+    State(agent_key_store): State<Arc<RwLock<Arc<SecretStore>>>>,
     mut req: Request,
     next: Next,
 ) -> Response {
@@ -166,7 +173,14 @@ pub async fn auth_middleware(
         return error_response(StatusCode::UNAUTHORIZED, "unauthorized");
     };
 
-    let bytes = match agent_key_store.get() {
+    // Read the CURRENT store on every request — never a snapshot captured
+    // once at router-build time, so a re-point via `set_agent_key_store`
+    // is visible to the very next request.
+    let store = agent_key_store
+        .read()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone();
+    let bytes = match store.get() {
         Ok(bytes) => bytes,
         Err(Sealed) => return error_response(StatusCode::LOCKED, "vault sealed"),
     };
@@ -296,6 +310,13 @@ mod tests {
     }
 
     fn test_router(key_store: Arc<SecretStore>, min_tier: Tier) -> Router<()> {
+        test_router_shared(Arc::new(RwLock::new(key_store)), min_tier)
+    }
+
+    /// Same as [`test_router`] but takes the shared lock directly — used by
+    /// the re-point test below, which needs to swap the store out from under
+    /// an already-built router.
+    fn test_router_shared(key_store: Arc<RwLock<Arc<SecretStore>>>, min_tier: Tier) -> Router<()> {
         let router: Router<()> = Router::new()
             .route("/probe", get(|| async { StatusCode::OK }))
             .route("/probe", post(|| async { StatusCode::OK }));
@@ -404,5 +425,33 @@ mod tests {
         let router = test_router(store, Tier::Paid);
         let res = router.oneshot(get_request(Some(raw))).await.expect("dispatch");
         assert_eq!(res.status(), StatusCode::FORBIDDEN);
+    }
+
+    /// Proves `auth_middleware` reads the CURRENT store on every request,
+    /// not a snapshot captured once at router-build time: swap the shared
+    /// `RwLock`'s inner `Arc` to a DIFFERENT store between two requests
+    /// against the SAME already-built router, and the second request must
+    /// answer against the new store — this is exactly the re-point
+    /// `AgentState::set_agent_key_store` performs on a profile switch.
+    #[tokio::test]
+    async fn repointed_store_is_read_on_next_request() {
+        let raw = "profile-a-raw-key";
+        let record = control_record(hex::encode(fingerprint_sha256(raw.as_bytes())));
+        let store_a = unlocked_store_with("auth_mw_repoint_a", &[record]);
+        let shared = Arc::new(RwLock::new(store_a));
+        let router = test_router_shared(shared.clone(), Tier::SignedIn);
+
+        // Profile A's key works.
+        let res = router.clone().oneshot(get_request(Some(raw))).await.expect("dispatch");
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // Re-point to profile B's store, which has no such key.
+        let store_b = unlocked_store_with("auth_mw_repoint_b", &[]);
+        *shared.write().expect("lock not poisoned") = store_b;
+
+        // The SAME router, SAME raw key — now answers 401 because it is
+        // checked against profile B's (different) store.
+        let res = router.oneshot(get_request(Some(raw))).await.expect("dispatch");
+        assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
     }
 }

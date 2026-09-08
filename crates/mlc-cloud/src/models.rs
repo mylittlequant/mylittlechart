@@ -742,6 +742,27 @@ pub struct ForumModerateAction {
     pub board: Option<String>,
 }
 
+/// Response body from `GET /api/forum/me` — the caller's resolved forum
+/// classes and roles. Optional bearer: an anonymous caller gets the
+/// signed-out answer (`classes` holding just `"public"`, `roles` empty),
+/// never a 401 — same optionality every other v2 read in this section has.
+/// `classes` is the caller's full cumulative class membership (wire names
+/// from `social_db::Class::as_str`, e.g. `["public","user","paid"]`), the
+/// server-side authority [`crate::forum_v2_error_message`]'s own 403 body
+/// already enforces; the client compares a board's `write_class` against
+/// this set instead of guessing from `signed_in`/`paid` locally. `roles`
+/// carries moderator/admin role names (`social_db::Role::as_str`) and gates
+/// the moderation row on the Thread view.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct ForumMeResponse {
+    pub classes: Vec<String>,
+    pub roles: Vec<String>,
+    /// `null` for an anonymous caller (the server answers `label: null,
+    /// public_id: null` then) — hence `Option`, not `String`.
+    pub label: Option<String>,
+    pub public_id: Option<String>,
+}
+
 // =============================================================================
 // /api/dm/* shapes (paid, end-to-end encrypted direct messages)
 //

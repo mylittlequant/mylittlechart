@@ -84,6 +84,21 @@ pub struct AgentState {
     /// `mlc_vault::store` — an agent key store must not die from inactivity
     /// between infrequent API calls, only from being unattended too long).
     ///
+    /// `Arc<RwLock<Arc<SecretStore>>>` (rather than a bare `Arc<SecretStore>`)
+    /// so a profile switch can RE-POINT this at a freshly built store bound
+    /// to the newly active profile's own `agent_keys.enc`
+    /// ([`Self::set_agent_key_store`]) — a bare `Arc<SecretStore>` field
+    /// could only be re-unlocked in place, never re-pointed at a different
+    /// profile's file (`mlc-app-shell-vello`'s `execute_profile_switch` used
+    /// to carry a comment to that effect). The outer `Arc` is what lets
+    /// `auth::auth_middleware` capture the SAME lock as its own axum
+    /// middleware state (`Router::layer` needs a `Clone` state, and cloning
+    /// this is a cheap pointer copy) while still reading whichever
+    /// `SecretStore` is current on every request — a re-point is visible to
+    /// the very next request with no restart. Every reader (including
+    /// `auth_middleware`) goes through [`Self::agent_key_store`] (a brief
+    /// read-lock, cloning the inner `Arc`) rather than this field directly.
+    ///
     /// [`Self::new`] wires a placeholder store bound to empty paths, which
     /// is permanently sealed (nothing ever calls `unlock`/`unlock_with_key`
     /// on it) — every request answers `423` until the host builds a real
@@ -91,7 +106,7 @@ pub struct AgentState {
     /// [`Self::with_agent_key_store`]. Kept this way (rather than making the
     /// field `Option`) so `auth_middleware`'s signature never has to handle
     /// "no store configured" as a state distinct from "sealed".
-    pub agent_key_store: Arc<SecretStore>,
+    agent_key_store: Arc<RwLock<Arc<SecretStore>>>,
 
     /// The most recently minted raw agent key, waiting for its one-time
     /// display in the UI's key-manager reveal box. Set by the render
@@ -148,9 +163,45 @@ impl AgentState {
             last_agent_access_ms: AtomicU64::new(0),
             version: version.into(),
             core: Mutex::new(None),
-            agent_key_store,
+            agent_key_store: Arc::new(RwLock::new(agent_key_store)),
             last_minted_key: Mutex::new(None),
         }
+    }
+
+    /// Snapshot the currently active agent-key store — a cheap `Arc` clone
+    /// under a brief read lock, never held across an `.await`. Every reader
+    /// that used to hold [`Self::agent_key_store`]'s old plain
+    /// `Arc<SecretStore>` field goes through here instead, so a profile
+    /// switch's [`Self::set_agent_key_store`] call is visible to the very
+    /// next read.
+    pub fn agent_key_store(&self) -> Arc<SecretStore> {
+        self.agent_key_store
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    /// Re-point the agent-key store at a DIFFERENT [`SecretStore`] — called
+    /// by the host's profile-switch path with a fresh store built against
+    /// the newly active profile's `agent_keys.enc` sidecar. Takes effect for
+    /// the very next [`Self::agent_key_store`] read (including the next
+    /// `auth::auth_middleware` request) — no restart, no stale captured
+    /// `Arc`.
+    pub fn set_agent_key_store(&self, new_store: Arc<SecretStore>) {
+        *self
+            .agent_key_store
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner()) = new_store;
+    }
+
+    /// The shared lock itself (not a snapshot) — `lib.rs::start_server`
+    /// clones this ONE `Arc<RwLock<..>>` into `auth::auth_middleware`'s own
+    /// captured state, so the middleware always reads whatever
+    /// [`Self::set_agent_key_store`] most recently wrote rather than a
+    /// snapshot frozen at router-build time. Every other caller wants
+    /// [`Self::agent_key_store`] instead.
+    pub fn agent_key_store_handle(&self) -> Arc<RwLock<Arc<SecretStore>>> {
+        self.agent_key_store.clone()
     }
 
     /// Drain the most recently minted raw agent key, if one is pending
@@ -174,7 +225,7 @@ impl AgentState {
     /// [`Sealed`] while `agent_key_store` is locked — the UI's key-manager
     /// panel shows "unlock to manage keys" on that.
     pub fn list_keys(&self) -> Result<Vec<AgentKeyRecord>, Sealed> {
-        let bytes = self.agent_key_store.get()?;
+        let bytes = self.agent_key_store().get()?;
         Ok(crate::auth::parse_key_records(&bytes))
     }
 

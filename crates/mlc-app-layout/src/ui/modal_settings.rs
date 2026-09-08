@@ -5427,10 +5427,29 @@ pub struct ForumV2State {
     pub request: Option<ForumV2Request>,
     /// Moderator/admin role names the calling account holds
     /// (`social_db::Role::from_wire_name`'s own wire values — `"moderator"`/
-    /// `"admin"`), filled every frame by the shell driver next to
-    /// `CloudOverlayState::forum_entitled`. Drives the moderation row on the
-    /// Thread view ([`Self::is_moderator_or_admin`]).
+    /// `"admin"`), filled by the shell driver's `GET /api/forum/me` fetch
+    /// (once per tab-open, refetched after a sign-in/sign-out transition —
+    /// see [`Self::invalidate_me`]/[`Self::mark_me_fetched`]). Drives the
+    /// moderation row on the Thread view ([`Self::is_moderator_or_admin`]).
     pub caller_roles: Vec<String>,
+    /// The calling account's full cumulative class membership (wire names
+    /// from `social_db::Class::as_str`, e.g. `["public","user","paid"]`),
+    /// filled by the same `GET /api/forum/me` fetch as [`Self::caller_roles`].
+    /// Used instead of a client-side `signed_in`/`paid` guess to resolve
+    /// `BoardUi::can_write` (`social_db::can_write`, mirrored client-side —
+    /// see this crate's own `forum2_can_write`/`forum2_can_write_native` in
+    /// each shell).
+    pub caller_classes: Vec<String>,
+    /// Wall-clock ms ([`now_ms`]) `caller_roles`/`caller_classes` last
+    /// landed a successful fetch — `None` until the first answer lands (or
+    /// after [`Self::invalidate_me`]), read by the shell's passive-fetch
+    /// poll to know whether to issue `Me` at all. No refresh cadence of its
+    /// own (unlike `boards_fetched_at`): this is an account-level fact that
+    /// only changes on a sign-in/sign-out edge, which already calls
+    /// [`Self::invalidate_me`] explicitly.
+    pub me_fetched_at: Option<u64>,
+    /// A `Me` fetch is in flight.
+    pub me_refreshing: bool,
     /// The last Forum-v2 request's server refusal (validation, rate limit,
     /// forbidden, not found), if any — read by whichever view drew the
     /// action that set it; cleared by the click handler on the next attempt.
@@ -5474,6 +5493,9 @@ impl Default for ForumV2State {
             view: ForumV2View::default(),
             request: None,
             caller_roles: Vec::new(),
+            caller_classes: Vec::new(),
+            me_fetched_at: None,
+            me_refreshing: false,
             last_error: None,
             boards_fetched_at: None,
             boards_refreshing: false,
@@ -5554,6 +5576,23 @@ impl ForumV2State {
     pub fn mark_thread_fetched(&mut self) {
         self.thread_fetched_at = Some(now_ms());
         self.thread_refreshing = false;
+    }
+
+    /// Drop `caller_roles`/`caller_classes` back to signed-out and clear the
+    /// fetch bookkeeping — called on a sign-in/sign-out transition so a
+    /// stale identity's answer never lingers past the edge that changed who
+    /// is asking; the shell's passive-fetch poll re-issues `Me` on the next
+    /// frame the tab is looked at (or immediately, if it already is).
+    pub fn invalidate_me(&mut self) {
+        self.caller_roles = Vec::new();
+        self.caller_classes = Vec::new();
+        self.me_fetched_at = None;
+        self.me_refreshing = false;
+    }
+
+    pub fn mark_me_fetched(&mut self) {
+        self.me_fetched_at = Some(now_ms());
+        self.me_refreshing = false;
     }
 }
 

@@ -289,6 +289,10 @@ pub enum ForumV2Request {
         action: String,
         board: Option<String>,
     },
+    /// `GET /api/forum/me` — the caller's resolved forum classes/roles.
+    /// Anonymous-ok, same as `ListBoards`/`ListBoardThreads`/`LoadThread`/
+    /// `Search` above.
+    Me,
 }
 
 /// Outcome of the most recent [`ForumV2Request`], broadcast via
@@ -323,6 +327,8 @@ pub enum ForumV2State {
     SearchResults(Vec<crate::forum_v2::ForumSearchHit>),
     /// `Moderate` succeeded.
     Moderated,
+    /// `Me` succeeded — the caller's resolved classes/roles.
+    Me { classes: Vec<String>, roles: Vec<String> },
     /// Refused — "Sign in first" for a write action with no stored token, or
     /// the server's/transport's own description otherwise.
     Failed { message: String },

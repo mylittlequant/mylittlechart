@@ -153,6 +153,19 @@ struct SearchWire {
     results: Vec<ForumSearchHit>,
 }
 
+/// `GET /api/forum/me`'s response — mirrors `mlc_cloud::ForumMeResponse`
+/// field-for-field (this crate does not depend on `mlc-cloud`; its native
+/// transport does not exist there — see that crate's own module doc).
+#[derive(serde::Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct ForumMe {
+    pub classes: Vec<String>,
+    pub roles: Vec<String>,
+    /// `null` for an anonymous caller (the server answers `label: null,
+    /// public_id: null` then) — hence `Option`, not `String`.
+    pub label: Option<String>,
+    pub public_id: Option<String>,
+}
+
 /// Server's own error body shape on a non-success response, e.g.
 /// `{"error": "That title is too short"}`.
 #[derive(serde::Deserialize)]
@@ -374,6 +387,22 @@ pub async fn moderate(
         return Err(error_message(resp).await);
     }
     Ok(())
+}
+
+/// `GET /api/forum/me` — the caller's resolved forum classes/roles.
+/// Anonymous-ok: goes out with whatever bearer is configured (possibly
+/// none — see [`ForumMe`]'s own doc).
+pub async fn me(client: &reqwest::Client, auth_header: Option<&str>) -> Result<ForumMe, String> {
+    let url = format!("{}/api/forum/me", UPDATE_SERVER);
+    let mut req = client.get(&url);
+    if let Some(auth) = auth_header {
+        req = req.header("Authorization", auth);
+    }
+    let resp = req.send().await.map_err(|e| format!("Request failed: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(error_message(resp).await);
+    }
+    resp.json::<ForumMe>().await.map_err(|e| format!("Parse error: {}", e))
 }
 
 /// Percent-encode a query-string component — mirrors

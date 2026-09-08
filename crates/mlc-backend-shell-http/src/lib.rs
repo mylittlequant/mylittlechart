@@ -55,7 +55,7 @@ pub fn start_server(
     handle: &tokio::runtime::Handle,
     port: u16,
 ) -> tokio::task::JoinHandle<()> {
-    let agent_key_store = state.agent_key_store.clone();
+    let agent_key_store = state.agent_key_store_handle();
     let app: Router = Router::new()
         .merge(tier_gate(routes::health::routes(), Tier::SignedIn))
         .merge(tier_gate(routes::apps::routes(), Tier::SignedIn))
