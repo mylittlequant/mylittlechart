@@ -10,6 +10,13 @@
 //! (`POST`/`PUT`/`PATCH`/`DELETE`) presented by a `ReadOnly` key answers
 //! `403`. The server still only binds `127.0.0.1` — the auth layer bounds
 //! WHO on this machine may act, not WHERE the traffic can come from.
+//!
+//! One exception: `routes::vault`'s `POST /api/v1/vault/unlock` and
+//! `GET /api/v1/vault/status` sit OUTSIDE `auth_middleware` entirely — an
+//! agent key can only ever be minted from an unlocked vault, so a sealed
+//! vault after a restart would have no bearer able to reopen it if that
+//! route required one. The passphrase itself is the credential there; see
+//! that module's own doc.
 
 pub mod auth;
 pub mod routes;
@@ -45,6 +52,13 @@ async fn track_access(
 /// thing as the outermost layer (added last — see the doc on
 /// [`axum::middleware::from_fn_with_state`]'s ordering) and `track_access`
 /// stays innermost so it only ever sees a request that already passed auth.
+/// [`routes::vault`] is merged in AFTER those layers are applied (see this
+/// crate's doc for why it must carry neither) — order matters here: a
+/// `.layer()` call only wraps the router it is called on, so building
+/// `routes::vault`'s router separately and merging its ALREADY-`with_state`d
+/// form is what keeps it layer-free rather than accidentally inheriting
+/// `auth_middleware` from a shared builder chain.
+///
 /// The listener is still bound to `127.0.0.1` only, so the server is not
 /// reachable from the network.
 ///
@@ -56,6 +70,11 @@ pub fn start_server(
     port: u16,
 ) -> tokio::task::JoinHandle<()> {
     let agent_key_store = state.agent_key_store_handle();
+
+    // Built and `.with_state()`'d on its own, before either layer below is
+    // applied — merging this in further down picks up no auth/tier layer.
+    let vault_router: Router = routes::vault::routes().with_state(state.clone());
+
     let app: Router = Router::new()
         .merge(tier_gate(routes::health::routes(), Tier::SignedIn))
         .merge(tier_gate(routes::apps::routes(), Tier::SignedIn))
@@ -81,7 +100,8 @@ pub fn start_server(
             agent_key_store,
             auth_middleware,
         ))
-        .with_state(state);
+        .with_state(state)
+        .merge(vault_router);
 
     handle.spawn(async move {
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));

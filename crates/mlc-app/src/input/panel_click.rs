@@ -6111,6 +6111,17 @@ impl ChartApp {
         // === User settings modal clicks ===
         if let Some(action) = widget_id.strip_prefix("user_settings:") {
             use mlc_app_layout::ui::modal_settings::{CredentialsView, UserSettingsTab};
+
+            // Auto-mask the one-time key reveal box on any click elsewhere
+            // in this modal — its own Show/Hide toggle and Copy button are
+            // exempt so neither immediately re-masks itself.
+            if self.panel_app.user_settings_state.key_reveal_shown
+                && action != "key_reveal_toggle"
+                && action != "key_reveal_copy"
+            {
+                self.panel_app.user_settings_state.key_reveal_shown = false;
+            }
+
             match action {
                 // Every edit here applies as it is made, so OK and the ✕ are
                 // the same action: leave. The footer button is the shell's,
@@ -6326,14 +6337,29 @@ impl ChartApp {
                     self.key_delete_request = Some(fingerprint_hex.clone());
                     eprintln!("[ChartApp] user_settings: key_delete requested, fingerprint={}", fingerprint_hex);
                 }
+                "key_reveal_toggle" => {
+                    self.panel_app.user_settings_state.key_reveal_shown =
+                        !self.panel_app.user_settings_state.key_reveal_shown;
+                }
                 "key_reveal_copy" => {
                     if let Some(ref raw_key) = self.panel_app.user_settings_state.last_created_key {
                         self.clipboard_text = Some(raw_key.clone());
+                        // Auto-mask on copy (owner spec) and show "Copied"
+                        // for 2s — `render_server_tab` compares this
+                        // timestamp against the current time every frame.
+                        self.panel_app.user_settings_state.key_reveal_shown = false;
+                        self.panel_app.user_settings_state.key_reveal_copied_at_ms =
+                            web_time::SystemTime::now()
+                                .duration_since(web_time::UNIX_EPOCH)
+                                .map(|d| d.as_millis() as u64)
+                                .unwrap_or(0);
                         eprintln!("[ChartApp] user_settings: minted key copied to clipboard");
                     }
                 }
                 "key_reveal_dismiss" => {
                     self.panel_app.user_settings_state.last_created_key = None;
+                    self.panel_app.user_settings_state.key_reveal_shown = false;
+                    self.panel_app.user_settings_state.key_reveal_copied_at_ms = 0;
                 }
                 // ── Welcome Wizard handlers ───────────────────────────────────
                 // Page order: 0=Theme, 1=Language (last page — its forward
@@ -7122,7 +7148,10 @@ impl ChartApp {
                         if !target_has_vault {
                             // Unencrypted — show CreatePassphrase inline
                             self.panel_app.user_settings_state.show_profile_manager = true;
-                            self.panel_app.user_settings_state.is_open = false;
+                            // `.close()` (not a raw `is_open = false`) so the
+                            // one-time key reveal box is dropped along with
+                            // every other close of this modal.
+                            self.panel_app.user_settings_state.close();
                             self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
                             self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
                             self.panel_app.user_settings_state.profile_manager_target_name = target_name;
@@ -7130,7 +7159,8 @@ impl ChartApp {
                         } else {
                             // Encrypted — show UnlockPassphrase inline
                             self.panel_app.user_settings_state.show_profile_manager = true;
-                            self.panel_app.user_settings_state.is_open = false;
+                            // See the sibling branch above for why `.close()`.
+                            self.panel_app.user_settings_state.close();
                             self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
                             self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
                             self.panel_app.user_settings_state.profile_manager_target_name = target_name;

@@ -11,6 +11,7 @@ pub mod primitives;
 pub mod screenshot;
 pub mod share;
 pub mod ui;
+pub mod vault;
 pub mod viewport;
 pub mod watchlists;
 pub mod windows;

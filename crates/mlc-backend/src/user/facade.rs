@@ -37,6 +37,21 @@ impl<'a> User<'a> {
         self.mgr.vault_key()
     }
 
+    /// Whether the active profile has an encrypted `vault.enc` on disk at
+    /// all — distinct from [`Self::vault_key`] being `Some`, which means
+    /// "unlocked THIS session". A profile that has never run vault setup
+    /// answers `false` here regardless of `vault_key`.
+    ///
+    /// Lives on the facade (rather than requiring a caller to depend on
+    /// `mlc_core` directly for `active_profile_data_dir`) so shells like
+    /// `mlc-backend-shell-http` — which deliberately does not pull in
+    /// `mlc-core` (see that crate's own `Cargo.toml` comment) — can still
+    /// answer `GET /api/v1/vault/status`'s `has_vault` field through the
+    /// `mlc-backend` dependency it already has.
+    pub fn has_vault_file(&self) -> bool {
+        mlc_core::active_profile_data_dir().join("vault.enc").exists()
+    }
+
     pub fn save_profile(&self) -> Result<(), mlc_core::user_profile::storage::ProfileError> {
         self.mgr.save_profile()
     }

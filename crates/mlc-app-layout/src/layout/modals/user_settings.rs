@@ -2666,6 +2666,21 @@ fn render_performance_tab(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Mask a raw agent key for the one-time reveal box's default (unrevealed)
+/// display: first 6 and last 4 hex characters visible, everything between
+/// replaced by `••••…` — enough to recognise the mint by eye (or check
+/// against a paste) without ever painting the full secret on screen unless
+/// the user explicitly asks (`UserSettingsState::key_reveal_shown`). Falls
+/// back to bullets only for anything shorter than 10 characters — a minted
+/// key is always 64 hex characters, but this must never panic on a
+/// malformed or unexpectedly short one either.
+fn mask_agent_key(raw: &str) -> String {
+    if raw.len() < 10 {
+        return "••••…".to_string();
+    }
+    format!("{}••••…{}", &raw[..6], &raw[raw.len() - 4..])
+}
+
 fn render_server_tab(
     ctx: &mut dyn RenderContext,
     viewport_rect: WidgetRect,
@@ -2903,7 +2918,12 @@ fn render_server_tab(
 
         // One-time raw-key reveal box — surfaces the freshly minted key
         // exactly once (`AgentState::take_last_minted_key`, drained by
-        // `main.rs` into this same field every frame).
+        // `main.rs` into this same field every frame). Masked by default
+        // (`UserSettingsState::key_reveal_shown`, toggled by the eye icon);
+        // a click anywhere else in this modal re-masks it
+        // (`panel_click.rs`'s `"user_settings:"` dispatch guard), and the
+        // whole box is dropped when the modal closes
+        // (`UserSettingsState::close`).
         if let Some(ref raw_key) = state.last_created_key {
             cy += 8.0;
             let box_h = row_h + 8.0;
@@ -2913,30 +2933,62 @@ fn render_server_tab(
             ctx.set_stroke_width(1.0);
             ctx.stroke_rounded_rect(x, cy, available_w, box_h, 4.0);
 
-            let copy_w = 50.0;
+            let toggle_w = 24.0;
+            let copy_w = 56.0;
             let dismiss_w = 20.0;
-            let text_w = (available_w - copy_w - dismiss_w - 24.0).max(20.0);
+            let dismiss_x = x + available_w - dismiss_w;
+            let copy_x = dismiss_x - copy_w - 6.0;
+            let toggle_x = copy_x - toggle_w - 6.0;
+            let text_w = (toggle_x - x - 16.0).max(20.0);
+
             ctx.set_font("11px monospace");
-            let shown = fit_text_to_width(ctx, raw_key, text_w);
+            let display_text = if state.key_reveal_shown {
+                raw_key.clone()
+            } else {
+                mask_agent_key(raw_key)
+            };
+            let shown = fit_text_to_width(ctx, &display_text, text_w);
             ctx.set_fill_color(&toolbar_theme.item_text);
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(&shown, x + 8.0, cy + box_h / 2.0);
 
-            let copy_x = x + available_w - copy_w - dismiss_w - 8.0;
+            // Show/Hide toggle — same "icon names the state" convention as
+            // the Vault tab's API-secret/passphrase reveal toggle (open eye
+            // = revealed, crossed eye = masked).
+            let toggle_rect = WidgetRect::new(toggle_x, cy, toggle_w, box_h);
+            let toggle_hovered = state.hovered_item_id.as_deref() == Some("key_reveal_toggle");
+            let toggle_color = if toggle_hovered { &toolbar_theme.item_text } else { &toolbar_theme.item_text_muted };
+            let icon_size = 16.0;
+            draw_svg_icon(
+                ctx,
+                if state.key_reveal_shown { Icon::Eye.svg() } else { Icon::EyeOff.svg() },
+                toggle_x + (toggle_w - icon_size) / 2.0, cy + (box_h - icon_size) / 2.0,
+                icon_size, icon_size, toggle_color,
+            );
+            result.content_items.push(("key_reveal_toggle".to_string(), toggle_rect));
+            input_coordinator.register_on_layer("user_settings:key_reveal_toggle", toggle_rect, Sense::CLICK | Sense::HOVER, layer_id);
+
+            // Copy — label swaps to "Copied" for 2s after a click
+            // (`UserSettingsState::key_reveal_copied_at_ms`).
             let copy_rect = WidgetRect::new(copy_x, cy, copy_w, box_h);
             let copy_hovered = state.hovered_item_id.as_deref() == Some("key_reveal_copy");
             ctx.set_fill_color(if copy_hovered { &toolbar_theme.item_bg_hover } else { &toolbar_theme.dropdown_bg });
             ctx.fill_rounded_rect(copy_x, cy + 2.0, copy_w, box_h - 4.0, 3.0);
-            ctx.set_fill_color(&toolbar_theme.item_text);
+            let current_time_ms = web_time::SystemTime::now()
+                .duration_since(web_time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0);
+            let just_copied = state.key_reveal_copied_at_ms != 0
+                && current_time_ms.saturating_sub(state.key_reveal_copied_at_ms) < 2000;
+            ctx.set_fill_color(if just_copied { &toolbar_theme.success } else { &toolbar_theme.item_text });
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(TextAlign::Center);
-            ctx.fill_text("Copy", copy_x + copy_w / 2.0, cy + box_h / 2.0);
+            ctx.fill_text(if just_copied { "Copied" } else { "Copy" }, copy_x + copy_w / 2.0, cy + box_h / 2.0);
             ctx.set_text_align(TextAlign::Left);
             result.content_items.push(("key_reveal_copy".to_string(), copy_rect));
             input_coordinator.register_on_layer("user_settings:key_reveal_copy", copy_rect, Sense::CLICK | Sense::HOVER, layer_id);
 
-            let dismiss_x = x + available_w - dismiss_w;
             let dismiss_rect = WidgetRect::new(dismiss_x, cy, dismiss_w, box_h);
             draw_svg_icon(ctx, Icon::Close.svg(), dismiss_x + 2.0, cy + (box_h - 16.0) / 2.0, 16.0, 16.0, &toolbar_theme.item_text_muted);
             result.content_items.push(("key_reveal_dismiss".to_string(), dismiss_rect));

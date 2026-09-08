@@ -3740,6 +3740,25 @@ pub struct UserSettingsState {
     /// `AgentState::take_last_minted_key()` by `main.rs` — the Server tab's
     /// one-time reveal box shows this until "Copy"/dismiss clears it.
     pub last_created_key: Option<String>,
+    /// Whether [`Self::last_created_key`] is shown in full in the reveal
+    /// box, toggled by its Show/Hide button. `false` (masked, showing only
+    /// the first 6 and last 4 hex characters) is the default the box opens
+    /// on for a freshly minted key — see `render_key_reveal_box` (the render
+    /// side, in `mlc-app-layout`) for the masking format itself.
+    ///
+    /// Reset to `false` (never left revealed) by: clicking anything in the
+    /// Settings modal that is not the box's own Show/Hide toggle or Copy
+    /// button (`"user_settings:key_reveal_*"`'s own click guard in
+    /// `panel_click.rs`), a Copy click (see [`Self::key_reveal_copied_at_ms`]),
+    /// and [`Self::close`] (the key itself is dropped there too).
+    pub key_reveal_shown: bool,
+    /// Milliseconds-since-epoch timestamp of the reveal box's last "Copy"
+    /// click, or `0` for "never copied" / "long enough ago to stop showing
+    /// the confirmation". The render side treats anything within 2000ms of
+    /// now as "just copied" and swaps the button label to "Copied" for that
+    /// window — same one-shot-timestamp idiom as `UiEventEntry::at_ms`,
+    /// just compared against a fixed 2s window instead of an unread flag.
+    pub key_reveal_copied_at_ms: u64,
     /// Render-time snapshot of the key-manager "label" input (populated
     /// from TextFieldStore by ChartApp), same idiom as `nick_edit_render`.
     pub key_label_render: ActiveFieldRender,
@@ -3982,6 +4001,8 @@ impl Default for UserSettingsState {
             agent_keys: Vec::new(),
             agent_keys_sealed: true,
             last_created_key: None,
+            key_reveal_shown: false,
+            key_reveal_copied_at_ms: 0,
             key_label_render: ActiveFieldRender::default(),
             key_label_focused: false,
             general_tab_scroll: ScrollState::default(),
@@ -4059,11 +4080,19 @@ impl UserSettingsState {
     }
 
     /// Close the modal and reset drag state.
+    ///
+    /// Also drops the one-time key reveal box: `last_created_key` is already
+    /// one-shot in `AgentState` (drained once by `main.rs`), but the UI's own
+    /// copy must not survive a close/reopen either — a modal reopened later
+    /// (a different key mint, or none at all) must never show a stale key.
     pub fn close(&mut self) {
         self.is_open = false;
         self.is_dragging = false;
         self.drag_offset = None;
         self.active_dropdown = None;
+        self.last_created_key = None;
+        self.key_reveal_shown = false;
+        self.key_reveal_copied_at_ms = 0;
     }
 
     /// Toggle open/closed.

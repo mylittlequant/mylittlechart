@@ -13,6 +13,7 @@ use mlc_backend_shell_http::auth::{agent_keys_paths, AgentKeyRecord};
 use mlc_backend_shell_http::AgentState;
 use mlc_backend_shell_http::state::{
     AgentCommand, AlertAddressDto, AlertConditionDto, AlertListEntry, TestAlertDeliveryError,
+    VaultUnlockError,
 };
 use mlc_backend_indicator_engine::IndicatorParamValue;
 
@@ -468,6 +469,52 @@ pub fn drain_agent_commands<H: AgentHost>(host: &mut H, agent_state: &Arc<AgentS
                     continue;
                 }
                 eprintln!("[AgentCommand] DeleteKey: revoked '{}'", fingerprint_hex);
+            }
+
+            // Vault unlock: loopback-only, bearer-free route
+            // (`mlc-backend-shell-http::routes::vault`) — the passphrase
+            // itself is the credential, so this never logs it, only whether
+            // the attempt succeeded.
+            AgentCommand::UnlockVault { passphrase, response_tx } => {
+                let Some(core) = agent_state.core() else {
+                    eprintln!("[AgentCommand] UnlockVault: no backend core attached");
+                    let _ = response_tx.send(Err(VaultUnlockError::NotReady));
+                    continue;
+                };
+                if core.user().vault_key().is_some() {
+                    // Already unlocked this session — no re-derivation.
+                    let _ = response_tx.send(Ok(()));
+                    continue;
+                }
+                if !core.user().has_vault_file() {
+                    eprintln!("[AgentCommand] UnlockVault: profile has no vault to unlock");
+                    let _ = response_tx.send(Err(VaultUnlockError::NoVault));
+                    continue;
+                }
+
+                let mut windows = host.windows_mut();
+                let Some(w) = windows.first_mut() else {
+                    eprintln!("[AgentCommand] UnlockVault: no window open");
+                    let _ = response_tx.send(Err(VaultUnlockError::NotReady));
+                    continue;
+                };
+                // `try_unlock_credentials` does everything the UI's own
+                // "Unlock" button does: derive the key, decrypt `vault.enc`,
+                // `unseal_vault`, `sync_vault_sidecars` (this is the same
+                // `Arc<SecretStore>` `auth::auth_middleware` reads — see
+                // `mlc-app::input::credentials`'s `vault_key_sidecars` doc),
+                // migrate legacy notification secrets, and clear
+                // `needs_vault_unlock`.
+                match w.chart.try_unlock_credentials(&passphrase) {
+                    Ok(()) => {
+                        eprintln!("[AgentCommand] UnlockVault: vault unlocked");
+                        let _ = response_tx.send(Ok(()));
+                    }
+                    Err(e) => {
+                        eprintln!("[AgentCommand] UnlockVault: failed ({e})");
+                        let _ = response_tx.send(Err(VaultUnlockError::WrongPassphrase));
+                    }
+                }
             }
 
             // ── UI test hooks (Phase 7 — admin-tier automation) ────────

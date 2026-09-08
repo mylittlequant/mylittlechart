@@ -113,7 +113,22 @@ pub struct AgentState {
     /// thread's `CreateKey` handling (`mlc-app-agent-api`), drained by
     /// [`Self::take_last_minted_key`].
     last_minted_key: Mutex<Option<String>>,
+
+    /// Timestamps of failed `POST /api/v1/vault/unlock` passphrase attempts,
+    /// newest last. That route sits OUTSIDE `auth_middleware` — the
+    /// passphrase itself is the credential — so this sliding-window counter
+    /// is the only thing standing between it and an unbounded local brute
+    /// force. See [`Self::vault_unlock_rate_limited`].
+    vault_unlock_failures: Mutex<Vec<web_time::Instant>>,
 }
+
+/// [`AgentState::vault_unlock_rate_limited`]'s window: at most
+/// [`VAULT_UNLOCK_FAILURE_LIMIT`] failures within this many seconds before
+/// `POST /api/v1/vault/unlock` answers `429` without even queuing an attempt.
+const VAULT_UNLOCK_FAILURE_WINDOW: Duration = Duration::from_secs(60);
+
+/// See [`VAULT_UNLOCK_FAILURE_WINDOW`].
+const VAULT_UNLOCK_FAILURE_LIMIT: usize = 5;
 
 impl AgentState {
     /// Create a new [`AgentState`] wrapping the given bridge.
@@ -165,6 +180,7 @@ impl AgentState {
             core: Mutex::new(None),
             agent_key_store: Arc::new(RwLock::new(agent_key_store)),
             last_minted_key: Mutex::new(None),
+            vault_unlock_failures: Mutex::new(Vec::new()),
         }
     }
 
@@ -227,6 +243,42 @@ impl AgentState {
     pub fn list_keys(&self) -> Result<Vec<AgentKeyRecord>, Sealed> {
         let bytes = self.agent_key_store().get()?;
         Ok(crate::auth::parse_key_records(&bytes))
+    }
+
+    /// Prune failures older than [`VAULT_UNLOCK_FAILURE_WINDOW`] and report
+    /// whether [`VAULT_UNLOCK_FAILURE_LIMIT`] is already reached — checked by
+    /// `routes::vault`'s unlock handler BEFORE it even queues an
+    /// [`AgentCommand::UnlockVault`], so a rate-limited caller never reaches
+    /// PBKDF2 at all.
+    pub fn vault_unlock_rate_limited(&self) -> bool {
+        let mut failures = self
+            .vault_unlock_failures
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let now = web_time::Instant::now();
+        failures.retain(|t| now.duration_since(*t) < VAULT_UNLOCK_FAILURE_WINDOW);
+        failures.len() >= VAULT_UNLOCK_FAILURE_LIMIT
+    }
+
+    /// Record one failed `POST /api/v1/vault/unlock` attempt (wrong
+    /// passphrase).
+    pub fn record_vault_unlock_failure(&self) {
+        let mut failures = self
+            .vault_unlock_failures
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let now = web_time::Instant::now();
+        failures.retain(|t| now.duration_since(*t) < VAULT_UNLOCK_FAILURE_WINDOW);
+        failures.push(now);
+    }
+
+    /// Clear the failed-unlock counter — called on a successful unlock (or
+    /// when the vault was already unlocked), so a legitimate unlock is never
+    /// throttled by attempts that happened before it.
+    pub fn clear_vault_unlock_failures(&self) {
+        if let Ok(mut failures) = self.vault_unlock_failures.lock() {
+            failures.clear();
+        }
     }
 
     /// Attach a `BackendCore` so the `/v1/apps` routes can resolve. Call
@@ -589,6 +641,20 @@ pub enum AgentCommand {
         fingerprint_hex: String,
     },
 
+    /// Unlock the active profile's vault from the loopback-only, bearer-free
+    /// `POST /api/v1/vault/unlock` route (the passphrase itself is the
+    /// credential — see `routes::vault`'s module doc). The render thread
+    /// (`mlc-app-agent-api`) reuses `ChartApp::try_unlock_credentials` —
+    /// the same passphrase→key derivation, `vault.enc` validation, and
+    /// `sync_vault_sidecars`/`needs_vault_unlock = false` path the UI's own
+    /// "Unlock" button drives — rather than re-deriving anything here.
+    /// Answers `Ok(())` immediately (no re-derivation) when the vault is
+    /// already unlocked this session.
+    UnlockVault {
+        passphrase: String,
+        response_tx: tokio::sync::oneshot::Sender<Result<(), VaultUnlockError>>,
+    },
+
     // -- UI test hooks (Phase 7 — admin-tier automation, owner ruling
     // 2026-09-05: the native control plane on `:17420` is the sanctioned
     // way to drive the native app without a mouse) --
@@ -685,6 +751,23 @@ pub enum TestAlertDeliveryError {
     /// API server itself is running (it starts alongside the first
     /// window), handled rather than panicking.
     NoWindow,
+}
+
+/// Why [`AgentCommand::UnlockVault`] could not unlock the vault, distinguished
+/// so `routes::vault`'s handler can answer a different status per cause
+/// (`401` for a wrong passphrase, `404` for a profile with no vault at all).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VaultUnlockError {
+    /// The passphrase did not decrypt `vault.enc`.
+    WrongPassphrase,
+    /// The active profile has no `vault.enc` to unlock — vault setup was
+    /// never run for it.
+    NoVault,
+    /// No backend/window is attached to carry out the unlock. Cannot happen
+    /// while the Agent API server itself is running (it starts alongside the
+    /// first window, same as [`TestAlertDeliveryError::NoWindow`]), handled
+    /// rather than panicking.
+    NotReady,
 }
 
 /// The instrument an alert watches — field-compatible with

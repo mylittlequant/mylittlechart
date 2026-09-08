@@ -5479,7 +5479,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                 }
                                                 pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                                 pw.chart.panel_app.user_settings_state.show_profile_manager = false;
-                                                pw.chart.panel_app.user_settings_state.is_open = false;
+                                                // `.close()` (not a raw `is_open = false`) so the
+                                                // one-time key reveal box is dropped along with
+                                                // every other close of this modal.
+                                                pw.chart.panel_app.user_settings_state.close();
                                             }
                                         }
                                         Err(e) => {
@@ -5511,7 +5514,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                 }
                                                 pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
                                                 pw.chart.panel_app.user_settings_state.show_profile_manager = false;
-                                                pw.chart.panel_app.user_settings_state.is_open = false;
+                                                // See the sibling branch above for why `.close()`.
+                                                pw.chart.panel_app.user_settings_state.close();
                                             }
                                         } else {
                                             eprintln!("[App] pre-switch: failed to create vault.enc");
@@ -5778,7 +5782,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                             }
                                                             pw.chart.panel_app.user_settings_state.recovery_key_display_focused = false;
                                                             pw.chart.panel_app.user_settings_state.show_profile_manager = false;
-                                                            pw.chart.panel_app.user_settings_state.is_open = false;
+                                                            // `.close()` — see the pre-switch passphrase
+                                                            // branches above for why.
+                                                            pw.chart.panel_app.user_settings_state.close();
                                                         }
                                                     }
                                                 }
