@@ -6012,10 +6012,6 @@ impl ChartApp {
                     use mlc_app_layout::ui::modal_settings::{DmRequest, DmView};
                     let action = &rest["dm:".len()..];
                     match action {
-                        "publish_key" => {
-                            st.dm.last_error = None;
-                            st.dm.request = Some(DmRequest::PublishIdentity);
-                        }
                         rest2 if rest2.starts_with("conversation:") => {
                             if let Ok(id) = rest2["conversation:".len()..].parse::<i64>() {
                                 st.dm.open_conversation(id);

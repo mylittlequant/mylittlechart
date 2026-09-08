@@ -3,8 +3,10 @@
 //!
 //! Plan: `docs/mlc/plans/social-sharing-access-gates-and-agent-control-
 //! 2026-09-05.md` §3 item 6 + §6 — DMs are paid, end-to-end; the identity
-//! keypair lives in the vault and rides vault sync (like `vault.enc`); the
-//! server holds only ciphertext plus visible metadata (who/when).
+//! keypair is derived from the vault key on demand (owner ruling
+//! 2026-09-09: never a separate secret to generate, persist, or publish by
+//! hand — see [`DmIdentity::from_vault_key`]); the server holds only
+//! ciphertext plus visible metadata (who/when).
 //!
 //! # Curve library: `curve25519-dalek`, not `x25519-dalek`
 //!
@@ -21,15 +23,24 @@
 //!
 //! # Key flow
 //!
-//! [`DmIdentity::generate`] mints an X25519 keypair, secret half wrapped in
-//! [`Zeroizing`]. [`conversation_key`] takes each side's own secret and the
-//! other side's public key, runs ECDH, and derives a symmetric key via
-//! HKDF-SHA256 (info = `"mylittlechart-dm-v1"` || `conversation_id`) — both
-//! parties land on the identical key without ever transmitting it.
-//! [`seal_message`] / [`open_message`] wrap AES-256-GCM over that key, with
-//! `aad` bound in (recommended: conversation id + sender id) so the
-//! server-visible metadata cannot be spliced onto a different message's
-//! ciphertext without the tag failing to verify on open.
+//! [`DmIdentity::from_vault_key`] is the real entry point: it derives the
+//! X25519 keypair deterministically from the profile's already-unlocked
+//! [`VaultKey`] via HKDF-SHA256, so the identity exists the moment the vault
+//! does, on every device that holds the same vault, with nothing to
+//! generate, publish by hand, or lose — publication to the server is an
+//! automatic background step the caller drives off this, never a user
+//! action. [`DmIdentity::generate`] mints an unrelated random X25519 keypair
+//! from OS entropy and exists for tests that need two independent
+//! identities (e.g. exercising [`conversation_key`] between "alice" and
+//! "bob") — production callers never call it. [`conversation_key`] takes
+//! each side's own secret and the other side's public key, runs ECDH, and
+//! derives a symmetric key via HKDF-SHA256 (info = `"mylittlechart-dm-v1"`
+//! || `conversation_id`) — both parties land on the identical key without
+//! ever transmitting it. [`seal_message`] / [`open_message`] wrap
+//! AES-256-GCM over that key, with `aad` bound in (recommended: conversation
+//! id + sender id) so the server-visible metadata cannot be spliced onto a
+//! different message's ciphertext without the tag failing to verify on
+//! open.
 //!
 //! # Contributory behaviour
 //!
@@ -49,41 +60,33 @@ use hkdf::Hkdf;
 use rand::rngs::OsRng;
 use rand::RngCore;
 use sha2::Sha256;
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::Zeroizing;
 
 use crate::crypto;
-use crate::vault::{self, VaultError, VaultKey};
+use crate::vault::{VaultError, VaultKey};
 
-/// Canonical sidecar file name for a DM identity keypair. Callers place it
-/// next to `vault.enc` (see the crate doc) so it rides the same vault-sync
-/// channel; this module does not know profile directory layout, so it takes
-/// the full path from the caller like every other function in this crate.
+/// Legacy sidecar file name a pre-derivation build wrote a DM identity
+/// keypair to, next to `vault.enc`. [`DmIdentity`] no longer reads or writes
+/// this file — [`DmIdentity::from_vault_key`] derives the identity fresh
+/// from the vault key every time — but the name stays here so a caller that
+/// still sees the file on disk (an install that predates this change) can
+/// name it in a one-time diagnostic without this module needing to know
+/// where it lives. The file itself is never deleted by anything in this
+/// crate.
 pub const DM_IDENTITY_FILE_NAME: &str = "dm_identity.enc";
 
 /// An X25519 keypair identifying one account for DMs.
 ///
 /// `secret` is [`Zeroizing`]-wrapped so it self-wipes on drop. The type does
-/// not implement `Debug`/`Clone`/`Serialize` — the only way it leaves this
-/// module is through [`Self::save_to_vault`] (ciphertext) or by reading its
-/// public fields explicitly.
+/// not implement `Debug`/`Clone`/`Serialize` — it is never persisted at all
+/// (see [`Self::from_vault_key`]); the only way the secret half leaves this
+/// module is by reading the field directly (e.g. into [`conversation_key`]).
 pub struct DmIdentity {
     /// The public X25519 point, safe to publish (e.g. via the server's
     /// fingerprint listing — see [`fingerprint`]).
     pub public: [u8; 32],
-    /// The private scalar. Never leaves the process except encrypted, via
-    /// [`Self::save_to_vault`].
+    /// The private scalar. Never leaves the process, and never touches disk.
     pub secret: Zeroizing<[u8; 32]>,
-}
-
-/// On-disk shape of a DM identity inside the encrypted sidecar. Never
-/// constructed by callers outside this module — a bridge between
-/// [`DmIdentity`] (whose secret half is `Zeroizing`, which `serde_json`
-/// cannot serialize through) and the plain bytes `vault::save_encrypted`
-/// expects.
-#[derive(serde::Serialize, serde::Deserialize)]
-struct DmIdentityRecord {
-    public: [u8; 32],
-    secret: [u8; 32],
 }
 
 impl DmIdentity {
@@ -92,6 +95,10 @@ impl DmIdentity {
     /// The raw random scalar is RFC-7748-clamped once, at generation time;
     /// clamping is idempotent, so it is safe (and done again, harmlessly)
     /// by [`MontgomeryPoint::mul_clamped`]/`mul_base_clamped` on every use.
+    ///
+    /// Test-only in practice — see this module's doc for why a production
+    /// caller derives its identity from the vault key instead
+    /// ([`Self::from_vault_key`]) rather than minting one of these.
     pub fn generate() -> Self {
         let mut secret_bytes = [0u8; 32];
         OsRng.fill_bytes(&mut secret_bytes);
@@ -103,35 +110,34 @@ impl DmIdentity {
         }
     }
 
-    /// Encrypt and persist this identity to `path` under `key` (the
-    /// profile's [`VaultKey`]) so it rides vault sync alongside `vault.enc`.
+    /// Derive this profile's DM identity keypair from its already-unlocked
+    /// [`VaultKey`] — deterministic, so the same vault key always derives
+    /// the same keypair, on any device that holds it, and there is nothing
+    /// to generate, persist, or publish by hand: the caller derives this
+    /// fresh every time it needs the identity (on vault unlock, at boot if
+    /// already unlocked, after a profile switch — see `mlc-app-shell-vello`'s
+    /// call sites), and drops it when the vault seals.
     ///
-    /// Overwrites whatever was previously stored at `path`.
-    pub fn save_to_vault(&self, key: &VaultKey, path: &std::path::Path) -> Result<(), VaultError> {
-        let mut record = DmIdentityRecord {
-            public: self.public,
-            secret: *self.secret,
-        };
-        let result = vault::save_encrypted(key, path, &record);
-        // Best-effort wipe of the plaintext copy `record` made of the
-        // secret (a `[u8; 32]` `Copy`, so the bytes handed to `Zeroizing`
-        // in `self.secret` are a separate copy from this one) before it is
-        // dropped — see `store.rs`'s module doc on what `zeroize` does and
-        // does not cover for the same class of stack copy.
-        record.secret.zeroize();
-        result
-    }
-
-    /// Load and decrypt an identity previously written by
-    /// [`Self::save_to_vault`].
-    pub fn load_from_vault(key: &VaultKey, path: &std::path::Path) -> Result<Self, VaultError> {
-        let mut record: DmIdentityRecord = vault::load_encrypted(key, path)?;
-        let secret = Zeroizing::new(record.secret);
-        record.secret.zeroize();
-        Ok(Self {
-            public: record.public,
-            secret,
-        })
+    /// `HKDF-SHA256(ikm = vault key, salt = None, info =
+    /// "mylittlechart dm identity v1") -> 32 raw bytes`, then RFC-7748-clamped
+    /// exactly as [`Self::generate`] clamps a random scalar. No salt: the
+    /// vault key is already a uniformly-random 32-byte AES key (never a
+    /// low-entropy passphrase), so the info string alone gives this
+    /// derivation the domain separation it needs from the vault's other
+    /// HKDF uses ([`crate::crypto::HKDF_VAULT_INFO`],
+    /// [`crate::crypto::HKDF_SYNC_INFO`], [`crate::crypto::HKDF_RECOVERY_INFO`],
+    /// this module's own [`crate::crypto::HKDF_DM_IDENTITY_INFO`]).
+    pub fn from_vault_key(key: &VaultKey) -> Self {
+        let hk = Hkdf::<Sha256>::new(None, key);
+        let mut secret_bytes = [0u8; 32];
+        hk.expand(crypto::HKDF_DM_IDENTITY_INFO, &mut secret_bytes)
+            .expect("HKDF expand should never fail for 32-byte output");
+        let secret_bytes = clamp_integer(secret_bytes);
+        let public = MontgomeryPoint::mul_base_clamped(secret_bytes).to_bytes();
+        Self {
+            public,
+            secret: Zeroizing::new(secret_bytes),
+        }
     }
 }
 
@@ -254,15 +260,6 @@ pub fn verify_fingerprint(public: &[u8; 32], expected: &str) -> bool {
 mod tests {
     use super::*;
 
-    fn temp_dir(name: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(name);
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap_or_else(|e| {
-            panic!("test setup: create_dir_all({dir:?}) failed: {e}")
-        });
-        dir
-    }
-
     #[test]
     fn both_sides_derive_the_same_conversation_key() {
         let alice = DmIdentity::generate();
@@ -322,39 +319,34 @@ mod tests {
     }
 
     #[test]
-    fn sidecar_save_and_load_round_trip_under_a_fresh_vault_key() {
-        let dir = temp_dir("mlc_vault_dm_identity_sidecar");
-        let path = dir.join(DM_IDENTITY_FILE_NAME);
-
-        let salt = vault::generate_salt();
-        let key = vault::derive_key("dm sidecar test passphrase", &salt);
-
-        let identity = DmIdentity::generate();
-        identity.save_to_vault(&key, &path).expect("save sidecar");
-
-        let loaded = DmIdentity::load_from_vault(&key, &path).expect("load sidecar");
-        assert_eq!(loaded.public, identity.public);
-        assert_eq!(*loaded.secret, *identity.secret);
-
-        let _ = std::fs::remove_dir_all(&dir);
+    fn from_vault_key_is_deterministic() {
+        let key: VaultKey = [7u8; 32];
+        let a = DmIdentity::from_vault_key(&key);
+        let b = DmIdentity::from_vault_key(&key);
+        assert_eq!(a.public, b.public, "same vault key must derive the same public key");
+        assert_eq!(*a.secret, *b.secret, "same vault key must derive the same secret scalar");
     }
 
     #[test]
-    fn wrong_vault_key_fails_to_load_the_sidecar() {
-        let dir = temp_dir("mlc_vault_dm_identity_sidecar_wrong_key");
-        let path = dir.join(DM_IDENTITY_FILE_NAME);
+    fn from_vault_key_different_keys_diverge() {
+        let key_a: VaultKey = [7u8; 32];
+        let key_b: VaultKey = [8u8; 32];
+        let a = DmIdentity::from_vault_key(&key_a);
+        let b = DmIdentity::from_vault_key(&key_b);
+        assert_ne!(a.public, b.public, "different vault keys must derive different public keys");
+    }
 
-        let salt = vault::generate_salt();
-        let right_key = vault::derive_key("correct passphrase", &salt);
-        let wrong_key = vault::derive_key("wrong passphrase", &salt);
+    #[test]
+    fn vault_derived_identities_still_agree_on_a_conversation_key() {
+        let alice_vault_key: VaultKey = [1u8; 32];
+        let bob_vault_key: VaultKey = [2u8; 32];
+        let alice = DmIdentity::from_vault_key(&alice_vault_key);
+        let bob = DmIdentity::from_vault_key(&bob_vault_key);
 
-        DmIdentity::generate()
-            .save_to_vault(&right_key, &path)
-            .expect("save sidecar");
+        let k_alice = conversation_key(&alice.secret, &bob.public, "conv-1");
+        let k_bob = conversation_key(&bob.secret, &alice.public, "conv-1");
 
-        assert!(DmIdentity::load_from_vault(&wrong_key, &path).is_err());
-
-        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(*k_alice, *k_bob, "vault-derived identities must still commute under ECDH");
     }
 
     #[test]

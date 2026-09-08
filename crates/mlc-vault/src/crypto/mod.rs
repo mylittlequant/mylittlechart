@@ -34,6 +34,14 @@ pub const HKDF_RECOVERY_INFO: &[u8] = b"mylittlechart-recovery-v1";
 /// when both parties' identity keys are reused across many conversations.
 pub const HKDF_DM_INFO: &[u8] = b"mylittlechart-dm-v1";
 
+/// HKDF info string binding a DM identity keypair to the vault key it is
+/// derived from — see [`crate::dm::DmIdentity::from_vault_key`]. Deliberately
+/// a distinct string (own spacing/naming convention) from the other
+/// `HKDF_*_INFO` constants above: it domain-separates the DM identity scalar
+/// from the vault key, the sync key, and the recovery-wrap key, all derived
+/// from related material one HKDF call away from each other.
+pub const HKDF_DM_IDENTITY_INFO: &[u8] = b"mylittlechart dm identity v1";
+
 /// AES-GCM nonce size in bytes.
 const NONCE_SIZE: usize = 12;
 

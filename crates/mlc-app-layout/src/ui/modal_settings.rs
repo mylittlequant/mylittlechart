@@ -5655,13 +5655,16 @@ pub enum DmView {
 
 /// A user-triggered DM action — one-shot mailbox ([`DmState::request`]),
 /// same idiom as [`ForumV2Request`].
+///
+/// Publishing the identity key (`PUT /dm/identity`) is NOT here — owner
+/// ruling 2026-09-09: the identity is derived from the vault key the user
+/// already has, so publication is an automatic background step the shell
+/// drives on its own (once signed in, paid, and the server's directory
+/// lacks it or shows a different fingerprint), never a user-triggered
+/// action.
 #[cfg(feature = "cloud")]
 #[derive(Clone, Debug, PartialEq)]
 pub enum DmRequest {
-    /// "Publish my key" button (`PUT /dm/identity`) — the shell generates
-    /// (or reuses) the local keypair and publishes the public half; this
-    /// crate never sees the key material itself.
-    PublishIdentity,
     LoadConversations,
     /// Start (or resume) a conversation with a `public_id`/nick — no button
     /// in this pass draws it (see the rendering report), but the request
@@ -5681,8 +5684,10 @@ pub enum DmRequest {
 #[derive(Clone, Debug)]
 pub struct DmState {
     /// This account's own published DM identity fingerprint — `None` means
-    /// no key has been published yet, which is the sole gate for the
-    /// "Publish my key" button (every DM action otherwise requires one).
+    /// the shell has not confirmed the server holds this identity yet
+    /// (publication is automatic; see [`DmRequest`]'s own doc). The List
+    /// view reads this to show a one-line "setting up" status instead of
+    /// any action the user must take.
     pub identity_fingerprint: Option<String>,
     pub conversations: Vec<DmConversationUi>,
     pub view: DmView,
@@ -5701,15 +5706,16 @@ pub struct DmState {
     /// code to know whether to clear `DM_DRAFT`, reset to `false` wherever
     /// it is consumed, on success or failure alike.
     pub send_pending: bool,
-    /// Whether DM controls (Publish my key, open-peer, conversations,
-    /// draft/send) can actually work in this shell. The web shell never sets
-    /// this — no DM identity plumbing exists there, and drawing those
-    /// controls anyway invited clicks that could never do anything (`dm.
-    /// last_error`'s own notice already tells the web user why). The native
-    /// shell sets it once the DM identity is loadable (vault unsealed) and
-    /// clears it while sealed, alongside its own "Unlock the vault…"
-    /// notice. Defaults `false` — a shell must opt in explicitly rather
-    /// than draw live controls before it can back them.
+    /// Whether DM controls (open-peer, conversations, draft/send) can
+    /// actually work in this shell. The web shell never sets this — no DM
+    /// identity plumbing exists there, and drawing those controls anyway
+    /// invited clicks that could never do anything (`dm.last_error`'s own
+    /// notice already tells the web user why). The native shell sets it
+    /// once the vault is unlocked (the DM identity is then derivable
+    /// on-demand, always successfully — see `mlc_vault::dm::DmIdentity::
+    /// from_vault_key`) and clears it while sealed, alongside its own
+    /// "Unlock the vault…" notice. Defaults `false` — a shell must opt in
+    /// explicitly rather than draw live controls before it can back them.
     pub available: bool,
 }
 

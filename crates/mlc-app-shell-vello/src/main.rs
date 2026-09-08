@@ -589,13 +589,27 @@ struct App<'s> {
     forum2_pending: Option<(WindowId, Forum2Chain)>,
 
     // ── Direct messages (paid, end-to-end encrypted) ────────────────────
-    /// This profile's DM identity keypair — loaded from (or generated and
-    /// saved to) the `dm_identity.enc` sidecar under the profile's
-    /// `VaultKey` the first time the Messages tab is opened while the vault
-    /// is unsealed. `None` while the vault is sealed, or before Messages
-    /// has ever been opened this session.
+    /// This profile's DM identity keypair — deterministically derived from
+    /// the profile's `VaultKey` (owner ruling 2026-09-09:
+    /// `mlc_vault::dm::DmIdentity::from_vault_key`, never a separate secret
+    /// to generate or persist). Refreshed at boot (if the vault is already
+    /// unlocked), on every vault unlock, and on profile switch; dropped
+    /// (`None`) whenever the vault seals — see [`Self::refresh_dm_identity`]
+    /// and [`Self::seal_secret_sidecars`].
     #[cfg(feature = "cloud")]
     dm_identity: Option<mlc_vault::dm::DmIdentity>,
+    /// The public half of the [`mlc_vault::dm::DmIdentity`] this process has
+    /// already attempted to publish (`PUT /api/dm/identity`) since the last
+    /// unlock or sign-in edge — `None` means no attempt has been made yet
+    /// this epoch. Guards [`Self::drive_dm`]'s auto-publish against sending
+    /// the request again on every frame while the async answer is still in
+    /// flight; reset to `None` by [`Self::refresh_dm_identity`] (a fresh
+    /// unlock/profile-switch gets its own attempt) and by the sign-in edge
+    /// in `about_to_wait` (so a session that signs in after the vault was
+    /// already unlocked still gets one attempt, even if an earlier one this
+    /// same unlock failed while signed out).
+    #[cfg(feature = "cloud")]
+    dm_identity_publish_attempted_for: Option<[u8; 32]>,
     /// Peer public keys, cached per conversation id — populated by
     /// `DmRequest::Open`'s `GetIdentity` step and by the list-page
     /// backfill (`dm_backfill_queue`) for a conversation reached via
@@ -1666,7 +1680,9 @@ impl App<'_> {
             #[cfg(feature = "cloud")]
             forum2_pending: None,
             #[cfg(feature = "cloud")]
-            dm_identity: None,
+            dm_identity: vault_key_at_boot.as_ref().map(mlc_vault::dm::DmIdentity::from_vault_key),
+            #[cfg(feature = "cloud")]
+            dm_identity_publish_attempted_for: None,
             #[cfg(feature = "cloud")]
             dm_peer_keys: std::collections::HashMap::new(),
             #[cfg(feature = "cloud")]
@@ -2259,17 +2275,14 @@ impl App<'_> {
         // 3b. Seal + drop every secret sidecar bound to the OLD profile
         //     before anything below touches the new one. `seal_secret_sidecars`
         //     (one-list idiom, `vault_key_sidecars`) wipes both RAM-only
-        //     `SecretStore`s; `dm_identity` has no seal of its own (it is a
-        //     plain `Option`, not a `SecretStore`) — dropping it here is
-        //     the drop, and it reloads lazily off the NEW profile's own
-        //     `dm_identity.enc` the next time a DM surface needs one
-        //     (`load_or_generate_dm_identity`, called only when
-        //     `self.dm_identity.is_none()`).
+        //     `SecretStore`s AND drops `self.dm_identity` (it is derived from
+        //     the vault key, never persisted — see `refresh_dm_identity`'s
+        //     own doc) — the NEW profile's identity gets re-derived either
+        //     by the pre-validated-key injection below (`sync_secret_sidecars`)
+        //     or, if the new profile still needs an unlock screen, by
+        //     whichever `e2e_setup:`/`cred_unlock:`/`recovery_unlock:` handler
+        //     lands its key.
         self.seal_secret_sidecars();
-        #[cfg(feature = "cloud")]
-        {
-            self.dm_identity = None;
-        }
 
         // 4. Determine whether the new profile needs vault unlock.
         //    active_profile_data_dir() now resolves to target_id's directory
@@ -2941,9 +2954,19 @@ impl App<'_> {
     /// `input/credentials.rs::seal_vault_sidecars`/`sync_vault_sidecars`
     /// (`mlc-app` crate) — this is the host-level counterpart for the
     /// call-outs that run before or without one.
-    fn seal_secret_sidecars(&self) {
+    ///
+    /// Also drops the DM identity and its publish-attempt guard (owner
+    /// ruling 2026-09-09: the identity is derived from the vault key, never
+    /// persisted, so sealing the vault must drop the derived copy in RAM
+    /// too — nothing else clears it on this edge).
+    fn seal_secret_sidecars(&mut self) {
         for store in self.vault_key_sidecars().into_iter().flatten() {
             store.seal();
+        }
+        #[cfg(feature = "cloud")]
+        {
+            self.dm_identity = None;
+            self.dm_identity_publish_attempted_for = None;
         }
     }
 
@@ -2951,49 +2974,36 @@ impl App<'_> {
     /// `VaultKey`, mirroring `ChartApp::sync_vault_sidecars`'s one-list
     /// idiom at the host level — called wherever `core.user_mut().
     /// set_vault_key(Some(..))` lands here (today: the profile-switch
-    /// pre-validated-key injection in `execute_profile_switch`).
-    fn sync_secret_sidecars(&self, vault_key: &mlc_vault::vault::VaultKey) {
+    /// pre-validated-key injection in `execute_profile_switch`). Also
+    /// re-derives the DM identity off the same key — see
+    /// [`Self::refresh_dm_identity`].
+    fn sync_secret_sidecars(&mut self, vault_key: &mlc_vault::vault::VaultKey) {
         for store in self.vault_key_sidecars().into_iter().flatten() {
             if let Err(e) = store.unlock_with_key(vault_key) {
                 eprintln!("[App] secret store: failed to unlock alongside vault: {}", e);
             }
         }
+        #[cfg(feature = "cloud")]
+        self.refresh_dm_identity();
     }
 
-    /// Load this profile's DM identity from its `dm_identity.enc` sidecar
-    /// under `vault_key`, generating and saving a fresh one on first use.
-    /// Sets `self.dm_identity`; leaves it `None` (retrying next call) on a
-    /// disk failure rather than silently generating a replacement for an
-    /// existing-but-unreadable sidecar — that would orphan every message
-    /// already exchanged under the old key.
-    ///
-    /// The path is resolved from `mlc_core::active_profile_data_dir()` at
-    /// call time — safe across a multi-profile hot-reload switch because
-    /// `execute_profile_switch` clears `self.dm_identity` to `None` on every
-    /// switch, so the next caller through here re-resolves against
-    /// whichever profile is active THEN, not whichever was active when this
-    /// `App` process started.
+    /// Re-derive `self.dm_identity` from whatever `VaultKey`
+    /// `self.core.user()` currently holds (`None` while sealed) —
+    /// deterministic (`mlc_vault::dm::DmIdentity::from_vault_key`), so this
+    /// is cheap and safe to call on every vault unlock, at every one of the
+    /// `e2e_setup:`/`cred_unlock:`/`recovery_unlock:` command handlers that
+    /// land a fresh key, and after a profile switch — there is no sidecar
+    /// file to race against another caller, and no failure mode: the same
+    /// vault key always derives the same keypair. Also resets
+    /// [`Self::dm_identity_publish_attempted_for`], so the freshly
+    /// (re)derived identity gets its own auto-publish attempt in
+    /// [`Self::drive_dm`] rather than inheriting a stale guard from
+    /// whichever identity (or profile) was active before this call.
     #[cfg(feature = "cloud")]
-    fn load_or_generate_dm_identity(&mut self, vault_key: &mlc_vault::vault::VaultKey) {
-        let path = mlc_core::active_profile_data_dir().join(mlc_vault::dm::DM_IDENTITY_FILE_NAME);
-        self.dm_identity = if path.exists() {
-            match mlc_vault::dm::DmIdentity::load_from_vault(vault_key, &path) {
-                Ok(id) => Some(id),
-                Err(e) => {
-                    eprintln!("[App] dm identity: failed to load sidecar: {} — leaving unset", e);
-                    None
-                }
-            }
-        } else {
-            let fresh = mlc_vault::dm::DmIdentity::generate();
-            match fresh.save_to_vault(vault_key, &path) {
-                Ok(()) => Some(fresh),
-                Err(e) => {
-                    eprintln!("[App] dm identity: failed to save new sidecar: {}", e);
-                    None
-                }
-            }
-        };
+    fn refresh_dm_identity(&mut self) {
+        let vault_key = self.core.user().vault_key();
+        self.dm_identity = vault_key.as_ref().map(mlc_vault::dm::DmIdentity::from_vault_key);
+        self.dm_identity_publish_attempted_for = None;
     }
 
     /// Applies the single, process-wide `forum_v2_rx` channel's next
@@ -3527,7 +3537,7 @@ impl App<'_> {
         }
 
         if self.dm_identity.is_none() {
-            self.load_or_generate_dm_identity(&vault_key);
+            self.dm_identity = Some(mlc_vault::dm::DmIdentity::from_vault_key(&vault_key));
         }
 
         if self.updater_handle.dm_rx.has_changed().unwrap_or(false) {
@@ -3551,24 +3561,47 @@ impl App<'_> {
             }
         }
 
-        // Auto-publish this profile's key the first time Messages is open
-        // with no confirmed fingerprint yet — the explicit "Publish my key"
-        // row (`UiDmRequest::PublishIdentity`) stays wired below too, as an
-        // idempotent retry if this one somehow never landed.
+        // Auto-publish this profile's key once signed in + paid — the ONLY
+        // publish path (owner ruling 2026-09-09: no user-facing button; the
+        // identity itself is derived from the vault key, so there is
+        // nothing to generate or remember). Fires at most once per unlock
+        // (`dm_identity_publish_attempted_for` is cleared by
+        // `refresh_dm_identity` on every fresh unlock/profile switch) and
+        // again after a sign-in edge (cleared in `about_to_wait`'s
+        // `newly_signed_in_as` handling) — the guard stops this from
+        // resending on every frame while an earlier attempt's answer is
+        // still in flight. Triggers whenever the server has not confirmed a
+        // MATCHING fingerprint yet, covering both "never published" (no
+        // confirmation at all) and "the confirmed key is stale" (this
+        // identity rotated — e.g. a different vault key now — since the
+        // server's last confirmed answer).
         if self.dm_pending.is_none() {
-            let needs_publish = self
-                .windows
-                .get(&messages_window)
-                .is_some_and(|pw| pw.chart.panel_app.cloud_overlay_state.dm.identity_fingerprint.is_none());
-            if needs_publish {
-                if let Some(identity) = &self.dm_identity {
+            if let Some(identity) = &self.dm_identity {
+                let (forum_entitled, confirmed_fingerprint) = self
+                    .windows
+                    .get(&messages_window)
+                    .map(|pw| {
+                        let ov = &pw.chart.panel_app.cloud_overlay_state;
+                        (ov.forum_entitled, ov.dm.identity_fingerprint.clone())
+                    })
+                    .unwrap_or((false, None));
+                let my_fingerprint = mlc_vault::dm::fingerprint(&identity.public);
+                let already_confirmed = confirmed_fingerprint.as_deref() == Some(my_fingerprint.as_str());
+                let already_attempted = self.dm_identity_publish_attempted_for == Some(identity.public);
+                if forum_entitled && !already_confirmed && !already_attempted {
                     let public_key_b64 = dm_encode(&identity.public);
                     let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
                         mlc_updater::DmRequest::PublishIdentity { public_key_b64 },
                     ));
+                    self.dm_identity_publish_attempted_for = Some(identity.public);
                     // No window to route the answer to — `Identity` is
                     // broadcast unconditionally above regardless of
-                    // `dm_pending`, so this is left `None`.
+                    // `dm_pending`, so this is left `None`; a failure lands
+                    // in `dm.last_error` the same (best-effort) way an
+                    // explicit action's does, via `apply_dm_result`'s
+                    // `Failed` arm, only if nothing else claims `dm_pending`
+                    // first — unchanged from this shell's existing
+                    // non-guarantee for the auto-publish path.
                 }
             }
         }
@@ -3583,14 +3616,6 @@ impl App<'_> {
         });
         if let Some((win_id, req)) = drained {
             match req {
-                UiDmRequest::PublishIdentity => {
-                    if let Some(identity) = &self.dm_identity {
-                        let public_key_b64 = dm_encode(&identity.public);
-                        let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
-                            mlc_updater::DmRequest::PublishIdentity { public_key_b64 },
-                        ));
-                    }
-                }
                 UiDmRequest::LoadConversations => {
                     if let Some(pw) = self.windows.get_mut(&win_id) {
                         pw.chart.panel_app.cloud_overlay_state.dm.conversations_refreshing = true;
@@ -5517,6 +5542,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 // First-time vault creation — show the recovery key before promoting.
                                 eprintln!("[App] vault key derived and set — showing recovery key");
                                 self.needs_vault_unlock = false;
+                                #[cfg(feature = "cloud")]
+                                self.refresh_dm_identity();
                                 for pw in self.windows.values_mut() {
                                     use mlc_app_layout::ui::modal_settings::{
                                         CredentialsView, ProfileManagerPage, UserSettingsTab,
@@ -5560,6 +5587,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 eprintln!("[App] vault passphrase validated OK — promoting skeleton");
                                 self.profile = self.profile_manager.profile.clone();
                                 self.needs_vault_unlock = false;
+                                #[cfg(feature = "cloud")]
+                                self.refresh_dm_identity();
                                 // Drop skeleton windows and recreate with live data.
                                 self.pending_skeleton_promote = true;
                             }
@@ -5605,6 +5634,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         eprintln!("[App] credentials: unlock failed: {}", e);
                     } else {
                         eprintln!("[App] credentials: vault unlocked mid-session");
+                        #[cfg(feature = "cloud")]
+                        self.refresh_dm_identity();
                     }
                 }
 
@@ -5695,6 +5726,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                         self.profile_manager.vault_key = Some(vault_key);
                                                         self.profile = self.profile_manager.profile.clone();
                                                         self.needs_vault_unlock = false;
+                                                        #[cfg(feature = "cloud")]
+                                                        self.refresh_dm_identity();
 
                                                         // Store master_key so set_new_passphrase: can re-key the vault.
                                                         self.pending_recovery_master_key = Some(master_key);
@@ -5846,6 +5879,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             match outcome {
                                 Some(Ok(new_recovery_key_fmt)) => {
                                     eprintln!("[App] set_new_passphrase: vault re-keyed successfully");
+
+                                    // A re-key derives a brand-new vault key from the new
+                                    // passphrase (`ProfileManager::rekey_vault`'s own step
+                                    // 3 — same salt, new passphrase, new master key), and
+                                    // the DM identity is a deterministic function of that
+                                    // key: re-deriving here keeps `self.dm_identity` (and
+                                    // the auto-publish guard) in step with what every
+                                    // future unlock under the NEW passphrase will derive,
+                                    // rather than a stale in-RAM copy of the old identity.
+                                    #[cfg(feature = "cloud")]
+                                    self.refresh_dm_identity();
 
                                     // Templates on disk are still encrypted under the OLD
                                     // key until rewritten — force an immediate (debounce
@@ -6538,6 +6582,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 let body = format!("Signed in as {display_name}.");
                 if let Some(pw) = self.system_event_window_mut() {
                     pw.chart.push_system_event(mlc_core::SystemEventKind::Account, "Signed in", body, true);
+                }
+                // Sign-in edge: this session gets its own DM auto-publish
+                // attempt in `drive_dm`, even if an earlier attempt this
+                // same unlock already failed while signed out (owner ruling
+                // 2026-09-09: "again after a sign-in edge").
+                #[cfg(feature = "cloud")]
+                {
+                    self.dm_identity_publish_attempted_for = None;
                 }
             }
             // Seal every secret-store sidecar on sign-out — a signed-out
