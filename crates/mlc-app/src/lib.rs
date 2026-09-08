@@ -10899,6 +10899,35 @@ impl ChartApp {
                         ov.forum_reply_char_positions.clone(),
                     );
                 }
+                // Forum v2's search box and DM's draft/peer boxes — same
+                // "no drag-selection, no click-to-position without this"
+                // reasoning as the three fields above. `forum_search_rect`/
+                // `dm_draft_rect` have carried geometry since W2 but were
+                // never wired here; `dm_peer_rect` is new this pass.
+                if let Some(r) = ov.forum_search_rect {
+                    let id = WidgetId::from(text_input::FORUM_SEARCH);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id,
+                        (r.x, r.y, r.width, r.height),
+                        ov.forum_search_char_positions.clone(),
+                    );
+                }
+                if let Some(r) = ov.dm_draft_rect {
+                    let id = WidgetId::from(text_input::DM_DRAFT);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id,
+                        (r.x, r.y, r.width, r.height),
+                        ov.dm_draft_char_positions.clone(),
+                    );
+                }
+                if let Some(r) = ov.dm_peer_rect {
+                    let id = WidgetId::from(text_input::DM_PEER);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id,
+                        (r.x, r.y, r.width, r.height),
+                        ov.dm_peer_char_positions.clone(),
+                    );
+                }
             }
             if let Some(ref pni) = fr.preset_name_input {
                 let r = &pni.input_text_rect;

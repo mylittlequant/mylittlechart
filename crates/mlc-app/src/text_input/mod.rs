@@ -174,6 +174,12 @@ pub const FORUM_SEARCH: &str = "forum_search";
 /// reaches the wire. Enter sends.
 pub const DM_DRAFT: &str = "dm_draft";
 
+/// DM List view's "start a conversation" peer field (`mlc_app_layout::
+/// layout::modals::dm_overlay`'s `draw_open_peer_row`, new this pass — W2
+/// drew no entry point for `DmRequest::Open` at all). A nick or public id;
+/// Enter opens (or resumes) the conversation.
+pub const DM_PEER: &str = "dm_peer";
+
 /// Webhook URL input (credentials modal). Replaces the decorative field of
 /// the same name that used to live in the alert-settings Notifications tab
 /// (`alert_set:item:webhook_url`, whose click handler was a literal no-op) —
@@ -285,6 +291,7 @@ pub fn known_field_ids() -> &'static [&'static str] {
         FORUM_REPLY,
         FORUM_SEARCH,
         DM_DRAFT,
+        DM_PEER,
         CRED_WEBHOOK_URL,
         CRED_ADD_EXCHANGE,
         CRED_ADD_LABEL,

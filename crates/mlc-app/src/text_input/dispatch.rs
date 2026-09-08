@@ -118,7 +118,7 @@ impl ChartApp {
         {
             is_early_field |= matches!(
                 focused_id.as_str(),
-                REDEEM_CODE | FORUM_TITLE | FORUM_BODY | FORUM_REPLY
+                REDEEM_CODE | FORUM_TITLE | FORUM_BODY | FORUM_REPLY | FORUM_SEARCH | DM_DRAFT | DM_PEER
             );
         }
         if !is_early_field {
@@ -272,6 +272,12 @@ impl ChartApp {
             FORUM_BODY                        => self.text_action_forum_body(ch, action),
             #[cfg(feature = "cloud")]
             FORUM_REPLY                       => self.text_action_forum_reply(ch, action),
+            #[cfg(feature = "cloud")]
+            FORUM_SEARCH                      => self.text_action_forum_search(ch, action),
+            #[cfg(feature = "cloud")]
+            DM_DRAFT                          => self.text_action_dm_draft(ch, action),
+            #[cfg(feature = "cloud")]
+            DM_PEER                           => self.text_action_dm_peer(ch, action),
             ALERT_TG_TOKEN                   => self.text_action_alert_token(ch, action),
             CRED_WEBHOOK_URL                 => self.text_action_cred_webhook_url(ch, action),
             CRED_ADD_EXCHANGE                => self.text_action_cred_add_field(crate::input::credentials::CredAddField::Exchange, ch, action),
@@ -941,18 +947,23 @@ impl ChartApp {
         }
     }
 
-    /// Abandon the Forum compose form: back to the thread list, clear both
-    /// fields, drop focus. Used by `FORUM_TITLE`/`FORUM_BODY`'s own Escape
-    /// handling below. `panel_click.rs`'s `"forum:compose_cancel"` arm
-    /// inlines the same three steps rather than calling this — it already
+    /// Abandon the Forum-v2 compose form: back to the board list, clear
+    /// both fields, drop focus. Used by `FORUM_TITLE`/`FORUM_BODY`'s own
+    /// Escape handling below. `panel_click.rs`'s `"forum2:compose_cancel"`
+    /// arm inlines the same steps rather than calling this — it already
     /// holds a named `&mut` borrow of `cloud_overlay_state`
     /// (`let st = &mut self.panel_app.cloud_overlay_state;`), and a method
     /// call taking `&mut self` cannot run alongside that borrow. Keep the
     /// two in sync by hand if this logic ever changes.
+    ///
+    /// `FORUM_TITLE`/`FORUM_BODY` are the same `TextFieldStore` ids Forum-v2's
+    /// compose view reuses from v1 (`forum_v2_overlay.rs`'s `draw_compose`) —
+    /// v1's own `ForumSubView`/`ForumRequest` no longer render anywhere
+    /// (`NewsTab::Forum` now draws `ForumV2State`, see that type's own doc),
+    /// so this handler (and its two siblings below) target `forum2` instead.
     #[cfg(feature = "cloud")]
     fn cancel_forum_compose(&mut self) {
-        self.panel_app.cloud_overlay_state.forum_view =
-            mlc_app_layout::ui::modal_settings::ForumSubView::List;
+        self.panel_app.cloud_overlay_state.forum2.reset_to_boards();
         let mut tf = self.input_coordinator.borrow_mut();
         let tf = tf.text_fields_mut();
         tf.clear(&WidgetId::from(crate::text_input::FORUM_TITLE));
@@ -960,7 +971,7 @@ impl ChartApp {
         tf.blur();
     }
 
-    /// Forum compose view's title field. Enter validates locally
+    /// Forum-v2 compose view's title field. Enter validates locally
     /// (`validate_forum_title`) and, if it passes, moves focus to
     /// `FORUM_BODY` — this field has no natural "next" key otherwise, so
     /// Enter takes that role instead of submitting early on a form that
@@ -977,18 +988,10 @@ impl ChartApp {
                 Ok(()) => {
                     let body_wid = WidgetId::from(crate::text_input::FORUM_BODY);
                     chart.input_coordinator.borrow_mut().text_fields_mut().focus(body_wid);
-                    if let mlc_app_layout::ui::modal_settings::ForumSubView::Compose { error, .. } =
-                        &mut chart.panel_app.cloud_overlay_state.forum_view
-                    {
-                        *error = None;
-                    }
+                    chart.panel_app.cloud_overlay_state.forum2.last_error = None;
                 }
                 Err(message) => {
-                    if let mlc_app_layout::ui::modal_settings::ForumSubView::Compose { error, .. } =
-                        &mut chart.panel_app.cloud_overlay_state.forum_view
-                    {
-                        *error = Some(message);
-                    }
+                    chart.panel_app.cloud_overlay_state.forum2.last_error = Some(message);
                 }
             }
         };
@@ -1007,11 +1010,12 @@ impl ChartApp {
         }
     }
 
-    /// Forum compose view's body field — the form's last field, so Enter
+    /// Forum-v2 compose view's body field — the form's last field, so Enter
     /// here submits the whole thread (both fields' current text, re-read
     /// from the store the same way `text_action_account_nick`'s `submit`
     /// does). Escape abandons the compose form, same as `FORUM_TITLE`'s own
-    /// Escape.
+    /// Escape. Mirrors `panel_click.rs`'s `"forum2:compose_post"` click arm
+    /// exactly, so Enter-from-body and clicking Post cannot disagree.
     #[cfg(feature = "cloud")]
     fn text_action_forum_body(&mut self, ch: char, action: TextAction) {
         let submit = |chart: &mut ChartApp| {
@@ -1022,25 +1026,23 @@ impl ChartApp {
                 let tf = coord.text_fields();
                 (tf.text(&title_wid).trim().to_string(), tf.text(&body_wid).trim().to_string())
             };
+            let slug = match &chart.panel_app.cloud_overlay_state.forum2.view {
+                mlc_app_layout::ui::modal_settings::ForumV2View::Compose { slug } => slug.clone(),
+                _ => return,
+            };
             let validated = mlc_app_layout::ui::modal_settings::validate_forum_title(&title)
                 .and_then(|()| mlc_app_layout::ui::modal_settings::validate_forum_body(&body));
             match validated {
                 Ok(()) => {
-                    if let mlc_app_layout::ui::modal_settings::ForumSubView::Compose { posting, error } =
-                        &mut chart.panel_app.cloud_overlay_state.forum_view
-                    {
-                        *posting = true;
-                        *error = None;
-                    }
-                    chart.panel_app.cloud_overlay_state.forum_request =
-                        Some(mlc_app_layout::ui::modal_settings::ForumRequest::CreateThread { title, body });
+                    let f2 = &mut chart.panel_app.cloud_overlay_state.forum2;
+                    f2.last_error = None;
+                    f2.create_thread_pending = true;
+                    f2.request = Some(mlc_app_layout::ui::modal_settings::ForumV2Request::CreateThread {
+                        slug, title, body,
+                    });
                 }
                 Err(message) => {
-                    if let mlc_app_layout::ui::modal_settings::ForumSubView::Compose { error, .. } =
-                        &mut chart.panel_app.cloud_overlay_state.forum_view
-                    {
-                        *error = Some(message);
-                    }
+                    chart.panel_app.cloud_overlay_state.forum2.last_error = Some(message);
                 }
             }
         };
@@ -1059,47 +1061,38 @@ impl ChartApp {
         }
     }
 
-    /// Forum thread view's reply field. Enter validates locally
+    /// Forum-v2 thread view's reply field. Enter validates locally
     /// (`validate_forum_body`) and, if it passes, arms
-    /// `ForumRequest::Reply` and marks the thread view `posting_reply` —
-    /// same submit-on-Enter idiom `text_action_redeem_code` uses. Escape
-    /// clears the field and drops focus WITHOUT leaving the thread (unlike
-    /// `FORUM_TITLE`/`FORUM_BODY`'s Escape, which abandons the whole
-    /// compose form) — there is no "form" here to abandon, just a reply
-    /// someone changed their mind about typing.
+    /// `ForumV2Request::Reply` (nested under `reply_to` when a specific
+    /// reply's own "Reply" row was picked first) and marks
+    /// `ForumV2State::reply_pending` — same submit-on-Enter idiom
+    /// `text_action_redeem_code` uses, and the same pending-flag idiom v1's
+    /// own `forum_reply_pending` uses (see that field's doc for why one is
+    /// needed). Escape clears the field and drops focus WITHOUT leaving the
+    /// thread (unlike `FORUM_TITLE`/`FORUM_BODY`'s Escape, which abandons
+    /// the whole compose form) — there is no "form" here to abandon, just a
+    /// reply someone changed their mind about typing. Mirrors
+    /// `panel_click.rs`'s `"forum2:reply_submit"` click arm exactly.
     #[cfg(feature = "cloud")]
     fn text_action_forum_reply(&mut self, ch: char, action: TextAction) {
         let submit = |chart: &mut ChartApp| {
             let wid = WidgetId::from(crate::text_input::FORUM_REPLY);
             let body = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
-            let thread_id = match &chart.panel_app.cloud_overlay_state.forum_view {
-                mlc_app_layout::ui::modal_settings::ForumSubView::Thread { thread: Some(t), .. } => t.id,
+            let (thread_id, parent_reply_id) = match &chart.panel_app.cloud_overlay_state.forum2.view {
+                mlc_app_layout::ui::modal_settings::ForumV2View::Thread { id, reply_to, .. } => (*id, *reply_to),
                 _ => return,
             };
             match mlc_app_layout::ui::modal_settings::validate_forum_body(&body) {
                 Ok(()) => {
-                    if let mlc_app_layout::ui::modal_settings::ForumSubView::Thread {
-                        posting_reply, reply_error, ..
-                    } = &mut chart.panel_app.cloud_overlay_state.forum_view
-                    {
-                        *posting_reply = true;
-                        *reply_error = None;
-                    }
-                    // Same tag `panel_click.rs`'s Reply button click sets —
-                    // consumed by the shells' successful-apply code to know
-                    // whether to clear the reply box (see its doc for why
-                    // `posting_reply` alone cannot tell Reply apart from
-                    // DeleteReply/DeleteThread).
-                    chart.panel_app.cloud_overlay_state.forum_reply_pending = true;
-                    chart.panel_app.cloud_overlay_state.forum_request =
-                        Some(mlc_app_layout::ui::modal_settings::ForumRequest::Reply { thread_id, body });
+                    let f2 = &mut chart.panel_app.cloud_overlay_state.forum2;
+                    f2.last_error = None;
+                    f2.reply_pending = true;
+                    f2.request = Some(mlc_app_layout::ui::modal_settings::ForumV2Request::Reply {
+                        thread_id, body, parent_reply_id,
+                    });
                 }
                 Err(message) => {
-                    if let mlc_app_layout::ui::modal_settings::ForumSubView::Thread { reply_error, .. } =
-                        &mut chart.panel_app.cloud_overlay_state.forum_view
-                    {
-                        *reply_error = Some(message);
-                    }
+                    chart.panel_app.cloud_overlay_state.forum2.last_error = Some(message);
                 }
             }
         };
@@ -1120,6 +1113,116 @@ impl ChartApp {
             TextAction::Commit(_) => submit(self),
             TextAction::Cancel => cancel(self),
             _ => {}
+        }
+    }
+
+    /// Forum-v2 Boards view's search box. Enter submits
+    /// `ForumV2Request::Search` and switches straight to `ForumV2View::
+    /// Search` with an empty hit list (same optimistic view-switch idiom
+    /// `panel_click.rs`'s `"forum2:thread:{id}"` arm uses) — mirrors
+    /// `panel_click.rs`'s own `"forum2:search_submit"` click arm exactly.
+    /// An empty query is a no-op rather than a request for everything.
+    #[cfg(feature = "cloud")]
+    fn text_action_forum_search(&mut self, ch: char, action: TextAction) {
+        let submit = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::FORUM_SEARCH);
+            let q = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+            if q.is_empty() {
+                return;
+            }
+            let f2 = &mut chart.panel_app.cloud_overlay_state.forum2;
+            f2.last_error = None;
+            f2.view = mlc_app_layout::ui::modal_settings::ForumV2View::Search { q: q.clone(), hits: Vec::new() };
+            f2.request = Some(mlc_app_layout::ui::modal_settings::ForumV2Request::Search { q, board: None });
+        };
+        if ch == '\r' || ch == '\n' {
+            submit(self);
+            return;
+        }
+        if ch == '\x1b' {
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            return;
+        }
+        if let TextAction::Commit(_) = action {
+            submit(self);
+        }
+    }
+
+    /// DM Conversation view's draft box. Enter validates non-empty and, if
+    /// it passes, arms `DmRequest::Send` and marks `DmState::send_pending`
+    /// — same pending-flag idiom as `ForumV2State::reply_pending`/v1's
+    /// `forum_reply_pending` (see the latter's doc for why one is needed).
+    /// Escape clears the field and drops focus, same as `FORUM_REPLY`'s own
+    /// Escape. Mirrors `panel_click.rs`'s `"dm:send"` click arm exactly.
+    #[cfg(feature = "cloud")]
+    fn text_action_dm_draft(&mut self, ch: char, action: TextAction) {
+        let submit = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::DM_DRAFT);
+            let text = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+            if text.is_empty() {
+                return;
+            }
+            let id = match &chart.panel_app.cloud_overlay_state.dm.view {
+                mlc_app_layout::ui::modal_settings::DmView::Conversation { id, .. } => *id,
+                _ => return,
+            };
+            let dm = &mut chart.panel_app.cloud_overlay_state.dm;
+            dm.last_error = None;
+            dm.send_pending = true;
+            dm.request = Some(mlc_app_layout::ui::modal_settings::DmRequest::Send { id, plaintext: text });
+        };
+        let cancel = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::DM_DRAFT);
+            chart.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+            chart.input_coordinator.borrow_mut().text_fields_mut().blur();
+        };
+        if ch == '\r' || ch == '\n' {
+            submit(self);
+            return;
+        }
+        if ch == '\x1b' {
+            cancel(self);
+            return;
+        }
+        match action {
+            TextAction::Commit(_) => submit(self),
+            TextAction::Cancel => cancel(self),
+            _ => {}
+        }
+    }
+
+    /// DM List view's "start a conversation" peer field (new this pass —
+    /// see `mlc_app_layout::layout::modals::dm_overlay`'s `draw_open_peer_
+    /// row`). Enter validates non-empty, arms `DmRequest::Open` and clears
+    /// the field immediately — unlike `DM_DRAFT`/`FORUM_REPLY`, there is
+    /// only ever one action reachable from the List view that touches this
+    /// field, and once `Open` succeeds the shell switches away to
+    /// `DmView::Conversation` (where this field is not even drawn), so no
+    /// pending flag is needed to know when it is safe to clear it. Mirrors
+    /// `panel_click.rs`'s `"dm:open_peer"` click arm exactly.
+    #[cfg(feature = "cloud")]
+    fn text_action_dm_peer(&mut self, ch: char, action: TextAction) {
+        let submit = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::DM_PEER);
+            let with_label = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+            if with_label.is_empty() {
+                return;
+            }
+            chart.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+            let dm = &mut chart.panel_app.cloud_overlay_state.dm;
+            dm.last_error = None;
+            dm.request = Some(mlc_app_layout::ui::modal_settings::DmRequest::Open { with_label });
+        };
+        if ch == '\r' || ch == '\n' {
+            submit(self);
+            return;
+        }
+        if ch == '\x1b' {
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            return;
+        }
+        if let TextAction::Commit(_) = action {
+            submit(self);
         }
     }
 

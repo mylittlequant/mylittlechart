@@ -67,6 +67,11 @@ pub(crate) const FORUM_REPLY_FIELD: &str = "forum_reply";
 /// Forum v2's search box — new field, added to `mlc_app::text_input::
 /// known_field_ids` alongside this pass.
 pub(crate) const FORUM_SEARCH_FIELD: &str = "forum_search";
+/// DM list view's "start a conversation" peer field (nick or public id) —
+/// mirrors `mlc_app::text_input::DM_PEER`. New this pass: W2 drew no entry
+/// point for `DmRequest::Open` at all (see `dm_overlay.rs`'s own
+/// `draw_open_peer_row`).
+pub(crate) const DM_PEER_FIELD: &str = "dm_peer";
 
 /// Social/project links shown in the News overlay's LINKS section (id,
 /// label, URL). Keep in sync with the landing footer. The click handler
@@ -140,6 +145,11 @@ pub struct CloudOverlayResult {
     /// pass).
     pub dm_draft_rect: Option<WidgetRect>,
     pub dm_draft_char_positions: Vec<f64>,
+    /// DM List view's "start a conversation" peer field geometry — same
+    /// contract as `forum_search_rect` above. Backs `mlc_app::text_input::
+    /// DM_PEER` (new this pass, see `dm_overlay.rs`'s `draw_open_peer_row`).
+    pub dm_peer_rect: Option<WidgetRect>,
+    pub dm_peer_char_positions: Vec<f64>,
 }
 
 fn title_for(state: &CloudOverlayState) -> &'static str {

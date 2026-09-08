@@ -5620,15 +5620,22 @@ impl ChartApp {
                     if let Some(tab) =
                         mlc_app_layout::ui::modal_settings::NewsTab::from_id(&rest["tab:".len()..])
                     {
-                        if tab != mlc_app_layout::ui::modal_settings::NewsTab::Forum || st.forum_entitled {
+                        use mlc_app_layout::ui::modal_settings::NewsTab;
+                        let paid_tab = matches!(tab, NewsTab::Forum | NewsTab::Messages);
+                        if !paid_tab || st.forum_entitled {
                             st.set_news_tab(tab);
-                            // Switching TO the Forum tab must not show
+                            // Switching TO Forum/Messages must not show
                             // whatever page was cached from a previous visit
                             // — invalidate so the shell's passive fetch
-                            // reissues page one (see `invalidate_forum_list`
-                            // doc for the other call sites).
-                            if tab == mlc_app_layout::ui::modal_settings::NewsTab::Forum {
-                                st.invalidate_forum_list();
+                            // reissues page one (see `invalidate_boards`/
+                            // `invalidate_conversations`' own doc for the
+                            // other call sites). `NewsTab::Forum` renders
+                            // `forum2` now, not v1's own `forum_list` — see
+                            // `ForumV2State`'s own doc.
+                            match tab {
+                                NewsTab::Forum => st.forum2.invalidate_boards(),
+                                NewsTab::Messages => st.dm.invalidate_conversations(),
+                                _ => {}
                             }
                         }
                     }
@@ -5805,6 +5812,247 @@ impl ChartApp {
                         // to do here" idiom `redeem_input`/`account_nick_input`
                         // already use.
                         "title_input" | "body_input" | "reply_input" => { /* claimed on mousedown */ }
+                        _ => {}
+                    }
+                }
+                // === Forum v2 tab clicks (paid-only) === What `NewsTab::
+                // Forum` actually renders now (`ForumV2State`'s own doc) —
+                // same disjoint-borrow shape as the v1 `"forum:"` arm above
+                // (`st` plus `self.input_coordinator`, a disjoint field).
+                // Explicitly re-gated on `forum_entitled`: unlike v1, this
+                // tab's own hit zones are new enough that a stale click
+                // target should not be trusted to belt the render side's own
+                // gate alone.
+                rest if rest.starts_with("forum2:") => {
+                    if !st.forum_entitled {
+                        return;
+                    }
+                    use mlc_app_layout::ui::modal_settings::{ForumV2Request, ForumV2View};
+                    let action = &rest["forum2:".len()..];
+                    // Share-link paragraph inside a thread body/reply — same
+                    // "carried in the id's own tail" shape as the v1 arm.
+                    if let Some((_, url)) = action.split_once(":link:") {
+                        st.open_url_requested = Some(url.to_string());
+                        return;
+                    }
+                    match action {
+                        rest2 if rest2.starts_with("board:") => {
+                            let slug = rest2["board:".len()..].to_string();
+                            st.forum2.view = ForumV2View::BoardThreads {
+                                slug: slug.clone(), threads: Vec::new(), next_before: None,
+                            };
+                            st.forum2.invalidate_board_threads();
+                            st.forum2.last_error = None;
+                            st.forum2.request = Some(ForumV2Request::LoadBoard { slug, before: None });
+                        }
+                        "new_thread" => {
+                            let slug = match &st.forum2.view {
+                                ForumV2View::BoardThreads { slug, .. } => slug.clone(),
+                                _ => return,
+                            };
+                            st.forum2.view = ForumV2View::Compose { slug };
+                            st.forum2.last_error = None;
+                            let title_wid = uzor::WidgetId::from(crate::text_input::FORUM_TITLE);
+                            let body_wid = uzor::WidgetId::from(crate::text_input::FORUM_BODY);
+                            let mut tf = self.input_coordinator.borrow_mut();
+                            let tf = tf.text_fields_mut();
+                            tf.clear(&title_wid);
+                            tf.clear(&body_wid);
+                            tf.focus(title_wid);
+                        }
+                        "back" => {
+                            st.forum2.reset_to_boards();
+                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                        }
+                        "compose_cancel" => {
+                            st.forum2.reset_to_boards();
+                            let mut tf = self.input_coordinator.borrow_mut();
+                            let tf = tf.text_fields_mut();
+                            tf.clear(&uzor::WidgetId::from(crate::text_input::FORUM_TITLE));
+                            tf.clear(&uzor::WidgetId::from(crate::text_input::FORUM_BODY));
+                            tf.blur();
+                        }
+                        // Mirrors `FORUM_BODY`'s own Enter-submit
+                        // (`text_input::dispatch::text_action_forum_body`).
+                        "compose_post" => {
+                            let title_wid = uzor::WidgetId::from(crate::text_input::FORUM_TITLE);
+                            let body_wid = uzor::WidgetId::from(crate::text_input::FORUM_BODY);
+                            let (title, body) = {
+                                let coord = self.input_coordinator.borrow();
+                                let tf = coord.text_fields();
+                                (tf.text(&title_wid).trim().to_string(), tf.text(&body_wid).trim().to_string())
+                            };
+                            let slug = match &st.forum2.view {
+                                ForumV2View::Compose { slug } => slug.clone(),
+                                _ => return,
+                            };
+                            let validated = mlc_app_layout::ui::modal_settings::validate_forum_title(&title)
+                                .and_then(|()| mlc_app_layout::ui::modal_settings::validate_forum_body(&body));
+                            match validated {
+                                Ok(()) => {
+                                    st.forum2.last_error = None;
+                                    st.forum2.create_thread_pending = true;
+                                    st.forum2.request = Some(ForumV2Request::CreateThread { slug, title, body });
+                                }
+                                Err(message) => st.forum2.last_error = Some(message),
+                            }
+                        }
+                        rest2 if rest2.starts_with("thread:") => {
+                            if let Ok(id) = rest2["thread:".len()..].parse::<i64>() {
+                                st.forum2.view = ForumV2View::Thread {
+                                    id, thread: None, replies_tree: Vec::new(), reply_to: None,
+                                };
+                                st.forum2.invalidate_thread();
+                                st.forum2.reply_pending = false;
+                                st.forum2.last_error = None;
+                                st.forum2.request = Some(ForumV2Request::OpenThread { id });
+                            }
+                        }
+                        "load_more" => {
+                            if let ForumV2View::BoardThreads { slug, next_before: Some(before), .. } = &st.forum2.view {
+                                st.forum2.request = Some(ForumV2Request::LoadBoard {
+                                    slug: slug.clone(), before: Some(before.clone()),
+                                });
+                            }
+                        }
+                        // Toggles which reply the reply box nests under —
+                        // clicking the same node's own row again returns to
+                        // a top-level reply (`parent_reply_id: None`).
+                        rest2 if rest2.starts_with("reply_to:") => {
+                            if let Ok(id) = rest2["reply_to:".len()..].parse::<i64>() {
+                                if let ForumV2View::Thread { reply_to, .. } = &mut st.forum2.view {
+                                    *reply_to = if *reply_to == Some(id) { None } else { Some(id) };
+                                }
+                            }
+                        }
+                        rest2 if rest2.starts_with("delete_reply:") => {
+                            if let Ok(id) = rest2["delete_reply:".len()..].parse::<i64>() {
+                                st.forum2.last_error = None;
+                                st.forum2.request = Some(ForumV2Request::DeleteReply { id });
+                            }
+                        }
+                        // Moderator/admin row: `mod:{hide|unhide|lock|unlock
+                        // |pin|unpin}:{thread_id}` — `board` only matters for
+                        // `move`, which no row here drives (see
+                        // `ForumV2Request::Moderate`'s own doc).
+                        rest2 if rest2.starts_with("mod:") => {
+                            if let Some((mod_action, id_str)) = rest2["mod:".len()..].split_once(':') {
+                                if let Ok(thread_id) = id_str.parse::<i64>() {
+                                    st.forum2.last_error = None;
+                                    st.forum2.request = Some(ForumV2Request::Moderate {
+                                        thread_id, action: mod_action.to_string(), board: None,
+                                    });
+                                }
+                            }
+                        }
+                        // Mirrors `FORUM_REPLY`'s own Enter-submit
+                        // (`text_input::dispatch::text_action_forum_reply`).
+                        "reply_submit" => {
+                            let wid = uzor::WidgetId::from(crate::text_input::FORUM_REPLY);
+                            let body = self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+                            let (thread_id, parent_reply_id) = match &st.forum2.view {
+                                ForumV2View::Thread { id, reply_to, .. } => (*id, *reply_to),
+                                _ => return,
+                            };
+                            match mlc_app_layout::ui::modal_settings::validate_forum_body(&body) {
+                                Ok(()) => {
+                                    st.forum2.last_error = None;
+                                    st.forum2.reply_pending = true;
+                                    st.forum2.request = Some(ForumV2Request::Reply { thread_id, body, parent_reply_id });
+                                }
+                                Err(message) => st.forum2.last_error = Some(message),
+                            }
+                        }
+                        // A search hit row — opens the hit's thread, same as
+                        // a `thread:{id}` row.
+                        rest2 if rest2.starts_with("search_hit:") => {
+                            if let Ok(i) = rest2["search_hit:".len()..].parse::<usize>() {
+                                let hit_thread_id = match &st.forum2.view {
+                                    ForumV2View::Search { hits, .. } => hits.get(i).map(|h| h.thread_id),
+                                    _ => None,
+                                };
+                                if let Some(id) = hit_thread_id {
+                                    st.forum2.view = ForumV2View::Thread {
+                                        id, thread: None, replies_tree: Vec::new(), reply_to: None,
+                                    };
+                                    st.forum2.invalidate_thread();
+                                    st.forum2.reply_pending = false;
+                                    st.forum2.last_error = None;
+                                    st.forum2.request = Some(ForumV2Request::OpenThread { id });
+                                }
+                            }
+                        }
+                        // Mirrors `FORUM_SEARCH`'s own Enter-submit
+                        // (`text_input::dispatch::text_action_forum_search`).
+                        "search_submit" => {
+                            let wid = uzor::WidgetId::from(crate::text_input::FORUM_SEARCH);
+                            let q = self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+                            if !q.is_empty() {
+                                st.forum2.last_error = None;
+                                st.forum2.view = ForumV2View::Search { q: q.clone(), hits: Vec::new() };
+                                st.forum2.request = Some(ForumV2Request::Search { q, board: None });
+                            }
+                        }
+                        // Claimed on mousedown by the store — same "nothing
+                        // to do here" idiom the v1 arm above uses.
+                        "search_input" | "title_input" | "body_input" | "reply_input" => { /* claimed on mousedown */ }
+                        _ => {}
+                    }
+                }
+                // === Direct Messages tab clicks (paid-only) === Same
+                // disjoint-borrow shape and re-gating reasoning as the
+                // `"forum2:"` arm above.
+                rest if rest.starts_with("dm:") => {
+                    if !st.forum_entitled {
+                        return;
+                    }
+                    use mlc_app_layout::ui::modal_settings::{DmRequest, DmView};
+                    let action = &rest["dm:".len()..];
+                    match action {
+                        "publish_key" => {
+                            st.dm.last_error = None;
+                            st.dm.request = Some(DmRequest::PublishIdentity);
+                        }
+                        rest2 if rest2.starts_with("conversation:") => {
+                            if let Ok(id) = rest2["conversation:".len()..].parse::<i64>() {
+                                st.dm.open_conversation(id);
+                                st.dm.request = Some(DmRequest::LoadMessages { id, after: None });
+                            }
+                        }
+                        "back" => {
+                            st.dm.reset_to_list();
+                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                        }
+                        // Starts (or resumes) a conversation with the typed
+                        // nick/public id. Mirrors `DM_PEER`'s own Enter-submit
+                        // (`text_input::dispatch::text_action_dm_peer`).
+                        "open_peer" => {
+                            let wid = uzor::WidgetId::from(crate::text_input::DM_PEER);
+                            let with_label = self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+                            if !with_label.is_empty() {
+                                self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+                                st.dm.last_error = None;
+                                st.dm.request = Some(DmRequest::Open { with_label });
+                            }
+                        }
+                        // Mirrors `DM_DRAFT`'s own Enter-submit
+                        // (`text_input::dispatch::text_action_dm_draft`).
+                        "send" => {
+                            let wid = uzor::WidgetId::from(crate::text_input::DM_DRAFT);
+                            let text = self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+                            let id = match &st.dm.view {
+                                DmView::Conversation { id, .. } => *id,
+                                _ => return,
+                            };
+                            if !text.is_empty() {
+                                st.dm.last_error = None;
+                                st.dm.send_pending = true;
+                                st.dm.request = Some(DmRequest::Send { id, plaintext: text });
+                            }
+                        }
+                        // Claimed on mousedown by the store — same "nothing
+                        // to do here" idiom the v1/forum2 arms above use.
+                        "peer_input" | "draft_input" => { /* claimed on mousedown */ }
                         _ => {}
                     }
                 }

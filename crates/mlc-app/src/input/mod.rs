@@ -2569,18 +2569,25 @@ impl ChartApp {
                     }
                 }
             }
-            // Cloud News/Download/Forum overlay — text select drag on
-            // whichever Forum field the compose/thread view is currently
-            // showing (title+body for Compose, reply for Thread). Same
-            // "every modal field needs its own arm" contract as the
-            // gift-code field above — each `Option<Rect>` is naturally
-            // `None` unless `cloud_overlay.rs` actually drew that field
-            // this frame, so no extra sub-view check is needed here beyond
-            // `is_open`.
+            // Cloud News/Download/Forum/DM overlay — text select drag on
+            // whichever field the current sub-view is showing (title+body
+            // for Forum-v2 Compose, reply for Forum-v2 Thread, search for
+            // Forum-v2 Boards, draft/peer for DM). Same "every modal field
+            // needs its own arm" contract as the gift-code field above —
+            // each `Option<Rect>` is naturally `None` unless the relevant
+            // `layout::modals` file actually drew that field this frame, so
+            // no extra sub-view check is needed here beyond `is_open`.
             #[cfg(feature = "cloud")]
             if let Some(ref ov) = result.cloud_overlay {
                 if self.panel_app.cloud_overlay_state.is_open {
-                    let hit = [ov.forum_title_rect, ov.forum_body_rect, ov.forum_reply_rect]
+                    let hit = [
+                        ov.forum_title_rect,
+                        ov.forum_body_rect,
+                        ov.forum_reply_rect,
+                        ov.forum_search_rect,
+                        ov.dm_draft_rect,
+                        ov.dm_peer_rect,
+                    ]
                         .into_iter()
                         .flatten()
                         .any(|r| r.contains(x, y));

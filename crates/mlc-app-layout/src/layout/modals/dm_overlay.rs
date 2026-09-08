@@ -22,7 +22,7 @@ use crate::ui::Icon;
 
 use super::cloud_overlay::{
     draw_action_row, draw_status, register_scrollbar_hit_zones, relative_time, scroll_config,
-    wrap_text, CloudOverlayResult, FIELD_H, GOLD, ROW_GAP, ROW_H,
+    wrap_text, CloudOverlayResult, ACTION_BTN_GAP, DM_PEER_FIELD, FIELD_H, GOLD, ROW_GAP, ROW_H,
 };
 
 const CONV_ROW_H: f64 = 52.0;
@@ -69,7 +69,7 @@ pub(crate) fn draw(
     let sw = scrollable.content_width();
 
     match &state.dm.view {
-        DmView::List => draw_list(ctx, coord, layer_id, sx, sy, sw, state, current_time_ms, tt),
+        DmView::List => draw_list(ctx, coord, layer_id, sx, sy, sw, state, ft, tt, current_time_ms, result),
         DmView::Conversation { id, messages, draft_field_id } => draw_conversation(
             ctx, coord, layer_id, sx, sy, sw, state, *id, messages, draft_field_id, ft, tt, current_time_ms, result,
         ),
@@ -167,6 +167,39 @@ fn draw_publish_key_row(
     coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
 }
 
+/// "Start a conversation" row: a nick/public-id field plus an Open button.
+/// W2 drew no entry point for `DmRequest::Open` at all — this pass adds the
+/// minimal one. Shown once an identity key is published (the row above this
+/// one covers the "not yet" case); click dispatch lives in `mlc-app`'s
+/// `panel_click.rs` (`cloud_overlay:dm:open_peer`).
+#[allow(clippy::too_many_arguments)]
+fn draw_open_peer_row(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    ft: &FrameTheme,
+    tt: &ToolbarTheme,
+    current_time_ms: u64,
+    result: &mut CloudOverlayResult,
+) -> f64 {
+    let btn_w = 64.0;
+    let field_w = w - btn_w - ACTION_BTN_GAP;
+    let (rect, chars) = draw_field(
+        ctx, coord, layer_id, "cloud_overlay:dm:peer_input", DM_PEER_FIELD,
+        WidgetRect::new(x, y, field_w, FIELD_H), "Nick or public id…", ft, tt, current_time_ms,
+    );
+    result.dm_peer_rect = Some(rect);
+    result.dm_peer_char_positions = chars;
+    draw_action_row(
+        ctx, coord, layer_id, "cloud_overlay:dm:open_peer",
+        WidgetRect::new(x + field_w + ACTION_BTN_GAP, y, btn_w, FIELD_H), "Open", tt,
+    );
+    FIELD_H + 12.0
+}
+
 fn draw_conversation_row(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -223,11 +256,13 @@ fn draw_conversation_row(
 
 fn list_h(d: &DmState) -> f64 {
     let publish_h = if d.identity_fingerprint.is_none() { ROW_H + 8.0 } else { 0.0 };
+    let open_peer_h = if d.identity_fingerprint.is_some() { FIELD_H + 12.0 } else { 0.0 };
     let err_h = if d.last_error.is_some() { 20.0 } else { 0.0 };
     let list_h = if d.conversations.is_empty() { 24.0 } else { d.conversations.len() as f64 * CONV_ROW_H };
-    publish_h + err_h + list_h
+    publish_h + open_peer_h + err_h + list_h
 }
 
+#[allow(clippy::too_many_arguments)]
 fn draw_list(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -236,13 +271,17 @@ fn draw_list(
     y: f64,
     w: f64,
     state: &CloudOverlayState,
-    current_time_ms: u64,
+    ft: &FrameTheme,
     tt: &ToolbarTheme,
+    current_time_ms: u64,
+    result: &mut CloudOverlayResult,
 ) {
     let mut ly = y;
     if state.dm.identity_fingerprint.is_none() {
         draw_publish_key_row(ctx, coord, layer_id, x, ly, w, tt);
         ly += ROW_H + 8.0;
+    } else {
+        ly += draw_open_peer_row(ctx, coord, layer_id, x, ly, w, ft, tt, current_time_ms, result);
     }
     if let Some(err) = &state.dm.last_error {
         ly += draw_error_line(ctx, w, x, ly, err);

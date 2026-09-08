@@ -5147,9 +5147,12 @@ impl CloudOverlayState {
         self.forum2.boards_refreshing = false;
         self.forum2.board_threads_refreshing = false;
         self.forum2.thread_refreshing = false;
+        self.forum2.create_thread_pending = false;
+        self.forum2.reply_pending = false;
         self.forum2.request = None;
         self.dm.conversations_refreshing = false;
         self.dm.messages_refreshing = false;
+        self.dm.send_pending = false;
         self.dm.request = None;
     }
 
@@ -5449,6 +5452,18 @@ pub struct ForumV2State {
     /// opened.
     pub thread_fetched_at: Option<u64>,
     pub thread_refreshing: bool,
+    /// The in-flight request is specifically `ForumV2Request::CreateThread`
+    /// — same idiom as v1's own `CloudOverlayState::forum_reply_pending`
+    /// (see that field's own doc for why a request-type flag is needed on
+    /// top of the one-shot `request` mailbox): consumed by the shells'
+    /// successful-apply code to know whether to clear `FORUM_TITLE`/
+    /// `FORUM_BODY`, reset to `false` wherever it is consumed, on success or
+    /// failure alike.
+    pub create_thread_pending: bool,
+    /// Same idiom, for `ForumV2Request::Reply` — never set by
+    /// `DeleteReply`/`Moderate`, consumed to know whether to clear
+    /// `FORUM_REPLY` (and `ForumV2View::Thread::reply_to`).
+    pub reply_pending: bool,
 }
 
 #[cfg(feature = "cloud")]
@@ -5466,6 +5481,8 @@ impl Default for ForumV2State {
             board_threads_refreshing: false,
             thread_fetched_at: None,
             thread_refreshing: false,
+            create_thread_pending: false,
+            reply_pending: false,
         }
     }
 }
@@ -5490,6 +5507,8 @@ impl ForumV2State {
         self.thread_refreshing = false;
         self.last_error = None;
         self.request = None;
+        self.create_thread_pending = false;
+        self.reply_pending = false;
     }
 
     pub fn invalidate_boards(&mut self) {
@@ -5636,6 +5655,13 @@ pub struct DmState {
     /// — reset whenever a different conversation is opened.
     pub messages_fetched_at: Option<u64>,
     pub messages_refreshing: bool,
+    /// The in-flight request is specifically `DmRequest::Send` — same idiom
+    /// as v1's own `CloudOverlayState::forum_reply_pending` (see that
+    /// field's own doc for why a request-type flag is needed on top of the
+    /// one-shot `request` mailbox): consumed by the shells' successful-apply
+    /// code to know whether to clear `DM_DRAFT`, reset to `false` wherever
+    /// it is consumed, on success or failure alike.
+    pub send_pending: bool,
 }
 
 #[cfg(feature = "cloud")]
@@ -5651,6 +5677,7 @@ impl Default for DmState {
             conversations_refreshing: false,
             messages_fetched_at: None,
             messages_refreshing: false,
+            send_pending: false,
         }
     }
 }
@@ -5673,6 +5700,7 @@ impl DmState {
         self.messages_refreshing = false;
         self.last_error = None;
         self.request = None;
+        self.send_pending = false;
     }
 
     /// Drop back to the conversation list — same "reopen always lands here"
@@ -5683,6 +5711,7 @@ impl DmState {
         self.messages_refreshing = false;
         self.last_error = None;
         self.request = None;
+        self.send_pending = false;
     }
 
     /// The peer row for the conversation currently open in
