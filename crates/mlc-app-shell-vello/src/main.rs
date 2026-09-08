@@ -2252,12 +2252,46 @@ impl App<'_> {
         }
         self.last_focused = None;
 
+        // 3b. Seal + drop every secret sidecar bound to the OLD profile
+        //     before anything below touches the new one. `seal_secret_sidecars`
+        //     (one-list idiom, `vault_key_sidecars`) wipes both RAM-only
+        //     `SecretStore`s; `dm_identity` has no seal of its own (it is a
+        //     plain `Option`, not a `SecretStore`) — dropping it here is
+        //     the drop, and it reloads lazily off the NEW profile's own
+        //     `dm_identity.enc` the next time a DM surface needs one
+        //     (`load_or_generate_dm_identity`, called only when
+        //     `self.dm_identity.is_none()`).
+        self.seal_secret_sidecars();
+        #[cfg(feature = "cloud")]
+        {
+            self.dm_identity = None;
+        }
+
         // 4. Determine whether the new profile needs vault unlock.
         //    active_profile_data_dir() now resolves to target_id's directory
         //    because the index was just updated and saved above.
         let new_profile_dir = mlc_core::active_profile_data_dir();
         let has_vault = new_profile_dir.join("vault.enc").exists();
         let has_salt  = new_profile_dir.join("salt.hex").exists();
+
+        // 4a. Rebuild `alert_secrets_store` fresh against `new_profile_dir`
+        //     (sealed — nothing has confirmed a key for the NEW profile
+        //     yet). Every window recreated in step 7 below wires its own
+        //     `ChartApp` off this field's CURRENT value (`create_window`'s
+        //     own `set_alert_secrets_store` call), so rebuilding it here,
+        //     before step 7 runs, is sufficient to reach every window —
+        //     there is no live window left to walk at this point (step 3
+        //     already dropped all of them). `agent_key_store` cannot be
+        //     rebuilt the same way — see `vault_key_sidecars`'s doc; it
+        //     stays sealed here (from 3b) and is re-unlocked in place, same
+        //     `Arc`, still against the ORIGINAL profile's `agent_keys.enc`,
+        //     in 6b below.
+        self.alert_secrets_store = build_secret_sidecar(
+            new_profile_dir.join("salt.hex"),
+            new_profile_dir.join("alert_secrets.enc"),
+            None,
+            "alert secrets",
+        );
 
         // 5. Load the new profile from disk.
         //    active_profile_data_dir() reads the index we just updated, so it
@@ -2290,22 +2324,21 @@ impl App<'_> {
             self.profile = self.profile_manager.profile.clone();
             self.core.user_mut().set_vault_key(Some(key));
             // Every `set_vault_key(Some(..))` site must also unlock the
-            // agent-key store off the same key (agent-api-auth-and-secret-
-            // store plan, follow-up) — this one previously left it sealed
-            // through an entire profile switch.
+            // sidecars off the same key (agent-api-auth-and-secret-store
+            // plan, follow-up) — this one previously left them sealed
+            // through an entire profile switch. One-list idiom via
+            // `sync_secret_sidecars`/`vault_key_sidecars`, mirroring
+            // `ChartApp::sync_vault_sidecars`.
             //
-            // NOTE: `agent_state.agent_key_store`'s `salt_path`/`vault_path`
-            // are bound to whatever profile was active at `App::new()` — a
-            // multi-profile hot-reload switch (paid feature) does not
-            // re-point them at the new profile's `agent_keys.enc`. This call
-            // therefore still targets the ORIGINAL profile's sidecar; a
-            // store rebuilt per profile switch is a separate follow-up, not
-            // this one.
-            if let Some(ref agent_state) = self.agent_state {
-                if let Err(e) = agent_state.agent_key_store.unlock_with_key(&key) {
-                    eprintln!("[App] agent key store: failed to unlock after profile-switch pre-validation: {}", e);
-                }
-            }
+            // `alert_secrets_store` was rebuilt against `new_profile_dir` in
+            // 4a above, so this now correctly unlocks the SWITCHED-TO
+            // profile's own `alert_secrets.enc`. `agent_key_store` cannot be
+            // rebuilt the same way (see `vault_key_sidecars`'s doc) — this
+            // still unlocks the SAME `Arc<SecretStore>`, bound to the
+            // ORIGINAL profile's `agent_keys.enc`; repointing or replacing
+            // it is a separate follow-up gated on a change to
+            // `mlc-backend-shell-http` (out of scope here).
+            self.sync_secret_sidecars(&key);
             self.needs_vault_unlock = false;
             eprintln!("[App] hot-reload: pre-validated vault key injected — skipping unlock screen");
         }
@@ -2864,20 +2897,46 @@ impl App<'_> {
         self.windows.get_mut(&key)
     }
 
-    /// Seal every RAM-only vault-keyed `SecretStore` sidecar this host
-    /// holds — `agent_state.agent_key_store` (if the Agent API is wired)
-    /// and `alert_secrets_store` — from the two edges that must drop both
-    /// together without going through any live window's `ChartApp`
-    /// (sign-out, `vault_skip_to_wizard`'s fresh-profile reset). Per-window
-    /// seal/unlock lockstep for the SAME two stores is
+    /// Every RAM-only vault-keyed `SecretStore` sidecar this HOST holds —
+    /// mirrors `ChartApp::vault_key_sidecars` (`input/credentials.rs`,
+    /// `mlc-app` crate) one level up, so a host-level seal or re-unlock
+    /// never forgets one. `agent_key_store` (if the Agent API is wired)
+    /// still lives inside `Arc<AgentState>` as a plain `Arc<SecretStore>`
+    /// field with no setter (`mlc-backend-shell-http` is out of scope for
+    /// the profile-switch rebuild below) — it is always the SAME `Arc`
+    /// here, seal/unlock only, never replaced.
+    fn vault_key_sidecars(&self) -> [Option<&std::sync::Arc<mlc_vault::SecretStore>>; 2] {
+        [
+            self.agent_state.as_ref().map(|s| &s.agent_key_store),
+            Some(&self.alert_secrets_store),
+        ]
+    }
+
+    /// Seal every store in [`Self::vault_key_sidecars`] — from the two
+    /// edges that must drop both together without going through any live
+    /// window's `ChartApp` (sign-out, `vault_skip_to_wizard`'s fresh-profile
+    /// reset, a profile hot-reload switch). Per-window seal/unlock lockstep
+    /// for the SAME two stores is
     /// `input/credentials.rs::seal_vault_sidecars`/`sync_vault_sidecars`
-    /// (`mlc-app` crate) — this is the host-level counterpart for the two
+    /// (`mlc-app` crate) — this is the host-level counterpart for the
     /// call-outs that run before or without one.
     fn seal_secret_sidecars(&self) {
-        if let Some(ref agent_state) = self.agent_state {
-            agent_state.agent_key_store.seal();
+        for store in self.vault_key_sidecars().into_iter().flatten() {
+            store.seal();
         }
-        self.alert_secrets_store.seal();
+    }
+
+    /// Refresh every store in [`Self::vault_key_sidecars`] off the SAME
+    /// `VaultKey`, mirroring `ChartApp::sync_vault_sidecars`'s one-list
+    /// idiom at the host level — called wherever `core.user_mut().
+    /// set_vault_key(Some(..))` lands here (today: the profile-switch
+    /// pre-validated-key injection in `execute_profile_switch`).
+    fn sync_secret_sidecars(&self, vault_key: &mlc_vault::vault::VaultKey) {
+        for store in self.vault_key_sidecars().into_iter().flatten() {
+            if let Err(e) = store.unlock_with_key(vault_key) {
+                eprintln!("[App] secret store: failed to unlock alongside vault: {}", e);
+            }
+        }
     }
 
     /// Load this profile's DM identity from its `dm_identity.enc` sidecar
@@ -2887,11 +2946,12 @@ impl App<'_> {
     /// existing-but-unreadable sidecar — that would orphan every message
     /// already exchanged under the old key.
     ///
-    /// Same known limitation as `agent_key_store`/`alert_secrets_store`
-    /// (see their own doc at `App::new`): the path is resolved from
-    /// `mlc_core::active_profile_data_dir()` at call time, which is not
-    /// re-pointed by a multi-profile hot-reload switch's own bookkeeping —
-    /// a store rebuilt per profile switch is a follow-up, not this pass.
+    /// The path is resolved from `mlc_core::active_profile_data_dir()` at
+    /// call time — safe across a multi-profile hot-reload switch because
+    /// `execute_profile_switch` clears `self.dm_identity` to `None` on every
+    /// switch, so the next caller through here re-resolves against
+    /// whichever profile is active THEN, not whichever was active when this
+    /// `App` process started.
     #[cfg(feature = "cloud")]
     fn load_or_generate_dm_identity(&mut self, vault_key: &mlc_vault::vault::VaultKey) {
         let path = mlc_core::active_profile_data_dir().join(mlc_vault::dm::DM_IDENTITY_FILE_NAME);

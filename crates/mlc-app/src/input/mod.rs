@@ -3346,6 +3346,19 @@ impl ChartApp {
         use crate::panel_grid::ChartDragStartHit;
 
         let active_bid_ds = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06) —
+        // freehand tools (brush/highlighter) accumulate their stroke inside
+        // `handle_drag_start` via `start_freehand`, so the primitive begins
+        // life right there rather than on click. Refuse BEFORE that call so a
+        // read-only tab never even starts a stroke — mirrors
+        // `handle_canvas_click`'s click-based tool gate (`modals.rs`).
+        let freehand_tool_active_ds = active_bid_ds
+            .map(|bid| self.core.drawings().is_freehand_tool(bid))
+            .unwrap_or(false);
+        if freehand_tool_active_ds && self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            eprintln!("[ChartApp] freehand drag-start refused: active tab is read-only (shared chart)");
+            return false;
+        }
         // Same rule as the click path: bars come from the bubble already
         // resolved above, never from the lagging tag-registry lookup.
         let ds_bars = active_bid_ds
@@ -5398,13 +5411,34 @@ impl ChartApp {
             return;
         }
 
-        // Freehand drawing (brush/highlighter) — complete stroke on drag end
+        // Freehand drawing (brush/highlighter) — complete stroke on drag end.
+        //
+        // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06):
+        // `complete_freehand` finalizes the primitive as a side effect of
+        // being CALLED, so the gate must run BEFORE that call rather than
+        // after consuming its `Option` result (that was the bug — the check
+        // used to live inside this `if let`, after the primitive already
+        // existed). `on_drag_start` already refuses to arm a stroke on a
+        // read-only tab, so this only guards the case where read-only status
+        // flips mid-drag.
         let active_bid_cf = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
-        if let Some(freehand) = active_bid_cf.and_then(|bid| {
-            let mut dreg = self.core.drawings_mut();
-            let mut session = crate::input::drawing_session::DrawingSessionView::new(&mut dreg, bid);
-            self.panel_app.panel_grid.complete_freehand(&mut session)
-        })
+        let freehand_readonly_blocked = active_bid_cf
+            .map(|bid| self.core.drawings().is_freehand_tool(bid))
+            .unwrap_or(false)
+            && self.is_readonly_tab(&self.panel_app.active_preset_id);
+        if freehand_readonly_blocked {
+            eprintln!("[ChartApp] freehand drag-end refused: active tab is read-only (shared chart)");
+        }
+        let freehand_cf = if freehand_readonly_blocked {
+            None
+        } else {
+            active_bid_cf.and_then(|bid| {
+                let mut dreg = self.core.drawings_mut();
+                let mut session = crate::input::drawing_session::DrawingSessionView::new(&mut dreg, bid);
+                self.panel_app.panel_grid.complete_freehand(&mut session)
+            })
+        };
+        if let Some(freehand) = freehand_cf
         {
             // For grouped windows: move the completed freehand primitive to TagManager.
             // For standalone windows: record undo and propagate to color-tag peers.
