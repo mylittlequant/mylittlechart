@@ -1993,6 +1993,19 @@ fn run_render_loop(
                 let _ = js_sys::Reflect::set(&dbg, &"alloc_live_mb".into(), &live_mb.round().into());
                 let _ = js_sys::Reflect::set(&dbg, &"alloc_peak_mb".into(), &peak_mb.round().into());
                 let _ = js_sys::Reflect::set(&dbg, &"alloc_count".into(), &allocs.into());
+                // Wasm linear-memory size (same `WebAssembly.Memory.buffer.
+                // byteLength` value `__MLC_WASM_MEM_MB()` in index.html
+                // already computes) next to `offscreen_px` — the live pixel
+                // count of the OffscreenCanvas(es) this shell owns (today:
+                // the cached blur-backdrop scratch surface, see
+                // `context::blur_scratch_offscreen_px`). Neither wasm linear
+                // memory nor GPU/compositor backing stores are counted by
+                // `alloc_live_mb`/`alloc_peak_mb` or the JS heap, so a single
+                // `MLC_DEBUG` read now tells all three apart.
+                let wasm_mem_mb = crate::perf::wasm_memory_mb();
+                let _ = js_sys::Reflect::set(&dbg, &"wasm_mem_mb".into(), &wasm_mem_mb.round().into());
+                let offscreen_px = crate::context::blur_scratch_offscreen_px();
+                let _ = js_sys::Reflect::set(&dbg, &"offscreen_px".into(), &(offscreen_px as f64).into());
                 // Sidebar state (two-clicks-after-reload defect hunt).
                 let sp = format!("{:?}", st.chart.sidebar_state.right_panel);
                 let _ = js_sys::Reflect::set(&dbg, &"sidebar_panel".into(), &sp.into());

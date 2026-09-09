@@ -13,6 +13,7 @@
 //! underlying surface instead of a CPU pixmap.
 
 use mlc_core::{Bar, render::RenderContext as ChartRenderContext};
+use std::cell::RefCell;
 use uzor::render::{
     BatchPainter, BlendMode, Effects, GradientPainter, Masking, Painter,
     RenderContext as UzorRenderContext, RenderContextExt, ShapeHelpers,
@@ -21,7 +22,38 @@ use uzor::render::{
 };
 use uzor_render_canvas2d::Canvas2dRenderContext;
 use wasm_bindgen::JsCast;
-use web_sys::CanvasRenderingContext2d;
+use web_sys::{CanvasRenderingContext2d, OffscreenCanvas, OffscreenCanvasRenderingContext2d};
+
+// ─── Blur scratch cache (2026-09-09, RSS-outside-every-counter fix) ───────────
+
+/// The cached scratch surface `blur_overlay_backdrop` snapshots into before
+/// blurring it back. Lives in a module-level [`thread_local!`] rather than on
+/// `Canvas2dChartRenderContext` because that render context is reconstructed
+/// fresh every frame (`lib.rs::render_frame`) — a field on `Self` would be
+/// dropped and recreated on the very next frame, which is the allocation this
+/// cache exists to eliminate. Wasm32 is single-threaded, so a `thread_local`
+/// is exactly one instance for the module's whole lifetime.
+struct BlurScratch {
+    canvas: OffscreenCanvas,
+    ctx: OffscreenCanvasRenderingContext2d,
+}
+
+thread_local! {
+    static BLUR_SCRATCH: RefCell<Option<BlurScratch>> = RefCell::new(None);
+}
+
+/// Live pixel count (width × height) of the cached blur scratch surface, or
+/// `0` before it has ever been allocated. Feeds the `MLC_DEBUG.offscreen_px`
+/// counter (`lib.rs`) — the shell owns exactly one `OffscreenCanvas`, this
+/// cache, so its area is the whole answer.
+pub(crate) fn blur_scratch_offscreen_px() -> u64 {
+    BLUR_SCRATCH.with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .map(|s| u64::from(s.canvas.width()) * u64::from(s.canvas.height()))
+            .unwrap_or(0)
+    })
+}
 
 // ─── Coordinate-space parameters ──────────────────────────────────────────────
 
@@ -205,31 +237,54 @@ impl UiEffectHelpers for Canvas2dChartRenderContext {
         let phys_sh = sh * dpr;
         let ow = phys_sw.ceil().max(1.0) as u32;
         let oh = phys_sh.ceil().max(1.0) as u32;
-        let Ok(tmp) = web_sys::OffscreenCanvas::new(ow, oh) else {
-            return;
-        };
-        let Ok(Some(raw)) = tmp.get_context("2d") else {
-            return;
-        };
-        let Ok(tctx) = raw.dyn_into::<web_sys::OffscreenCanvasRenderingContext2d>() else {
-            return;
-        };
         let Some(canvas) = ctx.canvas() else {
             return;
         };
-        if tctx
-            .draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
-                &canvas, phys_sx, phys_sy, phys_sw, phys_sh, 0.0, 0.0, phys_sw, phys_sh,
-            )
-            .is_err()
-        {
-            return;
-        }
-        ctx.save();
-        ctx.set_filter(&format!("blur({BLUR_PX}px)"));
-        let _ = ctx.draw_image_with_offscreen_canvas_and_dw_and_dh(&tmp, sx, sy, sw, sh);
-        ctx.set_filter("none");
-        ctx.restore();
+
+        // Reuse the ONE cached scratch surface (see `BLUR_SCRATCH` doc above)
+        // instead of allocating a new `OffscreenCanvas` on every call — this
+        // ran every frame a dimmed backdrop/modal was on screen
+        // (`mlc-app-layout/src/ui/overlay_fill.rs`), each call a GPU/backing-
+        // store allocation invisible to both `alloc_live_mb` and the JS heap
+        // counter. Resize only when the required physical size changed; the
+        // `width`/`height` setters (invoked implicitly by `OffscreenCanvas::
+        // new` below on first use, or left untouched when the size already
+        // matches) clear the surface, which is fine — the whole area is
+        // redrawn immediately by the snapshot `draw_image` call.
+        BLUR_SCRATCH.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            let need_new =
+                !matches!(slot.as_ref(), Some(s) if s.canvas.width() == ow && s.canvas.height() == oh);
+            if need_new {
+                let Ok(scratch_canvas) = OffscreenCanvas::new(ow, oh) else {
+                    return;
+                };
+                let Ok(Some(raw)) = scratch_canvas.get_context("2d") else {
+                    return;
+                };
+                let Ok(tctx) = raw.dyn_into::<OffscreenCanvasRenderingContext2d>() else {
+                    return;
+                };
+                *slot = Some(BlurScratch { canvas: scratch_canvas, ctx: tctx });
+            }
+            let Some(scratch) = slot.as_ref() else {
+                return;
+            };
+            if scratch
+                .ctx
+                .draw_image_with_html_canvas_element_and_sw_and_sh_and_dx_and_dy_and_dw_and_dh(
+                    &canvas, phys_sx, phys_sy, phys_sw, phys_sh, 0.0, 0.0, phys_sw, phys_sh,
+                )
+                .is_err()
+            {
+                return;
+            }
+            ctx.save();
+            ctx.set_filter(&format!("blur({BLUR_PX}px)"));
+            let _ = ctx.draw_image_with_offscreen_canvas_and_dw_and_dh(&scratch.canvas, sx, sy, sw, sh);
+            ctx.set_filter("none");
+            ctx.restore();
+        });
     }
 }
 
