@@ -460,6 +460,7 @@ pub use user_profile::{
     PersistedAgentLeaf,
     PersistedAgentCli,
     PersistedInstanceMode,
+    HeaderAccountDisplay,
 };
 
 // `UserManager`, `ProfileInfo`, `ProfileManager`, `SwitchData`,

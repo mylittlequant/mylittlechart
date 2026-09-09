@@ -6894,6 +6894,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     pw.window.request_redraw();
                 }
                 pw.chrome_state.account_provider = account_provider.clone();
+                // Header account-button display mode (owner ruling
+                // 2026-09-10) — same per-frame mirror as `account_label`
+                // above, from the SAME `user_settings_state` this loop just
+                // wrote it into.
+                let header_account_display =
+                    pw.chart.panel_app.user_settings_state.header_account_display;
+                if pw.chrome_state.header_account_display != header_account_display {
+                    pw.chrome_state.header_account_display = header_account_display;
+                    pw.toolbar_dirty = true;
+                    pw.window.request_redraw();
+                }
                 if pw.chrome_state.update != update_state {
                     pw.chrome_state.update = update_state;
                     pw.toolbar_dirty = true;

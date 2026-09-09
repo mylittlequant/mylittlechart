@@ -2008,6 +2008,63 @@ fn render_account_tab(
     );
     cy += 18.0;
 
+    // ── "Show in header:" 3-way row (owner ruling 2026-09-10) — what the
+    // header's signed-in account button shows: avatar only, nick only, or
+    // both (default). Same 3-segment control shape as the Notifications
+    // section's 4-way toast-anchor picker (`render_general_tab`).
+    {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.75));
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(UserSettingsKey::HeaderAccountDisplayLabel.get(current_language()), x, cy);
+        cy += 20.0;
+
+        let options: [(mlc_core::HeaderAccountDisplay, &str); 3] = [
+            (mlc_core::HeaderAccountDisplay::AvatarOnly, UserSettingsKey::BtnAvatar.get(current_language())),
+            (mlc_core::HeaderAccountDisplay::NickOnly, UserSettingsKey::HeaderAccountDisplayNick.get(current_language())),
+            (mlc_core::HeaderAccountDisplay::AvatarAndNick, UserSettingsKey::HeaderAccountDisplayBoth.get(current_language())),
+        ];
+        let seg_h = 26.0;
+        let gap = 6.0;
+        let seg_w = ((available_w - gap * 2.0) / 3.0).max(1.0);
+        for (i, (variant, label)) in options.iter().enumerate() {
+            let seg_x = x + i as f64 * (seg_w + gap);
+            let is_active = state.header_account_display == *variant;
+            let hit_id = format!("header_account_display:{:?}", variant);
+            let is_hovered = state.hovered_item_id.as_deref() == Some(hit_id.as_str());
+            let bg = if is_active {
+                &toolbar_theme.item_bg_active
+            } else if is_hovered {
+                &toolbar_theme.item_bg_hover
+            } else {
+                &toolbar_theme.dropdown_bg
+            };
+            ctx.set_fill_color(bg);
+            ctx.fill_rounded_rect(seg_x, cy, seg_w, seg_h, 4.0);
+            ctx.set_stroke_color(&toolbar_theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(seg_x, cy, seg_w, seg_h, 4.0);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            let fitted = fit_text_to_width(ctx, label, (seg_w - 8.0).max(1.0));
+            ctx.fill_text(&fitted, seg_x + seg_w / 2.0, cy + seg_h / 2.0);
+            ctx.set_text_align(TextAlign::Left);
+
+            let r = WidgetRect::new(seg_x, cy, seg_w, seg_h);
+            result.content_items.push((hit_id.clone(), r));
+            input_coordinator.register_on_layer(
+                format!("user_settings:{hit_id}").as_str(),
+                uzor::types::Rect::new(seg_x, cy, seg_w, seg_h),
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+        }
+        cy += seg_h + 16.0;
+    }
+
     // ── Tier / role ───────────────────────────────────────────────────────
     // Highest-ranked class only (a cumulative membership like
     // `["public","user","paid"]` always contains everything below the

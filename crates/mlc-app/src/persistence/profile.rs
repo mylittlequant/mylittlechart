@@ -188,6 +188,12 @@ impl ChartApp {
                 // `clock_glitch_enabled` above.
                 toast_anchor: existing.ui.toast_anchor,
                 toasts_enabled: existing.ui.toasts_enabled,
+                // Header account-button display mode (owner ruling
+                // 2026-09-10): same preserve-live-value pattern as
+                // `toast_anchor` above — mutated in-place via
+                // `self.core.user_mut().profile_mut()` at click time
+                // (panel_click.rs).
+                header_account_display: existing.ui.header_account_display,
                 // System event log (system-event-bus arc, 2026-09-05): the
                 // live value lives on `ChartApp` itself, mutated in place by
                 // `push_system_event`/`mark_all_system_events_read` — not by

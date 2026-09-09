@@ -831,12 +831,27 @@ impl Default for ToolbarTheme {
     }
 }
 
+/// Draw `MAGIC_HAT_SVG` mirrored horizontally about the icon box's own
+/// center — a draw-time transform (scale -1 on x), not an SVG edit, so a
+/// future icon swap keeps the same orientation rule for free (owner ruling
+/// 2026-09-10: "mirror the hat — the brim points the other way").
+fn draw_hat_mirrored(ctx: &mut dyn RenderContext, mx: f64, my: f64, size: f64) {
+    let cx = mx + size / 2.0;
+    ctx.save();
+    ctx.translate(cx, 0.0);
+    ctx.scale(-1.0, 1.0);
+    ctx.translate(-cx, 0.0);
+    draw_svg_multicolor(ctx, MAGIC_HAT_SVG, mx, my, size, size);
+    ctx.restore();
+}
+
 /// Render an icon by looking up its SVG via the chart's icon registry.
 ///
 /// `mascot_anim` is the live one-shot magic-hat animation (owner ruling
-/// 2026-09-10, tab open/close) for the "Bot" agents-panel button — `None`
-/// or lapsed draws the hat at rest, exactly as every other icon draws
-/// today. Ignored for every other `icon_id`.
+/// 2026-09-10, tab open/close AND the "Bot" button's own sidebar open/close)
+/// for the "Bot" agents-panel button — `None` or lapsed draws the
+/// (mirrored) hat at rest, exactly as every other icon draws today.
+/// Ignored for every other `icon_id`.
 fn render_icon(
     ctx: &mut dyn RenderContext,
     icon_id: &IconId,
@@ -849,24 +864,32 @@ fn render_icon(
         let mx = rect.x + (rect.width - mascot_size) / 2.0;
         let my = rect.y + (rect.height - mascot_size) / 2.0;
         match mascot_anim.filter(MascotAnim::is_live) {
-            None => draw_svg_multicolor(ctx, MAGIC_HAT_SVG, mx, my, mascot_size, mascot_size),
+            None => draw_hat_mirrored(ctx, mx, my, mascot_size),
             Some(anim) => {
                 let t = anim.progress();
                 ctx.save();
                 match anim.kind {
                     MascotAnimKind::Open => {
                         // "Tip": rotate about the brim's bottom-center,
-                        // ease-out-cubic dip then ease-out-back return.
-                        let (pivot_x, pivot_y) =
+                        // ease-out-cubic dip then ease-out-back return. The
+                        // pivot is mirrored the same way the hat itself is
+                        // (reflected about the icon box's horizontal
+                        // center) — it must land on the MIRRORED brim, not
+                        // the unmirrored one `hat_brim_pivot` maps to.
+                        let (raw_px, raw_py) =
                             super::mascot_anim::hat_brim_pivot(mx, my, mascot_size);
-                        ctx.translate(pivot_x, pivot_y);
+                        let flip_cx = mx + mascot_size / 2.0;
+                        let pivot_x = 2.0 * flip_cx - raw_px;
+                        ctx.translate(pivot_x, raw_py);
                         ctx.rotate(super::mascot_anim::tip_angle_rad(t));
-                        ctx.translate(-pivot_x, -pivot_y);
+                        ctx.translate(-pivot_x, -raw_py);
                     }
                     MascotAnimKind::Close => {
                         // "Squash": vertical scale anchored at the icon
                         // box's own bottom edge (owner spec: "anchor
                         // bottom" — the whole button box, not the brim).
+                        // This pivot sits ON the mirror axis (box
+                        // horizontal center), so mirroring never moves it.
                         let pivot_x = mx + mascot_size / 2.0;
                         let pivot_y = my + mascot_size;
                         ctx.translate(pivot_x, pivot_y);
@@ -874,7 +897,7 @@ fn render_icon(
                         ctx.translate(-pivot_x, -pivot_y);
                     }
                 }
-                draw_svg_multicolor(ctx, MAGIC_HAT_SVG, mx, my, mascot_size, mascot_size);
+                draw_hat_mirrored(ctx, mx, my, mascot_size);
                 ctx.restore();
             }
         }

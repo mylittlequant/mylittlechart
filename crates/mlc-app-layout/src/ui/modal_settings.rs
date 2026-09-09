@@ -3754,6 +3754,10 @@ pub struct UserSettingsState {
     /// General-tab "Notifications" section mirror of
     /// `ProfileUiSettings::toast_anchor` — the 4-way segmented control.
     pub toast_anchor: mlc_core::ToastAnchor,
+    /// Account-tab "Show in header:" row mirror of
+    /// `ProfileUiSettings::header_account_display` (owner ruling
+    /// 2026-09-10) — the 3-way segmented control under the nick editor.
+    pub header_account_display: mlc_core::HeaderAccountDisplay,
     /// Whether the internal Agent API server is enabled.
     pub server_enabled: bool,
     /// Port the server listens on.
@@ -4082,6 +4086,7 @@ impl Default for UserSettingsState {
             persist_toolbar_toggles: true,
             toasts_enabled: true,
             toast_anchor: mlc_core::ToastAnchor::default(),
+            header_account_display: mlc_core::HeaderAccountDisplay::default(),
             server_enabled: true,
             server_port: 17420,
             server_status: "running".to_string(),

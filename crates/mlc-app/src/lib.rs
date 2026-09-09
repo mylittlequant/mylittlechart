@@ -5110,6 +5110,12 @@ impl ChartApp {
         self.panel_app.user_settings_state.toasts_enabled = profile.ui.toasts_enabled;
         self.panel_app.user_settings_state.toast_anchor = profile.ui.toast_anchor;
 
+        // Header account-button display mode (owner ruling 2026-09-10) —
+        // same mirror-at-load reasoning as `toast_anchor` above, so the
+        // Account tab's "Show in header:" row shows the right selection
+        // immediately.
+        self.panel_app.user_settings_state.header_account_display = profile.ui.header_account_display;
+
         if let Some(style) = mlc_core::UIStyle::from_name(&profile.ui.active_ui_style) {
             self.panel_app.theme_manager.current_mut().set_style(style);
         }

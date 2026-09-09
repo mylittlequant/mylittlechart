@@ -6406,6 +6406,21 @@ impl ChartApp {
                     };
                     self.set_toast_anchor(anchor);
                 }
+                // Account tab's "Show in header:" 3-way row (owner ruling
+                // 2026-09-10) — hit id: "header_account_display:{Variant}".
+                rest if rest.starts_with("header_account_display:") => {
+                    let variant_str = &rest["header_account_display:".len()..];
+                    let display = match variant_str {
+                        "AvatarAndNick" => mlc_core::HeaderAccountDisplay::AvatarAndNick,
+                        "NickOnly" => mlc_core::HeaderAccountDisplay::NickOnly,
+                        "AvatarOnly" => mlc_core::HeaderAccountDisplay::AvatarOnly,
+                        _ => {
+                            eprintln!("[ChartApp] user_settings unknown header account display: {}", variant_str);
+                            return;
+                        }
+                    };
+                    self.set_header_account_display(display);
+                }
                 // Control-point shape option selected — hit id: "control_point_shape:{Variant}"
                 rest if rest.starts_with("control_point_shape:") => {
                     use mlc_core::drawing::primitives_v2::ControlPointShape;
@@ -9020,6 +9035,22 @@ impl ChartApp {
         let screen_h = self.window_height.unwrap_or(800) as f64;
         let anchor = mlc_core::ToastAnchor::nearest_corner(drop_x, drop_y, screen_w, screen_h);
         self.set_toast_anchor(anchor);
+    }
+
+    /// Set `ProfileUiSettings::header_account_display` and persist — the
+    /// Account tab's "Show in header:" 3-way row (owner ruling 2026-09-10).
+    /// Same preserve/mirror shape as [`Self::set_toast_anchor`]: the profile
+    /// is the source of truth, `user_settings_state` is the render mirror
+    /// the modal reads, and the shell's own `ChromeState` picks this up on
+    /// its own next per-frame mirror (same path `account_label` already
+    /// takes) — nothing here reaches the chrome directly.
+    pub(crate) fn set_header_account_display(&mut self, display: mlc_core::HeaderAccountDisplay) {
+        {
+            let mut user_mut = self.core.user_mut();
+            user_mut.profile_mut().ui.header_account_display = display;
+        }
+        self.panel_app.user_settings_state.header_account_display = display;
+        self.profile_dirty = true;
     }
 
     /// Submit the Server tab's key-manager "Create key" action — reads

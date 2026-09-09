@@ -1465,6 +1465,20 @@ impl ChartApp {
                 );
                 if let Some((opening, _width)) = result {
                     eprintln!("[ChartApp] Agents panel: {}", if opening { "opened" } else { "closed" });
+                    // One-shot magic-hat animation (owner report 2026-09-10):
+                    // this "Bot" toolbar button IS the trigger for this exact
+                    // sidebar — opening/closing it behind the hat must
+                    // animate the hat, not just an open/close tab. Lives in
+                    // the shared `ChartApp` event handler (this file), so
+                    // both shells get it from the one fix, same as the
+                    // `OpenTab`/`CloseTab` triggers below.
+                    self.panel_app.toolbar_state.trigger_mascot_anim(
+                        if opening {
+                            mlc_core::state::toolbar_state::MascotAnimKind::Open
+                        } else {
+                            mlc_core::state::toolbar_state::MascotAnimKind::Close
+                        },
+                    );
                     // Spawn-on-demand: PTY only starts when user explicitly clicks [Start].
                     let _ = opening;
                 }

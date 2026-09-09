@@ -2,6 +2,8 @@
 
 use uzor::WidgetId;
 use mlc_core::i18n::{TooltipKey, current_language};
+#[cfg(feature = "cloud")]
+use mlc_core::HeaderAccountDisplay;
 
 use super::types::{
     CHROME_HEIGHT, ChromeContextMenu, ChromeFlavor, ChromeHit, ChromeMenuAction, ChromeState,
@@ -21,14 +23,36 @@ const NEW_TAB_BUTTON_WIDTH: f64 = 28.0;
 /// Gold "Sign in" text button (Web flavor, cloud builds).
 #[cfg(feature = "cloud")]
 const LOGIN_BUTTON_WIDTH: f64 = 68.0;
-/// Signed-in header user button (owner ruling 2026-09-10): the gear is
-/// hidden while signed in and this button absorbs its slot instead, so a
-/// full nick fits without truncation. Fixed regardless of the nick's length
-/// — same no-jitter discipline [`LOGIN_BUTTON_WIDTH`] already holds for the
-/// signed-out CTA (see `long_account_label_does_not_widen_button_or_move_
-/// tabs_limit` below) — capped at the owner's ~180px ceiling.
+/// Signed-in header user button (owner ruling 2026-09-10, revised same day
+/// after review): content-sized — avatar + gap + nick text, plus the
+/// toolkit's normal button padding on both sides, exactly like every
+/// `auto_btn_width`-sized button elsewhere in the app. No empty space, no
+/// chevron. `USER_BUTTON_MAX_WIDTH` is a CEILING, not a fixed width: past it
+/// the nick is clipped with the existing ellipsis logic
+/// (`fit_text_to_width`, same as the signed-out CTA below), so the button
+/// never grows the tab strip out of its slot.
 #[cfg(feature = "cloud")]
-const USER_BUTTON_WIDTH: f64 = 180.0;
+const USER_BUTTON_MAX_WIDTH: f64 = 180.0;
+/// Avatar circle diameter inside the signed-in button (`AvatarAndNick` /
+/// `AvatarOnly` modes) — mirrored in render.rs, which draws it.
+#[cfg(feature = "cloud")]
+const USER_BUTTON_AVATAR_D: f64 = 20.0;
+/// Padding on BOTH sides of the signed-in button's content — the toolkit's
+/// own `auto_btn_width`/`ButtonConfig` default `padding_x` (mlc-app-layout's
+/// `ui/widgets/button.rs`), reused here so this button sizes by the exact
+/// same rule the owner asked for ("the normal button padding").
+#[cfg(feature = "cloud")]
+const USER_BUTTON_PAD: f64 = 8.0;
+/// Gap between the avatar circle and the nick text (`AvatarAndNick` mode) —
+/// the toolkit's own `ButtonConfig` default icon-to-text gap.
+#[cfg(feature = "cloud")]
+const USER_BUTTON_GAP: f64 = 6.0;
+/// `HeaderAccountDisplay::AvatarOnly` button width — a fixed icon-button
+/// size (owner spec: "a 28 px button with just the circle"), not derived
+/// from `USER_BUTTON_PAD`/`USER_BUTTON_AVATAR_D` (that formula's padding is
+/// sized for a padded text button, not a bare icon slot).
+#[cfg(feature = "cloud")]
+const USER_BUTTON_AVATAR_ONLY_WIDTH: f64 = 28.0;
 /// Icon-sized cloud buttons (Web flavor, cloud builds).
 #[cfg(feature = "cloud")]
 const CLOUD_ICON_BUTTON_WIDTH: f64 = 30.0;
@@ -102,15 +126,52 @@ pub(crate) fn gear_width(signed_in: bool) -> f64 {
     if signed_in { 0.0 } else { MENU_BUTTON_WIDTH }
 }
 
-/// The account button's width — [`USER_BUTTON_WIDTH`] while signed in
-/// (absorbing the gear's freed slot), [`LOGIN_BUTTON_WIDTH`] otherwise.
-/// Fixed per state rather than measured from the label, for the same reason
-/// [`update_button_width`] is: the painter and the hit test must always
-/// agree on it, and a width read off the live label could disagree with
-/// itself between the frame that grew the nick and the one that laid it out.
+/// The account button's width — [`LOGIN_BUTTON_WIDTH`] while signed out
+/// (the fixed CTA pill), content-sized while signed in per `display`
+/// (owner ruling 2026-09-10: no empty space, no chevron): avatar + gap +
+/// nick, or nick alone, or a bare avatar slot — capped at
+/// [`USER_BUTTON_MAX_WIDTH`], past which the nick clips with an ellipsis
+/// (`draw_account_button` applies the same cap to decide when to fit).
+///
+/// `nick_text_w` is the CALLER's already-measured value (`ChromeState::
+/// account_nick_text_w`, cached once per frame in `update_tab_widths`) —
+/// this function stays pure/measurement-free like the rest of this module,
+/// for the same reason [`update_button_width`] takes a resolved width
+/// rather than measuring anything itself: the painter and the hit test must
+/// always agree, and a width computed twice is a width that can disagree.
 #[cfg(feature = "cloud")]
-pub(crate) fn account_button_width(signed_in: bool) -> f64 {
-    if signed_in { USER_BUTTON_WIDTH } else { LOGIN_BUTTON_WIDTH }
+pub(crate) fn account_button_width(signed_in: bool, display: HeaderAccountDisplay, nick_text_w: f64) -> f64 {
+    if !signed_in {
+        return LOGIN_BUTTON_WIDTH;
+    }
+    match display {
+        HeaderAccountDisplay::AvatarOnly => USER_BUTTON_AVATAR_ONLY_WIDTH,
+        HeaderAccountDisplay::NickOnly => {
+            (USER_BUTTON_PAD * 2.0 + nick_text_w).min(USER_BUTTON_MAX_WIDTH)
+        }
+        HeaderAccountDisplay::AvatarAndNick => {
+            (USER_BUTTON_PAD * 2.0 + USER_BUTTON_AVATAR_D + USER_BUTTON_GAP + nick_text_w)
+                .min(USER_BUTTON_MAX_WIDTH)
+        }
+    }
+}
+
+/// [`account_button_width`]'s answer for the CURRENT `state`, or
+/// [`LOGIN_BUTTON_WIDTH`]-equivalent zero-cost stand-in (`0.0`) on a build
+/// without `cloud` — same "always resolve one scalar, dummy outside cloud"
+/// shape [`positions_update_w`] already uses, so `ButtonPositions::compute`
+/// (both this file and render.rs's copy) can take a single plain `f64`
+/// instead of needing `HeaderAccountDisplay`/measured-width parameters of
+/// its own on a build where the account button does not even exist.
+pub(crate) fn positions_account_w(#[allow(unused)] state: &ChromeState) -> f64 {
+    #[cfg(feature = "cloud")]
+    {
+        account_button_width(state.account_label.is_some(), state.header_account_display, state.account_nick_text_w)
+    }
+    #[cfg(not(feature = "cloud"))]
+    {
+        0.0
+    }
 }
 
 struct ButtonPositions {
@@ -136,8 +197,15 @@ impl ButtonPositions {
     /// `update_w` is [`update_button_width`]'s answer — zero when the
     /// update control is not drawn, which closes its slot up. `signed_in`
     /// closes the gear's own slot the same way (via [`gear_width`]) and
-    /// widens the account button into it (via [`account_button_width`]).
-    fn compute(width: f64, flavor: ChromeFlavor, #[allow(unused)] update_w: f64, signed_in: bool) -> Self {
+    /// `account_w` — [`positions_account_w`]'s answer — sizes the account
+    /// button into it (content-sized, owner ruling 2026-09-10).
+    fn compute(
+        width: f64,
+        flavor: ChromeFlavor,
+        #[allow(unused)] update_w: f64,
+        signed_in: bool,
+        #[allow(unused)] account_w: f64,
+    ) -> Self {
         let close_x           = width - BUTTON_WIDTH;
         let maximize_x        = width - BUTTON_WIDTH * 2.0;
         let minimize_x        = width - BUTTON_WIDTH * 3.0;
@@ -172,13 +240,13 @@ impl ButtonPositions {
         #[cfg(feature = "cloud")]
         let (login_left, download_left, news_left) = match flavor {
             ChromeFlavor::Web => {
-                let login = menu_left - account_button_width(signed_in);
+                let login = menu_left - account_w;
                 let dl = login - update_w;
                 let ne = dl - CLOUD_ICON_BUTTON_WIDTH;
                 (login, dl, ne)
             }
             ChromeFlavor::Native => {
-                let login = new_window_left - account_button_width(signed_in);
+                let login = new_window_left - account_w;
                 let dl = login - update_w;
                 let ne = dl - CLOUD_ICON_BUTTON_WIDTH;
                 (login, dl, ne)
@@ -216,7 +284,9 @@ pub const MIN_TAB_WIDTH: f64 = 2.0 * TAB_PADDING_H + 3.0 * TAB_CLOSE_SIZE;
 /// are static, the tabs are dynamic and shrink to fit whatever is left.
 pub fn tabs_right_limit(width: f64, state: &ChromeState) -> f64 {
     let flavor = state.flavor;
-    let bp = ButtonPositions::compute(width, flavor, positions_update_w(state), state.account_label.is_some());
+    let bp = ButtonPositions::compute(
+        width, flavor, positions_update_w(state), state.account_label.is_some(), positions_account_w(state),
+    );
     match flavor {
         ChromeFlavor::Native => {
             #[cfg(feature = "cloud")]
@@ -343,7 +413,9 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
 
     if y < CHROME_HEIGHT {
         let signed_in = state.account_label.is_some();
-        let bp = ButtonPositions::compute(width, state.flavor, positions_update_w(state), signed_in);
+        let bp = ButtonPositions::compute(
+            width, state.flavor, positions_update_w(state), signed_in, positions_account_w(state),
+        );
 
         match state.flavor {
             ChromeFlavor::Native => {
@@ -761,7 +833,9 @@ mod cloud_tests {
         let state = native_state(ChromeUpdate::Restart);
         // Same geometry render.rs paints: Restart spans
         // [login_left - RESTART_BUTTON_WIDTH, login_left).
-        let bp = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&state), false);
+        let bp = ButtonPositions::compute(
+            width, ChromeFlavor::Native, positions_update_w(&state), false, positions_account_w(&state),
+        );
         assert!((bp.login_left - bp.download_left - RESTART_BUTTON_WIDTH).abs() < 0.001);
         // Both edges of the painted Restart button must hit Download — the
         // left half used to fall through to News (owner, 2026-09-04).
@@ -778,7 +852,9 @@ mod cloud_tests {
         let width = 1200.0;
         let height = 800.0;
         let state = native_state(ChromeUpdate::Idle);
-        let bp = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&state), false);
+        let bp = ButtonPositions::compute(
+            width, ChromeFlavor::Native, positions_update_w(&state), false, positions_account_w(&state),
+        );
         // No update control drawn: News butts directly against Sign in, and a
         // click on the painted News button hits News, not a phantom Download.
         assert!((bp.login_left - bp.news_left - CLOUD_ICON_BUTTON_WIDTH).abs() < 0.001);
@@ -786,58 +862,108 @@ mod cloud_tests {
         assert_eq!(hit_test(news_mid, 10.0, width, height, &state), ChromeHit::NewsButton);
     }
 
-    /// Owner report 2026-09-05: a long account nickname must be fit with an
-    /// ellipsis (render.rs), not grow the button. This is the layout half of
-    /// that ruling — the signed-in cap ([`USER_BUTTON_WIDTH`], widened from
-    /// [`LOGIN_BUTTON_WIDTH`] by the 2026-09-10 gear-merge ruling) is fixed
-    /// regardless of `account_label`'s length, so neither the button's own
-    /// width nor the tab strip's right limit may move when the nickname
-    /// gets long.
+    /// Owner report 2026-09-05, revised 2026-09-10: the button is now
+    /// content-sized (avatar + gap + nick, capped at
+    /// [`USER_BUTTON_MAX_WIDTH`]) rather than a fixed width — so a nick
+    /// length change BELOW the cap DOES move the button (the whole point of
+    /// "no empty space"). What must still never move is the tab strip once
+    /// the nick is long enough to hit the cap: two different nicks that
+    /// BOTH exceed it produce the identical capped width and the identical
+    /// tab-strip right limit, however much further one overshoots the other.
     #[test]
     fn long_account_label_does_not_widen_button_or_move_tabs_limit() {
         let width = 1200.0;
-        let mut short = native_state(ChromeUpdate::Idle);
-        short.account_label = Some("Al".to_string());
         let mut long = native_state(ChromeUpdate::Idle);
         long.account_label = Some("a".repeat(24));
+        long.account_nick_text_w = 500.0; // comfortably past the cap
+        let mut longer = native_state(ChromeUpdate::Idle);
+        longer.account_label = Some("a".repeat(80));
+        longer.account_nick_text_w = 5000.0; // absurdly past the cap
 
-        let short_limit = tabs_right_limit(width, &short);
         let long_limit = tabs_right_limit(width, &long);
+        let longer_limit = tabs_right_limit(width, &longer);
         assert_eq!(
-            short_limit, long_limit,
-            "account label length must not move the tab strip's right limit"
+            long_limit, longer_limit,
+            "once the nick is past the cap, overshooting it further must not move the tab strip's right limit"
         );
 
-        let bp_short = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&short), true);
-        let bp_long = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&long), true);
+        let bp_long = ButtonPositions::compute(
+            width, ChromeFlavor::Native, positions_update_w(&long), true, positions_account_w(&long),
+        );
+        let bp_longer = ButtonPositions::compute(
+            width, ChromeFlavor::Native, positions_update_w(&longer), true, positions_account_w(&longer),
+        );
+        let button_w_long = bp_long.new_window_left - bp_long.login_left;
+        let button_w_longer = bp_longer.new_window_left - bp_longer.login_left;
+        assert!(
+            (button_w_long - button_w_longer).abs() < 0.001,
+            "account button width must not grow past the cap regardless of how long the label is"
+        );
+        assert!(
+            button_w_longer <= USER_BUTTON_MAX_WIDTH + 0.001,
+            "account button must stay within its cap regardless of label length"
+        );
+    }
+
+    /// The 2026-09-10 content-sizing ruling's other half: a SHORT nick makes
+    /// a narrower button than the cap (no empty space to its right), and a
+    /// nick long enough to exceed the cap is held at the cap — `render.rs`'s
+    /// `draw_account_button` is what actually clips it with an ellipsis;
+    /// this is the layout half, which only needs to prove the WIDTH itself
+    /// stops growing at the cap.
+    #[test]
+    fn short_nick_narrows_button_long_nick_hits_cap() {
+        let width = 1200.0;
+        let mut short = native_state(ChromeUpdate::Idle);
+        short.account_label = Some("Al".to_string());
+        short.account_nick_text_w = 12.0; // "Al" at 12px sans-serif, ballpark
+        let mut long = native_state(ChromeUpdate::Idle);
+        long.account_label = Some("a".repeat(40));
+        long.account_nick_text_w = 400.0; // comfortably past the cap
+
+        let bp_short = ButtonPositions::compute(
+            width, ChromeFlavor::Native, positions_update_w(&short), true, positions_account_w(&short),
+        );
+        let bp_long = ButtonPositions::compute(
+            width, ChromeFlavor::Native, positions_update_w(&long), true, positions_account_w(&long),
+        );
         let button_w_short = bp_short.new_window_left - bp_short.login_left;
         let button_w_long = bp_long.new_window_left - bp_long.login_left;
+
         assert!(
-            (button_w_short - button_w_long).abs() < 0.001,
-            "account button width must not depend on label length"
+            button_w_short < USER_BUTTON_MAX_WIDTH,
+            "a short nick must not pad the button out to the cap — no empty space"
         );
         assert!(
-            button_w_long <= USER_BUTTON_WIDTH + 0.001,
-            "account button must stay within its cap regardless of label length"
+            button_w_short < button_w_long,
+            "a shorter nick must make a narrower button than a longer one"
+        );
+        assert!(
+            (button_w_long - USER_BUTTON_MAX_WIDTH).abs() < 0.001,
+            "a nick past the cap holds the button exactly at the cap"
         );
     }
 
     /// The 2026-09-10 gear-merge ruling: signed in, the gear's own hit band
     /// disappears (its slot went to the account button) and the account
-    /// button widens to `USER_BUTTON_WIDTH`, directly against `new_window`
-    /// with no gap — no leftover sliver where a click hits neither.
+    /// button widens to fit its content, directly against `new_window` with
+    /// no gap — no leftover sliver where a click hits neither.
     #[test]
     fn signed_in_hides_gear_and_widens_account_button() {
         let width = 1200.0;
         let height = 800.0;
         let mut state = native_state(ChromeUpdate::Idle);
         state.account_label = Some("nick".to_string());
+        state.account_nick_text_w = 24.0;
 
-        let bp = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&state), true);
+        let bp = ButtonPositions::compute(
+            width, ChromeFlavor::Native, positions_update_w(&state), true, positions_account_w(&state),
+        );
         assert!((bp.menu_left - bp.mascot_left).abs() < 0.001, "gear's slot collapses to zero width");
+        let expected_w = USER_BUTTON_PAD * 2.0 + USER_BUTTON_AVATAR_D + USER_BUTTON_GAP + state.account_nick_text_w;
         assert!(
-            (bp.new_window_left - bp.login_left - USER_BUTTON_WIDTH).abs() < 0.001,
-            "account button widens to the fixed signed-in cap"
+            (bp.new_window_left - bp.login_left - expected_w).abs() < 0.001,
+            "account button widens to fit avatar + gap + nick"
         );
 
         // A click where the gear used to be must reach neither MenuButton

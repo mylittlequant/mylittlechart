@@ -1084,10 +1084,19 @@ pub enum UserSettingsKey {
     // disabled-state hint, so both say the same thing.
     AccountChooseNickHint           = 48,
     AccountChooseNickBtn            = 49,
+
+    // Account tab — header account-button display picker (owner ruling
+    // 2026-09-10: the header user button is content-sized, avatar+nick by
+    // default; this row lets the user pick avatar-only or nick-only
+    // instead). `BtnAvatar` (idx 6) is reused for the "Avatar" option so
+    // the word stays in one place.
+    HeaderAccountDisplayLabel       = 50,
+    HeaderAccountDisplayNick        = 51,
+    HeaderAccountDisplayBoth        = 52,
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 50;
+    pub const COUNT: usize = 53;
 
     /// Get translation for this key.
     #[inline]

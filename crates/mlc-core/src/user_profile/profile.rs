@@ -478,6 +478,25 @@ impl Default for ProfileDomainSettings {
     }
 }
 
+/// What the header's signed-in account button shows (owner ruling
+/// 2026-09-10: the button is content-sized — avatar + gap + nick, capped at
+/// a max width with an ellipsis past it — no empty space, no chevron). Set
+/// via the Account tab's three-way row under the nick editor; persisted per
+/// device like the rest of [`ProfileUiSettings`], same shape as
+/// [`crate::ToastAnchor`] next to it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum HeaderAccountDisplay {
+    /// Avatar circle + nick text (default — today's shape, just content-sized
+    /// now instead of a fixed 180px regardless of content).
+    #[default]
+    AvatarAndNick,
+    /// Nick text only, no avatar circle.
+    NickOnly,
+    /// Avatar circle only, fixed 28px — no text at all, so there is nothing
+    /// to measure or clip.
+    AvatarOnly,
+}
+
 // =============================================================================
 // ProfileUiSettings
 // =============================================================================
@@ -809,6 +828,13 @@ pub struct ProfileUiSettings {
     /// today's behaviour for every profile saved before this field existed.
     #[serde(default = "default_true")]
     pub toasts_enabled: bool,
+
+    /// What the header's signed-in account button shows — Account tab's
+    /// "Show in header:" row (owner ruling 2026-09-10). `#[serde(default)]`
+    /// falls back to [`HeaderAccountDisplay::AvatarAndNick`], today's shape,
+    /// for every profile saved before this field existed.
+    #[serde(default)]
+    pub header_account_display: HeaderAccountDisplay,
 }
 
 fn default_true() -> bool {
@@ -866,6 +892,7 @@ impl ProfileUiSettings {
             system_events: SystemEventLog::new(),
             toast_anchor: ToastAnchor::default(),
             toasts_enabled: true,
+            header_account_display: HeaderAccountDisplay::default(),
         }
     }
 }

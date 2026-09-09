@@ -14,6 +14,8 @@ use mlc_app_layout::ui::widgets::{
 // Only the account button (cloud builds) fits a label with an ellipsis today.
 #[cfg(feature = "cloud")]
 use mlc_app_layout::ui::widgets::fit_text_to_width;
+#[cfg(feature = "cloud")]
+use mlc_core::HeaderAccountDisplay;
 
 use super::types::{
     CHROME_HEIGHT, ChromeColors, ChromeContextMenu, ChromeFlavor, ChromeHit, ChromeState,
@@ -42,6 +44,18 @@ const NEW_TAB_BUTTON_WIDTH: f64 = 28.0;
 /// Icon-sized cloud buttons (Web flavor, cloud builds).
 #[cfg(feature = "cloud")]
 const CLOUD_ICON_BUTTON_WIDTH: f64 = 30.0;
+/// Signed-in header user button (owner ruling 2026-09-10) — mirrored from
+/// `logic.rs`'s copies of the same constants, which the layout half reads;
+/// this file only needs the ones it actually draws by (the cap itself is
+/// `logic.rs`'s concern — `positions_account_w` already resolves the final
+/// width, this file just lays out avatar/gap/text inside it). See
+/// `logic.rs`'s doc comments for the "no empty space, no chevron" rationale.
+#[cfg(feature = "cloud")]
+const USER_BUTTON_AVATAR_D: f64 = 20.0;
+#[cfg(feature = "cloud")]
+const USER_BUTTON_PAD: f64 = 8.0;
+#[cfg(feature = "cloud")]
+const USER_BUTTON_GAP: f64 = 6.0;
 const TAB_LEFT_MARGIN: f64 = 4.0;
 // Real separation between tabs so compressed neighbors never appear to
 // touch (owner report 2026-09: tabs "collide" when many are open). Mirrored
@@ -97,9 +111,15 @@ impl ButtonPositions {
     /// `update_w` is `logic::update_button_width`'s answer — zero when the
     /// update control is not drawn, which closes its slot up. `signed_in`
     /// closes the gear's own slot the same way (`logic::gear_width`) and
-    /// widens the account button into it (`logic::account_button_width`) —
-    /// owner ruling 2026-09-10.
-    fn compute(width: f64, flavor: ChromeFlavor, #[allow(unused)] update_w: f64, signed_in: bool) -> Self {
+    /// `account_w` — `logic::positions_account_w`'s answer — sizes the
+    /// account button into it (content-sized, owner ruling 2026-09-10).
+    fn compute(
+        width: f64,
+        flavor: ChromeFlavor,
+        #[allow(unused)] update_w: f64,
+        signed_in: bool,
+        #[allow(unused)] account_w: f64,
+    ) -> Self {
         let gear_w = super::logic::gear_width(signed_in);
         match flavor {
             ChromeFlavor::Native => {
@@ -114,7 +134,7 @@ impl ButtonPositions {
                 // account, then Download / News — see the same computation
                 // in `logic.rs`, which the hit test reads.
                 #[cfg(feature = "cloud")]
-                let login_left = new_window_left - super::logic::account_button_width(signed_in);
+                let login_left = new_window_left - account_w;
                 #[cfg(feature = "cloud")]
                 let download_left = login_left - update_w;
                 #[cfg(feature = "cloud")]
@@ -134,7 +154,7 @@ impl ButtonPositions {
                 // News. Gear is zero-width while signed in, which hides it.
                 let menu_left = width - gear_w;
                 #[cfg(feature = "cloud")]
-                let login_left = menu_left - super::logic::account_button_width(signed_in);
+                let login_left = menu_left - account_w;
                 #[cfg(feature = "cloud")]
                 let download_left = login_left - update_w;
                 #[cfg(feature = "cloud")]
@@ -175,6 +195,21 @@ pub fn update_tab_widths(
     width: f64,
     input_coord: &std::cell::RefCell<uzor::input::InputCoordinator>,
 ) {
+    // The signed-in account button's nick text width — measured here (the
+    // one place in the chrome pipeline with a live `ctx`) and cached on
+    // `ChromeState` so `logic::account_button_width` (layout) and
+    // `draw_account_button` (paint) read the exact same number instead of
+    // each measuring it themselves and risking disagreement, same
+    // discipline `tab_widths` below already holds. Must happen before
+    // `fit_tab_widths` below: `tabs_right_limit` reads the account button's
+    // width through `logic::positions_account_w`, which reads this field.
+    #[cfg(feature = "cloud")]
+    {
+        let label = state.account_label.as_deref().unwrap_or("");
+        ctx.set_font("600 12px sans-serif");
+        state.account_nick_text_w = ctx.measure_text(label);
+    }
+
     ctx.set_font("12px sans-serif");
     state.tab_widths.clear();
     for (i, tab) in state.tabs.iter().enumerate() {
@@ -242,6 +277,7 @@ pub fn render(
     let c = &state.colors;
     let bp = ButtonPositions::compute(
         width, state.flavor, super::logic::positions_update_w(state), state.account_label.is_some(),
+        super::logic::positions_account_w(state),
     );
 
     // Background.
@@ -968,12 +1004,17 @@ fn draw_avatar_placeholder(ctx: &mut dyn MlcRenderContext, cx: f64, cy: f64, r: 
 /// Signed out it is the single accent action in the strip, a fixed-width
 /// centred CTA pill.
 ///
-/// Signed in it is an ordinary control, and a wider one: the gear
-/// (`ChromeHit::MenuButton`) is hidden while signed in (owner ruling
-/// 2026-09-10) and this button absorbs its slot instead, so the full nick
-/// has room without truncating — avatar placeholder, left-aligned nick, then
-/// a caret so the button reads as a menu, the same layout every other
-/// header dropdown trigger in the app already uses.
+/// Signed in it is an ordinary control, content-sized (owner ruling
+/// 2026-09-10, revised same day: no empty space, no chevron): the gear
+/// (`ChromeHit::MenuButton`) is hidden while signed in and this button
+/// absorbs its slot instead, sized to exactly its own content — avatar
+/// circle, gap, nick text, both wrapped in the toolkit's normal button
+/// padding — per `state.header_account_display` (avatar+nick, nick only, or
+/// avatar only). `bp.login_left`/`btn_w` already reflect that width
+/// (`logic::positions_account_w`, read into `ButtonPositions::compute`), so
+/// this function only ever decides WHAT to draw inside it, never how wide it
+/// is — the same "one number, two readers" discipline used everywhere else
+/// in this pair of files.
 ///
 /// Shared by both flavors deliberately. This lived as two copies that
 /// disagreed — the web one ignored `account_label` entirely — which is exactly
@@ -989,7 +1030,7 @@ fn draw_account_button(
     let hovered = state.hovered == ChromeHit::LoginButton;
     let inset_x = 2.0;
     let inset_y = 4.0;
-    let btn_w = super::logic::account_button_width(signed_in);
+    let btn_w = super::logic::positions_account_w(state);
 
     if let Some(label) = state.account_label.as_deref().filter(|_| signed_in) {
         if hovered {
@@ -1003,44 +1044,40 @@ fn draw_account_button(
             );
         }
 
-        const AVATAR_D: f64 = 20.0;
-        const AVATAR_LEFT_PAD: f64 = 8.0;
-        const CARET_SIZE: f64 = 12.0;
-        const CARET_SLOT_W: f64 = 18.0;
-        const TEXT_GAP: f64 = 6.0;
+        let show_avatar = state.header_account_display != HeaderAccountDisplay::NickOnly;
+        let show_nick = state.header_account_display != HeaderAccountDisplay::AvatarOnly;
 
-        let avatar_cx = bp.login_left + AVATAR_LEFT_PAD + AVATAR_D / 2.0;
-        let avatar_cy = CHROME_HEIGHT / 2.0;
-        draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, AVATAR_D / 2.0, label, &c.cta_bg);
-
-        // Caret — a tiny "this opens a menu" tell at the button's right end.
-        if let Some(svg) = icon_svg("chevron_down") {
-            let caret_x = bp.login_left + btn_w - CARET_SLOT_W + (CARET_SLOT_W - CARET_SIZE) / 2.0;
-            let caret_y = (CHROME_HEIGHT - CARET_SIZE) / 2.0;
-            draw_svg_icon(ctx, svg, caret_x, caret_y, CARET_SIZE, CARET_SIZE, &c.icon_normal);
+        let mut text_x = bp.login_left + USER_BUTTON_PAD;
+        if show_avatar {
+            let avatar_cx = bp.login_left + USER_BUTTON_PAD + USER_BUTTON_AVATAR_D / 2.0;
+            let avatar_cy = CHROME_HEIGHT / 2.0;
+            draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, USER_BUTTON_AVATAR_D / 2.0, label, &c.cta_bg);
+            if show_nick {
+                text_x = avatar_cx + USER_BUTTON_AVATAR_D / 2.0 + USER_BUTTON_GAP;
+            }
         }
 
-        // Nick, left-aligned right after the avatar. Fixed reserved width
-        // regardless of the nick's length (no tab-strip jitter — the same
-        // discipline `LOGIN_BUTTON_WIDTH` already held for the signed-out
-        // CTA) — an ellipsis applies only past the widest allowed width the
-        // slot leaves for text (avatar and caret already claimed theirs).
-        let text_x = avatar_cx + AVATAR_D / 2.0 + TEXT_GAP;
-        let max_text_w = (bp.login_left + btn_w - CARET_SLOT_W - text_x).max(0.0);
-        ctx.set_font("600 12px sans-serif");
-        ctx.set_fill_color(&c.icon_normal);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.save();
-        ctx.clip_rect(bp.login_left, 0.0, btn_w, CHROME_HEIGHT);
-        let text_w = ctx.measure_text(label);
-        if text_w <= max_text_w {
-            ctx.fill_text(label, text_x, CHROME_HEIGHT / 2.0);
-        } else {
-            let fitted = fit_text_to_width(ctx, label, max_text_w);
-            ctx.fill_text(&fitted, text_x, CHROME_HEIGHT / 2.0);
+        if show_nick {
+            // Reads the SAME cached measurement `logic::account_button_width`
+            // sized the button from (`update_tab_widths` measured it once,
+            // this frame) — a second `ctx.measure_text` here could disagree
+            // with the width the layout already committed to.
+            let text_w = state.account_nick_text_w;
+            let max_text_w = (bp.login_left + btn_w - USER_BUTTON_PAD - text_x).max(0.0);
+            ctx.set_font("600 12px sans-serif");
+            ctx.set_fill_color(&c.icon_normal);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.save();
+            ctx.clip_rect(bp.login_left, 0.0, btn_w, CHROME_HEIGHT);
+            if text_w <= max_text_w {
+                ctx.fill_text(label, text_x, CHROME_HEIGHT / 2.0);
+            } else {
+                let fitted = fit_text_to_width(ctx, label, max_text_w);
+                ctx.fill_text(&fitted, text_x, CHROME_HEIGHT / 2.0);
+            }
+            ctx.restore();
         }
-        ctx.restore();
         return;
     }
 

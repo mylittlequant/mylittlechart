@@ -2690,6 +2690,12 @@ fn render_frame(state: Rc<RefCell<WebAppState>>, timer: &mut perf::FrameTimer) -
                 st.chrome.account_label = label;
             }
             st.chrome.account_provider = st.cloud.as_ref().and_then(|c| c.account_provider());
+            // Header account-button display mode (owner ruling 2026-09-10) —
+            // same per-frame mirror as `account_label`/`account_provider`
+            // above, from the profile-backed settings mirror the Account
+            // tab itself reads/writes.
+            let display = st.chart.panel_app.user_settings_state.header_account_display;
+            st.chrome.header_account_display = display;
         }
 
         // Sync chrome colours from the chart theme — wasm parity with the

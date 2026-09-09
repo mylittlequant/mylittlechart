@@ -1,5 +1,7 @@
 //! Chrome types — all platform-neutral (no winit, no RenderContext).
 
+use mlc_core::HeaderAccountDisplay;
+
 use crate::tooltip::TooltipState;
 
 /// Controls which chrome buttons are rendered / hit-tested.
@@ -216,6 +218,19 @@ pub struct ChromeState {
     /// that line read "via " with nothing after it on native, which is what
     /// happens when a screen is handed half a fact.
     pub account_provider: Option<String>,
+    /// What the signed-in account button shows — avatar, nick, or both
+    /// (owner ruling 2026-09-10: the button is content-sized, no fixed
+    /// width, no chevron). Mirrored from `ProfileUiSettings::
+    /// header_account_display` every frame by the shell, same path
+    /// `account_label` already takes.
+    pub header_account_display: HeaderAccountDisplay,
+    /// Measured width of `account_label`'s nick text at the button's own
+    /// font ("600 12px sans-serif"), cached once per frame by
+    /// `chrome::update_tab_widths` (needs `ctx.measure_text`) — read by
+    /// both the layout (`logic::account_button_width`) and the paint
+    /// (`draw_account_button`) so they can never disagree, same discipline
+    /// `tab_widths` already holds. Zero (and unused) while signed out.
+    pub account_nick_text_w: f64,
     /// True while an update has been installed and is waiting for a restart.
     ///
     /// The updater reaches `RestartPending` and the overlay says so — but only
@@ -287,6 +302,8 @@ impl ChromeState {
             hovered:      ChromeHit::None,
             account_label: None,
             account_provider: None,
+            header_account_display: HeaderAccountDisplay::default(),
+            account_nick_text_w: 0.0,
             update: ChromeUpdate::Idle,
             is_maximized: false,
             title:        title.into(),
