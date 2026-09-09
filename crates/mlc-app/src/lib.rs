@@ -13116,16 +13116,20 @@ impl ChartApp {
         // (community-modal-and-forum-ladder arc, piece 2) — same
         // unconditional per-frame stamp as `system_events_unread` above,
         // cheap (a bounded conversations vec), gated on `cloud` since
-        // `community_state`/`DmState` only exist in cloud builds.
+        // `community_state`/`DmState` only exist in cloud builds. Also
+        // gated on `messages_tab_visible` (owner ruling 2026-09-09: Messages
+        // is `paid`-and-above only) — a caller without the tab must never
+        // see a badge pointing at content they cannot reach.
         #[cfg(feature = "cloud")]
         {
-            self.panel_app.toolbar_state.community_unread = self
-                .panel_app
-                .community_state
-                .dm
-                .conversations
-                .iter()
-                .any(|c| c.unread_count > 0);
+            self.panel_app.toolbar_state.community_unread = self.panel_app.community_state.messages_tab_visible()
+                && self
+                    .panel_app
+                    .community_state
+                    .dm
+                    .conversations
+                    .iter()
+                    .any(|c| c.unread_count > 0);
         }
         self.stamp_settings_menu_state();
     }

@@ -36,7 +36,7 @@ use crate::ui::widgets::types::{WidgetState, WidgetTheme};
 
 use super::cloud_overlay::{
     draw_action_row, draw_column_divider, draw_status, register_scrollbar_hit_zones,
-    relative_time, scroll_config, wrap_text, CloudOverlayResult, ACTION_BTN_GAP, COL_GAP,
+    relative_time, scroll_config, wrap_text, CloudOverlayResult, COL_GAP,
     DM_PEER_FIELD, FIELD_H, GOLD, LIST_COL_W, ROW_GAP, ROW_H,
 };
 use super::community::CommunityListPaneResult;
@@ -52,6 +52,16 @@ const BUBBLE_MIN_W: f64 = 120.0;
 const COMPOSER_H: f64 = 8.0 + FIELD_H + 8.0 + ROW_H;
 
 const SETTING_UP_STATUS: &str = "Setting up messages…";
+
+/// Recipient-search dropdown under the "start a conversation" field (owner
+/// ruling 2026-09-09, community-modal-and-forum-ladder arc, piece 2 item b)
+/// — same row-height/cap idiom `forum_v2_overlay.rs`'s own inline
+/// quick-search dropdown uses (`QUICK_RESULT_ROW_H`/`QUICK_DROPDOWN_MAX_ROWS`
+/// there), sized for two lines (label + `@nick`/public id) per row instead
+/// of one.
+const LOOKUP_RESULT_ROW_H: f64 = 40.0;
+const LOOKUP_NO_RESULT_ROW_H: f64 = 24.0;
+const LOOKUP_DROPDOWN_MAX_ROWS: usize = 8;
 
 // =============================================================================
 // Entry points — `list_height` sizes the LEFT column's own scroll container;
@@ -120,6 +130,7 @@ pub(crate) fn draw(
             ly += draw_conversation_row(ctx, coord, layer_id, lx, ly, lw, c, current_time_ms, tt);
         }
     }
+    draw_lookup_dropdown(ctx, coord, layer_id, result.dm_peer_rect, &state.dm, tt);
     let widget_theme = WidgetTheme::default();
     let list_scroll_result = list_scrollable.end(ctx, list_drawn_h, &widget_theme);
     list_result.viewport_rect = Some(list_viewport_rect);
@@ -208,11 +219,13 @@ fn draw_field(
 // same way regardless of `DmState::available`/`identity_fingerprint`.
 // =============================================================================
 
-/// "Start a conversation" row: a nick/public-id field plus an Open button.
+/// "Start a conversation" row: a fuzzy nick/public-id search field —
+/// replaces the old plain field + "Open" button (owner ruling 2026-09-09:
+/// search-as-you-type with a results dropdown, [`draw_lookup_dropdown`]).
 /// Always at the top of the left column — publication of the identity key
 /// to the server runs in the background (see `DmRequest`'s own doc) and is
 /// never a precondition the user has to clear first; click dispatch lives
-/// in `mlc-app`'s `panel_click.rs` (`cloud_overlay:dm:open_peer`).
+/// in `mlc-app`'s `panel_click.rs` (`cloud_overlay:dm:peer_input`).
 #[allow(clippy::too_many_arguments)]
 fn draw_open_peer_row(
     ctx: &mut dyn RenderContext,
@@ -226,19 +239,93 @@ fn draw_open_peer_row(
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
 ) -> f64 {
-    let btn_w = 64.0;
-    let field_w = w - btn_w - ACTION_BTN_GAP;
     let (rect, chars) = draw_field(
         ctx, coord, layer_id, "cloud_overlay:dm:peer_input", DM_PEER_FIELD,
-        WidgetRect::new(x, y, field_w, FIELD_H), "Nick or public id…", ft, tt, current_time_ms,
+        WidgetRect::new(x, y, w, FIELD_H), "Search by nick or public id…", ft, tt, current_time_ms,
     );
     result.dm_peer_rect = Some(rect);
     result.dm_peer_char_positions = chars;
-    draw_action_row(
-        ctx, coord, layer_id, "cloud_overlay:dm:open_peer",
-        WidgetRect::new(x + field_w + ACTION_BTN_GAP, y, btn_w, FIELD_H), "Open", tt,
-    );
     FIELD_H + 12.0
+}
+
+/// Drawn LAST in the left column's own scroll body (after the conversation
+/// rows), so it paints over them — same "drawn last, floating over the
+/// content beneath it" idiom `forum_v2_overlay.rs`'s own
+/// `draw_quick_search_dropdown` uses for its inline search box. Anchored
+/// under `field_rect` (the "start a conversation" field's own rect,
+/// `None`/no-op while the field never drew). Only shows once a lookup has
+/// actually been asked (`DmState::lookup_query.is_some()`) — an empty field
+/// draws nothing, same "field cleared ⇒ dropdown gone" rule the forum box
+/// uses.
+fn draw_lookup_dropdown(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    field_rect: Option<WidgetRect>,
+    d: &DmState,
+    tt: &ToolbarTheme,
+) {
+    let Some(anchor) = field_rect else { return };
+    if d.lookup_query.is_none() {
+        return;
+    }
+    let n = d.lookup_results.len().min(LOOKUP_DROPDOWN_MAX_ROWS);
+    let box_h = if n == 0 { LOOKUP_NO_RESULT_ROW_H + 8.0 } else { n as f64 * LOOKUP_RESULT_ROW_H + 8.0 };
+    let box_x = anchor.x;
+    let box_y = anchor.y + anchor.height + 4.0;
+
+    ctx.set_fill_color(&tt.dropdown_bg);
+    ctx.fill_rounded_rect(box_x, box_y, anchor.width, box_h, SETTINGS_BUTTON_RADIUS);
+
+    if n == 0 {
+        draw_status(ctx, tt, box_x, box_y + 4.0, anchor.width, "No one found.", None);
+        return;
+    }
+    let mut ry = box_y + 4.0;
+    for (i, hit) in d.lookup_results.iter().take(n).enumerate() {
+        let widget_id = format!("cloud_overlay:dm:lookup_result:{i}");
+        let rect = WidgetRect::new(box_x + 4.0, ry, anchor.width - 8.0, LOOKUP_RESULT_ROW_H - 4.0);
+        let hovered = coord.is_hovered(&WidgetId::from(widget_id.as_str()));
+        if hovered {
+            ctx.set_fill_color(&tt.item_bg_hover);
+            ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+        }
+
+        ctx.set_font("600 12px sans-serif");
+        ctx.set_fill_color(if hovered { GOLD } else { &tt.item_text });
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        let label = crate::ui::widgets::fit_text_to_width(ctx, &hit.label, rect.width - 12.0);
+        ctx.fill_text(&label, rect.x + 6.0, rect.y + 2.0);
+
+        ctx.set_font("11px monospace");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        let sub = match &hit.nick {
+            Some(nick) => format!("@{nick}  ·  {}", short_public_id(&hit.public_id)),
+            None => short_public_id(&hit.public_id),
+        };
+        let sub = crate::ui::widgets::fit_text_to_width(ctx, &sub, rect.width - 12.0);
+        ctx.fill_text(&sub, rect.x + 6.0, rect.y + 18.0);
+
+        coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
+        ry += LOOKUP_RESULT_ROW_H;
+    }
+}
+
+/// Shorten a public id for the dropdown's second line — a click carries the
+/// full value from `DmState::lookup_results` directly (never re-typed), so
+/// only enough to tell two rows apart at a glance is needed here.
+/// Char-based (not byte slicing) so a non-ASCII id can never panic on a
+/// mid-character boundary.
+fn short_public_id(id: &str) -> String {
+    if id.chars().count() <= 12 {
+        id.to_string()
+    } else {
+        let head: String = id.chars().take(12).collect();
+        format!("{head}…")
+    }
 }
 
 fn draw_conversation_row(

@@ -32,7 +32,7 @@ pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthSta
 pub use share::{SharedChartResponse, SharedChartMetaWire, ClonePresetResponse, StrippedIndicatorWire};
 pub use forum::{ForumThreadSummary, ForumThread, ForumReply};
 pub use forum_v2::{ForumBoard, ForumThreadV2Summary, ForumThreadV2, ForumReplyNode, ForumSearchHit, ForumMe};
-pub use dm::{DmIdentity, DmConversation, DmConversationPeer, DmMessage};
+pub use dm::{DmIdentity, DmConversation, DmConversationPeer, DmMessage, DmLookupHit};
 
 /// Format current time as `HH:MM:SS` for log lines.
 pub fn now_ts() -> String {
@@ -947,6 +947,14 @@ async fn updater_loop(
                                         match dm::get_identity(&http_client, &auth, &label).await {
                                             Ok(identity) => {
                                                 let _ = dm_tx.send(state::DmState::PeerIdentity(identity));
+                                            }
+                                            Err(e) => demote_if_rejected_dm!(e),
+                                        }
+                                    }
+                                    state::DmRequest::Lookup { q } => {
+                                        match dm::lookup(&http_client, &auth, &q).await {
+                                            Ok(users) => {
+                                                let _ = dm_tx.send(state::DmState::LookupResults(users));
                                             }
                                             Err(e) => demote_if_rejected_dm!(e),
                                         }

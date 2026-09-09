@@ -698,6 +698,17 @@ impl FetchTransport {
         self.decode_success(status, &body)
     }
 
+    /// `GET /api/dm/lookup?q=` — fuzzy nick/label search for the recipient
+    /// dropdown (community-modal-and-forum-ladder arc, piece 2 item b);
+    /// server-sorted and -capped, distinct from the exact-label
+    /// [`Self::dm_get_identity`] above.
+    pub async fn dm_lookup(&self, q: &str) -> Result<Vec<DmLookupHit>, CloudError> {
+        let path = format!("/api/dm/lookup?q={}", encode_query_component(q));
+        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
+        let resp: DmLookupResponse = self.decode_success(status, &body)?;
+        Ok(resp.users)
+    }
+
     /// `GET /api/dm/conversations` — the caller's own, newest activity first.
     pub async fn dm_conversations(&self) -> Result<Vec<DmConversation>, CloudError> {
         let (status, body) = self.exchange("GET", "/api/dm/conversations", None, &[]).await?;

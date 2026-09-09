@@ -25,7 +25,7 @@ use mlc_app::ChartApp;
 use mlc_app_layout::ui::modal_settings::{
     BoardUi, CloudForumReply, CloudForumThread, CloudForumThreadSummary, CloudLoginPhase,
     CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudReleaseEntry, CommunityTab,
-    DmConversationUi, DmMessageUi, DmRequest as UiDmRequest, DmView, ForumListState,
+    DmConversationUi, DmLookupHitUi, DmMessageUi, DmRequest as UiDmRequest, DmView, ForumListState,
     ForumReplyV2Ui, ForumRequest, ForumSearchHitUi, ForumSubView, ForumThreadV2Detail,
     ForumThreadV2Ui, ForumV2Request, ForumV2View, RedeemStatus,
 };
@@ -175,6 +175,15 @@ enum FlowResult {
     DmRead {
         conversation_id: i64,
         result: Result<(), String>,
+    },
+    /// The recipient-search dropdown's debounced `GET /api/dm/lookup?q=`
+    /// (community-modal-and-forum-ladder arc, piece 2 item b) — `q` rides
+    /// alongside so the applied `DmState::lookup_query` always shows the
+    /// query that was actually asked, never a guess reconstructed from
+    /// whatever the field holds when the answer lands.
+    DmLookup {
+        q: String,
+        result: Result<Vec<mlc_cloud::DmLookupHit>, String>,
     },
 }
 
@@ -462,13 +471,22 @@ impl CloudSession {
         // whatever identity just left — clear it so the passive fetch
         // re-asks under the new (anonymous) caller.
         chart.panel_app.community_state.forum2.invalidate_me();
-        // Same reasoning for DMs: the server-confirmed fingerprint and
-        // conversation list both belong to whoever just signed out — clear
-        // them so a later sign-in gets its own auto-publish attempt
-        // (`dm_identity_publish_attempted_for`) instead of reading a stale
-        // "already confirmed" from a different account.
+        // The board LIST itself is per-caller too (owner defect 2026-09-09:
+        // an admin signing in saw zero boards until a hard reload) —
+        // `invalidate_me()` alone only re-asks classes/roles, never the
+        // boards a DIFFERENT account can read. Force a re-fetch on the next
+        // tab-open/frame instead of keeping the previous account's cached
+        // list around.
+        chart.panel_app.community_state.forum2.invalidate_boards();
+        // Same reasoning for DMs: the server-confirmed fingerprint,
+        // conversation list, and recipient-search dropdown all belong to
+        // whoever just signed out — clear them so a later sign-in gets its
+        // own auto-publish attempt (`dm_identity_publish_attempted_for`)
+        // instead of reading a stale "already confirmed" from a different
+        // account, and never shows a lookup answer meant for someone else.
         chart.panel_app.community_state.dm.identity_fingerprint = None;
         chart.panel_app.community_state.dm.conversations = Vec::new();
+        chart.panel_app.community_state.dm.invalidate_conversations();
         chart.panel_app.community_state.dm.reset_to_list();
         self.inner.borrow_mut().dm_identity_publish_attempted_for = None;
         {
@@ -908,6 +926,18 @@ impl CloudSession {
                     // in (or nobody) BEFORE this login — clear it so the
                     // passive fetch re-asks for the new identity.
                     chart.panel_app.community_state.forum2.invalidate_me();
+                    // The board LIST and DM conversation list are per-caller
+                    // too (owner defect 2026-09-09: an admin signing in saw
+                    // zero boards until a hard reload) — `invalidate_me()`
+                    // alone only re-asks classes/roles, never the boards a
+                    // DIFFERENT account can read, and this account's own
+                    // conversations are not the ones whoever was signed in
+                    // before had cached. Also drop any recipient-search
+                    // dropdown state so a stale answer from before this
+                    // login can never show under the new caller.
+                    chart.panel_app.community_state.forum2.invalidate_boards();
+                    chart.panel_app.community_state.dm.invalidate_conversations();
+                    chart.panel_app.community_state.dm.close_lookup_dropdown();
                     // Sign-in edge (owner ruling 2026-09-09): this session
                     // gets its own DM auto-publish attempt, even if an
                     // earlier attempt this same unlock already failed while
@@ -1581,6 +1611,22 @@ impl CloudSession {
                     }
                     self.inner.borrow_mut().dm_in_flight = false;
                 }
+                FlowResult::DmLookup { q, result } => {
+                    let dm = &mut chart.panel_app.community_state.dm;
+                    match result {
+                        Ok(hits) => {
+                            dm.lookup_query = Some(q);
+                            dm.lookup_results = hits
+                                .into_iter()
+                                .map(|h| DmLookupHitUi { public_id: h.public_id, nick: h.nick, label: h.label })
+                                .collect();
+                        }
+                        Err(e) => {
+                            dm.last_error = Some(e);
+                        }
+                    }
+                    self.inner.borrow_mut().dm_in_flight = false;
+                }
                 FlowResult::Logout => {
                     // Local sign-out regardless of the server answer. `st`
                     // (borrowed above) is not touched on this arm's path —
@@ -2143,6 +2189,48 @@ impl CloudSession {
                         }
                         let r = raw.map_err(|e| forum_v2_error_message(&e));
                         inner.borrow_mut().result = Some(FlowResult::Forum2Search { q, result: r });
+                    });
+                }
+            }
+        }
+
+        // ── DM recipient-search dropdown (owner ruling 2026-09-09,
+        // community-modal-and-forum-ladder arc, piece 2 item b) ──────────
+        // Debounced `GET /api/dm/lookup?q=` for the "start a conversation"
+        // field (`text_action_dm_peer` in mlc-app arms `DmState::
+        // lookup_due_at` on every keystroke) — fired directly here, never
+        // through `DmState::request`, same "debounce fires inline" idiom
+        // the Forum v2 quick-search block above uses. Shares `dm_in_flight`
+        // with every other DM action below: not worth a second flag for a
+        // box idle almost all the time.
+        {
+            let due = chart.panel_app.community_state.dm.lookup_due();
+            if due && !self.inner.borrow().dm_in_flight {
+                let q = {
+                    let coord = chart.input_coordinator.borrow();
+                    coord
+                        .text_fields()
+                        .text(&uzor::WidgetId::from(mlc_app::text_input::DM_PEER))
+                        .trim()
+                        .to_string()
+                };
+                let dm = &mut chart.panel_app.community_state.dm;
+                dm.lookup_due_at = None;
+                if q.is_empty() {
+                    dm.lookup_query = None;
+                    dm.lookup_results = Vec::new();
+                } else {
+                    dm.last_error = None;
+                    self.inner.borrow_mut().dm_in_flight = true;
+                    let inner = self.inner.clone();
+                    let transport = self.inner.borrow().transport.snapshot();
+                    spawn_local(async move {
+                        let raw = transport.dm_lookup(&q).await;
+                        if let Err(e) = &raw {
+                            mark_unauthorized(&inner, e);
+                        }
+                        let r = raw.map_err(|e| dm_error_message(&e));
+                        inner.borrow_mut().result = Some(FlowResult::DmLookup { q, result: r });
                     });
                 }
             }

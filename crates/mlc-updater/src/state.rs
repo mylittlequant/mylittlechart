@@ -345,6 +345,10 @@ pub enum DmRequest {
     PublishIdentity { public_key_b64: String },
     /// `GET /api/dm/identity/{public_id_or_nick}`.
     GetIdentity { label: String },
+    /// `GET /api/dm/lookup?q=` — fuzzy nick/label search for the recipient
+    /// dropdown; server-sorted and -capped, distinct from the exact-label
+    /// `GetIdentity` above.
+    Lookup { q: String },
     /// `GET /api/dm/conversations`.
     ListConversations,
     /// `POST /api/dm/conversations` — `{"with": …}`.
@@ -379,6 +383,8 @@ pub enum DmState {
     Identity { fingerprint: String },
     /// `GetIdentity` succeeded.
     PeerIdentity(crate::dm::DmIdentity),
+    /// `Lookup` succeeded.
+    LookupResults(Vec<crate::dm::DmLookupHit>),
     /// `ListConversations` succeeded.
     Conversations(Vec<crate::dm::DmConversation>),
     /// `OpenConversation` succeeded.

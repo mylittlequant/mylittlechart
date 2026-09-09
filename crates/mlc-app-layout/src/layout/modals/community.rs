@@ -50,10 +50,20 @@ use super::{dm_overlay, forum_v2_overlay};
 
 const MODAL_W: f64 = 760.0;
 
-const TAB_ITEMS: [ModalTab<'static>; 2] = [
-    ModalTab { id: "forum", label: "Forum", icon: None },
-    ModalTab { id: "messages", label: "Messages", icon: None },
-];
+/// Owner ruling 2026-09-09: the Messages tab (and its `"Forum & Messages"`
+/// modal title) only exist for a `paid`-and-above caller
+/// (`CommunityState::messages_tab_visible`) — everyone below that sees a
+/// single `"Forum"` tab titled `"Forum"`. Built per-frame (not a `const`
+/// array like before) since caller-classes membership can change between
+/// frames (a fresh sign-in/sign-out answer landing while the modal is
+/// open).
+fn tab_items(messages_visible: bool) -> Vec<ModalTab<'static>> {
+    let mut items = vec![ModalTab::new("forum", "Forum")];
+    if messages_visible {
+        items.push(ModalTab::new("messages", "Messages"));
+    }
+    items
+}
 
 /// Geometry the input side needs — header/resize drag, tab rects, plus the
 /// hosted forum-v2/DM content's own scroll + text-field rects. `content`
@@ -101,8 +111,8 @@ pub struct CommunityListPaneResult {
 /// doc for why it has no observable effect today) — never the two panes'
 /// OWN `ScrollableContainer::end` calls, which each use their own `*_h`
 /// helper directly (`forum_v2_overlay`/`dm_overlay`'s own `draw`).
-fn content_height(state: &CommunityState) -> f64 {
-    match state.tab {
+fn content_height(state: &CommunityState, tab: CommunityTab) -> f64 {
+    match tab {
         CommunityTab::Forum => forum_v2_overlay::list_height(state).max(forum_v2_overlay::height(state)),
         CommunityTab::Messages => dm_overlay::list_height(state).max(dm_overlay::height(state)),
     }
@@ -127,6 +137,15 @@ pub fn render_community_modal(
         &toolbar_theme.separator,
         toolbar_theme,
     );
+    // Which tab actually draws (falls back to Forum when `state.tab` names
+    // Messages but it is not visible for this caller right now — a stale
+    // `tab` surviving a sign-out or an account switch, see
+    // `CommunityState::active_tab`'s own doc) and whether the Messages tab
+    // exists at all this frame (owner ruling 2026-09-09: `paid` and above).
+    let active_tab = state.active_tab();
+    let messages_visible = state.messages_tab_visible();
+    let items = tab_items(messages_visible);
+    let title = if messages_visible { "Forum & Messages" } else { "Forum" };
     // The FULL, unclamped content height — not just what the default frame
     // shows. `state.size` is never `None` (see `CommunityState::default`),
     // so this never drives the frame's own size (that always comes from
@@ -138,10 +157,10 @@ pub fn render_community_modal(
     // content-driven frame) would silently make the excess unreachable.
     let spec = ModalShellSpec {
         placement: ModalPlacement::At(state.position),
-        ..ModalShellSpec::new("community", "Forum & Messages", MODAL_W, content_height(state))
+        ..ModalShellSpec::new("community", title, MODAL_W, content_height(state, active_tab))
         .with_tabs(ModalTabs::Horizontal {
-            items: &TAB_ITEMS,
-            active: state.tab.index(),
+            items: &items,
+            active: active_tab.index(),
             fit: TabFit::Equal,
         })
         // The composer at the bottom of whichever pane is showing is
@@ -164,7 +183,7 @@ pub fn render_community_modal(
             let y = shell.content.y;
             let w = shell.content.width;
             let viewport_h = shell.content.height;
-            match state.tab {
+            match active_tab {
                 CommunityTab::Forum => forum_v2_overlay::draw(
                     ctx, coord, layer_id, x, y, w, viewport_h, state, frame_theme, toolbar_theme,
                     current_time_ms, &mut result.content, &mut result.list,

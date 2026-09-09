@@ -1211,25 +1211,45 @@ impl ChartApp {
         }
     }
 
-    /// DM List view's "start a conversation" peer field (new this pass —
-    /// see `mlc_app_layout::layout::modals::dm_overlay`'s `draw_open_peer_
-    /// row`). Enter validates non-empty, arms `DmRequest::Open` and clears
-    /// the field immediately — unlike `DM_DRAFT`/`FORUM_REPLY`, there is
-    /// only ever one action reachable from the List view that touches this
-    /// field, and once `Open` succeeds the shell switches away to
-    /// `DmView::Conversation` (where this field is not even drawn), so no
-    /// pending flag is needed to know when it is safe to clear it. Mirrors
-    /// `panel_click.rs`'s `"dm:open_peer"` click arm exactly.
+    /// DM List view's "start a conversation" recipient-search field (owner
+    /// ruling 2026-09-09, community-modal-and-forum-ladder arc, piece 2
+    /// item b — see `mlc_app_layout::layout::modals::dm_overlay`'s
+    /// `draw_open_peer_row`/`draw_lookup_dropdown`). Every keystroke (re)arms
+    /// the debounced `DmRequest::Lookup` fetch
+    /// (`DmState::arm_lookup_debounce`), mirroring `text_action_forum_
+    /// search`'s own `ForumV2State::arm_quick_search_debounce`. Enter opens
+    /// the highlighted (top) dropdown result directly when one exists;
+    /// otherwise it falls back to the typed text as an exact label — the
+    /// field's original behaviour, kept so a public id typed in full still
+    /// works even when the fuzzy lookup finds nothing matching it. Escape
+    /// closes the dropdown outright (`close_lookup_dropdown`), same
+    /// "collapse instead of just blur" rule `text_action_forum_search`
+    /// gives its own inline box. Mirrors `panel_click.rs`'s
+    /// `"dm:lookup_result:{i}"` click arm for the row-click path.
     #[cfg(feature = "cloud")]
     fn text_action_dm_peer(&mut self, ch: char, action: TextAction) {
         let submit = |chart: &mut ChartApp| {
             let wid = WidgetId::from(crate::text_input::DM_PEER);
-            let with_label = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
-            if with_label.is_empty() {
-                return;
-            }
+            let top_public_id = chart
+                .panel_app
+                .community_state
+                .dm
+                .lookup_results
+                .first()
+                .map(|h| h.public_id.clone());
+            let with_label = match top_public_id {
+                Some(id) => id,
+                None => {
+                    let typed = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+                    if typed.is_empty() {
+                        return;
+                    }
+                    typed
+                }
+            };
             chart.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
             let dm = &mut chart.panel_app.community_state.dm;
+            dm.close_lookup_dropdown();
             dm.last_error = None;
             dm.request = Some(mlc_app_layout::ui::modal_settings::DmRequest::Open { with_label });
         };
@@ -1238,11 +1258,18 @@ impl ChartApp {
             return;
         }
         if ch == '\x1b' {
+            self.panel_app.community_state.dm.close_lookup_dropdown();
             self.input_coordinator.borrow_mut().text_fields_mut().blur();
             return;
         }
-        if let TextAction::Commit(_) = action {
-            submit(self);
+        match action {
+            TextAction::Commit(_) => submit(self),
+            TextAction::Cancel => {
+                self.panel_app.community_state.dm.close_lookup_dropdown();
+            }
+            _ => {
+                self.panel_app.community_state.dm.arm_lookup_debounce();
+            }
         }
     }
 

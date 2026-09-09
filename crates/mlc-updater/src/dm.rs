@@ -67,6 +67,23 @@ struct ConversationsWire {
     conversations: Vec<DmConversation>,
 }
 
+/// One row of `GET /api/dm/lookup?q=`'s answer — a fuzzy nick/label match
+/// for the recipient-search dropdown (community-modal-and-forum-ladder arc,
+/// piece 2 item b). Mirrors `mlc_cloud::models::DmLookupHit`'s wasm twin;
+/// the wire body's `rank` field is not declared here for the same reason
+/// (unread, `serde` drops unknown fields by default).
+#[derive(Clone, Debug, PartialEq, serde::Deserialize)]
+pub struct DmLookupHit {
+    pub public_id: String,
+    pub nick: Option<String>,
+    pub label: String,
+}
+
+#[derive(serde::Deserialize)]
+struct LookupWire {
+    users: Vec<DmLookupHit>,
+}
+
 /// One row of `GET /api/dm/conversations/{id}/messages`. `nonce_b64`/
 /// `ciphertext_b64` are opaque to this crate — see this module's doc.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize)]
@@ -169,6 +186,24 @@ pub async fn get_identity(client: &reqwest::Client, auth_header: &str, label: &s
         return Err(error_message(resp).await);
     }
     resp.json().await.map_err(|e| format!("Parse error: {}", e))
+}
+
+/// `GET /api/dm/lookup?q=` — fuzzy nick/label search for the recipient
+/// dropdown; server-sorted and -capped, distinct from the exact-label
+/// [`get_identity`] above.
+pub async fn lookup(client: &reqwest::Client, auth_header: &str, q: &str) -> Result<Vec<DmLookupHit>, String> {
+    let url = format!("{}/api/dm/lookup?q={}", UPDATE_SERVER, urlencode(q));
+    let resp = client
+        .get(&url)
+        .header("Authorization", auth_header)
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {}", e))?;
+    if !resp.status().is_success() {
+        return Err(error_message(resp).await);
+    }
+    let wire: LookupWire = resp.json().await.map_err(|e| format!("Parse error: {}", e))?;
+    Ok(wire.users)
 }
 
 /// `GET /api/dm/conversations` — the caller's own, newest activity first.

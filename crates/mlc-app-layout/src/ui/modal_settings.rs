@@ -5713,6 +5713,22 @@ pub struct DmConversationUi {
 /// One message bubble. `text` is already-decrypted plaintext (or
 /// `"<cannot decrypt>"`) — see this section's own doc for why the server
 /// contract (`nonce_b64`/`ciphertext_b64`) never appears here at all.
+/// One row of the recipient-search dropdown under the "start a
+/// conversation" field (`GET /api/dm/lookup?q=`, community-modal-and-forum-
+/// ladder arc, piece 2 item b) — a fuzzy nick/label match, server-sorted and
+/// -capped. `nick` is `None` for an account with no nickname set (`label` is
+/// then whatever the server falls back to). Unlike [`DmConversationUi`],
+/// this row has no fingerprint — the dropdown never opens a conversation by
+/// itself, a click/Enter re-runs today's exact two-step `Open` with
+/// [`Self::public_id`].
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct DmLookupHitUi {
+    pub public_id: String,
+    pub nick: Option<String>,
+    pub label: String,
+}
+
 #[cfg(feature = "cloud")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct DmMessageUi {
@@ -5797,6 +5813,29 @@ pub struct DmState {
     /// code to know whether to clear `DM_DRAFT`, reset to `false` wherever
     /// it is consumed, on success or failure alike.
     pub send_pending: bool,
+
+    // ── Recipient search (owner ruling 2026-09-09, community-modal-and-
+    // forum-ladder arc, piece 2 item b) — replaces the old plain "Nick or
+    // public id…" field: typing debounces a `GET /api/dm/lookup?q=` fetch
+    // (fired directly by the shell driver, same idiom
+    // `ForumV2State::quick_search_due`'s own debounce block uses — never
+    // routed through [`Self::request`]), and the answer renders as a
+    // dropdown under the field. There is no expand/collapse toggle
+    // counterpart (`ForumV2State::quick_search_open`) since the field
+    // itself is drawn open at all times — only the RESULTS dropdown
+    // opens/closes.
+    /// The query [`Self::lookup_results`] currently answers — `None`
+    /// before the first answer lands (or once the field empties/the
+    /// dropdown is explicitly closed).
+    pub lookup_query: Option<String>,
+    /// Live results for the dropdown (server-truncated to a handful of
+    /// rows, sorted) — see [`DmLookupHitUi`]'s own doc.
+    pub lookup_results: Vec<DmLookupHitUi>,
+    /// Wall-clock ms ([`now_ms`]) after which the debounced fetch for the
+    /// current field text is due; `None` = nothing pending. Armed by
+    /// [`Self::arm_lookup_debounce`] on every keystroke, read (and
+    /// cleared) by the shell driver's per-frame due-check.
+    pub lookup_due_at: Option<u64>,
     /// Whether DM controls (open-peer, conversations, draft/send) can
     /// actually work in this shell right now. Both shells derive this the
     /// same way (owner ruling 2026-09-09: paid web users hold the vault too,
@@ -5825,6 +5864,9 @@ impl Default for DmState {
             messages_fetched_at: None,
             messages_refreshing: false,
             send_pending: false,
+            lookup_query: None,
+            lookup_results: Vec::new(),
+            lookup_due_at: None,
             available: false,
         }
     }
@@ -5849,6 +5891,7 @@ impl DmState {
         self.last_error = None;
         self.request = None;
         self.send_pending = false;
+        self.close_lookup_dropdown();
     }
 
     /// Drop back to the conversation list — same "reopen always lands here"
@@ -5860,6 +5903,35 @@ impl DmState {
         self.last_error = None;
         self.request = None;
         self.send_pending = false;
+        self.close_lookup_dropdown();
+    }
+
+    /// Debounce window before the recipient-search dropdown re-fetches
+    /// after the last keystroke — same value `ForumV2State`'s own inline
+    /// quick-search uses (owner review 2026-09-09).
+    pub const LOOKUP_DEBOUNCE_MS: u64 = 300;
+
+    /// Called on every keystroke into the "start a conversation" field —
+    /// arms (or re-arms) the debounced lookup fetch. Cheap: nothing fires
+    /// here, only the timestamp this module's own [`now_ms`] reads.
+    pub fn arm_lookup_debounce(&mut self) {
+        self.lookup_due_at = Some(now_ms() + Self::LOOKUP_DEBOUNCE_MS);
+    }
+
+    /// Whether the armed debounce timer has elapsed — read (and cleared)
+    /// by the shell driver's per-frame poll, same idiom every other
+    /// `*_due`/`*_due_for_refresh` check in this module uses.
+    pub fn lookup_due(&self) -> bool {
+        matches!(self.lookup_due_at, Some(t) if now_ms() >= t)
+    }
+
+    /// Drop the recipient-search dropdown — called on Escape, opening a
+    /// conversation (row click, Enter, or the field emptying), and every
+    /// navigation that already resets this pane.
+    pub fn close_lookup_dropdown(&mut self) {
+        self.lookup_query = None;
+        self.lookup_results = Vec::new();
+        self.lookup_due_at = None;
     }
 
     /// The peer row for the conversation currently open in
@@ -6073,10 +6145,46 @@ impl CommunityState {
 
     /// Switch panes, resetting scroll — the pane switched TO must not
     /// inherit the scroll position of whichever pane was showing before it.
+    /// A request to land on Messages while it is not visible for this
+    /// caller (owner ruling 2026-09-09: Messages is `paid`-and-above only)
+    /// falls back to Forum — see [`Self::messages_tab_visible`].
     pub fn set_tab(&mut self, tab: CommunityTab) {
-        self.tab = tab;
+        self.tab = if tab == CommunityTab::Messages && !self.messages_tab_visible() {
+            CommunityTab::Forum
+        } else {
+            tab
+        };
         self.scroll.reset();
         self.list_scroll.reset();
+    }
+
+    /// Whether the Messages tab is visible for this caller — ladder rank
+    /// `paid` or above, read directly off [`ForumV2State::caller_classes`]
+    /// (cumulative membership: `"paid"` is present for paid/trusted/
+    /// moderator/admin alike, per the ladder in `docs/mlc/plans/
+    /// community-modal-and-forum-ladder-2026-09-09.md`). Empty/not-yet-
+    /// fetched classes (signed out, or the fetch has not landed) read as
+    /// not-visible — the same safe default `forum2_can_write` uses.
+    ///
+    /// Deliberately NOT [`DmState::available`] (vault+paid) — that one
+    /// keeps gating the tab's CONTENT (needs the vault unlocked too), this
+    /// one gates whether the tab exists at all.
+    pub fn messages_tab_visible(&self) -> bool {
+        self.forum2.caller_classes.iter().any(|c| c == "paid")
+    }
+
+    /// The tab to actually draw/act on — falls back to Forum when `tab`
+    /// names Messages but it is not visible for this caller right now
+    /// (a stale `tab` surviving a sign-out or an account switch to a
+    /// non-paid account; `open()`/`close()` never touch `tab` by design,
+    /// see that field's own doc). Callers that draw or drive the modal
+    /// should read this instead of `tab` directly.
+    pub fn active_tab(&self) -> CommunityTab {
+        if self.tab == CommunityTab::Messages && !self.messages_tab_visible() {
+            CommunityTab::Forum
+        } else {
+            self.tab
+        }
     }
 
     pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {

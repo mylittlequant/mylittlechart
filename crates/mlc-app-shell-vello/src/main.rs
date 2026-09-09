@@ -380,6 +380,11 @@ enum DmChain {
     /// which does not carry either) — `conversation_id` names the row to
     /// update once the answer lands.
     BackfillPeerKey { conversation_id: i64 },
+    /// The recipient-search dropdown's debounced `Lookup { q }` is in
+    /// flight — `q` rides along so the applied `DmState::lookup_query`
+    /// always shows the query that was actually asked, never a guess
+    /// reconstructed from whatever the field holds when the answer lands.
+    Lookup { q: String },
 }
 
 
@@ -3082,7 +3087,7 @@ impl App<'_> {
     /// `forum_entitled`/`is_paid` elsewhere in this file).
     #[cfg(feature = "cloud")]
     fn apply_dm_result(&mut self, win_id: WindowId, chain: DmChain, state: mlc_updater::DmState) {
-        use mlc_app_layout::ui::modal_settings::{DmConversationUi, DmMessageUi, DmView};
+        use mlc_app_layout::ui::modal_settings::{DmConversationUi, DmLookupHitUi, DmMessageUi, DmView};
 
         let Some(pw) = self.windows.get_mut(&win_id) else {
             return;
@@ -3197,6 +3202,13 @@ impl App<'_> {
                             row.unread_count = 0;
                         }
                     }
+                }
+                (DmChain::Lookup { q }, mlc_updater::DmState::LookupResults(hits)) => {
+                    ov.dm.lookup_query = Some(q);
+                    ov.dm.lookup_results = hits
+                        .into_iter()
+                        .map(|h| DmLookupHitUi { public_id: h.public_id, nick: h.nick, label: h.label })
+                        .collect();
                 }
                 (chain, mlc_updater::DmState::Failed { message }) => {
                     ov.dm.last_error = Some(message.clone());
@@ -3661,6 +3673,45 @@ impl App<'_> {
         }
 
         if self.dm_pending.is_some() {
+            return;
+        }
+
+        // Debounced recipient-search (owner ruling 2026-09-09, community-
+        // modal-and-forum-ladder arc, piece 2 item b) — mirrors the web
+        // shell's own `drive()` (`cloud_session.rs`): every keystroke into
+        // the "start a conversation" field (re)arms `lookup_due_at` via
+        // `DmState::arm_lookup_debounce` (`text_action_dm_peer`); once the
+        // timer elapses this fires `GET /api/dm/lookup?q=`, routed to
+        // `messages_window` — the only window this pass ever touches (see
+        // that binding's own doc).
+        let lookup_due = self
+            .windows
+            .get(&messages_window)
+            .map(|pw| pw.chart.panel_app.community_state.dm.lookup_due())
+            .unwrap_or(false);
+        if lookup_due {
+            if let Some(pw) = self.windows.get_mut(&messages_window) {
+                let q = {
+                    let coord = pw.chart.input_coordinator.borrow();
+                    coord
+                        .text_fields()
+                        .text(&uzor::WidgetId::from(mlc_app::text_input::DM_PEER))
+                        .trim()
+                        .to_string()
+                };
+                let dm = &mut pw.chart.panel_app.community_state.dm;
+                dm.lookup_due_at = None;
+                if q.is_empty() {
+                    dm.lookup_query = None;
+                    dm.lookup_results = Vec::new();
+                } else {
+                    dm.last_error = None;
+                    let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
+                        mlc_updater::DmRequest::Lookup { q: q.clone() },
+                    ));
+                    self.dm_pending = Some((messages_window, DmChain::Lookup { q }));
+                }
+            }
             return;
         }
 
@@ -6595,7 +6646,20 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             #[cfg(feature = "cloud")]
             if auth_identity_changed {
                 for pw in self.windows.values_mut() {
-                    pw.chart.panel_app.community_state.forum2.invalidate_me();
+                    let comm = &mut pw.chart.panel_app.community_state;
+                    comm.forum2.invalidate_me();
+                    // The board LIST and DM conversation list are per-caller
+                    // too (owner defect 2026-09-09: an admin signing in saw
+                    // zero boards until a hard reload) — `invalidate_me()`
+                    // alone only re-asks classes/roles, never the boards a
+                    // DIFFERENT account can read, nor whether this account's
+                    // own conversations differ from whoever was signed in
+                    // before. Also drop any recipient-search dropdown state
+                    // so a stale answer from a previous account can never
+                    // show under the new one.
+                    comm.forum2.invalidate_boards();
+                    comm.dm.invalidate_conversations();
+                    comm.dm.close_lookup_dropdown();
                 }
             }
             // Agent API listener start/stop: the port only ever binds for a

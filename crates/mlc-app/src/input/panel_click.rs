@@ -6078,6 +6078,16 @@ impl ChartApp {
                     }
                     use mlc_app_layout::ui::modal_settings::{DmRequest, DmView};
                     let action = &rest["dm:".len()..];
+                    // Recipient-search dropdown (owner ruling 2026-09-09,
+                    // community-modal-and-forum-ladder arc, piece 2 item b):
+                    // a click on anything else in this tab closes it — same
+                    // "clicking elsewhere" rule the `"forum2:"` arm's own
+                    // quick-search box uses. The field and the dropdown's
+                    // own rows are exempt so this pre-check cannot beat them
+                    // to it.
+                    if st.dm.lookup_query.is_some() && action != "peer_input" && !action.starts_with("lookup_result:") {
+                        st.dm.close_lookup_dropdown();
+                    }
                     match action {
                         rest2 if rest2.starts_with("conversation:") => {
                             if let Ok(id) = rest2["conversation:".len()..].parse::<i64>() {
@@ -6089,16 +6099,18 @@ impl ChartApp {
                             st.dm.reset_to_list();
                             self.input_coordinator.borrow_mut().text_fields_mut().blur();
                         }
-                        // Starts (or resumes) a conversation with the typed
-                        // nick/public id. Mirrors `DM_PEER`'s own Enter-submit
+                        // A row in the recipient-search dropdown. Mirrors
+                        // `DM_PEER`'s own Enter-on-top-result path
                         // (`text_input::dispatch::text_action_dm_peer`).
-                        "open_peer" => {
-                            let wid = uzor::WidgetId::from(crate::text_input::DM_PEER);
-                            let with_label = self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
-                            if !with_label.is_empty() {
-                                self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
-                                st.dm.last_error = None;
-                                st.dm.request = Some(DmRequest::Open { with_label });
+                        rest2 if rest2.starts_with("lookup_result:") => {
+                            if let Ok(i) = rest2["lookup_result:".len()..].parse::<usize>() {
+                                if let Some(with_label) = st.dm.lookup_results.get(i).map(|h| h.public_id.clone()) {
+                                    let wid = uzor::WidgetId::from(crate::text_input::DM_PEER);
+                                    self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+                                    st.dm.close_lookup_dropdown();
+                                    st.dm.last_error = None;
+                                    st.dm.request = Some(DmRequest::Open { with_label });
+                                }
                             }
                         }
                         // Mirrors `DM_DRAFT`'s own Enter-submit

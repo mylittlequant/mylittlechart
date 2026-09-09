@@ -824,6 +824,25 @@ pub struct DmCreateConversationRequest {
     pub with: String,
 }
 
+/// One row of `GET /api/dm/lookup?q=`'s answer — a fuzzy nick/label match
+/// for the recipient-search dropdown (community-modal-and-forum-ladder arc,
+/// piece 2 item b). `nick` is `None` for an account with no nickname set.
+/// The wire body also carries a `rank` field this client does not read (the
+/// server already sorts/caps the list) — `serde` drops unknown fields by
+/// default, so it is not declared here.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct DmLookupHit {
+    pub public_id: String,
+    pub nick: Option<String>,
+    pub label: String,
+}
+
+/// Response body from `GET /api/dm/lookup?q=`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DmLookupResponse {
+    pub users: Vec<DmLookupHit>,
+}
+
 /// The other party to a [`DmConversation`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DmConversationPeer {
