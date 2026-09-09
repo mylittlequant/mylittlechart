@@ -3296,7 +3296,7 @@ impl App<'_> {
     #[cfg(feature = "cloud")]
     fn drive_forum2(&mut self) {
         use mlc_app_layout::ui::modal_settings::{
-            CommunityTab, ForumV2Request as UiForumV2Request, ForumV2View,
+            CommunityTab, ForumV2Request as UiForumV2Request, ForumV2View, UserSettingsTab,
         };
 
         if self.updater_handle.forum_v2_rx.has_changed().unwrap_or(false) {
@@ -3470,16 +3470,25 @@ impl App<'_> {
         let mut found: Option<(WindowId, Passive)> = None;
         'scan: for (win_id, pw) in self.windows.iter() {
             let ov = &pw.chart.panel_app.community_state;
-            if !(ov.is_open && ov.tab == CommunityTab::Forum) {
-                continue;
-            }
+            let forum2_active = ov.is_open && ov.tab == CommunityTab::Forum;
+            // User Settings' Account tab shows the same tier/role line off
+            // this fetch (`UserSettingsState::account_classes`'s own doc) —
+            // it must fire even when the Community modal itself is closed,
+            // so the tab's line fills the moment it's looked at rather than
+            // only after the Forum tab happens to have been opened once
+            // (owner ruling 2026-09-10).
+            let account_tab_visible = pw.chart.panel_app.user_settings_state.is_open
+                && pw.chart.panel_app.user_settings_state.active_tab == UserSettingsTab::Account;
             // Once per tab-open (and again after a sign-in/sign-out edge
             // invalidates it — see the `auth_rx` edge block in
             // `about_to_wait`) — no refresh cadence of its own, see
             // `ForumV2State::me_fetched_at`'s own doc.
-            if ov.forum2.me_fetched_at.is_none() {
+            if (forum2_active || account_tab_visible) && ov.forum2.me_fetched_at.is_none() {
                 found = Some((*win_id, Passive::Me));
                 break 'scan;
+            }
+            if !forum2_active {
+                continue;
             }
             let boards_needs_fetch = ov.forum2.boards.is_empty() && ov.forum2.boards_fetched_at.is_none();
             if boards_needs_fetch || (!ov.forum2.boards.is_empty() && ov.forum2.boards_due_for_refresh()) {

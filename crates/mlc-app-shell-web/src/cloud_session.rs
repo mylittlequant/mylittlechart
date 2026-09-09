@@ -27,7 +27,7 @@ use mlc_app_layout::ui::modal_settings::{
     CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudReleaseEntry, CommunityTab,
     DmConversationUi, DmLookupHitUi, DmMessageUi, DmRequest as UiDmRequest, DmView, ForumListState,
     ForumReplyV2Ui, ForumRequest, ForumSearchHitUi, ForumSubView, ForumThreadV2Detail,
-    ForumThreadV2Ui, ForumV2Request, ForumV2View, RedeemStatus,
+    ForumThreadV2Ui, ForumV2Request, ForumV2View, RedeemStatus, UserSettingsTab,
 };
 use mlc_cloud::{
     dm_error_message, forum_error_message, forum_v2_error_message, redeem_error_message,
@@ -1956,6 +1956,14 @@ impl CloudSession {
 
         // ── Forum v2 tab (public boards): passive loads + explicit actions ─
         {
+            // User Settings' Account tab shows the same tier/role line off
+            // this fetch (`UserSettingsState::account_classes`'s own doc) —
+            // it must fire even when the Community modal itself is closed,
+            // so the tab's line fills the moment it's looked at rather than
+            // only after the Forum tab happens to have been opened once.
+            let account_tab_visible = chart.panel_app.user_settings_state.is_open
+                && chart.panel_app.user_settings_state.active_tab == UserSettingsTab::Account;
+
             let ov = &mut chart.panel_app.community_state;
             let forum2_active = ov.is_open && ov.tab == CommunityTab::Forum;
 
@@ -1983,8 +1991,13 @@ impl CloudSession {
             // no refresh cadence (unlike boards/threads below): this is an
             // account-level fact that only changes on a sign-in/sign-out
             // edge, which already calls `forum2.invalidate_me()` explicitly
-            // (`apply_signed_out`, the login-confirm arm further down).
-            if forum2_active && ov.forum2.me_fetched_at.is_none() && !self.inner.borrow().forum2_in_flight {
+            // (`apply_signed_out`, the login-confirm arm further down). Gated
+            // on the Community modal's Forum tab OR User Settings' Account
+            // tab — either surface reading this fact is enough to fetch it.
+            if (forum2_active || account_tab_visible)
+                && ov.forum2.me_fetched_at.is_none()
+                && !self.inner.borrow().forum2_in_flight
+            {
                 ov.forum2.me_refreshing = true;
                 self.inner.borrow_mut().forum2_in_flight = true;
                 let inner = self.inner.clone();

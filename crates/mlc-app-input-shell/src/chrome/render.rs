@@ -39,9 +39,6 @@ const MASCOT_BUTTON_WIDTH: f64 = 0.0;
 const MENU_BUTTON_WIDTH: f64 = 36.0;
 const NEW_WINDOW_BUTTON_WIDTH: f64 = 36.0;
 const NEW_TAB_BUTTON_WIDTH: f64 = 28.0;
-/// Gold "Sign in" text button (Web flavor, cloud builds).
-#[cfg(feature = "cloud")]
-const LOGIN_BUTTON_WIDTH: f64 = 68.0;
 /// Icon-sized cloud buttons (Web flavor, cloud builds).
 #[cfg(feature = "cloud")]
 const CLOUD_ICON_BUTTON_WIDTH: f64 = 30.0;
@@ -87,7 +84,7 @@ struct ButtonPositions {
     menu_left: f64,
     /// Only valid for Native flavor.
     new_window_left: f64,
-    /// Web flavor: left edge of the "Sign in" button (cloud builds).
+    /// Web flavor: left edge of the "Sign in" / account button (cloud builds).
     #[cfg(feature = "cloud")]
     login_left: f64,
     #[cfg(feature = "cloud")]
@@ -98,8 +95,12 @@ struct ButtonPositions {
 
 impl ButtonPositions {
     /// `update_w` is `logic::update_button_width`'s answer — zero when the
-    /// update control is not drawn, which closes its slot up.
-    fn compute(width: f64, flavor: ChromeFlavor, #[allow(unused)] update_w: f64) -> Self {
+    /// update control is not drawn, which closes its slot up. `signed_in`
+    /// closes the gear's own slot the same way (`logic::gear_width`) and
+    /// widens the account button into it (`logic::account_button_width`) —
+    /// owner ruling 2026-09-10.
+    fn compute(width: f64, flavor: ChromeFlavor, #[allow(unused)] update_w: f64, signed_in: bool) -> Self {
+        let gear_w = super::logic::gear_width(signed_in);
         match flavor {
             ChromeFlavor::Native => {
                 let close_x           = width - BUTTON_WIDTH;
@@ -107,13 +108,13 @@ impl ButtonPositions {
                 let minimize_x        = width - BUTTON_WIDTH * 3.0;
                 let close_window_left = minimize_x - CLOSE_WINDOW_BUTTON_WIDTH;
                 let mascot_left       = close_window_left - MASCOT_BUTTON_WIDTH;
-                let menu_left         = mascot_left - MENU_BUTTON_WIDTH;
+                let menu_left         = mascot_left - gear_w;
                 let new_window_left   = menu_left - NEW_WINDOW_BUTTON_WIDTH;
-                // Native cloud cluster, left of "new window": "Sign in",
-                // then Download / News — see the same computation in
-                // `logic.rs`, which the hit test reads.
+                // Native cloud cluster, left of "new window": "Sign in"/
+                // account, then Download / News — see the same computation
+                // in `logic.rs`, which the hit test reads.
                 #[cfg(feature = "cloud")]
-                let login_left = new_window_left - LOGIN_BUTTON_WIDTH;
+                let login_left = new_window_left - super::logic::account_button_width(signed_in);
                 #[cfg(feature = "cloud")]
                 let download_left = login_left - update_w;
                 #[cfg(feature = "cloud")]
@@ -129,10 +130,11 @@ impl ButtonPositions {
                 }
             }
             ChromeFlavor::Web => {
-                // Web: right-to-left — gear, "Sign in", Download, News.
-                let menu_left = width - MENU_BUTTON_WIDTH;
+                // Web: right-to-left — gear, "Sign in"/account, Download,
+                // News. Gear is zero-width while signed in, which hides it.
+                let menu_left = width - gear_w;
                 #[cfg(feature = "cloud")]
-                let login_left = menu_left - LOGIN_BUTTON_WIDTH;
+                let login_left = menu_left - super::logic::account_button_width(signed_in);
                 #[cfg(feature = "cloud")]
                 let download_left = login_left - update_w;
                 #[cfg(feature = "cloud")]
@@ -238,7 +240,9 @@ pub fn render(
     input_coord: &std::cell::RefCell<uzor::input::InputCoordinator>,
 ) {
     let c = &state.colors;
-    let bp = ButtonPositions::compute(width, state.flavor, super::logic::positions_update_w(state));
+    let bp = ButtonPositions::compute(
+        width, state.flavor, super::logic::positions_update_w(state), state.account_label.is_some(),
+    );
 
     // Background.
     ctx.set_fill_color(&c.background);
@@ -558,8 +562,10 @@ pub fn render(
                     }
                 }
 
-                // menu cell + icon.
-                {
+                // menu cell + icon — hidden entirely while signed in (owner
+                // ruling 2026-09-10): the gear's slot then belongs to the
+                // widened account button (`draw_account_button`) instead.
+                if state.account_label.is_none() {
                     if state.hovered == ChromeHit::MenuButton {
                         ctx.set_fill_color(&c.button_hover);
                         ctx.fill_rect(bp.menu_left, 0.0, MENU_BUTTON_WIDTH, BUTTON_HEIGHT);
@@ -604,8 +610,11 @@ pub fn render(
                 draw_cloud_icon_buttons(ctx, state, c, &bp);
 
                 // Menu button (gear) — rightmost. Same hover rule: background
-                // patch only, the icon itself does not recolor.
-                {
+                // patch only, the icon itself does not recolor. Hidden
+                // entirely while signed in (owner ruling 2026-09-10) — the
+                // widened account button (`draw_account_button`) takes its
+                // slot instead.
+                if state.account_label.is_none() {
                     if state.hovered == ChromeHit::MenuButton {
                         ctx.set_fill_color(&c.button_hover);
                         ctx.fill_rect(bp.menu_left, 0.0, MENU_BUTTON_WIDTH, BUTTON_HEIGHT);
@@ -931,13 +940,40 @@ fn draw_rect_outline(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, h: f64
     ctx.fill_rect(x + w - t, y + t, t, h - t * 2.0);
 }
 
+/// A round avatar placeholder: a filled circle in the theme accent with the
+/// label's first letter, centered. Stands in for the real avatar set the
+/// owner has not picked yet (2026-09-10 ruling) — one drawing helper so
+/// swapping it for a picked image later touches this one place, the same
+/// reason [`draw_account_button`] itself is one body instead of two.
+#[cfg(feature = "cloud")]
+fn draw_avatar_placeholder(ctx: &mut dyn MlcRenderContext, cx: f64, cy: f64, r: f64, label: &str, bg: &str) {
+    ctx.set_fill_color(bg);
+    ctx.begin_path();
+    ctx.arc(cx, cy, r, 0.0, std::f64::consts::TAU);
+    ctx.fill();
+    if let Some(letter) = label.chars().next() {
+        ctx.set_fill_color(contrasting_text_color(bg));
+        ctx.set_font("600 11px sans-serif");
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        let upper: String = letter.to_uppercase().collect();
+        ctx.fill_text(&upper, cx, cy + 0.5);
+    }
+}
+
 /// The sign-in / account button: one control with two readings — "Sign in"
 /// while nobody is, the account's own name once somebody is, so the button the
 /// user pressed is the one that now says who they are.
 ///
-/// Signed out it is the single accent action in the strip. Signed in it is an
-/// ordinary control: the call to action has been answered, and leaving it
-/// shouting is noise.
+/// Signed out it is the single accent action in the strip, a fixed-width
+/// centred CTA pill.
+///
+/// Signed in it is an ordinary control, and a wider one: the gear
+/// (`ChromeHit::MenuButton`) is hidden while signed in (owner ruling
+/// 2026-09-10) and this button absorbs its slot instead, so the full nick
+/// has room without truncating — avatar placeholder, left-aligned nick, then
+/// a caret so the button reads as a menu, the same layout every other
+/// header dropdown trigger in the app already uses.
 ///
 /// Shared by both flavors deliberately. This lived as two copies that
 /// disagreed — the web one ignored `account_label` entirely — which is exactly
@@ -953,37 +989,77 @@ fn draw_account_button(
     let hovered = state.hovered == ChromeHit::LoginButton;
     let inset_x = 2.0;
     let inset_y = 4.0;
-    if signed_in {
+    let btn_w = super::logic::account_button_width(signed_in);
+
+    if let Some(label) = state.account_label.as_deref().filter(|_| signed_in) {
         if hovered {
             ctx.set_fill_color(&c.button_hover);
             ctx.fill_rounded_rect(
                 bp.login_left + inset_x,
                 inset_y,
-                LOGIN_BUTTON_WIDTH - inset_x * 2.0,
+                btn_w - inset_x * 2.0,
                 CHROME_HEIGHT - inset_y * 2.0,
                 7.0,
             );
         }
-        // Same token every other chrome glyph uses, so a signed-in account
-        // reads as part of the strip.
+
+        const AVATAR_D: f64 = 20.0;
+        const AVATAR_LEFT_PAD: f64 = 8.0;
+        const CARET_SIZE: f64 = 12.0;
+        const CARET_SLOT_W: f64 = 18.0;
+        const TEXT_GAP: f64 = 6.0;
+
+        let avatar_cx = bp.login_left + AVATAR_LEFT_PAD + AVATAR_D / 2.0;
+        let avatar_cy = CHROME_HEIGHT / 2.0;
+        draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, AVATAR_D / 2.0, label, &c.cta_bg);
+
+        // Caret — a tiny "this opens a menu" tell at the button's right end.
+        if let Some(svg) = icon_svg("chevron_down") {
+            let caret_x = bp.login_left + btn_w - CARET_SLOT_W + (CARET_SLOT_W - CARET_SIZE) / 2.0;
+            let caret_y = (CHROME_HEIGHT - CARET_SIZE) / 2.0;
+            draw_svg_icon(ctx, svg, caret_x, caret_y, CARET_SIZE, CARET_SIZE, &c.icon_normal);
+        }
+
+        // Nick, left-aligned right after the avatar. Fixed reserved width
+        // regardless of the nick's length (no tab-strip jitter — the same
+        // discipline `LOGIN_BUTTON_WIDTH` already held for the signed-out
+        // CTA) — an ellipsis applies only past the widest allowed width the
+        // slot leaves for text (avatar and caret already claimed theirs).
+        let text_x = avatar_cx + AVATAR_D / 2.0 + TEXT_GAP;
+        let max_text_w = (bp.login_left + btn_w - CARET_SLOT_W - text_x).max(0.0);
+        ctx.set_font("600 12px sans-serif");
         ctx.set_fill_color(&c.icon_normal);
-    } else {
-        let cta = if hovered { &c.cta_bg_hover } else { &c.cta_bg };
-        ctx.set_fill_color(cta);
-        ctx.fill_rounded_rect(
-            bp.login_left + inset_x,
-            inset_y,
-            LOGIN_BUTTON_WIDTH - inset_x * 2.0,
-            CHROME_HEIGHT - inset_y * 2.0,
-            7.0,
-        );
-        ctx.set_fill_color(contrasting_text_color(cta));
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.save();
+        ctx.clip_rect(bp.login_left, 0.0, btn_w, CHROME_HEIGHT);
+        let text_w = ctx.measure_text(label);
+        if text_w <= max_text_w {
+            ctx.fill_text(label, text_x, CHROME_HEIGHT / 2.0);
+        } else {
+            let fitted = fit_text_to_width(ctx, label, max_text_w);
+            ctx.fill_text(&fitted, text_x, CHROME_HEIGHT / 2.0);
+        }
+        ctx.restore();
+        return;
     }
-    let label = state.account_label.as_deref().unwrap_or("Sign in");
+
+    // Signed out: the single accent CTA in the strip, unchanged.
+    let cta = if hovered { &c.cta_bg_hover } else { &c.cta_bg };
+    ctx.set_fill_color(cta);
+    ctx.fill_rounded_rect(
+        bp.login_left + inset_x,
+        inset_y,
+        btn_w - inset_x * 2.0,
+        CHROME_HEIGHT - inset_y * 2.0,
+        7.0,
+    );
+    ctx.set_fill_color(contrasting_text_color(cta));
+    let label = "Sign in";
     ctx.set_font("600 12px sans-serif");
     ctx.set_text_baseline(TextBaseline::Middle);
-    // The button's width never grows with the label (LOGIN_BUTTON_WIDTH is a
-    // fixed cap, mirrored in logic.rs's `ButtonPositions`) — a long account
+    // The button's width never grows with the label (`btn_w` is a fixed
+    // cap, mirrored in logic.rs's `ButtonPositions`) — a long account
     // nickname does not push the News/Download icons. What used to go wrong
     // is the fit: centring `label` on the button's midpoint and relying on
     // `clip_rect` to hide the overrun clips it on BOTH sides symmetrically
@@ -992,13 +1068,13 @@ fn draw_account_button(
     // the padded width with an ellipsis and left-aligned, the same rule
     // `fit_text_to_width` applies to every other fitted label in the app.
     const TEXT_PADDING_X: f64 = 6.0;
-    let max_text_w = (LOGIN_BUTTON_WIDTH - TEXT_PADDING_X * 2.0).max(0.0);
+    let max_text_w = (btn_w - TEXT_PADDING_X * 2.0).max(0.0);
     let text_w = ctx.measure_text(label);
     ctx.save();
-    ctx.clip_rect(bp.login_left, 0.0, LOGIN_BUTTON_WIDTH, CHROME_HEIGHT);
+    ctx.clip_rect(bp.login_left, 0.0, btn_w, CHROME_HEIGHT);
     if text_w <= max_text_w {
         ctx.set_text_align(TextAlign::Center);
-        ctx.fill_text(label, bp.login_left + LOGIN_BUTTON_WIDTH / 2.0, CHROME_HEIGHT / 2.0);
+        ctx.fill_text(label, bp.login_left + btn_w / 2.0, CHROME_HEIGHT / 2.0);
     } else {
         let fitted = fit_text_to_width(ctx, label, max_text_w);
         ctx.set_text_align(TextAlign::Left);

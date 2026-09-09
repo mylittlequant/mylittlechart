@@ -21,6 +21,14 @@ const NEW_TAB_BUTTON_WIDTH: f64 = 28.0;
 /// Gold "Sign in" text button (Web flavor, cloud builds).
 #[cfg(feature = "cloud")]
 const LOGIN_BUTTON_WIDTH: f64 = 68.0;
+/// Signed-in header user button (owner ruling 2026-09-10): the gear is
+/// hidden while signed in and this button absorbs its slot instead, so a
+/// full nick fits without truncation. Fixed regardless of the nick's length
+/// — same no-jitter discipline [`LOGIN_BUTTON_WIDTH`] already holds for the
+/// signed-out CTA (see `long_account_label_does_not_widen_button_or_move_
+/// tabs_limit` below) — capped at the owner's ~180px ceiling.
+#[cfg(feature = "cloud")]
+const USER_BUTTON_WIDTH: f64 = 180.0;
 /// Icon-sized cloud buttons (Web flavor, cloud builds).
 #[cfg(feature = "cloud")]
 const CLOUD_ICON_BUTTON_WIDTH: f64 = 30.0;
@@ -84,6 +92,27 @@ pub(crate) fn update_button_width(update: ChromeUpdate, flavor: ChromeFlavor) ->
     }
 }
 
+/// Gear (settings) button's width for layout — zero while signed in: the
+/// gear is then hidden and its slot belongs to the widened user button
+/// instead (owner ruling 2026-09-10). Unconditional on `cloud` — without
+/// that feature `account_label` is always `None`, so this is always
+/// [`MENU_BUTTON_WIDTH`] there. Same "reads as zero when it doesn't apply"
+/// shape [`update_button_width`] already uses for the update control.
+pub(crate) fn gear_width(signed_in: bool) -> f64 {
+    if signed_in { 0.0 } else { MENU_BUTTON_WIDTH }
+}
+
+/// The account button's width — [`USER_BUTTON_WIDTH`] while signed in
+/// (absorbing the gear's freed slot), [`LOGIN_BUTTON_WIDTH`] otherwise.
+/// Fixed per state rather than measured from the label, for the same reason
+/// [`update_button_width`] is: the painter and the hit test must always
+/// agree on it, and a width read off the live label could disagree with
+/// itself between the frame that grew the nick and the one that laid it out.
+#[cfg(feature = "cloud")]
+pub(crate) fn account_button_width(signed_in: bool) -> f64 {
+    if signed_in { USER_BUTTON_WIDTH } else { LOGIN_BUTTON_WIDTH }
+}
+
 struct ButtonPositions {
     close_x: f64,
     maximize_x: f64,
@@ -92,7 +121,7 @@ struct ButtonPositions {
     mascot_left: f64,
     menu_left: f64,
     new_window_left: f64,
-    /// Web flavor: left edge of the "Sign in" button (cloud builds).
+    /// Web flavor: left edge of the "Sign in" / account button (cloud builds).
     #[cfg(feature = "cloud")]
     login_left: f64,
     /// Web flavor: Download button (cloud builds).
@@ -105,24 +134,28 @@ struct ButtonPositions {
 
 impl ButtonPositions {
     /// `update_w` is [`update_button_width`]'s answer — zero when the
-    /// update control is not drawn, which closes its slot up.
-    fn compute(width: f64, flavor: ChromeFlavor, #[allow(unused)] update_w: f64) -> Self {
+    /// update control is not drawn, which closes its slot up. `signed_in`
+    /// closes the gear's own slot the same way (via [`gear_width`]) and
+    /// widens the account button into it (via [`account_button_width`]).
+    fn compute(width: f64, flavor: ChromeFlavor, #[allow(unused)] update_w: f64, signed_in: bool) -> Self {
         let close_x           = width - BUTTON_WIDTH;
         let maximize_x        = width - BUTTON_WIDTH * 2.0;
         let minimize_x        = width - BUTTON_WIDTH * 3.0;
         let close_window_left = minimize_x - CLOSE_WINDOW_BUTTON_WIDTH;
         let mascot_left       = close_window_left - MASCOT_BUTTON_WIDTH;
+        let gear_w            = gear_width(signed_in);
         let new_window_left   = match flavor {
-            ChromeFlavor::Native => mascot_left - MENU_BUTTON_WIDTH - NEW_WINDOW_BUTTON_WIDTH,
+            ChromeFlavor::Native => mascot_left - gear_w - NEW_WINDOW_BUTTON_WIDTH,
             ChromeFlavor::Web => 0.0,
         };
         let menu_left = match flavor {
-            ChromeFlavor::Native => mascot_left - MENU_BUTTON_WIDTH,
-            // Web: the gear is the rightmost button (mirrors render.rs).
-            ChromeFlavor::Web => width - MENU_BUTTON_WIDTH,
+            ChromeFlavor::Native => mascot_left - gear_w,
+            // Web: the gear is the rightmost button (mirrors render.rs) —
+            // zero-width while signed in, which is what hides it.
+            ChromeFlavor::Web => width - gear_w,
         };
-        // Cloud builds: right-to-left — gear, "Sign in", Download, News.
-        // Native and Web share this cluster: News is server-published
+        // Cloud builds: right-to-left — gear, "Sign in"/account, Download,
+        // News. Native and Web share this cluster: News is server-published
         // content, unrelated to whether the surface is a tab or a window, and
         // Download is the same release manifest the in-process updater
         // already reads, re-verbed on native from "download a binary" to
@@ -139,13 +172,13 @@ impl ButtonPositions {
         #[cfg(feature = "cloud")]
         let (login_left, download_left, news_left) = match flavor {
             ChromeFlavor::Web => {
-                let login = menu_left - LOGIN_BUTTON_WIDTH;
+                let login = menu_left - account_button_width(signed_in);
                 let dl = login - update_w;
                 let ne = dl - CLOUD_ICON_BUTTON_WIDTH;
                 (login, dl, ne)
             }
             ChromeFlavor::Native => {
-                let login = new_window_left - LOGIN_BUTTON_WIDTH;
+                let login = new_window_left - account_button_width(signed_in);
                 let dl = login - update_w;
                 let ne = dl - CLOUD_ICON_BUTTON_WIDTH;
                 (login, dl, ne)
@@ -183,7 +216,7 @@ pub const MIN_TAB_WIDTH: f64 = 2.0 * TAB_PADDING_H + 3.0 * TAB_CLOSE_SIZE;
 /// are static, the tabs are dynamic and shrink to fit whatever is left.
 pub fn tabs_right_limit(width: f64, state: &ChromeState) -> f64 {
     let flavor = state.flavor;
-    let bp = ButtonPositions::compute(width, flavor, positions_update_w(state));
+    let bp = ButtonPositions::compute(width, flavor, positions_update_w(state), state.account_label.is_some());
     match flavor {
         ChromeFlavor::Native => {
             #[cfg(feature = "cloud")]
@@ -309,7 +342,8 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
     }
 
     if y < CHROME_HEIGHT {
-        let bp = ButtonPositions::compute(width, state.flavor, positions_update_w(state));
+        let signed_in = state.account_label.is_some();
+        let bp = ButtonPositions::compute(width, state.flavor, positions_update_w(state), signed_in);
 
         match state.flavor {
             ChromeFlavor::Native => {
@@ -318,7 +352,11 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
                 if x >= bp.minimize_x       { return ChromeHit::MinimizeButton; }
                 if x >= bp.close_window_left && x < bp.minimize_x        { return ChromeHit::CloseWindowButton; }
                 if x >= bp.mascot_left       && x < bp.close_window_left { return ChromeHit::MascotButton; }
-                if x >= bp.menu_left         && x < bp.mascot_left       { return ChromeHit::MenuButton; }
+                // Hidden while signed in (owner ruling 2026-09-10) — its
+                // slot then belongs to the widened account button; the
+                // band is empty anyway once `gear_width` is zero (menu_left
+                // == mascot_left), this guard just says so explicitly.
+                if !signed_in && x >= bp.menu_left && x < bp.mascot_left { return ChromeHit::MenuButton; }
                 if x >= bp.new_window_left   && x < bp.menu_left         { return ChromeHit::NewWindowButton; }
                 #[cfg(feature = "cloud")]
                 if let Some(hit) = cloud_button_hit_test(x, &bp, bp.new_window_left) {
@@ -326,8 +364,10 @@ pub fn hit_test(x: f64, y: f64, width: f64, height: f64, state: &ChromeState) ->
                 }
             }
             ChromeFlavor::Web => {
-                // Web: gear is rightmost; cloud builds add the cloud buttons.
-                if x >= bp.menu_left { return ChromeHit::MenuButton; }
+                // Web: gear is rightmost; cloud builds add the cloud
+                // buttons. Hidden while signed in (owner ruling 2026-09-10) —
+                // see the Native arm's comment above.
+                if !signed_in && x >= bp.menu_left { return ChromeHit::MenuButton; }
                 #[cfg(feature = "cloud")]
                 if let Some(hit) = cloud_button_hit_test(x, &bp, bp.menu_left) {
                     return hit;
@@ -721,7 +761,7 @@ mod cloud_tests {
         let state = native_state(ChromeUpdate::Restart);
         // Same geometry render.rs paints: Restart spans
         // [login_left - RESTART_BUTTON_WIDTH, login_left).
-        let bp = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&state));
+        let bp = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&state), false);
         assert!((bp.login_left - bp.download_left - RESTART_BUTTON_WIDTH).abs() < 0.001);
         // Both edges of the painted Restart button must hit Download — the
         // left half used to fall through to News (owner, 2026-09-04).
@@ -738,7 +778,7 @@ mod cloud_tests {
         let width = 1200.0;
         let height = 800.0;
         let state = native_state(ChromeUpdate::Idle);
-        let bp = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&state));
+        let bp = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&state), false);
         // No update control drawn: News butts directly against Sign in, and a
         // click on the painted News button hits News, not a phantom Download.
         assert!((bp.login_left - bp.news_left - CLOUD_ICON_BUTTON_WIDTH).abs() < 0.001);
@@ -748,9 +788,11 @@ mod cloud_tests {
 
     /// Owner report 2026-09-05: a long account nickname must be fit with an
     /// ellipsis (render.rs), not grow the button. This is the layout half of
-    /// that ruling — `LOGIN_BUTTON_WIDTH` is a fixed cap regardless of
-    /// `account_label`'s length, so neither the button's own width nor the
-    /// tab strip's right limit may move when the nickname gets long.
+    /// that ruling — the signed-in cap ([`USER_BUTTON_WIDTH`], widened from
+    /// [`LOGIN_BUTTON_WIDTH`] by the 2026-09-10 gear-merge ruling) is fixed
+    /// regardless of `account_label`'s length, so neither the button's own
+    /// width nor the tab strip's right limit may move when the nickname
+    /// gets long.
     #[test]
     fn long_account_label_does_not_widen_button_or_move_tabs_limit() {
         let width = 1200.0;
@@ -766,8 +808,8 @@ mod cloud_tests {
             "account label length must not move the tab strip's right limit"
         );
 
-        let bp_short = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&short));
-        let bp_long = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&long));
+        let bp_short = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&short), true);
+        let bp_long = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&long), true);
         let button_w_short = bp_short.new_window_left - bp_short.login_left;
         let button_w_long = bp_long.new_window_left - bp_long.login_left;
         assert!(
@@ -775,8 +817,36 @@ mod cloud_tests {
             "account button width must not depend on label length"
         );
         assert!(
-            button_w_long <= LOGIN_BUTTON_WIDTH + 0.001,
+            button_w_long <= USER_BUTTON_WIDTH + 0.001,
             "account button must stay within its cap regardless of label length"
+        );
+    }
+
+    /// The 2026-09-10 gear-merge ruling: signed in, the gear's own hit band
+    /// disappears (its slot went to the account button) and the account
+    /// button widens to `USER_BUTTON_WIDTH`, directly against `new_window`
+    /// with no gap — no leftover sliver where a click hits neither.
+    #[test]
+    fn signed_in_hides_gear_and_widens_account_button() {
+        let width = 1200.0;
+        let height = 800.0;
+        let mut state = native_state(ChromeUpdate::Idle);
+        state.account_label = Some("nick".to_string());
+
+        let bp = ButtonPositions::compute(width, ChromeFlavor::Native, positions_update_w(&state), true);
+        assert!((bp.menu_left - bp.mascot_left).abs() < 0.001, "gear's slot collapses to zero width");
+        assert!(
+            (bp.new_window_left - bp.login_left - USER_BUTTON_WIDTH).abs() < 0.001,
+            "account button widens to the fixed signed-in cap"
+        );
+
+        // A click where the gear used to be must reach neither MenuButton
+        // (hidden) nor a dead zone — it lands on NewWindowButton, whose
+        // slot now extends into the freed gear band.
+        let old_gear_mid = bp.mascot_left - 10.0;
+        assert_eq!(
+            hit_test(old_gear_mid, 10.0, width, height, &state),
+            ChromeHit::NewWindowButton,
         );
     }
 }

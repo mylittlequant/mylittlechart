@@ -1955,6 +1955,13 @@ fn render_account_nick_row(
 /// shortcut into the Vault tab for "Messages need an unlocked vault".
 /// Never rendered while signed out — [`UserSettingsTab::visible`] drops
 /// the tab entirely in that case, so this function never has to ask.
+///
+/// The tier/role row reads "—" until that fetch lands (owner ruling
+/// 2026-09-10) rather than not drawing at all — and both shells' passive
+/// drivers fire the fetch the moment THIS tab becomes visible, not only
+/// when the Community modal's Forum tab does: `mlc-app-shell-web`'s
+/// `cloud_session.rs` and `mlc-app-shell-vello`'s `main.rs::drive_forum2`
+/// each gate it on `forum2_active || account_tab_visible`.
 #[allow(clippy::too_many_arguments)]
 fn render_account_tab(
     ctx: &mut dyn RenderContext,
@@ -2007,12 +2014,20 @@ fn render_account_tab(
     // caller's real tier) — this tiny local rank exists only to pick that
     // one entry for display; it is not a write-access decision (those stay
     // in each shell's own `forum2_can_write*`, unaffected by this tab).
-    if !state.account_classes.is_empty() || !state.account_roles.is_empty() {
+    //
+    // Always drawn, never skipped: before the `GET /api/forum/me` fetch
+    // lands both fields are empty, and the row used to show nothing at all
+    // then — reading as "this tab has no tier/role concept" rather than
+    // "still loading" (owner ruling 2026-09-10). Tier falls back to "—" for
+    // that window; role stays omitted when genuinely absent — most
+    // accounts hold none, which is a real state, not an unknown one.
+    {
         const CLASS_RANK: [&str; 3] = ["public", "user", "paid"];
         let tier = state.account_classes.iter()
             .max_by_key(|c| CLASS_RANK.iter().position(|r| *r == c.as_str()).unwrap_or(0))
             .cloned()
-            .unwrap_or_default();
+            .filter(|t| !t.is_empty())
+            .unwrap_or_else(|| "—".to_string());
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.75));
         ctx.set_text_align(TextAlign::Left);
