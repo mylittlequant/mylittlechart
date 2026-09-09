@@ -678,28 +678,47 @@ pub fn process_event(
                         {
                             let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
                             if !skeleton_active {
-                                use mlc_app_layout::ui::modal_settings::CloudLoginPhase;
-                                chart.panel_app.cloud_login_state.toggle();
-                                // Which flow the modal opens into is a
-                                // property of the shell, not of the click.
-                                // Native signs in through a loopback redirect
-                                // and has no device-code driver at all, so
-                                // opening on `RequestCode` would sit at
-                                // "Requesting sign-in code…" forever.
-                                if chrome_st.flavor == crate::ChromeFlavor::Native
-                                    && chart.panel_app.cloud_login_state.is_open
-                                {
-                                    chart.panel_app.cloud_login_state.phase =
-                                        match chrome_st.account_label.clone() {
-                                            Some(display_name) => CloudLoginPhase::SignedIn {
-                                                display_name,
-                                                provider: chrome_st
-                                                    .account_provider
-                                                    .clone()
-                                                    .unwrap_or_default(),
-                                            },
-                                            None => CloudLoginPhase::ChooseProvider,
-                                        };
+                                if chrome_st.account_label.is_some() {
+                                    // Signed in: the header's own account
+                                    // button opens straight onto User
+                                    // Settings' Account tab (owner ruling
+                                    // 2026-09-09) — the login overlay's own
+                                    // job (choose a provider, or watch the
+                                    // sign-in complete) is already done.
+                                    // Toggle closed if it is already open
+                                    // there, the same "click again to
+                                    // close" the overlay itself used to give
+                                    // this button.
+                                    use mlc_app_layout::ui::modal_settings::UserSettingsTab;
+                                    let uss = &mut chart.panel_app.user_settings_state;
+                                    if uss.is_open && uss.active_tab == UserSettingsTab::Account {
+                                        uss.close();
+                                    } else {
+                                        uss.open();
+                                        uss.set_tab(UserSettingsTab::Account);
+                                    }
+                                    // The overlay's own "sign out" stays for
+                                    // the signed-out→signed-in TRANSITION
+                                    // screens only (owner ruling) — once
+                                    // already signed in, this button never
+                                    // opens it, so close it here rather than
+                                    // leaving it stacked behind Settings.
+                                    chart.panel_app.cloud_login_state.close();
+                                } else {
+                                    use mlc_app_layout::ui::modal_settings::CloudLoginPhase;
+                                    chart.panel_app.cloud_login_state.toggle();
+                                    // Which flow the modal opens into is a
+                                    // property of the shell, not of the
+                                    // click. Native signs in through a
+                                    // loopback redirect and has no
+                                    // device-code driver at all, so opening
+                                    // on `RequestCode` would sit at
+                                    // "Requesting sign-in code…" forever.
+                                    if chrome_st.flavor == crate::ChromeFlavor::Native
+                                        && chart.panel_app.cloud_login_state.is_open
+                                    {
+                                        chart.panel_app.cloud_login_state.phase = CloudLoginPhase::ChooseProvider;
+                                    }
                                 }
                                 chart.panel_app.cloud_overlay_state.close();
                                 dirty.chart_dirty = true;

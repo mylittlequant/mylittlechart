@@ -893,6 +893,7 @@ async fn updater_loop(
                                             let _ = forum_v2_tx.send(state::ForumV2State::Me {
                                                 classes: me.classes,
                                                 roles: me.roles,
+                                                nick: me.nick,
                                             });
                                         }
                                         Err(e) => demote_if_rejected_v2!(e),

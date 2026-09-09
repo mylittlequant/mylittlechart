@@ -327,8 +327,8 @@ pub enum ForumV2State {
     SearchResults(Vec<crate::forum_v2::ForumSearchHit>),
     /// `Moderate` succeeded.
     Moderated,
-    /// `Me` succeeded — the caller's resolved classes/roles.
-    Me { classes: Vec<String>, roles: Vec<String> },
+    /// `Me` succeeded — the caller's resolved classes/roles/nick.
+    Me { classes: Vec<String>, roles: Vec<String>, nick: Option<String> },
     /// Refused — "Sign in first" for a write action with no stored token, or
     /// the server's/transport's own description otherwise.
     Failed { message: String },

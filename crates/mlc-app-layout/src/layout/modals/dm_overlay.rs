@@ -22,6 +22,7 @@
 //! uses for its reply box.
 
 use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
+use mlc_core::i18n::{current_language, UserSettingsKey};
 use uzor::input::{InputCoordinator, LayerId, Sense};
 use uzor::types::Rect as WidgetRect;
 use uzor::WidgetId;
@@ -71,7 +72,7 @@ const LOOKUP_DROPDOWN_MAX_ROWS: usize = 8;
 // =============================================================================
 
 pub(crate) fn list_height(state: &CommunityState) -> f64 {
-    list_pane_h(&state.dm)
+    list_pane_h(&state.dm, state.forum2.nick_required())
 }
 
 /// The right pane's own "wanted" content height — used only for
@@ -114,7 +115,7 @@ pub(crate) fn draw(
     // unconditionally (not gated on `available`/identity — see this file's
     // own top doc): a click on either still reaches `panel_click.rs`'s own
     // `dm:` arm, which already re-gates on `available` itself.
-    let list_drawn_h = list_pane_h(&state.dm);
+    let list_drawn_h = list_pane_h(&state.dm, state.forum2.nick_required());
     let list_viewport_rect = WidgetRect::new(x, y, LIST_COL_W, viewport_h);
     coord.register_on_layer("cloud_overlay:scroll_viewport", list_viewport_rect, Sense::SCROLL, layer_id);
     let list_scrollable = ScrollableContainer::new(list_viewport_rect, &state.list_scroll, Some(scroll_config()));
@@ -122,7 +123,10 @@ pub(crate) fn draw(
     let lx = x;
     let mut ly = list_scrollable.content_y();
     let lw = list_scrollable.content_width();
-    ly += draw_open_peer_row(ctx, coord, layer_id, lx, ly, lw, ft, tt, current_time_ms, result);
+    ly += draw_open_peer_row(
+        ctx, coord, layer_id, lx, ly, lw, ft, tt, current_time_ms,
+        state.forum2.nick_required(), result,
+    );
     if state.dm.conversations.is_empty() {
         draw_status(ctx, tt, lx, ly, lw, "No conversations yet.", None);
     } else {
@@ -237,15 +241,35 @@ fn draw_open_peer_row(
     ft: &FrameTheme,
     tt: &ToolbarTheme,
     current_time_ms: u64,
+    nick_required: bool,
     result: &mut CloudOverlayResult,
 ) -> f64 {
+    // Disabled (owner mandate 2026-09-09): a signed-in caller with no
+    // nickname yet cannot open a conversation — a hint line + the same
+    // "Choose a nick" trigger the composer ([`draw_right_conversation`])
+    // uses, instead of the search field.
+    if nick_required {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(UserSettingsKey::AccountChooseNickHint.get(current_language()), x, y);
+        let hint_h = 20.0;
+        let btn_h = ROW_H - ROW_GAP;
+        draw_action_row(
+            ctx, coord, layer_id, "cloud_overlay:dm:choose_nick",
+            WidgetRect::new(x, y + hint_h, w, btn_h),
+            UserSettingsKey::AccountChooseNickBtn.get(current_language()), tt,
+        );
+        return open_peer_row_h(true);
+    }
     let (rect, chars) = draw_field(
         ctx, coord, layer_id, "cloud_overlay:dm:peer_input", DM_PEER_FIELD,
         WidgetRect::new(x, y, w, FIELD_H), "Search by nick or public id…", ft, tt, current_time_ms,
     );
     result.dm_peer_rect = Some(rect);
     result.dm_peer_char_positions = chars;
-    FIELD_H + 12.0
+    open_peer_row_h(false)
 }
 
 /// Drawn LAST in the left column's own scroll body (after the conversation
@@ -382,8 +406,22 @@ fn draw_conversation_row(
     CONV_ROW_H
 }
 
-fn list_pane_h(d: &DmState) -> f64 {
-    let open_peer_h = FIELD_H + 12.0;
+/// [`draw_open_peer_row`]'s own height, factored out so [`list_pane_h`]'s
+/// sizing can never drift from what that function actually draws — the
+/// disabled (`nick_required`) shape is taller (hint line + button) than
+/// the plain search field.
+fn open_peer_row_h(nick_required: bool) -> f64 {
+    if nick_required {
+        let hint_h = 20.0;
+        let btn_h = ROW_H - ROW_GAP;
+        hint_h + btn_h + 12.0
+    } else {
+        FIELD_H + 12.0
+    }
+}
+
+fn list_pane_h(d: &DmState, nick_required: bool) -> f64 {
+    let open_peer_h = open_peer_row_h(nick_required);
     let list_h = if d.conversations.is_empty() { 24.0 } else { d.conversations.len() as f64 * CONV_ROW_H };
     open_peer_h + list_h
 }
@@ -518,8 +556,29 @@ fn draw_right_conversation(
     register_scrollbar_hit_zones(coord, layer_id, &scroll_result);
 
     // Docked send box — fixed to the bottom of the pane, outside the
-    // scrollable clip above.
+    // scrollable clip above. Disabled (owner mandate 2026-09-09,
+    // `nick_required`) trades the draft field for a hint line and swaps
+    // "Send" for the same "Choose a nick" trigger the recipient-search row
+    // ([`draw_open_peer_row`]) uses — same `COMPOSER_H` footprint either
+    // way, so the scroll math above never has to know which is showing.
     let composer_y = y + (viewport_h - COMPOSER_H).max(0.0);
+    if state.forum2.nick_required() {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(
+            UserSettingsKey::AccountChooseNickHint.get(current_language()),
+            x, composer_y + 8.0,
+        );
+        let btn_y = composer_y + 8.0 + FIELD_H + 8.0;
+        draw_action_row(
+            ctx, coord, layer_id, "cloud_overlay:dm:choose_nick",
+            WidgetRect::new(x, btn_y, w, ROW_H - ROW_GAP),
+            UserSettingsKey::AccountChooseNickBtn.get(current_language()), tt,
+        );
+        return;
+    }
     let field_rect = WidgetRect::new(x, composer_y + 8.0, w, FIELD_H);
     let (rect, chars) = draw_field(
         ctx, coord, layer_id, "cloud_overlay:dm:draft_input", draft_field_id, field_rect,

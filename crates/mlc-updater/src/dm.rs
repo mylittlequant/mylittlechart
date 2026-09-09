@@ -112,10 +112,15 @@ struct SendMessageWire {
     created_at: String,
 }
 
-/// Server's own error body shape on a non-success response.
+/// Server's own error body shape on a non-success response — a write
+/// refusal additionally carries a stable `code` (`"nick_required"` today;
+/// see [`crate::forum_v2::NICK_REQUIRED_SENTINEL`], reused here so both
+/// gates read the same sentinel).
 #[derive(serde::Deserialize)]
 struct ErrorBody {
     error: String,
+    #[serde(default)]
+    code: Option<String>,
 }
 
 /// The 429 body additionally carries how long to wait.
@@ -144,6 +149,9 @@ async fn error_message(resp: reqwest::Response) -> String {
     }
     if status.as_u16() == 403 {
         return match resp.json::<ErrorBody>().await {
+            Ok(b) if b.code.as_deref() == Some("nick_required") => {
+                crate::forum_v2::NICK_REQUIRED_SENTINEL.to_string()
+            }
             Ok(b) => b.error,
             Err(_) => "Direct messages require a paid account".to_string(),
         };

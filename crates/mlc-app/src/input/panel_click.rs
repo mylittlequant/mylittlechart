@@ -268,6 +268,34 @@ impl ChartApp {
         self.panel_app.user_settings_state.new_profile_name_focused = false;
     }
 
+    /// Open the User Settings modal on the Account tab with the account
+    /// nickname editor already in edit mode — the "choose_nick" trigger
+    /// three separate surfaces share: the Account tab's own idle nickname
+    /// row (`account_nick_edit`), the forum composer's "Choose a nick"
+    /// button, and the DM composer's own copy of it (owner mandate
+    /// 2026-09-09: a signed-in, nick-less account is gated off forum/DM
+    /// writing until it picks one). Refuses for a signed-out identity —
+    /// none of the three callers can reach this while signed out, but the
+    /// guard stays independent rather than assumed from the caller.
+    pub(super) fn open_account_nick_editor(&mut self) {
+        if !self.panel_app.user_settings_state.account_signed_in {
+            eprintln!("[ChartApp] open_account_nick_editor refused: account_signed_in=false");
+            return;
+        }
+        use mlc_app_layout::ui::modal_settings::UserSettingsTab;
+        self.panel_app.user_settings_state.open();
+        self.panel_app.user_settings_state.set_tab(UserSettingsTab::Account);
+        let current = self.panel_app.user_settings_state.account_label.clone();
+        let wid = uzor::WidgetId::from(crate::text_input::ACCOUNT_NICK);
+        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&wid, &current);
+        self.input_coordinator.borrow_mut().text_fields_mut().focus(wid);
+        let uss = &mut self.panel_app.user_settings_state;
+        uss.nick_edit_mode = true;
+        uss.nick_edit_focused = true;
+        uss.nick_status = mlc_app_layout::ui::modal_settings::NickStatus::Idle;
+        eprintln!("[ChartApp] open_account_nick_editor: opened Account tab, prefilled '{}'", current);
+    }
+
     /// Dispatch a click that landed on a registered widget.
     ///
     /// Handles toolbar clicks and dropdown item selections by forwarding to
@@ -5942,6 +5970,29 @@ impl ChartApp {
                             tf.clear(&uzor::WidgetId::from(crate::text_input::FORUM_BODY));
                             tf.blur();
                         }
+                        // The composer renders disabled with this trigger
+                        // instead of the title/body fields + Post while
+                        // `nick_required()` (owner mandate 2026-09-09) —
+                        // opens the Account tab with the nick editor armed.
+                        // Inlined rather than calling `open_account_nick_
+                        // editor` (which needs the whole `&mut self`): `st`
+                        // above already holds a live field-borrow of
+                        // `self.panel_app.community_state` for this arm's
+                        // siblings, and touches only the DISJOINT `user_
+                        // settings_state`/`input_coordinator` fields here.
+                        "choose_nick" => {
+                            use mlc_app_layout::ui::modal_settings::{NickStatus, UserSettingsTab};
+                            self.panel_app.user_settings_state.open();
+                            self.panel_app.user_settings_state.set_tab(UserSettingsTab::Account);
+                            let current = self.panel_app.user_settings_state.account_label.clone();
+                            let wid = uzor::WidgetId::from(crate::text_input::ACCOUNT_NICK);
+                            self.input_coordinator.borrow_mut().text_fields_mut().set_text(&wid, &current);
+                            self.input_coordinator.borrow_mut().text_fields_mut().focus(wid);
+                            let uss = &mut self.panel_app.user_settings_state;
+                            uss.nick_edit_mode = true;
+                            uss.nick_edit_focused = true;
+                            uss.nick_status = NickStatus::Idle;
+                        }
                         // Mirrors `FORUM_BODY`'s own Enter-submit
                         // (`text_input::dispatch::text_action_forum_body`).
                         "compose_post" => {
@@ -6127,6 +6178,26 @@ impl ChartApp {
                                 st.dm.send_pending = true;
                                 st.dm.request = Some(DmRequest::Send { id, plaintext: text });
                             }
+                        }
+                        // The recipient search box and the send box both
+                        // render disabled with this trigger instead while
+                        // `nick_required()` (owner mandate 2026-09-09) —
+                        // same inlined shape as the `"forum2:choose_nick"`
+                        // arm above, for the same disjoint-borrow reason
+                        // (`st` here shadows `self.panel_app.community_
+                        // state`, disjoint from `user_settings_state`).
+                        "choose_nick" => {
+                            use mlc_app_layout::ui::modal_settings::{NickStatus, UserSettingsTab};
+                            self.panel_app.user_settings_state.open();
+                            self.panel_app.user_settings_state.set_tab(UserSettingsTab::Account);
+                            let current = self.panel_app.user_settings_state.account_label.clone();
+                            let wid = uzor::WidgetId::from(crate::text_input::ACCOUNT_NICK);
+                            self.input_coordinator.borrow_mut().text_fields_mut().set_text(&wid, &current);
+                            self.input_coordinator.borrow_mut().text_fields_mut().focus(wid);
+                            let uss = &mut self.panel_app.user_settings_state;
+                            uss.nick_edit_mode = true;
+                            uss.nick_edit_focused = true;
+                            uss.nick_status = NickStatus::Idle;
                         }
                         // Claimed on mousedown by the store — same "nothing
                         // to do here" idiom the v1/forum2 arms above use.
@@ -7093,23 +7164,13 @@ impl ChartApp {
                 // wire, even though both drive the same row's "Nickname"
                 // control for a single-profile identity.
                 "account_nick_edit" => {
-                    // An anonymous identity has a fixed name — the button is
-                    // not drawn for it (`render_single_profile_row`), so this
-                    // arm refuses rather than opening an editor for an
-                    // account that was never asked for a nickname.
-                    if !self.panel_app.user_settings_state.account_signed_in {
-                        eprintln!("[ChartApp] account_nick_edit refused: account_signed_in=false");
-                    } else {
-                        let current = self.panel_app.user_settings_state.account_label.clone();
-                        let wid = uzor::WidgetId::from(crate::text_input::ACCOUNT_NICK);
-                        self.input_coordinator.borrow_mut().text_fields_mut().set_text(&wid, &current);
-                        self.input_coordinator.borrow_mut().text_fields_mut().focus(wid);
-                        let uss = &mut self.panel_app.user_settings_state;
-                        uss.nick_edit_mode = true;
-                        uss.nick_edit_focused = true;
-                        uss.nick_status = mlc_app_layout::ui::modal_settings::NickStatus::Idle;
-                        eprintln!("[ChartApp] account_nick_edit: opened, prefilled '{}'", current);
-                    }
+                    // An anonymous identity has a fixed name and the
+                    // Account tab does not exist for it at all
+                    // (`UserSettingsTab::visible`) — `open_account_nick_
+                    // editor`'s own guard refuses rather than opening an
+                    // editor for an account that was never asked for a
+                    // nickname.
+                    self.open_account_nick_editor();
                 }
                 "account_nick_input" => {
                     // Claimed on mousedown by the store — same "nothing to
@@ -7143,6 +7204,23 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     eprintln!("[ChartApp] account_nick_cancel");
+                }
+                // ── Account tab: Sign out / "Messages need an unlocked
+                // vault" → Vault (owner ruling 2026-09-09) ─────────────────
+                "account_sign_out" => {
+                    // Same one-shot the cloud account overlay's own Sign out
+                    // arms (`cloud_login:sign_out`) — the shell driver is the
+                    // only thing that actually calls the sign-out endpoint,
+                    // from wherever this flag is set.
+                    #[cfg(feature = "cloud")]
+                    {
+                        self.panel_app.cloud_login_state.sign_out_requested = true;
+                    }
+                    eprintln!("[ChartApp] account_sign_out");
+                }
+                "account_open_vault" => {
+                    self.open_vault_tab();
+                    eprintln!("[ChartApp] account_open_vault: switched to Vault tab");
                 }
                 "profile_new" => {
                     // "+ New Profile" is not drawn below the paid tier

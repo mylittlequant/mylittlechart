@@ -34,6 +34,7 @@
 //! own "More results" row.
 
 use mlc_core::engine::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
+use mlc_core::i18n::{current_language, UserSettingsKey};
 use uzor::input::{InputCoordinator, LayerId, Sense};
 use uzor::types::Rect as WidgetRect;
 use uzor::WidgetId;
@@ -1255,6 +1256,13 @@ fn draw_search(
 fn compose_h(f: &ForumV2State) -> f64 {
     let back_h = 36.0;
     let heading_h = 20.0;
+    // Disabled state (owner mandate 2026-09-09, `nick_required`): a hint
+    // line + one trigger button — no title/body fields, no Post/Cancel.
+    if f.nick_required() {
+        let hint_h = 24.0;
+        let action_h = ROW_H;
+        return back_h + heading_h + hint_h + action_h;
+    }
     let title_h = 16.0 + FIELD_H + 12.0;
     let body_h = 16.0 + FIELD_H + 12.0;
     let err_h = if f.last_error.is_some() { 20.0 } else { 0.0 };
@@ -1287,6 +1295,24 @@ fn draw_compose(
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(&format!("NEW THREAD IN {}", board_label.to_uppercase()), x, ly);
     ly += 20.0;
+
+    // Disabled state (owner mandate 2026-09-09): a signed-in caller with
+    // no nickname yet cannot write here — one hint line + a trigger into
+    // the Account tab's nick editor, no title/body fields, no Post.
+    if state.forum2.nick_required() {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(UserSettingsKey::AccountChooseNickHint.get(current_language()), x, ly);
+        ly += 24.0;
+        draw_action_row(
+            ctx, coord, layer_id, "cloud_overlay:forum2:choose_nick",
+            WidgetRect::new(x, ly, w, ROW_H - ROW_GAP),
+            UserSettingsKey::AccountChooseNickBtn.get(current_language()), tt,
+        );
+        return;
+    }
 
     ctx.fill_text("TITLE", x, ly);
     ly += 16.0;

@@ -74,6 +74,7 @@ pub fn render_user_settings_modal(
                 UserSettingsTab::Persistence => Icon::Pin,
                 UserSettingsTab::Performance => Icon::Grid,
                 UserSettingsTab::Server => Icon::Layers,
+                UserSettingsTab::Account => Icon::User,
             };
             ModalTab::with_icon(tab.id(), tab.label(), icon)
         })
@@ -245,6 +246,26 @@ pub fn render_user_settings_modal(
                 ctx,
                 viewport_rect,
                 state,
+                toolbar_theme,
+                frame_theme,
+                &scroll_widget_theme,
+                input_coordinator,
+                &layer_id,
+                &mut result,
+            );
+        }
+        UserSettingsTab::Account => {
+            let viewport_rect = WidgetRect::new(
+                content_x + padding,
+                settings_y,
+                content_w - padding * 2.0,
+                scroll_viewport_h,
+            );
+            render_account_tab(
+                ctx,
+                viewport_rect,
+                state,
+                text_color,
                 toolbar_theme,
                 frame_theme,
                 &scroll_widget_theme,
@@ -1483,17 +1504,6 @@ fn render_single_profile_row(
     let is_renaming = state.account_signed_in
         && state.profile_rename_mode
         && state.profile_rename_target_id.as_deref() == Some(id);
-    // The account-nickname edit — a completely separate flag pair from the
-    // profile rename above (`UserSettingsState::nick_edit_mode`'s own doc):
-    // one submits to `POST /api/account/nick`, the other to local
-    // `profile_meta`. Mutually exclusive in practice (this row's own "Save"
-    // button only ever arms one of the two, and `is_renaming` above cannot
-    // become true from a control this row still draws), but both flags are
-    // checked independently rather than assumed disjoint.
-    let is_nick_editing = state.account_signed_in && state.nick_edit_mode;
-    // Extra height reserved below the row for a validation/server error —
-    // 0.0 unless the nick edit below actually has one to show.
-    let mut nick_msg_h = 0.0_f64;
 
     if is_renaming {
         // Inline rename input + Save/Cancel — same idiom as the multi-profile
@@ -1607,21 +1617,152 @@ fn render_single_profile_row(
             Sense::CLICK | Sense::HOVER,
             layer_id,
         );
-    } else if is_nick_editing {
-        // Inline account-nickname edit + Save/Cancel — same idiom as the
-        // profile-rename block above, but this submits the ACCOUNT's
-        // nickname (`POST /api/account/nick`, via the shell's cloud
-        // transport) rather than the local profile's display name, so it
-        // reads from/writes to a completely separate set of state
-        // (`nick_edit_render`/`nick_edit_focused`/`nick_status`, never
-        // `profile_rename_render`/`profile_display_name`).
+    } else {
+        // Normal display: name, plus the Avatar control. The account
+        // nickname editor moved to the Account tab (owner ruling
+        // 2026-09-09, `render_account_nick_row`) — an anonymous identity
+        // has neither a nickname nor an avatar to personalise, so neither
+        // control is drawn for it, no hit ids, nothing for a stray click
+        // to reach.
+        let avail_btns = (right_edge - name_x).max(0.0);
+        let avatar = state.account_signed_in.then(|| {
+            let label = UserSettingsKey::BtnAvatar.get(current_language());
+            ctx.set_font("11px sans-serif");
+            let w = auto_btn_width(ctx, label, "11px sans-serif", btn_padding_x, btn_min_w).min(avail_btns.max(btn_min_w));
+            (label, w)
+        });
+
+        ctx.set_font("600 13px sans-serif");
+        ctx.set_fill_color(text_color);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(&state.profile_display_name, name_x, row_cy);
+
+        // Right-aligned — the nickname button used to sit here too; it now
+        // lives on the Account tab (`render_account_nick_row`), so Avatar is
+        // the only control this row ever draws.
+        let avatar_w = avatar.map(|(_, w)| w).unwrap_or(0.0);
+        let avatar_btn_x = right_edge - avatar_w;
+        let btn_y = y + (profile_row_h - btn_h) / 2.0;
+
+        if let Some((avatar_label, avatar_w)) = avatar {
+            let toggle_hover_id = format!("profile_avatar_toggle:{}", id);
+            let is_hovered = state.hovered_item_id.as_deref() == Some(toggle_hover_id.as_str());
+            let bg = if is_hovered {
+                mlc_core::apply_opacity(&toolbar_theme.item_text, 0.12)
+            } else {
+                toolbar_theme.item_bg_hover.clone()
+            };
+            ctx.set_fill_color(&bg);
+            ctx.fill_rounded_rect(avatar_btn_x, btn_y, avatar_w, btn_h, 3.0);
+            ctx.set_stroke_color(&toolbar_theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(avatar_btn_x, btn_y, avatar_w, btn_h, 3.0);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, if is_hovered { 0.95 } else { 0.7 }));
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(fit_text_to_width(ctx, avatar_label, avatar_w - btn_padding_x).as_str(), avatar_btn_x + avatar_w / 2.0, btn_y + btn_h / 2.0);
+            ctx.set_text_align(TextAlign::Left);
+
+            result.content_items.push((toggle_hover_id.clone(), WidgetRect::new(avatar_btn_x, btn_y, avatar_w, btn_h)));
+            input_coordinator.register_on_layer(
+                format!("user_settings:{}", toggle_hover_id).as_str(),
+                uzor::types::Rect::new(avatar_btn_x, btn_y, avatar_w, btn_h),
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+        }
+    }
+
+    // The picker drops below the row when the toggle above opened it. Same
+    // eight avatars and the same `profile_avatar:{name}` ids the multi-profile
+    // list uses — one avatar vocabulary, not two.
+    let picker_open = state.account_signed_in
+        && state.show_avatar_picker
+        && state.profile_avatar_target_id.as_deref().map(|t| t == id).unwrap_or(true);
+    if !picker_open {
+        return y + profile_row_h;
+    }
+
+    let avatars = [
+        "chart", "rocket", "shield", "fire",
+        "star",  "moon",   "sun",    "ghost",
+    ];
+    let cell_size = 28.0;
+    let picker_w = cell_size * avatars.len() as f64;
+    let picker_h = cell_size + 8.0;
+    let picker_y = y + profile_row_h;
+
+    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+    ctx.fill_rounded_rect(x, picker_y, picker_w, picker_h, 4.0);
+    ctx.set_stroke_color(&toolbar_theme.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x, picker_y, picker_w, picker_h, 4.0);
+
+    for (i, av) in avatars.iter().enumerate() {
+        let cell_x = x + i as f64 * cell_size;
+        if *av == state.profile_avatar.as_str() {
+            ctx.set_fill_color(&toolbar_theme.item_bg_active);
+            ctx.fill_rounded_rect(cell_x + 2.0, picker_y + 2.0, cell_size - 4.0, picker_h - 4.0, 3.0);
+        }
+        draw_avatar_dot(ctx, cell_x + cell_size / 2.0, picker_y + picker_h / 2.0, 7.0, avatar_color(av));
+        result.content_items.push((format!("profile_avatar:{}", av), WidgetRect::new(cell_x, picker_y, cell_size, picker_h)));
+        input_coordinator.register_on_layer(
+            format!("user_settings:profile_avatar:{}", av).as_str(),
+            uzor::types::Rect::new(cell_x, picker_y, cell_size, picker_h),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+    }
+
+    y + profile_row_h + picker_h + 4.0
+}
+
+/// The account nickname row — moved off the single-profile PROFILE row
+/// onto the Account tab (owner ruling 2026-09-09): the nickname is an
+/// ACCOUNT-level fact available to every signed-in caller, not a
+/// `multi_profile`-gated one, and reads better next to Sign out and the
+/// class/role line than buried among purely local profile settings.
+///
+/// Idle: current nickname + an "Edit" trigger (`account_nick_edit`).
+/// Editing (`UserSettingsState::nick_edit_mode`): inline input + Save/
+/// Cancel + status/cooldown message — the same `POST /api/account/nick`
+/// round trip and the same hit ids
+/// (`account_nick_input`/`account_nick_confirm`/`account_nick_cancel`) the
+/// row had before the move; only where it is drawn changed, so
+/// `mlc-app/src/input/panel_click.rs`'s click handlers needed no edit at
+/// all.
+#[allow(clippy::too_many_arguments)]
+fn render_account_nick_row(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    available_w: f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) -> f64 {
+    let row_h = 32.0;
+    let btn_h = 22.0;
+    let btn_gap = 6.0;
+    let btn_padding_x = 8.0;
+    let btn_min_w = 40.0;
+    let right_edge = x + available_w;
+    let row_cy = y + row_h / 2.0;
+
+    if state.nick_edit_mode {
         let save_label   = TextKey::Save.get(current_language());
         let cancel_label = TextKey::Cancel.get(current_language());
 
         ctx.set_font("11px sans-serif");
         let save_w   = auto_btn_width(ctx, save_label,   "11px sans-serif", btn_padding_x, btn_min_w);
         let cancel_w = auto_btn_width(ctx, cancel_label, "11px sans-serif", btn_padding_x, btn_min_w);
-        let avail_btns = (right_edge - name_x).max(0.0);
+        let avail_btns = available_w.max(0.0);
         let (save_w, cancel_w) = {
             let total = save_w + cancel_w + btn_gap;
             if total > avail_btns && total > 0.0 {
@@ -1634,9 +1775,9 @@ fn render_single_profile_row(
         let cancel_btn_x = right_edge - cancel_w;
         let confirm_btn_x = cancel_btn_x - save_w - btn_gap;
 
-        let input_w = (confirm_btn_x - name_x - btn_gap).max(0.0);
+        let input_w = (confirm_btn_x - x - btn_gap).max(0.0);
         let input_h = 22.0;
-        let input_y = y + (profile_row_h - input_h) / 2.0;
+        let input_y = y + (row_h - input_h) / 2.0;
         let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
 
         let working = state.nick_status == NickStatus::Working;
@@ -1653,12 +1794,12 @@ fn render_single_profile_row(
             .with_selection(sel_start, sel_end);
         let nick_input_result = draw_input(
             ctx, &nick_input_config, WidgetState::Normal,
-            WidgetRect::new(name_x, input_y, input_w, input_h), &widget_theme,
+            WidgetRect::new(x, input_y, input_w, input_h), &widget_theme,
         );
 
         result.content_items.push((
             "user_settings:account_nick_input".to_string(),
-            WidgetRect::new(name_x, input_y, input_w, input_h),
+            WidgetRect::new(x, input_y, input_w, input_h),
         ));
         result.input_char_positions.push((
             "user_settings:account_nick_input".to_string(),
@@ -1666,7 +1807,7 @@ fn render_single_profile_row(
         ));
         input_coordinator.register_on_layer(
             "user_settings:account_nick_input",
-            uzor::types::Rect::new(name_x, input_y, input_w, input_h),
+            uzor::types::Rect::new(x, input_y, input_w, input_h),
             Sense::CLICK,
             layer_id,
         );
@@ -1681,7 +1822,7 @@ fn render_single_profile_row(
             );
         }
 
-        let btn_y = y + (profile_row_h - btn_h) / 2.0;
+        let btn_y = y + (row_h - btn_h) / 2.0;
 
         // Save button — drawn but unreachable (no hit id) while a
         // submission is in flight, the same "dead rather than removed"
@@ -1743,162 +1884,229 @@ fn render_single_profile_row(
         // SetNewPassphrase page (`render_page_set_new_passphrase`'s own
         // `has_error` block): danger-colored, below the row.
         if let NickStatus::Failed { message } = &state.nick_status {
-            let msg_y = y + profile_row_h + 2.0;
+            let msg_y = y + row_h + 2.0;
             ctx.set_font("11px sans-serif");
             ctx.set_fill_color(toolbar_theme.danger.as_str());
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Top);
             let fitted = fit_text_to_width(ctx, message, available_w);
-            ctx.fill_text(&fitted, name_x, msg_y);
+            ctx.fill_text(&fitted, x, msg_y);
             ctx.set_text_align(TextAlign::Left);
-            nick_msg_h = 18.0;
+            return y + row_h + 18.0;
         }
+        y + row_h
     } else {
-        // Normal display: name, plus the two identity controls a real
-        // signed-in account gets — a nickname and an avatar. An anonymous
-        // identity has neither: its name is fixed and there is nothing to
-        // personalise, so no buttons, no hit ids, nothing for a stray click
-        // to reach.
-        //
-        // Avatar sits here rather than with the profile-management controls
-        // because it is identity, not management: it says who this is, not
-        // how many of them there may be.
-        let avail_btns = (right_edge - name_x).max(0.0);
-        let rename = state.account_signed_in.then(|| {
-            let label = UserSettingsKey::BtnNickname.get(current_language());
-            ctx.set_font("11px sans-serif");
-            let w = auto_btn_width(ctx, label, "11px sans-serif", btn_padding_x, btn_min_w).min(avail_btns.max(btn_min_w));
-            (label, w)
-        });
-        let avatar = state.account_signed_in.then(|| {
-            let label = UserSettingsKey::BtnAvatar.get(current_language());
-            ctx.set_font("11px sans-serif");
-            let w = auto_btn_width(ctx, label, "11px sans-serif", btn_padding_x, btn_min_w).min(avail_btns.max(btn_min_w));
-            (label, w)
-        });
+        // Idle: current nickname (dash placeholder if somehow still empty
+        // this frame) + the Edit trigger, same label the row always used
+        // (`BtnNickname`, not a plain "Edit" — see that key's own doc).
+        let label = UserSettingsKey::BtnNickname.get(current_language());
+        ctx.set_font("11px sans-serif");
+        let btn_w = auto_btn_width(ctx, label, "11px sans-serif", btn_padding_x, btn_min_w);
+        let btn_x = right_edge - btn_w;
+        let btn_y = y + (row_h - btn_h) / 2.0;
 
         ctx.set_font("600 13px sans-serif");
         ctx.set_fill_color(text_color);
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(&state.profile_display_name, name_x, row_cy);
+        let current = if state.account_label.is_empty() { "—" } else { state.account_label.as_str() };
+        ctx.fill_text(current, x, row_cy);
+        ctx.set_text_align(TextAlign::Left);
 
-        // Right-aligned, avatar outermost: [ nickname ][ avatar ]
-        let avatar_w = avatar.map(|(_, w)| w).unwrap_or(0.0);
-        let avatar_btn_x = right_edge - avatar_w;
-        let btn_y = y + (profile_row_h - btn_h) / 2.0;
-        if let Some((rename_label, rename_w)) = rename {
-            let rename_btn_x = if avatar.is_some() {
-                (avatar_btn_x - btn_gap - rename_w).max(name_x)
-            } else {
-                right_edge - rename_w
-            };
+        let hover_id = "account_nick_edit";
+        let is_hovered = state.hovered_item_id.as_deref() == Some(hover_id);
+        let bg = if is_hovered {
+            mlc_core::apply_opacity(&toolbar_theme.item_text, 0.12)
+        } else {
+            toolbar_theme.item_bg_hover.clone()
+        };
+        ctx.set_fill_color(&bg);
+        ctx.fill_rounded_rect(btn_x, btn_y, btn_w, btn_h, 3.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(btn_x, btn_y, btn_w, btn_h, 3.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, if is_hovered { 0.95 } else { 0.7 }));
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(fit_text_to_width(ctx, label, btn_w - btn_padding_x).as_str(), btn_x + btn_w / 2.0, btn_y + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
 
-            // Fixed id, not per-profile like `profile_rename:{id}` above —
-            // this button opens the ACCOUNT nick edit (`account_nick_edit`),
-            // never a `profile_meta` rename, so there is exactly one target
-            // regardless of which profile happens to be active.
-            let rename_hover_id = "account_nick_edit".to_string();
-            let is_rename_hovered = state.hovered_item_id.as_deref() == Some(rename_hover_id.as_str());
-            let rename_bg = if is_rename_hovered {
-                mlc_core::apply_opacity(&toolbar_theme.item_text, 0.12)
-            } else {
-                toolbar_theme.item_bg_hover.clone()
-            };
-            ctx.set_fill_color(&rename_bg);
-            ctx.fill_rounded_rect(rename_btn_x, btn_y, rename_w, btn_h, 3.0);
-            ctx.set_stroke_color(&toolbar_theme.separator);
-            ctx.set_stroke_width(1.0);
-            ctx.stroke_rounded_rect(rename_btn_x, btn_y, rename_w, btn_h, 3.0);
-            ctx.set_font("11px sans-serif");
-            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, if is_rename_hovered { 0.95 } else { 0.7 }));
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(fit_text_to_width(ctx, rename_label, rename_w - btn_padding_x).as_str(), rename_btn_x + rename_w / 2.0, btn_y + btn_h / 2.0);
-            ctx.set_text_align(TextAlign::Left);
-
-            let rename_hit_id = "user_settings:account_nick_edit".to_string();
-            result.content_items.push(("account_nick_edit".to_string(), WidgetRect::new(rename_btn_x, btn_y, rename_w, btn_h)));
-            input_coordinator.register_on_layer(
-                rename_hit_id.as_str(),
-                uzor::types::Rect::new(rename_btn_x, btn_y, rename_w, btn_h),
-                Sense::CLICK | Sense::HOVER,
-                layer_id,
-            );
-        }
-
-        if let Some((avatar_label, avatar_w)) = avatar {
-            let toggle_hover_id = format!("profile_avatar_toggle:{}", id);
-            let is_hovered = state.hovered_item_id.as_deref() == Some(toggle_hover_id.as_str());
-            let bg = if is_hovered {
-                mlc_core::apply_opacity(&toolbar_theme.item_text, 0.12)
-            } else {
-                toolbar_theme.item_bg_hover.clone()
-            };
-            ctx.set_fill_color(&bg);
-            ctx.fill_rounded_rect(avatar_btn_x, btn_y, avatar_w, btn_h, 3.0);
-            ctx.set_stroke_color(&toolbar_theme.separator);
-            ctx.set_stroke_width(1.0);
-            ctx.stroke_rounded_rect(avatar_btn_x, btn_y, avatar_w, btn_h, 3.0);
-            ctx.set_font("11px sans-serif");
-            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, if is_hovered { 0.95 } else { 0.7 }));
-            ctx.set_text_align(TextAlign::Center);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(fit_text_to_width(ctx, avatar_label, avatar_w - btn_padding_x).as_str(), avatar_btn_x + avatar_w / 2.0, btn_y + btn_h / 2.0);
-            ctx.set_text_align(TextAlign::Left);
-
-            result.content_items.push((toggle_hover_id.clone(), WidgetRect::new(avatar_btn_x, btn_y, avatar_w, btn_h)));
-            input_coordinator.register_on_layer(
-                format!("user_settings:{}", toggle_hover_id).as_str(),
-                uzor::types::Rect::new(avatar_btn_x, btn_y, avatar_w, btn_h),
-                Sense::CLICK | Sense::HOVER,
-                layer_id,
-            );
-        }
-    }
-
-    // The picker drops below the row when the toggle above opened it. Same
-    // eight avatars and the same `profile_avatar:{name}` ids the multi-profile
-    // list uses — one avatar vocabulary, not two.
-    let picker_open = state.account_signed_in
-        && state.show_avatar_picker
-        && state.profile_avatar_target_id.as_deref().map(|t| t == id).unwrap_or(true);
-    if !picker_open {
-        return y + profile_row_h + nick_msg_h;
-    }
-
-    let avatars = [
-        "chart", "rocket", "shield", "fire",
-        "star",  "moon",   "sun",    "ghost",
-    ];
-    let cell_size = 28.0;
-    let picker_w = cell_size * avatars.len() as f64;
-    let picker_h = cell_size + 8.0;
-    let picker_y = y + profile_row_h;
-
-    ctx.set_fill_color(&toolbar_theme.item_bg_hover);
-    ctx.fill_rounded_rect(x, picker_y, picker_w, picker_h, 4.0);
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(x, picker_y, picker_w, picker_h, 4.0);
-
-    for (i, av) in avatars.iter().enumerate() {
-        let cell_x = x + i as f64 * cell_size;
-        if *av == state.profile_avatar.as_str() {
-            ctx.set_fill_color(&toolbar_theme.item_bg_active);
-            ctx.fill_rounded_rect(cell_x + 2.0, picker_y + 2.0, cell_size - 4.0, picker_h - 4.0, 3.0);
-        }
-        draw_avatar_dot(ctx, cell_x + cell_size / 2.0, picker_y + picker_h / 2.0, 7.0, avatar_color(av));
-        result.content_items.push((format!("profile_avatar:{}", av), WidgetRect::new(cell_x, picker_y, cell_size, picker_h)));
+        result.content_items.push((hover_id.to_string(), WidgetRect::new(btn_x, btn_y, btn_w, btn_h)));
         input_coordinator.register_on_layer(
-            format!("user_settings:profile_avatar:{}", av).as_str(),
-            uzor::types::Rect::new(cell_x, picker_y, cell_size, picker_h),
+            "user_settings:account_nick_edit",
+            uzor::types::Rect::new(btn_x, btn_y, btn_w, btn_h),
             Sense::CLICK | Sense::HOVER,
             layer_id,
         );
+
+        y + row_h
+    }
+}
+
+/// The Account tab (owner ruling 2026-09-09) — the header's own account
+/// button opens User Settings straight onto this tab. Contents: "Signed in
+/// as … via …", the account nickname row (moved off the General tab's
+/// PROFILE row — [`render_account_nick_row`]), the caller's tier and role
+/// (from the same `GET /api/forum/me` fetch the Community modal's Forum
+/// tab already uses, mirrored into `UserSettingsState::account_classes`/
+/// `account_roles` — see those fields' own doc), a Sign out button (the
+/// same one-shot the cloud account overlay's own Sign out uses), and a
+/// shortcut into the Vault tab for "Messages need an unlocked vault".
+/// Never rendered while signed out — [`UserSettingsTab::visible`] drops
+/// the tab entirely in that case, so this function never has to ask.
+#[allow(clippy::too_many_arguments)]
+fn render_account_tab(
+    ctx: &mut dyn RenderContext,
+    viewport_rect: WidgetRect,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    scroll_widget_theme: &WidgetTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    let container = ScrollableContainer::new(viewport_rect, &state.account_tab_scroll, None);
+    container.begin(ctx);
+    let x = viewport_rect.x;
+    let available_w = container.content_width();
+    let mut cy = container.content_y();
+
+    // ── "Signed in as … via …" ──────────────────────────────────────────
+    ctx.set_font("600 13px sans-serif");
+    ctx.set_fill_color(text_color);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let signed_in_line = if state.account_provider.is_empty() {
+        format!("{} {}", UserSettingsKey::AccountSignedInAs.get(current_language()), state.account_label)
+    } else {
+        format!(
+            "{} {} {} {}",
+            UserSettingsKey::AccountSignedInAs.get(current_language()),
+            state.account_label,
+            UserSettingsKey::AccountVia.get(current_language()),
+            state.account_provider,
+        )
+    };
+    ctx.fill_text(&signed_in_line, x, cy);
+    ctx.set_text_align(TextAlign::Left);
+    cy += 26.0;
+
+    // ── Nickname row ─────────────────────────────────────────────────────
+    cy = render_account_nick_row(
+        ctx, x, cy, available_w, state, text_color, toolbar_theme, frame_theme,
+        input_coordinator, layer_id, result,
+    );
+    cy += 18.0;
+
+    // ── Tier / role ───────────────────────────────────────────────────────
+    // Highest-ranked class only (a cumulative membership like
+    // `["public","user","paid"]` always contains everything below the
+    // caller's real tier) — this tiny local rank exists only to pick that
+    // one entry for display; it is not a write-access decision (those stay
+    // in each shell's own `forum2_can_write*`, unaffected by this tab).
+    if !state.account_classes.is_empty() || !state.account_roles.is_empty() {
+        const CLASS_RANK: [&str; 3] = ["public", "user", "paid"];
+        let tier = state.account_classes.iter()
+            .max_by_key(|c| CLASS_RANK.iter().position(|r| *r == c.as_str()).unwrap_or(0))
+            .cloned()
+            .unwrap_or_default();
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.75));
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        let mut line = format!("{}: {}", UserSettingsKey::AccountTier.get(current_language()), tier);
+        if let Some(role) = state.account_roles.first() {
+            line.push_str(&format!("   {}: {}", UserSettingsKey::AccountRole.get(current_language()), role));
+        }
+        ctx.fill_text(&line, x, cy);
+        cy += 22.0;
     }
 
-    y + profile_row_h + picker_h + 4.0 + nick_msg_h
+    // ── Sign out ──────────────────────────────────────────────────────────
+    {
+        let label = UserSettingsKey::AccountSignOut.get(current_language());
+        ctx.set_font("11px sans-serif");
+        let btn_w = auto_btn_width(ctx, label, "11px sans-serif", 8.0, 60.0);
+        let btn_h = 26.0;
+        let is_hovered = state.hovered_item_id.as_deref() == Some("account_sign_out");
+        let bg = if is_hovered {
+            mlc_core::apply_opacity(&toolbar_theme.danger, 0.25)
+        } else {
+            mlc_core::apply_opacity(&toolbar_theme.danger, 0.15)
+        };
+        ctx.set_fill_color(&bg);
+        ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 3.0);
+        ctx.set_stroke_color(&mlc_core::apply_opacity(&toolbar_theme.danger, 0.6));
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 3.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.danger);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, x + btn_w / 2.0, cy + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("account_sign_out".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:account_sign_out",
+            uzor::types::Rect::new(x, cy, btn_w, btn_h),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+        cy += btn_h + 24.0;
+    }
+
+    // ── "Messages need an unlocked vault" → Vault tab ───────────────────
+    {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.65));
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(UserSettingsKey::AccountVaultHint.get(current_language()), x, cy);
+        cy += 20.0;
+
+        let label = UserSettingsKey::AccountOpenVault.get(current_language());
+        ctx.set_font("11px sans-serif");
+        let btn_w = auto_btn_width(ctx, label, "11px sans-serif", 8.0, 60.0);
+        let btn_h = 24.0;
+        let is_hovered = state.hovered_item_id.as_deref() == Some("account_open_vault");
+        let bg = if is_hovered {
+            toolbar_theme.item_bg_active.clone()
+        } else {
+            toolbar_theme.item_bg_hover.clone()
+        };
+        ctx.set_fill_color(&bg);
+        ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 3.0);
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cy, btn_w, btn_h, 3.0);
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, x + btn_w / 2.0, cy + btn_h / 2.0);
+        ctx.set_text_align(TextAlign::Left);
+
+        result.content_items.push(("account_open_vault".to_string(), WidgetRect::new(x, cy, btn_w, btn_h)));
+        input_coordinator.register_on_layer(
+            "user_settings:account_open_vault",
+            uzor::types::Rect::new(x, cy, btn_w, btn_h),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+        cy += btn_h + 8.0;
+    }
+
+    let total_content_h = cy - container.content_y();
+    let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
+    result.scroll_viewport_rect = Some(viewport_rect);
+    result.scroll_content_height = scroll_result.content_height;
+    result.scrollbar_handle_rect = scroll_result.handle_rect;
+    result.scrollbar_track_rect = scroll_result.track_rect;
+    result.scroll_viewport_height = scroll_result.viewport_height;
 }
 
 #[allow(clippy::too_many_arguments)]

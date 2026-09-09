@@ -25,6 +25,19 @@
 
 pub mod models;
 
+/// The one refusal [`forum_v2_error_message`]/[`dm_error_message`] special-
+/// case rather than surfacing verbatim: a signed-in caller with no
+/// nickname yet (owner mandate 2026-09-09 — `code: "nick_required"` on
+/// `POST /api/forum/v2/*` thread/reply creation and `POST /dm/
+/// conversations`/`POST /dm/conversations/{id}/messages`). Both functions
+/// return this exact string instead of the server's own sentence so the
+/// caller can tell it apart with a plain `==` and re-drive the "choose a
+/// nick" prompt (`ForumV2State::nick_required`, `mlc-app-layout`) instead
+/// of showing raw error text. Same VALUE as `mlc_updater::forum_v2::
+/// NICK_REQUIRED_SENTINEL` — the native and wasm builds never share a
+/// dependency for this constant, only its string value.
+pub const NICK_REQUIRED_SENTINEL: &str = "__mlc_nick_required__";
+
 #[cfg(target_arch = "wasm32")]
 mod wasm;
 
@@ -205,6 +218,8 @@ pub fn forum_v2_error_message(e: &CloudError) -> String {
     #[derive(serde::Deserialize)]
     struct ErrorBody {
         error: String,
+        #[serde(default)]
+        code: Option<String>,
     }
     #[derive(serde::Deserialize, Default)]
     struct RateLimitBody {
@@ -214,10 +229,11 @@ pub fn forum_v2_error_message(e: &CloudError) -> String {
         retry_after_secs: u64,
     }
     match e {
-        CloudError::Forbidden(body) => serde_json::from_str::<ErrorBody>(body)
-            .ok()
-            .map(|b| b.error)
-            .unwrap_or_else(|| "You don't have write access to this board".to_string()),
+        CloudError::Forbidden(body) => match serde_json::from_str::<ErrorBody>(body) {
+            Ok(b) if b.code.as_deref() == Some("nick_required") => NICK_REQUIRED_SENTINEL.to_string(),
+            Ok(b) => b.error,
+            Err(_) => "You don't have write access to this board".to_string(),
+        },
         CloudError::Http { status: 400, body } => serde_json::from_str::<ErrorBody>(body)
             .ok()
             .map(|b| b.error)
@@ -246,6 +262,8 @@ pub fn dm_error_message(e: &CloudError) -> String {
     #[derive(serde::Deserialize)]
     struct ErrorBody {
         error: String,
+        #[serde(default)]
+        code: Option<String>,
     }
     #[derive(serde::Deserialize, Default)]
     struct RateLimitBody {
@@ -255,10 +273,11 @@ pub fn dm_error_message(e: &CloudError) -> String {
         retry_after_secs: u64,
     }
     match e {
-        CloudError::Forbidden(body) => serde_json::from_str::<ErrorBody>(body)
-            .ok()
-            .map(|b| b.error)
-            .unwrap_or_else(|| "Direct messages require a paid account".to_string()),
+        CloudError::Forbidden(body) => match serde_json::from_str::<ErrorBody>(body) {
+            Ok(b) if b.code.as_deref() == Some("nick_required") => NICK_REQUIRED_SENTINEL.to_string(),
+            Ok(b) => b.error,
+            Err(_) => "Direct messages require a paid account".to_string(),
+        },
         CloudError::Http { status: 400, body } => serde_json::from_str::<ErrorBody>(body)
             .ok()
             .map(|b| b.error)

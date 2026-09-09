@@ -3053,6 +3053,17 @@ impl App<'_> {
                         }
                     }
                 }
+                (chain, mlc_updater::ForumV2State::Failed { message })
+                    if message == mlc_updater::forum_v2::NICK_REQUIRED_SENTINEL =>
+                {
+                    // Caller lost the nick between the proactive
+                    // `nick_required()` gate and this write landing (owner
+                    // mandate 2026-09-09) — re-ask `Me` rather than show the
+                    // sentinel; the composer's own gate picks the prompt
+                    // back up from `caller_nick` on the next frame.
+                    ov.forum2.invalidate_me();
+                    let _ = chain;
+                }
                 (chain, mlc_updater::ForumV2State::Failed { message }) => {
                     ov.forum2.last_error = Some(message.clone());
                     if matches!(chain, Forum2Chain::AwaitingWriteAck { .. } | Forum2Chain::ReloadAfterWrite) {
@@ -3210,6 +3221,16 @@ impl App<'_> {
                         .map(|h| DmLookupHitUi { public_id: h.public_id, nick: h.nick, label: h.label })
                         .collect();
                 }
+                (chain, mlc_updater::DmState::Failed { message })
+                    if message == mlc_updater::forum_v2::NICK_REQUIRED_SENTINEL =>
+                {
+                    // Same "nick_required" gate as the forum composer
+                    // (owner mandate 2026-09-09) — `caller_nick` is a
+                    // shared account-level fact, so a Me refetch there
+                    // re-drives the DM composer's own gate too.
+                    ov.forum2.invalidate_me();
+                    let _ = chain;
+                }
                 (chain, mlc_updater::DmState::Failed { message }) => {
                     ov.dm.last_error = Some(message.clone());
                     if matches!(chain, DmChain::Sending { .. }) {
@@ -3286,7 +3307,7 @@ impl App<'_> {
                 // before `apply_forum2_result` (the single tracked window)
                 // is even reached, same idiom `DmState::Identity` uses for
                 // its own broadcast fact.
-                mlc_updater::ForumV2State::Me { classes, roles } => {
+                mlc_updater::ForumV2State::Me { classes, roles, nick } => {
                     for pw in self.windows.values_mut() {
                         let ov = &mut pw.chart.panel_app.community_state;
                         ov.forum2.caller_roles = roles.clone();
@@ -3298,7 +3319,14 @@ impl App<'_> {
                             b.can_write = forum2_can_write_native(&b.write_class, &classes);
                         }
                         ov.forum2.caller_classes = classes.clone();
+                        ov.forum2.caller_nick = nick.clone();
                         ov.forum2.mark_me_fetched();
+                        // Account tab's own mirrors of the same fetch — see
+                        // `UserSettingsState::account_classes`'s own doc for
+                        // why this crate carries a second copy instead of
+                        // reading `CommunityState` directly.
+                        pw.chart.panel_app.user_settings_state.account_classes = classes.clone();
+                        pw.chart.panel_app.user_settings_state.account_roles = roles.clone();
                         pw.overlay_dirty = true;
                     }
                     self.forum2_pending = None;
@@ -6820,6 +6848,24 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     pw.chart.panel_app.user_settings_state.active_tab =
                         mlc_app_layout::ui::modal_settings::UserSettingsTab::General;
                 }
+                // `Account` is likewise never in the rail while signed out
+                // (`UserSettingsTab::visible`) — same defensive snap, mirror
+                // image of `Server`'s own gate above.
+                if !account_signed_in
+                    && pw.chart.panel_app.user_settings_state.active_tab
+                        == mlc_app_layout::ui::modal_settings::UserSettingsTab::Account
+                {
+                    pw.chart.panel_app.user_settings_state.active_tab =
+                        mlc_app_layout::ui::modal_settings::UserSettingsTab::General;
+                }
+                // `ForumV2State::caller_signed_in` mirrors the same source
+                // as `account_signed_in` above — see that field's own doc
+                // for why it is not derived from `caller_classes` (which
+                // stays empty until the `Me` fetch answers).
+                #[cfg(feature = "cloud")]
+                {
+                    pw.chart.panel_app.community_state.forum2.caller_signed_in = account_signed_in;
+                }
                 pw.chart.panel_app.user_settings_state.server_status = agent_server_status.to_string();
                 pw.chart.panel_app.user_settings_state.agent_keys = agent_keys.clone();
                 pw.chart.panel_app.user_settings_state.agent_keys_sealed = agent_keys_sealed;
@@ -6831,6 +6877,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // profile name.
                 pw.chart.panel_app.user_settings_state.account_label =
                     account_label.clone().unwrap_or_default();
+                pw.chart.panel_app.user_settings_state.account_provider =
+                    account_provider.clone().unwrap_or_default();
                 if pw.chrome_state.account_label != account_label {
                     pw.chrome_state.account_label = account_label.clone();
                     pw.toolbar_dirty = true;
@@ -7200,11 +7248,20 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 }
                 if let Some(status) = nick_status.as_ref() {
                     use mlc_app_layout::ui::modal_settings::NickStatus;
+                    let saved = matches!(status, NickStatus::Saved { .. });
                     let uss = &mut pw.chart.panel_app.user_settings_state;
                     uss.nick_status = status.clone();
-                    if matches!(status, NickStatus::Saved { .. }) {
+                    if saved {
                         uss.nick_edit_mode = false;
                         uss.nick_edit_focused = false;
+                    }
+                    // A saved nick invalidates the `Me` cache the forum/DM
+                    // "choose a nick" gate reads (owner mandate 2026-09-09)
+                    // — without this, `caller_nick` would keep answering
+                    // "none" until the next passive refresh cadence.
+                    #[cfg(feature = "cloud")]
+                    if saved {
+                        pw.chart.panel_app.community_state.forum2.invalidate_me();
                     }
                     pw.overlay_dirty = true;
                     pw.window.request_redraw();

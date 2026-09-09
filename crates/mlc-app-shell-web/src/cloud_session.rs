@@ -456,10 +456,23 @@ impl CloudSession {
         }
         chart.panel_app.user_settings_state.multi_profile = false;
         chart.panel_app.user_settings_state.account_label = String::new();
+        chart.panel_app.user_settings_state.account_provider = String::new();
+        chart.panel_app.user_settings_state.account_classes = Vec::new();
+        chart.panel_app.user_settings_state.account_roles = Vec::new();
         chart.panel_app.user_settings_state.nick_edit_mode = false;
         chart.panel_app.user_settings_state.nick_edit_focused = false;
         chart.panel_app.user_settings_state.nick_status =
             mlc_app_layout::ui::modal_settings::NickStatus::Idle;
+        // `Account` is never in the rail while signed out
+        // (`UserSettingsTab::visible`) — snap off it here too, the same
+        // defensive move the native shell's per-frame sync makes for
+        // `Server`'s own sign-out gate.
+        if chart.panel_app.user_settings_state.active_tab
+            == mlc_app_layout::ui::modal_settings::UserSettingsTab::Account
+        {
+            chart.panel_app.user_settings_state.active_tab =
+                mlc_app_layout::ui::modal_settings::UserSettingsTab::General;
+        }
         // Same fields the entitlements Err path degrades to on a failed
         // fetch (`drive()`'s entitlements block) — set here too so this
         // does not wait out that fetch's own round trip to stop showing a
@@ -470,6 +483,7 @@ impl CloudSession {
         // The signed-out answer to `GET /api/forum/me` is not the same as
         // whatever identity just left — clear it so the passive fetch
         // re-asks under the new (anonymous) caller.
+        chart.panel_app.community_state.forum2.caller_signed_in = false;
         chart.panel_app.community_state.forum2.invalidate_me();
         // The board LIST itself is per-caller too (owner defect 2026-09-09:
         // an admin signing in saw zero boards until a hard reload) —
@@ -607,11 +621,18 @@ impl CloudSession {
         // (a bool copy), unlike the entitlements fetch this is not an
         // endpoint call, so there is no reason to gate it to "moments".
         chart.panel_app.user_settings_state.account_signed_in = self.is_signed_in();
+        // `ForumV2State::caller_signed_in` mirrors the same source — see
+        // that field's own doc for why it is not derived from
+        // `caller_classes` (which stays empty until the `Me` fetch
+        // answers).
+        chart.panel_app.community_state.forum2.caller_signed_in = self.is_signed_in();
         // Mirrors `account_label()` — the same source the chrome's account
         // button reads — so the nick edit box can prefill with what the
         // person already sees there, not the unrelated local profile name.
         chart.panel_app.user_settings_state.account_label =
             self.account_label().unwrap_or_default();
+        chart.panel_app.user_settings_state.account_provider =
+            self.account_provider().unwrap_or_default();
 
         // ── Entitlements: boot + periodic background re-ask ────────────────
         // Deliberately its own block, ahead of and independent from the
@@ -1062,6 +1083,11 @@ impl CloudSession {
                     uss.account_label = effective_label.clone();
                     // `st`/`uss` are both done being used above — safe to
                     // take `&mut chart` again here.
+                    // A saved nick invalidates the `Me` cache the forum/DM
+                    // "choose a nick" gate reads (owner mandate
+                    // 2026-09-09) — without this, `caller_nick` would keep
+                    // answering "none" until the next passive refresh.
+                    chart.panel_app.community_state.forum2.invalidate_me();
                     chart.push_system_event(
                         mlc_core::SystemEventKind::Nick,
                         "Nickname saved",
@@ -1369,6 +1395,15 @@ impl CloudSession {
                                 }
                             }
                         }
+                        Err(e) if e == mlc_cloud::NICK_REQUIRED_SENTINEL => {
+                            // Caller lost the nick between the proactive
+                            // `nick_required()` gate and this write landing
+                            // (owner mandate 2026-09-09) — re-ask `Me`
+                            // rather than show the sentinel; the
+                            // composer's own gate picks the prompt back up
+                            // from `caller_nick` on the next frame.
+                            ov.forum2.invalidate_me();
+                        }
                         Err(e) => {
                             ov.forum2.last_error = Some(e.clone());
                             chart.push_system_event(mlc_core::SystemEventKind::Info, "Forum post failed", e, true);
@@ -1400,10 +1435,18 @@ impl CloudSession {
                     self.inner.borrow_mut().forum2_in_flight = false;
                 }
                 FlowResult::Forum2Me(result) => {
-                    let ov = &mut chart.panel_app.community_state;
-                    ov.forum2.me_refreshing = false;
                     match result {
                         Ok(me) => {
+                            // Account tab's own mirrors of the same fetch —
+                            // see `UserSettingsState::account_classes`'s
+                            // own doc for why this crate carries a second
+                            // copy instead of reading `CommunityState`
+                            // directly. Cloned before the `ov` block below
+                            // moves `me.classes`/`me.roles` into `forum2`.
+                            chart.panel_app.user_settings_state.account_classes = me.classes.clone();
+                            chart.panel_app.user_settings_state.account_roles = me.roles.clone();
+
+                            let ov = &mut chart.panel_app.community_state;
                             ov.forum2.caller_roles = me.roles;
                             // Recompute `can_write` on whatever boards are
                             // already loaded — a `Me` answer arriving after
@@ -1413,13 +1456,15 @@ impl CloudSession {
                                 b.can_write = forum2_can_write(&b.write_class, &me.classes);
                             }
                             ov.forum2.caller_classes = me.classes;
+                            ov.forum2.caller_nick = me.nick;
                             ov.forum2.mark_me_fetched();
                         }
                         Err(e) => {
                             web_sys::console::warn_1(&format!("[forum2] me() failed: {}", e).into());
-                            ov.forum2.last_error = Some(e);
+                            chart.panel_app.community_state.forum2.last_error = Some(e);
                         }
                     }
+                    chart.panel_app.community_state.forum2.me_refreshing = false;
                     self.inner.borrow_mut().forum2_in_flight = false;
                 }
                 FlowResult::DmIdentityPublished(result) => {
@@ -1489,6 +1534,14 @@ impl CloudSession {
                                 ov.conversations.push(row);
                             }
                             ov.open_conversation(conversation.id);
+                        }
+                        Err(e) if e == mlc_cloud::NICK_REQUIRED_SENTINEL => {
+                            // Same "nick_required" gate as the forum
+                            // composer (owner mandate 2026-09-09) —
+                            // `caller_nick` is a shared account-level fact,
+                            // so a Me refetch there re-drives the DM
+                            // composer's own gate too.
+                            chart.panel_app.community_state.forum2.invalidate_me();
                         }
                         Err(e) => {
                             ov.last_error = Some(e);
@@ -1583,6 +1636,11 @@ impl CloudSession {
                             if let DmView::Conversation { messages, .. } = &mut ov.view {
                                 messages.push(DmMessageUi { id, mine: true, text: plaintext, created_at, read_at: None });
                             }
+                        }
+                        Err(message) if message == mlc_cloud::NICK_REQUIRED_SENTINEL => {
+                            // Same "nick_required" gate as the forum
+                            // composer (owner mandate 2026-09-09).
+                            chart.panel_app.community_state.forum2.invalidate_me();
                         }
                         Err(message) => {
                             ov.last_error = Some(message.clone());

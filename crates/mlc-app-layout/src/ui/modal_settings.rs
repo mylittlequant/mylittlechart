@@ -3474,6 +3474,13 @@ pub enum UserSettingsTab {
     Persistence,
     Performance,
     Server,
+    /// The signed-in account surface (owner ruling 2026-09-09): signed-in
+    /// label + provider, the account nickname editor (moved off the
+    /// General tab's PROFILE row), class/role, Sign out, and a shortcut
+    /// into the Vault tab. Never in [`Self::all`] — it exists only for a
+    /// signed-in caller, so [`Self::visible`] prepends it instead of
+    /// filtering it out, the mirror image of `Server`'s own gate below.
+    Account,
 }
 
 impl UserSettingsTab {
@@ -3485,6 +3492,7 @@ impl UserSettingsTab {
             Self::Persistence => "persistence",
             Self::Performance => "performance",
             Self::Server => "server",
+            Self::Account => "account",
         }
     }
 
@@ -3498,23 +3506,34 @@ impl UserSettingsTab {
             Self::Persistence => UserSettingsKey::TabPersistence.get(lang),
             Self::Performance => UserSettingsKey::TabPerformance.get(lang),
             Self::Server => UserSettingsKey::TabServer.get(lang),
+            Self::Account => UserSettingsKey::TabAccount.get(lang),
         }
     }
 
     pub fn all() -> &'static [Self] {
         // `Sync` retained as a variant for serde back-compat but hidden
         // from the tab strip — cloud sync is a paid server feature, not
-        // local persist (Persistence tab below).
+        // local persist (Persistence tab below). `Account` is NOT here —
+        // see its own doc; [`Self::visible`] prepends it for a signed-in
+        // caller instead.
         &[Self::General, Self::Vault, Self::Persistence, Self::Performance, Self::Server]
     }
 
-    /// [`Self::all`], with `Server` dropped while signed out — the Agent
-    /// API is gated on `account_signed_in && server_enabled()` (agent-api-
-    /// auth-and-secret-store plan, piece 4), so a signed-out session has no
-    /// reachable server for the tab to manage. Same `retain`-by-id idiom
-    /// `panel_app.rs:850` already uses for `share_chart` on the same gate.
+    /// [`Self::all`], with `Server` dropped while signed out (the Agent API
+    /// is gated on `account_signed_in && server_enabled()` — agent-api-
+    /// auth-and-secret-store plan, piece 4 — so a signed-out session has no
+    /// reachable server for the tab to manage; same `retain`-by-id idiom
+    /// `panel_app.rs:850` already uses for `share_chart` on the same gate),
+    /// and `Account` prepended — FIRST, not appended — while signed in
+    /// (owner ruling 2026-09-09): the header's own account button opens
+    /// straight onto it, so it reads as the account's own home tab, not an
+    /// afterthought at the end of the rail.
     pub fn visible(signed_in: bool) -> Vec<Self> {
-        let mut tabs = Self::all().to_vec();
+        let mut tabs = Vec::with_capacity(Self::all().len() + 1);
+        if signed_in {
+            tabs.push(Self::Account);
+        }
+        tabs.extend_from_slice(Self::all());
         if !signed_in {
             tabs.retain(|t| *t != Self::Server);
         }
@@ -3529,6 +3548,7 @@ impl UserSettingsTab {
             "persistence" => Some(Self::Persistence),
             "performance" => Some(Self::Performance),
             "server" => Some(Self::Server),
+            "account" => Some(Self::Account),
             _ => None,
         }
     }
@@ -3803,6 +3823,8 @@ pub struct UserSettingsState {
     pub server_tab_scroll: ScrollState,
     /// Scroll state for the Performance tab content.
     pub performance_tab_scroll: ScrollState,
+    /// Scroll state for the Account tab content.
+    pub account_tab_scroll: ScrollState,
 
     // ── WELCOME WIZARD ──────────────────────────────────────────────────
     /// True when the first-run welcome wizard should be shown (no profile.json on first launch).
@@ -3930,6 +3952,24 @@ pub struct UserSettingsState {
     /// edit box can prefill with what the person already sees elsewhere
     /// rather than the unrelated local profile name. Empty when signed out.
     pub account_label: String,
+    /// The OAuth provider the account signed in with (e.g. `"google"`,
+    /// `"github"`), or empty when signed out — same per-frame mirror idiom
+    /// as [`Self::account_label`] (web: `CloudSession::account_provider`;
+    /// native: `AuthStatus::LoggedIn::provider`). Read by the Account tab's
+    /// "Signed in as … via …" line.
+    pub account_provider: String,
+    /// The calling account's cumulative class membership (wire names from
+    /// `social_db::Class::as_str`, e.g. `["public","user","paid"]`) — a
+    /// mirror of `ForumV2State::caller_classes` (the same `GET /api/forum/
+    /// me` fetch), kept here too so the Account tab can show a tier line
+    /// without this crate reaching into the `cloud`-feature-gated
+    /// `CommunityState` (`UserSettingsState` itself carries no such gate).
+    /// Empty until the first `Me` answer lands, or while signed out.
+    pub account_classes: Vec<String>,
+    /// Moderator/admin role names the calling account holds — the same
+    /// mirror idiom as [`Self::account_classes`], of `ForumV2State::
+    /// caller_roles`.
+    pub account_roles: Vec<String>,
 
     /// Whether the avatar picker popover is open.
     pub show_avatar_picker: bool,
@@ -4058,6 +4098,7 @@ impl Default for UserSettingsState {
             persistence_tab_scroll: ScrollState::default(),
             server_tab_scroll: ScrollState::default(),
             performance_tab_scroll: ScrollState::default(),
+            account_tab_scroll: ScrollState::default(),
             show_welcome_wizard: false,
             needs_vault_unlock: false,
             vault_unlock_error: None,
@@ -4096,6 +4137,9 @@ impl Default for UserSettingsState {
             nick_save_requested: false,
             nick_status: NickStatus::default(),
             account_label: String::new(),
+            account_provider: String::new(),
+            account_classes: Vec::new(),
+            account_roles: Vec::new(),
             show_avatar_picker: false,
             profile_avatar_target_id: None,
             show_new_profile_dialog: false,
@@ -5486,6 +5530,21 @@ pub struct ForumV2State {
     /// see this crate's own `forum2_can_write`/`forum2_can_write_native` in
     /// each shell).
     pub caller_classes: Vec<String>,
+    /// Whether the calling account is signed in at all — mirrored every
+    /// frame from `UserSettingsState::account_signed_in` (the same source
+    /// the chrome's own sign-in button reads), NOT derived from
+    /// `caller_classes` (which stays empty until the `Me` fetch answers,
+    /// so it cannot tell "signed in, fetch pending" apart from "signed
+    /// out"). Read by [`Self::nick_required`] to gate the forum/DM
+    /// composer on a signed-in caller with no nick yet.
+    pub caller_signed_in: bool,
+    /// The calling account's chosen nickname, or `None` for a signed-in
+    /// account that has never set one (`ForumMe::nick`/`ForumMeResponse::
+    /// nick`, the same `GET /api/forum/me` fetch as `caller_classes`/
+    /// `caller_roles`) — also `None` while signed out. Owner mandate
+    /// 2026-09-09: a signed-in account with no nick can read the forum but
+    /// not write or DM ([`Self::nick_required`]).
+    pub caller_nick: Option<String>,
     /// Wall-clock ms ([`now_ms`]) `caller_roles`/`caller_classes` last
     /// landed a successful fetch — `None` until the first answer lands (or
     /// after [`Self::invalidate_me`]), read by the shell's passive-fetch
@@ -5581,6 +5640,8 @@ impl Default for ForumV2State {
             request: None,
             caller_roles: Vec::new(),
             caller_classes: Vec::new(),
+            caller_signed_in: false,
+            caller_nick: None,
             me_fetched_at: None,
             me_refreshing: false,
             last_error: None,
@@ -5606,6 +5667,16 @@ impl Default for ForumV2State {
 impl ForumV2State {
     pub fn is_moderator_or_admin(&self) -> bool {
         self.caller_roles.iter().any(|r| r == "moderator" || r == "admin")
+    }
+
+    /// Whether the forum composer and DM search/composer must render
+    /// disabled with the "choose a nick" prompt instead of their normal
+    /// controls (owner mandate 2026-09-09) — a signed-in caller with no
+    /// nick yet. `false` while signed out (an anonymous caller is refused
+    /// for an unrelated reason — "sign in first" — that this flag does not
+    /// speak to) and `false` once a nick lands.
+    pub fn nick_required(&self) -> bool {
+        self.caller_signed_in && self.caller_nick.is_none()
     }
 
     /// Drop back to the board list — called when the overlay (re)opens
@@ -5716,6 +5787,7 @@ impl ForumV2State {
     pub fn invalidate_me(&mut self) {
         self.caller_roles = Vec::new();
         self.caller_classes = Vec::new();
+        self.caller_nick = None;
         self.me_fetched_at = None;
         self.me_refreshing = false;
     }

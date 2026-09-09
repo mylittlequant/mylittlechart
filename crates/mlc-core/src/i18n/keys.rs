@@ -1067,10 +1067,27 @@ pub enum UserSettingsKey {
     // exist at this tier, so the row's own button gets its own word instead
     // of the multi-profile one (2026-09-02).
     BtnNickname                    = 39,
+
+    // Account tab (owner ruling 2026-09-09): the header's own account
+    // button opens User Settings straight to this tab, and the nickname
+    // editor lives here now, not on the General tab's PROFILE row.
+    TabAccount                      = 40,
+    AccountSignedInAs               = 41,
+    AccountVia                      = 42,
+    AccountTier                     = 43,
+    AccountRole                     = 44,
+    AccountVaultHint                = 45,
+    AccountOpenVault                = 46,
+    AccountSignOut                  = 47,
+    // "Choose a nick" prompt (nick-required gate on forum/DM writing) —
+    // shared by the Account tab's own trigger and the forum/DM composer
+    // disabled-state hint, so both say the same thing.
+    AccountChooseNickHint           = 48,
+    AccountChooseNickBtn            = 49,
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 40;
+    pub const COUNT: usize = 50;
 
     /// Get translation for this key.
     #[inline]

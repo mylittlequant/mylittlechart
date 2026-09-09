@@ -180,14 +180,40 @@ pub struct ForumMe {
     /// public_id: null` then) — hence `Option`, not `String`.
     pub label: Option<String>,
     pub public_id: Option<String>,
+    /// The caller's chosen nickname, or `null` for a signed-in account that
+    /// has never set one — `#[serde(default)]` since the server change
+    /// landing this field is a separate in-flight deploy (same reasoning as
+    /// `ForumBoard::thread_count`'s own copy of this idiom). A signed-in,
+    /// nick-less account is gated off forum/DM writing (owner mandate
+    /// 2026-09-09, `nick_required` 403s) — the client reads this to show
+    /// that gate as a prompt instead of the raw refusal.
+    #[serde(default)]
+    pub nick: Option<String>,
 }
 
 /// Server's own error body shape on a non-success response, e.g.
-/// `{"error": "That title is too short"}`.
+/// `{"error": "That title is too short"}` — a write refusal additionally
+/// carries a stable `code` for the caller to branch on (`"nick_required"`
+/// today; see [`NICK_REQUIRED_SENTINEL`]).
 #[derive(serde::Deserialize)]
 struct ErrorBody {
     error: String,
+    #[serde(default)]
+    code: Option<String>,
 }
+
+/// The one refusal `updater_loop`'s forum2/DM write handling special-cases
+/// rather than surfacing verbatim: a signed-in caller with no nickname yet
+/// (owner mandate 2026-09-09 — `code: "nick_required"` on `POST /api/
+/// forum/v2/*` thread/reply creation and `POST /dm/conversations`/`POST
+/// /dm/conversations/{id}/messages`). [`error_message`] returns this exact
+/// string instead of the server's own sentence so the caller can tell it
+/// apart with a plain `==` and re-drive the "choose a nick" prompt
+/// (`ForumV2State::nick_required`) instead of showing raw error text —
+/// same shape `mlc_cloud`'s wasm twin uses for its own copy of this
+/// constant (the two builds never share a dependency for it, so the
+/// VALUE, not the item, is what has to match).
+pub const NICK_REQUIRED_SENTINEL: &str = "__mlc_nick_required__";
 
 /// The 429 body additionally carries how long to wait.
 #[derive(serde::Deserialize, Default)]
@@ -217,6 +243,7 @@ async fn error_message(resp: reqwest::Response) -> String {
         return "Sign in again, then retry".to_string();
     }
     match resp.json::<ErrorBody>().await {
+        Ok(b) if b.code.as_deref() == Some("nick_required") => NICK_REQUIRED_SENTINEL.to_string(),
         Ok(b) => b.error,
         Err(_) => format!("Server returned {}", status),
     }

@@ -781,6 +781,15 @@ pub struct ForumMeResponse {
     /// public_id: null` then) — hence `Option`, not `String`.
     pub label: Option<String>,
     pub public_id: Option<String>,
+    /// The caller's chosen nickname, or `null` for a signed-in account
+    /// that has never set one — `#[serde(default)]`, same reasoning as
+    /// `ForumBoard::thread_count`'s own copy of this idiom (the server
+    /// change landing this field is a separate in-flight deploy). A
+    /// signed-in, nick-less account is gated off forum/DM writing (owner
+    /// mandate 2026-09-09, `nick_required` 403s) — the client reads this
+    /// to show that gate as a prompt instead of the raw refusal.
+    #[serde(default)]
+    pub nick: Option<String>,
 }
 
 // =============================================================================
