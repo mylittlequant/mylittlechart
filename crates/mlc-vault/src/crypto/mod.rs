@@ -245,6 +245,19 @@ pub fn parse_recovery_key(formatted: &str) -> Result<[u8; 32], String> {
     Ok(key)
 }
 
+/// Compare two formatted recovery keys by their underlying bytes, not by
+/// string equality — the confirm-by-typing gate's own check (a user pasting
+/// the key back rarely reproduces the exact case or dash placement it was
+/// shown in, and [`parse_recovery_key`] is already tolerant of both).
+/// `false` if either side fails to parse to a valid 32-byte key, including
+/// an empty string.
+pub fn recovery_keys_match(typed: &str, shown: &str) -> bool {
+    match (parse_recovery_key(typed), parse_recovery_key(shown)) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
 /// Encrypt `master_key` with `recovery_key` for server-side escrow storage.
 ///
 /// Derives an encryption key from `recovery_key` via HKDF with
@@ -451,6 +464,38 @@ mod tests {
         let no_dashes: String = formatted.chars().filter(|c| *c != '-').collect();
         let parsed = parse_recovery_key(&no_dashes).unwrap();
         assert_eq!(parsed, key);
+    }
+
+    #[test]
+    fn recovery_keys_match_exact() {
+        let key = generate_recovery_key();
+        let formatted = format_recovery_key(&key);
+        assert!(recovery_keys_match(&formatted, &formatted));
+    }
+
+    #[test]
+    fn recovery_keys_match_tolerates_case_and_dashes() {
+        let key = generate_recovery_key();
+        let formatted = format_recovery_key(&key);
+        // Typed back upper-case with no dashes — a very plausible paste.
+        let retyped: String = formatted.chars().filter(|c| *c != '-').collect::<String>().to_uppercase();
+        assert!(recovery_keys_match(&retyped, &formatted));
+    }
+
+    #[test]
+    fn recovery_keys_match_rejects_mismatch() {
+        let a = generate_recovery_key();
+        let b = generate_recovery_key();
+        assert_ne!(a, b, "test fixture needs two distinct keys");
+        assert!(!recovery_keys_match(&format_recovery_key(&a), &format_recovery_key(&b)));
+    }
+
+    #[test]
+    fn recovery_keys_match_rejects_garbage_input() {
+        let key = generate_recovery_key();
+        let formatted = format_recovery_key(&key);
+        assert!(!recovery_keys_match("not a key", &formatted));
+        assert!(!recovery_keys_match("", &formatted));
     }
 
     #[test]

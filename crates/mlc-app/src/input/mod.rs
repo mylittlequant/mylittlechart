@@ -2535,7 +2535,16 @@ impl ChartApp {
 
         if let Some(result) = &self.frame_result {
             // Profile manager / wizard inputs — text select drag on any active profile manager or wizard input.
-            if self.panel_app.user_settings_state.show_profile_manager || self.panel_app.user_settings_state.show_welcome_wizard {
+            // `vault_pages_active()` extends this to the Vault tab host —
+            // the SAME shared page bodies render there under
+            // `VaultPageHost::Tab` and must share this one complete
+            // dispatch path rather than fall through to the incomplete
+            // per-id arms in `panel_click.rs` (root cause of two focus
+            // rings at once + no drag-selection on the Vault tab).
+            if self.panel_app.user_settings_state.show_profile_manager
+                || self.panel_app.user_settings_state.show_welcome_wizard
+                || self.vault_pages_active()
+            {
                 if let Some(ref us) = result.user_settings {
                     // Iterate all registered input char-position entries and check if
                     // the drag started inside that input's rect.
@@ -2572,7 +2581,7 @@ impl ChartApp {
                                 uss.recovery_key_display_focused = false;
                                 Some(WidgetId::from(crate::text_input::NEW_PROFILE_NAME))
                             }
-                            "profile_mgr:recovery_key_input" => {
+                            "profile_mgr:recovery_key_input" | "profile_mgr:confirm_recovery_input" => {
                                 uss.recovery_key_display_focused = true;
                                 uss.new_passphrase_focused = false;
                                 uss.new_profile_name_focused = false;
@@ -2592,7 +2601,9 @@ impl ChartApp {
                                 uss.new_passphrase_focused = false;
                                 uss.new_profile_name_focused = false;
                                 uss.confirm_passphrase_focused = false;
-                                Some(WidgetId::from(crate::text_input::RECOVERY_KEY))
+                                // Separate id from the entry field above —
+                                // see `RECOVERY_KEY_DISPLAY`'s own doc.
+                                Some(WidgetId::from(crate::text_input::RECOVERY_KEY_DISPLAY))
                             }
                             _ => None,
                         };

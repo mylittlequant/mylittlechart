@@ -120,6 +120,38 @@ impl ChartApp {
         self.panel_app.user_settings_state.is_open = true;
     }
 
+    /// True while the Vault tab (User Settings modal) is open and showing
+    /// one of the six shared vault pages that also render under the
+    /// standalone Profile Manager modal / welcome wizard host
+    /// (`VaultPageHost::{Tab,Modal}` — `layout::modals::profile_manager`'s
+    /// module doc): `UnlockPassphrase`, `CreatePassphrase`,
+    /// `ShowRecoveryKey`, `ConfirmRecoveryKey`, `UseRecoveryKey`,
+    /// `SetNewPassphrase`.
+    ///
+    /// Exists so `mlc-app/src/input/mod.rs`'s drag pre-dispatch block (full
+    /// hit-test over `input_char_positions`, exclusive focus-flag clearing
+    /// across every sibling field) can gate on ONE predicate that is true
+    /// under either host, instead of only ever being true for the
+    /// standalone modal (`show_profile_manager`/`show_welcome_wizard`).
+    /// Without this the Tab host falls through to the incomplete per-id
+    /// click arms in `panel_click.rs`, which clear fewer sibling flags and
+    /// never arm drag-select — the root cause of two focus rings at once
+    /// and no drag-selection on the Vault tab's passphrase/recovery-key
+    /// fields.
+    pub(crate) fn vault_pages_active(&self) -> bool {
+        self.panel_app.user_settings_state.is_open
+            && self.panel_app.user_settings_state.active_tab == UserSettingsTab::Vault
+            && matches!(
+                self.panel_app.credentials_state.view,
+                CredentialsView::UnlockPassphrase
+                    | CredentialsView::CreatePassphrase
+                    | CredentialsView::ShowRecoveryKey
+                    | CredentialsView::ConfirmRecoveryKey
+                    | CredentialsView::UseRecoveryKey
+                    | CredentialsView::SetNewPassphrase
+            )
+    }
+
     /// Refresh the credentials modal's cache from `BackendCore` — the same
     /// cache-refreshed-by-the-app-layer pattern `apply_profile_state` uses
     /// for `AlertSettingsState`. Call whenever the vault key or the

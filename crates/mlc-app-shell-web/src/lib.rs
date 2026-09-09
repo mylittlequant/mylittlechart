@@ -1132,12 +1132,16 @@ fn run_render_loop(
                                     CredentialsView, ProfileManagerPage, UserSettingsTab,
                                 };
                                 {
-                                    let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
-                                    let klen = rk.chars().count();
+                                    let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY_DISPLAY);
                                     let mut ic = state.chart.input_coordinator.borrow_mut();
                                     ic.text_fields_mut().set_text(&rk_wid, &rk);
                                     if let Some(fs) = ic.text_fields_mut().field_state_mut(&rk_wid) {
-                                        fs.cursor = klen;
+                                        // Cursor at the START, not the end: the reveal box is a
+                                        // real (scrollable) input now, and a cursor seeded at the
+                                        // far end would scroll to show the TAIL of the key by
+                                        // default — the "first three groups off-screen" defect
+                                        // the two-line paint this replaced was built to avoid.
+                                        fs.cursor = 0;
                                         fs.selection_start = None;
                                     }
                                 }
@@ -1260,12 +1264,14 @@ fn run_render_loop(
                                 CredentialsView, ProfileManagerPage, UserSettingsTab,
                             };
                             {
-                                let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
-                                let klen = new_recovery_key_fmt.chars().count();
+                                let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY_DISPLAY);
                                 let mut ic = state.chart.input_coordinator.borrow_mut();
                                 ic.text_fields_mut().set_text(&rk_wid, &new_recovery_key_fmt);
                                 if let Some(fs) = ic.text_fields_mut().field_state_mut(&rk_wid) {
-                                    fs.cursor = klen;
+                                    // Cursor at the START — see the sibling seed site above for
+                                    // why (real scrollable input now, not a hand-painted
+                                    // two-line box).
+                                    fs.cursor = 0;
                                     fs.selection_start = None;
                                 }
                             }

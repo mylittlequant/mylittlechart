@@ -6366,8 +6366,21 @@ impl ChartApp {
                     self.set_control_point_size(size);
                 }
                 "e2e_passphrase_input" => {
+                    // Fallback path only — the guard at `mod.rs:2538`
+                    // (`vault_pages_active()`) routes a plain click on this
+                    // field through the complete drag pre-dispatch block
+                    // whenever the Vault tab is showing one of the five
+                    // vault pages, which clears all three sibling flags
+                    // below. This arm still needs the same clearing
+                    // discipline as its siblings (`"profile_mgr:
+                    // new_passphrase_input"` etc.) for any caller that
+                    // reaches it directly (e.g. a click that is not a
+                    // drag start) — two focus rings at once is exactly what
+                    // clearing only one sibling here used to cause.
                     self.panel_app.user_settings_state.new_passphrase_focused = true;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                    self.panel_app.user_settings_state.recovery_key_display_focused = false;
                     let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(np_wid.clone());
                     // Position cursor at click point using pre-computed char positions.
@@ -6887,12 +6900,16 @@ impl ChartApp {
                     }
                 }
                 "profile_mgr:recovery_key_display" => {
-                    // User clicked the recovery key display box — position cursor at click point.
+                    // User clicked the recovery key reveal box — position cursor
+                    // at click point. `RECOVERY_KEY_DISPLAY`, not `RECOVERY_KEY`:
+                    // this box is read-only (see that id's own doc) and must not
+                    // share storage with the editable entry field on
+                    // `UseRecoveryKey`/`ConfirmRecoveryKey`.
                     self.panel_app.user_settings_state.recovery_key_display_focused = true;
                     let key_text = self.panel_app.user_settings_state.recovery_key_display
                         .clone()
                         .unwrap_or_default();
-                    let rk_wid = uzor::WidgetId::from(crate::text_input::RECOVERY_KEY);
+                    let rk_wid = uzor::WidgetId::from(crate::text_input::RECOVERY_KEY_DISPLAY);
                     // Sync the store text in case it hasn't been set yet.
                     {
                         let current = self.input_coordinator.borrow().text_fields().text(&rk_wid).to_string();
@@ -6922,12 +6939,91 @@ impl ChartApp {
                         eprintln!("[ChartApp] profile_mgr: recovery key copied to clipboard");
                     }
                 }
+                // "I saved it — continue" (label reworded from "I have written
+                // it down") — no longer fires `recovery_key_confirmed` itself.
+                // Routes to `ConfirmRecoveryKey` instead, which asks for the key
+                // back before the command that wipes it ever fires (recovery-
+                // key-confirm-by-typing arc). The key stays in
+                // `recovery_key_display` either way; only the page changes.
                 "profile_mgr:recovery_key_confirm" => {
-                    // User confirmed they have written down the recovery key.
-                    // Emit a command so main.rs clears pending_recovery_key and
-                    // dismisses the ShowRecoveryKey page.
-                    self.pending_updater_cmd = Some("recovery_key_confirmed".to_string());
-                    eprintln!("[ChartApp] profile_mgr: recovery key confirmed by user");
+                    use mlc_app_layout::ui::modal_settings::{CredentialsView, ProfileManagerPage};
+                    if self.panel_app.user_settings_state.show_profile_manager {
+                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ConfirmRecoveryKey;
+                    } else {
+                        self.panel_app.credentials_state.view = CredentialsView::ConfirmRecoveryKey;
+                    }
+                    self.panel_app.user_settings_state.confirm_recovery_key_error = None;
+                    {
+                        let rk_wid = uzor::WidgetId::from(crate::text_input::RECOVERY_KEY);
+                        self.input_coordinator.borrow_mut().text_fields_mut().clear(&rk_wid);
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    }
+                    self.panel_app.user_settings_state.recovery_key_display_focused = false;
+                    eprintln!("[ChartApp] profile_mgr: routing to recovery key confirm-by-typing");
+                }
+                // Entry field on `ConfirmRecoveryKey` — same shape as
+                // `"profile_mgr:recovery_key_input"` on `UseRecoveryKey` (shares
+                // its `RECOVERY_KEY` store id; the two pages never render at the
+                // same time).
+                "profile_mgr:confirm_recovery_input" => {
+                    self.panel_app.user_settings_state.recovery_key_display_focused = true;
+                    self.panel_app.user_settings_state.new_passphrase_focused = false;
+                    self.panel_app.user_settings_state.new_profile_name_focused = false;
+                    self.panel_app.user_settings_state.confirm_passphrase_focused = false;
+                    let rk_wid = uzor::WidgetId::from(crate::text_input::RECOVERY_KEY);
+                    self.input_coordinator.borrow_mut().text_fields_mut().focus(rk_wid.clone());
+                    let char_positions: Vec<f64> = self.frame_result.as_ref()
+                        .and_then(|r| r.user_settings.as_ref())
+                        .and_then(|us| us.input_char_positions.iter().find(|(k, _)| k == "profile_mgr:confirm_recovery_input"))
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    if !char_positions.is_empty() {
+                        let new_cursor = mlc_app_layout::ui::widgets::cursor_from_char_positions(&char_positions, x);
+                        if let Some(fs) = self.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&rk_wid) {
+                            fs.cursor = new_cursor;
+                            fs.selection_start = None;
+                        }
+                    }
+                    eprintln!("[ChartApp] profile_mgr: confirm_recovery_input focused");
+                }
+                // "Confirm" on `ConfirmRecoveryKey` — the actual proof step:
+                // compares the typed-back key against `recovery_key_display`
+                // byte-for-byte (`mlc_vault::crypto::recovery_keys_match`, tolerant
+                // of case/dash differences). On match this is the ONLY place
+                // `recovery_key_confirmed` fires now — see
+                // `"profile_mgr:recovery_key_confirm"`'s own doc above.
+                "profile_mgr:confirm_recovery_submit" => {
+                    let rk_wid = uzor::WidgetId::from(crate::text_input::RECOVERY_KEY);
+                    let typed = self.input_coordinator.borrow().text_fields().text(&rk_wid).to_string();
+                    let shown = self.panel_app.user_settings_state.recovery_key_display.clone().unwrap_or_default();
+                    if mlc_vault::crypto::recovery_keys_match(&typed, &shown) {
+                        self.panel_app.user_settings_state.confirm_recovery_key_error = None;
+                        self.pending_updater_cmd = Some("recovery_key_confirmed".to_string());
+                        eprintln!("[ChartApp] profile_mgr: recovery key confirmed by typed match");
+                    } else {
+                        self.panel_app.user_settings_state.confirm_recovery_key_error =
+                            Some(mlc_core::i18n::ProfileKey::RecoveryKeyMismatch.get(mlc_core::i18n::current_language()).to_string());
+                        eprintln!("[ChartApp] profile_mgr: confirm_recovery_key mismatch");
+                    }
+                }
+                // "Back" on `ConfirmRecoveryKey` — returns to `ShowRecoveryKey`
+                // without losing the key (`recovery_key_display` is untouched;
+                // only the page-selector enum moves).
+                "profile_mgr:confirm_recovery_back" => {
+                    use mlc_app_layout::ui::modal_settings::{CredentialsView, ProfileManagerPage};
+                    if self.panel_app.user_settings_state.show_profile_manager {
+                        self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ShowRecoveryKey;
+                    } else {
+                        self.panel_app.credentials_state.view = CredentialsView::ShowRecoveryKey;
+                    }
+                    self.panel_app.user_settings_state.confirm_recovery_key_error = None;
+                    {
+                        let rk_wid = uzor::WidgetId::from(crate::text_input::RECOVERY_KEY);
+                        self.input_coordinator.borrow_mut().text_fields_mut().clear(&rk_wid);
+                        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                    }
+                    self.panel_app.user_settings_state.recovery_key_display_focused = false;
+                    eprintln!("[ChartApp] profile_mgr: confirm_recovery_key back to ShowRecoveryKey");
                 }
                 // Shared by every passphrase field on the current page — see
                 // `UserSettingsState::passphrase_revealed`'s own doc for why

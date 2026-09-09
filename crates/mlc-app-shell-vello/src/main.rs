@@ -5434,11 +5434,16 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                 // Sync TextFieldStore recovery key display so it can be selected/copied.
                                                 let key_str = recovery_key.as_deref().unwrap_or("");
                                                 {
-                                                    let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
-                                                    let klen = key_str.chars().count();
+                                                    let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY_DISPLAY);
                                                     pw.chart.input_coordinator.borrow_mut().text_fields_mut().set_text(&rk_wid, key_str);
                                                     if let Some(fs) = pw.chart.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&rk_wid) {
-                                                        fs.cursor = klen;
+                                                        // Cursor at the START, not the end: the reveal box
+                                                        // is now a real (scrollable) input, and a cursor
+                                                        // seeded at the far end would scroll the box to
+                                                        // show the TAIL of the key by default — exactly the
+                                                        // "first three groups off-screen" defect the
+                                                        // two-line paint this replaced was built to avoid.
+                                                        fs.cursor = 0;
                                                         fs.selection_start = None;
                                                     }
                                                 }
@@ -5592,11 +5597,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                         Some(rk.clone());
                                     // Sync TextFieldStore recovery key display so it can be selected/copied.
                                     {
-                                        let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
-                                        let klen = rk.chars().count();
+                                        let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY_DISPLAY);
                                         pw.chart.input_coordinator.borrow_mut().text_fields_mut().set_text(&rk_wid, &rk);
                                         if let Some(fs) = pw.chart.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&rk_wid) {
-                                            fs.cursor = klen;
+                                            // Cursor at the START — see the sibling seed site above
+                                            // for why (real scrollable input now, not a hand-painted
+                                            // two-line box).
+                                            fs.cursor = 0;
                                             fs.selection_start = None;
                                         }
                                     }
@@ -5949,11 +5956,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             Some(new_recovery_key_fmt.clone());
                                         // Sync TextFieldStore recovery key display so it can be selected/copied.
                                         {
-                                            let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
-                                            let klen = new_recovery_key_fmt.chars().count();
+                                            let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY_DISPLAY);
                                             pw.chart.input_coordinator.borrow_mut().text_fields_mut().set_text(&rk_wid, &new_recovery_key_fmt);
                                             if let Some(fs) = pw.chart.input_coordinator.borrow_mut().text_fields_mut().field_state_mut(&rk_wid) {
-                                                fs.cursor = klen;
+                                                // Cursor at the START — see the sibling seed sites
+                                                // above for why (real scrollable input now, not a
+                                                // hand-painted two-line box).
+                                                fs.cursor = 0;
                                                 fs.selection_start = None;
                                             }
                                         }

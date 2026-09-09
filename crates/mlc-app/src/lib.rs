@@ -164,6 +164,13 @@ fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
     tf.register(text_input::NEW_PASSPHRASE, TextFieldConfig::password());
     tf.register(text_input::CONFIRM_PASSPHRASE, TextFieldConfig::password());
     tf.register(text_input::RECOVERY_KEY, TextFieldConfig::text());
+    // The reveal box's own field, separate from the entry field above: the
+    // two co-exist on a bidirectional ShowRecoveryKey <-> ConfirmRecoveryKey
+    // hop (recovery-key-confirm-by-typing arc) — sharing one id would let a
+    // mistyped confirm attempt overwrite what the reveal box shows on
+    // "Back". `read_only()` still permits Copy/SelectAll (see its own doc)
+    // and mouse drag-select, just never typing.
+    tf.register(text_input::RECOVERY_KEY_DISPLAY, TextFieldConfig::read_only());
     // Account nickname: 3-24 chars per `validate_nick`'s own rule; the box
     // accepts a little more so a pasted overlong value is still editable
     // rather than silently truncated before the person even sees the error.
@@ -9990,7 +9997,7 @@ impl ChartApp {
                         cursor_visible: cursor_blink && focused,
                     }
                 };
-                let (pf_new_profile_name, pf_profile_rename, pf_new_passphrase, pf_confirm_passphrase, pf_recovery_key, pf_account_nick) = {
+                let (pf_new_profile_name, pf_profile_rename, pf_new_passphrase, pf_confirm_passphrase, pf_recovery_key, pf_recovery_key_reveal, pf_account_nick) = {
                     let uss = &self.panel_app.user_settings_state;
                     (
                         populate_proxy(text_input::NEW_PROFILE_NAME, tf, uss.new_profile_name_focused),
@@ -9998,6 +10005,12 @@ impl ChartApp {
                         populate_proxy(text_input::NEW_PASSPHRASE, tf, uss.new_passphrase_focused),
                         populate_proxy(text_input::CONFIRM_PASSPHRASE, tf, uss.confirm_passphrase_focused),
                         populate_proxy(text_input::RECOVERY_KEY, tf, uss.recovery_key_display_focused),
+                        // Separate id, same shared focus flag: `ShowRecoveryKey`
+                        // and `UseRecoveryKey`/`ConfirmRecoveryKey` never render
+                        // at the same time, so mirroring both proxies off one
+                        // bool every frame is safe — see `RECOVERY_KEY_DISPLAY`'s
+                        // own doc for why the two fields are not the same id.
+                        populate_proxy(text_input::RECOVERY_KEY_DISPLAY, tf, uss.recovery_key_display_focused),
                         populate_proxy(text_input::ACCOUNT_NICK, tf, uss.nick_edit_focused),
                     )
                 };
@@ -10007,6 +10020,7 @@ impl ChartApp {
                 uss_mut.new_passphrase_render = pf_new_passphrase;
                 uss_mut.confirm_passphrase_render = pf_confirm_passphrase;
                 uss_mut.recovery_key_display_render = pf_recovery_key;
+                uss_mut.recovery_key_reveal_render = pf_recovery_key_reveal;
                 uss_mut.nick_edit_render = pf_account_nick;
             }
 

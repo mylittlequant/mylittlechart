@@ -119,9 +119,23 @@ pub const NEW_PASSPHRASE: &str = "new_passphrase";
 /// Rendered with asterisk masking.
 pub const CONFIRM_PASSPHRASE: &str = "confirm_passphrase";
 
-/// Recovery key display box (UseRecoveryKey page).
-/// Long paste-friendly text field; read-only display on ShowRecoveryKey page.
+/// Recovery key entry field — the box the user TYPES OR PASTES a key into,
+/// shared by `UseRecoveryKey` (lost-passphrase recovery) and
+/// `ConfirmRecoveryKey` (confirm-by-typing gate after `ShowRecoveryKey`).
+/// Editable. See [`RECOVERY_KEY_DISPLAY`] for the separate, read-only
+/// reveal box — the two must not share an id: `ShowRecoveryKey` and
+/// `ConfirmRecoveryKey` hop back and forth (the "Back" button on the
+/// confirm page returns to the reveal page without losing the key), and a
+/// mistyped confirm attempt sharing this field's text would overwrite what
+/// the reveal box shows on the way back.
 pub const RECOVERY_KEY: &str = "recovery_key";
+
+/// Recovery key reveal box (`ShowRecoveryKey` page,
+/// `"profile_mgr:recovery_key_display"`) — the freshly-generated key,
+/// selectable and copyable (caret, drag-select, Ctrl+A/Ctrl+C) but never
+/// typed into (`TextFieldConfig::read_only`). See [`RECOVERY_KEY`]'s doc for
+/// why this is a separate id rather than the same field toggled read-only.
+pub const RECOVERY_KEY_DISPLAY: &str = "recovery_key_display";
 
 /// Inline account-nickname edit input (user settings single-profile row,
 /// `UserSettingsState::nick_edit_mode`). Sets the ACCOUNT's nickname via

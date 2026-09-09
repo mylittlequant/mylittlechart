@@ -1141,16 +1141,25 @@ pub enum ProfileKey {
     RecoveryKeyWriteDownWarning  = 24,
     RecoveryKeyPasswordLossNote  = 25,
     BtnCopyKey                   = 26,
+    /// Label reworded (recovery-key-confirm-by-typing arc): used to fire
+    /// `recovery_key_confirmed` directly, now routes to `ConfirmRecoveryKey`.
     BtnRecoveryConfirmed         = 27,
 
     // CreatePassphrase / SetNewPassphrase pages — "Suggest" button that
     // fills the new-passphrase field with a generated one (owner ruling
     // 2026-09-02).
     BtnSuggestPassphrase         = 28,
+
+    // ConfirmRecoveryKey page (recovery-key-confirm-by-typing arc) — the
+    // gate between `ShowRecoveryKey` and the key actually being wiped.
+    ConfirmRecoveryKeyTitle      = 29,
+    PasteOrTypeRecoveryKey       = 30,
+    BtnConfirmRecoveryKey        = 31,
+    RecoveryKeyMismatch          = 32,
 }
 
 impl ProfileKey {
-    pub const COUNT: usize = 29;
+    pub const COUNT: usize = 33;
 
     /// Get translation for this key.
     #[inline]

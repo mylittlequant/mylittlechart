@@ -127,12 +127,17 @@ fn page_content_height(state: &UserSettingsState) -> f64 {
         ProfileManagerPage::CreatePassphrase => 242.0,
         // back(24) + gap(12) + label(18) + input+gap(32+16) + button(32) = 134.
         ProfileManagerPage::CreateNew => 134.0,
-        // warning_line1(18) + warning_line2(26) + key_box+gap(40+10) +
-        // copy_btn+gap(28+12) + confirm_btn(34) = 168.
-        ProfileManagerPage::ShowRecoveryKey => 168.0,
+        // warning_line1(18) + warning_line2(26) + key_input+gap(32+14) +
+        // copy_btn+gap(28+12) + confirm_btn(34) = 164. (Recovery-key-reveal-
+        // is-a-real-field arc: was a 52px two-line paint, now a 32px
+        // `draw_input` like every other field on these pages.)
+        ProfileManagerPage::ShowRecoveryKey => 164.0,
         // back(24) + gap(10) + subtitle(22) + input+gap(32+14) +
         // button+gap(32+10) + error(18, worst case) = 162.
         ProfileManagerPage::UseRecoveryKey => 162.0,
+        // back(24) + gap(10) + subtitle(22) + input+gap(32+14) +
+        // button+gap(34+10) + error(18, worst case) = 164.
+        ProfileManagerPage::ConfirmRecoveryKey => 164.0,
         // line1(16) + line2(26) + new_label(18) + new_input+gap(32+14) +
         // confirm_label(18) + confirm_input+gap(32+16) + error(22, worst
         // case) + button(32) = 226.
@@ -169,6 +174,7 @@ fn page_title(state: &UserSettingsState) -> String {
         }
         ProfileManagerPage::CreateNew => ProfileKey::NewProfile.get(lang).to_string(),
         ProfileManagerPage::ShowRecoveryKey => ProfileKey::RecoveryKeyTitle.get(lang).to_string(),
+        ProfileManagerPage::ConfirmRecoveryKey => ProfileKey::ConfirmRecoveryKeyTitle.get(lang).to_string(),
         ProfileManagerPage::UseRecoveryKey => ProfileKey::RecoverWithKey.get(lang).to_string(),
         ProfileManagerPage::SetNewPassphrase => ProfileKey::SetNewPassphrase.get(lang).to_string(),
     }
@@ -254,6 +260,12 @@ pub fn render_profile_manager(
         ),
         ProfileManagerPage::ShowRecoveryKey => {
             render_page_show_recovery_key(
+                ctx, x, y, w, state, text_color, toolbar_theme,
+                frame_theme, &layer_id, input_coordinator, result,
+            );
+        }
+        ProfileManagerPage::ConfirmRecoveryKey => {
+            render_page_confirm_recovery_key(
                 ctx, x, y, w, state, text_color, toolbar_theme,
                 frame_theme, &layer_id, input_coordinator, result,
             );
@@ -744,25 +756,13 @@ pub(crate) fn render_page_create_passphrase(
 // =============================================================================
 
 /// Shown once after a successful vault creation. The user must click
-/// "Я записал" ("I have written it down") to proceed — that step, not the
-/// modal's own dismissibility, is what makes this page a one-way door; the ×
-/// and Esc still work like any other page here (the recovery key itself is
-/// never destroyed by closing early, only the forward flow is).
-/// Split a formatted recovery key onto two lines at the group boundary
-/// nearest the middle, so both halves are about as long.
-///
-/// A key with no separators (or a short placeholder like "(key not
-/// available)") comes back as one line and an empty second — the caller
-/// centres a single line in that case.
-fn split_recovery_key_for_display(key: &str) -> (String, String) {
-    let groups: Vec<&str> = key.split('-').collect();
-    if groups.len() < 4 {
-        return (key.to_string(), String::new());
-    }
-    let half = groups.len() / 2;
-    (groups[..half].join("-"), groups[half..].join("-"))
-}
-
+/// "I saved it — continue" to proceed — that step, not the modal's own
+/// dismissibility, is what makes this page a one-way door; the × and Esc
+/// still work like any other page here (the recovery key itself is never
+/// destroyed by closing early, only the forward flow is). The button no
+/// longer wipes the key directly: it routes to `ConfirmRecoveryKey`
+/// (below), which asks for the key back before `recovery_key_confirmed`
+/// ever fires — see that page's own doc for why.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn render_page_show_recovery_key(
     ctx: &mut dyn RenderContext,
@@ -772,7 +772,7 @@ pub(crate) fn render_page_show_recovery_key(
     state: &UserSettingsState,
     _text_color: &str,
     toolbar_theme: &ToolbarTheme,
-    _frame_theme: &FrameTheme,
+    frame_theme: &FrameTheme,
     layer_id: &uzor::input::LayerId,
     input_coordinator: &mut uzor::input::InputCoordinator,
     result: &mut UserSettingsResult,
@@ -799,47 +799,56 @@ pub(crate) fn render_page_show_recovery_key(
     ctx.set_text_align(TextAlign::Left);
     cy += 26.0;
 
-    let key_text = state
-        .recovery_key_display
-        .as_deref()
-        .unwrap_or("(key not available)");
-
-    // The key is 16 groups of four hex digits — 79 characters. A single-line
-    // input box this wide fits about seventy of them at a readable size, so
-    // the box scrolled and showed the TAIL: measured on the stand, the first
-    // three groups were off-screen with no indication they existed. On the
-    // one page whose entire job is "write this down", showing part of the key
-    // is worse than showing it small, and worse still because it looks
-    // complete. Two lines, split on a group boundary, and every character is
-    // on screen.
-    //
-    // Monospace, because the reader is transcribing it by hand and the
-    // grouping is the only structure they have to keep their place.
-    let key_box_h = 52.0;
-    let key_display_rect = WidgetRect::new(x, cy, w, key_box_h);
-
-    let (line_one, line_two) = split_recovery_key_for_display(key_text);
-
-    ctx.set_fill_color(&toolbar_theme.dropdown_bg);
-    ctx.fill_rounded_rect(key_display_rect.x, key_display_rect.y, key_display_rect.width, key_display_rect.height, 4.0);
-    ctx.set_stroke_color(&toolbar_theme.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.stroke_rounded_rect(key_display_rect.x, key_display_rect.y, key_display_rect.width, key_display_rect.height, 4.0);
-
-    ctx.set_font("13px monospace");
-    ctx.set_fill_color(&toolbar_theme.item_text);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    let centre_x = key_display_rect.x + key_display_rect.width / 2.0;
-    if line_two.is_empty() {
-        ctx.fill_text(&line_one, centre_x, key_display_rect.y + key_box_h / 2.0);
+    // A real, read-only text field (`RECOVERY_KEY_DISPLAY` — see its own doc
+    // for why it is not the same store id as the entry field below) instead
+    // of two hand-painted `fill_text` calls: caret, drag-select, Ctrl+A/
+    // Ctrl+C now work on the freshly-generated key exactly as they do on the
+    // entry field, and typing is refused by the store's own `read_only`
+    // config rather than by this page simply never registering a click
+    // target. `draw_input` scrolls a value wider than the box (same as
+    // every other overflowing input here — the entry field on
+    // `UseRecoveryKey`/`ConfirmRecoveryKey` shows the identical 79-character
+    // string the identical way) rather than wrapping to two lines; the
+    // shells that seed this field's text (`ShowRecoveryKey`'s several
+    // navigation sites) seed the cursor at position 0, not the end, so the
+    // box opens showing the START of the key, not the tail.
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+    let input_h = 32.0;
+    let input_rect = WidgetRect::new(x, cy, w, input_h);
+    let rk_render = &state.recovery_key_reveal_render;
+    let (sel_start, sel_end) = if let Some((lo, hi)) = rk_render.selection_range() {
+        (Some(lo), Some(hi))
     } else {
-        ctx.fill_text(&line_one, centre_x, key_display_rect.y + key_box_h * 0.32);
-        ctx.fill_text(&line_two, centre_x, key_display_rect.y + key_box_h * 0.68);
-    }
-    ctx.set_text_align(TextAlign::Left);
+        (None, None)
+    };
+    let input_config = InputConfig::new(&rk_render.text)
+        .with_focused(state.recovery_key_display_focused)
+        .with_cursor(rk_render.cursor)
+        .with_placeholder("(key not available)")
+        .with_selection(sel_start, sel_end);
 
-    cy += key_box_h + 10.0;
+    let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
+
+    result.content_items.push(("profile_mgr:recovery_key_display".to_string(), input_rect));
+    result.input_char_positions.push(("profile_mgr:recovery_key_display".to_string(), input_result.char_x_positions.clone()));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:recovery_key_display",
+        input_rect,
+        Sense::CLICK,
+        layer_id,
+    );
+
+    if state.recovery_key_display_focused && rk_render.cursor_visible {
+        draw_input_cursor(
+            ctx,
+            input_result.cursor_x,
+            input_result.cursor_y,
+            input_result.cursor_height,
+            &toolbar_theme.item_text,
+        );
+    }
+
+    cy += input_h + 14.0;
 
     let copy_btn_label = ProfileKey::BtnCopyKey.get(current_language());
     let is_copy_hovered = hovered == Some("profile_mgr:recovery_key_copy");
@@ -900,6 +909,162 @@ pub(crate) fn render_page_show_recovery_key(
         layer_id,
     );
     cy += btn_h;
+    cy
+}
+
+// =============================================================================
+// Page: ConfirmRecoveryKey
+// =============================================================================
+
+/// Confirm-by-typing gate between `ShowRecoveryKey` and the recovery key
+/// actually being wiped from memory (`recovery_key_confirmed`).
+///
+/// Reached from `ShowRecoveryKey`'s "I saved it — continue" button, which
+/// used to fire `recovery_key_confirmed` directly with no proof the user
+/// had actually recorded the key. This page asks for it back: the same
+/// input shape as [`render_page_use_recovery_key`] (the entry field on the
+/// lost-passphrase recovery page), sharing that page's `RECOVERY_KEY` store
+/// id — the two never render at the same time, unlike `ShowRecoveryKey`'s
+/// own reveal box, which is why THAT one needs a separate id
+/// (`RECOVERY_KEY_DISPLAY`) but this one does not.
+///
+/// "Back" returns to `ShowRecoveryKey` without losing the key — it is still
+/// held in `UserSettingsState::recovery_key_display` until this page's own
+/// "Confirm" validates the typed-back copy against it
+/// (`mlc_vault::crypto::recovery_keys_match`, called by the click handler
+/// in `mlc-app`, which alone depends on `mlc-vault`). On mismatch the click
+/// handler sets `confirm_recovery_key_error`, shown inline below; on match
+/// it fires the SAME `recovery_key_confirmed` command the old button used
+/// to fire directly.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn render_page_confirm_recovery_key(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    w: f64,
+    state: &UserSettingsState,
+    _text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    layer_id: &uzor::input::LayerId,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    result: &mut UserSettingsResult,
+) -> f64 {
+    let hovered = state.hovered_item_id.as_deref();
+    let mut cy = y;
+
+    // Plain "< Back" text link — neither host has a "profiles" or "vault
+    // list" concept to name here (this page only ever returns to
+    // `ShowRecoveryKey`), so there is no Modal-vs-Tab styling split like
+    // `render_back_button`'s other three callers have.
+    let back_id = "profile_mgr:confirm_recovery_back";
+    let is_back_hovered = hovered == Some(back_id);
+    let back_h = 24.0;
+    ctx.set_fill_color(if is_back_hovered { &toolbar_theme.accent } else { &toolbar_theme.item_text_muted });
+    ctx.set_font("12px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("< Back", x, cy + back_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+    let back_rect = WidgetRect::new(x, cy, 60.0, back_h);
+    result.content_items.push((back_id.to_string(), back_rect));
+    input_coordinator.register_on_layer(
+        format!("user_settings:{back_id}").as_str(),
+        back_rect,
+        Sense::CLICK | Sense::HOVER,
+        layer_id,
+    );
+    cy += back_h + 10.0;
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(toolbar_theme.item_text_muted.as_str());
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(ProfileKey::PasteOrTypeRecoveryKey.get(current_language()), x + w / 2.0, cy);
+    ctx.set_text_align(TextAlign::Left);
+    cy += 22.0;
+
+    let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+    let input_h = 32.0;
+    let input_rect = WidgetRect::new(x, cy, w, input_h);
+    let rk_input_render = &state.recovery_key_display_render;
+    let (sel_start, sel_end) = if let Some((lo, hi)) = rk_input_render.selection_range() {
+        (Some(lo), Some(hi))
+    } else {
+        (None, None)
+    };
+    let input_config = InputConfig::new(&rk_input_render.text)
+        .with_focused(state.recovery_key_display_focused)
+        .with_cursor(rk_input_render.cursor)
+        .with_placeholder("xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-xxxx-\u{2026}")
+        .with_type(InputType::Text)
+        .with_selection(sel_start, sel_end);
+
+    let input_result = draw_input(ctx, &input_config, WidgetState::Normal, input_rect, &widget_theme);
+
+    result.content_items.push(("profile_mgr:confirm_recovery_input".to_string(), input_rect));
+    result.input_char_positions.push(("profile_mgr:confirm_recovery_input".to_string(), input_result.char_x_positions.clone()));
+    input_coordinator.register_on_layer(
+        "user_settings:profile_mgr:confirm_recovery_input",
+        input_rect,
+        Sense::CLICK,
+        layer_id,
+    );
+
+    if state.recovery_key_display_focused && rk_input_render.cursor_visible {
+        draw_input_cursor(
+            ctx,
+            input_result.cursor_x,
+            input_result.cursor_y,
+            input_result.cursor_height,
+            &toolbar_theme.item_text,
+        );
+    }
+    cy += input_h + 14.0;
+
+    // Enabled on any non-empty text — unlike `UseRecoveryKey`'s "Recover"
+    // button (which gates on the formatted length, since a short value
+    // there can never decrypt anything), this button's own click handler
+    // does the real validation (`recovery_keys_match`) and reports a
+    // specific mismatch below; gating on "non-empty" only avoids submitting
+    // literally nothing.
+    let confirm_disabled = rk_input_render.text.trim().is_empty();
+    let is_confirm_hovered = !confirm_disabled && hovered == Some("profile_mgr:confirm_recovery_submit");
+    let btn_bg = if is_confirm_hovered {
+        toolbar_theme.button_bg_hover.as_str()
+    } else {
+        toolbar_theme.button_bg.as_str()
+    };
+    let btn_text_col = if confirm_disabled { toolbar_theme.item_text_muted.as_str() } else { toolbar_theme.item_text_active.as_str() };
+    let btn_h = 34.0;
+    let btn_w = w.min(200.0);
+    ctx.set_fill_color(btn_bg);
+    ctx.fill_rounded_rect(x, cy, btn_w, btn_h, 4.0);
+    ctx.set_font("bold 12px sans-serif");
+    ctx.set_fill_color(btn_text_col);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(ProfileKey::BtnConfirmRecoveryKey.get(current_language()), x + btn_w / 2.0, cy + btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+
+    if !confirm_disabled {
+        let btn_rect = WidgetRect::new(x, cy, btn_w, btn_h);
+        result.content_items.push(("profile_mgr:confirm_recovery_submit".to_string(), btn_rect));
+        input_coordinator.register_on_layer(
+            "user_settings:profile_mgr:confirm_recovery_submit", btn_rect, Sense::CLICK | Sense::HOVER, layer_id,
+        );
+    }
+    cy += btn_h + 10.0;
+
+    if let Some(ref err_msg) = state.confirm_recovery_key_error {
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(toolbar_theme.danger.as_str());
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(err_msg.as_str(), x + w / 2.0, cy);
+        ctx.set_text_align(TextAlign::Left);
+        cy += 18.0;
+    }
     cy
 }
 

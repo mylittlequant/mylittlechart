@@ -26,8 +26,8 @@ use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::Icon;
 use crate::ui::scroll_widget::ScrollableContainer;
 use crate::layout::modals::profile_manager::{
-    render_page_create_passphrase, render_page_set_new_passphrase, render_page_show_recovery_key,
-    render_page_unlock, render_page_use_recovery_key, VaultPageHost,
+    render_page_confirm_recovery_key, render_page_create_passphrase, render_page_set_new_passphrase,
+    render_page_show_recovery_key, render_page_unlock, render_page_use_recovery_key, VaultPageHost,
 };
 
 /// Row height for the Vault tab's own rows (status/key/webhook/add-key
@@ -429,6 +429,10 @@ fn render_vault_tab(
             current_time_ms, layer_id, input_coordinator, result, VaultPageHost::Tab,
         ),
         CredentialsView::ShowRecoveryKey => render_page_show_recovery_key(
+            ctx, x, cy, available_w, state, text_color, toolbar_theme, frame_theme,
+            layer_id, input_coordinator, result,
+        ),
+        CredentialsView::ConfirmRecoveryKey => render_page_confirm_recovery_key(
             ctx, x, cy, available_w, state, text_color, toolbar_theme, frame_theme,
             layer_id, input_coordinator, result,
         ),

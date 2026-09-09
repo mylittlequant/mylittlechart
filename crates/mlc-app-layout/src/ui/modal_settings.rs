@@ -2736,8 +2736,13 @@ pub enum CredentialsView {
     CreatePassphrase,
     /// Display the recovery key once after vault creation. Shown immediately
     /// after `CreatePassphrase` succeeds; no back button in either host —
-    /// the user must acknowledge it, not navigate away.
+    /// its own button routes forward to `ConfirmRecoveryKey` rather than
+    /// navigating away.
     ShowRecoveryKey,
+    /// Confirm-by-typing gate before the key is wiped from memory — see
+    /// `ProfileManagerPage::ConfirmRecoveryKey`'s doc (the Tab and Modal
+    /// hosts share this reasoning byte for byte).
+    ConfirmRecoveryKey,
     /// Enter a recovery key to restore access when the passphrase is
     /// forgotten.
     UseRecoveryKey,
@@ -3553,9 +3558,20 @@ pub enum ProfileManagerPage {
     CreateNew,
     /// Display the recovery key once after vault creation.
     ///
-    /// Shown immediately after `CreatePassphrase` succeeds.  The user must
-    /// acknowledge ("I have written it down") before proceeding.
+    /// Shown immediately after `CreatePassphrase` succeeds. Its own button
+    /// ("I saved it — continue") does not clear the key by itself anymore —
+    /// it routes to `ConfirmRecoveryKey`, which asks for it back.
     ShowRecoveryKey,
+    /// Confirm-by-typing gate between `ShowRecoveryKey` and the key actually
+    /// being wiped from memory (`recovery_key_confirmed`). The key is still
+    /// held in `UserSettingsState::recovery_key_display` here — "Back"
+    /// returns to `ShowRecoveryKey` without losing it. Reuses
+    /// `UseRecoveryKey`'s input shape (`render_page_use_recovery_key`'s
+    /// body) because both pages ask for the same 79-character formatted
+    /// string and validate it the same way — see
+    /// `mlc_vault::crypto::recovery_keys_match`'s doc for the byte-level
+    /// comparison this page's "Confirm" button runs on submit.
+    ConfirmRecoveryKey,
     /// Enter a recovery key to restore access when passphrase is forgotten.
     UseRecoveryKey,
     /// After recovery unlock — user must set a new passphrase before proceeding.
@@ -3813,9 +3829,17 @@ pub struct UserSettingsState {
     pub show_profile_manager: bool,
     /// Formatted recovery key to display on the `ShowRecoveryKey` page.
     ///
-    /// Set by `main.rs` after a successful vault creation and cleared when the
-    /// user confirms they have recorded it.
+    /// Set by `main.rs` after a successful vault creation and cleared only
+    /// once `ConfirmRecoveryKey` validates the user's typed-back copy
+    /// against it (`recovery_key_confirmed`) — `ShowRecoveryKey`'s own
+    /// button no longer clears it directly; it routes to `ConfirmRecoveryKey`
+    /// instead.
     pub recovery_key_display: Option<String>,
+    /// Inline error under `ConfirmRecoveryKey`'s input when the typed-back
+    /// key does not match [`recovery_key_display`](Self::recovery_key_display)
+    /// (`mlc_vault::crypto::recovery_keys_match`). Cleared on every fresh
+    /// attempt and whenever the page is left.
+    pub confirm_recovery_key_error: Option<String>,
     /// Current page of the profile manager.
     pub profile_manager_page: ProfileManagerPage,
     /// Profile ID being operated on in the profile manager (unlock/create passphrase target).
@@ -3942,12 +3966,27 @@ pub struct UserSettingsState {
     pub profile_mgr_text_select_dragging: Option<String>,
 
     // ── Recovery key display editing state ────────────────────────────────────
-    /// Render-time snapshot of the recovery key display box (populated from TextFieldStore by ChartApp).
-    /// The user can select/copy the key text by clicking and dragging inside the display box.
+    /// Render-time snapshot of the recovery key ENTRY field (`UseRecoveryKey`/
+    /// `ConfirmRecoveryKey` — the box the user types or pastes a key into),
+    /// populated from `TextFieldStore` by `ChartApp`. Despite the name (kept
+    /// for compatibility with the many existing call sites already matching
+    /// on it), this is the editable box — see
+    /// [`recovery_key_reveal_render`](Self::recovery_key_reveal_render) for
+    /// the actual read-only reveal box on `ShowRecoveryKey`.
     pub recovery_key_display_render: ActiveFieldRender,
-    /// Whether the recovery key display box has logical focus (user clicked it).
-    /// Does NOT allow typing — only Ctrl+A and Ctrl+C (via on_copy_selection) are active.
+    /// Whether the recovery key entry/reveal field has logical focus (user
+    /// clicked it). Shared by both boxes above — they never render at the
+    /// same time, since `ShowRecoveryKey` and `UseRecoveryKey`/
+    /// `ConfirmRecoveryKey` are mutually exclusive pages.
     pub recovery_key_display_focused: bool,
+    /// Render-time snapshot of the recovery key REVEAL box
+    /// (`ShowRecoveryKey` — the freshly-generated key, selectable/copyable
+    /// but never typed into; `TextFieldConfig::read_only` on the store side
+    /// enforces that). Separate from
+    /// [`recovery_key_display_render`](Self::recovery_key_display_render)
+    /// so that a mistyped `ConfirmRecoveryKey` attempt can never overwrite
+    /// what this box shows on "Back".
+    pub recovery_key_reveal_render: ActiveFieldRender,
 
     /// Timestamp (ms) when recovery key was last copied. Used for visual feedback.
     pub recovery_key_copied_at: u64,
@@ -4026,6 +4065,7 @@ impl Default for UserSettingsState {
             profile_manager_mandatory: false,
             show_profile_manager: false,
             recovery_key_display: None,
+            confirm_recovery_key_error: None,
             profile_manager_page: ProfileManagerPage::ProfileList,
             profile_manager_target_id: String::new(),
             profile_manager_target_name: String::new(),
@@ -4070,6 +4110,7 @@ impl Default for UserSettingsState {
             profile_mgr_text_select_dragging: None,
             recovery_key_display_render: ActiveFieldRender::default(),
             recovery_key_display_focused: false,
+            recovery_key_reveal_render: ActiveFieldRender::default(),
             recovery_key_copied_at: 0,
             data_bg_bars: 2000,
             data_max_bars: 10000,

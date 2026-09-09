@@ -69,8 +69,9 @@ impl ChartApp {
     /// CRED_ADD_EXCHANGE, CRED_ADD_LABEL, CRED_ADD_API_KEY,
     /// CRED_ADD_API_SECRET, CRED_ADD_PASSPHRASE, PROFILE_RENAME,
     /// ACCOUNT_NICK, NEW_PASSPHRASE, NEW_PROFILE_NAME, RECOVERY_KEY,
-    /// CONFIRM_PASSPHRASE, BAR_MODE_PARAM, TF_FAVORITE_INPUT,
-    /// PARAM_FAVORITE_INPUT, HEX_COLOR, AGENT_PTY, AGENT_CHAT.
+    /// RECOVERY_KEY_DISPLAY, CONFIRM_PASSPHRASE, BAR_MODE_PARAM,
+    /// TF_FAVORITE_INPUT, PARAM_FAVORITE_INPUT, HEX_COLOR, AGENT_PTY,
+    /// AGENT_CHAT.
     pub(crate) fn dispatch_text_key_early(&mut self, key: &KeyPress) -> bool {
         use crate::text_input::*;
 
@@ -103,6 +104,7 @@ impl ChartApp {
                 | NEW_PASSPHRASE
                 | NEW_PROFILE_NAME
                 | RECOVERY_KEY
+                | RECOVERY_KEY_DISPLAY
                 | CONFIRM_PASSPHRASE
                 | BAR_MODE_PARAM
                 | TF_FAVORITE_INPUT
