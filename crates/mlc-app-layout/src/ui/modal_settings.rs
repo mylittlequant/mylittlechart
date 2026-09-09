@@ -3712,6 +3712,12 @@ pub struct UserSettingsState {
     /// Persistence-tab mirrors of `ProfileUiSettings::persist_toolbar_*`.
     pub persist_toolbar_last_tools: bool,
     pub persist_toolbar_toggles: bool,
+    /// General-tab "Notifications" section mirror of
+    /// `ProfileUiSettings::toasts_enabled` — the "Show toasts" row.
+    pub toasts_enabled: bool,
+    /// General-tab "Notifications" section mirror of
+    /// `ProfileUiSettings::toast_anchor` — the 4-way segmented control.
+    pub toast_anchor: mlc_core::ToastAnchor,
     /// Whether the internal Agent API server is enabled.
     pub server_enabled: bool,
     /// Port the server listens on.
@@ -3995,6 +4001,8 @@ impl Default for UserSettingsState {
             control_point_size: ControlPointSize::default(),
             persist_toolbar_last_tools: true,
             persist_toolbar_toggles: true,
+            toasts_enabled: true,
+            toast_anchor: mlc_core::ToastAnchor::default(),
             server_enabled: true,
             server_port: 17420,
             server_status: "running".to_string(),

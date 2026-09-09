@@ -13,7 +13,7 @@ use crate::state::ewa_engine::EwaEngineConfig;
 use crate::state::candle_pattern_engine::CandlePatternEngineConfig;
 use crate::state::smc_engine::SmcEngineConfig;
 use crate::state::orderflow_engine::OrderFlowEngineConfig;
-use crate::system_event::SystemEventLog;
+use crate::system_event::{SystemEventLog, ToastAnchor};
 
 // =============================================================================
 // Schema version
@@ -794,6 +794,21 @@ pub struct ProfileUiSettings {
     /// failing to parse.
     #[serde(default)]
     pub system_events: SystemEventLog,
+
+    /// Screen corner the toast stack anchors to (toast restyle-and-anchor
+    /// follow-up to §8, owner ask 2026-09-09) — set via the Settings
+    /// modal's Notifications segmented control, or by dragging any toast to
+    /// a corner (`ToastAnchor::nearest_corner`). `#[serde(default)]` falls
+    /// back to `ToastAnchor::TopRight`, today's fixed position, for every
+    /// profile saved before this field existed.
+    #[serde(default)]
+    pub toast_anchor: ToastAnchor,
+    /// Whether toasts are painted at all (Settings modal "Show toasts" row).
+    /// `false` still logs every event to `system_events` (history + unread
+    /// badge) — only the transient popup is suppressed. Defaults to true:
+    /// today's behaviour for every profile saved before this field existed.
+    #[serde(default = "default_true")]
+    pub toasts_enabled: bool,
 }
 
 fn default_true() -> bool {
@@ -849,6 +864,8 @@ impl ProfileUiSettings {
             drawings_visible: true,
             clock_glitch_enabled: true,
             system_events: SystemEventLog::new(),
+            toast_anchor: ToastAnchor::default(),
+            toasts_enabled: true,
         }
     }
 }

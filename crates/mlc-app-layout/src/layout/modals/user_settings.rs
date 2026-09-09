@@ -1211,6 +1211,103 @@ fn render_general_tab(
         cy = desc_y + (hint_lines.len().max(1) as f64) * line_h + 16.0;
     }
 
+    // ── Notifications (toast restyle-and-anchor follow-up to §8, owner ask
+    // 2026-09-09) — quiet mode + the 4-way anchor picker. Plain English
+    // strings, not routed through the frozen `UserSettingsKey` table: the
+    // same choice `TradingPanelTopbarTakeover`'s own hint text above
+    // already made for a niche settings-modal description, rather than
+    // authoring six new keys' worth of translations across all 15
+    // languages for a first-cut restyle.
+    ctx.set_font("600 11px sans-serif");
+    ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.85));
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("NOTIFICATIONS", x, cy);
+    cy += 20.0;
+
+    // "Show toasts" — a single-line label carries the whole sentence
+    // (owner spec verbatim), so this is a plain checkbox row rather than
+    // `persist_checkbox_row`'s own two-line label+hint shape.
+    {
+        let row_h = 24.0;
+        let cb_size = 16.0;
+        let cb_y = cy + (row_h - cb_size) / 2.0;
+        ctx.set_stroke_color(&toolbar_theme.separator);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(x, cb_y, cb_size, cb_size, 2.0);
+        if state.toasts_enabled {
+            ctx.set_fill_color(&toolbar_theme.item_text_active);
+            ctx.fill_rounded_rect(x + 3.0, cb_y + 3.0, cb_size - 6.0, cb_size - 6.0, 1.0);
+        }
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        let label = "Show toasts (events always go to the panel)";
+        let text_x = x + cb_size + 10.0;
+        let text_w = (available_w - cb_size - 10.0).max(0.0);
+        ctx.fill_text(&fit_text_to_width(ctx, label, text_w), text_x, cy + row_h / 2.0);
+
+        let toggle_rect = WidgetRect::new(x, cy, available_w, row_h);
+        result.content_items.push(("toasts_enabled".to_string(), toggle_rect));
+        input_coordinator.register_on_layer(
+            "user_settings:toasts_enabled",
+            uzor::types::Rect::new(x, cy, available_w, row_h),
+            Sense::CLICK | Sense::HOVER,
+            layer_id,
+        );
+        cy += row_h + 12.0;
+    }
+
+    // 4-way segmented control for the toast anchor corner — stack direction
+    // follows this at paint time (`crate::ui::toast::render_toasts`).
+    {
+        let options: [(mlc_core::ToastAnchor, &str); 4] = [
+            (mlc_core::ToastAnchor::TopLeft, "Top-Left"),
+            (mlc_core::ToastAnchor::TopRight, "Top-Right"),
+            (mlc_core::ToastAnchor::BottomLeft, "Bottom-Left"),
+            (mlc_core::ToastAnchor::BottomRight, "Bottom-Right"),
+        ];
+        let seg_h = 28.0;
+        let gap = 6.0;
+        let seg_w = ((available_w - gap * 3.0) / 4.0).max(1.0);
+        for (i, (variant, label)) in options.iter().enumerate() {
+            let seg_x = x + i as f64 * (seg_w + gap);
+            let is_active = state.toast_anchor == *variant;
+            let hit_id = format!("toast_anchor:{:?}", variant);
+            let is_hovered = state.hovered_item_id.as_deref() == Some(hit_id.as_str());
+            let bg = if is_active {
+                &toolbar_theme.item_bg_active
+            } else if is_hovered {
+                &toolbar_theme.item_bg_hover
+            } else {
+                &toolbar_theme.dropdown_bg
+            };
+            ctx.set_fill_color(bg);
+            ctx.fill_rounded_rect(seg_x, cy, seg_w, seg_h, 4.0);
+            ctx.set_stroke_color(&toolbar_theme.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(seg_x, cy, seg_w, seg_h, 4.0);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(if is_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text });
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            let fitted = fit_text_to_width(ctx, label, (seg_w - 8.0).max(1.0));
+            ctx.fill_text(&fitted, seg_x + seg_w / 2.0, cy + seg_h / 2.0);
+            ctx.set_text_align(TextAlign::Left);
+
+            let r = WidgetRect::new(seg_x, cy, seg_w, seg_h);
+            result.content_items.push((hit_id.clone(), r));
+            input_coordinator.register_on_layer(
+                format!("user_settings:{hit_id}").as_str(),
+                uzor::types::Rect::new(seg_x, cy, seg_w, seg_h),
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+        }
+        cy += seg_h + 16.0;
+    }
+
     // ── Version info (always shown at bottom) ─────────────────────────────────
     ctx.set_font("600 11px sans-serif");
     // A section heading is an accented label, not a warning. The gold it

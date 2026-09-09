@@ -825,6 +825,19 @@ pub struct ChartApp {
     /// method-only.
     pub(crate) system_events: mlc_core::SystemEventLog,
 
+    /// Currently visible toasts, drained from `system_events` each frame by
+    /// [`Self::refresh_active_toasts`] (toast restyle-and-anchor follow-up
+    /// to §8, owner ask 2026-09-09). RAM-only, like `active_toasts` in the
+    /// shells this replaced (native's own `Vec<mlc_alert_delivery::
+    /// ToastNotification>`, the web shell's own `Vec<(SystemEvent, f64)>`)
+    /// — a toast on screen when the app closes is simply gone on relaunch.
+    pub(crate) active_toasts: Vec<system_events::ToastItem>,
+    /// Toast body drag in flight — `(toast_id, x, y)`, the CURRENT pointer
+    /// position. Toasts do not visually follow the drag (there is nothing
+    /// to paint mid-drag); only the drop point matters, read by
+    /// [`Self::set_toast_anchor_from_drop`] at drag-end.
+    pub(crate) toast_drag: Option<(u64, f64, f64)>,
+
     /// Raw stored workspace focus (chart canvas vs. the Trading tab's
     /// container) — read via [`Self::workspace_focus`], never directly.
     /// See `focus.rs` module docs for the write sites and the self-heal
@@ -3432,6 +3445,8 @@ impl ChartApp {
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             system_events: mlc_core::SystemEventLog::new(),
+            active_toasts: Vec::new(),
+            toast_drag: None,
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
             // Corrected on first frame by `workspace_focus()`'s live
             // `active_container_id()` fallback — see field doc.
@@ -3821,6 +3836,8 @@ impl ChartApp {
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             system_events: mlc_core::SystemEventLog::new(),
+            active_toasts: Vec::new(),
+            toast_drag: None,
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
             // Corrected on first frame by `workspace_focus()`'s live
             // `active_container_id()` fallback — see field doc.
@@ -4426,6 +4443,8 @@ impl ChartApp {
             pending_delivery_events: Vec::new(),
             pending_alert_screenshot: false,
             system_events: mlc_core::SystemEventLog::new(),
+            active_toasts: Vec::new(),
+            toast_drag: None,
             sidebar_state: mlc_app_sidebar_content::state::SidebarState::new(),
             // Corrected on first frame by `workspace_focus()`'s live
             // `active_container_id()` fallback — see field doc.
@@ -5074,6 +5093,15 @@ impl ChartApp {
         );
         self.panel_app.user_settings_state.control_point_shape = profile.ui.control_point_shape;
         self.panel_app.user_settings_state.control_point_size = profile.ui.control_point_size;
+
+        // Toast anchor/quiet-mode (toast restyle-and-anchor follow-up to
+        // §8, owner ask 2026-09-09) — mirrored into `user_settings_state`
+        // here too so the General tab's Notifications section shows the
+        // right state immediately rather than waiting for `prepare()`'s
+        // per-frame sync to catch up (same reasoning as `control_point_shape`
+        // above).
+        self.panel_app.user_settings_state.toasts_enabled = profile.ui.toasts_enabled;
+        self.panel_app.user_settings_state.toast_anchor = profile.ui.toast_anchor;
 
         if let Some(style) = mlc_core::UIStyle::from_name(&profile.ui.active_ui_style) {
             self.panel_app.theme_manager.current_mut().set_style(style);
@@ -10669,6 +10697,48 @@ impl ChartApp {
         // results from this frame).  apply_render_output runs BEFORE this
         // path on the same frame and would see stale Nones.
         self.update_text_field_geometry();
+    }
+
+    /// Draw active toasts — restyled to the modal frame (owner ask
+    /// 2026-09-09, toast restyle-and-anchor follow-up to §8: "reuse the
+    /// modal frame drawing helper or its constants"). A separate call from
+    /// [`Self::render_modal_layer`] rather than folded into its tail: every
+    /// shell already has its own dedicated toast-overlay slot in its
+    /// composite sequence (after the chrome context menu / panel popups,
+    /// before the tooltip layer — the same slot the pre-restyle ad-hoc
+    /// `Vec<mlc_alert_delivery::ToastNotification>` painter used), and
+    /// folding this into `render_modal_layer`'s own composite step would
+    /// have moved a toast BELOW those chrome-owned overlays instead.
+    ///
+    /// `refresh_active_toasts` runs first — same "call once per frame per
+    /// window that is actually on screen" contract its own doc gives,
+    /// satisfied here because every shell calls this once per visible
+    /// window per frame, same as `render_modal_layer` itself.
+    pub fn render_toasts(&mut self, ctx: &mut dyn RenderContext, current_time_ms: u64) {
+        use mlc_app_layout::ui::widgets::ModalTheme;
+
+        self.refresh_active_toasts(current_time_ms as f64);
+        if self.active_toasts.is_empty() {
+            return;
+        }
+        let now_ms = current_time_ms as f64;
+        let facts: Vec<mlc_app_layout::ui::toast::ToastFact> = self
+            .active_toasts
+            .iter()
+            .map(|t| mlc_app_layout::ui::toast::ToastFact {
+                id: t.id,
+                title: t.title.clone(),
+                body: t.body.clone(),
+                remaining: t.remaining_fraction(now_ms),
+            })
+            .collect();
+        let frame_theme = self.panel_app.frame_theme_for_render();
+        let toolbar_theme = self.panel_app.toolbar_theme_for_render();
+        let toast_theme = ModalTheme::from_toolbar(&frame_theme.modal_bg, &toolbar_theme.separator, &toolbar_theme);
+        let anchor = self.core.user().profile().ui.toast_anchor;
+        let (w, h) = (self.width as f64, self.height as f64);
+        let mut coord = self.input_coordinator.borrow_mut();
+        mlc_app_layout::ui::toast::render_toasts(ctx, &mut coord, &facts, &toast_theme, anchor, (w, h));
     }
 
     /// Build the standalone panel-settings surface view (overlay gear,

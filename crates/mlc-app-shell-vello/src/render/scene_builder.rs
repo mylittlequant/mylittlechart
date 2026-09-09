@@ -5,7 +5,6 @@ use mlc_app_sidebar_content::state::RenderBackend;
 use crate::{
     chrome,
     PerWindowState,
-    render_toasts,
 };
 
 /// Phase 1 of rendering: build the Vello scene for a single window (CPU-only).
@@ -15,9 +14,14 @@ use crate::{
 /// so multiple windows can run this phase concurrently via
 /// `std::thread::scope`.
 ///
+/// Toasts are no longer drawn here — `pw.chart.render_modal_layer` (called
+/// below, on `pw.chart`) draws them itself, topmost, restyled to the modal
+/// frame (toast restyle-and-anchor follow-up to §8, owner ask 2026-09-09;
+/// see `ChartApp::render_modal_layer`'s own "8g" block).
+///
 /// Returns the wall-clock microseconds spent building the scene so callers can
 /// track the parallel phase duration correctly.
-pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_alert_delivery::ToastNotification], frame_time: u64) -> u64 {
+pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u64 {
     let width = pw.surface.config.width;
     let height = pw.surface.config.height;
 
@@ -330,10 +334,11 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
             chrome::render_tab_list(&mut overlay_ctx, &pw.chrome_state, width as f64);
         }
 
-        // Render toast notification overlays (top-right corner)
-        if !active_toasts.is_empty() {
+        // Render toast overlays — restyled to the modal frame (owner ask
+        // 2026-09-09, toast restyle-and-anchor follow-up to §8).
+        {
             let mut toast_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
-            render_toasts(&mut toast_ctx, active_toasts, width as f64, height as f64);
+            pw.chart.render_toasts(&mut toast_ctx, frame_time);
         }
 
         // Render tooltips (top-most layer): chrome + toolbar. Suppressed
@@ -456,8 +461,9 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                     chart_ctx.inner_mut().draw_commands.extend_from_slice(&overlay_ctx.inner().draw_commands);
                 }
 
-                // Render toast overlays.
-                if !active_toasts.is_empty() {
+                // Render toast overlays — restyled to the modal frame (owner
+                // ask 2026-09-09, toast restyle-and-anchor follow-up to §8).
+                {
                     let mut toast_ctx = mlc_app_render_context_instanced::InstancedChartRenderContext::new(
                         width as f32,
                         height as f32,
@@ -466,7 +472,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                         None,
                         None,
                     );
-                    render_toasts(&mut toast_ctx, active_toasts, width as f64, height as f64);
+                    pw.chart.render_toasts(&mut toast_ctx, frame_time);
                     chart_ctx.inner_mut().draw_commands.extend_from_slice(&toast_ctx.inner().draw_commands);
                 }
 
@@ -569,10 +575,9 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                     );
                 chrome::render_tab_list(&mut cpu_ctx, &pw.chrome_state, width as f64);
                 }
-                // Render toast overlays.
-                if !active_toasts.is_empty() {
-                    render_toasts(&mut cpu_ctx, active_toasts, width as f64, height as f64);
-                }
+                // Render toast overlays — restyled to the modal frame (owner
+                // ask 2026-09-09, toast restyle-and-anchor follow-up to §8).
+                pw.chart.render_toasts(&mut cpu_ctx, frame_time);
                 // Render tooltips (top-most layer). Suppressed while
                 // capturing a screenshot (screenshot-is-chart-only arc,
                 // 2026-09-05).
@@ -656,10 +661,9 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                     );
                 chrome::render_tab_list(&mut skia_ctx, &pw.chrome_state, width as f64);
                 }
-                // Render toast overlays.
-                if !active_toasts.is_empty() {
-                    render_toasts(&mut skia_ctx, active_toasts, width as f64, height as f64);
-                }
+                // Render toast overlays — restyled to the modal frame (owner
+                // ask 2026-09-09, toast restyle-and-anchor follow-up to §8).
+                pw.chart.render_toasts(&mut skia_ctx, frame_time);
                 // Render tooltips (top-most layer). Suppressed while
                 // capturing a screenshot (screenshot-is-chart-only arc,
                 // 2026-09-05).
@@ -733,10 +737,9 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, active_toasts: &[mlc_a
                     );
                 chrome::render_tab_list(&mut hybrid_ctx, &pw.chrome_state, width as f64);
                 }
-                // Render toast overlays.
-                if !active_toasts.is_empty() {
-                    render_toasts(&mut hybrid_ctx, active_toasts, width as f64, height as f64);
-                }
+                // Render toast overlays — restyled to the modal frame (owner
+                // ask 2026-09-09, toast restyle-and-anchor follow-up to §8).
+                pw.chart.render_toasts(&mut hybrid_ctx, frame_time);
                 // Render tooltips (top-most layer). Suppressed while
                 // capturing a screenshot (screenshot-is-chart-only arc,
                 // 2026-09-05).

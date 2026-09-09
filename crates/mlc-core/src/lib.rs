@@ -391,7 +391,7 @@ pub use data_provider::{DataProvider, SharedDataProvider, NullDataProvider};
 pub use events::ChartOutEvent;
 
 // System event bus (see the `system_event` module doc for scope).
-pub use system_event::{SystemEvent, SystemEventKind, SystemEventLog, SYSTEM_EVENT_LOG_CAPACITY};
+pub use system_event::{SystemEvent, SystemEventKind, SystemEventLog, ToastAnchor, SYSTEM_EVENT_LOG_CAPACITY};
 
 // Chart-local modal state
 pub use modal::ChartOpenModal;

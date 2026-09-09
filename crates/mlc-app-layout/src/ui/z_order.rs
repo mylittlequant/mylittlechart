@@ -44,6 +44,11 @@ pub enum ZLayer {
 
     // z=6 — color pickers
     ColorPicker,
+
+    // z=7 — toast notifications (topmost; floats over every other layer but
+    // is not itself modal — it never dims or blocks input to what is under
+    // it, only its own hit zones: the ✕ and the drag handle)
+    Toast,
 }
 
 impl ZLayer {
@@ -57,6 +62,7 @@ impl ZLayer {
             Self::ModalOverlay | Self::FloatingWindow => 4,
             Self::ContextMenu => 5,
             Self::ColorPicker => 6,
+            Self::Toast => 7,
         }
     }
 
@@ -81,6 +87,7 @@ impl ZLayer {
             Self::FloatingWindow => "floating_window",
             Self::ContextMenu => "context_menu",
             Self::ColorPicker => "color_picker",
+            Self::Toast => "toast",
         }
     }
 

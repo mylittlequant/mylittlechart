@@ -313,9 +313,19 @@ struct SpawnRequest {
 #[cfg(feature = "cloud")]
 enum Forum2Chain {
     /// `Boards` / `Thread` (an `OpenThread` click or a passive background
-    /// refresh) / `SearchResults` — apply directly; each `ForumV2State`
-    /// variant is already self-describing.
+    /// refresh) — apply directly; each `ForumV2State` variant is already
+    /// self-describing.
     Direct,
+    /// `Search` (`ForumV2Request::Search`) is in flight — either the
+    /// header's inline quick-search (Enter-fire via `text_action_forum_search`
+    /// or the debounced due-check in [`App::drive_forum2`],
+    /// `ForumV2State::quick_search_pending` says which) or the full-page
+    /// "More results" navigation. `q` is the query text the answer belongs
+    /// to — `ForumV2State::SearchResults` itself never echoes it back
+    /// (unlike the web shell's own per-spawn `FlowResult::Forum2Search { q,
+    /// .. }`), and it is needed to populate `ForumV2State::
+    /// quick_search_query` on the quick-search landing.
+    Search { q: String },
     /// `LoadBoard` — `append` distinguishes "Load more" from a fresh open
     /// or a passive due-refresh (both replace the page in place).
     BoardThreads { append: bool },
@@ -550,8 +560,6 @@ struct App<'s> {
     /// previous tick's `deliver()` call resolves asynchronously, often
     /// several frames later.
     alert_outcome_rx: Option<tokio::sync::mpsc::UnboundedReceiver<mlc_alert_delivery::DeliveryOutcome>>,
-    /// Active toast notifications to render as overlays.
-    active_toasts: Vec<mlc_alert_delivery::ToastNotification>,
     /// RAM-only `SecretStore` sidecar (`alert_secrets.enc`) holding the
     /// Telegram bot token + subscribers + webhook URL — same construction
     /// and same seal/unlock lockstep as `agent_state.agent_key_store` (see
@@ -804,89 +812,6 @@ struct PerfSysSample {
     process_mem_bytes: u64,
     /// Total system RAM in bytes.
     total_mem_bytes: u64,
-}
-
-/// Render toast notifications as semi-transparent overlays in the top-right corner.
-///
-/// Toasts are stacked from top-right downward. Each toast fades out during its
-/// final 20% of display time.  The drawing is done with the flat-rect API from
-/// [`uzor::render::RenderContext`] so it works with any backend.
-fn render_toasts(
-    ctx: &mut dyn uzor::render::RenderContext,
-    toasts: &[mlc_alert_delivery::ToastNotification],
-    window_width: f64,
-    window_height: f64,
-) {
-    let toast_width = 320.0_f64;
-    let toast_height = 64.0_f64;
-    let padding = 12.0_f64;
-    let margin = 8.0_f64;
-    let border_thickness = 1.0_f64;
-
-    // Stack toasts from top-right, going downward, below the chrome strip.
-    let start_x = window_width - toast_width - margin;
-    let start_y = 40.0 + margin; // below chrome strip (32px) + small gap
-
-    let now = web_time::SystemTime::now()
-        .duration_since(web_time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0);
-
-    for (i, toast) in toasts.iter().enumerate() {
-        let y = start_y + (i as f64) * (toast_height + margin);
-        if y + toast_height > window_height {
-            break; // don't render off-screen
-        }
-
-        // Calculate fade-out alpha (last 20% of lifetime fades to zero).
-        let remaining = toast.remaining_fraction(now);
-        let alpha = if remaining < 0.2 {
-            (remaining / 0.2) as f32
-        } else {
-            1.0_f32
-        };
-
-        if alpha <= 0.0 {
-            continue;
-        }
-
-        let a = alpha as f64;
-
-        // ── Shadow ──────────────────────────────────────────────────────────
-        // Simple drop shadow: darker bg offset by 2px.
-        ctx.set_fill_color(&format!("rgba(0,0,0,{:.2})", a * 0.4));
-        ctx.fill_rect(start_x + 2.0, y + 2.0, toast_width, toast_height);
-
-        // ── Background ──────────────────────────────────────────────────────
-        // Dark navy background matching the chart theme.
-        ctx.set_fill_color(&format!("rgba(20,24,33,{:.2})", a * 0.92));
-        ctx.fill_rect(start_x, y, toast_width, toast_height);
-
-        // ── Border (1px blue accent, four sides via filled rects) ───────────
-        let border_a = a * 0.6;
-        let border_color = format!("rgba(59,130,246,{:.2})", border_a);
-        ctx.set_fill_color(&border_color);
-        // top
-        ctx.fill_rect(start_x, y, toast_width, border_thickness);
-        // bottom
-        ctx.fill_rect(start_x, y + toast_height - border_thickness, toast_width, border_thickness);
-        // left
-        ctx.fill_rect(start_x, y + border_thickness, border_thickness, toast_height - border_thickness * 2.0);
-        // right
-        ctx.fill_rect(start_x + toast_width - border_thickness, y + border_thickness, border_thickness, toast_height - border_thickness * 2.0);
-
-        // ── Title (accent blue, bold 12px) ───────────────────────────────────
-        ctx.set_font("bold 12px sans-serif");
-        ctx.set_fill_color(&format!("rgba(59,130,246,{:.2})", a));
-        ctx.set_text_align(uzor::render::TextAlign::Left);
-        ctx.set_text_baseline(uzor::render::TextBaseline::Middle);
-        ctx.fill_text(&toast.title, start_x + padding, y + padding + 6.0);
-
-        // ── Message (muted white, normal 11px) ───────────────────────────────
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(&format!("rgba(220,220,230,{:.2})", a * 0.85));
-        ctx.fill_text(&toast.message, start_x + padding, y + padding + 6.0 + 18.0);
-    }
 }
 
 /// Default watchlist seed — one ticker per crypto venue, used when no
@@ -1679,7 +1604,6 @@ impl App<'_> {
             mlc_alert_delivery: Some(alert_delivery_engine),
             toast_rx: Some(toast_rx),
             alert_outcome_rx: Some(alert_outcome_rx),
-            active_toasts: Vec::new(),
             alert_secrets_store,
             alert_delivery_seal_notice_shown: false,
             #[cfg(feature = "cloud")]
@@ -3035,6 +2959,14 @@ impl App<'_> {
             ov.forum2.boards_refreshing = false;
             ov.forum2.board_threads_refreshing = false;
             ov.forum2.thread_refreshing = false;
+            // Only ever `true` while a `Forum2Chain::Search` is the chain
+            // in flight (set right before firing it, by either
+            // `text_action_forum_search`'s Enter-fire or the debounced
+            // due-check below) — taken unconditionally here so it can never
+            // survive past the answer it was armed for, success or failure
+            // alike (mirrors the web shell's own `Forum2Search` apply arm,
+            // `cloud_session.rs`).
+            let quick = std::mem::take(&mut ov.forum2.quick_search_pending);
 
             match (chain, state) {
                 (_, mlc_updater::ForumV2State::Idle) | (_, mlc_updater::ForumV2State::Working) => {}
@@ -3074,9 +3006,13 @@ impl App<'_> {
                         // navigated away from — dropped.
                     }
                 }
-                (Forum2Chain::Direct, mlc_updater::ForumV2State::SearchResults(hits)) => {
-                    if let ForumV2View::Search { hits: h, .. } = &mut ov.forum2.view {
-                        *h = hits.into_iter().map(map_forum2_search_hit_native).collect();
+                (Forum2Chain::Search { q }, mlc_updater::ForumV2State::SearchResults(hits)) => {
+                    let mapped: Vec<_> = hits.into_iter().map(map_forum2_search_hit_native).collect();
+                    if quick {
+                        ov.forum2.quick_search_query = Some(q);
+                        ov.forum2.quick_search_results = mapped;
+                    } else if let ForumV2View::Search { hits: h, .. } = &mut ov.forum2.view {
+                        *h = mapped;
                     }
                 }
                 (Forum2Chain::AwaitingWriteAck { thread_id_hint: _ }, mlc_updater::ForumV2State::ThreadCreated { id }) => {
@@ -3430,7 +3366,7 @@ impl App<'_> {
                     Forum2Chain::AwaitingWriteAck { thread_id_hint },
                 ),
                 UiForumV2Request::Search { q, board } => {
-                    (mlc_updater::ForumV2Request::Search { q, board }, Forum2Chain::Direct)
+                    (mlc_updater::ForumV2Request::Search { q: q.clone(), board }, Forum2Chain::Search { q })
                 }
                 UiForumV2Request::Moderate { thread_id, action, board } => (
                     mlc_updater::ForumV2Request::Moderate { thread_id, action, board },
@@ -3439,6 +3375,44 @@ impl App<'_> {
             };
             let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::ForumV2(cmd));
             self.forum2_pending = Some((win_id, chain));
+            return;
+        }
+
+        // Debounced inline quick-search (owner review 2026-09-09, item d) —
+        // mirrors the web shell's own `drive()` (`cloud_session.rs`): every
+        // keystroke into the header's compact search box while it is open
+        // (re)arms `quick_search_due_at` via `ForumV2State::
+        // arm_quick_search_debounce` (`text_action_forum_search`); once the
+        // timer elapses this fires the same `ForumV2Request::Search` Enter
+        // already sends immediately (that function's own `fire`). Two-pass
+        // like the passive scan below, for the same reason.
+        let due_window = self.windows.iter().find_map(|(win_id, pw)| {
+            pw.chart.panel_app.community_state.forum2.quick_search_due().then_some(*win_id)
+        });
+        if let Some(win_id) = due_window {
+            if let Some(pw) = self.windows.get_mut(&win_id) {
+                let q = {
+                    let coord = pw.chart.input_coordinator.borrow();
+                    coord
+                        .text_fields()
+                        .text(&uzor::WidgetId::from(mlc_app::text_input::FORUM_SEARCH))
+                        .trim()
+                        .to_string()
+                };
+                let ov = &mut pw.chart.panel_app.community_state.forum2;
+                ov.quick_search_due_at = None;
+                if q.is_empty() {
+                    ov.quick_search_query = None;
+                    ov.quick_search_results = Vec::new();
+                } else {
+                    ov.quick_search_pending = true;
+                    ov.last_error = None;
+                    let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::ForumV2(
+                        mlc_updater::ForumV2Request::Search { q: q.clone(), board: None },
+                    ));
+                    self.forum2_pending = Some((win_id, Forum2Chain::Search { q }));
+                }
+            }
             return;
         }
 
@@ -5007,9 +4981,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     pw.window.request_redraw();
                 }
                 // Routed through the system-event bus (system-event-bus arc,
-                // 2026-09-05) instead of an ad-hoc `active_toasts` push —
-                // the toast still shows: the bus-toast drain loop below
-                // converts it into a `ToastNotification` the same frame.
+                // 2026-09-05) — `toast=true` makes `ChartApp::
+                // refresh_active_toasts` (driven every frame from
+                // `render_modal_layer`) pick it up and show it the same
+                // frame; no shell-owned toast Vec involved.
                 if let Some(pw) = self.system_event_window_mut() {
                     pw.chart.push_system_event(
                         mlc_core::SystemEventKind::Account,
@@ -5147,10 +5122,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     // background task processes the command. There is no
                     // ChartApp/BackendCore auth-status field to write here
                     // (shell contract forbids writing those directly anyway)
-                    // — routed through the system-event bus instead of an
-                    // ad-hoc `active_toasts` push (system-event-bus arc,
-                    // 2026-09-05); the toast still shows via the bus-toast
-                    // drain loop below.
+                    // — routed through the system-event bus (system-event-
+                    // bus arc, 2026-09-05); `toast=true` below is what
+                    // makes it show (see the sibling call site's own doc).
                     if let Some(pw) = self.system_event_window_mut() {
                         pw.chart.push_system_event(
                             mlc_core::SystemEventKind::Account,
@@ -7615,47 +7589,29 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // NOTE: alert delivery events are drained AFTER render_window() below,
         // so that alert screenshots can be captured and attached first.
 
-        // ── Drain toast notifications for UI overlay ──────────────────────────
+        // ── Drain alert-delivery toast notifications into the system-event
+        // bus ───────────────────────────────────────────────────────────────
+        // (toast restyle-and-anchor follow-up to §8, owner ask 2026-09-09):
+        // `toast=true` is what used to be a second, ad-hoc `active_toasts`
+        // push — `ChartApp::refresh_active_toasts` (driven every frame from
+        // `render_modal_layer`) is now the ONE toast queue, so an alert
+        // delivery is just another bus entry that happens to carry `toast=
+        // true`, same as e.g. the "Signed out" account event above.
         let mut drained_alert_toasts: Vec<mlc_alert_delivery::ToastNotification> = Vec::new();
         if let Some(ref mut rx) = self.toast_rx {
             while let Ok(toast) = rx.try_recv() {
                 drained_alert_toasts.push(toast);
             }
         }
-        // Every delivered alert is ALSO logged to the system-event bus
-        // (owner ask 2026-09-05, scope §8: "доставка алертов (Popup тоже
-        // пишется в лог)"). `toast=false` here — the alert's own toast is
-        // already visible via `active_toasts` below; this call only adds
-        // the history entry.
-        for toast in &drained_alert_toasts {
+        for toast in drained_alert_toasts {
             if let Some(pw) = self.system_event_window_mut() {
                 pw.chart.push_system_event(
                     mlc_core::SystemEventKind::Alert,
-                    toast.title.clone(),
-                    toast.message.clone(),
-                    false,
+                    toast.title,
+                    toast.message,
+                    true,
                 );
             }
-        }
-        self.active_toasts.extend(drained_alert_toasts);
-        // System-event bus toasts (tier/account/share/sync/update/...)
-        // surface on native too — converted into `ToastNotification`s here
-        // so `render_toasts` (which only knows this Vec) shows them the
-        // same as an alert-delivery toast (owner ask 2026-09-05, scope §8:
-        // "нейтив переводится на шину вместо своего Vec" — the simplest
-        // correct reading being that a bus toast ALSO reaches the Vec,
-        // rather than replacing it outright).
-        let drained_bus_toasts: Vec<mlc_core::SystemEvent> = self
-            .system_event_window_mut()
-            .map(|pw| pw.chart.drain_system_toasts())
-            .unwrap_or_default();
-        for event in drained_bus_toasts {
-            self.active_toasts.push(mlc_alert_delivery::ToastNotification {
-                title: event.title,
-                message: event.body,
-                timestamp: event.at_ms.max(0) as u64,
-                duration_ms: 5000,
-            });
         }
         // ── Drain memory-watchdog warnings into the system-event bus ───────────
         // (owner ask 2026-09-05, scope §8; recon: "memory warnings are
@@ -7680,13 +7636,6 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 pw.chart.push_system_event(mlc_core::SystemEventKind::Memory, title, body, false);
             }
         }
-
-        // Expire old toasts.
-        let now_ms_val = web_time::SystemTime::now()
-            .duration_since(web_time::UNIX_EPOCH)
-            .map(|d| d.as_millis() as u64)
-            .unwrap_or(0);
-        self.active_toasts.retain(|t| !t.is_expired(now_ms_val));
 
         // Per-window: poll cursor, drain screenshots, request redraw
         for pw in self.windows.values_mut() {
@@ -8136,7 +8085,6 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             .filter(|pw| !pw.window.is_minimized().unwrap_or(false))
             .collect();
 
-        let active_toasts = self.active_toasts.clone();
         let frame_time = screenshot::now_ms();
         let msaa_samples = self.msaa_samples;
 
@@ -8186,7 +8134,6 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // Safety: each pw_addr points to a distinct live PerWindowState.
         // The GPU thread only touches pw.gpu_scene/renderer/surface;
         // build_window_scene only touches pw.scene (and non-GPU fields).
-        let active_toasts_ref: &[mlc_alert_delivery::ToastNotification] = &active_toasts;
         let parallel_t0 = web_time::Instant::now();
         // Single window (the common case): build inline. Spawning an OS thread
         // per frame via thread::scope costs ~0.5-2ms on Windows for the spawn+
@@ -8198,7 +8145,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             if let Some(pw) = window_refs.first_mut() {
                 // Return value (per-window scene_us) is ignored — total_scene_us
                 // is overwritten with parallel_t0 wall-clock below either way.
-                let _ = build_window_scene(pw, active_toasts_ref, frame_time);
+                let _ = build_window_scene(pw, frame_time);
             }
         } else {
             std::thread::scope(|s| {
@@ -8211,7 +8158,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         // std::thread::scope guarantees join before scope exits.
                         let pw_ref: &mut PerWindowState =
                             unsafe { &mut *(pw_addr as *mut PerWindowState) };
-                        build_window_scene(pw_ref, active_toasts_ref, frame_time)
+                        build_window_scene(pw_ref, frame_time)
                     });
                     handles.push(h);
                 }

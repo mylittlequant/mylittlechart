@@ -285,6 +285,18 @@ impl ChartApp {
     /// genuine mouse input; agent dispatch passes `(0.0, 0.0)`, the same
     /// no-real-position sentinel `clock_popup_state.toggle` already uses.
     pub fn dispatch_panel_click(&mut self, widget_id: &str, x: f64, y: f64) {
+        // Toast ✕ (owner ask 2026-09-09 restyle-and-anchor pass) — dismisses
+        // ONLY that one toast. Checked first: a toast floats above every
+        // other layer (`ZLayer::Toast`), so a click here must never also
+        // trigger some lower surface's own "click elsewhere dismisses me"
+        // logic below.
+        if let Some(id_str) = widget_id.strip_prefix("toast:close:") {
+            if let Ok(id) = id_str.parse::<u64>() {
+                self.dismiss_toast(id);
+            }
+            return;
+        }
+
         // Standalone panel-settings surface (overlay gear, 2026-07-28) is
         // transient — any click outside it (and not on a gear that would
         // reopen it) dismisses it; the click then proceeds normally.
@@ -6290,6 +6302,27 @@ impl ChartApp {
                 "persist_toolbar_toggles" => {
                     self.toggle_persist_toolbar_toggles();
                 }
+                // Notifications section (toast restyle-and-anchor follow-up
+                // to §8, owner ask 2026-09-09) — "Show toasts" row.
+                "toasts_enabled" => {
+                    self.toggle_toasts_enabled();
+                }
+                // Notifications section's 4-way segmented control — hit id:
+                // "toast_anchor:{Variant}".
+                rest if rest.starts_with("toast_anchor:") => {
+                    let anchor_str = &rest["toast_anchor:".len()..];
+                    let anchor = match anchor_str {
+                        "TopLeft" => mlc_core::ToastAnchor::TopLeft,
+                        "TopRight" => mlc_core::ToastAnchor::TopRight,
+                        "BottomLeft" => mlc_core::ToastAnchor::BottomLeft,
+                        "BottomRight" => mlc_core::ToastAnchor::BottomRight,
+                        _ => {
+                            eprintln!("[ChartApp] user_settings unknown toast anchor: {}", anchor_str);
+                            return;
+                        }
+                    };
+                    self.set_toast_anchor(anchor);
+                }
                 // Control-point shape option selected — hit id: "control_point_shape:{Variant}"
                 rest if rest.starts_with("control_point_shape:") => {
                     use mlc_core::drawing::primitives_v2::ControlPointShape;
@@ -8760,6 +8793,47 @@ impl ChartApp {
         };
         self.panel_app.user_settings_state.persist_toolbar_toggles = now_on;
         self.autosave_snapshot();
+    }
+
+    /// Flip `ProfileUiSettings::toasts_enabled` and persist — the Settings
+    /// modal's Notifications-section "Show toasts" row (toast restyle-and-
+    /// anchor follow-up to §8, owner ask 2026-09-09). `profile_dirty` (not
+    /// `autosave_snapshot`) is the correct trigger here: this is a
+    /// `ProfileUiSettings` field, not preset content, same reasoning as the
+    /// clock-glitch toggle's own `"clock_glitch"` arm.
+    pub(crate) fn toggle_toasts_enabled(&mut self) {
+        let now_on = {
+            let mut user_mut = self.core.user_mut();
+            let ui = &mut user_mut.profile_mut().ui;
+            ui.toasts_enabled = !ui.toasts_enabled;
+            ui.toasts_enabled
+        };
+        self.panel_app.user_settings_state.toasts_enabled = now_on;
+        self.profile_dirty = true;
+    }
+
+    /// Set `ProfileUiSettings::toast_anchor` and persist — shared by the
+    /// Settings modal's segmented control and
+    /// [`Self::set_toast_anchor_from_drop`] (dragging a toast to a corner).
+    pub(crate) fn set_toast_anchor(&mut self, anchor: mlc_core::ToastAnchor) {
+        {
+            let mut user_mut = self.core.user_mut();
+            user_mut.profile_mut().ui.toast_anchor = anchor;
+        }
+        self.panel_app.user_settings_state.toast_anchor = anchor;
+        self.profile_dirty = true;
+    }
+
+    /// Drag-to-corner: the drop point picks the nearest screen corner for
+    /// the anchor (`ToastAnchor::nearest_corner`). Falls back to a sensible
+    /// default screen size when the shell has not yet reported one (same
+    /// fallback class as every other geometry read in this crate that has
+    /// no live window size to hand).
+    pub(crate) fn set_toast_anchor_from_drop(&mut self, drop_x: f64, drop_y: f64) {
+        let screen_w = self.window_width.unwrap_or(1280) as f64;
+        let screen_h = self.window_height.unwrap_or(800) as f64;
+        let anchor = mlc_core::ToastAnchor::nearest_corner(drop_x, drop_y, screen_w, screen_h);
+        self.set_toast_anchor(anchor);
     }
 
     /// Submit the Server tab's key-manager "Create key" action — reads

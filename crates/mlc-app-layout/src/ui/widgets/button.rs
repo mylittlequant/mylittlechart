@@ -274,6 +274,53 @@ pub fn fit_text_to_width(ctx: &dyn RenderContext, text: &str, max_width: f64) ->
     s
 }
 
+/// Word-wrap `text` to `max_w` pixels at the currently-set font, one `\n`-
+/// separated paragraph at a time. Char-count wrap would be wrong here: an
+/// 11px CJK line and a Latin one overflow a fixed-width box completely
+/// differently. Shared by every settings-modal hint row and the toast
+/// painter (`crate::ui::toast`) — a single line that itself does not fit
+/// (a long unbroken token) still emits one entry per remaining character
+/// rather than looping forever.
+pub fn wrap_text_to_width(ctx: &dyn RenderContext, text: &str, max_w: f64) -> Vec<String> {
+    let mut out = Vec::new();
+    for para in text.split('\n') {
+        let mut rest = para.trim();
+        if rest.is_empty() {
+            out.push(String::new());
+            continue;
+        }
+        while !rest.is_empty() {
+            if ctx.measure_text(rest) <= max_w {
+                out.push(rest.to_string());
+                break;
+            }
+            let mut last_fit_end = 0usize;
+            let mut last_fit_space = 0usize;
+            let mut acc = String::new();
+            for (i, ch) in rest.char_indices() {
+                acc.push(ch);
+                if ctx.measure_text(&acc) > max_w {
+                    break;
+                }
+                last_fit_end = i + ch.len_utf8();
+                if ch == ' ' {
+                    last_fit_space = last_fit_end;
+                }
+            }
+            if last_fit_end == 0 {
+                let Some(ch) = rest.chars().next() else { break };
+                out.push(ch.to_string());
+                rest = &rest[ch.len_utf8()..];
+                continue;
+            }
+            let cut = if last_fit_space > 0 { last_fit_space } else { last_fit_end };
+            out.push(rest[..cut].trim_end().to_string());
+            rest = rest[cut..].trim_start();
+        }
+    }
+    out
+}
+
 /// Lay out a horizontal row of buttons sharing `available_w` (excluding the
 /// inter-button gaps). Each entry grows to fit its label; if the total would
 /// exceed the budget the widths are scaled down proportionally so the row

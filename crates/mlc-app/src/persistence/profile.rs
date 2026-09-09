@@ -181,6 +181,13 @@ impl ChartApp {
                 // this snapshot is built from live UI state and this is not
                 // UI state.
                 clock_glitch_enabled: existing.ui.clock_glitch_enabled,
+                // Toast anchor/quiet-mode (toast restyle-and-anchor follow-up
+                // to §8, owner ask 2026-09-09): mutated in-place via
+                // `self.core.user_mut().profile_mut()` at toggle/drag time
+                // (panel_click.rs), same preserve-live-value pattern as
+                // `clock_glitch_enabled` above.
+                toast_anchor: existing.ui.toast_anchor,
+                toasts_enabled: existing.ui.toasts_enabled,
                 // System event log (system-event-bus arc, 2026-09-05): the
                 // live value lives on `ChartApp` itself, mutated in place by
                 // `push_system_event`/`mark_all_system_events_read` — not by

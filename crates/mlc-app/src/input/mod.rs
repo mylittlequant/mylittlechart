@@ -1279,6 +1279,21 @@ impl ChartApp {
         // Track whether this drag started on a UI element (for crosshair suppression).
         self.ui_drag_active = live_over_ui;
 
+        // ── Toast body drag (drag-to-corner, owner ask 2026-09-09 restyle-
+        // and-anchor pass): dragging any toast and dropping it moves the
+        // whole stack's anchor to the nearest screen corner
+        // (`Self::set_toast_anchor_from_drop`, at drag-end). The body's own
+        // hit zone (`toast:drag:{id}`) carries DRAG only, never CLICK — so
+        // there is no plain-click case to disambiguate against and no 5px
+        // promotion threshold needed, unlike `granularity_drag_pending`'s
+        // own two-step below.
+        if let Some(id_str) = live_hover.as_deref().and_then(|h| h.strip_prefix("toast:drag:")) {
+            if let Ok(toast_id) = id_str.parse::<u64>() {
+                self.toast_drag = Some((toast_id, x, y));
+                return false;
+            }
+        }
+
         // ── Agent-panel separator drag initiation ────────────────────────────
         // MUST run BEFORE PTY/Chat drag so separator hit zones take priority
         // over the leaf content areas that may overlap the separator zone.
@@ -3561,6 +3576,14 @@ impl ChartApp {
             }
         }
 
+        // ── Toast body drag: track the current pointer position only —
+        // see `on_drag_start`'s own doc for why there is no paint/preview
+        // to update mid-drag.
+        if let Some((id, _, _)) = self.toast_drag {
+            self.toast_drag = Some((id, x, y));
+            return;
+        }
+
         let _ = (x, dx);
 
         // ── Granularity row drag-reorder: promote pending drag once mouse
@@ -4857,6 +4880,15 @@ impl ChartApp {
         }
 
         self.ui_drag_active = false;
+
+        // ── End toast body drag: the drop point picks the nearest screen
+        // corner for the WHOLE stack's anchor (owner ask 2026-09-09) — see
+        // `on_drag_start`'s own doc for why this needs no pending/promoted
+        // two-step.
+        if let Some((_, dx, dy)) = self.toast_drag.take() {
+            self.set_toast_anchor_from_drop(dx, dy);
+            return;
+        }
 
         // ── End granularity row drag-reorder: clear any pending drag that
         // never crossed the promote threshold (falls through to the normal
@@ -7748,6 +7780,15 @@ impl ChartApp {
 
     /// Handle the Escape key — close any open modal or deselect the active tool.
     pub fn on_escape(&mut self) {
+        // Toasts float above every other layer (`ZLayer::Toast`, the
+        // topmost) — Escape dismisses the newest one first, before anything
+        // else on screen gets a chance to answer it (owner ask 2026-09-09
+        // restyle-and-anchor pass).
+        if !self.active_toasts.is_empty() {
+            self.dismiss_newest_toast();
+            return;
+        }
+
         // Cancel an in-progress granularity row drag-reorder first (owner
         // spec 2026-07-16 items 2+3: "Escape ... cancels the drag") — no
         // reorder applies, the dropdown itself stays open.

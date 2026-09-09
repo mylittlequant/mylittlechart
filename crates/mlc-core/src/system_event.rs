@@ -193,6 +193,38 @@ impl Default for SystemEventLog {
     }
 }
 
+/// Which screen corner the toast stack anchors to and stacks away from.
+/// Persisted per device (`ProfileUiSettings::toast_anchor`) — the Settings
+/// modal's Notifications section (a 4-way segmented control) and dragging
+/// any toast to a corner both write this (owner ask 2026-09-09, toast
+/// restyle-and-anchor follow-up to §8).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub enum ToastAnchor {
+    TopLeft,
+    /// Today's fixed position, kept as the default so an existing profile's
+    /// toasts do not jump on the update that added this setting.
+    #[default]
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
+impl ToastAnchor {
+    /// Which corner of a `screen_w`×`screen_h` surface is nearest the point
+    /// `(x, y)` — the drag-to-corner rule a toast drop applies: a straight
+    /// half/half split on each axis, not a distance metric (a toast dropped
+    /// dead-centre still answers, just less meaningfully than one dropped
+    /// near an actual corner).
+    pub fn nearest_corner(x: f64, y: f64, screen_w: f64, screen_h: f64) -> Self {
+        match (x < screen_w / 2.0, y < screen_h / 2.0) {
+            (true, true) => ToastAnchor::TopLeft,
+            (false, true) => ToastAnchor::TopRight,
+            (true, false) => ToastAnchor::BottomLeft,
+            (false, false) => ToastAnchor::BottomRight,
+        }
+    }
+}
+
 fn now_ms() -> i64 {
     web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
@@ -282,5 +314,13 @@ mod tests {
         let legacy: LegacyHolder = serde_json::from_str("{}").expect("must deserialize legacy json");
         assert_eq!(legacy.system_events.events.len(), 0);
         assert_eq!(legacy.system_events.unread_count(), 0);
+    }
+
+    #[test]
+    fn nearest_corner_splits_the_screen_in_quarters() {
+        assert_eq!(ToastAnchor::nearest_corner(10.0, 10.0, 1000.0, 800.0), ToastAnchor::TopLeft);
+        assert_eq!(ToastAnchor::nearest_corner(990.0, 10.0, 1000.0, 800.0), ToastAnchor::TopRight);
+        assert_eq!(ToastAnchor::nearest_corner(10.0, 790.0, 1000.0, 800.0), ToastAnchor::BottomLeft);
+        assert_eq!(ToastAnchor::nearest_corner(990.0, 790.0, 1000.0, 800.0), ToastAnchor::BottomRight);
     }
 }
