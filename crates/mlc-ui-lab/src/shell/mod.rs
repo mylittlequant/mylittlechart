@@ -42,11 +42,14 @@ use uzor::input::{InputCoordinator, LayerId, Sense};
 use uzor::render::{draw_svg_icon, draw_svg_multicolor};
 use uzor::types::Rect;
 
-/// Mini mascot asset, embedded the same way `mlc-app-layout`'s own toolbar
+/// Brand mark, embedded the same way `mlc-app-layout`'s own toolbar
 /// renderer does for the "Bot" agent-panel icon (`toolbar_core.rs`) — same
 /// relative depth (`crates/<this crate>/src/shell/` vs
-/// `crates/mlc-app-layout/src/ui/`), same asset.
-const MINI_MASCOT_LEFT_SVG: &str = include_str!("../../../../assets/mascot/mini_mascot_left.svg");
+/// `crates/mlc-app-layout/src/ui/`), same asset (owner ruling 2026-09-10:
+/// the bull is retired, the magic hat replaces it everywhere). This lab
+/// has no tab lifecycle of its own, so unlike the real toolbar it always
+/// draws the hat at rest — no animation here.
+const MAGIC_HAT_SVG: &str = include_str!("../../../../assets/mascot/magic_hat.svg");
 
 /// Absolute-coordinate rect: `(x, y, width, height)`. Every `draw` fn in
 /// this module tree takes/returns geometry in this shape rather than a
@@ -273,7 +276,7 @@ pub fn apply_shell_response(id: &str, state: &mut ShellState) -> bool {
 /// no longer assume its own type_id always resolves an icon).
 fn draw_icon(ctx: &mut dyn RenderContext, name: &str, x: f64, y: f64, size: f64, color: &str) {
     if name == "bot" {
-        draw_svg_multicolor(ctx, MINI_MASCOT_LEFT_SVG, x, y, size, size);
+        draw_svg_multicolor(ctx, MAGIC_HAT_SVG, x, y, size, size);
         return;
     }
     match icon_svg(name) {

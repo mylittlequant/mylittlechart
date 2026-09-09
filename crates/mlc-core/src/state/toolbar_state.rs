@@ -641,6 +641,66 @@ pub enum ScreenshotDestination {
     ShareLink,
 }
 
+/// Which one-shot magic-hat motion is running (owner ruling 2026-09-10:
+/// the hat animates once on tab open, differently once on tab close —
+/// nothing loops, nothing redraws while idle). `mlc-app-layout::ui::
+/// mascot_anim` owns the actual curve math (rotation angle / scale-y over
+/// elapsed fraction); this type only carries WHICH motion and its own
+/// duration, so `mlc-core` — which must not depend on any render crate —
+/// can still hold it on [`ChartToolbarState`], and the tab-lifecycle
+/// handlers that arm it (`mlc-app`) never need to import one either.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MascotAnimKind {
+    /// A tab was opened.
+    Open,
+    /// A tab was closed.
+    Close,
+}
+
+impl MascotAnimKind {
+    /// Total duration of this motion, milliseconds (owner spec: the "tip"
+    /// open motion runs 520ms, the "squash" close motion 620ms).
+    pub const fn duration_ms(self) -> u64 {
+        match self {
+            MascotAnimKind::Open => 520,
+            MascotAnimKind::Close => 620,
+        }
+    }
+}
+
+/// Live one-shot mascot animation: which motion, and when it started.
+/// A new trigger REPLACES a running one (owner ruling) — callers just
+/// overwrite [`ChartToolbarState::mascot_anim`] via
+/// [`ChartToolbarState::trigger_mascot_anim`] rather than queuing.
+#[derive(Clone, Copy, Debug)]
+pub struct MascotAnim {
+    pub kind: MascotAnimKind,
+    started_at: Instant,
+}
+
+impl MascotAnim {
+    pub fn new(kind: MascotAnimKind) -> Self {
+        Self { kind, started_at: Instant::now() }
+    }
+
+    /// Elapsed time since the trigger, in milliseconds.
+    pub fn elapsed_ms(&self) -> u64 {
+        Instant::now().duration_since(self.started_at).as_millis() as u64
+    }
+
+    /// True while still inside `kind`'s own duration — a one-shot pulse
+    /// that expires on its own, same shape as `screenshot_active()` below.
+    pub fn is_live(&self) -> bool {
+        self.elapsed_ms() < self.kind.duration_ms()
+    }
+
+    /// Elapsed fraction of the total duration, clamped to `[0, 1]` — `1.0`
+    /// once the animation has lapsed (render sites hold at the rest pose).
+    pub fn progress(&self) -> f64 {
+        (self.elapsed_ms() as f64 / self.kind.duration_ms() as f64).min(1.0)
+    }
+}
+
 // =============================================================================
 // ChartToolbarState
 // =============================================================================
@@ -796,6 +856,13 @@ pub struct ChartToolbarState {
     /// Used by the Commit handler to route the value to the right
     /// `ChartOutEvent::UpdateChartTypeParam` / `UpdateChartTypeInterval`.
     pub active_param_chart_type: Option<String>,
+    /// Live one-shot magic-hat animation on the right toolbar's "agents"
+    /// button (owner ruling 2026-09-10) — armed by
+    /// [`trigger_mascot_anim`](ChartToolbarState::trigger_mascot_anim) from
+    /// the tab open/close handlers, read by the toolbar render and by the
+    /// native shell's redraw-gating loop. `None` (or lapsed) draws the hat
+    /// at rest.
+    pub mascot_anim: Option<MascotAnim>,
 }
 
 impl Default for ChartToolbarState {
@@ -856,6 +923,7 @@ impl Default for ChartToolbarState {
             right_scroll_offset: 0.0,
             open_dropdown_position: None,
             active_param_chart_type: None,
+            mascot_anim: None,
         }
     }
 }
@@ -892,6 +960,14 @@ impl ChartToolbarState {
         self.last_screenshot_click_time
             .map(|t| Instant::now().duration_since(t).as_millis() < Self::SCREENSHOT_ACTIVE_MS as u128)
             .unwrap_or(false)
+    }
+
+    /// Arms the one-shot magic-hat animation for `kind` — a new trigger
+    /// replaces whatever is currently running (owner ruling 2026-09-10:
+    /// a tab-open mid-close-animation, or vice versa, always shows the
+    /// newest motion, never a queue of both).
+    pub fn trigger_mascot_anim(&mut self, kind: MascotAnimKind) {
+        self.mascot_anim = Some(MascotAnim::new(kind));
     }
 
     /// True while ANY chart-toolbar dropdown is open — the top-level

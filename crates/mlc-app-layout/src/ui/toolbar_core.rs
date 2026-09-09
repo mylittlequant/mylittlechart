@@ -5,8 +5,11 @@
 //! resolves icons via the chart's own `icons::icon_svg()` registry.
 
 use uzor::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon, draw_svg_multicolor};
+use mlc_core::state::toolbar_state::{MascotAnim, MascotAnimKind};
 
-const MINI_MASCOT_LEFT_SVG: &str = include_str!("../../../../assets/mascot/mini_mascot_left.svg");
+/// The brand mark (owner ruling 2026-09-10: the bull is retired, the magic
+/// hat replaces it everywhere the mascot is drawn).
+const MAGIC_HAT_SVG: &str = include_str!("../../../../assets/mascot/magic_hat.svg");
 
 // =============================================================================
 // Local type definitions (replace core's WidgetRect and IconId)
@@ -745,6 +748,12 @@ pub struct ToolbarConfig {
     /// falls back to the plain `fill_text` draw path, same as an unknown
     /// pointer.
     pub clock_glitch_enabled: bool,
+    /// Live one-shot magic-hat animation (owner ruling 2026-09-10) for the
+    /// "Bot" agents-panel button — `None`/lapsed draws the hat at rest,
+    /// exactly like every other icon. Callers with no mascot concept of
+    /// their own (drawing/control/inline/favorites toolbars — none of
+    /// which host a "Bot" item) simply pass `None`.
+    pub mascot_anim: Option<MascotAnim>,
 }
 
 impl Default for ToolbarConfig {
@@ -763,6 +772,7 @@ impl Default for ToolbarConfig {
             anim_time_s: 0.0,
             anim_frame: 0,
             clock_glitch_enabled: true,
+            mascot_anim: None,
         }
     }
 }
@@ -821,13 +831,53 @@ impl Default for ToolbarTheme {
     }
 }
 
-/// Render an icon by looking up its SVG via the chart's icon registry
-fn render_icon(ctx: &mut dyn RenderContext, icon_id: &IconId, rect: WidgetRect, color: &str) {
+/// Render an icon by looking up its SVG via the chart's icon registry.
+///
+/// `mascot_anim` is the live one-shot magic-hat animation (owner ruling
+/// 2026-09-10, tab open/close) for the "Bot" agents-panel button — `None`
+/// or lapsed draws the hat at rest, exactly as every other icon draws
+/// today. Ignored for every other `icon_id`.
+fn render_icon(
+    ctx: &mut dyn RenderContext,
+    icon_id: &IconId,
+    rect: WidgetRect,
+    color: &str,
+    mascot_anim: Option<MascotAnim>,
+) {
     if icon_id.name() == "Bot" {
         let mascot_size = 36.0;
         let mx = rect.x + (rect.width - mascot_size) / 2.0;
         let my = rect.y + (rect.height - mascot_size) / 2.0;
-        draw_svg_multicolor(ctx, MINI_MASCOT_LEFT_SVG, mx, my, mascot_size, mascot_size);
+        match mascot_anim.filter(MascotAnim::is_live) {
+            None => draw_svg_multicolor(ctx, MAGIC_HAT_SVG, mx, my, mascot_size, mascot_size),
+            Some(anim) => {
+                let t = anim.progress();
+                ctx.save();
+                match anim.kind {
+                    MascotAnimKind::Open => {
+                        // "Tip": rotate about the brim's bottom-center,
+                        // ease-out-cubic dip then ease-out-back return.
+                        let (pivot_x, pivot_y) =
+                            super::mascot_anim::hat_brim_pivot(mx, my, mascot_size);
+                        ctx.translate(pivot_x, pivot_y);
+                        ctx.rotate(super::mascot_anim::tip_angle_rad(t));
+                        ctx.translate(-pivot_x, -pivot_y);
+                    }
+                    MascotAnimKind::Close => {
+                        // "Squash": vertical scale anchored at the icon
+                        // box's own bottom edge (owner spec: "anchor
+                        // bottom" — the whole button box, not the brim).
+                        let pivot_x = mx + mascot_size / 2.0;
+                        let pivot_y = my + mascot_size;
+                        ctx.translate(pivot_x, pivot_y);
+                        ctx.scale(1.0, super::mascot_anim::squash_scale_y(t));
+                        ctx.translate(-pivot_x, -pivot_y);
+                    }
+                }
+                draw_svg_multicolor(ctx, MAGIC_HAT_SVG, mx, my, mascot_size, mascot_size);
+                ctx.restore();
+            }
+        }
         return;
     }
     if let Some(svg) = super::icons::icon_svg(icon_id.name()) {
@@ -1174,7 +1224,7 @@ pub fn draw_toolbar_with_icons(
                         config.icon_size,
                         config.icon_size,
                     );
-                    render_icon(ctx, icon, icon_rect, icon_color);
+                    render_icon(ctx, icon, icon_rect, icon_color, config.mascot_anim);
                 }
 
                 if let Some(text) = text_opt {
@@ -1269,7 +1319,7 @@ pub fn draw_toolbar_with_icons(
                     icon_size,
                     icon_size,
                 );
-                render_icon(ctx, icon, icon_rect, icon_color);
+                render_icon(ctx, icon, icon_rect, icon_color, config.mascot_anim);
 
                 result.item_rects.push((id.clone(), item_rect));
                 if is_hovered {
@@ -1354,7 +1404,7 @@ pub fn draw_toolbar_with_icons(
                         config.icon_size,
                         config.icon_size,
                     );
-                    render_icon(ctx, icon, icon_rect, icon_color);
+                    render_icon(ctx, icon, icon_rect, icon_color, config.mascot_anim);
                 }
 
                 if let Some(text) = text {
@@ -1483,7 +1533,7 @@ pub fn draw_toolbar_with_icons(
                     config.icon_size,
                     config.icon_size,
                 );
-                render_icon(ctx, icon, icon_rect, icon_color);
+                render_icon(ctx, icon, icon_rect, icon_color, config.mascot_anim);
 
                 ctx.set_fill_color(color);
                 ctx.fill_rect(item_rect.x + 4.0, item_rect.bottom() - 6.0, item_width - 8.0, 3.0);
@@ -1595,7 +1645,7 @@ pub fn draw_toolbar_with_icons(
                     icon_size,
                     icon_size,
                 );
-                render_icon(ctx, icon, icon_rect, icon_color);
+                render_icon(ctx, icon, icon_rect, icon_color, config.mascot_anim);
 
                 // Draw tiny downward chevron in the chevron area
                 {

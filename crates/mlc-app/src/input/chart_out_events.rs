@@ -2062,6 +2062,11 @@ impl ChartApp {
 
             ChartOutEvent::CloseTab { id } => {
                 eprintln!("[ChartApp] close tab: {}", id);
+                // One-shot magic-hat "squash" (owner ruling 2026-09-10) —
+                // a new trigger always replaces whatever was running.
+                self.panel_app.toolbar_state.trigger_mascot_anim(
+                    mlc_core::state::toolbar_state::MascotAnimKind::Close,
+                );
                 // Autosave the closing tab's state before removing.
                 if id == self.panel_app.active_preset_id {
                     self.autosave_snapshot();
@@ -2100,6 +2105,11 @@ impl ChartApp {
 
             ChartOutEvent::OpenTab { id } => {
                 eprintln!("[ChartApp] open tab: {}", id);
+                // One-shot magic-hat "tip" (owner ruling 2026-09-10) — a
+                // new trigger always replaces whatever was running.
+                self.panel_app.toolbar_state.trigger_mascot_anim(
+                    mlc_core::state::toolbar_state::MascotAnimKind::Open,
+                );
                 if self.panel_app.open_tabs.contains(&id) {
                     // Preset already open  -  pure redirect to that tab.
                     // Do NOT pre-set active_preset_id here: LoadPreset reads

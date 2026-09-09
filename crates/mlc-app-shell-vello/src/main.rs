@@ -8513,7 +8513,26 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // alone being clean is not enough to skip it.
                 pw.toolbar_dirty = true;
             }
-            if spinner_up || per_chart_loading || cold_apply_stashed || clock_hovered {
+            // One-shot magic-hat animation on the right toolbar's "agents"
+            // button (owner ruling 2026-09-10: tab open/close, nothing
+            // loops, nothing redraws while idle). Same time-boxed pulse
+            // shape as `clock_hovered` above, but gated on wall-clock
+            // elapsed time instead of pointer position — keep redrawing
+            // only while the current trigger is still inside its own
+            // duration, then let it lapse on its own (`MascotAnim::
+            // is_live`), never an unconditional per-frame repaint.
+            let mascot_animating = pw
+                .chart
+                .panel_app
+                .toolbar_state
+                .mascot_anim
+                .map(|anim| anim.is_live())
+                .unwrap_or(false);
+            if mascot_animating {
+                // The hat is painted by the toolbar pass too.
+                pw.toolbar_dirty = true;
+            }
+            if spinner_up || per_chart_loading || cold_apply_stashed || clock_hovered || mascot_animating {
                 pw.window.request_redraw();
             }
         }

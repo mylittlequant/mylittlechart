@@ -518,6 +518,8 @@ pub fn chart_toolbar_render_toolbars(
                 anim_time_s: 0.0,
                 anim_frame: 0,
                 clock_glitch_enabled: false,
+                // No "Bot" item lives in the drawing toolbar.
+                mascot_anim: None,
             };
 
             let drawing_rect = WidgetRect::new(
@@ -869,6 +871,8 @@ pub fn chart_toolbar_render_toolbars(
                 anim_time_s: 0.0,
                 anim_frame: 0,
                 clock_glitch_enabled: false,
+                // No "Bot" item lives in the top control strip.
+                mascot_anim: None,
             };
 
             let control_rect = WidgetRect::new(
@@ -938,6 +942,12 @@ pub fn chart_toolbar_render_toolbars(
                 anim_time_s: 0.0,
                 anim_frame: 0,
                 clock_glitch_enabled: false,
+                // The right toolbar hosts the "Bot" agents-panel button —
+                // the one item this whole `mascot_anim` field exists for
+                // (owner ruling 2026-09-10). Sourced from `tb` (already a
+                // `&ChartToolbarState` parameter here) rather than a new
+                // function parameter of its own.
+                mascot_anim: tb.mascot_anim,
             };
 
             let right_rect = WidgetRect::new(
@@ -1059,6 +1069,8 @@ pub fn chart_toolbar_render_toolbars(
                 anim_time_s,
                 anim_frame,
                 clock_glitch_enabled,
+                // No "Bot" item lives in the bottom toolbar.
+                mascot_anim: None,
             };
 
             let bottom_rect = WidgetRect::new(
@@ -1210,6 +1222,8 @@ pub fn chart_toolbar_render_toolbars(
                 anim_time_s: 0.0,
                 anim_frame: 0,
                 clock_glitch_enabled: false,
+                // No "Bot" item lives in the floating inline-config bar.
+                mascot_anim: None,
             };
 
             // Pre-compute exact bar width from section items (single-pass, no measurement draw).
@@ -1305,6 +1319,8 @@ pub fn chart_toolbar_render_toolbars(
                 anim_time_s: 0.0,
                 anim_frame: 0,
                 clock_glitch_enabled: false,
+                // No "Bot" item lives in the favorites quick-pick bar.
+                mascot_anim: None,
             };
 
             // Pre-compute exact bar width from section items (single-pass, no measurement draw).

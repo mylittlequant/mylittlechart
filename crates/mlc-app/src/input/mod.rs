@@ -9658,6 +9658,12 @@ impl ChartApp {
         // Add the new preset to open_tabs.
         if !self.panel_app.open_tabs.contains(&new_id) {
             self.panel_app.open_tabs.push(new_id.clone());
+            // One-shot magic-hat "tip" (owner ruling 2026-09-10) — same
+            // trigger as `ChartOutEvent::OpenTab`, fired here too since a
+            // brand-new preset never goes through that event.
+            self.panel_app.toolbar_state.trigger_mascot_anim(
+                mlc_core::state::toolbar_state::MascotAnimKind::Open,
+            );
         }
         // Bound first so the `presets()` read guard drops before the body runs
         // (clippy::significant_drop_in_scrutinee).
