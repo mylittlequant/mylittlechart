@@ -1117,35 +1117,54 @@ impl ChartApp {
         }
     }
 
-    /// Forum-v2 Boards view's search box. Enter submits
-    /// `ForumV2Request::Search` and switches straight to `ForumV2View::
-    /// Search` with an empty hit list (same optimistic view-switch idiom
-    /// `panel_click.rs`'s `"forum2:thread:{id}"` arm uses) — mirrors
-    /// `panel_click.rs`'s own `"forum2:search_submit"` click arm exactly.
-    /// An empty query is a no-op rather than a request for everything.
+    /// The Community modal's compact inline search field (owner review
+    /// 2026-09-09, community-modal-and-forum-ladder arc, piece 2 item d —
+    /// replaces the old full-page Boards-view search box this doc used to
+    /// describe). Enter fires `ForumV2Request::Search` immediately (the
+    /// same request the ~300ms debounce in the shell driver's per-frame
+    /// poll would otherwise fire); every other keystroke just (re)arms that
+    /// debounce (`ForumV2State::arm_quick_search_debounce`) — nothing
+    /// fetches on this path. The answer lands in `ForumV2State::
+    /// quick_search_results` (the inline dropdown), never `view` — the
+    /// full-page `ForumV2View::Search` is reached only via the dropdown's
+    /// own "More results" row (`panel_click.rs`'s `"forum2:quick_more"`
+    /// arm). Escape collapses the box outright (`close_quick_search`)
+    /// instead of just blurring the field.
     #[cfg(feature = "cloud")]
     fn text_action_forum_search(&mut self, ch: char, action: TextAction) {
-        let submit = |chart: &mut ChartApp| {
+        let fire = |chart: &mut ChartApp| {
             let wid = WidgetId::from(crate::text_input::FORUM_SEARCH);
             let q = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
+            let f2 = &mut chart.panel_app.community_state.forum2;
+            f2.quick_search_due_at = None;
             if q.is_empty() {
+                f2.quick_search_query = None;
+                f2.quick_search_results = Vec::new();
                 return;
             }
-            let f2 = &mut chart.panel_app.community_state.forum2;
             f2.last_error = None;
-            f2.view = mlc_app_layout::ui::modal_settings::ForumV2View::Search { q: q.clone(), hits: Vec::new() };
+            f2.quick_search_pending = true;
             f2.request = Some(mlc_app_layout::ui::modal_settings::ForumV2Request::Search { q, board: None });
         };
         if ch == '\r' || ch == '\n' {
-            submit(self);
+            fire(self);
             return;
         }
         if ch == '\x1b' {
+            self.panel_app.community_state.forum2.close_quick_search();
             self.input_coordinator.borrow_mut().text_fields_mut().blur();
             return;
         }
-        if let TextAction::Commit(_) = action {
-            submit(self);
+        match action {
+            TextAction::Commit(_) => fire(self),
+            TextAction::Cancel => {
+                self.panel_app.community_state.forum2.close_quick_search();
+            }
+            _ => {
+                if self.panel_app.community_state.forum2.quick_search_open {
+                    self.panel_app.community_state.forum2.arm_quick_search_debounce();
+                }
+            }
         }
     }
 

@@ -13042,6 +13042,21 @@ impl ChartApp {
         // click first.
         self.panel_app.toolbar_state.system_events_unread = self.system_events.unread_count() > 0;
         self.sidebar_state.system_event_items = self.system_events.iter_newest_first().cloned().collect();
+        // Community (Forum + Messages) envelope button's own unread dot
+        // (community-modal-and-forum-ladder arc, piece 2) — same
+        // unconditional per-frame stamp as `system_events_unread` above,
+        // cheap (a bounded conversations vec), gated on `cloud` since
+        // `community_state`/`DmState` only exist in cloud builds.
+        #[cfg(feature = "cloud")]
+        {
+            self.panel_app.toolbar_state.community_unread = self
+                .panel_app
+                .community_state
+                .dm
+                .conversations
+                .iter()
+                .any(|c| c.unread_count > 0);
+        }
         self.stamp_settings_menu_state();
     }
 

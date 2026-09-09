@@ -25,24 +25,25 @@ use mlc_app::ChartApp;
 use mlc_app_layout::ui::modal_settings::{
     BoardUi, CloudForumReply, CloudForumThread, CloudForumThreadSummary, CloudLoginPhase,
     CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudReleaseEntry, CommunityTab,
-    ForumListState, ForumReplyV2Ui, ForumRequest, ForumSearchHitUi, ForumSubView,
-    ForumThreadV2Detail, ForumThreadV2Ui, ForumV2Request, ForumV2View, RedeemStatus,
+    DmConversationUi, DmMessageUi, DmRequest as UiDmRequest, DmView, ForumListState,
+    ForumReplyV2Ui, ForumRequest, ForumSearchHitUi, ForumSubView, ForumThreadV2Detail,
+    ForumThreadV2Ui, ForumV2Request, ForumV2View, RedeemStatus,
 };
 use mlc_cloud::{
-    forum_error_message, forum_v2_error_message, redeem_error_message, BuildAttestation,
-    BlogPost, CloudConfig, DeviceAuthPoll, EntitlementsResponse, FetchTransport, ForumBoard,
-    ForumMeResponse, ForumReplyNode, ForumSearchHit, ForumThreadResponse, ForumThreadSummary,
-    ForumThreadV2Response, ForumThreadV2Summary, MeResponse, ReleaseEntry, StoredToken,
-    VersionManifest,
+    dm_error_message, forum_error_message, forum_v2_error_message, redeem_error_message,
+    BuildAttestation, BlogPost, CloudConfig, DeviceAuthPoll, EntitlementsResponse, FetchTransport,
+    ForumBoard, ForumMeResponse, ForumReplyNode, ForumSearchHit, ForumThreadResponse,
+    ForumThreadSummary, ForumThreadV2Response, ForumThreadV2Summary, MeResponse, ReleaseEntry,
+    StoredToken, VersionManifest,
 };
 
-/// The Community modal's Messages tab (`CommunityTab::Messages`) has no
-/// vault key to hold a DM identity on this shell — see this crate's own doc
-/// on why direct messages stay desktop-only for now. Set into
-/// `CommunityState::dm.last_error` every frame the tab is active (idempotent
-/// — there is nothing else this shell could ever put there instead) and
-/// every `dm.request` is dropped without a network call.
-const WEB_DM_UNAVAILABLE: &str = "Direct messages are available in the desktop app for now.";
+/// Notice shown in place of the Messages tab's controls while the vault is
+/// sealed (owner ruling 2026-09-09: paid web users hold the vault too, so
+/// "desktop app only" is gone — DMs work here exactly like the native shell,
+/// E2E riding through the server, which never decrypts).
+const DM_LOCKED_MESSAGE: &str = "Unlock your vault to use messages";
+/// Notice shown once the vault is unlocked but the account is not paid.
+const DM_UNPAID_MESSAGE: &str = "Messages need a paid account";
 
 const TOKEN_KEY: &str = "mlc.cloud.token.v1";
 const DEVICE_KEY: &str = "mlc.cloud.device_id.v1";
@@ -136,6 +137,45 @@ enum FlowResult {
     /// sign-in/sign-out edge invalidates it) — see
     /// `ForumV2State::me_fetched_at`'s own doc.
     Forum2Me(Result<ForumMeResponse, String>),
+
+    // ── Messages tab (paid, end-to-end encrypted) ───────────────────────
+    /// The auto-publish attempt (`PUT /api/dm/identity`) — success carries
+    /// the confirmed fingerprint. Best-effort: a failure just logs and
+    /// leaves the next frame's check to retry, same tolerance the native
+    /// shell's own auto-publish gives itself.
+    DmIdentityPublished(Result<String, String>),
+    /// `DmRequest::LoadConversations` (passive first fetch or due-refresh).
+    DmConversations(Result<Vec<mlc_cloud::DmConversation>, String>),
+    /// `DmRequest::Open` — resolves the peer's identity, decodes their
+    /// public key, then opens (or resumes) the conversation, all in one
+    /// round trip (no separate in-flight chain needed — unlike the native
+    /// shell's two-command channel, this is one `spawn_local` body).
+    DmConversationOpened(Result<(mlc_cloud::DmConversation, [u8; 32]), String>),
+    /// Backfilling a LIST-sourced conversation's peer key/fingerprint
+    /// (`GetIdentity` for a conversation reached via `ListConversations`,
+    /// which does not carry either).
+    DmBackfillPeerKey {
+        conversation_id: i64,
+        result: Result<mlc_cloud::DmIdentityResponse, String>,
+    },
+    /// `DmRequest::LoadMessages` — `append` distinguishes "Load more" from a
+    /// fresh open/background refresh, same split `Forum2BoardThreads` draws.
+    DmMessages {
+        conversation_id: i64,
+        append: bool,
+        result: Result<mlc_cloud::DmMessagesResponse, String>,
+    },
+    /// `DmRequest::Send` — `plaintext` rides along so the settled answer can
+    /// become an optimistic bubble without a second round trip.
+    DmSent {
+        plaintext: String,
+        result: Result<(i64, String), String>,
+    },
+    /// `DmRequest::MarkRead`.
+    DmRead {
+        conversation_id: i64,
+        result: Result<(), String>,
+    },
 }
 
 struct Inner {
@@ -233,6 +273,44 @@ struct Inner {
     /// above (v1 and v2 forums are unrelated request streams) so neither
     /// tab's fetch can block or be blocked by the other's.
     forum2_in_flight: bool,
+
+    // ── Direct messages (paid, end-to-end encrypted) ────────────────────
+    // Owner ruling 2026-09-09: paid web users hold the vault too, so this
+    // shell drives DMs exactly like the native shell (`mlc-app-shell-vello`'s
+    // `main.rs` is the reference) — just without a separate background
+    // thread/channel, since every crypto op here is cheap wasm-thread
+    // computation and every network call already goes through `spawn_local`.
+    /// This account's DM identity keypair, deterministically derived from
+    /// the profile's already-unlocked `VaultKey`
+    /// (`mlc_vault::dm::DmIdentity::from_vault_key`) — never a separate
+    /// secret to generate or persist. Re-derived whenever the held vault
+    /// key changes (see `dm_identity_key`); dropped when the vault seals.
+    dm_identity: Option<mlc_vault::dm::DmIdentity>,
+    /// The vault key `dm_identity` was last derived from — compared every
+    /// frame against `chart.core.user().vault_key()` so a fresh unlock (or
+    /// profile switch) re-derives the identity instead of keeping a stale
+    /// one from before a seal.
+    dm_identity_key: Option<mlc_vault::vault::VaultKey>,
+    /// The public half of the identity this browser has already attempted
+    /// to publish (`PUT /api/dm/identity`) since the last unlock or sign-in
+    /// edge — `None` means no attempt yet this epoch. Mirrors the native
+    /// shell's own `dm_identity_publish_attempted_for`.
+    dm_identity_publish_attempted_for: Option<[u8; 32]>,
+    /// Peer public keys cached per conversation id — populated by
+    /// `DmRequest::Open`'s peer lookup and by the backfill queue below for
+    /// a conversation reached via `GET /api/dm/conversations` instead,
+    /// which does not carry the peer's key. Needed to derive
+    /// `conversation_key` for both sending and decrypting.
+    dm_peer_keys: std::collections::HashMap<i64, [u8; 32]>,
+    /// Conversations loaded via `ListConversations` whose peer key is not
+    /// yet cached — `(conversation_id, peer_label)`, drained one at a time
+    /// whenever `dm_in_flight` is free. Mirrors the native shell's own
+    /// `dm_backfill_queue`.
+    dm_backfill_queue: std::collections::VecDeque<(i64, String)>,
+    /// A DM request is in flight — separate from `forum2_in_flight` above
+    /// (unrelated request streams) so neither tab's fetch can block or be
+    /// blocked by the other's.
+    dm_in_flight: bool,
 }
 
 pub struct CloudSession {
@@ -289,6 +367,12 @@ impl CloudSession {
                 clone_result: None,
                 forum_in_flight: false,
                 forum2_in_flight: false,
+                dm_identity: None,
+                dm_identity_key: None,
+                dm_identity_publish_attempted_for: None,
+                dm_peer_keys: std::collections::HashMap::new(),
+                dm_backfill_queue: std::collections::VecDeque::new(),
+                dm_in_flight: false,
             })),
         }
     }
@@ -378,6 +462,15 @@ impl CloudSession {
         // whatever identity just left — clear it so the passive fetch
         // re-asks under the new (anonymous) caller.
         chart.panel_app.community_state.forum2.invalidate_me();
+        // Same reasoning for DMs: the server-confirmed fingerprint and
+        // conversation list both belong to whoever just signed out — clear
+        // them so a later sign-in gets its own auto-publish attempt
+        // (`dm_identity_publish_attempted_for`) instead of reading a stale
+        // "already confirmed" from a different account.
+        chart.panel_app.community_state.dm.identity_fingerprint = None;
+        chart.panel_app.community_state.dm.conversations = Vec::new();
+        chart.panel_app.community_state.dm.reset_to_list();
+        self.inner.borrow_mut().dm_identity_publish_attempted_for = None;
         {
             let mut user = chart.core.user_mut();
             let p = user.profile_mut();
@@ -815,6 +908,12 @@ impl CloudSession {
                     // in (or nobody) BEFORE this login — clear it so the
                     // passive fetch re-asks for the new identity.
                     chart.panel_app.community_state.forum2.invalidate_me();
+                    // Sign-in edge (owner ruling 2026-09-09): this session
+                    // gets its own DM auto-publish attempt, even if an
+                    // earlier attempt this same unlock already failed while
+                    // signed out — mirrors the native shell's own reset at
+                    // this exact edge.
+                    self.inner.borrow_mut().dm_identity_publish_attempted_for = None;
                     // Link the account on the profile (persisted by the
                     // shell's per-frame dirty drain).
                     {
@@ -1249,12 +1348,20 @@ impl CloudSession {
                 }
                 FlowResult::Forum2Search { q, result } => {
                     let ov = &mut chart.panel_app.community_state;
+                    // The inline dropdown (owner review 2026-09-09, item d)
+                    // and the full-page "More results" navigation share this
+                    // one request/result wire — `quick_search_pending` says
+                    // which landing this particular answer gets.
+                    let quick = std::mem::take(&mut ov.forum2.quick_search_pending);
                     match result {
                         Ok(hits) => {
-                            ov.forum2.view = ForumV2View::Search {
-                                q,
-                                hits: hits.into_iter().map(map_forum_search_hit).collect(),
-                            };
+                            let mapped: Vec<ForumSearchHitUi> = hits.into_iter().map(map_forum_search_hit).collect();
+                            if quick {
+                                ov.forum2.quick_search_query = Some(q);
+                                ov.forum2.quick_search_results = mapped;
+                            } else {
+                                ov.forum2.view = ForumV2View::Search { q, hits: mapped };
+                            }
                         }
                         Err(e) => {
                             ov.forum2.last_error = Some(e);
@@ -1284,6 +1391,195 @@ impl CloudSession {
                         }
                     }
                     self.inner.borrow_mut().forum2_in_flight = false;
+                }
+                FlowResult::DmIdentityPublished(result) => {
+                    match result {
+                        Ok(fingerprint) => {
+                            chart.panel_app.community_state.dm.identity_fingerprint = Some(fingerprint);
+                        }
+                        Err(e) => {
+                            // Best-effort background attempt — the next
+                            // frame's check retries; nothing user-facing to
+                            // show for a publish nobody asked for directly.
+                            web_sys::console::warn_1(&format!("[dm] identity publish failed: {}", e).into());
+                        }
+                    }
+                    self.inner.borrow_mut().dm_in_flight = false;
+                }
+                FlowResult::DmConversations(result) => {
+                    let ov = &mut chart.panel_app.community_state.dm;
+                    ov.conversations_refreshing = false;
+                    match result {
+                        Ok(conversations) => {
+                            let mut backfill_targets = Vec::with_capacity(conversations.len());
+                            let mapped: Vec<DmConversationUi> = conversations
+                                .into_iter()
+                                .map(|c| {
+                                    backfill_targets.push((c.id, c.peer.label.clone()));
+                                    DmConversationUi {
+                                        id: c.id,
+                                        peer_label: c.peer.label,
+                                        peer_fingerprint: c.peer.fingerprint,
+                                        last_message_at: c.last_message_at,
+                                        unread_count: c.unread,
+                                    }
+                                })
+                                .collect();
+                            ov.conversations = mapped;
+                            ov.mark_conversations_fetched();
+                            let mut inner = self.inner.borrow_mut();
+                            for (id, label) in backfill_targets {
+                                if !inner.dm_peer_keys.contains_key(&id) {
+                                    inner.dm_backfill_queue.push_back((id, label));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            web_sys::console::warn_1(&format!("[dm] conversations fetch failed: {}", e).into());
+                            ov.last_error = Some(e);
+                        }
+                    }
+                    self.inner.borrow_mut().dm_in_flight = false;
+                }
+                FlowResult::DmConversationOpened(result) => {
+                    let ov = &mut chart.panel_app.community_state.dm;
+                    match result {
+                        Ok((conversation, peer_public_key)) => {
+                            self.inner.borrow_mut().dm_peer_keys.insert(conversation.id, peer_public_key);
+                            let row = DmConversationUi {
+                                id: conversation.id,
+                                peer_label: conversation.peer.label,
+                                peer_fingerprint: conversation.peer.fingerprint,
+                                last_message_at: conversation.last_message_at,
+                                unread_count: conversation.unread,
+                            };
+                            if let Some(existing) = ov.conversations.iter_mut().find(|c| c.id == row.id) {
+                                *existing = row;
+                            } else {
+                                ov.conversations.push(row);
+                            }
+                            ov.open_conversation(conversation.id);
+                        }
+                        Err(e) => {
+                            ov.last_error = Some(e);
+                        }
+                    }
+                    self.inner.borrow_mut().dm_in_flight = false;
+                }
+                FlowResult::DmBackfillPeerKey { conversation_id, result } => {
+                    match result {
+                        Ok(identity) => {
+                            if let Some(key) = dm_decode_public_key(&identity.public_key_b64) {
+                                self.inner.borrow_mut().dm_peer_keys.insert(conversation_id, key);
+                                if let Some(row) = chart
+                                    .panel_app
+                                    .community_state
+                                    .dm
+                                    .conversations
+                                    .iter_mut()
+                                    .find(|c| c.id == conversation_id)
+                                {
+                                    row.peer_fingerprint = Some(identity.fingerprint);
+                                }
+                            }
+                            // A malformed key just leaves this row without a
+                            // fingerprint — Send/decrypt refuse locally until
+                            // a later attempt succeeds.
+                        }
+                        Err(e) => {
+                            web_sys::console::warn_1(&format!("[dm] peer-key backfill failed: {}", e).into());
+                        }
+                    }
+                    self.inner.borrow_mut().dm_in_flight = false;
+                }
+                FlowResult::DmMessages { conversation_id, append, result } => {
+                    let ov = &mut chart.panel_app.community_state.dm;
+                    ov.messages_refreshing = false;
+                    match result {
+                        Ok(resp) => {
+                            let crypto_ctx = {
+                                let inner = self.inner.borrow();
+                                match (&inner.dm_identity, inner.dm_peer_keys.get(&conversation_id)) {
+                                    (Some(identity), Some(peer_public)) => {
+                                        let key: [u8; 32] = *mlc_vault::dm::conversation_key(
+                                            &identity.secret,
+                                            peer_public,
+                                            &conversation_id.to_string(),
+                                        );
+                                        Some((key, identity.public, *peer_public))
+                                    }
+                                    _ => None,
+                                }
+                            };
+                            let mapped: Vec<DmMessageUi> = resp
+                                .messages
+                                .into_iter()
+                                .map(|m| {
+                                    let text = decrypt_dm_message_web(crypto_ctx.as_ref(), conversation_id, &m);
+                                    DmMessageUi {
+                                        id: m.id,
+                                        mine: m.sender_is_me,
+                                        text,
+                                        created_at: m.created_at,
+                                        read_at: m.read_at,
+                                    }
+                                })
+                                .collect();
+                            if let DmView::Conversation { id: existing_id, messages, .. } = &mut ov.view {
+                                if *existing_id == conversation_id {
+                                    if append {
+                                        messages.extend(mapped);
+                                    } else {
+                                        *messages = mapped;
+                                    }
+                                    ov.mark_messages_fetched();
+                                }
+                                // Else: the caller navigated away before this
+                                // landed — dropped, same tolerance an
+                                // interrupted v1/forum2 fetch gets.
+                            }
+                        }
+                        Err(e) => {
+                            web_sys::console::warn_1(&format!("[dm] messages fetch failed: {}", e).into());
+                            ov.last_error = Some(e);
+                        }
+                    }
+                    self.inner.borrow_mut().dm_in_flight = false;
+                }
+                FlowResult::DmSent { plaintext, result } => {
+                    let ov = &mut chart.panel_app.community_state.dm;
+                    match result {
+                        Ok((id, created_at)) => {
+                            if let DmView::Conversation { messages, .. } = &mut ov.view {
+                                messages.push(DmMessageUi { id, mine: true, text: plaintext, created_at, read_at: None });
+                            }
+                        }
+                        Err(message) => {
+                            ov.last_error = Some(message.clone());
+                            chart.push_system_event(mlc_core::SystemEventKind::Info, "Message not sent", message, true);
+                        }
+                    }
+                    self.inner.borrow_mut().dm_in_flight = false;
+                }
+                FlowResult::DmRead { conversation_id, result } => {
+                    match result {
+                        Ok(()) => {
+                            if let Some(row) = chart
+                                .panel_app
+                                .community_state
+                                .dm
+                                .conversations
+                                .iter_mut()
+                                .find(|c| c.id == conversation_id)
+                            {
+                                row.unread_count = 0;
+                            }
+                        }
+                        Err(e) => {
+                            chart.panel_app.community_state.dm.last_error = Some(e);
+                        }
+                    }
+                    self.inner.borrow_mut().dm_in_flight = false;
                 }
                 FlowResult::Logout => {
                     // Local sign-out regardless of the server answer. `st`
@@ -1810,20 +2106,324 @@ impl CloudSession {
             }
         }
 
-        // ── Messages tab: no vault key on this shell — desktop-only for
-        // now (see `WEB_DM_UNAVAILABLE`'s own doc). Every `dm.request` is
-        // dropped without a network call.
+        // ── Forum v2 inline quick-search (owner review 2026-09-09, item d
+        // of the community-modal-and-forum-ladder arc) ──────────────────
+        // Debounced (or Enter-fired, `text_action_forum_search` in
+        // mlc-app) refetch for the header's compact search box — lands in
+        // `ForumV2State::quick_search_*` (the dropdown), never `view`.
+        // Shares `forum2_in_flight` with the boards/threads passive
+        // fetches above: not worth a second flag for a box idle almost
+        // all the time.
         {
-            let ov = &mut chart.panel_app.community_state;
-            let messages_active = ov.is_open && ov.tab == CommunityTab::Messages;
-            if messages_active {
-                ov.dm.last_error = Some(WEB_DM_UNAVAILABLE.to_string());
+            let due = chart.panel_app.community_state.forum2.quick_search_due();
+            if due && !self.inner.borrow().forum2_in_flight {
+                let q = {
+                    let coord = chart.input_coordinator.borrow();
+                    coord
+                        .text_fields()
+                        .text(&uzor::WidgetId::from(mlc_app::text_input::FORUM_SEARCH))
+                        .trim()
+                        .to_string()
+                };
+                let ov = &mut chart.panel_app.community_state.forum2;
+                ov.quick_search_due_at = None;
+                if q.is_empty() {
+                    ov.quick_search_query = None;
+                    ov.quick_search_results = Vec::new();
+                } else {
+                    ov.quick_search_pending = true;
+                    ov.last_error = None;
+                    self.inner.borrow_mut().forum2_in_flight = true;
+                    let inner = self.inner.clone();
+                    let transport = self.inner.borrow().transport.snapshot();
+                    spawn_local(async move {
+                        let raw = transport.forum_search(&q, None).await;
+                        if let Err(e) = &raw {
+                            mark_unauthorized(&inner, e);
+                        }
+                        let r = raw.map_err(|e| forum_v2_error_message(&e));
+                        inner.borrow_mut().result = Some(FlowResult::Forum2Search { q, result: r });
+                    });
+                }
             }
-            if ov.dm.request.take().is_some() {
-                web_sys::console::warn_1(
-                    &"[dm] direct messages are not available on the web build — request dropped".into(),
-                );
-                ov.dm.last_error = Some(WEB_DM_UNAVAILABLE.to_string());
+        }
+
+        // ── Messages tab (paid, end-to-end encrypted) ────────────────────
+        // Owner ruling 2026-09-09: paid web users hold the vault too — this
+        // mirrors the native shell's own `drive_dm` (`mlc-app-shell-vello`'s
+        // `main.rs`), just as one shell-owned driver instead of a background
+        // updater thread + channel (every crypto op below is cheap
+        // synchronous wasm-thread computation; every network call already
+        // goes through this file's own `spawn_local` idiom).
+        {
+            let messages_active = chart.panel_app.community_state.is_open
+                && chart.panel_app.community_state.tab == CommunityTab::Messages;
+
+            let vault_key = chart.core.user().vault_key();
+            let paid = chart.panel_app.cloud_overlay_state.forum_entitled;
+
+            match vault_key {
+                None => {
+                    chart.panel_app.community_state.dm.available = false;
+                    if messages_active {
+                        chart.panel_app.community_state.dm.last_error = Some(DM_LOCKED_MESSAGE.to_string());
+                    }
+                    let mut inner = self.inner.borrow_mut();
+                    inner.dm_identity = None;
+                    inner.dm_identity_key = None;
+                    inner.dm_identity_publish_attempted_for = None;
+                }
+                Some(key) => {
+                    if !paid {
+                        chart.panel_app.community_state.dm.available = false;
+                        if messages_active {
+                            chart.panel_app.community_state.dm.last_error = Some(DM_UNPAID_MESSAGE.to_string());
+                        }
+                    } else {
+                        chart.panel_app.community_state.dm.available = true;
+                    }
+                    let mut inner = self.inner.borrow_mut();
+                    let needs_derive = inner.dm_identity.is_none() || inner.dm_identity_key != Some(key);
+                    if needs_derive {
+                        inner.dm_identity = Some(mlc_vault::dm::DmIdentity::from_vault_key(&key));
+                        inner.dm_identity_key = Some(key);
+                        inner.dm_identity_publish_attempted_for = None;
+                    }
+                }
+            }
+
+            if messages_active {
+                // Auto-publish this profile's key once signed in + paid —
+                // the ONLY publish path (owner ruling 2026-09-09: no
+                // user-facing button). Fires at most once per unlock and
+                // again after a sign-in edge (both clear
+                // `dm_identity_publish_attempted_for` — see the vault-key
+                // branch above and the login-confirm arm below).
+                if !self.inner.borrow().dm_in_flight {
+                    let should_publish = {
+                        let inner = self.inner.borrow();
+                        match &inner.dm_identity {
+                            Some(identity) if paid => {
+                                let my_fingerprint = mlc_vault::dm::fingerprint(&identity.public);
+                                let already_confirmed = chart
+                                    .panel_app
+                                    .community_state
+                                    .dm
+                                    .identity_fingerprint
+                                    .as_deref()
+                                    == Some(my_fingerprint.as_str());
+                                let already_attempted =
+                                    inner.dm_identity_publish_attempted_for == Some(identity.public);
+                                (!already_confirmed && !already_attempted).then_some(identity.public)
+                            }
+                            _ => None,
+                        }
+                    };
+                    if let Some(public) = should_publish {
+                        self.inner.borrow_mut().dm_identity_publish_attempted_for = Some(public);
+                        self.inner.borrow_mut().dm_in_flight = true;
+                        let public_key_b64 = dm_encode(&public);
+                        let inner = self.inner.clone();
+                        let transport = self.inner.borrow().transport.snapshot();
+                        spawn_local(async move {
+                            let raw = transport.dm_put_identity(&public_key_b64).await;
+                            if let Err(e) = &raw {
+                                mark_unauthorized(&inner, e);
+                            }
+                            let r = raw.map_err(|e| dm_error_message(&e));
+                            inner.borrow_mut().result = Some(FlowResult::DmIdentityPublished(r));
+                        });
+                    }
+                }
+
+                // Passive: conversations list, on tab-open or due-refresh.
+                let conv_needs = {
+                    let ov = &chart.panel_app.community_state.dm;
+                    ov.conversations_fetched_at.is_none() || ov.conversations_due_for_refresh()
+                };
+                if conv_needs && !self.inner.borrow().dm_in_flight {
+                    chart.panel_app.community_state.dm.conversations_refreshing = true;
+                    self.inner.borrow_mut().dm_in_flight = true;
+                    let inner = self.inner.clone();
+                    let transport = self.inner.borrow().transport.snapshot();
+                    spawn_local(async move {
+                        let raw = transport.dm_conversations().await;
+                        if let Err(e) = &raw {
+                            mark_unauthorized(&inner, e);
+                        }
+                        let r = raw.map_err(|e| dm_error_message(&e));
+                        inner.borrow_mut().result = Some(FlowResult::DmConversations(r));
+                    });
+                }
+
+                // Passive: the open conversation's messages, on open or
+                // due-refresh — silent (no view flip), same tolerance v1's
+                // own thread refresh gives an in-progress draft.
+                if !self.inner.borrow().dm_in_flight {
+                    if let DmView::Conversation { id, .. } = &chart.panel_app.community_state.dm.view {
+                        let id = *id;
+                        let ov = &chart.panel_app.community_state.dm;
+                        let due = ov.messages_fetched_at.is_none() || ov.messages_due_for_refresh();
+                        if due {
+                            chart.panel_app.community_state.dm.messages_refreshing = true;
+                            self.inner.borrow_mut().dm_in_flight = true;
+                            let inner = self.inner.clone();
+                            let transport = self.inner.borrow().transport.snapshot();
+                            spawn_local(async move {
+                                let raw = transport.dm_messages(id, None, 50).await;
+                                if let Err(e) = &raw {
+                                    mark_unauthorized(&inner, e);
+                                }
+                                let r = raw.map_err(|e| dm_error_message(&e));
+                                inner.borrow_mut().result =
+                                    Some(FlowResult::DmMessages { conversation_id: id, append: false, result: r });
+                            });
+                        }
+                    }
+                }
+
+                // Explicit user action — dropped (not queued) if a DM
+                // request is already in flight, same tolerance every other
+                // tab in this driver gives a doubled click.
+                if let Some(req) = chart.panel_app.community_state.dm.request.take() {
+                    if !self.inner.borrow().dm_in_flight {
+                        match req {
+                            UiDmRequest::LoadConversations => {
+                                chart.panel_app.community_state.dm.conversations_refreshing = true;
+                                self.inner.borrow_mut().dm_in_flight = true;
+                                let inner = self.inner.clone();
+                                let transport = self.inner.borrow().transport.snapshot();
+                                spawn_local(async move {
+                                    let raw = transport.dm_conversations().await;
+                                    if let Err(e) = &raw {
+                                        mark_unauthorized(&inner, e);
+                                    }
+                                    let r = raw.map_err(|e| dm_error_message(&e));
+                                    inner.borrow_mut().result = Some(FlowResult::DmConversations(r));
+                                });
+                            }
+                            UiDmRequest::Open { with_label } => {
+                                self.inner.borrow_mut().dm_in_flight = true;
+                                let inner = self.inner.clone();
+                                let transport = self.inner.borrow().transport.snapshot();
+                                spawn_local(async move {
+                                    let result = match transport.dm_get_identity(&with_label).await {
+                                        Err(e) => {
+                                            mark_unauthorized(&inner, &e);
+                                            Err(dm_error_message(&e))
+                                        }
+                                        Ok(identity) => match dm_decode_public_key(&identity.public_key_b64) {
+                                            None => Err("That account's messaging key is malformed".to_string()),
+                                            Some(peer_public_key) => {
+                                                match transport.dm_open_conversation(&identity.public_id).await {
+                                                    Err(e) => {
+                                                        mark_unauthorized(&inner, &e);
+                                                        Err(dm_error_message(&e))
+                                                    }
+                                                    Ok(conversation) => Ok((conversation, peer_public_key)),
+                                                }
+                                            }
+                                        },
+                                    };
+                                    inner.borrow_mut().result = Some(FlowResult::DmConversationOpened(result));
+                                });
+                            }
+                            UiDmRequest::LoadMessages { id, after } => {
+                                let append = after.is_some();
+                                chart.panel_app.community_state.dm.messages_refreshing = true;
+                                self.inner.borrow_mut().dm_in_flight = true;
+                                let inner = self.inner.clone();
+                                let transport = self.inner.borrow().transport.snapshot();
+                                spawn_local(async move {
+                                    let raw = transport.dm_messages(id, after, 50).await;
+                                    if let Err(e) = &raw {
+                                        mark_unauthorized(&inner, e);
+                                    }
+                                    let r = raw.map_err(|e| dm_error_message(&e));
+                                    inner.borrow_mut().result =
+                                        Some(FlowResult::DmMessages { conversation_id: id, append, result: r });
+                                });
+                            }
+                            UiDmRequest::Send { id, plaintext } => {
+                                let sealed_payload: Result<(String, String), &'static str> = {
+                                    let inner_borrow = self.inner.borrow();
+                                    match (&inner_borrow.dm_identity, inner_borrow.dm_peer_keys.get(&id)) {
+                                        (None, _) => Err("Unlock the vault to send messages"),
+                                        (_, None) => Err("Open this conversation again to send"),
+                                        (Some(identity), Some(peer_public)) => {
+                                            let key: [u8; 32] = *mlc_vault::dm::conversation_key(
+                                                &identity.secret,
+                                                peer_public,
+                                                &id.to_string(),
+                                            );
+                                            let my_fingerprint = mlc_vault::dm::fingerprint(&identity.public);
+                                            let aad = dm_aad(id, &my_fingerprint);
+                                            let sealed = mlc_vault::dm::seal_message(&key, plaintext.as_bytes(), &aad);
+                                            Ok((dm_encode(&sealed.nonce), dm_encode(&sealed.ciphertext)))
+                                        }
+                                    }
+                                };
+                                match sealed_payload {
+                                    Err(message) => {
+                                        chart.panel_app.community_state.dm.last_error = Some(message.to_string());
+                                    }
+                                    Ok((nonce_b64, ciphertext_b64)) => {
+                                        self.inner.borrow_mut().dm_in_flight = true;
+                                        let inner = self.inner.clone();
+                                        let transport = self.inner.borrow().transport.snapshot();
+                                        spawn_local(async move {
+                                            let raw = transport.dm_send(id, &nonce_b64, &ciphertext_b64).await;
+                                            if let Err(e) = &raw {
+                                                mark_unauthorized(&inner, e);
+                                            }
+                                            let r = raw
+                                                .map(|resp| (resp.id, resp.created_at))
+                                                .map_err(|e| dm_error_message(&e));
+                                            inner.borrow_mut().result = Some(FlowResult::DmSent { plaintext, result: r });
+                                        });
+                                    }
+                                }
+                            }
+                            UiDmRequest::MarkRead { id, up_to } => {
+                                self.inner.borrow_mut().dm_in_flight = true;
+                                let inner = self.inner.clone();
+                                let transport = self.inner.borrow().transport.snapshot();
+                                spawn_local(async move {
+                                    let raw = transport.dm_mark_read(id, up_to).await;
+                                    if let Err(e) = &raw {
+                                        mark_unauthorized(&inner, e);
+                                    }
+                                    let r = raw.map_err(|e| dm_error_message(&e));
+                                    inner.borrow_mut().result = Some(FlowResult::DmRead { conversation_id: id, result: r });
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Backfill: one peer-key lookup at a time for a LIST-sourced
+                // conversation the `Open` flow never touched.
+                if !self.inner.borrow().dm_in_flight {
+                    let next = self.inner.borrow_mut().dm_backfill_queue.pop_front();
+                    if let Some((conversation_id, label)) = next {
+                        if self.inner.borrow().dm_peer_keys.contains_key(&conversation_id) {
+                            // Already resolved by an earlier `Open` — drop.
+                        } else {
+                            self.inner.borrow_mut().dm_in_flight = true;
+                            let inner = self.inner.clone();
+                            let transport = self.inner.borrow().transport.snapshot();
+                            spawn_local(async move {
+                                let raw = transport.dm_get_identity(&label).await;
+                                if let Err(e) = &raw {
+                                    mark_unauthorized(&inner, e);
+                                }
+                                let r = raw.map_err(|e| dm_error_message(&e));
+                                inner.borrow_mut().result =
+                                    Some(FlowResult::DmBackfillPeerKey { conversation_id, result: r });
+                            });
+                        }
+                    }
+                }
             }
         }
 
@@ -1998,17 +2598,21 @@ fn map_forum_thread(resp: ForumThreadResponse) -> CloudForumThread {
 // Same split as the v1 mapping above: `mlc-app-layout` cannot depend on
 // `mlc-cloud`, so the shell turns a wire row into the UI mirror.
 
-/// Coarse class ranking for [`forum2_can_write`] — public < user < paid <
-/// moderator < admin, matching `social_db::Class`'s own ordering
-/// (`forum_v2_overlay`'s doc names it, this crate does not depend on the
-/// server crate to read it directly).
+/// Full client-side ladder for [`forum2_can_write`] — `public < user < paid
+/// < trusted < moderator < admin`, matching `social_db::Class`'s own
+/// ordering (`forum_v2_overlay`'s doc names it, this crate does not depend
+/// on the server crate to read it directly). `trusted` (rank 3 — "paid with
+/// standing", owner ruling 2026-09-08) sits between `paid` and `moderator`;
+/// mirrored exactly in `mlc-app-shell-vello`'s own
+/// `forum2_class_rank_native` — the two must never disagree on a rank.
 fn forum2_class_rank(class: &str) -> u8 {
     match class {
         "public" => 0,
         "user" => 1,
         "paid" => 2,
-        "moderator" => 3,
-        "admin" => 4,
+        "trusted" => 3,
+        "moderator" => 4,
+        "admin" => 5,
         _ => 0,
     }
 }
@@ -2162,6 +2766,74 @@ fn clone_error_message(e: &mlc_cloud::CloudError) -> String {
 fn mark_unauthorized(inner: &Rc<RefCell<Inner>>, e: &mlc_cloud::CloudError) {
     if e.is_unauthorized() {
         inner.borrow_mut().unauthorized = true;
+    }
+}
+
+// ── Direct-message crypto helpers ────────────────────────────────────────
+// The shell owns the crypto end to end (`mlc_vault::dm`'s own module doc) —
+// mirrors `mlc-app-shell-vello`'s own copy of these exactly (`main.rs`'s
+// `dm_aad`/`dm_decode_public_key`/`dm_decode_nonce`/`dm_encode`/
+// `decrypt_dm_message_native`), so the two shells derive the identical AAD
+// and reach the identical plaintext for the same wire message.
+// `mlc-app-layout`'s `DmMessageUi::text` only ever holds plaintext or the
+// literal `"<cannot decrypt>"`, never ciphertext or a key.
+
+/// AAD binding for one DM message's seal/open — conversation id plus the
+/// SENDING identity's own key fingerprint. See `mlc-app-shell-vello`'s own
+/// copy for the full reasoning; both shells must derive the same value for
+/// the same message.
+fn dm_aad(conversation_id: i64, sender_fingerprint: &str) -> Vec<u8> {
+    format!("{}|{}", conversation_id, sender_fingerprint).into_bytes()
+}
+
+fn dm_decode_public_key(public_key_b64: &str) -> Option<[u8; 32]> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(public_key_b64).ok()?;
+    bytes.try_into().ok()
+}
+
+fn dm_decode_nonce(nonce_b64: &str) -> Option<[u8; 12]> {
+    use base64::Engine;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(nonce_b64).ok()?;
+    bytes.try_into().ok()
+}
+
+fn dm_encode(bytes: &[u8]) -> String {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn dm_base64_decode(s: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(s).ok()
+}
+
+/// Decrypt one wire `DmMessage` into the plaintext (or the literal
+/// `"<cannot decrypt>"`) `DmMessageUi::text` carries. `ctx =
+/// (conversation_key, my_public, peer_public)`, `None` when either this
+/// profile's identity or the conversation's cached peer key is missing
+/// (sealed vault, or the peer key has not been resolved/backfilled yet).
+fn decrypt_dm_message_web(
+    ctx: Option<&([u8; 32], [u8; 32], [u8; 32])>,
+    conversation_id: i64,
+    m: &mlc_cloud::DmMessage,
+) -> String {
+    const CANNOT_DECRYPT: &str = "<cannot decrypt>";
+    let Some((key, my_public, peer_public)) = ctx else {
+        return CANNOT_DECRYPT.to_string();
+    };
+    let Some(nonce) = dm_decode_nonce(&m.nonce_b64) else {
+        return CANNOT_DECRYPT.to_string();
+    };
+    let Some(ciphertext) = dm_base64_decode(&m.ciphertext_b64) else {
+        return CANNOT_DECRYPT.to_string();
+    };
+    let sender_public = if m.sender_is_me { my_public } else { peer_public };
+    let aad = dm_aad(conversation_id, &mlc_vault::dm::fingerprint(sender_public));
+    let sealed = mlc_vault::dm::DmCiphertext { nonce, ciphertext };
+    match mlc_vault::dm::open_message(key, &sealed, &aad) {
+        Ok(plaintext) => String::from_utf8_lossy(&plaintext).into_owned(),
+        Err(_) => CANNOT_DECRYPT.to_string(),
     }
 }
 

@@ -5480,6 +5480,47 @@ pub struct ForumV2State {
     /// `DeleteReply`/`Moderate`, consumed to know whether to clear
     /// `FORUM_REPLY` (and `ForumV2View::Thread::reply_to`).
     pub reply_pending: bool,
+
+    // ── Inline compact search (owner review 2026-09-09, community-modal-
+    // and-forum-ladder arc, piece 2 item d) — replaces the old full-width
+    // search box + big "Search" button that used to open directly into
+    // `ForumV2View::Search`. A magnifier icon in the right pane's header
+    // row expands the shared `FORUM_SEARCH` field in place; typing
+    // debounces (or Enter fires immediately) the SAME `ForumV2Request::
+    // Search` the full-page view already uses, and the answer lands here
+    // instead of replacing `view` — rendered as a small dropdown anchored
+    // under the field. The full-page `ForumV2View::Search` stays reachable
+    // only via the dropdown's own "More results" row.
+    /// Whether the header's magnifier button has expanded the field.
+    pub quick_search_open: bool,
+    /// The query `quick_search_results` currently answers — `None` before
+    /// the first answer lands (or once the field empties). Distinct from
+    /// [`ForumV2View::Search`]'s own `q` echo: that one belongs to the
+    /// full-page navigation, this one to the inline dropdown.
+    pub quick_search_query: Option<String>,
+    /// Live results for the inline dropdown (client-truncated to the first
+    /// few rows by the drawing side) — separate from `ForumV2View::
+    /// Search`'s own full-page `hits` so the two can never overwrite each
+    /// other.
+    pub quick_search_results: Vec<ForumSearchHitUi>,
+    /// The `FORUM_SEARCH` field text the shell driver's debounce check last
+    /// saw — compared each frame against the live field to detect an edit
+    /// and (re)arm [`Self::quick_search_due_at`]. Not the answered query
+    /// (see [`Self::quick_search_query`] for that).
+    pub quick_search_last_seen_text: String,
+    /// Wall-clock ms ([`now_ms`]) after which the debounced fetch for the
+    /// current field text is due; `None` = nothing pending. Armed by
+    /// [`Self::arm_quick_search_debounce`] on every keystroke while
+    /// [`Self::quick_search_open`], read (and cleared) by the shell
+    /// driver's per-frame due-check.
+    pub quick_search_due_at: Option<u64>,
+    /// The in-flight (or about-to-fire) `ForumV2Request::Search` is the
+    /// INLINE one — consumed by the `Forum2Search` apply arm to know
+    /// whether the answer goes to [`Self::quick_search_results`] (inline
+    /// dropdown) or replaces `view` (the full-page "More results"
+    /// navigation, which never sets this flag) — same request/result wire,
+    /// two different landings.
+    pub quick_search_pending: bool,
 }
 
 #[cfg(feature = "cloud")]
@@ -5502,6 +5543,12 @@ impl Default for ForumV2State {
             thread_refreshing: false,
             create_thread_pending: false,
             reply_pending: false,
+            quick_search_open: false,
+            quick_search_query: None,
+            quick_search_results: Vec::new(),
+            quick_search_last_seen_text: String::new(),
+            quick_search_due_at: None,
+            quick_search_pending: false,
         }
     }
 }
@@ -5528,6 +5575,43 @@ impl ForumV2State {
         self.request = None;
         self.create_thread_pending = false;
         self.reply_pending = false;
+        self.close_quick_search();
+    }
+
+    /// Debounce window before the inline quick-search dropdown re-fetches
+    /// after the last keystroke — long enough to not fire on every
+    /// character, short enough to feel live (owner review 2026-09-09).
+    pub const QUICK_SEARCH_DEBOUNCE_MS: u64 = 300;
+
+    /// Expand the header's inline search field.
+    pub fn open_quick_search(&mut self) {
+        self.quick_search_open = true;
+    }
+
+    /// Collapse the inline search field and drop whatever it was showing —
+    /// called on Escape, a click elsewhere, and every navigation that
+    /// already resets the pane (`reset_to_boards`, opening a different
+    /// board/thread).
+    pub fn close_quick_search(&mut self) {
+        self.quick_search_open = false;
+        self.quick_search_query = None;
+        self.quick_search_results = Vec::new();
+        self.quick_search_last_seen_text = String::new();
+        self.quick_search_due_at = None;
+    }
+
+    /// Called on every keystroke into `FORUM_SEARCH` while the inline box
+    /// is open — arms (or re-arms) the debounced fetch. Cheap: nothing
+    /// fires here, only the timestamp this module's own [`now_ms`] reads.
+    pub fn arm_quick_search_debounce(&mut self) {
+        self.quick_search_due_at = Some(now_ms() + Self::QUICK_SEARCH_DEBOUNCE_MS);
+    }
+
+    /// Whether the armed debounce timer has elapsed — read (and cleared)
+    /// by the shell driver's per-frame poll, same idiom every other
+    /// `*_due_for_refresh` check in this type uses.
+    pub fn quick_search_due(&self) -> bool {
+        matches!(self.quick_search_due_at, Some(t) if now_ms() >= t)
     }
 
     pub fn invalidate_boards(&mut self) {
@@ -5706,15 +5790,16 @@ pub struct DmState {
     /// it is consumed, on success or failure alike.
     pub send_pending: bool,
     /// Whether DM controls (open-peer, conversations, draft/send) can
-    /// actually work in this shell. The web shell never sets this — no DM
-    /// identity plumbing exists there, and drawing those controls anyway
-    /// invited clicks that could never do anything (`dm.last_error`'s own
-    /// notice already tells the web user why). The native shell sets it
-    /// once the vault is unlocked (the DM identity is then derivable
-    /// on-demand, always successfully — see `mlc_vault::dm::DmIdentity::
-    /// from_vault_key`) and clears it while sealed, alongside its own
-    /// "Unlock the vault…" notice. Defaults `false` — a shell must opt in
-    /// explicitly rather than draw live controls before it can back them.
+    /// actually work in this shell right now. Both shells derive this the
+    /// same way (owner ruling 2026-09-09: paid web users hold the vault too,
+    /// end-to-end DMs ride through the server, which never decrypts) — set
+    /// once the vault is unlocked AND the account is paid (the DM identity
+    /// is then derivable on-demand, always successfully — see
+    /// `mlc_vault::dm::DmIdentity::from_vault_key`), cleared with the
+    /// matching notice in `last_error` ("Unlock your vault to use messages"
+    /// while sealed; "Messages need a paid account" while unlocked but
+    /// free). Defaults `false` — a shell must opt in explicitly rather than
+    /// draw live controls before it can back them.
     pub available: bool,
 }
 
@@ -5963,6 +6048,7 @@ impl CommunityState {
         self.forum2.create_thread_pending = false;
         self.forum2.reply_pending = false;
         self.forum2.request = None;
+        self.forum2.close_quick_search();
         self.dm.conversations_refreshing = false;
         self.dm.messages_refreshing = false;
         self.dm.send_pending = false;

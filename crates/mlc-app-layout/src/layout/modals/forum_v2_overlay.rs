@@ -17,14 +17,21 @@
 //! thread/reply counts + last activity — owner review 2026-09-09: "a forum,
 //! not a feed") and a RIGHT pane whose content depends on `ForumV2View`
 //! (board header + threads, an open thread, search results, or the compose
-//! form). The search box moved from the boards list's own top to the right
-//! pane's top (`draw_right_boards`); an open thread's reply composer is
-//! DOCKED at the bottom of the right pane, with only the thread body/reply
-//! tree above it scrolling — same split `dm_overlay.rs`'s own conversation
-//! view uses for its send box. `height`/`draw` no longer size a single
-//! shared scroll region: `list_height` sizes the left column, `draw` sizes
-//! each pane's own region internally (see this file's own per-view `*_h`
-//! helpers).
+//! form). An open thread's reply composer is DOCKED at the bottom of the
+//! right pane, with only the thread body/reply tree above it scrolling —
+//! same split `dm_overlay.rs`'s own conversation view uses for its send box.
+//! `height`/`draw` no longer size a single shared scroll region:
+//! `list_height` sizes the left column, `draw` sizes each pane's own region
+//! internally (see this file's own per-view `*_h` helpers).
+//!
+//! Owner review 2026-09-09 (item d) replaced the old full-width search box
+//! + big "Search" button with a compact magnifier toggle in the right
+//! pane's own header row (`draw_pane_header`): typing debounces (or Enter
+//! fires) the same `ForumV2Request::Search` the full-page view already
+//! used, and the answer renders as a small dropdown anchored under the
+//! field (`draw_quick_search_dropdown`) instead of switching `view` — the
+//! full-page `ForumV2View::Search` stays reachable only via the dropdown's
+//! own "More results" row.
 
 use mlc_core::engine::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
 use uzor::input::{InputCoordinator, LayerId, Sense};
@@ -64,6 +71,16 @@ const LINK_ROW_H: f64 = ROW_H;
 /// content column to nothing.
 const REPLY_INDENT: f64 = 16.0;
 const REPLY_MAX_DEPTH: i64 = 6;
+
+// ── Right-pane header (owner review 2026-09-09, item d) ─────────────────
+// Board title / "New thread" / the compact search toggle all share one
+// fixed-height row — see `draw_pane_header`'s own doc.
+const PANE_HEADER_H: f64 = FIELD_H + 8.0;
+const QUICK_SEARCH_ICON_BOX: f64 = 28.0;
+const QUICK_SEARCH_FIELD_W: f64 = 180.0;
+const QUICK_RESULT_ROW_H: f64 = 36.0;
+const QUICK_MORE_ROW_H: f64 = 28.0;
+const QUICK_DROPDOWN_MAX_ROWS: usize = 8;
 
 // =============================================================================
 // Entry points — `list_height` sizes the LEFT column's own scroll container
@@ -489,10 +506,17 @@ fn draw_board_row(
     let desc = crate::ui::widgets::fit_text_to_width(ctx, &board.description, w - 16.0);
     ctx.fill_text(&desc, x + 8.0, y + 22.0);
 
-    ctx.set_font("10px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    let hint = crate::ui::widgets::fit_text_to_width(ctx, &format!("write: {}", board.write_class), w - 16.0);
-    ctx.fill_text(&hint, x + 8.0, y + 38.0);
+    // "write: <class>" hint — only when the caller CANNOT write (owner
+    // review 2026-09-09: quiet when they can; the lock glyph above already
+    // says the same thing at a glance for the cannot-write case, this line
+    // just names the class). Other lines keep their fixed y-offsets either
+    // way — dropping this one does not reflow the row.
+    if !board.can_write {
+        ctx.set_font("10px monospace");
+        ctx.set_fill_color(&tt.item_text_muted);
+        let hint = crate::ui::widgets::fit_text_to_width(ctx, &format!("write: {}", board.write_class), w - 16.0);
+        ctx.fill_text(&hint, x + 8.0, y + 38.0);
+    }
 
     let counts = format!("{} threads · {} posts", board.thread_count, board.thread_count + board.reply_count);
     let counts = crate::ui::widgets::fit_text_to_width(ctx, &counts, w - 16.0);
@@ -534,55 +558,161 @@ fn draw_board_list(
 }
 
 // =============================================================================
-// Right pane — Boards view (`ForumV2View::Boards`, nothing selected yet):
-// search box (moved here from the left column's own top in W1/W2) plus a
-// placeholder pointing at the left column.
+// Right pane header — board title (`BoardThreads` only) + "New thread" (when
+// `can_write`) + a compact search toggle, shared by every right-pane view
+// (owner review 2026-09-09, item d: replaces the old full-width search box
+// + big "Search" button, which took half the pane for one field). Clicking
+// the magnifier expands the shared `FORUM_SEARCH` field in place; the
+// answer renders as a dropdown anchored under it (`draw_quick_search_
+// dropdown`) rather than switching `view` — the old full-page
+// `ForumV2View::Search` stays reachable only via the dropdown's own "More
+// results" row.
 // =============================================================================
 
-fn search_box_h() -> f64 {
-    16.0 + FIELD_H + 8.0 + ROW_H + 12.0
-}
-
+/// Draws the header row and returns its height. When the inline field is
+/// open, `result.forum_search_rect` carries its rect (the dropdown's own
+/// anchor) — left untouched (so it stays `None` on a fresh per-frame
+/// result) when the field is closed.
 #[allow(clippy::too_many_arguments)]
-fn draw_search_box(
+fn draw_pane_header(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
     x: f64,
     y: f64,
     w: f64,
+    board_title_text: Option<&str>,
+    show_new_thread: bool,
+    state: &CommunityState,
     ft: &FrameTheme,
     tt: &ToolbarTheme,
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
 ) -> f64 {
-    let mut ly = y;
-    ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("SEARCH", x, ly);
-    ly += 16.0;
-    let field_rect = WidgetRect::new(x, ly, w, FIELD_H);
-    let (rect, chars) = draw_field(
-        ctx, coord, layer_id, "cloud_overlay:forum2:search_input", FORUM_SEARCH_FIELD, field_rect,
-        "Search the forum…", ft, tt, current_time_ms,
-    );
-    result.forum_search_rect = Some(rect);
-    result.forum_search_char_positions = chars;
-    ly += FIELD_H + 8.0;
-    draw_action_row(
-        ctx, coord, layer_id, "cloud_overlay:forum2:search_submit",
-        WidgetRect::new(x, ly, w, ROW_H - ROW_GAP), "Search", tt,
-    );
-    ly += ROW_H + 12.0;
-    ly - y
+    let h = PANE_HEADER_H;
+    let mut right_edge = x + w;
+
+    // Search toggle — always the rightmost control.
+    let icon_rect = WidgetRect::new(right_edge - QUICK_SEARCH_ICON_BOX, y + (h - QUICK_SEARCH_ICON_BOX) / 2.0, QUICK_SEARCH_ICON_BOX, QUICK_SEARCH_ICON_BOX);
+    let icon_hovered = coord.is_hovered(&WidgetId::from("cloud_overlay:forum2:quick_search_toggle"));
+    if icon_hovered || state.forum2.quick_search_open {
+        ctx.set_fill_color(&tt.item_bg_hover);
+        ctx.fill_rounded_rect(icon_rect.x, icon_rect.y, icon_rect.width, icon_rect.height, SETTINGS_BUTTON_RADIUS);
+    }
+    draw_svg_icon(ctx, Icon::Search.svg(), icon_rect.x + 6.0, icon_rect.y + 6.0, 16.0, 16.0, &tt.item_text);
+    coord.register_on_layer("cloud_overlay:forum2:quick_search_toggle", icon_rect, Sense::CLICK | Sense::HOVER, layer_id);
+    right_edge -= QUICK_SEARCH_ICON_BOX + 8.0;
+
+    if state.forum2.quick_search_open {
+        let field_w = QUICK_SEARCH_FIELD_W.min((right_edge - x).max(60.0));
+        let field_rect = WidgetRect::new(right_edge - field_w, y + (h - FIELD_H) / 2.0, field_w, FIELD_H);
+        let (rect, chars) = draw_field(
+            ctx, coord, layer_id, "cloud_overlay:forum2:quick_search_input", FORUM_SEARCH_FIELD, field_rect,
+            "Search…", ft, tt, current_time_ms,
+        );
+        result.forum_search_rect = Some(rect);
+        result.forum_search_char_positions = chars;
+        right_edge -= field_w + 8.0;
+    }
+
+    if show_new_thread {
+        let btn_w = 92.0f64.min((right_edge - x).max(0.0));
+        let btn_rect = WidgetRect::new(right_edge - btn_w, y + (h - (ROW_H - ROW_GAP)) / 2.0, btn_w, ROW_H - ROW_GAP);
+        draw_action_row(ctx, coord, layer_id, "cloud_overlay:forum2:new_thread", btn_rect, "New thread", tt);
+        right_edge -= btn_w + 8.0;
+    }
+
+    if let Some(title) = board_title_text {
+        ctx.set_font("600 13px sans-serif");
+        ctx.set_fill_color(GOLD);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        let avail_w = (right_edge - x).max(20.0);
+        let title = crate::ui::widgets::fit_text_to_width(ctx, title, avail_w);
+        ctx.fill_text(&title, x, y + h / 2.0);
+    }
+
+    h
 }
 
+/// Drawn LAST in whichever view's closure calls it, so it paints over
+/// board/thread rows beneath it — anchored under `field_rect` (the header's
+/// own field, `None` when the box is closed, in which case this is a
+/// no-op). Clipped to the same scroll viewport the caller is already inside
+/// (`ScrollableContainer::begin`'s clip) — a dropdown near the pane's
+/// visible bottom edge is cut there, same as any other content would be.
+fn draw_quick_search_dropdown(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    field_rect: Option<WidgetRect>,
+    f: &ForumV2State,
+    tt: &ToolbarTheme,
+) {
+    let Some(anchor) = field_rect else { return };
+    if !f.quick_search_open || f.quick_search_query.is_none() {
+        return;
+    }
+    let n = f.quick_search_results.len().min(QUICK_DROPDOWN_MAX_ROWS);
+    let rows_h = if n == 0 { QUICK_RESULT_ROW_H } else { n as f64 * QUICK_RESULT_ROW_H };
+    let box_h = rows_h + QUICK_MORE_ROW_H + 8.0;
+    let box_w = (anchor.width * 1.6).max(260.0);
+    let box_x = (anchor.x + anchor.width - box_w).max(0.0);
+    let box_y = anchor.y + anchor.height + 4.0;
+
+    ctx.set_fill_color(&tt.dropdown_bg);
+    ctx.fill_rounded_rect(box_x, box_y, box_w, box_h, SETTINGS_BUTTON_RADIUS);
+
+    let mut ry = box_y + 4.0;
+    if n == 0 {
+        draw_status(ctx, tt, box_x, ry, box_w, "No results.", None);
+        ry += QUICK_RESULT_ROW_H;
+    } else {
+        for (i, hit) in f.quick_search_results.iter().take(n).enumerate() {
+            let widget_id = format!("cloud_overlay:forum2:quick_result:{i}");
+            let rect = WidgetRect::new(box_x + 4.0, ry, box_w - 8.0, QUICK_RESULT_ROW_H - 4.0);
+            let hovered = coord.is_hovered(&WidgetId::from(widget_id.as_str()));
+            if hovered {
+                ctx.set_fill_color(&tt.item_bg_hover);
+                ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+            }
+            let heading = hit.title.clone().unwrap_or_else(|| format!("Reply in thread #{}", hit.thread_id));
+            ctx.set_font("600 12px sans-serif");
+            ctx.set_fill_color(if hovered { GOLD } else { &tt.item_text });
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            let heading = crate::ui::widgets::fit_text_to_width(ctx, &heading, rect.width - 12.0);
+            ctx.fill_text(&heading, rect.x + 6.0, rect.y + 2.0);
+
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&tt.item_text_muted);
+            let snippet = crate::ui::widgets::fit_text_to_width(ctx, &hit.snippet, rect.width - 12.0);
+            ctx.fill_text(&snippet, rect.x + 6.0, rect.y + 18.0);
+
+            coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
+            ry += QUICK_RESULT_ROW_H;
+        }
+    }
+
+    let more_rect = WidgetRect::new(box_x + 4.0, ry, box_w - 8.0, QUICK_MORE_ROW_H - 4.0);
+    let more_hovered = coord.is_hovered(&WidgetId::from("cloud_overlay:forum2:quick_more"));
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(if more_hovered { GOLD } else { &tt.item_text_muted });
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("More results…", more_rect.center_x(), more_rect.center_y());
+    coord.register_on_layer("cloud_overlay:forum2:quick_more", more_rect, Sense::CLICK | Sense::HOVER, layer_id);
+}
+
+// =============================================================================
+// Right pane — Boards view (`ForumV2View::Boards`, nothing selected yet):
+// header (search toggle only — no board title/"New thread") plus a
+// placeholder pointing at the left column.
+// =============================================================================
+
 fn right_boards_h(f: &ForumV2State) -> f64 {
-    let sb = search_box_h();
     let err_h = if f.last_error.is_some() { 20.0 } else { 0.0 };
-    sb + err_h + 24.0
+    PANE_HEADER_H + err_h + 24.0
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -605,20 +735,22 @@ fn draw_right_boards(
         ctx, coord, layer_id, x, y, w, viewport_h, &state.scroll, content_h, result,
         |ctx, coord, layer_id, sx, sy, sw, result| {
             let mut py = sy;
-            py += draw_search_box(ctx, coord, layer_id, sx, py, sw, ft, tt, current_time_ms, result);
+            py += draw_pane_header(ctx, coord, layer_id, sx, py, sw, None, false, state, ft, tt, current_time_ms, result);
             if let Some(err) = &state.forum2.last_error {
                 py += draw_error_line(ctx, sw, sx, py, err);
             }
             draw_status(ctx, tt, sx, py, sw, "Select a board from the list on the left.", None);
+            draw_quick_search_dropdown(ctx, coord, layer_id, result.forum_search_rect, &state.forum2, tt);
         },
     );
 }
 
 // =============================================================================
-// Right pane — BoardThreads view (`ForumV2View::BoardThreads`): search box,
-// board header (title + "New thread" when `can_write`), thread rows (pinned
-// first), optional "Load more". No "← Forum" row (W2) — the left column's
-// permanent boards list already reaches this view.
+// Right pane — BoardThreads view (`ForumV2View::BoardThreads`): the shared
+// header (board title + "New thread" when `can_write` + the compact search
+// toggle — `draw_pane_header`), thread rows (pinned first), optional
+// "Load more". No "← Forum" row (W2) — the left column's permanent boards
+// list already reaches this view.
 // =============================================================================
 
 fn board_can_write(f: &ForumV2State, slug: &str) -> bool {
@@ -676,14 +808,11 @@ fn draw_thread_row(
     THREAD_ROW_H
 }
 
-fn right_board_threads_h(f: &ForumV2State, slug: &str, threads: &[ForumThreadV2Ui], next_before: &Option<String>) -> f64 {
-    let sb = search_box_h();
-    let heading_h = 24.0;
-    let new_thread_h = if board_can_write(f, slug) { ROW_H + 8.0 } else { 0.0 };
+fn right_board_threads_h(f: &ForumV2State, _slug: &str, threads: &[ForumThreadV2Ui], next_before: &Option<String>) -> f64 {
     let err_h = if f.last_error.is_some() { 20.0 } else { 0.0 };
     let list_h = if threads.is_empty() { 24.0 } else { threads.len() as f64 * THREAD_ROW_H };
     let more_h = if next_before.is_some() { ROW_H } else { 0.0 };
-    sb + heading_h + new_thread_h + err_h + list_h + more_h
+    PANE_HEADER_H + err_h + list_h + more_h
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -710,24 +839,12 @@ fn draw_right_board_threads(
         ctx, coord, layer_id, x, y, w, viewport_h, &state.scroll, content_h, result,
         |ctx, coord, layer_id, sx, sy, sw, result| {
             let mut py = sy;
-            py += draw_search_box(ctx, coord, layer_id, sx, py, sw, ft, tt, current_time_ms, result);
-
             let board_label = board_title(&state.forum2, slug);
-            ctx.set_font("600 13px sans-serif");
-            ctx.set_fill_color(GOLD);
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Top);
-            let board_label = crate::ui::widgets::fit_text_to_width(ctx, board_label, sw);
-            ctx.fill_text(&board_label, sx, py);
-            py += 24.0;
+            let can_write = board_can_write(&state.forum2, slug);
+            py += draw_pane_header(
+                ctx, coord, layer_id, sx, py, sw, Some(board_label), can_write, state, ft, tt, current_time_ms, result,
+            );
 
-            if board_can_write(&state.forum2, slug) {
-                draw_action_row(
-                    ctx, coord, layer_id, "cloud_overlay:forum2:new_thread",
-                    WidgetRect::new(sx, py, sw, ROW_H - ROW_GAP), "New thread", tt,
-                );
-                py += ROW_H + 8.0;
-            }
             if let Some(err) = &state.forum2.last_error {
                 py += draw_error_line(ctx, sw, sx, py, err);
             }
@@ -749,6 +866,7 @@ fn draw_right_board_threads(
                     );
                 }
             }
+            draw_quick_search_dropdown(ctx, coord, layer_id, result.forum_search_rect, &state.forum2, tt);
         },
     );
 }

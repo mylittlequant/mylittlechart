@@ -5841,7 +5841,59 @@ impl ChartApp {
                     // per-line rename. `forum_entitled`/`open_url_requested`
                     // above already ran against the OUTER `st`.
                     let st = &mut self.panel_app.community_state;
+                    // Compact inline search (owner review 2026-09-09, item
+                    // d): a click on anything else in this tab collapses
+                    // the box — "clicking elsewhere" per that review. The
+                    // box's own controls (and "More results", which reads
+                    // `quick_search_query` before closing itself) are
+                    // exempt so this pre-check cannot beat them to it.
+                    if st.forum2.quick_search_open
+                        && action != "quick_search_toggle"
+                        && action != "quick_search_input"
+                        && action != "quick_more"
+                        && !action.starts_with("quick_result:")
+                    {
+                        st.forum2.close_quick_search();
+                    }
                     match action {
+                        "quick_search_toggle" => {
+                            if st.forum2.quick_search_open {
+                                st.forum2.close_quick_search();
+                                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                            } else {
+                                st.forum2.open_quick_search();
+                                let wid = uzor::WidgetId::from(crate::text_input::FORUM_SEARCH);
+                                self.input_coordinator.borrow_mut().text_fields_mut().focus(wid);
+                            }
+                        }
+                        // Claimed on mousedown by the store — nothing to do
+                        // here, same idiom as `"search_input"` below.
+                        "quick_search_input" => {}
+                        rest2 if rest2.starts_with("quick_result:") => {
+                            if let Ok(i) = rest2["quick_result:".len()..].parse::<usize>() {
+                                let hit_thread_id = st.forum2.quick_search_results.get(i).map(|h| h.thread_id);
+                                if let Some(id) = hit_thread_id {
+                                    st.forum2.close_quick_search();
+                                    st.forum2.view = ForumV2View::Thread {
+                                        id, thread: None, replies_tree: Vec::new(), reply_to: None,
+                                    };
+                                    st.forum2.invalidate_thread();
+                                    st.forum2.reply_pending = false;
+                                    st.forum2.last_error = None;
+                                    st.forum2.request = Some(ForumV2Request::OpenThread { id });
+                                }
+                            }
+                        }
+                        // The inline dropdown's own "More results" row — the
+                        // only path left to the old full-page search view.
+                        "quick_more" => {
+                            if let Some(q) = st.forum2.quick_search_query.clone() {
+                                st.forum2.close_quick_search();
+                                st.forum2.last_error = None;
+                                st.forum2.view = ForumV2View::Search { q: q.clone(), hits: Vec::new() };
+                                st.forum2.request = Some(ForumV2Request::Search { q, board: None });
+                            }
+                        }
                         rest2 if rest2.starts_with("board:") => {
                             let slug = rest2["board:".len()..].to_string();
                             st.forum2.view = ForumV2View::BoardThreads {
@@ -5988,20 +6040,13 @@ impl ChartApp {
                                 }
                             }
                         }
-                        // Mirrors `FORUM_SEARCH`'s own Enter-submit
-                        // (`text_input::dispatch::text_action_forum_search`).
-                        "search_submit" => {
-                            let wid = uzor::WidgetId::from(crate::text_input::FORUM_SEARCH);
-                            let q = self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
-                            if !q.is_empty() {
-                                st.forum2.last_error = None;
-                                st.forum2.view = ForumV2View::Search { q: q.clone(), hits: Vec::new() };
-                                st.forum2.request = Some(ForumV2Request::Search { q, board: None });
-                            }
-                        }
                         // Claimed on mousedown by the store — same "nothing
-                        // to do here" idiom the v1 arm above uses.
-                        "search_input" | "title_input" | "body_input" | "reply_input" => { /* claimed on mousedown */ }
+                        // to do here" idiom the v1 arm above uses. The old
+                        // full-width search field's own click id
+                        // (`"search_input"`) is gone with it — the field
+                        // now lives in the header row under
+                        // `"quick_search_input"`, handled above.
+                        "title_input" | "body_input" | "reply_input" => { /* claimed on mousedown */ }
                         _ => {}
                     }
                 }

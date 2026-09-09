@@ -670,6 +670,15 @@ pub struct ChartToolbarState {
     /// §8, 2026-09-05). Stamped per frame alongside `active_right_toolbar_id`
     /// by `ChartApp::stamp_active_right_toolbar_id`.
     pub system_events_unread: bool,
+    /// True while any Direct Message conversation has unread messages
+    /// (`CommunityState::dm.conversations[*].unread_count > 0`) — the
+    /// "community" (envelope) button paints the same small accent dot the
+    /// "events" button gets via `system_events_unread` above (community-
+    /// modal-and-forum-ladder arc, piece 2). Stamped per frame alongside
+    /// `system_events_unread` by `ChartApp::stamp_active_right_toolbar_id`
+    /// — unconditional field so this struct (mlc-core) needs no `cloud`
+    /// feature gate of its own; a non-cloud build simply never flips it.
+    pub community_unread: bool,
     /// Hovered bottom toolbar item
     pub hovered_bottom_toolbar_id: Option<String>,
     /// Currently open dropdown
@@ -798,6 +807,7 @@ impl Default for ChartToolbarState {
             hovered_right_toolbar_id: None,
             active_right_toolbar_id: None,
             system_events_unread: false,
+            community_unread: false,
             hovered_bottom_toolbar_id: None,
             open_dropdown_id: None,
             hovered_dropdown_item: None,

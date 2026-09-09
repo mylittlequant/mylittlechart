@@ -998,15 +998,18 @@ fn map_forum_thread_native(
 // `map_forum_board`/`map_forum_thread_v2_summary`/etc. (`cloud_session.rs`)
 // field-for-field.
 
-/// Same ranking `mlc-app-shell-web`'s own `forum2_class_rank` uses.
+/// Same ranking `mlc-app-shell-web`'s own `forum2_class_rank` uses — full
+/// ladder `public < user < paid < trusted < moderator < admin` (`trusted` =
+/// "paid with standing", owner ruling 2026-09-08, rank 3).
 #[cfg(feature = "cloud")]
 fn forum2_class_rank_native(class: &str) -> u8 {
     match class {
         "public" => 0,
         "user" => 1,
         "paid" => 2,
-        "moderator" => 3,
-        "admin" => 4,
+        "trusted" => 3,
+        "moderator" => 4,
+        "admin" => 5,
         _ => 0,
     }
 }

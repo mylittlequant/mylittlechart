@@ -987,6 +987,28 @@ pub fn chart_toolbar_render_toolbars(
             }
         }
 
+        // Unread DM badge on the "community" (envelope) button — same small
+        // accent dot as the "events" badge above (community-modal-and-forum-
+        // ladder arc, piece 2), driven by `tb.community_unread`.
+        if tb.community_unread {
+            if let Some((_, item_rect)) = right_tc_result.item_rects.iter().find(|(id, _)| id == "community") {
+                let dot_r = 3.0;
+                let ring_r = dot_r + 1.0;
+                let cx = item_rect.x + item_rect.width - ring_r - 2.0;
+                let cy = item_rect.y + ring_r + 2.0;
+                ctx.set_fill_color(&theme.background);
+                ctx.begin_path();
+                ctx.arc(cx, cy, ring_r, 0.0, std::f64::consts::TAU);
+                ctx.close_path();
+                ctx.fill();
+                ctx.set_fill_color(&theme.accent);
+                ctx.begin_path();
+                ctx.arc(cx, cy, dot_r, 0.0, std::f64::consts::TAU);
+                ctx.close_path();
+                ctx.fill();
+            }
+        }
+
         // --- Bottom toolbar (horizontal, bottom) ---
         let bottom_tc_result = if toolbar_config.bottom.is_some() {
             let bottom_def = toolbar_config.bottom.as_ref().unwrap();
