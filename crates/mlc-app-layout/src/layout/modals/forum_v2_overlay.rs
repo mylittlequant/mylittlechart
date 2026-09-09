@@ -9,6 +9,22 @@
 //! `mlc-app`'s `panel_click.rs` (out of scope here). Widget ids keep their
 //! pre-existing `cloud_overlay:forum2:*` prefix unchanged — only the Rust
 //! type hosting them moved.
+//!
+//! W2 of the community-modal-and-forum-ladder arc (`docs/mlc/plans/
+//! community-modal-and-forum-ladder-2026-09-09.md`) turned this into a
+//! "familiar forum" TWO-COLUMN layout: a fixed-width, own-scroll LEFT column
+//! (the boards list, `draw_board_list`, with a totals header and per-board
+//! thread/reply counts + last activity — owner review 2026-09-09: "a forum,
+//! not a feed") and a RIGHT pane whose content depends on `ForumV2View`
+//! (board header + threads, an open thread, search results, or the compose
+//! form). The search box moved from the boards list's own top to the right
+//! pane's top (`draw_right_boards`); an open thread's reply composer is
+//! DOCKED at the bottom of the right pane, with only the thread body/reply
+//! tree above it scrolling — same split `dm_overlay.rs`'s own conversation
+//! view uses for its send box. `height`/`draw` no longer size a single
+//! shared scroll region: `list_height` sizes the left column, `draw` sizes
+//! each pane's own region internally (see this file's own per-view `*_h`
+//! helpers).
 
 use mlc_core::engine::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
 use uzor::input::{InputCoordinator, LayerId, Sense};
@@ -21,6 +37,7 @@ use crate::ui::modal_settings::{
     BoardUi, CommunityState, ForumReplyV2Ui, ForumSearchHitUi, ForumThreadV2Detail,
     ForumThreadV2Ui, ForumV2State, ForumV2View,
 };
+use crate::ui::scroll_state::ScrollState;
 use crate::ui::scroll_widget::ScrollableContainer;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, SETTINGS_BUTTON_RADIUS};
@@ -28,13 +45,17 @@ use crate::ui::widgets::types::{WidgetState, WidgetTheme};
 use crate::ui::Icon;
 
 use super::cloud_overlay::{
-    draw_action_row, draw_expand_row, draw_link_row, draw_status, register_scrollbar_hit_zones,
-    relative_time, scroll_config, wrap_text, CloudOverlayResult, ACTION_BTN_GAP, FIELD_H,
-    FORUM_BODY_FIELD, FORUM_REPLY_FIELD, FORUM_SEARCH_FIELD, FORUM_TITLE_FIELD, GOLD, ROW_GAP,
-    ROW_H,
+    draw_action_row, draw_column_divider, draw_expand_row, draw_link_row, draw_status,
+    register_scrollbar_hit_zones, relative_time, scroll_config, wrap_text, CloudOverlayResult,
+    ACTION_BTN_GAP, COL_GAP, FIELD_H, FORUM_BODY_FIELD, FORUM_REPLY_FIELD, FORUM_SEARCH_FIELD,
+    FORUM_TITLE_FIELD, GOLD, LIST_COL_W, ROW_GAP, ROW_H,
 };
+use super::community::CommunityListPaneResult;
 
-const BOARD_ROW_H: f64 = 60.0;
+/// Left column's per-board row height — title, description, the "write:
+/// <class>" hint, the thread/post counts, and the last-activity line (five
+/// short lines at [`LIST_COL_W`]'s width).
+const BOARD_ROW_H: f64 = 84.0;
 const THREAD_ROW_H: f64 = 48.0;
 const SEARCH_HIT_ROW_H: f64 = 64.0;
 const LINK_ROW_H: f64 = ROW_H;
@@ -45,19 +66,33 @@ const REPLY_INDENT: f64 = 16.0;
 const REPLY_MAX_DEPTH: i64 = 6;
 
 // =============================================================================
-// Entry points — mirror the old (deleted) v1 `forum_view_h`/`draw_forum_view`
-// shape: `height` sizes the modal frame, `draw` paints inside a scroll
-// container the same way every other unbounded body in `cloud_overlay.rs`
-// does.
+// Entry points — `list_height` sizes the LEFT column's own scroll container
+// (`community.rs`'s `draw` call); the RIGHT pane's content height is computed
+// per-view inline by `draw` itself (Thread's own composer-docking split needs
+// two different heights — the scrollable part and the fixed footer — so a
+// single shared number stopped being enough, unlike W1's one-pane shape).
 // =============================================================================
 
+pub(crate) fn list_height(state: &CommunityState) -> f64 {
+    board_list_h(&state.forum2)
+}
+
+/// The right pane's own "wanted" content height, matching `community.rs`'s
+/// old single-number contract — used only for `ModalShellSpec`'s inert
+/// `content_height` (see that call site's own doc for why it is inert);
+/// `draw`'s own per-view scaffolding computes the SAME numbers again from
+/// the same helpers below, so the two can never silently diverge from each
+/// other even though neither reads this function.
 pub(crate) fn height(state: &CommunityState) -> f64 {
     match &state.forum2.view {
-        ForumV2View::Boards => boards_h(&state.forum2),
+        ForumV2View::Boards => right_boards_h(&state.forum2),
         ForumV2View::BoardThreads { slug, threads, next_before } => {
-            board_threads_h(&state.forum2, slug, threads, next_before)
+            right_board_threads_h(&state.forum2, slug, threads, next_before)
         }
-        ForumV2View::Thread { .. } => thread_view_h(&state.forum2),
+        ForumV2View::Thread { thread, replies_tree, reply_to, .. } => match thread {
+            Some(t) => thread_scroll_content_h(t, replies_tree, &state.forum2) + thread_composer_h(&state.forum2, *reply_to),
+            None => 44.0,
+        },
         ForumV2View::Search { hits, .. } => search_h(&state.forum2, hits),
         ForumV2View::Compose { .. } => compose_h(&state.forum2),
     }
@@ -77,36 +112,93 @@ pub(crate) fn draw(
     tt: &ToolbarTheme,
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
+    list_result: &mut CommunityListPaneResult,
 ) {
-    let drawn_h = height(state);
+    let right_x = x + LIST_COL_W + COL_GAP;
+    let right_w = (w - LIST_COL_W - COL_GAP).max(0.0);
+    draw_column_divider(ctx, right_x - COL_GAP / 2.0, y, viewport_h, tt);
+
+    // --- Left column: boards list, its own scroll region ---
+    let list_drawn_h = board_list_h(&state.forum2);
+    let list_viewport_rect = WidgetRect::new(x, y, LIST_COL_W, viewport_h);
+    coord.register_on_layer("cloud_overlay:scroll_viewport", list_viewport_rect, Sense::SCROLL, layer_id);
+    let list_scrollable = ScrollableContainer::new(list_viewport_rect, &state.list_scroll, Some(scroll_config()));
+    list_scrollable.begin(ctx);
+    draw_board_list(
+        ctx, coord, layer_id, x, list_scrollable.content_y(), list_scrollable.content_width(),
+        &state.forum2, current_time_ms, tt,
+    );
+    let widget_theme = WidgetTheme::default();
+    let list_scroll_result = list_scrollable.end(ctx, list_drawn_h, &widget_theme);
+    list_result.viewport_rect = Some(list_viewport_rect);
+    list_result.total_content_height = Some(list_drawn_h);
+    list_result.viewport_height = Some(viewport_h.min(list_drawn_h));
+    list_result.scrollbar_handle_rect = list_scroll_result.handle_rect;
+    list_result.scrollbar_track_rect = list_scroll_result.track_rect;
+    register_scrollbar_hit_zones(coord, layer_id, &list_scroll_result);
+
+    // --- Right pane: content depends on the current sub-view ---
+    match &state.forum2.view {
+        ForumV2View::Boards => draw_right_boards(
+            ctx, coord, layer_id, right_x, y, right_w, viewport_h, state, ft, tt, current_time_ms, result,
+        ),
+        ForumV2View::BoardThreads { slug, threads, next_before } => draw_right_board_threads(
+            ctx, coord, layer_id, right_x, y, right_w, viewport_h, state, slug, threads,
+            next_before.as_deref(), ft, tt, current_time_ms, result,
+        ),
+        ForumV2View::Thread { thread, replies_tree, reply_to, .. } => draw_right_thread(
+            ctx, coord, layer_id, right_x, y, right_w, viewport_h, state, thread.as_ref(),
+            replies_tree, *reply_to, ft, tt, current_time_ms, result,
+        ),
+        ForumV2View::Search { q, hits } => draw_right_scrollable(
+            ctx, coord, layer_id, right_x, y, right_w, viewport_h, &state.scroll,
+            search_h(&state.forum2, hits), result,
+            |ctx, coord, layer_id, sx, sy, sw, result| {
+                draw_search(ctx, coord, layer_id, sx, sy, sw, state, q, hits, current_time_ms, tt);
+                let _ = result;
+            },
+        ),
+        ForumV2View::Compose { slug } => draw_right_scrollable(
+            ctx, coord, layer_id, right_x, y, right_w, viewport_h, &state.scroll,
+            compose_h(&state.forum2), result,
+            |ctx, coord, layer_id, sx, sy, sw, result| {
+                draw_compose(ctx, coord, layer_id, sx, sy, sw, state, slug, ft, tt, current_time_ms, result);
+            },
+        ),
+    }
+}
+
+/// Shared scaffolding for a right-pane view with NO docked footer (Search,
+/// Compose): register the viewport, clip+scroll, run `body`, then publish
+/// the scroll geometry into `result`. `Thread`'s own composer-docking split
+/// does not use this — it needs a SHORTER scroll region (viewport minus the
+/// footer) plus a fixed block below it, so it scaffolds itself inline
+/// (`draw_right_thread`).
+#[allow(clippy::too_many_arguments)]
+fn draw_right_scrollable(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    viewport_h: f64,
+    scroll: &ScrollState,
+    content_h: f64,
+    result: &mut CloudOverlayResult,
+    body: impl FnOnce(&mut dyn RenderContext, &mut InputCoordinator, &LayerId, f64, f64, f64, &mut CloudOverlayResult),
+) {
     let viewport_rect = WidgetRect::new(x, y, w, viewport_h);
     coord.register_on_layer("cloud_overlay:scroll_viewport", viewport_rect, Sense::SCROLL, layer_id);
-    let scrollable = ScrollableContainer::new(viewport_rect, &state.scroll, Some(scroll_config()));
+    let scrollable = ScrollableContainer::new(viewport_rect, scroll, Some(scroll_config()));
     scrollable.begin(ctx);
     let sx = x;
     let sy = scrollable.content_y();
     let sw = scrollable.content_width();
-
-    match &state.forum2.view {
-        ForumV2View::Boards => draw_boards(ctx, coord, layer_id, sx, sy, sw, state, ft, tt, current_time_ms, result),
-        ForumV2View::BoardThreads { slug, threads, next_before } => draw_board_threads(
-            ctx, coord, layer_id, sx, sy, sw, state, slug, threads, next_before.as_deref(), current_time_ms, tt,
-        ),
-        ForumV2View::Thread { thread, replies_tree, reply_to, .. } => draw_thread(
-            ctx, coord, layer_id, sx, sy, sw, state, thread.as_ref(), replies_tree, *reply_to, ft, tt,
-            current_time_ms, result,
-        ),
-        ForumV2View::Search { q, hits } => {
-            draw_search(ctx, coord, layer_id, sx, sy, sw, state, q, hits, current_time_ms, tt)
-        }
-        ForumV2View::Compose { slug } => {
-            draw_compose(ctx, coord, layer_id, sx, sy, sw, state, slug, ft, tt, current_time_ms, result)
-        }
-    }
-
+    body(&mut *ctx, &mut *coord, layer_id, sx, sy, sw, &mut *result);
     let widget_theme = WidgetTheme::default();
-    let scroll_result = scrollable.end(ctx, drawn_h, &widget_theme);
-    result.total_content_height = Some(drawn_h);
+    let scroll_result = scrollable.end(ctx, content_h, &widget_theme);
+    result.total_content_height = Some(content_h);
     result.viewport_height = Some(viewport_h);
     result.scroll_viewport_rect = Some(viewport_rect);
     result.scrollbar_handle_rect = scroll_result.handle_rect;
@@ -206,12 +298,12 @@ fn draw_mini_button(
     coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
 }
 
-/// The single "← Back" row every non-landing view (BoardThreads/Thread/
-/// Search/Compose) draws — one shared hit id, same reuse v1's own back row
-/// had across Thread/Compose. Which view "back" resolves to is for the
-/// click handler (`mlc-app`) to decide from the current `ForumV2View`.
-/// Returns the height consumed (36.0, matched by every `*_h` function's own
-/// `back_h`).
+/// The single "← Forum" row `Search` (and `Compose`, via its own Cancel
+/// button reaching the same request) draws to leave a view not reachable
+/// any other way. `BoardThreads`/`Thread` dropped their own copy of this
+/// row in W2: the left column's permanent boards list already reaches
+/// (and re-reaches) both, so a second "back" affordance was dead weight —
+/// see this file's own top doc.
 fn draw_back_row(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -324,7 +416,127 @@ fn draw_blocks(
 }
 
 // =============================================================================
-// Boards view (`ForumV2View::Boards`) — search box + board rows.
+// Left column — boards list (`draw_board_list`): a totals header (boards /
+// threads / posts) plus one row per board (title, description, the
+// "write: <class>" hint, thread/post counts, last activity). Community-modal
+// arc W2 (owner review 2026-09-09: "a forum, not a feed").
+// =============================================================================
+
+fn totals_header_h() -> f64 {
+    20.0
+}
+
+fn draw_totals_header(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, f: &ForumV2State, tt: &ToolbarTheme) -> f64 {
+    let boards = f.boards.len();
+    let threads: i64 = f.boards.iter().map(|b| b.thread_count).sum();
+    let posts: i64 = threads + f.boards.iter().map(|b| b.reply_count).sum::<i64>();
+    ctx.set_font("11px monospace");
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let label = format!("{boards} boards · {threads} threads · {posts} posts");
+    let label = crate::ui::widgets::fit_text_to_width(ctx, &label, w);
+    ctx.fill_text(&label, x, y);
+    totals_header_h()
+}
+
+fn board_list_h(f: &ForumV2State) -> f64 {
+    let header_h = totals_header_h() + 8.0;
+    let list_h = if f.boards.is_empty() { 24.0 } else { f.boards.len() as f64 * BOARD_ROW_H };
+    header_h + list_h
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_board_row(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    board: &BoardUi,
+    current_time_ms: u64,
+    tt: &ToolbarTheme,
+) -> f64 {
+    let widget_id = format!("cloud_overlay:forum2:board:{}", board.slug);
+    let rect = WidgetRect::new(x, y, w, BOARD_ROW_H - ROW_GAP);
+    let hovered = coord.is_hovered(&WidgetId::from(widget_id.as_str()));
+    if hovered {
+        ctx.set_fill_color(&tt.item_bg_hover);
+        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+    }
+
+    let mut title_x = x + 8.0;
+    if !board.can_write {
+        // Lock glyph: the caller can read this board but its write_class is
+        // above what they hold (`social_db::can_write`, resolved by the
+        // shell into `BoardUi::can_write`). A board the caller cannot even
+        // READ never reaches this row at all — the server already filters
+        // it out of `boards` (`routes::forum_v2::list_boards`), which is
+        // why there is no separate "locked for read" mark here.
+        draw_svg_icon(ctx, Icon::Lock.svg(), title_x, y + 5.0, 14.0, 14.0, &tt.item_text_muted);
+        title_x += 20.0;
+    }
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.set_font("600 13px sans-serif");
+    ctx.set_fill_color(if hovered { GOLD } else { &tt.item_text });
+    let title = crate::ui::widgets::fit_text_to_width(ctx, &board.title, w - (title_x - x) - 8.0);
+    ctx.fill_text(&title, title_x, y + 4.0);
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&tt.item_text_muted);
+    let desc = crate::ui::widgets::fit_text_to_width(ctx, &board.description, w - 16.0);
+    ctx.fill_text(&desc, x + 8.0, y + 22.0);
+
+    ctx.set_font("10px monospace");
+    ctx.set_fill_color(&tt.item_text_muted);
+    let hint = crate::ui::widgets::fit_text_to_width(ctx, &format!("write: {}", board.write_class), w - 16.0);
+    ctx.fill_text(&hint, x + 8.0, y + 38.0);
+
+    let counts = format!("{} threads · {} posts", board.thread_count, board.thread_count + board.reply_count);
+    let counts = crate::ui::widgets::fit_text_to_width(ctx, &counts, w - 16.0);
+    ctx.fill_text(&counts, x + 8.0, y + 52.0);
+
+    let activity = match (&board.last_post_at, &board.last_thread_title) {
+        (Some(t), Some(title)) => format!("{} — {}", relative_time(t, current_time_ms), title),
+        (Some(t), None) => relative_time(t, current_time_ms),
+        _ => "No posts yet".to_string(),
+    };
+    let activity = crate::ui::widgets::fit_text_to_width(ctx, &activity, w - 16.0);
+    ctx.fill_text(&activity, x + 8.0, y + 66.0);
+
+    coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
+    BOARD_ROW_H
+}
+
+fn draw_board_list(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    f: &ForumV2State,
+    current_time_ms: u64,
+    tt: &ToolbarTheme,
+) {
+    let mut py = y;
+    py += draw_totals_header(ctx, x, py, w, f, tt);
+    py += 8.0;
+    if f.boards.is_empty() {
+        draw_status(ctx, tt, x, py, w, "No boards yet.", None);
+    } else {
+        for b in &f.boards {
+            py += draw_board_row(ctx, coord, layer_id, x, py, w, b, current_time_ms, tt);
+        }
+    }
+}
+
+// =============================================================================
+// Right pane — Boards view (`ForumV2View::Boards`, nothing selected yet):
+// search box (moved here from the left column's own top in W1/W2) plus a
+// placeholder pointing at the left column.
 // =============================================================================
 
 fn search_box_h() -> f64 {
@@ -354,7 +566,7 @@ fn draw_search_box(
     let field_rect = WidgetRect::new(x, ly, w, FIELD_H);
     let (rect, chars) = draw_field(
         ctx, coord, layer_id, "cloud_overlay:forum2:search_input", FORUM_SEARCH_FIELD, field_rect,
-        "Search boards…", ft, tt, current_time_ms,
+        "Search the forum…", ft, tt, current_time_ms,
     );
     result.forum_search_rect = Some(rect);
     result.forum_search_char_positions = chars;
@@ -367,91 +579,54 @@ fn draw_search_box(
     ly - y
 }
 
-fn draw_board_row(
-    ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
-    layer_id: &LayerId,
-    x: f64,
-    y: f64,
-    w: f64,
-    board: &BoardUi,
-    tt: &ToolbarTheme,
-) -> f64 {
-    let widget_id = format!("cloud_overlay:forum2:board:{}", board.slug);
-    let rect = WidgetRect::new(x, y, w, BOARD_ROW_H - ROW_GAP);
-    let hovered = coord.is_hovered(&WidgetId::from(widget_id.as_str()));
-    if hovered {
-        ctx.set_fill_color(&tt.item_bg_hover);
-        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
-    }
-
-    let mut title_x = x + 8.0;
-    if !board.can_write {
-        // Lock glyph: the caller can read this board but its write_class is
-        // above what they hold (`social_db::can_write`, resolved by the
-        // shell into `BoardUi::can_write`).
-        draw_svg_icon(ctx, Icon::Lock.svg(), title_x, y + 5.0, 14.0, 14.0, &tt.item_text_muted);
-        title_x += 20.0;
-    }
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.set_font("600 13px sans-serif");
-    ctx.set_fill_color(if hovered { GOLD } else { &tt.item_text });
-    let title = crate::ui::widgets::fit_text_to_width(ctx, &board.title, w - (title_x - x) - 8.0);
-    ctx.fill_text(&title, title_x, y + 4.0);
-
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(&tt.item_text_muted);
-    let desc = crate::ui::widgets::fit_text_to_width(ctx, &board.description, w - 16.0);
-    ctx.fill_text(&desc, x + 8.0, y + 26.0);
-
-    coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
-    BOARD_ROW_H
-}
-
-fn boards_h(f: &ForumV2State) -> f64 {
+fn right_boards_h(f: &ForumV2State) -> f64 {
     let sb = search_box_h();
     let err_h = if f.last_error.is_some() { 20.0 } else { 0.0 };
-    let list_h = if f.boards.is_empty() { 24.0 } else { f.boards.len() as f64 * BOARD_ROW_H };
-    sb + err_h + list_h
+    sb + err_h + 24.0
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_boards(
+fn draw_right_boards(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
     x: f64,
     y: f64,
     w: f64,
+    viewport_h: f64,
     state: &CommunityState,
     ft: &FrameTheme,
     tt: &ToolbarTheme,
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
 ) {
-    let mut py = y;
-    py += draw_search_box(ctx, coord, layer_id, x, py, w, ft, tt, current_time_ms, result);
-    if let Some(err) = &state.forum2.last_error {
-        py += draw_error_line(ctx, w, x, py, err);
-    }
-    if state.forum2.boards.is_empty() {
-        draw_status(ctx, tt, x, py, w, "No boards yet.", None);
-    } else {
-        for b in &state.forum2.boards {
-            py += draw_board_row(ctx, coord, layer_id, x, py, w, b, tt);
-        }
-    }
+    let content_h = right_boards_h(&state.forum2);
+    draw_right_scrollable(
+        ctx, coord, layer_id, x, y, w, viewport_h, &state.scroll, content_h, result,
+        |ctx, coord, layer_id, sx, sy, sw, result| {
+            let mut py = sy;
+            py += draw_search_box(ctx, coord, layer_id, sx, py, sw, ft, tt, current_time_ms, result);
+            if let Some(err) = &state.forum2.last_error {
+                py += draw_error_line(ctx, sw, sx, py, err);
+            }
+            draw_status(ctx, tt, sx, py, sw, "Select a board from the list on the left.", None);
+        },
+    );
 }
 
 // =============================================================================
-// BoardThreads view (`ForumV2View::BoardThreads`) — back row, optional "New
-// thread" (write-class gated), thread rows (pinned first), optional "Load
-// more".
+// Right pane — BoardThreads view (`ForumV2View::BoardThreads`): search box,
+// board header (title + "New thread" when `can_write`), thread rows (pinned
+// first), optional "Load more". No "← Forum" row (W2) — the left column's
+// permanent boards list already reaches this view.
 // =============================================================================
 
 fn board_can_write(f: &ForumV2State, slug: &str) -> bool {
     f.boards.iter().find(|b| b.slug == slug).map(|b| b.can_write).unwrap_or(false)
+}
+
+fn board_title<'a>(f: &'a ForumV2State, slug: &'a str) -> &'a str {
+    f.boards.iter().find(|b| b.slug == slug).map(|b| b.title.as_str()).unwrap_or(slug)
 }
 
 fn draw_thread_row(
@@ -501,64 +676,90 @@ fn draw_thread_row(
     THREAD_ROW_H
 }
 
-fn board_threads_h(f: &ForumV2State, slug: &str, threads: &[ForumThreadV2Ui], next_before: &Option<String>) -> f64 {
-    let back_h = 36.0;
+fn right_board_threads_h(f: &ForumV2State, slug: &str, threads: &[ForumThreadV2Ui], next_before: &Option<String>) -> f64 {
+    let sb = search_box_h();
+    let heading_h = 24.0;
     let new_thread_h = if board_can_write(f, slug) { ROW_H + 8.0 } else { 0.0 };
     let err_h = if f.last_error.is_some() { 20.0 } else { 0.0 };
     let list_h = if threads.is_empty() { 24.0 } else { threads.len() as f64 * THREAD_ROW_H };
     let more_h = if next_before.is_some() { ROW_H } else { 0.0 };
-    back_h + new_thread_h + err_h + list_h + more_h
+    sb + heading_h + new_thread_h + err_h + list_h + more_h
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_board_threads(
+fn draw_right_board_threads(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
     x: f64,
     y: f64,
     w: f64,
+    viewport_h: f64,
     state: &CommunityState,
     slug: &str,
     threads: &[ForumThreadV2Ui],
     next_before: Option<&str>,
-    current_time_ms: u64,
+    ft: &FrameTheme,
     tt: &ToolbarTheme,
+    current_time_ms: u64,
+    result: &mut CloudOverlayResult,
 ) {
-    let mut ly = y;
-    ly += draw_back_row(ctx, coord, layer_id, x, ly, w, tt);
-    if board_can_write(&state.forum2, slug) {
-        draw_action_row(
-            ctx, coord, layer_id, "cloud_overlay:forum2:new_thread",
-            WidgetRect::new(x, ly, w, ROW_H - ROW_GAP), "New thread", tt,
-        );
-        ly += ROW_H + 8.0;
-    }
-    if let Some(err) = &state.forum2.last_error {
-        ly += draw_error_line(ctx, w, x, ly, err);
-    }
-    if threads.is_empty() {
-        draw_status(ctx, tt, x, ly, w, "No threads yet.", None);
-    } else {
-        // Pinned first — `sort_by_key` is stable, so relative order within
-        // each of the two groups (as the server returned it) survives.
-        let mut ordered: Vec<&ForumThreadV2Ui> = threads.iter().collect();
-        ordered.sort_by_key(|t| !t.pinned);
-        for t in ordered {
-            ly += draw_thread_row(ctx, coord, layer_id, x, ly, w, t, current_time_ms, tt);
-        }
-        if next_before.is_some() {
-            draw_expand_row(
-                ctx, coord, layer_id, "cloud_overlay:forum2:load_more",
-                WidgetRect::new(x, ly, w, ROW_H - ROW_GAP), "Load more", false, tt,
-            );
-        }
-    }
+    let next_before_owned = next_before.map(str::to_string);
+    let content_h = right_board_threads_h(&state.forum2, slug, threads, &next_before_owned);
+    draw_right_scrollable(
+        ctx, coord, layer_id, x, y, w, viewport_h, &state.scroll, content_h, result,
+        |ctx, coord, layer_id, sx, sy, sw, result| {
+            let mut py = sy;
+            py += draw_search_box(ctx, coord, layer_id, sx, py, sw, ft, tt, current_time_ms, result);
+
+            let board_label = board_title(&state.forum2, slug);
+            ctx.set_font("600 13px sans-serif");
+            ctx.set_fill_color(GOLD);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            let board_label = crate::ui::widgets::fit_text_to_width(ctx, board_label, sw);
+            ctx.fill_text(&board_label, sx, py);
+            py += 24.0;
+
+            if board_can_write(&state.forum2, slug) {
+                draw_action_row(
+                    ctx, coord, layer_id, "cloud_overlay:forum2:new_thread",
+                    WidgetRect::new(sx, py, sw, ROW_H - ROW_GAP), "New thread", tt,
+                );
+                py += ROW_H + 8.0;
+            }
+            if let Some(err) = &state.forum2.last_error {
+                py += draw_error_line(ctx, sw, sx, py, err);
+            }
+            if threads.is_empty() {
+                draw_status(ctx, tt, sx, py, sw, "No threads yet.", None);
+            } else {
+                // Pinned first — `sort_by_key` is stable, so relative order
+                // within each of the two groups (as the server returned it)
+                // survives.
+                let mut ordered: Vec<&ForumThreadV2Ui> = threads.iter().collect();
+                ordered.sort_by_key(|t| !t.pinned);
+                for t in ordered {
+                    py += draw_thread_row(ctx, coord, layer_id, sx, py, sw, t, current_time_ms, tt);
+                }
+                if next_before.is_some() {
+                    draw_expand_row(
+                        ctx, coord, layer_id, "cloud_overlay:forum2:load_more",
+                        WidgetRect::new(sx, py, sw, ROW_H - ROW_GAP), "Load more", false, tt,
+                    );
+                }
+            }
+        },
+    );
 }
 
 // =============================================================================
-// Thread view (`ForumV2View::Thread`) — header, optional moderation row,
-// body, reply tree, reply box.
+// Right pane — Thread view (`ForumV2View::Thread`): mod row, body, replies
+// tree scroll ABOVE a docked composer (error line, reply-to indicator, REPLY
+// field + submit) fixed to the bottom of the pane — same split
+// `dm_overlay.rs`'s own conversation view uses for its send box (W2). No
+// "← Forum" row (W2, see this file's own top doc) — a fresh click on this
+// same board's row in the left column re-opens `BoardThreads`.
 // =============================================================================
 
 fn reply_node_h(node: &ForumReplyV2Ui) -> f64 {
@@ -684,29 +885,38 @@ fn draw_mod_row(
     );
 }
 
-fn thread_view_h(f: &ForumV2State) -> f64 {
-    let ForumV2View::Thread { thread, replies_tree, reply_to, .. } = &f.view else { return 0.0 };
-    let back_h = 36.0;
-    let Some(t) = thread else { return back_h + 44.0 };
+/// The scrollable part of the Thread view — everything ABOVE the docked
+/// composer (header meta, title, optional mod row, body, replies heading,
+/// reply tree). Matches exactly what `draw_right_thread`'s own scroll
+/// region draws, same doctrine every `*_h`/`draw_*` pair in this file
+/// follows.
+fn thread_scroll_content_h(t: &ForumThreadV2Detail, replies_tree: &[ForumReplyV2Ui], f: &ForumV2State) -> f64 {
     let header_h = 16.0 + 26.0;
     let mod_h = if f.is_moderator_or_admin() { ROW_H } else { 0.0 };
     let body_h = blocks_h(&t.body) + 12.0;
     let replies_heading_h = 24.0;
     let replies_h = reply_tree_h(replies_tree);
+    header_h + mod_h + body_h + replies_heading_h + replies_h
+}
+
+/// The docked composer's own height — error line, reply-to indicator, the
+/// REPLY label, the field, and the submit button. Fixed to the bottom of
+/// the pane regardless of how tall the scrollable part above it is.
+fn thread_composer_h(f: &ForumV2State, reply_to: Option<i64>) -> f64 {
     let err_h = if f.last_error.is_some() { 20.0 } else { 0.0 };
     let reply_to_h = if reply_to.is_some() { 20.0 } else { 0.0 };
-    let reply_box_h = reply_to_h + 4.0 + 16.0 + FIELD_H + 8.0 + ROW_H;
-    back_h + header_h + mod_h + body_h + replies_heading_h + replies_h + err_h + reply_box_h
+    err_h + reply_to_h + 4.0 + 16.0 + FIELD_H + 8.0 + ROW_H
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_thread(
+fn draw_right_thread(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
     x: f64,
     y: f64,
     w: f64,
+    viewport_h: f64,
     state: &CommunityState,
     thread: Option<&ForumThreadV2Detail>,
     replies_tree: &[ForumReplyV2Ui],
@@ -716,97 +926,118 @@ fn draw_thread(
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
 ) {
-    let mut ly = y;
-    ly += draw_back_row(ctx, coord, layer_id, x, ly, w, tt);
-
     let Some(t) = thread else {
-        if let Some(err) = &state.forum2.last_error {
-            draw_status(ctx, tt, x, ly, w, "Failed to load thread", Some(err));
-        } else {
-            draw_status(ctx, tt, x, ly, w, "Loading thread…", None);
-        }
+        // Nothing to reply to yet — no composer, plain full-height status.
+        draw_right_scrollable(
+            ctx, coord, layer_id, x, y, w, viewport_h, &state.scroll, 44.0, result,
+            |ctx, _coord, _layer_id, sx, sy, sw, _result| {
+                if let Some(err) = &state.forum2.last_error {
+                    draw_status(ctx, tt, sx, sy, sw, "Failed to load thread", Some(err));
+                } else {
+                    draw_status(ctx, tt, sx, sy, sw, "Loading thread…", None);
+                }
+            },
+        );
         return;
     };
 
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.set_font("10px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.fill_text(&format!("{} · {}", t.author, relative_time(&t.created_at, current_time_ms)), x, ly);
-    ly += 16.0;
+    let composer_h = thread_composer_h(&state.forum2, reply_to);
+    let scroll_h = (viewport_h - composer_h).max(0.0);
+    let content_h = thread_scroll_content_h(t, replies_tree, &state.forum2);
 
-    let mut title_x = x;
-    if t.pinned {
-        draw_svg_icon(ctx, Icon::Pin.svg(), title_x, ly + 3.0, 16.0, 16.0, GOLD);
-        title_x += 20.0;
+    draw_right_scrollable(
+        ctx, coord, layer_id, x, y, w, scroll_h, &state.scroll, content_h, result,
+        |ctx, coord, layer_id, sx, sy, sw, _result| {
+            let mut ly = sy;
+            ctx.set_text_baseline(TextBaseline::Top);
+            ctx.set_font("10px monospace");
+            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.fill_text(&format!("{} · {}", t.author, relative_time(&t.created_at, current_time_ms)), sx, ly);
+            ly += 16.0;
+
+            let mut title_x = sx;
+            if t.pinned {
+                draw_svg_icon(ctx, Icon::Pin.svg(), title_x, ly + 3.0, 16.0, 16.0, GOLD);
+                title_x += 20.0;
+            }
+            if t.locked {
+                draw_svg_icon(ctx, Icon::Lock.svg(), title_x, ly + 3.0, 16.0, 16.0, &tt.item_text_muted);
+                title_x += 20.0;
+            }
+            ctx.set_font("600 14px sans-serif");
+            ctx.set_fill_color(GOLD);
+            ctx.fill_text(&t.title, title_x, ly);
+            ly += 26.0;
+
+            if state.forum2.is_moderator_or_admin() {
+                draw_mod_row(ctx, coord, layer_id, sx, ly, sw, t, tt);
+                ly += ROW_H;
+            }
+
+            ly += draw_blocks(ctx, coord, layer_id, "cloud_overlay:forum2:body", sx, ly, sw, &t.body, tt);
+            ly += 12.0;
+
+            ctx.set_font("11px monospace");
+            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            let replies_label = if replies_tree.is_empty() {
+                "NO REPLIES YET".to_string()
+            } else if replies_tree.len() == 1 {
+                "1 REPLY".to_string()
+            } else {
+                format!("{} REPLIES", replies_tree.len())
+            };
+            ctx.fill_text(&replies_label, sx, ly);
+            ly += 24.0;
+
+            draw_reply_tree(ctx, coord, layer_id, sx, ly, sw, replies_tree, reply_to, current_time_ms, tt);
+        },
+    );
+
+    // Docked composer — fixed to the bottom of the pane, outside the
+    // scrollable clip above.
+    let composer_y = y + (viewport_h - composer_h).max(0.0);
+    let mut cy = composer_y;
+    if let Some(err) = &state.forum2.last_error {
+        cy += draw_error_line(ctx, w, x, cy, err);
     }
-    if t.locked {
-        draw_svg_icon(ctx, Icon::Lock.svg(), title_x, ly + 3.0, 16.0, 16.0, &tt.item_text_muted);
-        title_x += 20.0;
+    if let Some(target) = reply_to {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(&format!("Replying to reply #{target}"), x, cy);
+        cy += 20.0;
     }
-    ctx.set_font("600 14px sans-serif");
-    ctx.set_fill_color(GOLD);
-    ctx.fill_text(&t.title, title_x, ly);
-    ly += 26.0;
-
-    if state.forum2.is_moderator_or_admin() {
-        draw_mod_row(ctx, coord, layer_id, x, ly, w, t, tt);
-        ly += ROW_H;
-    }
-
-    ly += draw_blocks(ctx, coord, layer_id, "cloud_overlay:forum2:body", x, ly, w, &t.body, tt);
-    ly += 12.0;
-
+    cy += 4.0;
     ctx.set_font("11px monospace");
     ctx.set_fill_color(&tt.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    let replies_label = if replies_tree.is_empty() {
-        "NO REPLIES YET".to_string()
-    } else if replies_tree.len() == 1 {
-        "1 REPLY".to_string()
-    } else {
-        format!("{} REPLIES", replies_tree.len())
-    };
-    ctx.fill_text(&replies_label, x, ly);
-    ly += 24.0;
+    ctx.fill_text("REPLY", x, cy);
+    cy += 16.0;
 
-    ly += draw_reply_tree(ctx, coord, layer_id, x, ly, w, replies_tree, reply_to, current_time_ms, tt);
-
-    if let Some(err) = &state.forum2.last_error {
-        ly += draw_error_line(ctx, w, x, ly, err);
-    }
-
-    if let Some(target) = reply_to {
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(&tt.item_text_muted);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(&format!("Replying to reply #{target}"), x, ly);
-        ly += 20.0;
-    }
-
-    ly += 4.0;
-    ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.fill_text("REPLY", x, ly);
-    ly += 16.0;
-
-    let field_rect = WidgetRect::new(x, ly, w, FIELD_H);
+    let field_rect = WidgetRect::new(x, cy, w, FIELD_H);
     let (rect, chars) = draw_field(
         ctx, coord, layer_id, "cloud_overlay:forum2:reply_input", FORUM_REPLY_FIELD, field_rect,
         "Write a reply…", ft, tt, current_time_ms,
     );
     result.forum_reply_rect = Some(rect);
     result.forum_reply_char_positions = chars;
-    ly += FIELD_H + 8.0;
+    cy += FIELD_H + 8.0;
 
     draw_action_row(
         ctx, coord, layer_id, "cloud_overlay:forum2:reply_submit",
-        WidgetRect::new(x, ly, w, ROW_H - ROW_GAP), "Reply", tt,
+        WidgetRect::new(x, cy, w, ROW_H - ROW_GAP), "Reply", tt,
     );
 }
 
 // =============================================================================
-// Search view (`ForumV2View::Search`) — back row, query echo, result rows.
+// Right pane — Search view (`ForumV2View::Search`) — back row, query echo,
+// result rows. Unchanged from W1's single-pane shape (still the one view
+// that needs an explicit "← Forum" row — see this file's own top doc).
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
@@ -895,8 +1126,12 @@ fn draw_search(
 }
 
 // =============================================================================
-// Compose view (`ForumV2View::Compose`) — back row, TITLE/BODY fields
-// (reusing `mlc_app::text_input::{FORUM_TITLE, FORUM_BODY}`), Post/Cancel.
+// Right pane — Compose view (`ForumV2View::Compose`) — back row, TITLE/BODY
+// fields (reusing `mlc_app::text_input::{FORUM_TITLE, FORUM_BODY}`),
+// Post/Cancel. Unchanged from W1's single-pane shape: with no board list
+// above it any more (that lives in the left column now), there is nothing
+// left for a docked footer to sit below — the whole form already reads as
+// the pane's only content.
 // =============================================================================
 
 fn compose_h(f: &ForumV2State) -> f64 {

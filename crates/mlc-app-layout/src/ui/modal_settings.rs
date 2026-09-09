@@ -5246,6 +5246,20 @@ pub struct BoardUi {
     /// board — drives the "New thread" row and the lock glyph on the
     /// board's own list row.
     pub can_write: bool,
+    /// Total threads on this board — community-modal arc W2 (owner review
+    /// 2026-09-09: "a forum, not a feed"). Mirrors `mlc_cloud`/
+    /// `mlc_updater`'s own `ForumBoard::thread_count`; `0` on a server that
+    /// does not send it yet (that field's own `#[serde(default)]`), which
+    /// reads correctly as "no threads" either way.
+    pub thread_count: i64,
+    /// Total replies across every thread on this board.
+    pub reply_count: i64,
+    /// Timestamp of the board's most recent thread or reply, whichever is
+    /// newer — `None` for a board with no activity, or a server that does
+    /// not send this field yet.
+    pub last_post_at: Option<String>,
+    /// Title of the thread that carries `last_post_at`.
+    pub last_thread_title: Option<String>,
 }
 
 /// One row of a board's thread list. A flat mirror of `routes::forum_v2::
@@ -5873,10 +5887,25 @@ pub struct CommunityState {
     pub resize_drag: Option<ResizeDrag>,
     pub is_dragging: bool,
     pub drag_offset: Option<(f64, f64)>,
-    /// Scroll offset for whichever pane's content is currently scrollable —
-    /// mirrors `CloudOverlayState::scroll`'s own role for the News/Download
-    /// overlay. Reset on `open()`/`close()`/`set_tab()`, same reasoning.
+    /// Scroll offset for the RIGHT pane's content — the board-threads/
+    /// thread/search/compose body for Forum, the open conversation's
+    /// messages for Messages. Mirrors `CloudOverlayState::scroll`'s own
+    /// role for the News/Download overlay. Reset on `open()`/`set_tab()`
+    /// (not `close()` — same "in-flight bookkeeping only" split
+    /// `close()`'s own doc explains for the request/refreshing flags).
     pub scroll: ScrollState,
+    /// Scroll offset for the LEFT column — the boards list (Forum) or
+    /// conversations list (Messages). Independent of `scroll`: W2 of the
+    /// community-modal arc (`docs/mlc/plans/community-modal-and-forum-
+    /// ladder-2026-09-09.md`) put two panes on screen at once, each with
+    /// its own scroll position, so one `ScrollState` per modal is no
+    /// longer enough. Registered under the same shared `"cloud_overlay:
+    /// scroll_viewport"`/`"cloud_overlay:scrollbar_*"` ids as `scroll` —
+    /// `mlc-app`'s `try_handle_wheel`/`try_start_scrollbar_drag` already
+    /// disambiguate same-id candidates by rect containment (see that
+    /// dispatch's own doc), so a third candidate is exactly the shape
+    /// those call sites already expect.
+    pub list_scroll: ScrollState,
     /// Forum v2 (boards/threads/search) — see [`ForumV2State`]'s own doc.
     pub forum2: ForumV2State,
     /// Direct messages — see [`DmState`]'s own doc.
@@ -5895,6 +5924,7 @@ impl Default for CommunityState {
             is_dragging: false,
             drag_offset: None,
             scroll: ScrollState::new(),
+            list_scroll: ScrollState::new(),
             forum2: ForumV2State::default(),
             dm: DmState::default(),
         }
@@ -5911,6 +5941,7 @@ impl CommunityState {
     pub fn open(&mut self) {
         self.is_open = true;
         self.scroll.reset();
+        self.list_scroll.reset();
         self.is_dragging = false;
         self.drag_offset = None;
         self.forum2.reset_to_boards();
@@ -5951,6 +5982,7 @@ impl CommunityState {
     pub fn set_tab(&mut self, tab: CommunityTab) {
         self.tab = tab;
         self.scroll.reset();
+        self.list_scroll.reset();
     }
 
     pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {

@@ -2761,6 +2761,18 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         // System event log button (bottom of the right toolbar, owner scope
         // §8, 2026-09-05) — "bell"/"list" already mean Alerts/Watchlist.
         "history" | "events" => Some(ICON_HISTORY),
+        // Community (Forum + Messages) envelope button, directly above
+        // `events` on the right toolbar (community-modal arc W1/W2). The
+        // generic toolbar rail resolves `ToolbarIconId` through THIS
+        // function (`toolbar_core.rs`'s own `icon_svg(icon_id.name())`),
+        // never through `Icon::from_id`/`Icon::svg()` (the OTHER "mail"
+        // match, above, which callers holding an already-resolved `Icon`
+        // value use instead — `draw_svg_icon(ctx, Icon::X.svg(), ...)`
+        // call sites like `forum_v2_overlay.rs`'s lock/pin glyphs). Adding
+        // `ICON_MAIL` to the enum's own match was not enough: this arm was
+        // still missing, so the toolbar button rendered with no glyph at
+        // all — found in review of the shipped W1 build (owner, 2026-09-09).
+        "mail" | "envelope" | "community" => Some(ICON_MAIL),
 
         // Bottom toolbar zoom/screenshot buttons
         "zoom_in" | "zoomin" => Some(ICON_ZOOM_IN),

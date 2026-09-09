@@ -9,6 +9,17 @@
 //! dispatch lives in `mlc-app`'s `panel_click.rs` (out of scope here). Widget
 //! ids keep their pre-existing `cloud_overlay:dm:*` prefix unchanged — only
 //! the Rust type hosting them moved.
+//!
+//! W2 of the community-modal-and-forum-ladder arc (`docs/mlc/plans/
+//! community-modal-and-forum-ladder-2026-09-09.md`) turned this into a
+//! "familiar messenger" TWO-COLUMN layout: a fixed-width, own-scroll LEFT
+//! column (`draw_conversation_list` — the "start a conversation with
+//! nick/public id" row, always at its top, plus the conversation rows) and a
+//! RIGHT pane holding the selected conversation's messages, the "desktop
+//! only"/"Setting up messages…" notices, or a landing placeholder. The send
+//! box is DOCKED at the bottom of the right pane, with only the messages
+//! above it scrolling — same split `forum_v2_overlay.rs`'s own Thread view
+//! uses for its reply box.
 
 use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
 use uzor::input::{InputCoordinator, LayerId, Sense};
@@ -24,9 +35,11 @@ use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, SETTINGS_BU
 use crate::ui::widgets::types::{WidgetState, WidgetTheme};
 
 use super::cloud_overlay::{
-    draw_action_row, draw_status, register_scrollbar_hit_zones, relative_time, scroll_config,
-    wrap_text, CloudOverlayResult, ACTION_BTN_GAP, DM_PEER_FIELD, FIELD_H, GOLD, ROW_GAP, ROW_H,
+    draw_action_row, draw_column_divider, draw_status, register_scrollbar_hit_zones,
+    relative_time, scroll_config, wrap_text, CloudOverlayResult, ACTION_BTN_GAP, COL_GAP,
+    DM_PEER_FIELD, FIELD_H, GOLD, LIST_COL_W, ROW_GAP, ROW_H,
 };
+use super::community::CommunityListPaneResult;
 
 const CONV_ROW_H: f64 = 52.0;
 /// Message bubble text wraps at this many characters — narrower than the
@@ -35,18 +48,35 @@ const CONV_ROW_H: f64 = 52.0;
 const BUBBLE_WRAP_COLS: usize = 40;
 const BUBBLE_WIDTH_FRAC: f64 = 0.72;
 const BUBBLE_MIN_W: f64 = 120.0;
+/// The docked send box's own height — draft field + gap + Send button.
+const COMPOSER_H: f64 = 8.0 + FIELD_H + 8.0 + ROW_H;
+
+const SETTING_UP_STATUS: &str = "Setting up messages…";
 
 // =============================================================================
-// Entry points — mirror `forum_v2_overlay`'s own `height`/`draw` shape.
+// Entry points — `list_height` sizes the LEFT column's own scroll container;
+// the RIGHT pane's content height is computed inline by `draw` (see
+// `forum_v2_overlay.rs`'s own top doc for why one shared number stopped
+// being enough once the composer needed docking).
 // =============================================================================
 
+pub(crate) fn list_height(state: &CommunityState) -> f64 {
+    list_pane_h(&state.dm)
+}
+
+/// The right pane's own "wanted" content height — used only for
+/// `ModalShellSpec`'s inert `content_height` (see `forum_v2_overlay.rs`'s
+/// own `height` doc for why that number is inert).
 pub(crate) fn height(state: &CommunityState) -> f64 {
     if !state.dm.available {
         return if state.dm.last_error.is_some() { 20.0 } else { 0.0 };
     }
+    if state.dm.identity_fingerprint.is_none() {
+        return 24.0;
+    }
     match &state.dm.view {
-        DmView::List => list_h(&state.dm),
-        DmView::Conversation { .. } => conversation_h(&state.dm),
+        DmView::List => 24.0,
+        DmView::Conversation { messages, .. } => conversation_scroll_h(&state.dm, messages) + COMPOSER_H,
     }
 }
 
@@ -64,37 +94,64 @@ pub(crate) fn draw(
     tt: &ToolbarTheme,
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
+    list_result: &mut CommunityListPaneResult,
 ) {
-    let drawn_h = height(state);
-    let viewport_rect = WidgetRect::new(x, y, w, viewport_h);
-    coord.register_on_layer("cloud_overlay:scroll_viewport", viewport_rect, Sense::SCROLL, layer_id);
-    let scrollable = ScrollableContainer::new(viewport_rect, &state.scroll, Some(scroll_config()));
-    scrollable.begin(ctx);
-    let sx = x;
-    let sy = scrollable.content_y();
-    let sw = scrollable.content_width();
+    let right_x = x + LIST_COL_W + COL_GAP;
+    let right_w = (w - LIST_COL_W - COL_GAP).max(0.0);
+    draw_column_divider(ctx, right_x - COL_GAP / 2.0, y, viewport_h, tt);
 
-    if !state.dm.available {
-        if let Some(err) = &state.dm.last_error {
-            draw_error_line(ctx, sw, sx, sy, err);
-        }
+    // --- Left column: "open a conversation" row + conversation list. Drawn
+    // unconditionally (not gated on `available`/identity — see this file's
+    // own top doc): a click on either still reaches `panel_click.rs`'s own
+    // `dm:` arm, which already re-gates on `available` itself.
+    let list_drawn_h = list_pane_h(&state.dm);
+    let list_viewport_rect = WidgetRect::new(x, y, LIST_COL_W, viewport_h);
+    coord.register_on_layer("cloud_overlay:scroll_viewport", list_viewport_rect, Sense::SCROLL, layer_id);
+    let list_scrollable = ScrollableContainer::new(list_viewport_rect, &state.list_scroll, Some(scroll_config()));
+    list_scrollable.begin(ctx);
+    let lx = x;
+    let mut ly = list_scrollable.content_y();
+    let lw = list_scrollable.content_width();
+    ly += draw_open_peer_row(ctx, coord, layer_id, lx, ly, lw, ft, tt, current_time_ms, result);
+    if state.dm.conversations.is_empty() {
+        draw_status(ctx, tt, lx, ly, lw, "No conversations yet.", None);
     } else {
-        match &state.dm.view {
-            DmView::List => draw_list(ctx, coord, layer_id, sx, sy, sw, state, ft, tt, current_time_ms, result),
-            DmView::Conversation { id, messages, draft_field_id } => draw_conversation(
-                ctx, coord, layer_id, sx, sy, sw, state, *id, messages, draft_field_id, ft, tt, current_time_ms, result,
-            ),
+        for c in &state.dm.conversations {
+            ly += draw_conversation_row(ctx, coord, layer_id, lx, ly, lw, c, current_time_ms, tt);
         }
     }
-
     let widget_theme = WidgetTheme::default();
-    let scroll_result = scrollable.end(ctx, drawn_h, &widget_theme);
-    result.total_content_height = Some(drawn_h);
-    result.viewport_height = Some(viewport_h);
-    result.scroll_viewport_rect = Some(viewport_rect);
-    result.scrollbar_handle_rect = scroll_result.handle_rect;
-    result.scrollbar_track_rect = scroll_result.track_rect;
-    register_scrollbar_hit_zones(coord, layer_id, &scroll_result);
+    let list_scroll_result = list_scrollable.end(ctx, list_drawn_h, &widget_theme);
+    list_result.viewport_rect = Some(list_viewport_rect);
+    list_result.total_content_height = Some(list_drawn_h);
+    list_result.viewport_height = Some(viewport_h.min(list_drawn_h));
+    list_result.scrollbar_handle_rect = list_scroll_result.handle_rect;
+    list_result.scrollbar_track_rect = list_scroll_result.track_rect;
+    register_scrollbar_hit_zones(coord, layer_id, &list_scroll_result);
+
+    // --- Right pane ---
+    if !state.dm.available {
+        if let Some(err) = &state.dm.last_error {
+            draw_error_line(ctx, right_w, right_x, y, err);
+        }
+        return;
+    }
+    if state.dm.identity_fingerprint.is_none() {
+        draw_status(ctx, tt, right_x, y, right_w, SETTING_UP_STATUS, None);
+        return;
+    }
+    match &state.dm.view {
+        DmView::List => {
+            draw_status(
+                ctx, tt, right_x, y, right_w,
+                "Select a conversation from the list on the left, or start a new one above.", None,
+            );
+        }
+        DmView::Conversation { id, messages, draft_field_id } => draw_right_conversation(
+            ctx, coord, layer_id, right_x, y, right_w, viewport_h, state, *id, messages,
+            draft_field_id, ft, tt, current_time_ms, result,
+        ),
+    }
 }
 
 /// One clipped red error line — mirrors `forum_v2_overlay`'s own
@@ -146,19 +203,16 @@ fn draw_field(
 }
 
 // =============================================================================
-// List view (`DmView::List`) — a one-line "setting up" status while the
-// server has not confirmed this account's identity key yet, the
-// open-peer-by-nick row, and conversation rows with unread badges.
+// Left column — "start a conversation" row + conversation rows. Drawn
+// unconditionally (see this file's own top doc); `list_pane_h` sizes it the
+// same way regardless of `DmState::available`/`identity_fingerprint`.
 // =============================================================================
 
-const SETTING_UP_STATUS: &str = "Setting up messages…";
-
 /// "Start a conversation" row: a nick/public-id field plus an Open button.
-/// Drawn whenever `dm.available` is true (native, identity present) —
-/// publication of the identity key to the server runs in the background
-/// (see `DmRequest`'s own doc) and is never a precondition the user has to
-/// clear first; click dispatch lives in `mlc-app`'s `panel_click.rs`
-/// (`cloud_overlay:dm:open_peer`).
+/// Always at the top of the left column — publication of the identity key
+/// to the server runs in the background (see `DmRequest`'s own doc) and is
+/// never a precondition the user has to clear first; click dispatch lives
+/// in `mlc-app`'s `panel_click.rs` (`cloud_overlay:dm:open_peer`).
 #[allow(clippy::too_many_arguments)]
 fn draw_open_peer_row(
     ctx: &mut dyn RenderContext,
@@ -241,50 +295,21 @@ fn draw_conversation_row(
     CONV_ROW_H
 }
 
-fn list_h(d: &DmState) -> f64 {
-    let status_h = if d.identity_fingerprint.is_none() { 24.0 } else { 0.0 };
+fn list_pane_h(d: &DmState) -> f64 {
     let open_peer_h = FIELD_H + 12.0;
-    let err_h = if d.last_error.is_some() { 20.0 } else { 0.0 };
     let list_h = if d.conversations.is_empty() { 24.0 } else { d.conversations.len() as f64 * CONV_ROW_H };
-    status_h + open_peer_h + err_h + list_h
-}
-
-#[allow(clippy::too_many_arguments)]
-fn draw_list(
-    ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
-    layer_id: &LayerId,
-    x: f64,
-    y: f64,
-    w: f64,
-    state: &CommunityState,
-    ft: &FrameTheme,
-    tt: &ToolbarTheme,
-    current_time_ms: u64,
-    result: &mut CloudOverlayResult,
-) {
-    let mut ly = y;
-    if state.dm.identity_fingerprint.is_none() {
-        draw_status(ctx, tt, x, ly, w, SETTING_UP_STATUS, None);
-        ly += 24.0;
-    }
-    ly += draw_open_peer_row(ctx, coord, layer_id, x, ly, w, ft, tt, current_time_ms, result);
-    if let Some(err) = &state.dm.last_error {
-        ly += draw_error_line(ctx, w, x, ly, err);
-    }
-    if state.dm.conversations.is_empty() {
-        draw_status(ctx, tt, x, ly, w, "No conversations yet.", None);
-    } else {
-        for c in &state.dm.conversations {
-            ly += draw_conversation_row(ctx, coord, layer_id, x, ly, w, c, current_time_ms, tt);
-        }
-    }
+    open_peer_h + list_h
 }
 
 // =============================================================================
-// Conversation view (`DmView::Conversation`) — header (peer label +
-// fingerprint, read from the matching `DmState::conversations` row),
-// message bubbles (mine right, theirs left), draft field, Send.
+// Right pane — Conversation view (`DmView::Conversation`): header (peer
+// label + fingerprint, read from the matching `DmState::conversations` row),
+// message bubbles (mine right, theirs left) scrolling ABOVE a DOCKED
+// send box (draft field + Send) fixed to the bottom of the pane — W2 split,
+// same shape `forum_v2_overlay.rs`'s own Thread reply box uses. No "←
+// Messages" row (W2): the left column's permanent conversation list already
+// reaches this view — same reasoning `forum_v2_overlay.rs`'s own doc gives
+// for dropping its `BoardThreads`/`Thread` back rows.
 // =============================================================================
 
 fn message_h(m: &DmMessageUi) -> f64 {
@@ -330,24 +355,22 @@ fn draw_message(
     ly - y
 }
 
-fn conversation_h(d: &DmState) -> f64 {
-    let DmView::Conversation { messages, .. } = &d.view else { return 0.0 };
-    let back_h = 36.0;
+fn conversation_scroll_h(d: &DmState, messages: &[DmMessageUi]) -> f64 {
     let header_h = 36.0;
     let err_h = if d.last_error.is_some() { 20.0 } else { 0.0 };
     let msgs_h = if messages.is_empty() { 24.0 } else { messages.iter().map(message_h).sum() };
-    let draft_h = 8.0 + FIELD_H + 8.0 + ROW_H;
-    back_h + header_h + err_h + msgs_h + draft_h
+    header_h + err_h + msgs_h
 }
 
 #[allow(clippy::too_many_arguments)]
-fn draw_conversation(
+fn draw_right_conversation(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
     x: f64,
     y: f64,
     w: f64,
+    viewport_h: f64,
     state: &CommunityState,
     id: i64,
     messages: &[DmMessageUi],
@@ -357,21 +380,16 @@ fn draw_conversation(
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
 ) {
-    let mut ly = y;
+    let scroll_h = (viewport_h - COMPOSER_H).max(0.0);
+    let content_h = conversation_scroll_h(&state.dm, messages);
 
-    let back_rect = WidgetRect::new(x, ly, w, 28.0);
-    let hovered = coord.is_hovered(&WidgetId::from("cloud_overlay:dm:back"));
-    if hovered {
-        ctx.set_fill_color(&tt.item_bg_hover);
-        ctx.fill_rounded_rect(back_rect.x, back_rect.y, back_rect.width, back_rect.height, SETTINGS_BUTTON_RADIUS);
-    }
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(if hovered { &tt.item_text } else { &tt.item_text_muted });
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text("← Messages", x + 8.0, ly + 14.0);
-    coord.register_on_layer("cloud_overlay:dm:back", back_rect, Sense::CLICK | Sense::HOVER, layer_id);
-    ly += 36.0;
+    let viewport_rect = WidgetRect::new(x, y, w, scroll_h);
+    coord.register_on_layer("cloud_overlay:scroll_viewport", viewport_rect, Sense::SCROLL, layer_id);
+    let scrollable = ScrollableContainer::new(viewport_rect, &state.scroll, Some(scroll_config()));
+    scrollable.begin(ctx);
+    let sx = x;
+    let mut sy = scrollable.content_y();
+    let sw = scrollable.content_width();
 
     // Peer label/fingerprint are read from the matching conversation-list
     // row by id (`DmState::open_peer`'s own lookup, inlined here since we
@@ -384,35 +402,44 @@ fn draw_conversation(
     ctx.set_fill_color(GOLD);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(peer_label, x, ly);
-    ly += 18.0;
+    ctx.fill_text(peer_label, sx, sy);
+    sy += 18.0;
     ctx.set_font("10px monospace");
     ctx.set_fill_color(&tt.item_text_muted);
-    ctx.fill_text(&format!("fingerprint: {fingerprint}"), x, ly);
-    ly += 18.0;
+    ctx.fill_text(&format!("fingerprint: {fingerprint}"), sx, sy);
+    sy += 18.0;
 
     if let Some(err) = &state.dm.last_error {
-        ly += draw_error_line(ctx, w, x, ly, err);
+        sy += draw_error_line(ctx, sw, sx, sy, err);
     }
 
     if messages.is_empty() {
-        draw_status(ctx, tt, x, ly, w, "No messages yet.", None);
-        ly += 24.0;
+        draw_status(ctx, tt, sx, sy, sw, "No messages yet.", None);
     } else {
         for m in messages {
-            ly += draw_message(ctx, x, ly, w, m, current_time_ms, tt);
+            sy += draw_message(ctx, sx, sy, sw, m, current_time_ms, tt);
         }
     }
 
-    ly += 8.0;
-    let field_rect = WidgetRect::new(x, ly, w, FIELD_H);
+    let widget_theme = WidgetTheme::default();
+    let scroll_result = scrollable.end(ctx, content_h, &widget_theme);
+    result.total_content_height = Some(content_h);
+    result.viewport_height = Some(scroll_h);
+    result.scroll_viewport_rect = Some(viewport_rect);
+    result.scrollbar_handle_rect = scroll_result.handle_rect;
+    result.scrollbar_track_rect = scroll_result.track_rect;
+    register_scrollbar_hit_zones(coord, layer_id, &scroll_result);
+
+    // Docked send box — fixed to the bottom of the pane, outside the
+    // scrollable clip above.
+    let composer_y = y + (viewport_h - COMPOSER_H).max(0.0);
+    let field_rect = WidgetRect::new(x, composer_y + 8.0, w, FIELD_H);
     let (rect, chars) = draw_field(
         ctx, coord, layer_id, "cloud_overlay:dm:draft_input", draft_field_id, field_rect,
         "Write a message…", ft, tt, current_time_ms,
     );
     result.dm_draft_rect = Some(rect);
     result.dm_draft_char_positions = chars;
-    ly += FIELD_H + 8.0;
-
-    draw_action_row(ctx, coord, layer_id, "cloud_overlay:dm:send", WidgetRect::new(x, ly, w, ROW_H - ROW_GAP), "Send", tt);
+    let btn_y = composer_y + 8.0 + FIELD_H + 8.0;
+    draw_action_row(ctx, coord, layer_id, "cloud_overlay:dm:send", WidgetRect::new(x, btn_y, w, ROW_H - ROW_GAP), "Send", tt);
 }

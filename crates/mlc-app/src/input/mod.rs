@@ -2268,9 +2268,21 @@ impl ChartApp {
                         viewport_height: comm.content.viewport_height.unwrap_or(0.0),
                         viewport_rect: comm.content.scroll_viewport_rect,
                     };
+                    // The Community modal's LEFT column (boards/
+                    // conversations) — its own scroll region, same shared
+                    // id, disambiguated the same way (community-modal arc
+                    // W2).
+                    let comm_list_info = ScrollableInfo {
+                        handle_rect: comm.list.scrollbar_handle_rect,
+                        track_rect: comm.list.scrollbar_track_rect,
+                        content_height: comm.list.total_content_height.unwrap_or(0.0),
+                        viewport_height: comm.list.viewport_height.unwrap_or(0.0),
+                        viewport_rect: comm.list.viewport_rect,
+                    };
                     let started = try_start_scrollbar_drag(x, y, &mut [
                         (&co_info, &mut self.panel_app.cloud_overlay_state.scroll),
                         (&comm_info, &mut self.panel_app.community_state.scroll),
+                        (&comm_list_info, &mut self.panel_app.community_state.list_scroll),
                     ]);
                     if started {
                         // FALSE like every other modal drag here: means "a
@@ -2974,7 +2986,9 @@ impl ChartApp {
                 }
             }
             // Community modal scrollbar track click — same shape as the
-            // cloud overlay's above (community-modal arc W1).
+            // cloud overlay's above (community-modal arc W1); the left
+            // column (boards/conversations) is a second independent
+            // candidate sharing the same ids (arc W2).
             #[cfg(feature = "cloud")]
             if self.panel_app.community_state.is_open {
                 if let Some(ref cm) = result.community {
@@ -2986,8 +3000,17 @@ impl ChartApp {
                         viewport_height: cm.content.viewport_height.unwrap_or(0.0),
                         viewport_rect: cm.content.scroll_viewport_rect,
                     };
-                    let scroll_state = &mut self.panel_app.community_state.scroll;
-                    if try_handle_track_click(x, y, &mut [(&info, scroll_state)]) {
+                    let list_info = ScrollableInfo {
+                        handle_rect: cm.list.scrollbar_handle_rect,
+                        track_rect: cm.list.scrollbar_track_rect,
+                        content_height: cm.list.total_content_height.unwrap_or(0.0),
+                        viewport_height: cm.list.viewport_height.unwrap_or(0.0),
+                        viewport_rect: cm.list.viewport_rect,
+                    };
+                    if try_handle_track_click(x, y, &mut [
+                        (&info, &mut self.panel_app.community_state.scroll),
+                        (&list_info, &mut self.panel_app.community_state.list_scroll),
+                    ]) {
                         return false;
                     }
                 }
@@ -4161,6 +4184,17 @@ impl ChartApp {
                 self.panel_app.cloud_overlay_state.update_drag(x, y);
                 return;
             }
+            // Community modal's own header drag — `start_drag` (on_drag_start's
+            // "community" header arm) set `is_dragging`, but nothing advanced
+            // it on move or cleared it on release until this pass: the modal
+            // dragged its RESIZE edges fine (that path is wired separately,
+            // `ResizableModal::update_resize`) while a plain header drag left
+            // `is_dragging` stuck true forever. Same shape as
+            // `cloud_overlay_state`'s own pair just above.
+            if self.panel_app.community_state.is_dragging {
+                self.panel_app.community_state.update_drag(x, y);
+                return;
+            }
         }
         if self.panel_app.ewa_engine_settings_state.is_dragging {
             self.panel_app.ewa_engine_settings_state.update_drag(x, y);
@@ -4357,6 +4391,25 @@ impl ChartApp {
                             track_rect.height,
                             cm.content.total_content_height.unwrap_or(0.0),
                             cm.content.viewport_height.unwrap_or(0.0),
+                        );
+                    }
+                }
+            }
+            return;
+        }
+        // Community modal's LEFT column (boards/conversations) scrollbar
+        // drag — same shape as its own `content` pane just above, geometry
+        // from `CommunityResult::list` (community-modal arc W2).
+        #[cfg(feature = "cloud")]
+        if self.panel_app.community_state.list_scroll.is_dragging {
+            if let Some(ref result) = self.frame_result {
+                if let Some(ref cm) = result.community {
+                    if let Some(ref track_rect) = cm.list.scrollbar_track_rect {
+                        self.panel_app.community_state.list_scroll.handle_drag(
+                            y,
+                            track_rect.height,
+                            cm.list.total_content_height.unwrap_or(0.0),
+                            cm.list.viewport_height.unwrap_or(0.0),
                         );
                     }
                 }
@@ -5152,6 +5205,13 @@ impl ChartApp {
             self.panel_app.community_state.scroll.end_drag();
             return;
         }
+        // End the Community modal's LEFT column scrollbar drag
+        // (community-modal arc W2).
+        #[cfg(feature = "cloud")]
+        if self.panel_app.community_state.list_scroll.is_dragging {
+            self.panel_app.community_state.list_scroll.end_drag();
+            return;
+        }
 
         // End signal group scrollbar drag.
         for (_, scroll) in self.sidebar_state.signal_group_scroll.iter_mut() {
@@ -5246,6 +5306,14 @@ impl ChartApp {
             }
             if self.panel_app.cloud_overlay_state.is_dragging {
                 self.panel_app.cloud_overlay_state.end_drag();
+                return;
+            }
+            // Community modal's own header drag end — see the matching
+            // `update_drag` fix's own doc (on_drag_move, just above) for why
+            // this was missing.
+            if self.panel_app.community_state.is_dragging {
+                self.panel_app.community_state.end_drag();
+                eprintln!("[ChartApp] community modal drag ended");
                 return;
             }
         }
@@ -6984,9 +7052,21 @@ impl ChartApp {
                                 viewport_height: comm.content.viewport_height.unwrap_or(0.0),
                                 viewport_rect: comm.content.scroll_viewport_rect,
                             };
+                            // The Community modal's LEFT column (boards/
+                            // conversations) — its own scroll region, same
+                            // shared id, disambiguated by rect containment
+                            // the same way (community-modal arc W2).
+                            let comm_list_info = ScrollableInfo {
+                                handle_rect: comm.list.scrollbar_handle_rect,
+                                track_rect: comm.list.scrollbar_track_rect,
+                                content_height: comm.list.total_content_height.unwrap_or(0.0),
+                                viewport_height: comm.list.viewport_height.unwrap_or(0.0),
+                                viewport_rect: comm.list.viewport_rect,
+                            };
                             let _ = try_handle_wheel(x, y, scroll_step, &mut [
                                 (&co_info, &mut self.panel_app.cloud_overlay_state.scroll),
                                 (&comm_info, &mut self.panel_app.community_state.scroll),
+                                (&comm_list_info, &mut self.panel_app.community_state.list_scroll),
                             ]);
                             return;
                         }

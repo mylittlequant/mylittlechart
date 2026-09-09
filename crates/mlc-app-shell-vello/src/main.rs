@@ -1030,6 +1030,10 @@ fn map_forum2_board_native(
         read_class: b.read_class,
         write_class: b.write_class,
         can_write,
+        thread_count: b.thread_count,
+        reply_count: b.reply_count,
+        last_post_at: b.last_post_at,
+        last_thread_title: b.last_thread_title,
     }
 }
 

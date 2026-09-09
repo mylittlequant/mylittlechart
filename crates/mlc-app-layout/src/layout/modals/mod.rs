@@ -93,7 +93,7 @@ pub mod dm_overlay;
 #[cfg(feature = "cloud")]
 pub mod community;
 #[cfg(feature = "cloud")]
-pub use community::{render_community_modal, CommunityResult};
+pub use community::{render_community_modal, CommunityListPaneResult, CommunityResult};
 
 pub use indicator_settings::*;
 pub use context_menu::*;

@@ -16,12 +16,22 @@
 //! here registers anything when `state.is_open` is false — the caller in
 //! `chart_panel_app.rs` only calls this while it is).
 //!
-//! Hosts today's Forum-v2 (`forum_v2_overlay`) and Direct Messages
-//! (`dm_overlay`) rendering UNCHANGED — both already took `&CommunityState`
-//! (moved out of `CloudOverlayState` alongside this modal) and keep every
-//! widget id they had (`cloud_overlay:forum2:*` / `cloud_overlay:dm:*`), so
-//! `mlc-app`'s click dispatch needed only a Rust field-access path change,
-//! not an id rename.
+//! Hosts Forum-v2 (`forum_v2_overlay`) and Direct Messages (`dm_overlay`)
+//! rendering — both take `&CommunityState` (moved out of `CloudOverlayState`
+//! alongside this modal) and keep every widget id they had (`cloud_overlay:
+//! forum2:*` / `cloud_overlay:dm:*`), so `mlc-app`'s click dispatch needed
+//! only a Rust field-access path change, not an id rename.
+//!
+//! W2 of the community-modal-and-forum-ladder arc (`docs/mlc/plans/
+//! community-modal-and-forum-ladder-2026-09-09.md`) turned each pane into a
+//! "familiar forum + messenger" TWO-COLUMN layout: a fixed-width, own-
+//! scroll left column (boards / conversations) and a right pane (board
+//! header + threads, or an open thread/compose/search; the open
+//! conversation's messages) — both `forum_v2_overlay::draw`/
+//! `dm_overlay::draw` now fill BOTH `CommunityResult::content` (the right
+//! pane, reusing `CloudOverlayResult` exactly as W1 did for the single-pane
+//! body) and [`CommunityResult::list`] (the left column's own scroll
+//! geometry, new this pass).
 
 use mlc_core::engine::render::RenderContext;
 use uzor::input::InputCoordinator;
@@ -59,15 +69,42 @@ pub struct CommunityResult {
     pub close_btn_rect: WidgetRect,
     pub tab_rects: Vec<(String, WidgetRect)>,
     pub content: CloudOverlayResult,
+    /// Left-column (boards/conversations) scroll geometry — see this
+    /// type's own doc for why it is separate from `content`. `None` fields
+    /// mean the column drew with nothing to scroll (short list), same
+    /// "absent means nothing to wire up" convention `CloudOverlayResult`'s
+    /// own optional fields already use.
+    pub list: CommunityListPaneResult,
 }
 
-/// Natural (unclamped) content height for whichever pane is active — shared
-/// by the frame-sizing call and the body draw so the two can never disagree
-/// (same doctrine every other modal in this crate follows).
+/// The left column's own scroll/viewport geometry — a single scroll region
+/// alongside `content`'s own (community-modal arc W2). Registered under the
+/// SAME `"cloud_overlay:scroll_viewport"`/`"cloud_overlay:scrollbar_*"` ids
+/// as `content`'s own viewport (and the News/Download overlay's single one)
+/// — `mlc-app`'s `try_handle_wheel`/`try_start_scrollbar_drag` already
+/// disambiguate same-id candidates by rect containment, so this is exactly
+/// the shape those call sites already expect as a third candidate.
+#[derive(Clone, Debug, Default)]
+pub struct CommunityListPaneResult {
+    pub viewport_rect: Option<WidgetRect>,
+    pub scrollbar_handle_rect: Option<WidgetRect>,
+    pub scrollbar_track_rect: Option<WidgetRect>,
+    pub total_content_height: Option<f64>,
+    pub viewport_height: Option<f64>,
+}
+
+/// Natural (unclamped) content height for whichever pane is active — the
+/// taller of the left column and the right pane (W2's two-pane layout has
+/// two independent scroll regions on screen at once, so a single number can
+/// only ever be a reasonable upper bound, not an exact match for both). Feeds
+/// only `ModalShellSpec`'s inert `content_height` (see that call site's own
+/// doc for why it has no observable effect today) — never the two panes'
+/// OWN `ScrollableContainer::end` calls, which each use their own `*_h`
+/// helper directly (`forum_v2_overlay`/`dm_overlay`'s own `draw`).
 fn content_height(state: &CommunityState) -> f64 {
     match state.tab {
-        CommunityTab::Forum => forum_v2_overlay::height(state),
-        CommunityTab::Messages => dm_overlay::height(state),
+        CommunityTab::Forum => forum_v2_overlay::list_height(state).max(forum_v2_overlay::height(state)),
+        CommunityTab::Messages => dm_overlay::list_height(state).max(dm_overlay::height(state)),
     }
 }
 
@@ -130,11 +167,11 @@ pub fn render_community_modal(
             match state.tab {
                 CommunityTab::Forum => forum_v2_overlay::draw(
                     ctx, coord, layer_id, x, y, w, viewport_h, state, frame_theme, toolbar_theme,
-                    current_time_ms, &mut result.content,
+                    current_time_ms, &mut result.content, &mut result.list,
                 ),
                 CommunityTab::Messages => dm_overlay::draw(
                     ctx, coord, layer_id, x, y, w, viewport_h, state, frame_theme, toolbar_theme,
-                    current_time_ms, &mut result.content,
+                    current_time_ms, &mut result.content, &mut result.list,
                 ),
             }
         },

@@ -27,6 +27,22 @@ pub struct ForumBoard {
     pub read_class: String,
     pub write_class: String,
     pub position: i64,
+    /// Total threads on this board. `#[serde(default)]` — same reasoning
+    /// as `mlc_cloud::models::ForumBoard`'s own copy of these four fields
+    /// (community-modal arc W2): the server change landing them is a
+    /// separate in-flight deploy.
+    #[serde(default)]
+    pub thread_count: i64,
+    /// Total replies across every thread on this board.
+    #[serde(default)]
+    pub reply_count: i64,
+    /// Timestamp of the board's most recent thread or reply, whichever is
+    /// newer — `None` for a board with no activity yet, or an older server.
+    #[serde(default)]
+    pub last_post_at: Option<String>,
+    /// Title of the thread that carries `last_post_at`.
+    #[serde(default)]
+    pub last_thread_title: Option<String>,
 }
 
 /// One row of `GET /api/forum/boards/{slug}/threads`.

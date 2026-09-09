@@ -609,6 +609,26 @@ pub struct ForumBoard {
     /// Wire name of the write-access class gate — see this section's doc.
     pub write_class: String,
     pub position: i64,
+    /// Total threads on this board. `#[serde(default)]` (community-modal
+    /// arc W2, owner review 2026-09-09: "a forum, not a feed") — the server
+    /// change landing this field is a separate in-flight deploy, so an
+    /// older server's response (missing the key entirely) must still
+    /// deserialize rather than reject the whole boards list.
+    #[serde(default)]
+    pub thread_count: i64,
+    /// Total replies across every thread on this board. Same
+    /// `#[serde(default)]` reasoning as `thread_count`.
+    #[serde(default)]
+    pub reply_count: i64,
+    /// Timestamp of the board's most recent thread or reply, whichever is
+    /// newer — `None` for a board with no activity yet, or an older server
+    /// that does not send this field.
+    #[serde(default)]
+    pub last_post_at: Option<String>,
+    /// Title of the thread that carries `last_post_at` — `None` under the
+    /// same conditions as `last_post_at`.
+    #[serde(default)]
+    pub last_thread_title: Option<String>,
 }
 
 /// Response body from `GET /api/forum/boards`.

@@ -195,6 +195,19 @@ fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
     tf.register(text_input::FORUM_TITLE, TextFieldConfig::text().with_max_len(160));
     tf.register(text_input::FORUM_BODY, TextFieldConfig::text().with_max_len(4000));
     tf.register(text_input::FORUM_REPLY, TextFieldConfig::text().with_max_len(4000));
+    // Forum v2's search box and DM's draft/peer boxes were added to
+    // `TextFieldStore` geometry (`update_field`, `lib.rs`'s own per-frame
+    // pass) and dispatch (`text_input::dispatch::text_action_forum_search`/
+    // `text_action_dm_draft`/`text_action_dm_peer`) but never here — and
+    // `register`/`update_field`/`focus` all use `get`/`get_mut` against the
+    // field map, never `entry().or_insert_with()`, so a field that is never
+    // registered can never hold a rect, never be focused, and never accept
+    // a typed character. That silently broke Board search (found in review
+    // of the shipped W1 build, owner 2026-09-09) and would have broken DM's
+    // draft/peer boxes identically the first time anyone tried them.
+    tf.register(text_input::FORUM_SEARCH, TextFieldConfig::text().with_max_len(200));
+    tf.register(text_input::DM_DRAFT, TextFieldConfig::text().with_max_len(4000));
+    tf.register(text_input::DM_PEER, TextFieldConfig::text().with_max_len(128));
 }
 
 use std::cell::RefCell;
