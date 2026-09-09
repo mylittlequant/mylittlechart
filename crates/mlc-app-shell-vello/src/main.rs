@@ -3024,7 +3024,7 @@ impl App<'_> {
         let mut write_failure: Option<String> = None;
 
         {
-            let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+            let ov = &mut pw.chart.panel_app.community_state;
             ov.forum2.boards_refreshing = false;
             ov.forum2.board_threads_refreshing = false;
             ov.forum2.thread_refreshing = false;
@@ -3152,7 +3152,7 @@ impl App<'_> {
         let mut backfilled: Option<(i64, [u8; 32], String)> = None;
 
         {
-            let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+            let ov = &mut pw.chart.panel_app.community_state;
             ov.dm.conversations_refreshing = false;
             ov.dm.messages_refreshing = false;
 
@@ -3280,7 +3280,7 @@ impl App<'_> {
 
         if let Some((conversation, peer_public_key)) = opened {
             self.dm_peer_keys.insert(conversation.id, peer_public_key);
-            let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+            let ov = &mut pw.chart.panel_app.community_state;
             let row = DmConversationUi {
                 id: conversation.id,
                 peer_label: conversation.peer.label,
@@ -3298,7 +3298,7 @@ impl App<'_> {
 
         if let Some((conversation_id, key, fingerprint)) = backfilled {
             self.dm_peer_keys.insert(conversation_id, key);
-            let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+            let ov = &mut pw.chart.panel_app.community_state;
             if let Some(row) = ov.dm.conversations.iter_mut().find(|c| c.id == conversation_id) {
                 row.peer_fingerprint = Some(fingerprint);
             }
@@ -3320,7 +3320,7 @@ impl App<'_> {
     #[cfg(feature = "cloud")]
     fn drive_forum2(&mut self) {
         use mlc_app_layout::ui::modal_settings::{
-            CloudOverlayKind, ForumV2Request as UiForumV2Request, ForumV2View, NewsTab,
+            CommunityTab, ForumV2Request as UiForumV2Request, ForumV2View,
         };
 
         if self.updater_handle.forum_v2_rx.has_changed().unwrap_or(false) {
@@ -3333,7 +3333,7 @@ impl App<'_> {
                 // its own broadcast fact.
                 mlc_updater::ForumV2State::Me { classes, roles } => {
                     for pw in self.windows.values_mut() {
-                        let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+                        let ov = &mut pw.chart.panel_app.community_state;
                         ov.forum2.caller_roles = roles.clone();
                         // Recompute `can_write` on whatever boards this
                         // window already has loaded — a `Me` answer landing
@@ -3365,7 +3365,7 @@ impl App<'_> {
         // `Forum2Chain`'s own doc for why only one action is ever in flight
         // at a time).
         let drained = self.windows.iter_mut().find_map(|(id, pw)| {
-            pw.chart.panel_app.cloud_overlay_state.forum2.request.take().map(|r| (*id, r))
+            pw.chart.panel_app.community_state.forum2.request.take().map(|r| (*id, r))
         });
         if let Some((win_id, req)) = drained {
             // Optimistic view pre-set, and the thread-id inference
@@ -3373,7 +3373,7 @@ impl App<'_> {
             // both read/written before firing.
             let mut thread_id_hint = None;
             if let Some(pw) = self.windows.get_mut(&win_id) {
-                let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+                let ov = &mut pw.chart.panel_app.community_state;
                 match &req {
                     UiForumV2Request::LoadBoard { slug, before } if before.is_none() => {
                         ov.forum2.view = ForumV2View::BoardThreads {
@@ -3448,8 +3448,8 @@ impl App<'_> {
         }
         let mut found: Option<(WindowId, Passive)> = None;
         'scan: for (win_id, pw) in self.windows.iter() {
-            let ov = &pw.chart.panel_app.cloud_overlay_state;
-            if !(ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Forum) {
+            let ov = &pw.chart.panel_app.community_state;
+            if !(ov.is_open && ov.tab == CommunityTab::Forum) {
                 continue;
             }
             // Once per tab-open (and again after a sign-in/sign-out edge
@@ -3481,7 +3481,7 @@ impl App<'_> {
         }
         if let Some((win_id, passive)) = found {
             if let Some(pw) = self.windows.get_mut(&win_id) {
-                let ov = &mut pw.chart.panel_app.cloud_overlay_state;
+                let ov = &mut pw.chart.panel_app.community_state;
                 match &passive {
                     Passive::Me => ov.forum2.me_refreshing = true,
                     Passive::Boards => ov.forum2.boards_refreshing = true,
@@ -3509,14 +3509,14 @@ impl App<'_> {
     /// passive fetch. Same structure as [`Self::drive_forum2`].
     #[cfg(feature = "cloud")]
     fn drive_dm(&mut self) {
-        use mlc_app_layout::ui::modal_settings::{CloudOverlayKind, DmRequest as UiDmRequest, NewsTab};
+        use mlc_app_layout::ui::modal_settings::{CommunityTab, DmRequest as UiDmRequest};
 
         // The window (if any) currently showing Messages — used both as the
         // gate below and as the routing target for actions that are not
         // tied to a specific request (auto-publish, backfill).
         let messages_window: Option<WindowId> = self.windows.iter().find_map(|(id, pw)| {
-            let ov = &pw.chart.panel_app.cloud_overlay_state;
-            (ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Messages).then_some(*id)
+            let ov = &pw.chart.panel_app.community_state;
+            (ov.is_open && ov.tab == CommunityTab::Messages).then_some(*id)
         });
         let Some(messages_window) = messages_window else {
             return;
@@ -3525,15 +3525,15 @@ impl App<'_> {
         let vault_key = self.core.user().vault_key();
         let Some(vault_key) = vault_key else {
             if let Some(pw) = self.windows.get_mut(&messages_window) {
-                pw.chart.panel_app.cloud_overlay_state.dm.available = false;
-                pw.chart.panel_app.cloud_overlay_state.dm.last_error =
+                pw.chart.panel_app.community_state.dm.available = false;
+                pw.chart.panel_app.community_state.dm.last_error =
                     Some("Unlock the vault to use messages".to_string());
             }
             return;
         };
 
         if let Some(pw) = self.windows.get_mut(&messages_window) {
-            pw.chart.panel_app.cloud_overlay_state.dm.available = true;
+            pw.chart.panel_app.community_state.dm.available = true;
         }
 
         if self.dm_identity.is_none() {
@@ -3549,7 +3549,7 @@ impl App<'_> {
                 // all), rather than routed like every other answer.
                 mlc_updater::DmState::Identity { fingerprint } => {
                     for pw in self.windows.values_mut() {
-                        pw.chart.panel_app.cloud_overlay_state.dm.identity_fingerprint = Some(fingerprint.clone());
+                        pw.chart.panel_app.community_state.dm.identity_fingerprint = Some(fingerprint.clone());
                         pw.overlay_dirty = true;
                     }
                 }
@@ -3581,8 +3581,10 @@ impl App<'_> {
                     .windows
                     .get(&messages_window)
                     .map(|pw| {
-                        let ov = &pw.chart.panel_app.cloud_overlay_state;
-                        (ov.forum_entitled, ov.dm.identity_fingerprint.clone())
+                        (
+                            pw.chart.panel_app.cloud_overlay_state.forum_entitled,
+                            pw.chart.panel_app.community_state.dm.identity_fingerprint.clone(),
+                        )
                     })
                     .unwrap_or((false, None));
                 let my_fingerprint = mlc_vault::dm::fingerprint(&identity.public);
@@ -3612,13 +3614,13 @@ impl App<'_> {
 
         // Explicit user action.
         let drained = self.windows.iter_mut().find_map(|(id, pw)| {
-            pw.chart.panel_app.cloud_overlay_state.dm.request.take().map(|r| (*id, r))
+            pw.chart.panel_app.community_state.dm.request.take().map(|r| (*id, r))
         });
         if let Some((win_id, req)) = drained {
             match req {
                 UiDmRequest::LoadConversations => {
                     if let Some(pw) = self.windows.get_mut(&win_id) {
-                        pw.chart.panel_app.cloud_overlay_state.dm.conversations_refreshing = true;
+                        pw.chart.panel_app.community_state.dm.conversations_refreshing = true;
                     }
                     let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
                         mlc_updater::DmRequest::ListConversations,
@@ -3633,7 +3635,7 @@ impl App<'_> {
                 }
                 UiDmRequest::LoadMessages { id, after } => {
                     if let Some(pw) = self.windows.get_mut(&win_id) {
-                        pw.chart.panel_app.cloud_overlay_state.dm.messages_refreshing = true;
+                        pw.chart.panel_app.community_state.dm.messages_refreshing = true;
                     }
                     let append = after.is_some();
                     let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
@@ -3644,14 +3646,14 @@ impl App<'_> {
                 UiDmRequest::Send { id, plaintext } => {
                     let Some(identity) = &self.dm_identity else {
                         if let Some(pw) = self.windows.get_mut(&win_id) {
-                            pw.chart.panel_app.cloud_overlay_state.dm.last_error =
+                            pw.chart.panel_app.community_state.dm.last_error =
                                 Some("Unlock the vault to send messages".to_string());
                         }
                         return;
                     };
                     let Some(peer_public) = self.dm_peer_keys.get(&id).copied() else {
                         if let Some(pw) = self.windows.get_mut(&win_id) {
-                            pw.chart.panel_app.cloud_overlay_state.dm.last_error =
+                            pw.chart.panel_app.community_state.dm.last_error =
                                 Some("Open this conversation again to send".to_string());
                         }
                         return;
@@ -6383,7 +6385,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         #[cfg(feature = "cloud")]
         {
             use mlc_app_layout::ui::modal_settings::{
-                CloudOverlayKind, ForumListState, ForumRequest, ForumSubView, NewsTab,
+                CommunityTab, ForumListState, ForumRequest, ForumSubView,
             };
 
             let mut to_send: Vec<mlc_updater::ForumCommand> = Vec::new();
@@ -6416,20 +6418,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             // nothing loaded yet — same "Empty -> fire" idiom the News fetch
             // above uses.
             let needs_fetch = self.windows.values().any(|pw| {
+                let community_forum_open = pw.chart.panel_app.community_state.is_open
+                    && pw.chart.panel_app.community_state.tab == CommunityTab::Forum;
                 let ov = &pw.chart.panel_app.cloud_overlay_state;
-                ov.is_open
-                    && ov.kind == CloudOverlayKind::News
-                    && ov.news_tab == NewsTab::Forum
-                    && matches!(ov.forum_list, ForumListState::Empty)
+                community_forum_open && matches!(ov.forum_list, ForumListState::Empty)
             });
             if needs_fetch {
                 for pw in self.windows.values_mut() {
+                    let community_forum_open = pw.chart.panel_app.community_state.is_open
+                        && pw.chart.panel_app.community_state.tab == CommunityTab::Forum;
                     let ov = &mut pw.chart.panel_app.cloud_overlay_state;
-                    if ov.is_open
-                        && ov.kind == CloudOverlayKind::News
-                        && ov.news_tab == NewsTab::Forum
-                        && matches!(ov.forum_list, ForumListState::Empty)
-                    {
+                    if community_forum_open && matches!(ov.forum_list, ForumListState::Empty) {
                         ov.forum_list = ForumListState::Loading;
                     }
                 }
@@ -6455,19 +6454,19 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             let forum_busy = self.updater_handle.forum_rx.borrow().busy;
             if !explicit_action_this_tick && !forum_busy && !needs_fetch {
                 let list_due = self.windows.values().any(|pw| {
+                    let community_forum_open = pw.chart.panel_app.community_state.is_open
+                        && pw.chart.panel_app.community_state.tab == CommunityTab::Forum;
                     let ov = &pw.chart.panel_app.cloud_overlay_state;
-                    ov.is_open
-                        && ov.kind == CloudOverlayKind::News
-                        && ov.news_tab == NewsTab::Forum
+                    community_forum_open
                         && matches!(ov.forum_list, ForumListState::Loaded { .. })
                         && ov.forum_list_due_for_refresh()
                 });
                 if list_due {
                     for pw in self.windows.values_mut() {
+                        let community_forum_open = pw.chart.panel_app.community_state.is_open
+                            && pw.chart.panel_app.community_state.tab == CommunityTab::Forum;
                         let ov = &mut pw.chart.panel_app.cloud_overlay_state;
-                        if ov.is_open
-                            && ov.kind == CloudOverlayKind::News
-                            && ov.news_tab == NewsTab::Forum
+                        if community_forum_open
                             && matches!(ov.forum_list, ForumListState::Loaded { .. })
                             && ov.forum_list_due_for_refresh()
                         {
@@ -6478,10 +6477,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         mlc_updater::ForumCommand::ListThreads { before: None },
                     ));
                 } else if let Some(id) = self.windows.values().find_map(|pw| {
-                    let ov = &pw.chart.panel_app.cloud_overlay_state;
-                    if !(ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Forum) {
+                    let community_forum_open = pw.chart.panel_app.community_state.is_open
+                        && pw.chart.panel_app.community_state.tab == CommunityTab::Forum;
+                    if !community_forum_open {
                         return None;
                     }
+                    let ov = &pw.chart.panel_app.cloud_overlay_state;
                     if let ForumSubView::Thread { thread: Some(t), loading: false, posting_reply: false, .. } =
                         &ov.forum_view
                     {
@@ -6613,7 +6614,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             #[cfg(feature = "cloud")]
             if auth_identity_changed {
                 for pw in self.windows.values_mut() {
-                    pw.chart.panel_app.cloud_overlay_state.forum2.invalidate_me();
+                    pw.chart.panel_app.community_state.forum2.invalidate_me();
                 }
             }
             // Agent API listener start/stop: the port only ever binds for a

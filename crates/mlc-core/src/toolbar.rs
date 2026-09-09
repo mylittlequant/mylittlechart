@@ -167,6 +167,15 @@ pub fn right_toolbar() -> PanelToolbarDef {
         // so this needed no renderer change.
         {
             let mut s = ToolbarSectionDef::new(vec![
+                // Community (Forum + Messages) — directly above `events`
+                // (community-modal arc, `docs/mlc/plans/community-modal-and-
+                // forum-ladder-2026-09-09.md` W1). Toggles `CommunityState::
+                // is_open` (`mlc-app`'s `panel_click.rs`, `"community"` item
+                // id, ahead of the generic `handle_toolbar_click_with_chart`
+                // dispatch) rather than a `RightSidebarPanel` — this is a
+                // modal, not a sidebar panel.
+                ToolbarItemDef::icon_button("community", ToolbarIconId::new("Mail"))
+                    .with_tooltip(t_toolbar(TK::Community)),
                 ToolbarItemDef::icon_button("events", ToolbarIconId::new("History"))
                     .with_tooltip(t_toolbar(TK::Events)),
             ]);

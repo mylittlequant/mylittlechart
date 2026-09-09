@@ -1190,6 +1190,12 @@ impl ChartToolbarState {
                 vec![ChartOutEvent::Consumed]
             }
 
+            // === Community modal (Forum + Messages) — app-level modal ===
+            // Same "toggle already happened before this generic dispatch was
+            // reached" shape as `chart_settings` above (community-modal arc
+            // W1, `mlc-app`'s `panel_click.rs`).
+            "community" => vec![ChartOutEvent::Consumed],
+
             // === Favorites quick-pick bar toggle (favorite-primitives arc) ===
             // Purely local UI state — visibility is profile-persisted by the
             // app layer (mirrors the inline bar's position persistence).

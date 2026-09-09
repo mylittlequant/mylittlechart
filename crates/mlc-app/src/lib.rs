@@ -10870,11 +10870,15 @@ impl ChartApp {
                     );
                 }
             }
-            // Forum tab's title/body (compose) / reply (thread) fields —
-            // same "no drag-selection, no click-to-position without this"
-            // reasoning as the gift-code box above.
+            // Community modal's Forum title/body (compose) / reply (thread)
+            // fields, Forum search box, and DM draft/peer boxes — same
+            // "no drag-selection, no click-to-position without this"
+            // reasoning as the gift-code box above. Geometry comes from
+            // `CommunityResult::content` (community-modal arc W1) — moved
+            // out of `fr.cloud_overlay` when Forum/Messages moved out of the
+            // News overlay into their own modal.
             #[cfg(feature = "cloud")]
-            if let Some(ref ov) = fr.cloud_overlay {
+            if let Some(ov) = fr.community.as_ref().map(|c| &c.content) {
                 if let Some(r) = ov.forum_title_rect {
                     let id = WidgetId::from(text_input::FORUM_TITLE);
                     self.input_coordinator.borrow_mut().text_fields_mut().update_field(

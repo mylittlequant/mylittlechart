@@ -4611,11 +4611,14 @@ impl CloudLoginState {
 // =============================================================================
 
 // =============================================================================
-// Forum (News overlay, `NewsTab::Forum`, paid-only) — see the plan at
-// `docs/mlc/plans/web-surface-cleanup-and-in-app-blog-2026-09-05.md` phase 3
-// and the scope at `docs/mlc/plans/users-paid-features-scope-2026-09-05.md`
-// §4. Server: `GET/POST/DELETE /api/forum/*`, auth + paid required, 401
-// anonymous / 403 free.
+// Forum v1 (paid-only) — see the plan at `docs/mlc/plans/web-surface-
+// cleanup-and-in-app-blog-2026-09-05.md` phase 3 and the scope at
+// `docs/mlc/plans/users-paid-features-scope-2026-09-05.md` §4. Server:
+// `GET/POST/DELETE /api/forum/*`, auth + paid required, 401 anonymous / 403
+// free. These fields no longer back any rendered tab — v2 (`ForumV2State`,
+// below) replaced them, then moved to its own Community modal
+// (community-modal arc W1) — kept only so a shell mid-upgrade still
+// compiles against them.
 // =============================================================================
 
 /// One row of the Forum tab's thread list. A flat mirror of
@@ -4861,24 +4864,6 @@ pub enum NewsTab {
     #[default]
     Posts,
     PatchNotes,
-    /// Paid-only communication board — forum v2 (`GET/POST/DELETE
-    /// /api/forum/*`, `routes::forum_v2`). Drawn only when
-    /// [`CloudOverlayState::forum_entitled`] is true — see
-    /// `cloud_overlay.rs`'s `news_tab_items`. Content lives in
-    /// [`CloudOverlayState::forum2`], NOT `CloudOverlayState::data` —
-    /// switching to/from this tab must not discard (or be discarded by) the
-    /// blog feed the other two tabs share. The v1 forum fields
-    /// (`forum_list`/`forum_view`/`forum_request`/`CloudForumThread*`)
-    /// still exist on `CloudOverlayState` — kept only so a shell mid-upgrade
-    /// still compiles against them — but this tab no longer renders from
-    /// them; see `CloudOverlayState::forum2`'s own doc.
-    Forum,
-    /// Paid-only direct messages (`GET/PUT/POST /api/dm/*`, `routes::dm`).
-    /// Same `forum_entitled` gate as `Forum` — the server names the DM gate
-    /// `Feature::Forum` too (`routes::dm`'s own doc: "Feature::Forum today
-    /// stands for the paid social tier"). Content lives in
-    /// [`CloudOverlayState::dm`].
-    Messages,
 }
 
 #[cfg(feature = "cloud")]
@@ -4890,8 +4875,6 @@ impl NewsTab {
         match self {
             Self::Posts => "posts",
             Self::PatchNotes => "patch_notes",
-            Self::Forum => "forum",
-            Self::Messages => "messages",
         }
     }
 
@@ -4900,8 +4883,6 @@ impl NewsTab {
         match self {
             Self::Posts => "Posts",
             Self::PatchNotes => "Patch notes",
-            Self::Forum => "Forum",
-            Self::Messages => "Messages",
         }
     }
 
@@ -4912,8 +4893,6 @@ impl NewsTab {
         match id {
             "posts" | "latest" => Some(Self::Posts),
             "patch_notes" | "all" => Some(Self::PatchNotes),
-            "forum" => Some(Self::Forum),
-            "messages" => Some(Self::Messages),
             _ => None,
         }
     }
@@ -4923,8 +4902,6 @@ impl NewsTab {
         match self {
             Self::Posts => 0,
             Self::PatchNotes => 1,
-            Self::Forum => 2,
-            Self::Messages => 3,
         }
     }
 }
@@ -5010,8 +4987,9 @@ pub struct CloudOverlayState {
     pub is_dragging: bool,
     pub drag_offset: Option<(f64, f64)>,
     /// Whether `GET /api/entitlements`'s feature list carried `"forum"` for
-    /// THIS caller — the sole visibility switch for `NewsTab::Forum` and
-    /// every forum control under it. Written every frame by the shell
+    /// THIS caller — the sole visibility switch for the Community modal's
+    /// Forum tab (`CommunityTab::Forum`) and every forum control under it.
+    /// Written every frame by the shell
     /// driver's entitlements-apply block (`cloud_session.rs`'s wasm side,
     /// `main.rs`'s native side), the same cadence `UserSettingsState::
     /// multi_profile` already gets — never inferred from `is_paid` alone,
@@ -5056,12 +5034,6 @@ pub struct CloudOverlayState {
     pub forum_reply_pending: bool,
     /// One-shot mailbox for a Forum action the shell should perform.
     pub forum_request: Option<ForumRequest>,
-    /// Forum v2 (boards/threads/search) — what `NewsTab::Forum` actually
-    /// renders now. See [`ForumV2State`]'s own doc.
-    pub forum2: ForumV2State,
-    /// Direct messages — what `NewsTab::Messages` renders. See [`DmState`]'s
-    /// own doc.
-    pub dm: DmState,
 }
 
 #[cfg(feature = "cloud")]
@@ -5089,8 +5061,6 @@ impl Default for CloudOverlayState {
             forum_thread_refreshing: false,
             forum_reply_pending: false,
             forum_request: None,
-            forum2: ForumV2State::default(),
-            dm: DmState::default(),
         }
     }
 }
@@ -5145,10 +5115,6 @@ impl CloudOverlayState {
         }
         self.forum_list_refreshing = false;
         self.forum_request = None;
-        // Forum v2 / DMs: same "drop to the landing view, keep what is
-        // already loaded" rule as the v1 fields above.
-        self.forum2.reset_to_boards();
-        self.dm.reset_to_list();
     }
 
     pub fn close(&mut self) {
@@ -5170,19 +5136,6 @@ impl CloudOverlayState {
         self.forum_thread_refreshing = false;
         self.forum_reply_pending = false;
         self.forum_request = None;
-        // Same split as the v1 fields above: the view/boards/conversations
-        // survive a close (so reopening onto an unentitled tab briefly, then
-        // back, is not a full refetch), only in-flight bookkeeping resets.
-        self.forum2.boards_refreshing = false;
-        self.forum2.board_threads_refreshing = false;
-        self.forum2.thread_refreshing = false;
-        self.forum2.create_thread_pending = false;
-        self.forum2.reply_pending = false;
-        self.forum2.request = None;
-        self.dm.conversations_refreshing = false;
-        self.dm.messages_refreshing = false;
-        self.dm.send_pending = false;
-        self.dm.request = None;
     }
 
     pub fn toggle(&mut self, kind: CloudOverlayKind) {
@@ -5266,14 +5219,15 @@ impl CloudOverlayState {
     }
 }
 // =============================================================================
-// Forum v2 (paid boards, `NewsTab::Forum`) — server: `routes::forum_v2` +
-// `social_db.rs` (`docs/mlc/plans/social-sharing-access-gates-and-agent-
-// control-2026-09-05.md` §4-6). What `NewsTab::Forum` now renders in place
-// of the v1 types above (which stay declared for shell-compat — see
-// `CloudOverlayState::forum2`'s own doc). UI-side mirrors of the wire
-// shapes only: this crate must not depend on the cloud transport crate,
-// same reason `CloudForumThreadSummary` mirrors `mlc_cloud::
-// ForumThreadSummary` above.
+// Forum v2 (paid boards, `CommunityTab::Forum`) — server: `routes::
+// forum_v2` + `social_db.rs` (`docs/mlc/plans/social-sharing-access-gates-
+// and-agent-control-2026-09-05.md` §4-6). What the Community modal's Forum
+// tab renders in place of the v1 types above (which stay declared for
+// shell-compat — see `CommunityState::forum2`'s own doc); moved out of the
+// News overlay's own `NewsTab::Forum` into the Community modal
+// (community-modal arc W1). UI-side mirrors of the wire shapes only: this
+// crate must not depend on the cloud transport crate, same reason
+// `CloudForumThreadSummary` mirrors `mlc_cloud::ForumThreadSummary` above.
 // =============================================================================
 
 /// One row of the Boards view. A flat mirror of `routes::forum_v2::
@@ -5437,7 +5391,7 @@ pub enum ForumV2Request {
     Moderate { thread_id: i64, action: String, board: Option<String> },
 }
 
-/// State for the Forum-v2 boards/threads/search UI (`NewsTab::Forum`).
+/// State for the Forum-v2 boards/threads/search UI (`CommunityTab::Forum`).
 ///
 /// Same mailbox contract as [`CloudOverlayState`] itself: pure UI state +
 /// flags, effects and fetches in the shell driver.
@@ -5626,8 +5580,10 @@ impl ForumV2State {
 }
 
 // =============================================================================
-// Direct messages (paid, end-to-end encrypted — `NewsTab::Messages`).
-// Server: `routes::dm` + `dm_db.rs`. The shell owns the crypto
+// Direct messages (paid, end-to-end encrypted — `CommunityTab::Messages`,
+// community-modal arc W1; moved out of the News overlay's own
+// `NewsTab::Messages`, retired). Server: `routes::dm` + `dm_db.rs`. The
+// shell owns the crypto
 // (`mlc_vault::dm`) end to end: this state only ever carries PLAINTEXT
 // already decrypted by the shell (or the literal string `"<cannot
 // decrypt>"` when it could not be) — never ciphertext, never a key.
@@ -5708,7 +5664,7 @@ pub enum DmRequest {
     MarkRead { id: i64, up_to: i64 },
 }
 
-/// State for the Direct Messages UI (`NewsTab::Messages`).
+/// State for the Direct Messages UI (`CommunityTab::Messages`).
 #[cfg(feature = "cloud")]
 #[derive(Clone, Debug)]
 pub struct DmState {
@@ -5838,3 +5794,182 @@ impl DmState {
         self.messages_refreshing = false;
     }
 }
+
+// =============================================================================
+// Community modal (Forum + Messages) — W1 of the community-modal-and-forum-
+// ladder arc (`docs/mlc/plans/community-modal-and-forum-ladder-2026-09-09.md`).
+// Owns what `CloudOverlayState::forum2`/`::dm` used to (moved out here so the
+// News overlay keeps only Posts/Patch notes — owner ruling: "Forum and
+// direct messages get their own modal. Not tabs inside 'What's new'").
+// Resizable via the same [`ResizableModal`] mechanism `ChartSettingsState`
+// uses; escape/click-outside semantics mirror that modal too (`dim_backdrop`
+// off — see `crate::layout::modals::community`'s own doc), unlike the News/
+// Download overlay's dimmed-backdrop style.
+// =============================================================================
+
+/// Which pane of the Community modal is showing.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum CommunityTab {
+    #[default]
+    Forum,
+    Messages,
+}
+
+#[cfg(feature = "cloud")]
+impl CommunityTab {
+    /// Tab id — also the widget-id suffix the shell's tab bar registers
+    /// (`community:tab:{id}`).
+    pub fn id(&self) -> &'static str {
+        match self {
+            Self::Forum => "forum",
+            Self::Messages => "messages",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Forum => "Forum",
+            Self::Messages => "Messages",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "forum" => Some(Self::Forum),
+            "messages" => Some(Self::Messages),
+            _ => None,
+        }
+    }
+
+    /// Index into the shell's own tab strip (`ModalTabs::Horizontal::active`).
+    pub fn index(&self) -> usize {
+        match self {
+            Self::Forum => 0,
+            Self::Messages => 1,
+        }
+    }
+}
+
+/// State for the Community modal (Forum + Messages). Pure UI state + the
+/// forum-v2/DM state it now owns — effects live in the shell driver, same
+/// mailbox contract as [`CloudOverlayState`].
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug)]
+pub struct CommunityState {
+    pub is_open: bool,
+    /// Which pane is showing — survives a close (opening lands on the last
+    /// used tab, owner ruling), unlike `CloudOverlayState::news_tab` which
+    /// resets to its default every open.
+    pub tab: CommunityTab,
+    /// Modal position (for dragging). `None` = centered.
+    pub position: Option<(f64, f64)>,
+    /// Size the user dragged this modal to — starts at a sensible default
+    /// (760×560, see [`Self::default`]) rather than `None`/content-driven
+    /// like `ChartSettingsState::size`: a forum-and-messenger layout has no
+    /// single natural content height the way a settings tab does.
+    pub size: Option<(f64, f64)>,
+    /// Resize drag in flight, if the user has hold of an edge.
+    pub resize_drag: Option<ResizeDrag>,
+    pub is_dragging: bool,
+    pub drag_offset: Option<(f64, f64)>,
+    /// Scroll offset for whichever pane's content is currently scrollable —
+    /// mirrors `CloudOverlayState::scroll`'s own role for the News/Download
+    /// overlay. Reset on `open()`/`close()`/`set_tab()`, same reasoning.
+    pub scroll: ScrollState,
+    /// Forum v2 (boards/threads/search) — see [`ForumV2State`]'s own doc.
+    pub forum2: ForumV2State,
+    /// Direct messages — see [`DmState`]'s own doc.
+    pub dm: DmState,
+}
+
+#[cfg(feature = "cloud")]
+impl Default for CommunityState {
+    fn default() -> Self {
+        Self {
+            is_open: false,
+            tab: CommunityTab::default(),
+            position: None,
+            size: Some((760.0, 560.0)),
+            resize_drag: None,
+            is_dragging: false,
+            drag_offset: None,
+            scroll: ScrollState::new(),
+            forum2: ForumV2State::default(),
+            dm: DmState::default(),
+        }
+    }
+}
+
+#[cfg(feature = "cloud")]
+impl CommunityState {
+    /// Open the modal, landing on whichever tab was last used (`tab` is
+    /// deliberately left untouched — see its own doc). Drops each pane back
+    /// to its landing view, same "reopen never resurfaces a stale open
+    /// thread/conversation" rule `CloudOverlayState::open` applies to v1's
+    /// own `forum_view`.
+    pub fn open(&mut self) {
+        self.is_open = true;
+        self.scroll.reset();
+        self.is_dragging = false;
+        self.drag_offset = None;
+        self.forum2.reset_to_boards();
+        self.dm.reset_to_list();
+    }
+
+    pub fn close(&mut self) {
+        self.is_open = false;
+        self.is_dragging = false;
+        self.drag_offset = None;
+        // In-flight background bookkeeping does NOT survive a close — a
+        // refresh whose result lands after the modal is closed must not
+        // leave a flag stuck `true` that then blocks every future
+        // due-check (same reasoning `CloudOverlayState::close` documents
+        // for its own v1 fields).
+        self.forum2.boards_refreshing = false;
+        self.forum2.board_threads_refreshing = false;
+        self.forum2.thread_refreshing = false;
+        self.forum2.create_thread_pending = false;
+        self.forum2.reply_pending = false;
+        self.forum2.request = None;
+        self.dm.conversations_refreshing = false;
+        self.dm.messages_refreshing = false;
+        self.dm.send_pending = false;
+        self.dm.request = None;
+    }
+
+    pub fn toggle(&mut self) {
+        if self.is_open {
+            self.close();
+        } else {
+            self.open();
+        }
+    }
+
+    /// Switch panes, resetting scroll — the pane switched TO must not
+    /// inherit the scroll position of whichever pane was showing before it.
+    pub fn set_tab(&mut self, tab: CommunityTab) {
+        self.tab = tab;
+        self.scroll.reset();
+    }
+
+    pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {
+        self.is_dragging = true;
+        self.drag_offset = Some((mouse_x - modal_x, mouse_y - modal_y));
+    }
+
+    pub fn update_drag(&mut self, mouse_x: f64, mouse_y: f64) {
+        if let Some((ox, oy)) = self.drag_offset {
+            self.position = Some((mouse_x - ox, mouse_y - oy));
+        }
+    }
+
+    pub fn end_drag(&mut self) {
+        self.is_dragging = false;
+    }
+}
+
+#[cfg(feature = "cloud")]
+impl_resizable_modal!(
+    CommunityState => (520.0, 400.0),
+);

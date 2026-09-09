@@ -24,9 +24,9 @@ use wasm_bindgen_futures::{spawn_local, JsFuture};
 use mlc_app::ChartApp;
 use mlc_app_layout::ui::modal_settings::{
     BoardUi, CloudForumReply, CloudForumThread, CloudForumThreadSummary, CloudLoginPhase,
-    CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudReleaseEntry, ForumListState,
-    ForumReplyV2Ui, ForumRequest, ForumSearchHitUi, ForumSubView, ForumThreadV2Detail,
-    ForumThreadV2Ui, ForumV2Request, ForumV2View, NewsTab, RedeemStatus,
+    CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudReleaseEntry, CommunityTab,
+    ForumListState, ForumReplyV2Ui, ForumRequest, ForumSearchHitUi, ForumSubView,
+    ForumThreadV2Detail, ForumThreadV2Ui, ForumV2Request, ForumV2View, RedeemStatus,
 };
 use mlc_cloud::{
     forum_error_message, forum_v2_error_message, redeem_error_message, BuildAttestation,
@@ -36,12 +36,12 @@ use mlc_cloud::{
     VersionManifest,
 };
 
-/// The Messages tab (`NewsTab::Messages`) has no vault key to hold a DM
-/// identity on this shell — see this crate's own doc on why direct messages
-/// stay desktop-only for now. Set into `CloudOverlayState::dm.last_error`
-/// every frame the tab is active (idempotent — there is nothing else this
-/// shell could ever put there instead) and every `dm.request` is dropped
-/// without a network call.
+/// The Community modal's Messages tab (`CommunityTab::Messages`) has no
+/// vault key to hold a DM identity on this shell — see this crate's own doc
+/// on why direct messages stay desktop-only for now. Set into
+/// `CommunityState::dm.last_error` every frame the tab is active (idempotent
+/// — there is nothing else this shell could ever put there instead) and
+/// every `dm.request` is dropped without a network call.
 const WEB_DM_UNAVAILABLE: &str = "Direct messages are available in the desktop app for now.";
 
 const TOKEN_KEY: &str = "mlc.cloud.token.v1";
@@ -104,7 +104,7 @@ enum FlowResult {
     /// the thread view up with the sentence in `reply_error`.
     ForumThreadDeleted(Result<(Vec<ForumThreadSummary>, Option<String>), String>),
 
-    // ── Forum v2 tab (public boards, `NewsTab::Forum`) ──────────────────
+    // ── Forum v2 tab (public boards, `CommunityTab::Forum`) ─────────────
     /// `ForumV2Request::LoadBoards` (passive first fetch, a background
     /// due-refresh, or the explicit "back to boards" reload).
     Forum2Boards(Result<Vec<ForumBoard>, String>),
@@ -377,7 +377,7 @@ impl CloudSession {
         // The signed-out answer to `GET /api/forum/me` is not the same as
         // whatever identity just left — clear it so the passive fetch
         // re-asks under the new (anonymous) caller.
-        chart.panel_app.cloud_overlay_state.forum2.invalidate_me();
+        chart.panel_app.community_state.forum2.invalidate_me();
         {
             let mut user = chart.core.user_mut();
             let p = user.profile_mut();
@@ -814,7 +814,7 @@ impl CloudSession {
                     // any was already fetched, belongs to whoever was signed
                     // in (or nobody) BEFORE this login — clear it so the
                     // passive fetch re-asks for the new identity.
-                    chart.panel_app.cloud_overlay_state.forum2.invalidate_me();
+                    chart.panel_app.community_state.forum2.invalidate_me();
                     // Link the account on the profile (persisted by the
                     // shell's per-frame dirty drain).
                     {
@@ -1121,7 +1121,7 @@ impl CloudSession {
                     self.inner.borrow_mut().forum_in_flight = false;
                 }
                 FlowResult::Forum2Boards(result) => {
-                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    let ov = &mut chart.panel_app.community_state;
                     ov.forum2.boards_refreshing = false;
                     match result {
                         Ok(boards) => {
@@ -1143,7 +1143,7 @@ impl CloudSession {
                     self.inner.borrow_mut().forum2_in_flight = false;
                 }
                 FlowResult::Forum2BoardThreads { append, result } => {
-                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    let ov = &mut chart.panel_app.community_state;
                     ov.forum2.board_threads_refreshing = false;
                     match result {
                         Ok((threads, next_before)) => {
@@ -1173,7 +1173,7 @@ impl CloudSession {
                     self.inner.borrow_mut().forum2_in_flight = false;
                 }
                 FlowResult::Forum2Thread(result) => {
-                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    let ov = &mut chart.panel_app.community_state;
                     ov.forum2.thread_refreshing = false;
                     match result {
                         Ok(resp) => {
@@ -1200,7 +1200,7 @@ impl CloudSession {
                     self.inner.borrow_mut().forum2_in_flight = false;
                 }
                 FlowResult::Forum2ThreadAfterWrite(result) => {
-                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    let ov = &mut chart.panel_app.community_state;
                     match result {
                         Ok(resp) => {
                             let detail = map_forum_thread_v2_detail(&resp);
@@ -1248,7 +1248,7 @@ impl CloudSession {
                     self.inner.borrow_mut().forum2_in_flight = false;
                 }
                 FlowResult::Forum2Search { q, result } => {
-                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    let ov = &mut chart.panel_app.community_state;
                     match result {
                         Ok(hits) => {
                             ov.forum2.view = ForumV2View::Search {
@@ -1263,7 +1263,7 @@ impl CloudSession {
                     self.inner.borrow_mut().forum2_in_flight = false;
                 }
                 FlowResult::Forum2Me(result) => {
-                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    let ov = &mut chart.panel_app.community_state;
                     ov.forum2.me_refreshing = false;
                     match result {
                         Ok(me) => {
@@ -1385,8 +1385,9 @@ impl CloudSession {
 
         // ── Forum tab (paid-only): passive list fetch + explicit actions ──
         {
+            let forum_active = chart.panel_app.community_state.is_open
+                && chart.panel_app.community_state.tab == CommunityTab::Forum;
             let ov = &mut chart.panel_app.cloud_overlay_state;
-            let forum_active = ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Forum;
 
             // Passive: fetch page one the moment the tab is looked at with
             // nothing loaded yet, OR reissue it quietly once
@@ -1555,8 +1556,8 @@ impl CloudSession {
 
         // ── Forum v2 tab (public boards): passive loads + explicit actions ─
         {
-            let ov = &mut chart.panel_app.cloud_overlay_state;
-            let forum2_active = ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Forum;
+            let ov = &mut chart.panel_app.community_state;
+            let forum2_active = ov.is_open && ov.tab == CommunityTab::Forum;
 
             // Passive: boards, the moment the tab is looked at with nothing
             // loaded, or once `boards_due_for_refresh()` says the cadence
@@ -1813,8 +1814,8 @@ impl CloudSession {
         // now (see `WEB_DM_UNAVAILABLE`'s own doc). Every `dm.request` is
         // dropped without a network call.
         {
-            let ov = &mut chart.panel_app.cloud_overlay_state;
-            let messages_active = ov.is_open && ov.kind == CloudOverlayKind::News && ov.news_tab == NewsTab::Messages;
+            let ov = &mut chart.panel_app.community_state;
+            let messages_active = ov.is_open && ov.tab == CommunityTab::Messages;
             if messages_active {
                 ov.dm.last_error = Some(WEB_DM_UNAVAILABLE.to_string());
             }

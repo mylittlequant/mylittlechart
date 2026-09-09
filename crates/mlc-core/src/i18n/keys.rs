@@ -635,10 +635,14 @@ pub enum ToolbarTooltipKey {
     /// Bottom-of-right-toolbar button opening the system event log panel
     /// (owner scope §8, `docs/mlc/plans/users-paid-features-scope-2026-09-05.md`).
     Events            = 49,
+    /// Bottom-of-right-toolbar button opening the Community modal (Forum +
+    /// Messages), directly above `Events` (community-modal arc,
+    /// `docs/mlc/plans/community-modal-and-forum-ladder-2026-09-09.md` W1).
+    Community         = 50,
 }
 
 impl ToolbarTooltipKey {
-    pub const COUNT: usize = 50;
+    pub const COUNT: usize = 51;
 
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {

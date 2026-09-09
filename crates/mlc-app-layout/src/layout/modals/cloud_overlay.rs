@@ -228,12 +228,13 @@ fn links_section_h() -> f64 {
 }
 
 /// The News overlay's list-view tabs — `Posts` (the default glance: up to
-/// `MAX_NEWS_POSTS` editorial entries + LINKS), `PatchNotes` (the full
-/// release-note history, no LINKS), `Forum` and `Messages` (both paid-only,
-/// see `NEWS_TAB_ITEMS_ALL`/`news_tab_items` further down). Drawn only over
-/// the list view: the in-modal reading view (`state.selected_post.is_some()`)
-/// and the Download overlay have nothing to switch between, so neither
-/// carries a tab bar at all.
+/// `MAX_NEWS_POSTS` editorial entries + LINKS) and `PatchNotes` (the full
+/// release-note history, no LINKS) — see `NEWS_TAB_ITEMS`. Forum and
+/// Messages moved out to their own Community modal (community-modal arc W1,
+/// `crate::layout::modals::community`) and are no longer `NewsTab` variants
+/// at all. Drawn only over the list view: the in-modal reading view
+/// (`state.selected_post.is_some()`) and the Download overlay have nothing
+/// to switch between, so neither carries a tab bar at all.
 
 /// Height of the News list view for `tab` — the block sum for whichever
 /// slice of `posts` that tab shows (`Posts` = `kind != "patch"`, capped at
@@ -254,11 +255,6 @@ fn news_list_h(tab: NewsTab, posts: &[CloudNewsPost]) -> f64 {
             blocks + links_section_h()
         }
         NewsTab::PatchNotes => posts.iter().filter(|p| is_patch(p)).map(post_block_h).sum(),
-        // Never actually reached — `content_height`/`draw_body` branch off
-        // to `forum_v2_overlay`/`dm_overlay` before either call site here
-        // runs. Kept exhaustive rather than `unreachable!()` so a future
-        // caller of this function cannot panic by forgetting that split.
-        NewsTab::Forum | NewsTab::Messages => 0.0,
     }
 }
 
@@ -325,8 +321,6 @@ fn content_height(state: &CloudOverlayState) -> f64 {
             ),
             _ => DOWNLOAD_STATUS_H,
         },
-        CloudOverlayKind::News if state.news_tab == NewsTab::Forum => super::forum_v2_overlay::height(state),
-        CloudOverlayKind::News if state.news_tab == NewsTab::Messages => super::dm_overlay::height(state),
         CloudOverlayKind::News => match &state.data {
             CloudOverlayData::News { posts } => {
                 // Reading view: one post, expanded — no tabs over it (the
@@ -344,12 +338,13 @@ fn content_height(state: &CloudOverlayState) -> f64 {
     }
 }
 
-/// Render the cloud overlay (News, which carries the LINKS section, Forum
-/// and Messages tabs, and Download). `current_time_ms` drives the Forum/
-/// Messages tabs' relative timestamps and their text fields' caret blink —
-/// the News/Download kinds never needed a clock before this (unlike
-/// `render_cloud_login_modal`, which has taken one since the gift-code
-/// field).
+/// Render the cloud overlay (News, which carries the LINKS section, and
+/// Download). Forum and Messages moved out to their own Community modal
+/// (community-modal arc W1, `crate::layout::modals::community`) — this
+/// overlay no longer needs a clock (`draw_news_post`'s dates are
+/// pre-formatted server text, not relative), so `current_time_ms` is gone
+/// from this signature; `render_community_modal` is the sibling that still
+/// takes one.
 pub fn render_cloud_overlay(
     ctx: &mut dyn RenderContext,
     window_w: f64,
@@ -357,7 +352,6 @@ pub fn render_cloud_overlay(
     state: &CloudOverlayState,
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
-    current_time_ms: u64,
     input_coordinator: &mut InputCoordinator,
 ) -> CloudOverlayResult {
     let theme = ModalTheme::from_toolbar(
@@ -376,30 +370,23 @@ pub fn render_cloud_overlay(
             content_height(state),
         )
     };
-    // Tabs only over the News list view (incl. the Forum/Messages tabs) — a
-    // reading view or the Download overlay has nothing to switch between,
-    // so `spec.tabs` stays `None` and the shell draws no tab bar (and
-    // charges the frame no `TAB_BAR_H`) for either of them. Forum/Messages
-    // are gated by `forum_entitled` OR already being the active tab — kept
-    // shown once selected even if entitlement is re-asked mid-session and
-    // (implausibly) comes back false, rather than yanking the tab bar out
-    // from under an open thread/conversation.
-    let on_paid_tab = matches!(state.news_tab, NewsTab::Forum | NewsTab::Messages);
+    // Tabs only over the News list view — a reading view or the Download
+    // overlay has nothing to switch between, so `spec.tabs` stays `None`
+    // and the shell draws no tab bar (and charges the frame no
+    // `TAB_BAR_H`) for either of them.
     let show_news_tabs = state.kind == CloudOverlayKind::News
         && state.selected_post.is_none()
-        && (matches!(&state.data, CloudOverlayData::News { .. }) || on_paid_tab);
+        && matches!(&state.data, CloudOverlayData::News { .. });
     if show_news_tabs {
-        let items = news_tab_items(state.forum_entitled || on_paid_tab);
         spec = spec.with_tabs(ModalTabs::Horizontal {
-            items,
+            items: &NEWS_TAB_ITEMS,
             active: state.news_tab.index(),
             fit: TabFit::Equal,
         });
         // The News list view is the one whose content is unbounded (the
-        // `PatchNotes` tab, a long history under `Posts`'s LINKS section,
-        // the Forum board/thread list/thread body, and the DM conversation
-        // list/history) — cap it here and let `draw_body`'s scroll
-        // container reach the rest.
+        // `PatchNotes` tab, a long history under `Posts`'s LINKS section) —
+        // cap it here and let `draw_body`'s scroll container reach the
+        // rest.
         spec = spec.with_max_content_height(NEWS_LIST_MAX_BODY_H);
     }
     // The Download body is the OTHER unbounded view (the release catalogue
@@ -430,9 +417,7 @@ pub fn render_cloud_overlay(
                 layer_id,
                 shell,
                 state,
-                frame_theme,
                 toolbar_theme,
-                current_time_ms,
                 &mut result,
             );
         },
@@ -441,25 +426,13 @@ pub fn render_cloud_overlay(
     result
 }
 
-/// The News overlay's tab strip: `Posts`/`PatchNotes` always, `Forum` and
-/// `Messages` only when `with_forum` (entitlement, or either one already
-/// being the active tab — see `render_cloud_overlay`'s own call site). A
-/// fixed 4-slot array sliced down rather than separate `const`s, so the
-/// first two entries can never drift between the gated and ungated form.
-const NEWS_TAB_ITEMS_ALL: [ModalTab<'static>; 4] = [
+/// The News overlay's tab strip: `Posts`/`PatchNotes`, always both — Forum
+/// and Messages moved out to their own Community modal (community-modal arc
+/// W1) and are no longer part of this overlay's tab bar at all.
+const NEWS_TAB_ITEMS: [ModalTab<'static>; 2] = [
     ModalTab { id: "posts", label: "Posts", icon: None },
     ModalTab { id: "patch_notes", label: "Patch notes", icon: None },
-    ModalTab { id: "forum", label: "Forum", icon: None },
-    ModalTab { id: "messages", label: "Messages", icon: None },
 ];
-
-fn news_tab_items(with_forum: bool) -> &'static [ModalTab<'static>] {
-    if with_forum {
-        &NEWS_TAB_ITEMS_ALL
-    } else {
-        &NEWS_TAB_ITEMS_ALL[..2]
-    }
-}
 
 /// Scrollbar geometry shared by every `ScrollableContainer` in this file —
 /// same 8px handle + 4px padding, auto-hidden while content fits, that
@@ -499,16 +472,13 @@ pub(crate) fn register_scrollbar_hit_zones(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn draw_body(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
     shell: &ModalShell,
     state: &CloudOverlayState,
-    ft: &FrameTheme,
     tt: &ToolbarTheme,
-    current_time_ms: u64,
     result: &mut CloudOverlayResult,
 ) {
     let x = shell.content.x;
@@ -574,14 +544,6 @@ fn draw_body(
             result.scrollbar_handle_rect = scroll_result.handle_rect;
             result.scrollbar_track_rect = scroll_result.track_rect;
             register_scrollbar_hit_zones(coord, layer_id, &scroll_result);
-        }
-
-        CloudOverlayKind::News if state.news_tab == NewsTab::Forum => {
-            super::forum_v2_overlay::draw(ctx, coord, layer_id, x, y, w, viewport_h, state, ft, tt, current_time_ms, result);
-        }
-
-        CloudOverlayKind::News if state.news_tab == NewsTab::Messages => {
-            super::dm_overlay::draw(ctx, coord, layer_id, x, y, w, viewport_h, state, ft, tt, current_time_ms, result);
         }
 
         CloudOverlayKind::News => match &state.data {
@@ -695,11 +657,6 @@ fn draw_news_list(
                 );
             }
         }
-        // Never reached — `draw_body` branches to `forum_v2_overlay`/
-        // `dm_overlay` before this function is ever called with either tab.
-        // Kept exhaustive rather than `unreachable!()`, same reasoning as
-        // `news_list_h`'s own arm above.
-        NewsTab::Forum | NewsTab::Messages => {}
     }
 }
 
@@ -840,10 +797,9 @@ fn draw_news_detail(
 }
 
 // =============================================================================
-// Forum tab (News overlay, `NewsTab::Forum`, paid-only) — three sub-views:
-// list, one open thread, compose. Content lives in `CloudOverlayState::
-// forum_list`/`forum_view`, not `CloudOverlayState::data` — see those
-// fields' own doc for why.
+// Shared date/time formatting — used by this file's own timestamps and by
+// `forum_v2_overlay`/`dm_overlay` (now hosted in the Community modal,
+// community-modal arc W1) for theirs.
 // =============================================================================
 
 /// Days-since-epoch via Howard Hinnant's `days_from_civil` algorithm

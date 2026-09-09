@@ -90,6 +90,10 @@ pub use cloud_overlay::render_cloud_overlay;
 pub mod forum_v2_overlay;
 #[cfg(feature = "cloud")]
 pub mod dm_overlay;
+#[cfg(feature = "cloud")]
+pub mod community;
+#[cfg(feature = "cloud")]
+pub use community::{render_community_modal, CommunityResult};
 
 pub use indicator_settings::*;
 pub use context_menu::*;

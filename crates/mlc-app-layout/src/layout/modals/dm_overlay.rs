@@ -1,10 +1,14 @@
-//! Direct messages (paid, end-to-end encrypted) — what `NewsTab::Messages`
-//! draws. Sibling of `cloud_overlay.rs` under `layout::modals`; reuses that
-//! file's shared row/status/scroll helpers (`pub(crate)`). State lives in
-//! `CloudOverlayState::dm` (`DmState`); see that type's own doc for the
+//! Direct messages (paid, end-to-end encrypted) — what the Community modal's
+//! Messages tab draws (`crate::layout::modals::community`, community-modal
+//! arc W1; moved out of the News overlay's own `NewsTab::Messages`, retired).
+//! Sibling of `cloud_overlay.rs` under `layout::modals`; reuses that file's
+//! shared row/status/scroll helpers (`pub(crate)`). State lives in
+//! `CommunityState::dm` (`DmState`); see that type's own doc for the
 //! plaintext-only contract (the shell decrypts before this crate ever sees
 //! a message). Pure presentation — effects live in the shell driver; click
-//! dispatch lives in `mlc-app`'s `panel_click.rs` (out of scope here).
+//! dispatch lives in `mlc-app`'s `panel_click.rs` (out of scope here). Widget
+//! ids keep their pre-existing `cloud_overlay:dm:*` prefix unchanged — only
+//! the Rust type hosting them moved.
 
 use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
 use uzor::input::{InputCoordinator, LayerId, Sense};
@@ -13,7 +17,7 @@ use uzor::WidgetId;
 
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_ui::toolbar_to_widget_theme;
-use crate::ui::modal_settings::{CloudOverlayState, DmConversationUi, DmMessageUi, DmState, DmView};
+use crate::ui::modal_settings::{CommunityState, DmConversationUi, DmMessageUi, DmState, DmView};
 use crate::ui::scroll_widget::ScrollableContainer;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, SETTINGS_BUTTON_RADIUS};
@@ -36,7 +40,7 @@ const BUBBLE_MIN_W: f64 = 120.0;
 // Entry points — mirror `forum_v2_overlay`'s own `height`/`draw` shape.
 // =============================================================================
 
-pub(crate) fn height(state: &CloudOverlayState) -> f64 {
+pub(crate) fn height(state: &CommunityState) -> f64 {
     if !state.dm.available {
         return if state.dm.last_error.is_some() { 20.0 } else { 0.0 };
     }
@@ -55,7 +59,7 @@ pub(crate) fn draw(
     y: f64,
     w: f64,
     viewport_h: f64,
-    state: &CloudOverlayState,
+    state: &CommunityState,
     ft: &FrameTheme,
     tt: &ToolbarTheme,
     current_time_ms: u64,
@@ -253,7 +257,7 @@ fn draw_list(
     x: f64,
     y: f64,
     w: f64,
-    state: &CloudOverlayState,
+    state: &CommunityState,
     ft: &FrameTheme,
     tt: &ToolbarTheme,
     current_time_ms: u64,
@@ -344,7 +348,7 @@ fn draw_conversation(
     x: f64,
     y: f64,
     w: f64,
-    state: &CloudOverlayState,
+    state: &CommunityState,
     id: i64,
     messages: &[DmMessageUi],
     draft_field_id: &str,

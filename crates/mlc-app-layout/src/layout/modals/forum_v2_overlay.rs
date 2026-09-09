@@ -1,10 +1,14 @@
-//! Forum v2 (paid boards/threads/search) — what `NewsTab::Forum` draws.
-//! Sibling of `cloud_overlay.rs` under `layout::modals`; reuses that file's
-//! shared row/status/scroll helpers (`pub(crate)`) rather than duplicating
-//! them. State lives in `CloudOverlayState::forum2` (`ForumV2State`); see
-//! that type's own doc for the mailbox/freshness contract. Pure
-//! presentation — effects (the actual HTTP calls) live in the shell driver;
-//! click dispatch lives in `mlc-app`'s `panel_click.rs` (out of scope here).
+//! Forum v2 (paid boards/threads/search) — what the Community modal's Forum
+//! tab draws (`crate::layout::modals::community`, community-modal arc W1;
+//! moved out of the News overlay's own `NewsTab::Forum`, retired). Sibling of
+//! `cloud_overlay.rs` under `layout::modals`; reuses that file's shared
+//! row/status/scroll helpers (`pub(crate)`) rather than duplicating them.
+//! State lives in `CommunityState::forum2` (`ForumV2State`); see that type's
+//! own doc for the mailbox/freshness contract. Pure presentation — effects
+//! (the actual HTTP calls) live in the shell driver; click dispatch lives in
+//! `mlc-app`'s `panel_click.rs` (out of scope here). Widget ids keep their
+//! pre-existing `cloud_overlay:forum2:*` prefix unchanged — only the Rust
+//! type hosting them moved.
 
 use mlc_core::engine::render::{draw_svg_icon, RenderContext, TextAlign, TextBaseline};
 use uzor::input::{InputCoordinator, LayerId, Sense};
@@ -14,7 +18,7 @@ use uzor::WidgetId;
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::modal_settings::{
-    BoardUi, CloudOverlayState, ForumReplyV2Ui, ForumSearchHitUi, ForumThreadV2Detail,
+    BoardUi, CommunityState, ForumReplyV2Ui, ForumSearchHitUi, ForumThreadV2Detail,
     ForumThreadV2Ui, ForumV2State, ForumV2View,
 };
 use crate::ui::scroll_widget::ScrollableContainer;
@@ -47,7 +51,7 @@ const REPLY_MAX_DEPTH: i64 = 6;
 // does.
 // =============================================================================
 
-pub(crate) fn height(state: &CloudOverlayState) -> f64 {
+pub(crate) fn height(state: &CommunityState) -> f64 {
     match &state.forum2.view {
         ForumV2View::Boards => boards_h(&state.forum2),
         ForumV2View::BoardThreads { slug, threads, next_before } => {
@@ -68,7 +72,7 @@ pub(crate) fn draw(
     y: f64,
     w: f64,
     viewport_h: f64,
-    state: &CloudOverlayState,
+    state: &CommunityState,
     ft: &FrameTheme,
     tt: &ToolbarTheme,
     current_time_ms: u64,
@@ -420,7 +424,7 @@ fn draw_boards(
     x: f64,
     y: f64,
     w: f64,
-    state: &CloudOverlayState,
+    state: &CommunityState,
     ft: &FrameTheme,
     tt: &ToolbarTheme,
     current_time_ms: u64,
@@ -514,7 +518,7 @@ fn draw_board_threads(
     x: f64,
     y: f64,
     w: f64,
-    state: &CloudOverlayState,
+    state: &CommunityState,
     slug: &str,
     threads: &[ForumThreadV2Ui],
     next_before: Option<&str>,
@@ -703,7 +707,7 @@ fn draw_thread(
     x: f64,
     y: f64,
     w: f64,
-    state: &CloudOverlayState,
+    state: &CommunityState,
     thread: Option<&ForumThreadV2Detail>,
     replies_tree: &[ForumReplyV2Ui],
     reply_to: Option<i64>,
@@ -864,7 +868,7 @@ fn draw_search(
     x: f64,
     y: f64,
     w: f64,
-    state: &CloudOverlayState,
+    state: &CommunityState,
     q: &str,
     hits: &[ForumSearchHitUi],
     current_time_ms: u64,
@@ -913,7 +917,7 @@ fn draw_compose(
     x: f64,
     y: f64,
     w: f64,
-    state: &CloudOverlayState,
+    state: &CommunityState,
     slug: &str,
     ft: &FrameTheme,
     tt: &ToolbarTheme,

@@ -193,6 +193,11 @@ pub enum Icon {
     /// means Watchlist, so neither reads as a distinct third icon; no
     /// "Inbox"/"History" glyph existed in this registry before this one.
     History,
+    /// Envelope — right-toolbar Community (Forum + Messages) button,
+    /// directly above `History`'s own bottom-anchored slot (community-modal
+    /// arc, `docs/mlc/plans/community-modal-and-forum-ladder-2026-09-09.md`
+    /// W1). No prior envelope glyph existed in this registry.
+    Mail,
     Watermark,
     Legend,
     Tooltip,
@@ -1634,6 +1639,13 @@ pub const ICON_HISTORY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewB
   <path d="M12 7v5l4 2"/>
 </svg>"##;
 
+/// Envelope glyph (Lucide "Mail" silhouette) — right-toolbar Community
+/// (Forum + Messages) button.
+pub const ICON_MAIL: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+  <rect width="20" height="16" x="2" y="4" rx="2"/>
+  <path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>
+</svg>"##;
+
 pub const ICON_WATERMARK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
   <rect x="3" y="3" width="18" height="18" rx="2"/>
   <path d="M7 12h10" stroke-opacity="0.5"/>
@@ -2182,6 +2194,7 @@ impl Icon {
             Icon::Search => ICON_SEARCH,
             Icon::Clock => ICON_CLOCK,
             Icon::History => ICON_HISTORY,
+            Icon::Mail => ICON_MAIL,
             Icon::Watermark => ICON_WATERMARK,
             Icon::Legend => ICON_LEGEND,
             Icon::Tooltip => ICON_TOOLTIP,
@@ -2375,6 +2388,7 @@ impl Icon {
             "search" => Some(Icon::Search),
             "clock" => Some(Icon::Clock),
             "history" | "events" => Some(Icon::History),
+            "mail" | "envelope" | "community" => Some(Icon::Mail),
             "watermark" => Some(Icon::Watermark),
             "legend" => Some(Icon::Legend),
             "tooltip" => Some(Icon::Tooltip),

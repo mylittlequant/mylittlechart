@@ -951,19 +951,20 @@ impl ChartApp {
     /// both fields, drop focus. Used by `FORUM_TITLE`/`FORUM_BODY`'s own
     /// Escape handling below. `panel_click.rs`'s `"forum2:compose_cancel"`
     /// arm inlines the same steps rather than calling this — it already
-    /// holds a named `&mut` borrow of `cloud_overlay_state`
-    /// (`let st = &mut self.panel_app.cloud_overlay_state;`), and a method
+    /// holds a named `&mut` borrow of `community_state`
+    /// (`let comm = &mut self.panel_app.community_state;`), and a method
     /// call taking `&mut self` cannot run alongside that borrow. Keep the
     /// two in sync by hand if this logic ever changes.
     ///
     /// `FORUM_TITLE`/`FORUM_BODY` are the same `TextFieldStore` ids Forum-v2's
     /// compose view reuses from v1 (`forum_v2_overlay.rs`'s `draw_compose`) —
     /// v1's own `ForumSubView`/`ForumRequest` no longer render anywhere
-    /// (`NewsTab::Forum` now draws `ForumV2State`, see that type's own doc),
-    /// so this handler (and its two siblings below) target `forum2` instead.
+    /// (the Community modal's own Forum tab draws `ForumV2State`, see that
+    /// type's own doc), so this handler (and its two siblings below) target
+    /// `forum2` instead.
     #[cfg(feature = "cloud")]
     fn cancel_forum_compose(&mut self) {
-        self.panel_app.cloud_overlay_state.forum2.reset_to_boards();
+        self.panel_app.community_state.forum2.reset_to_boards();
         let mut tf = self.input_coordinator.borrow_mut();
         let tf = tf.text_fields_mut();
         tf.clear(&WidgetId::from(crate::text_input::FORUM_TITLE));
@@ -988,10 +989,10 @@ impl ChartApp {
                 Ok(()) => {
                     let body_wid = WidgetId::from(crate::text_input::FORUM_BODY);
                     chart.input_coordinator.borrow_mut().text_fields_mut().focus(body_wid);
-                    chart.panel_app.cloud_overlay_state.forum2.last_error = None;
+                    chart.panel_app.community_state.forum2.last_error = None;
                 }
                 Err(message) => {
-                    chart.panel_app.cloud_overlay_state.forum2.last_error = Some(message);
+                    chart.panel_app.community_state.forum2.last_error = Some(message);
                 }
             }
         };
@@ -1026,7 +1027,7 @@ impl ChartApp {
                 let tf = coord.text_fields();
                 (tf.text(&title_wid).trim().to_string(), tf.text(&body_wid).trim().to_string())
             };
-            let slug = match &chart.panel_app.cloud_overlay_state.forum2.view {
+            let slug = match &chart.panel_app.community_state.forum2.view {
                 mlc_app_layout::ui::modal_settings::ForumV2View::Compose { slug } => slug.clone(),
                 _ => return,
             };
@@ -1034,7 +1035,7 @@ impl ChartApp {
                 .and_then(|()| mlc_app_layout::ui::modal_settings::validate_forum_body(&body));
             match validated {
                 Ok(()) => {
-                    let f2 = &mut chart.panel_app.cloud_overlay_state.forum2;
+                    let f2 = &mut chart.panel_app.community_state.forum2;
                     f2.last_error = None;
                     f2.create_thread_pending = true;
                     f2.request = Some(mlc_app_layout::ui::modal_settings::ForumV2Request::CreateThread {
@@ -1042,7 +1043,7 @@ impl ChartApp {
                     });
                 }
                 Err(message) => {
-                    chart.panel_app.cloud_overlay_state.forum2.last_error = Some(message);
+                    chart.panel_app.community_state.forum2.last_error = Some(message);
                 }
             }
         };
@@ -1078,13 +1079,13 @@ impl ChartApp {
         let submit = |chart: &mut ChartApp| {
             let wid = WidgetId::from(crate::text_input::FORUM_REPLY);
             let body = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
-            let (thread_id, parent_reply_id) = match &chart.panel_app.cloud_overlay_state.forum2.view {
+            let (thread_id, parent_reply_id) = match &chart.panel_app.community_state.forum2.view {
                 mlc_app_layout::ui::modal_settings::ForumV2View::Thread { id, reply_to, .. } => (*id, *reply_to),
                 _ => return,
             };
             match mlc_app_layout::ui::modal_settings::validate_forum_body(&body) {
                 Ok(()) => {
-                    let f2 = &mut chart.panel_app.cloud_overlay_state.forum2;
+                    let f2 = &mut chart.panel_app.community_state.forum2;
                     f2.last_error = None;
                     f2.reply_pending = true;
                     f2.request = Some(mlc_app_layout::ui::modal_settings::ForumV2Request::Reply {
@@ -1092,7 +1093,7 @@ impl ChartApp {
                     });
                 }
                 Err(message) => {
-                    chart.panel_app.cloud_overlay_state.forum2.last_error = Some(message);
+                    chart.panel_app.community_state.forum2.last_error = Some(message);
                 }
             }
         };
@@ -1130,7 +1131,7 @@ impl ChartApp {
             if q.is_empty() {
                 return;
             }
-            let f2 = &mut chart.panel_app.cloud_overlay_state.forum2;
+            let f2 = &mut chart.panel_app.community_state.forum2;
             f2.last_error = None;
             f2.view = mlc_app_layout::ui::modal_settings::ForumV2View::Search { q: q.clone(), hits: Vec::new() };
             f2.request = Some(mlc_app_layout::ui::modal_settings::ForumV2Request::Search { q, board: None });
@@ -1162,11 +1163,11 @@ impl ChartApp {
             if text.is_empty() {
                 return;
             }
-            let id = match &chart.panel_app.cloud_overlay_state.dm.view {
+            let id = match &chart.panel_app.community_state.dm.view {
                 mlc_app_layout::ui::modal_settings::DmView::Conversation { id, .. } => *id,
                 _ => return,
             };
-            let dm = &mut chart.panel_app.cloud_overlay_state.dm;
+            let dm = &mut chart.panel_app.community_state.dm;
             dm.last_error = None;
             dm.send_pending = true;
             dm.request = Some(mlc_app_layout::ui::modal_settings::DmRequest::Send { id, plaintext: text });
@@ -1209,7 +1210,7 @@ impl ChartApp {
                 return;
             }
             chart.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
-            let dm = &mut chart.panel_app.cloud_overlay_state.dm;
+            let dm = &mut chart.panel_app.community_state.dm;
             dm.last_error = None;
             dm.request = Some(mlc_app_layout::ui::modal_settings::DmRequest::Open { with_label });
         };

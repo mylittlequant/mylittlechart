@@ -621,6 +621,10 @@ pub struct ChartModalRenderResult {
     /// Cloud News/Links/Download overlay geometry (cloud builds only, if open).
     #[cfg(feature = "cloud")]
     pub cloud_overlay: Option<crate::layout::modals::cloud_overlay::CloudOverlayResult>,
+    /// Community modal (Forum + Messages) geometry (cloud builds only, if
+    /// open) — community-modal arc W1.
+    #[cfg(feature = "cloud")]
+    pub community: Option<crate::layout::modals::community::CommunityResult>,
 }
 
 // =============================================================================

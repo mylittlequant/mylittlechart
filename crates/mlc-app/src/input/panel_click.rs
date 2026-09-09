@@ -3634,6 +3634,22 @@ impl ChartApp {
                 return;
             }
 
+            // community button (right toolbar, above events) opens/closes
+            // the Community modal (Forum + Messages) directly, same
+            // "toggle a modal, not a sidebar panel" shape as chart_settings
+            // above (community-modal arc W1). No-op without the `cloud`
+            // feature — the button itself draws unconditionally
+            // (`right_toolbar()`), but there is no `CommunityState` to
+            // toggle without it.
+            if item_id == "community" {
+                #[cfg(feature = "cloud")]
+                {
+                    self.panel_app.community_state.toggle();
+                    eprintln!("[ChartApp] community modal toggled: {}", self.panel_app.community_state.is_open);
+                }
+                return;
+            }
+
             // Undo/Redo — intercept before handle_toolbar_click_with_chart() which
             // returns Consumed without executing the command.  Command history lives
             // on ChartContainer, so we extract the command here and apply it.
@@ -5611,33 +5627,15 @@ impl ChartApp {
                 "header" => { /* drag start handled in mouse_down */ }
                 // News overlay's list-view tab bar (drawn by the modal shell
                 // itself, hence the `{ns}:tab:{id}` id it registers under).
-                // The Forum tab is refused here even if a stale click target
-                // somehow names it while `forum_entitled` is false — belt to
-                // the render side's own gate (`cloud_overlay.rs`'s
-                // `news_tab_items`), which never draws that tab's hit zone
-                // for an unentitled caller in the first place.
+                // Only Posts/Patch notes now — Forum and Messages moved out
+                // to their own Community modal (community-modal arc W1),
+                // so this tab bar no longer has a paid-entitlement gate at
+                // all.
                 rest if rest.starts_with("tab:") => {
                     if let Some(tab) =
                         mlc_app_layout::ui::modal_settings::NewsTab::from_id(&rest["tab:".len()..])
                     {
-                        use mlc_app_layout::ui::modal_settings::NewsTab;
-                        let paid_tab = matches!(tab, NewsTab::Forum | NewsTab::Messages);
-                        if !paid_tab || st.forum_entitled {
-                            st.set_news_tab(tab);
-                            // Switching TO Forum/Messages must not show
-                            // whatever page was cached from a previous visit
-                            // — invalidate so the shell's passive fetch
-                            // reissues page one (see `invalidate_boards`/
-                            // `invalidate_conversations`' own doc for the
-                            // other call sites). `NewsTab::Forum` renders
-                            // `forum2` now, not v1's own `forum_list` — see
-                            // `ForumV2State`'s own doc.
-                            match tab {
-                                NewsTab::Forum => st.forum2.invalidate_boards(),
-                                NewsTab::Messages => st.dm.invalidate_conversations(),
-                                _ => {}
-                            }
-                        }
+                        st.set_news_tab(tab);
                     }
                 }
                 rest if rest.starts_with("dimmer") => st.close(),
@@ -5831,10 +5829,18 @@ impl ChartApp {
                     let action = &rest["forum2:".len()..];
                     // Share-link paragraph inside a thread body/reply — same
                     // "carried in the id's own tail" shape as the v1 arm.
+                    // Still the OUTER `st` (`cloud_overlay_state`) — the
+                    // open-a-link mailbox never moved.
                     if let Some((_, url)) = action.split_once(":link:") {
                         st.open_url_requested = Some(url.to_string());
                         return;
                     }
+                    // `forum2`/`dm` moved to `CommunityState` (community-modal
+                    // arc W1) — shadow `st` for the rest of this arm so every
+                    // `st.forum2.*` below reads/writes the new home without a
+                    // per-line rename. `forum_entitled`/`open_url_requested`
+                    // above already ran against the OUTER `st`.
+                    let st = &mut self.panel_app.community_state;
                     match action {
                         rest2 if rest2.starts_with("board:") => {
                             let slug = rest2["board:".len()..].to_string();
@@ -6006,6 +6012,10 @@ impl ChartApp {
                     if !st.forum_entitled {
                         return;
                     }
+                    // `dm` moved to `CommunityState` (community-modal arc
+                    // W1) — shadow `st` for the rest of this arm, same idiom
+                    // the `"forum2:"` arm above uses.
+                    let st = &mut self.panel_app.community_state;
                     if !st.dm.available {
                         return;
                     }
@@ -6103,6 +6113,31 @@ impl ChartApp {
                 // shell decides what to do with it, this side only records
                 // that it was asked for.
                 "update:install" => st.update_install_requested = true,
+                _ => {}
+            }
+            return;
+        }
+
+        // === Community modal clicks (Forum + Messages, cloud builds only) ===
+        // community-modal arc W1. The modal's own chrome only — the hosted
+        // Forum-v2/DM content keeps its pre-existing `"cloud_overlay:
+        // forum2:*"`/`"cloud_overlay:dm:*"` ids, handled in the
+        // `"cloud_overlay:"` block above (path changes only, see that
+        // block's own `forum2:`/`dm:` arms).
+        #[cfg(feature = "cloud")]
+        if let Some(action) = widget_id.strip_prefix("community:") {
+            let comm = &mut self.panel_app.community_state;
+            match action {
+                "close" | "ok" => comm.close(),
+                "modal_bg" => { /* absorb */ }
+                "header" => { /* drag start handled in mouse_down */ }
+                rest if rest.starts_with("tab:") => {
+                    if let Some(tab) = mlc_app_layout::ui::modal_settings::CommunityTab::from_id(
+                        &rest["tab:".len()..],
+                    ) {
+                        comm.set_tab(tab);
+                    }
+                }
                 _ => {}
             }
             return;

@@ -1232,6 +1232,8 @@ impl ChartApp {
                     "chart_settings" => r.chart_settings.as_ref().map(|m| m.modal_rect),
                     "ind_settings" => r.indicator_settings.as_ref().map(|m| m.modal_rect),
                     "prim_settings" => r.primitive_settings.as_ref().map(|m| m.modal_rect),
+                    #[cfg(feature = "cloud")]
+                    "community" => r.community.as_ref().map(|m| m.modal_rect),
                     _ => None,
                 });
                 if let Some(f) = frame {
@@ -1244,6 +1246,11 @@ impl ChartApp {
                         "prim_settings" => self
                             .panel_app
                             .primitive_settings_state
+                            .start_resize(edge, (x, y), pos, size),
+                        #[cfg(feature = "cloud")]
+                        "community" => self
+                            .panel_app
+                            .community_state
                             .start_resize(edge, (x, y), pos, size),
                         _ => self
                             .panel_app
@@ -2118,6 +2125,13 @@ impl ChartApp {
                             true
                         } else { false }
                     }
+                    #[cfg(feature = "cloud")]
+                    "community" => {
+                        if let Some(ref cm) = self.frame_result.as_ref().and_then(|r| r.community.as_ref()) {
+                            self.panel_app.community_state.start_drag(x, y, cm.header_rect.x, cm.header_rect.y);
+                            true
+                        } else { false }
+                    }
                     "ewa_engine_settings" => {
                         if let Some(ref es) = self.frame_result.as_ref().and_then(|r| r.ewa_engine_settings.as_ref()) {
                             self.panel_app.ewa_engine_settings_state.start_drag(x, y, es.header_rect.x, es.header_rect.y);
@@ -2227,14 +2241,45 @@ impl ChartApp {
             // Scrollbar handle drags — dispatched via InputCoordinator DRAG registration.
             if id.ends_with(":scrollbar_handle") {
                 let prefix = &id[..id.len() - ":scrollbar_handle".len()];
+                // The News/Download overlay's own scroll_viewport/scrollbar
+                // ids are shared literals with the Community modal's hosted
+                // Forum/DM content (both reuse `forum_v2_overlay`'s/
+                // `dm_overlay`'s pre-existing `"cloud_overlay:scrollbar_
+                // handle"` id — community-modal arc W1). Disambiguated by
+                // rect containment via `try_start_scrollbar_drag` rather
+                // than assumed, since either modal (or both) may be open at
+                // once.
                 #[cfg(feature = "cloud")]
                 if prefix == "cloud_overlay" {
-                    self.panel_app.cloud_overlay_state.scroll.start_drag(y);
-                    // FALSE like every other modal drag here:  means "a
-                    // popup was dismissed, drop this press", and the shell
-                    // answers that by ending the drag we just started.
-                    self.ui_drag_active = true;
-                    return false;
+                    use crate::scroll_dispatch::{try_start_scrollbar_drag, ScrollableInfo};
+                    let co = self.frame_result.as_ref().and_then(|r| r.cloud_overlay.as_ref()).cloned().unwrap_or_default();
+                    let comm = self.frame_result.as_ref().and_then(|r| r.community.as_ref()).cloned().unwrap_or_default();
+                    let co_info = ScrollableInfo {
+                        handle_rect: co.scrollbar_handle_rect,
+                        track_rect: co.scrollbar_track_rect,
+                        content_height: co.total_content_height.unwrap_or(0.0),
+                        viewport_height: co.viewport_height.unwrap_or(0.0),
+                        viewport_rect: co.scroll_viewport_rect,
+                    };
+                    let comm_info = ScrollableInfo {
+                        handle_rect: comm.content.scrollbar_handle_rect,
+                        track_rect: comm.content.scrollbar_track_rect,
+                        content_height: comm.content.total_content_height.unwrap_or(0.0),
+                        viewport_height: comm.content.viewport_height.unwrap_or(0.0),
+                        viewport_rect: comm.content.scroll_viewport_rect,
+                    };
+                    let started = try_start_scrollbar_drag(x, y, &mut [
+                        (&co_info, &mut self.panel_app.cloud_overlay_state.scroll),
+                        (&comm_info, &mut self.panel_app.community_state.scroll),
+                    ]);
+                    if started {
+                        // FALSE like every other modal drag here: means "a
+                        // popup was dismissed, drop this press", and the
+                        // shell answers that by ending the drag we just
+                        // started.
+                        self.ui_drag_active = true;
+                        return false;
+                    }
                 }
                 let started = if prefix == "sidebar" {
                     self.sidebar_state.current_right_scroll_mut().start_drag(y);
@@ -2569,17 +2614,21 @@ impl ChartApp {
                     }
                 }
             }
-            // Cloud News/Download/Forum/DM overlay — text select drag on
-            // whichever field the current sub-view is showing (title+body
-            // for Forum-v2 Compose, reply for Forum-v2 Thread, search for
+            // Community modal (Forum/DM) — text select drag on whichever
+            // field the current sub-view is showing (title+body for
+            // Forum-v2 Compose, reply for Forum-v2 Thread, search for
             // Forum-v2 Boards, draft/peer for DM). Same "every modal field
             // needs its own arm" contract as the gift-code field above —
             // each `Option<Rect>` is naturally `None` unless the relevant
             // `layout::modals` file actually drew that field this frame, so
             // no extra sub-view check is needed here beyond `is_open`.
+            // Geometry comes from `CommunityResult::content`
+            // (community-modal arc W1) — moved out of `result.cloud_overlay`
+            // when Forum/Messages moved out of the News overlay.
             #[cfg(feature = "cloud")]
-            if let Some(ref ov) = result.cloud_overlay {
-                if self.panel_app.cloud_overlay_state.is_open {
+            if let Some(ref cm) = result.community {
+                if self.panel_app.community_state.is_open {
+                    let ov = &cm.content;
                     let hit = [
                         ov.forum_title_rect,
                         ov.forum_body_rect,
@@ -2919,6 +2968,25 @@ impl ChartApp {
                                     viewport_rect:   co.scroll_viewport_rect,
                                 };
                     let scroll_state = &mut self.panel_app.cloud_overlay_state.scroll;
+                    if try_handle_track_click(x, y, &mut [(&info, scroll_state)]) {
+                        return false;
+                    }
+                }
+            }
+            // Community modal scrollbar track click — same shape as the
+            // cloud overlay's above (community-modal arc W1).
+            #[cfg(feature = "cloud")]
+            if self.panel_app.community_state.is_open {
+                if let Some(ref cm) = result.community {
+                    use crate::scroll_dispatch::{try_handle_track_click, ScrollableInfo};
+                    let info = ScrollableInfo {
+                        handle_rect: cm.content.scrollbar_handle_rect,
+                        track_rect: cm.content.scrollbar_track_rect,
+                        content_height: cm.content.total_content_height.unwrap_or(0.0),
+                        viewport_height: cm.content.viewport_height.unwrap_or(0.0),
+                        viewport_rect: cm.content.scroll_viewport_rect,
+                    };
+                    let scroll_state = &mut self.panel_app.community_state.scroll;
                     if try_handle_track_click(x, y, &mut [(&info, scroll_state)]) {
                         return false;
                     }
@@ -3461,6 +3529,11 @@ impl ChartApp {
             }
             if self.panel_app.primitive_settings_state.resize_drag().is_some() {
                 self.panel_app.primitive_settings_state.update_resize((x, y));
+                return;
+            }
+            #[cfg(feature = "cloud")]
+            if self.panel_app.community_state.resize_drag().is_some() {
+                self.panel_app.community_state.update_resize((x, y));
                 return;
             }
         }
@@ -4271,6 +4344,25 @@ impl ChartApp {
             }
             return;
         }
+        // Community modal's own scrollbar drag — same shape as the cloud
+        // overlay's above, geometry from `CommunityResult::content`
+        // (community-modal arc W1).
+        #[cfg(feature = "cloud")]
+        if self.panel_app.community_state.scroll.is_dragging {
+            if let Some(ref result) = self.frame_result {
+                if let Some(ref cm) = result.community {
+                    if let Some(ref track_rect) = cm.content.scrollbar_track_rect {
+                        self.panel_app.community_state.scroll.handle_drag(
+                            y,
+                            track_rect.height,
+                            cm.content.total_content_height.unwrap_or(0.0),
+                            cm.content.viewport_height.unwrap_or(0.0),
+                        );
+                    }
+                }
+            }
+            return;
+        }
         if self.panel_app.chart_settings_state.scroll.is_dragging {
             if let Some(ref result) = self.frame_result {
                 if let Some(ref cs) = result.chart_settings {
@@ -4705,6 +4797,10 @@ impl ChartApp {
             {
                 return;
             }
+            #[cfg(feature = "cloud")]
+            if self.panel_app.community_state.end_resize() {
+                return;
+            }
         }
 
         self.ui_drag_active = false;
@@ -5046,6 +5142,14 @@ impl ChartApp {
         #[cfg(feature = "cloud")]
         if self.panel_app.cloud_overlay_state.scroll.is_dragging {
             self.panel_app.cloud_overlay_state.scroll.end_drag();
+            return;
+        }
+
+        // End the Community modal's own scrollbar drag (community-modal
+        // arc W1).
+        #[cfg(feature = "cloud")]
+        if self.panel_app.community_state.scroll.is_dragging {
+            self.panel_app.community_state.scroll.end_drag();
             return;
         }
 
@@ -6852,26 +6956,38 @@ impl ChartApp {
                         // The cloud overlay's own viewport — the release
                         // catalogue and the News "All" tab both outgrow their
                         // frame, and a scrollbar nobody can turn is a picture
-                        // of a scrollbar.
+                        // of a scrollbar. This id is a shared literal with
+                        // the Community modal's hosted Forum/DM content
+                        // (both reuse `forum_v2_overlay`'s/`dm_overlay`'s
+                        // pre-existing `"cloud_overlay:scroll_viewport"` id
+                        // — community-modal arc W1); `try_handle_wheel`
+                        // disambiguates by which one's own viewport rect
+                        // actually contains the cursor, so both are always
+                        // offered as candidates regardless of which (or
+                        // both) modal happens to be open.
                         #[cfg(feature = "cloud")]
                         "cloud_overlay:scroll_viewport" => {
-                            if let Some(ref co) = self.frame_result
-                                .as_ref()
-                                .and_then(|r| r.cloud_overlay.as_ref())
-                                .cloned()
-                            {
-                                use crate::scroll_dispatch::try_handle_wheel;
-                                use crate::scroll_dispatch::ScrollableInfo;
-                                let info = ScrollableInfo {
-                                    handle_rect:     co.scrollbar_handle_rect,
-                                    track_rect:      co.scrollbar_track_rect,
-                                    content_height:  co.total_content_height.unwrap_or(0.0),
-                                    viewport_height: co.viewport_height.unwrap_or(0.0),
-                                    viewport_rect:   co.scroll_viewport_rect,
-                                };
-                                let scroll_state = &mut self.panel_app.cloud_overlay_state.scroll;
-                                let _ = try_handle_wheel(x, y, scroll_step, &mut [(&info, scroll_state)]);
-                            }
+                            use crate::scroll_dispatch::{try_handle_wheel, ScrollableInfo};
+                            let co = self.frame_result.as_ref().and_then(|r| r.cloud_overlay.as_ref()).cloned().unwrap_or_default();
+                            let comm = self.frame_result.as_ref().and_then(|r| r.community.as_ref()).cloned().unwrap_or_default();
+                            let co_info = ScrollableInfo {
+                                handle_rect: co.scrollbar_handle_rect,
+                                track_rect: co.scrollbar_track_rect,
+                                content_height: co.total_content_height.unwrap_or(0.0),
+                                viewport_height: co.viewport_height.unwrap_or(0.0),
+                                viewport_rect: co.scroll_viewport_rect,
+                            };
+                            let comm_info = ScrollableInfo {
+                                handle_rect: comm.content.scrollbar_handle_rect,
+                                track_rect: comm.content.scrollbar_track_rect,
+                                content_height: comm.content.total_content_height.unwrap_or(0.0),
+                                viewport_height: comm.content.viewport_height.unwrap_or(0.0),
+                                viewport_rect: comm.content.scroll_viewport_rect,
+                            };
+                            let _ = try_handle_wheel(x, y, scroll_step, &mut [
+                                (&co_info, &mut self.panel_app.cloud_overlay_state.scroll),
+                                (&comm_info, &mut self.panel_app.community_state.scroll),
+                            ]);
                             return;
                         }
                         "user_settings:scroll_viewport" => {
@@ -7703,6 +7819,15 @@ impl ChartApp {
         }
         if self.panel_app.compare_settings_state.is_open() {
             self.panel_app.compare_settings_state.close();
+            return;
+        }
+        // Community modal (Forum + Messages) — same priority-list treatment
+        // as `chart_settings_state` above (community-modal arc W1): Escape
+        // closes it directly rather than depending on the generic
+        // `close_topmost_known_modal_layer` fallback below.
+        #[cfg(feature = "cloud")]
+        if self.panel_app.community_state.is_open {
+            self.panel_app.community_state.close();
             return;
         }
 

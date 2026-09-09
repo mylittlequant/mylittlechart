@@ -2372,6 +2372,14 @@ impl ChartApp {
                 "compare_settings" => {
                     self.panel_app.compare_settings_state.close();
                 }
+                // Community modal (Forum + Messages, community-modal arc
+                // W1) — `dim_backdrop` is off (same as `chart_settings`),
+                // so a click that misses every widget while this layer is
+                // open reaches this generic path instead of a dimmer zone.
+                #[cfg(feature = "cloud")]
+                "community" => {
+                    self.panel_app.community_state.close();
+                }
                 "modal_search" => {
                     self.modal_state.close();
                 }

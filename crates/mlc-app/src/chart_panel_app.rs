@@ -98,6 +98,10 @@ pub struct ChartPanelApp {
     /// Cloud News/Links/Download overlay state (cloud builds only).
     #[cfg(feature = "cloud")]
     pub cloud_overlay_state: mlc_app_layout::ui::modal_settings::CloudOverlayState,
+    /// Community modal state — Forum + Messages, its own modal since
+    /// community-modal arc W1 (cloud builds only).
+    #[cfg(feature = "cloud")]
+    pub community_state: mlc_app_layout::ui::modal_settings::CommunityState,
     /// EWA Engine Settings modal state (owner ask 2026-08-14).
     pub ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState,
     /// Price Action Engine Settings modal state — the non-Elliott sibling
@@ -167,6 +171,8 @@ impl ChartPanelApp {
             cloud_login_state: mlc_app_layout::ui::modal_settings::CloudLoginState::default(),
             #[cfg(feature = "cloud")]
             cloud_overlay_state: mlc_app_layout::ui::modal_settings::CloudOverlayState::default(),
+            #[cfg(feature = "cloud")]
+            community_state: mlc_app_layout::ui::modal_settings::CommunityState::default(),
             ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState::default(),
             markup_engine_settings_state: mlc_app_layout::ui::modal_settings::MarkupEngineSettingsState::default(),
             clock_popup_state: mlc_app_layout::ui::ClockPopupState::default(),
@@ -967,6 +973,21 @@ impl ChartPanelApp {
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
                 &self.cloud_overlay_state,
+                frame_theme,
+                toolbar_theme,
+                input_coordinator,
+            ));
+        }
+
+        // Community modal — Forum + Messages (cloud builds only,
+        // community-modal arc W1).
+        #[cfg(feature = "cloud")]
+        if self.community_state.is_open {
+            result.community = Some(mlc_app_layout::layout::modals::render_community_modal(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                &self.community_state,
                 frame_theme,
                 toolbar_theme,
                 current_time_ms,
