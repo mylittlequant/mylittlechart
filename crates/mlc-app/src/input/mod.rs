@@ -332,6 +332,48 @@ impl ChartApp {
         if text.is_empty() { None } else { Some((leaf_id, text)) }
     }
 
+    /// Extract the currently selected DM message text, in the open
+    /// conversation. Same shape as [`Self::chat_selection_text`] (whose own
+    /// doc explains the "wrapped-line rects from the last render, not the
+    /// raw message body" choice) — DM has no leaf concept, so there is
+    /// nothing here to return alongside the text.
+    ///
+    /// After returning `Some(text)` the caller is responsible for clearing
+    /// the selection (`community_state.dm.selection = None`).
+    #[cfg(feature = "cloud")]
+    pub fn dm_selection_text(&self) -> Option<String> {
+        let sel = self.panel_app.community_state.dm.selection?;
+        if sel.is_empty() { return None; }
+        let ((lo_msg, lo_line, lo_char), (hi_msg, hi_line, hi_char)) = sel.ordered();
+        let rects = self.frame_result.as_ref()
+            .and_then(|r| r.community.as_ref())
+            .map(|cm| &cm.content.dm_message_line_rects)?;
+        let mut text = String::new();
+        for entry in rects.iter() {
+            let pos = (entry.msg_idx, entry.line_idx);
+            if pos < (lo_msg, lo_line) || pos > (hi_msg, hi_line) { continue; }
+            if !text.is_empty() { text.push('\n'); }
+            let is_first = pos == (lo_msg, lo_line);
+            let is_last = pos == (hi_msg, hi_line);
+            if is_first && is_last {
+                let slice: String = entry.text.chars()
+                    .skip(lo_char as usize)
+                    .take((hi_char as usize).saturating_sub(lo_char as usize))
+                    .collect();
+                text.push_str(&slice);
+            } else if is_first {
+                let slice: String = entry.text.chars().skip(lo_char as usize).collect();
+                text.push_str(&slice);
+            } else if is_last {
+                let slice: String = entry.text.chars().take(hi_char as usize).collect();
+                text.push_str(&slice);
+            } else {
+                text.push_str(&entry.text);
+            }
+        }
+        if text.is_empty() { None } else { Some(text) }
+    }
+
     /// Handle a left-click at screen coordinates `(x, y)`.
     ///
     /// Dispatch order:
@@ -2653,6 +2695,33 @@ impl ChartApp {
                     }
                 }
             }
+            // DM message bubbles — host-side line-level text selection, the
+            // SAME mechanism (msg/line/char coordinates, a mouse-down
+            // hit-tested against a `Vec` of wrapped-line rects handed back
+            // from render) the Agents chat panel uses for its own
+            // `ChatSelection` (owner ruling 2026-09-10: replaces the old
+            // one-`TextFieldStore`-field-per-wrapped-line approach, which
+            // had no row axis at all and so could never select across
+            // lines or across messages — see `dm_overlay.rs::draw_message`'s
+            // own doc). Checked BEFORE the generic community text-field
+            // block below so a press landing on a bubble's body claims the
+            // drag here, not there.
+            #[cfg(feature = "cloud")]
+            if let Some(ref cm) = result.community {
+                if self.panel_app.community_state.is_open {
+                    let hit = cm.content.dm_message_line_rects.iter()
+                        .find(|l| y >= l.y_top && y < l.y_bot)
+                        .map(|l| (l.msg_idx, l.line_idx, l.text.clone(), l.text_x));
+                    if let Some((msg_idx, line_idx, line_text, text_x)) = hit {
+                        let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
+                        self.panel_app.community_state.dm.selection = Some(
+                            mlc_app_layout::ui::modal_settings::DmMessageSelection::new_at(msg_idx, line_idx, char_idx),
+                        );
+                        self.panel_app.community_state.dm.selection_drag_active = true;
+                        return false;
+                    }
+                }
+            }
             // Community modal (Forum/DM) — text select drag on whichever
             // field the current sub-view is showing (title+body for
             // Forum-v2 Compose, reply for Forum-v2 Thread, search for
@@ -2663,17 +2732,13 @@ impl ChartApp {
             // no extra sub-view check is needed here beyond `is_open`.
             // Geometry comes from `CommunityResult::content`
             // (community-modal arc W1) — moved out of `result.cloud_overlay`
-            // when Forum/Messages moved out of the News overlay.
+            // when Forum/Messages moved out of the News overlay. Message
+            // bubbles are NOT in this list any more — see the DM
+            // line-selection block above.
             #[cfg(feature = "cloud")]
             if let Some(ref cm) = result.community {
                 if self.panel_app.community_state.is_open {
                     let ov = &cm.content;
-                    // `dm_message_line_rects` (message-bubble text, one rect
-                    // per wrapped line — owner ruling 2026-09-10, item 3)
-                    // joins the fixed `Option<Rect>` fields above so a
-                    // mouse-down on a bubble's body starts a drag-select
-                    // instead of falling through to ordinary click routing
-                    // (a conversation row, the Send button, ...).
                     let hit = [
                         ov.forum_title_rect,
                         ov.forum_body_rect,
@@ -2684,7 +2749,6 @@ impl ChartApp {
                     ]
                         .into_iter()
                         .flatten()
-                        .chain(ov.dm_message_line_rects.iter().copied())
                         .any(|r| r.contains(x, y));
                     if hit {
                         self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
@@ -3839,6 +3903,27 @@ impl ChartApp {
                         sel.end_char = char_idx;
                         self.sidebar_data_dirty = true;
                     }
+                }
+            }
+            return;
+        }
+
+        // ── DM message host-side selection drag extension ─────────────────
+        #[cfg(feature = "cloud")]
+        if self.panel_app.community_state.dm.selection_drag_active {
+            let hit = self.frame_result.as_ref()
+                .and_then(|r| r.community.as_ref())
+                .and_then(|cm| {
+                    cm.content.dm_message_line_rects.iter()
+                        .find(|l| y >= l.y_top && y < l.y_bot)
+                        .map(|l| (l.msg_idx, l.line_idx, l.text.clone(), l.text_x))
+                });
+            if let Some((msg_idx, line_idx, line_text, text_x)) = hit {
+                let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
+                if let Some(sel) = self.panel_app.community_state.dm.selection.as_mut() {
+                    sel.end_msg = msg_idx;
+                    sel.end_line = line_idx;
+                    sel.end_char = char_idx;
                 }
             }
             return;
@@ -5102,6 +5187,22 @@ impl ChartApp {
                 }
             }
             self.sidebar_data_dirty = true;
+            return;
+        }
+
+        // ── End host-side DM message selection drag ────────────────────────
+        #[cfg(feature = "cloud")]
+        if self.panel_app.community_state.dm.selection_drag_active {
+            self.panel_app.community_state.dm.selection_drag_active = false;
+            // If start==end the selection is empty — clear it so the
+            // overlay vanishes, same rule the Agents chat's own end-of-drag
+            // applies to `ChatSelection`.
+            let is_empty = self.panel_app.community_state.dm.selection
+                .map(|s| s.is_empty())
+                .unwrap_or(true);
+            if is_empty {
+                self.panel_app.community_state.dm.selection = None;
+            }
             return;
         }
 

@@ -160,17 +160,45 @@ pub struct CloudOverlayResult {
     /// DM_PEER` (new this pass, see `dm_overlay.rs`'s `draw_open_peer_row`).
     pub dm_peer_rect: Option<WidgetRect>,
     pub dm_peer_char_positions: Vec<f64>,
-    /// DM Conversation view's message-bubble text geometry — one rect per
-    /// WRAPPED LINE of every bubble currently on screen (`dm:msg:{id}:
-    /// {line}` — see `dm_overlay.rs::draw_message`'s own doc for why a
-    /// bubble registers one `TextFieldStore` field per visual line rather
-    /// than one multi-line field per message: `uzor::input::text::
-    /// TextFieldState` tracks a single `(rect, char_positions)` pair, no
-    /// row axis at all). `mlc-app`'s drag pre-dispatch (`input/mod.rs`)
-    /// hit-tests a mouse-down against these before falling through to
-    /// ordinary click routing, same "every modal field needs its own arm"
-    /// contract `dm_draft_rect` above documents.
-    pub dm_message_line_rects: Vec<WidgetRect>,
+    /// DM Conversation view's message-bubble text geometry — one entry per
+    /// WRAPPED LINE of every bubble currently on screen, for HOST-SIDE
+    /// line-level text selection (owner ruling 2026-09-10: the DM pane
+    /// selects text the same way the Agents chat panel does — across
+    /// wrapped lines and across messages both — see [`DmMessageLineHit`]'s
+    /// own doc). `mlc-app`'s drag pre-dispatch (`input/mod.rs`) hit-tests a
+    /// mouse-down's Y against these to start (and, while dragging, extend)
+    /// a selection, same "every modal field needs its own arm" contract
+    /// `dm_draft_rect` above documents.
+    pub dm_message_line_rects: Vec<DmMessageLineHit>,
+}
+
+/// One visual (wrapped) line of a DM message bubble — collected during
+/// `dm_overlay::draw_message`'s own paint pass. Mirrors the shape of
+/// `mlc_app_sidebar_content::render::render_agents_chat_bubbles`'s own
+/// `line_rects_out` (msg/line coordinates, the line's own Y band, its raw
+/// text and left edge) — the mechanism this struct backs replaces the
+/// pane's former one-`TextFieldStore`-field-per-wrapped-line approach,
+/// which had no row axis at all and so could never select across lines or
+/// across messages.
+#[derive(Clone, Debug)]
+pub struct DmMessageLineHit {
+    /// Index into the open conversation's `messages` slice.
+    pub msg_idx: u16,
+    /// Wrapped-line index within that message's body.
+    pub line_idx: u16,
+    pub y_top: f64,
+    pub y_bot: f64,
+    /// The line's own text, verbatim — re-measured on demand by the
+    /// selection overlay and by copy (no precomputed char-position table,
+    /// same choice the Agents chat's own `line_rects_out` makes).
+    pub text: String,
+    /// Left edge the line's text was drawn from (inside the bubble).
+    pub text_x: f64,
+    /// Monospace ciphertext line vs. an ordinary bubble body — the
+    /// selection overlay and copy both need the SAME font the paint pass
+    /// used before calling `measure_text`, or the highlight rect and
+    /// character boundaries drift from what is on screen.
+    pub mono: bool,
 }
 
 fn title_for(state: &CloudOverlayState) -> &'static str {

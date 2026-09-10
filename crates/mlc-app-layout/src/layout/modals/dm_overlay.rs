@@ -31,24 +31,36 @@
 //! branch) — so a caller sees end-to-end encryption is real before they
 //! ever unlock anything. Bubbles carry an avatar (peer side only), a nick
 //! line, wrapped body text, a bottom-right clock, and day separators
-//! between bubbles on different calendar days; every bubble body is a real
-//! read-only `TextFieldStore` field (one per WRAPPED LINE — see
-//! [`draw_message`]'s own doc for why per-line rather than per-message) so
-//! drag-select and Ctrl+C work.
+//! between bubbles on different calendar days. Every color in this file
+//! comes from `ToolbarTheme`/theme-derived helpers (`mlc_core::mix_colors`,
+//! `contrasting_text_color`) — accent is used ONLY to tint the "mine"
+//! bubble so sender/recipient read apart at a glance, never as a plain
+//! decorative fill.
+//!
+//! Owner ruling 2026-09-10 (text selection, item 2): message bubble text is
+//! drag-selectable and Ctrl+C-able across wrapped lines AND across
+//! messages, via the SAME host-side line-rect mechanism the Agents chat
+//! panel uses for its own selection (`mlc_app_sidebar_content::render::
+//! render_agents_chat_bubbles`'s `line_rects_out`/`ChatSelection`) — see
+//! [`draw_message`]'s own doc. This replaced a one-`TextFieldStore`-field-
+//! per-wrapped-line approach that could only ever select inside a single
+//! line at a time.
 
 use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::i18n::{current_language, UserSettingsKey};
-use uzor::input::{InputCoordinator, LayerId, Sense, TextFieldConfig};
+use uzor::input::{InputCoordinator, LayerId, Sense};
 use uzor::types::Rect as WidgetRect;
 use uzor::WidgetId;
 
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::modal_settings::{
-    CommunityState, DmConversationUi, DmMessageBody, DmMessageUi, DmState, DmUnavailableReason, DmView,
+    CommunityState, DmConversationUi, DmMessageBody, DmMessageSelection, DmMessageUi, DmState,
+    DmUnavailableReason, DmView,
 };
 use crate::ui::scroll_widget::ScrollableContainer;
 use crate::ui::toolbar_theme::ToolbarTheme;
+use crate::ui::widgets::avatar::contrasting_text_color;
 use crate::ui::widgets::{
     draw_avatar_placeholder, draw_input, draw_input_cursor, InputConfig, SETTINGS_BUTTON_RADIUS,
 };
@@ -57,7 +69,7 @@ use crate::ui::widgets::types::{WidgetState, WidgetTheme};
 use super::cloud_overlay::{
     draw_action_row, draw_column_divider, draw_status, parse_rfc3339_unix_secs, register_scrollbar_hit_zones,
     relative_time, scroll_config, wrap_text, CloudOverlayResult, COL_GAP,
-    DM_PEER_FIELD, FIELD_H, GOLD, LIST_COL_W, ROW_GAP, ROW_H,
+    DM_PEER_FIELD, FIELD_H, LIST_COL_W, ROW_GAP, ROW_H,
 };
 use super::community::CommunityListPaneResult;
 
@@ -220,7 +232,7 @@ pub(crate) fn draw(
     match state.dm.unavailable_reason {
         DmUnavailableReason::NotPaid => {
             if let Some(err) = &state.dm.last_error {
-                draw_error_line(ctx, right_w, right_x, y, err);
+                draw_error_line(ctx, tt, right_w, right_x, y, err);
             }
             return;
         }
@@ -255,7 +267,7 @@ pub(crate) fn draw(
         // unreachable; if it ever is, degrade to the old single-line notice
         // rather than draw controls the caller cannot use.
         if let Some(err) = &state.dm.last_error {
-            draw_error_line(ctx, right_w, right_x, y, err);
+            draw_error_line(ctx, tt, right_w, right_x, y, err);
         }
         return;
     }
@@ -277,13 +289,13 @@ pub(crate) fn draw(
     }
 }
 
-/// One clipped red error line — mirrors `forum_v2_overlay`'s own
-/// `draw_error_line`; not shared because pulling one function up to
-/// `cloud_overlay.rs` for two four-line call sites is not worth the extra
-/// public surface.
-fn draw_error_line(ctx: &mut dyn RenderContext, w: f64, x: f64, y: f64, msg: &str) -> f64 {
+/// One clipped error line, in the theme's own `danger` tone — mirrors
+/// `forum_v2_overlay`'s own `draw_error_line`; not shared because pulling
+/// one function up to `cloud_overlay.rs` for two four-line call sites is
+/// not worth the extra public surface.
+fn draw_error_line(ctx: &mut dyn RenderContext, tt: &ToolbarTheme, w: f64, x: f64, y: f64, msg: &str) -> f64 {
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("#e5484d");
+    ctx.set_fill_color(&tt.danger);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     let m = crate::ui::widgets::fit_text_to_width(ctx, msg, w);
@@ -476,7 +488,7 @@ fn draw_lookup_dropdown(
         }
 
         ctx.set_font("600 12px sans-serif");
-        ctx.set_fill_color(if hovered { GOLD } else { &tt.item_text });
+        ctx.set_fill_color(if hovered { &tt.item_text_hover } else { &tt.item_text });
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
         let label = crate::ui::widgets::fit_text_to_width(ctx, &hit.label, rect.width - 12.0);
@@ -533,11 +545,15 @@ fn draw_conversation_row(
 
     let avatar_cx = x + 8.0 + LIST_AVATAR_D / 2.0;
     let avatar_cy = rect.y + rect.height / 2.0;
-    draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, LIST_AVATAR_D / 2.0, &c.peer_label, GOLD);
+    // Peer identity marker — a neutral "active surface" tone, never the
+    // accent: accent is reserved for telling sender/recipient bubbles apart
+    // inside an open conversation (owner ruling 2026-09-10), and every row
+    // here is a peer, never "me".
+    draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, LIST_AVATAR_D / 2.0, &c.peer_label, &tt.item_bg_active);
     let text_x = x + 8.0 + LIST_AVATAR_D + LIST_AVATAR_GAP;
 
     ctx.set_font("600 13px sans-serif");
-    ctx.set_fill_color(if hovered { GOLD } else { &tt.item_text });
+    ctx.set_fill_color(if hovered { &tt.item_text_hover } else { &tt.item_text });
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     let label = crate::ui::widgets::fit_text_to_width(ctx, &c.peer_label, (x + w - text_x - 52.0).max(0.0));
@@ -547,10 +563,14 @@ fn draw_conversation_row(
         let badge_label = if c.unread_count > 99 { "99+".to_string() } else { c.unread_count.to_string() };
         let badge_w = 16.0 + badge_label.len() as f64 * 6.0;
         let badge_rect = WidgetRect::new(x + w - badge_w - 8.0, y + 4.0, badge_w, 18.0);
-        ctx.set_fill_color(GOLD);
+        // Unread-count pill — the same accent "active indicator" the
+        // envelope/events toolbar buttons already paint their own unread
+        // dot with (`ToolbarTheme::accent`'s own doc), not a sender/
+        // recipient distinction, so it stays outside that rule.
+        ctx.set_fill_color(&tt.accent);
         ctx.fill_rounded_rect(badge_rect.x, badge_rect.y, badge_rect.width, badge_rect.height, 9.0);
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color("#101014");
+        ctx.set_fill_color(contrasting_text_color(&tt.accent));
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(&badge_label, badge_rect.center_x(), badge_rect.center_y());
@@ -658,20 +678,6 @@ fn message_h(m: &DmMessageUi, available: bool) -> f64 {
     BUBBLE_PAD_V * 2.0 + BUBBLE_NICK_H + line_count as f64 * BUBBLE_LINE_H + BUBBLE_TIME_H + BUBBLE_GAP
 }
 
-/// Screen-x char-boundary positions for one wrapped `line`, starting at
-/// `x` — the per-line equivalent of `widgets::input`'s own
-/// `char_x_positions` (single-line only). Needs `line`'s font already set
-/// on `ctx` (measurement depends on it).
-fn char_positions_for_line(ctx: &mut dyn RenderContext, line: &str, x: f64) -> Vec<f64> {
-    let char_count = line.chars().count();
-    let mut positions = Vec::with_capacity(char_count + 1);
-    for i in 0..=char_count {
-        let slice: String = line.chars().take(i).collect();
-        positions.push(x + ctx.measure_text(&slice));
-    }
-    positions
-}
-
 /// Two messages fall on the same calendar day (UTC — see [`clock_hm`]'s own
 /// doc for why this crate has no local-timezone conversion yet).
 fn same_day(a: &str, b: &str) -> bool {
@@ -728,24 +734,26 @@ fn clock_hm(created_at: &str) -> &str {
 /// monospace lock-glyphed block for [`DmMessageBody::Ciphertext`] while the
 /// vault is sealed (`!available`).
 ///
-/// Registers one READ-ONLY `TextFieldStore` field PER WRAPPED LINE
-/// (`dm:msg:{id}:{line}`), not one per message: `uzor::input::text::
-/// TextFieldState` tracks a single `(rect, char_positions)` pair with no
-/// row axis at all, so a multi-line bubble needs one field per visual line
-/// for the generic drag-select (`TextFieldStore::on_drag_start`, which
-/// hit-tests every registered field's own `last_rect`) to land on the
-/// right line. `mlc-app`'s `panel_click.rs::unregister_dm_message_fields`
-/// drops these again when the conversation changes.
+/// Records one [`super::cloud_overlay::DmMessageLineHit`] per WRAPPED LINE
+/// into `result.dm_message_line_rects` — HOST-SIDE text selection (the same
+/// mechanism the Agents chat panel uses for its own, owner ruling
+/// 2026-09-10), not a per-line `TextFieldStore` field: that store tracks a
+/// single `(rect, char_positions)` pair per id with no row axis at all, so
+/// it could only ever select inside ONE wrapped line at a time. `selection`
+/// is the whole open conversation's current selection (`DmState::
+/// selection`), read here so each message can paint the highlight over
+/// whichever of ITS OWN lines the ordered range covers.
 #[allow(clippy::too_many_arguments)]
 fn draw_message(
     ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
     x: f64,
     y: f64,
     w: f64,
+    msg_idx: u16,
     m: &DmMessageUi,
     peer_label: &str,
     available: bool,
+    selection: Option<DmMessageSelection>,
     tt: &ToolbarTheme,
     result: &mut CloudOverlayResult,
 ) -> f64 {
@@ -761,12 +769,26 @@ fn draw_message(
     let bx = if m.mine { x + w - bubble_w } else { x + avatar_reserved };
 
     if has_avatar {
+        // Peer identity marker — a neutral "active surface" tone, never the
+        // accent (see `draw_conversation_row`'s own comment: accent is
+        // reserved for telling sender/recipient bubbles apart, and this is
+        // always a peer, never "me").
         let avatar_cx = x + BUBBLE_AVATAR_D / 2.0;
         let avatar_cy = y + bubble_h / 2.0;
-        draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, BUBBLE_AVATAR_D / 2.0, peer_label, GOLD);
+        draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, BUBBLE_AVATAR_D / 2.0, peer_label, &tt.item_bg_active);
     }
 
-    ctx.set_fill_color(if m.mine { GOLD } else { &tt.dropdown_bg });
+    // Own bubble = the pane's own secondary surface tinted toward the
+    // theme's accent; peer bubble = the plain secondary surface — accent
+    // is used ONLY to tell sender and recipient apart (owner ruling
+    // 2026-09-10), never as a decorative fill on its own. The text color
+    // is derived from whatever that tinted surface actually renders as
+    // (auto black/white contrast) rather than a fixed light/dark guess, so
+    // every preset — including ones with a light or a very saturated
+    // accent — stays legible.
+    let mine_bg = mlc_core::mix_colors(&tt.dropdown_bg, &tt.accent, 0.25);
+    let mine_text = contrasting_text_color(&mine_bg);
+    ctx.set_fill_color(if m.mine { &mine_bg } else { &tt.dropdown_bg });
     ctx.fill_rounded_rect(bx, y, bubble_w, bubble_h, SETTINGS_BUTTON_RADIUS);
 
     if visual.is_ciphertext_style {
@@ -774,7 +796,7 @@ fn draw_message(
     }
 
     // Nick line — "You" for an own message, the peer's label otherwise.
-    let nick_color: &str = if m.mine { "#101014" } else { &tt.item_text_muted };
+    let nick_color: &str = if m.mine { mine_text } else { &tt.item_text_muted };
     let nick = if m.mine { UserSettingsKey::DmYou.get(current_language()) } else { peer_label };
     ctx.set_font("600 10px sans-serif");
     ctx.set_fill_color(nick_color);
@@ -783,35 +805,70 @@ fn draw_message(
     let nick_fit = crate::ui::widgets::fit_text_to_width(ctx, nick, bubble_w - 24.0);
     ctx.fill_text(&nick_fit, bx + 10.0, y + BUBBLE_PAD_V);
 
-    // Body lines — each one a real, selectable, read-only text field.
-    let (body_font, body_color): (&str, &str) = if visual.is_ciphertext_style {
-        ("11px monospace", &tt.item_text_muted)
+    // Body lines — plain fill_text; the selection highlight (below) paints
+    // a translucent overlay on top, same paint order the Agents chat's own
+    // selection uses.
+    let (body_font, body_color, mono): (&str, &str, bool) = if visual.is_ciphertext_style {
+        ("11px monospace", tt.item_text_muted.as_str(), true)
     } else if m.mine {
-        ("12px sans-serif", "#101014")
+        ("12px sans-serif", mine_text, false)
     } else {
-        ("12px sans-serif", &tt.item_text)
+        ("12px sans-serif", tt.item_text.as_str(), false)
     };
     ctx.set_font(body_font);
     ctx.set_fill_color(body_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
+    let line_x = bx + 10.0;
     for (i, line) in visual.lines.iter().enumerate() {
-        let line_x = bx + 10.0;
         let line_y = y + BUBBLE_PAD_V + BUBBLE_NICK_H + i as f64 * BUBBLE_LINE_H;
         ctx.fill_text(line, line_x, line_y);
+        result.dm_message_line_rects.push(super::cloud_overlay::DmMessageLineHit {
+            msg_idx,
+            line_idx: i as u16,
+            y_top: line_y,
+            y_bot: line_y + BUBBLE_LINE_H,
+            text: line.clone(),
+            text_x: line_x,
+            mono,
+        });
+    }
 
-        let positions = char_positions_for_line(ctx, line, line_x);
-        let line_rect = WidgetRect::new(line_x, line_y, (bubble_w - 20.0).max(0.0), BUBBLE_LINE_H);
-        let wid = WidgetId::from(format!("dm:msg:{}:{i}", m.id));
-        {
-            let tf = coord.text_fields_mut();
-            tf.register(wid.clone(), TextFieldConfig::read_only());
-            if tf.text(&wid) != line.as_str() {
-                tf.set_text(&wid, line);
+    // Selection highlight — see this function's own doc.
+    if let Some(sel) = selection.filter(|s| !s.is_empty()) {
+        let ((lo_msg, lo_line, lo_char), (hi_msg, hi_line, hi_char)) = sel.ordered();
+        ctx.set_font(body_font);
+        ctx.set_fill_color(&tt.selection);
+        ctx.set_global_alpha(0.35);
+        for (i, line) in visual.lines.iter().enumerate() {
+            let line_idx = i as u16;
+            let pos = (msg_idx, line_idx);
+            if pos < (lo_msg, lo_line) || pos > (hi_msg, hi_line) {
+                continue;
             }
-            tf.update_field(&wid, (line_rect.x, line_rect.y, line_rect.width, line_rect.height), positions);
+            let line_y = y + BUBBLE_PAD_V + BUBBLE_NICK_H + i as f64 * BUBBLE_LINE_H;
+            let is_first = pos == (lo_msg, lo_line);
+            let is_last = pos == (hi_msg, hi_line);
+            let char_prefix = |n: usize| -> String { line.chars().take(n).collect() };
+            let (sel_x, sel_w) = if is_first && is_last {
+                let prefix_w = ctx.measure_text(&char_prefix(lo_char as usize));
+                let end_w = ctx.measure_text(&char_prefix(hi_char as usize));
+                (line_x + prefix_w, (end_w - prefix_w).max(0.0))
+            } else if is_first {
+                let prefix_w = ctx.measure_text(&char_prefix(lo_char as usize));
+                let full_w = ctx.measure_text(line);
+                (line_x + prefix_w, (full_w - prefix_w).max(4.0))
+            } else if is_last {
+                let end_w = ctx.measure_text(&char_prefix(hi_char as usize));
+                (line_x, end_w.max(4.0))
+            } else {
+                (line_x, ctx.measure_text(line).max(4.0))
+            };
+            if sel_w > 0.0 {
+                ctx.fill_rect(sel_x, line_y, sel_w, BUBBLE_LINE_H);
+            }
         }
-        result.dm_message_line_rects.push(line_rect);
+        ctx.set_global_alpha(1.0);
     }
 
     // Clock — bottom-right inside the bubble.
@@ -880,7 +937,7 @@ fn draw_right_conversation(
     let peer_label = peer.map(|c| c.peer_label.as_str()).unwrap_or("Unknown");
     let fingerprint = peer.and_then(|c| c.peer_fingerprint.as_deref()).unwrap_or("no key published");
     ctx.set_font("600 14px sans-serif");
-    ctx.set_fill_color(GOLD);
+    ctx.set_fill_color(&tt.item_text);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(peer_label, sx, sy);
@@ -891,7 +948,7 @@ fn draw_right_conversation(
     sy += 18.0;
 
     if let Some(err) = &state.dm.last_error {
-        sy += draw_error_line(ctx, sw, sx, sy, err);
+        sy += draw_error_line(ctx, tt, sw, sx, sy, err);
     }
 
     if messages.is_empty() {
@@ -902,7 +959,9 @@ fn draw_right_conversation(
                 let label = day_separator_label(&m.created_at, current_time_ms);
                 sy += draw_day_separator(ctx, sx, sy, sw, &label, tt);
             }
-            sy += draw_message(ctx, coord, sx, sy, sw, m, peer_label, state.dm.available, tt, result);
+            sy += draw_message(
+                ctx, sx, sy, sw, i as u16, m, peer_label, state.dm.available, state.dm.selection, tt, result,
+            );
         }
     }
 

@@ -5583,6 +5583,25 @@ impl ChartApp {
             return;
         }
 
+        // === DM vault-unlock mini overlay chrome (frame/dimmer/close) ===
+        // Small unlock card drawn ON TOP of the Community modal (owner
+        // ruling 2026-09-10, DM pane item 3). Its PAGE CONTENT (passphrase
+        // field, "Unlock" button, error line) is the SAME shared
+        // `"user_settings:profile_mgr:*"` widget ids the standalone Profile
+        // Manager modal / Vault tab already dispatch (see that match's own
+        // top doc — it runs with no `user_settings_state.is_open` gate), so
+        // only this overlay's OWN chrome needs an arm here.
+        #[cfg(feature = "cloud")]
+        if let Some(action) = widget_id.strip_prefix("dm_vault_unlock:") {
+            match action {
+                "modal_bg" | "header" => { /* absorb */ }
+                "close" | "cancel" => self.close_dm_vault_unlock_overlay(),
+                rest if rest.starts_with("dimmer") => self.close_dm_vault_unlock_overlay(),
+                _ => {}
+            }
+            return;
+        }
+
         // === Welcome Wizard modal chrome (frame/dimmer/close) ===
         // A first-run courtesy, not a gate (owner's ruling 2026-08-31) —
         // always dismissible. Boot already created a profile silently, so
@@ -6122,12 +6141,12 @@ impl ChartApp {
                     }
                     let action = &rest["dm:".len()..];
                     // "Unlock your vault to read" (owner ruling 2026-09-10,
-                    // item 2) — reuses the Account tab's own
-                    // `account_open_vault` handler (`open_vault_tab`).
+                    // item 3) — opens the small unlock overlay drawn on top
+                    // of this modal, not the whole User Settings modal.
                     // Checked before `st` reborrows `community_state` below:
-                    // `open_vault_tab` takes the full `&mut self`.
+                    // `open_dm_vault_unlock_overlay` takes the full `&mut self`.
                     if action == "unlock_vault" {
-                        self.open_vault_tab();
+                        self.open_dm_vault_unlock_overlay();
                         return;
                     }
                     // `dm` moved to `CommunityState` (community-modal arc
@@ -6145,14 +6164,17 @@ impl ChartApp {
                     match action {
                         rest2 if rest2.starts_with("conversation:") => {
                             if let Ok(id) = rest2["conversation:".len()..].parse::<i64>() {
-                                unregister_dm_message_fields(&self.input_coordinator, &st.dm.view);
+                                // `open_conversation` already clears
+                                // `DmState::selection`/`selection_drag_active`
+                                // — no per-line `TextFieldStore` registration
+                                // to drop any more (owner ruling 2026-09-10,
+                                // item 2: host-side selection replaced it).
                                 st.dm.open_conversation(id);
                                 st.dm.request = Some(DmRequest::LoadMessages { id, after: None });
                             }
                             return;
                         }
                         "back" => {
-                            unregister_dm_message_fields(&self.input_coordinator, &st.dm.view);
                             st.dm.reset_to_list();
                             self.input_coordinator.borrow_mut().text_fields_mut().blur();
                             return;
@@ -6819,8 +6841,17 @@ impl ChartApp {
                         // which validates for real and does not rebuild any
                         // window (`ChartApp::dispatch_profile_command`'s doc
                         // has the fuller "why a shell command, not a facade
-                        // call" reasoning).
-                        if self.panel_app.credentials_state.pending_unlock_return.is_some() {
+                        // call" reasoning). The DM vault-unlock overlay
+                        // (owner ruling 2026-09-10, item 3) is the same
+                        // reseal case — it is only ever reachable for a
+                        // paid account that already has a vault, never a
+                        // fresh-setup one — so it joins this branch too
+                        // (see `Self::open_dm_vault_unlock_overlay`'s own
+                        // doc for why it deliberately leaves
+                        // `pending_unlock_return` unset instead).
+                        if self.panel_app.credentials_state.pending_unlock_return.is_some()
+                            || self.panel_app.user_settings_state.show_dm_vault_unlock_overlay
+                        {
                             self.pending_updater_cmd = Some(format!("cred_unlock:{}", passphrase));
                             eprintln!("[ChartApp] profile_mgr: unlock passphrase submitted (credentials reseal)");
                         } else {
@@ -9324,38 +9355,6 @@ impl ChartApp {
         }
     }
 
-}
-
-/// Drop every per-message `TextFieldStore` registration
-/// (`dm:msg:{id}:{line}` — one read-only field per WRAPPED LINE of a bubble,
-/// not per message: `uzor::input::text::TextFieldState` tracks a single
-/// `(rect, char_positions)` pair with no row axis at all, so a multi-line
-/// bubble needs one field per visual line for drag-select/Ctrl+C to hit-test
-/// correctly — see `dm_overlay.rs::draw_message`'s own doc) belonging to
-/// `view`'s conversation, if it is one. Called right before the DM click
-/// router navigates to a DIFFERENT conversation or back to the list (owner
-/// ruling 2026-09-10, item 3): the old view's fields would otherwise leak in
-/// the store forever, keyed by message ids that no longer render anywhere.
-#[cfg(feature = "cloud")]
-fn unregister_dm_message_fields(
-    coord: &std::cell::RefCell<uzor::input::InputCoordinator>,
-    view: &mlc_app_layout::ui::modal_settings::DmView,
-) {
-    use mlc_app_layout::ui::modal_settings::DmView;
-    let DmView::Conversation { messages, .. } = view else { return };
-    let mut tf = coord.borrow_mut();
-    let tf = tf.text_fields_mut();
-    for m in messages {
-        let mut line = 0usize;
-        loop {
-            let wid = uzor::WidgetId::from(format!("dm:msg:{}:{}", m.id, line));
-            if !tf.has_field(&wid) {
-                break;
-            }
-            tf.unregister(&wid);
-            line += 1;
-        }
-    }
 }
 
 /// Parse a `"SYMBOL:exchange_id:account_type"` composite key (symbols may

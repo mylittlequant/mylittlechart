@@ -952,6 +952,15 @@ pub fn process_event(
                                 return;
                             }
                         }
+                        #[cfg(feature = "cloud")]
+                        {
+                            let dm_text = chart.dm_selection_text();
+                            if let Some(text) = dm_text {
+                                platform.clipboard_write(&text);
+                                chart.panel_app.community_state.dm.selection = None;
+                                return;
+                            }
+                        }
                         if chart.is_agent_pty_focused() {
                             let sel_text = chart.pty_selection_text();
                             if !sel_text.is_empty() {

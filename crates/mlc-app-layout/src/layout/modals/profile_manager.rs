@@ -49,7 +49,7 @@
 //! asking which host rendered the click.
 
 use mlc_core::engine::render::{RenderContext, draw_svg_icon};
-use mlc_core::i18n::{current_language, TextKey, ProfileKey};
+use mlc_core::i18n::{current_language, TextKey, ProfileKey, UserSettingsKey};
 
 use crate::ui::Icon;
 use uzor::render::{TextAlign, TextBaseline};
@@ -74,8 +74,8 @@ use crate::layout::render_chart::FrameTheme;
 const MODAL_W: f64 = 520.0;
 
 /// Which host is rendering one of the five shared vault pages — the only
-/// thing that differs between the two callers (see the module doc). Threaded
-/// only into the three pages that draw a "back" affordance
+/// thing that differs between the two ORIGINAL callers (see the module
+/// doc). Threaded only into the three pages that draw a "back" affordance
 /// (`render_page_unlock`, `render_page_create_passphrase`,
 /// `render_page_use_recovery_key`); `ShowRecoveryKey`/`SetNewPassphrase`
 /// render no back button in either host, so they take no host parameter.
@@ -89,6 +89,13 @@ pub enum VaultPageHost {
     /// returns to `CredentialsView::List`, the same target the add-key
     /// form's own "< Back" already uses.
     Tab,
+    /// The small DM vault-unlock overlay (owner ruling 2026-09-10, DM pane
+    /// item 3, [`render_dm_vault_unlock_overlay`]) — a THIRD host added for
+    /// `UnlockPassphrase` only: no "back" (there is nowhere to go back to;
+    /// Cancel/Esc/the × all close the overlay instead) and no "use a
+    /// recovery key" link (owner's own overlay spec: "passphrase field,
+    /// Unlock button, error line, Cancel/Esc" — nothing else).
+    Overlay,
 }
 
 const PROFILE_HEADER_H: f64 = 36.0;
@@ -284,6 +291,101 @@ pub fn render_profile_manager(
             );
         }
     }
+
+    end_modal_shell(ctx, input_coordinator, &spec, &theme, &shell, &layer_id, &[]);
+}
+
+/// Small vault-unlock overlay drawn ON TOP of the Community modal (owner
+/// ruling 2026-09-10, DM pane item 3): a centered card holding ONLY the
+/// shared `UnlockPassphrase` page (`render_page_unlock`,
+/// `VaultPageHost::Overlay`) — no profile list, no other vault pages, no
+/// tabs. Entered from `"cloud_overlay:dm:unlock_vault"`
+/// (`ChartApp::open_dm_vault_unlock_overlay`) instead of the whole User
+/// Settings modal `open_vault_tab` used to open, which then rendered
+/// UNDER the community modal (both plain `ZLayer::Modal`; render-call
+/// order decided which one painted last). `ZLayer::ModalOverlay` puts
+/// this one z ABOVE every ordinary modal unconditionally — in both paint
+/// order (`chart_panel_app.rs::render_modals` draws it last, after the
+/// community modal) and hit-testing (`InputCoordinator` sorts layers by
+/// this z-value) — so it needs no part in that file's general "last
+/// opened is on top" fix for User-Settings-vs-Community.
+///
+/// The shell's own declared height (`OVERLAY_CONTENT_H` below) is a
+/// hand-traced constant, same "exact bottom edge" rule
+/// [`page_content_height`]'s own doc documents for the `Modal` host — the
+/// Cancel button below still draws at `render_page_unlock`'s own REAL
+/// returned `cy`, never at the constant, so the two can never visibly
+/// disagree even if the constant drifts from the actual trace.
+pub fn render_dm_vault_unlock_overlay(
+    ctx: &mut dyn RenderContext,
+    screen_w: f64,
+    screen_h: f64,
+    state: &UserSettingsState,
+    text_color: &str,
+    toolbar_theme: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    current_time_ms: u64,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    result: &mut UserSettingsResult,
+) {
+    const OVERLAY_W: f64 = 360.0;
+    // Hand-traced, same "exact bottom edge" rule `page_content_height`'s
+    // own doc documents (an UNDER-estimate would let the Cancel button
+    // below draw past the shell's own background; an OVER-estimate only
+    // ever costs a small gap): subtitle(22) + `render_passphrase_input`'s
+    // own label+input+gap(18+32+16=66) + Unlock button+gap(32+10=42) +
+    // one worst-case error line(18) + this fn's own Cancel gap+button
+    // (6+24=30) + bottom padding(10) = 188.
+    const OVERLAY_CONTENT_H: f64 = 188.0;
+
+    let theme = ModalTheme::from_toolbar(&frame_theme.modal_bg, &toolbar_theme.separator, toolbar_theme);
+    let title = UserSettingsKey::AccountOpenVault.get(current_language());
+    let spec = ModalShellSpec {
+        dim_backdrop: true,
+        footer: ModalFooter::None,
+        draggable: false,
+        placement: ModalPlacement::Center,
+        layer: ZLayer::ModalOverlay,
+        ..ModalShellSpec::new("dm_vault_unlock", title, OVERLAY_W, OVERLAY_CONTENT_H)
+    };
+    let (shell, layer_id) =
+        begin_modal_shell(ctx, input_coordinator, &spec, &theme, (screen_w, screen_h));
+    register_dimmer_zones(input_coordinator, &layer_id, "dm_vault_unlock", shell.frame, (screen_w, screen_h));
+
+    result.modal_rect = shell.frame;
+    result.header_rect = shell.header;
+    result.close_btn_rect = shell.close_btn.unwrap_or_default();
+
+    let (x, y, w) = (shell.content.x, shell.content.y, shell.content.width);
+    let cy = render_page_unlock(
+        ctx, x, y, w, state, text_color, toolbar_theme,
+        frame_theme, current_time_ms, &layer_id, input_coordinator, result,
+        VaultPageHost::Overlay,
+    );
+
+    // Cancel — the overlay's own dedicated dismiss action (`"dm_vault_
+    // unlock:cancel"`, `panel_click.rs`'s chrome arm for this modal),
+    // alongside the shell's own × and Esc/dimmer-click. This button is
+    // OVERLAY CHROME, not `UnlockPassphrase` page content — hover comes
+    // from the generic `InputCoordinator` hover state (same idiom
+    // `dm_overlay.rs`'s own buttons use), not `UserSettingsState::
+    // hovered_item_id` (that field tracks only the `"user_settings:"`
+    // content namespace `render_page_unlock`'s own widgets register into).
+    let is_cancel_hovered = input_coordinator.is_hovered(&uzor::WidgetId::from("dm_vault_unlock:cancel"));
+    let btn_h = 24.0;
+    let btn_w = w.min(100.0);
+    let btn_y = cy + 6.0;
+    ctx.set_fill_color(if is_cancel_hovered { &toolbar_theme.item_bg_hover } else { &toolbar_theme.button_bg });
+    ctx.fill_rounded_rect(x, btn_y, btn_w, btn_h, 4.0);
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&toolbar_theme.item_text_muted);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(TextKey::Cancel.get(current_language()), x + btn_w / 2.0, btn_y + btn_h / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+    let cancel_rect = WidgetRect::new(x, btn_y, btn_w, btn_h);
+    result.content_items.push(("dm_vault_unlock:cancel".to_string(), cancel_rect));
+    input_coordinator.register_on_layer("dm_vault_unlock:cancel", cancel_rect, Sense::CLICK | Sense::HOVER, &layer_id);
 
     end_modal_shell(ctx, input_coordinator, &spec, &theme, &shell, &layer_id, &[]);
 }
@@ -521,8 +623,12 @@ pub(crate) fn render_page_unlock(
     let hovered = state.hovered_item_id.as_deref();
     let mut cy = y;
 
-    render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered, host);
-    cy += 10.0;
+    // The overlay host has nowhere to go "back" to (Cancel/Esc/the × all
+    // close it instead) — see `VaultPageHost::Overlay`'s own doc.
+    if host != VaultPageHost::Overlay {
+        render_back_button(ctx, x, &mut cy, toolbar_theme, layer_id, input_coordinator, result, hovered, host);
+        cy += 10.0;
+    }
 
     // Subtitle (the title now lives in the shell header).
     ctx.set_font("12px sans-serif");
@@ -572,6 +678,12 @@ pub(crate) fn render_page_unlock(
         ctx.fill_text(err_msg.as_str(), x + w / 2.0, cy);
         ctx.set_text_align(TextAlign::Left);
         cy += 18.0;
+    }
+
+    // No "use a recovery key" link on the overlay host — see
+    // `VaultPageHost::Overlay`'s own doc.
+    if host == VaultPageHost::Overlay {
+        return cy;
     }
 
     let link_text = ProfileKey::LinkUseRecoveryKey.get(current_language());
@@ -1470,7 +1582,12 @@ pub(crate) fn render_page_use_recovery_key(
 
 /// Render the "back" affordance for one of the three vault pages that have
 /// one. Advances `cy` by the affordance's own height (the caller adds its
-/// usual gap afterward, same in both hosts — see the module doc).
+/// usual gap afterward, same in both hosts — see the module doc). Never
+/// called with `VaultPageHost::Overlay` (every call site guards it — that
+/// host has no "back" affordance at all, see its own doc); the match below
+/// still names it explicitly rather than a wildcard arm, so a FUTURE call
+/// site that forgets to guard fails to compile instead of silently drawing
+/// nothing.
 ///
 /// The widget id is `"profile_mgr:back"` in EITHER host — only the paint
 /// differs. Behaviour is decided once, in `panel_click.rs`'s single
@@ -1525,6 +1642,9 @@ fn render_back_button(
 
             WidgetRect::new(x, *cy, 60.0, btn_h)
         }
+        VaultPageHost::Overlay => unreachable!(
+            "VaultPageHost::Overlay has no back affordance — every call site guards it, see this fn's own doc"
+        ),
     };
 
     result.content_items.push(("profile_mgr:back".to_string(), back_rect));

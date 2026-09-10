@@ -117,7 +117,52 @@ impl ChartApp {
         self.sync_credentials_from_core();
         self.panel_app.credentials_state.open();
         self.panel_app.user_settings_state.active_tab = UserSettingsTab::Vault;
-        self.panel_app.user_settings_state.is_open = true;
+        self.panel_app.user_settings_state.open();
+    }
+
+    /// Open the small vault-unlock overlay drawn on top of the Community
+    /// modal (owner ruling 2026-09-10, DM pane item 3) — replaces
+    /// `"cloud_overlay:dm:unlock_vault"` opening the WHOLE User Settings
+    /// modal via [`Self::open_vault_tab`], which then rendered UNDER the
+    /// community modal (both `ZLayer::Modal`; render-call order decided
+    /// which one painted last — see `chart_panel_app.rs::render_modals`'s
+    /// own doc for the general fix). This overlay draws at
+    /// `ZLayer::ModalOverlay` instead, unconditionally above every ordinary
+    /// modal, so it needs no part in that fix.
+    ///
+    /// Reuses the SAME shared vault page
+    /// (`layout::modals::profile_manager::render_page_unlock`,
+    /// `VaultPageHost::Overlay`) and the SAME `cred_unlock:{passphrase}`
+    /// shell command the Vault tab's own "Unlock" button fires
+    /// (`Self::try_unlock_credentials`) — never `e2e_setup:`, since DM is
+    /// only ever reachable for a paid account that already has a vault to
+    /// unlock. `pending_unlock_return` stays untouched here (explicitly
+    /// cleared): unlike the Vault tab's own routes, success must NOT pop
+    /// open User Settings — see [`Self::finish_credentials_unlock`]'s own
+    /// `show_dm_vault_unlock_overlay` branch.
+    pub(super) fn open_dm_vault_unlock_overlay(&mut self) {
+        self.panel_app.credentials_state.pending_unlock_return = None;
+        self.panel_app.user_settings_state.vault_unlock_error = None;
+        self.panel_app.user_settings_state.vault_unlock_attempts = 0;
+        self.panel_app.user_settings_state.passphrase_revealed = false;
+        self.panel_app.user_settings_state.show_dm_vault_unlock_overlay = true;
+        let mut ic = self.input_coordinator.borrow_mut();
+        let tf = ic.text_fields_mut();
+        let wid = uzor::WidgetId::from(text_input::NEW_PASSPHRASE);
+        tf.clear(&wid);
+        tf.focus(wid);
+    }
+
+    /// Close the DM vault-unlock overlay without unlocking — Cancel, Esc,
+    /// the × or a dimmer click all land here (`panel_click.rs`'s
+    /// `"dm_vault_unlock:"` chrome arm).
+    pub(super) fn close_dm_vault_unlock_overlay(&mut self) {
+        self.panel_app.user_settings_state.show_dm_vault_unlock_overlay = false;
+        self.panel_app.user_settings_state.vault_unlock_error = None;
+        let mut ic = self.input_coordinator.borrow_mut();
+        let tf = ic.text_fields_mut();
+        tf.clear(&uzor::WidgetId::from(text_input::NEW_PASSPHRASE));
+        tf.blur();
     }
 
     /// True while the Vault tab (User Settings modal) is open and showing
@@ -460,12 +505,27 @@ impl ChartApp {
 
         self.sync_credentials_from_core();
 
-        self.panel_app.user_settings_state.show_profile_manager = false;
         self.panel_app.user_settings_state.vault_unlock_error = None;
+
+        // DM's own mini overlay (owner ruling 2026-09-10, item 3) closes in
+        // place on success — its caller never asked for the full User
+        // Settings modal, so nothing here may pop it open. The open DM
+        // conversation redecrypts itself on the very next frame: both
+        // shells' own per-frame DM driver re-reads `core.user().vault_key()`
+        // unconditionally (`cloud_session.rs`/`main.rs`'s own "Messages tab"
+        // block, "runs regardless of `messages_active`/tab") and calls
+        // `redecrypt_open_conversation` the moment it sees a key.
+        if self.panel_app.user_settings_state.show_dm_vault_unlock_overlay {
+            self.panel_app.user_settings_state.show_dm_vault_unlock_overlay = false;
+            eprintln!("[ChartApp] credentials: vault unlocked mid-session (DM overlay)");
+            return;
+        }
+
+        self.panel_app.user_settings_state.show_profile_manager = false;
 
         if let Some(view) = self.panel_app.credentials_state.pending_unlock_return.take() {
             self.panel_app.user_settings_state.active_tab = UserSettingsTab::Vault;
-            self.panel_app.user_settings_state.is_open = true;
+            self.panel_app.user_settings_state.open();
             self.panel_app.credentials_state.view = view;
         }
         eprintln!("[ChartApp] credentials: vault unlocked mid-session");
@@ -500,7 +560,7 @@ impl ChartApp {
 
         if let Some(view) = self.panel_app.credentials_state.pending_unlock_return.take() {
             self.panel_app.user_settings_state.active_tab = UserSettingsTab::Vault;
-            self.panel_app.user_settings_state.is_open = true;
+            self.panel_app.user_settings_state.open();
             self.panel_app.credentials_state.view = view;
             eprintln!("[ChartApp] credentials: vault created, returning to {:?}", view);
         }

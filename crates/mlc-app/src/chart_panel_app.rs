@@ -934,8 +934,40 @@ impl ChartPanelApp {
             ));
         }
 
-        // User settings modal
-        if self.user_settings_state.is_open {
+        // User settings modal vs. the Community modal — "last opened is on
+        // top" (owner ruling 2026-09-10). Both render at the same
+        // `ZLayer::Modal` by default, and `InputCoordinator::
+        // hit_test_at_filtered` breaks a same-z tie by PUSH order, not by
+        // "whichever call happened last wins" — the layer pushed FIRST in
+        // the frame blocks every later same-z layer outright, modal or
+        // not, regardless of visual paint order. A fixed call order always
+        // favoured Community for painting (it used to run unconditionally
+        // after this block) while leaving whichever pushed first still
+        // eating every click — the DM pane's own "Open Vault" opening User
+        // Settings while Community stayed open, and Community then going
+        // fully unresponsive underneath it, was one symptom, not a bug
+        // specific to DM (fixed there by giving DM its own `ZLayer::
+        // ModalOverlay` mini overlay instead of the whole User Settings
+        // modal — see `render_dm_vault_unlock_overlay`'s own doc; THIS is
+        // the general fix, for User Settings vs. Community directly).
+        // `focus_seq` (stamped once, in each state's own `open()`) decides
+        // which one was opened more recently; that one gets BOTH its
+        // render call moved after the other's (paint order) AND its own
+        // layer promoted to `ZLayer::ModalOverlay` (`promote_to_overlay`,
+        // each render fn's own parameter) so the z-order sort resolves the
+        // two unambiguously instead of falling into the same-z tie break.
+        #[cfg(feature = "cloud")]
+        let user_settings_after_community = self.user_settings_state.is_open
+            && self.community_state.is_open
+            && self.user_settings_state.focus_seq > self.community_state.focus_seq;
+        #[cfg(not(feature = "cloud"))]
+        let user_settings_after_community = false;
+        #[cfg(feature = "cloud")]
+        let community_after_user_settings = self.user_settings_state.is_open
+            && self.community_state.is_open
+            && !user_settings_after_community;
+
+        if self.user_settings_state.is_open && !user_settings_after_community {
             use mlc_app_layout::layout::modals::user_settings::render_user_settings_modal;
             result.user_settings = Some(render_user_settings_modal(
                 ctx,
@@ -947,6 +979,9 @@ impl ChartPanelApp {
                 toolbar_theme,
                 current_time_ms,
                 input_coordinator,
+                // This branch only ever runs when `user_settings_after_community`
+                // is false (see the `if` above) — never promoted here.
+                false,
             ));
         }
 
@@ -992,7 +1027,59 @@ impl ChartPanelApp {
                 toolbar_theme,
                 current_time_ms,
                 input_coordinator,
+                community_after_user_settings,
             ));
+        }
+
+        // User settings modal, deferred — see `user_settings_after_community`'s
+        // own doc above: this is the SAME call, only reached when User
+        // Settings was opened MORE RECENTLY than the already-open Community
+        // modal, so it must paint (and hit-test) above it instead of below.
+        #[cfg(feature = "cloud")]
+        if user_settings_after_community {
+            use mlc_app_layout::layout::modals::user_settings::render_user_settings_modal;
+            result.user_settings = Some(render_user_settings_modal(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                &self.user_settings_state,
+                &self.credentials_state,
+                frame_theme,
+                toolbar_theme,
+                current_time_ms,
+                input_coordinator,
+                true,
+            ));
+        }
+
+        // DM vault-unlock mini overlay (cloud builds only, owner ruling
+        // 2026-09-10, DM pane item 3) — drawn AFTER the community modal so
+        // it paints on top of it even before `ZLayer::ModalOverlay` (this
+        // overlay's own layer) settles the matter for hit-testing too.
+        // Shares `result.user_settings` with the Welcome Wizard / Profile
+        // Manager below (same "one slot, mutually exclusive in practice"
+        // convention those two already use).
+        #[cfg(feature = "cloud")]
+        if self.user_settings_state.show_dm_vault_unlock_overlay {
+            use mlc_app_layout::layout::modals::profile_manager::render_dm_vault_unlock_overlay;
+            let text_color = &toolbar_theme.item_text.clone();
+            if result.user_settings.is_none() {
+                result.user_settings = Some(Default::default());
+            }
+            if let Some(ref mut ws_result) = result.user_settings {
+                render_dm_vault_unlock_overlay(
+                    ctx,
+                    modal_layout.prim_screen_w,
+                    modal_layout.prim_screen_h,
+                    &self.user_settings_state,
+                    text_color,
+                    toolbar_theme,
+                    frame_theme,
+                    current_time_ms,
+                    input_coordinator,
+                    ws_result,
+                );
+            }
         }
 
         // Price Action Engine Settings modal

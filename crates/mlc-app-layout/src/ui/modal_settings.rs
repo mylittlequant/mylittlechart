@@ -3853,6 +3853,23 @@ pub struct UserSettingsState {
     // ── PROFILE MANAGER ───────────────────────────────────────────────────────
     /// True when the profile manager overlay is shown (replaces vault_unlock + profile picker).
     pub show_profile_manager: bool,
+    /// True when the small DM vault-unlock overlay is shown, drawn ON TOP
+    /// of the Community modal (owner ruling 2026-09-10, DM pane item 3) —
+    /// a THIRD host (`VaultPageHost::Overlay`) for the same shared
+    /// `render_page_unlock` page `show_profile_manager`/the Vault tab
+    /// already use, entered from `"cloud_overlay:dm:unlock_vault"` instead
+    /// of opening the whole User Settings modal.
+    pub show_dm_vault_unlock_overlay: bool,
+    /// Wall-clock ms ([`now_ms`]) this modal was last opened — compared
+    /// against [`CommunityState::focus_seq`] so whichever of the two was
+    /// opened MORE RECENTLY draws (and hit-tests) on top, instead of a
+    /// fixed render-call order always favouring one of them regardless of
+    /// which the caller actually asked for (owner ruling 2026-09-10: "if
+    /// User Settings is opened while the community modal is open, it must
+    /// come to the front" — `chart_panel_app.rs::render_modals`'s own doc
+    /// has the ordering this field drives). Stamped once, in [`Self::open`]
+    /// — every prior direct `is_open = true` write now routes through it.
+    pub focus_seq: u64,
     /// Formatted recovery key to display on the `ShowRecoveryKey` page.
     ///
     /// Set by `main.rs` after a successful vault creation and cleared only
@@ -4110,6 +4127,8 @@ impl Default for UserSettingsState {
             vault_unlock_attempts: 0,
             profile_manager_mandatory: false,
             show_profile_manager: false,
+            show_dm_vault_unlock_overlay: false,
+            focus_seq: 0,
             recovery_key_display: None,
             confirm_recovery_key_error: None,
             profile_manager_page: ProfileManagerPage::ProfileList,
@@ -4172,9 +4191,16 @@ impl Default for UserSettingsState {
 }
 
 impl UserSettingsState {
-    /// Open the modal.
+    /// Open the modal, and stamp [`Self::focus_seq`] — every call site that
+    /// used to set `is_open = true` directly now routes through here (owner
+    /// ruling 2026-09-10: "last opened is on top" must hold between this
+    /// modal and the Community modal, whichever raw `is_open` write got
+    /// there first). `set_tab`/other state this modal's various open
+    /// entry points also touch is left to each of THEM, same as before —
+    /// this only ever adds the one stamp every path was missing.
     pub fn open(&mut self) {
         self.is_open = true;
+        self.focus_seq = now_ms();
     }
 
     /// Close the modal and reset drag state.
@@ -5015,7 +5041,11 @@ impl NewsTab {
 #[cfg(feature = "cloud")]
 pub const FORUM_REFRESH_MS: u64 = 30_000;
 
-#[cfg(feature = "cloud")]
+/// Not `cloud`-gated (unlike most of this function's own callers): `UserSettingsState::open`
+/// stamps `focus_seq` with it unconditionally (owner ruling 2026-09-10,
+/// "last opened is on top" vs. the Community modal — which itself only
+/// exists under `cloud`, but the stamp still has to compile everywhere
+/// `UserSettingsState` does).
 fn now_ms() -> u64 {
     web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
@@ -5930,6 +5960,58 @@ pub enum DmRequest {
     MarkRead { id: i64, up_to: i64 },
 }
 
+/// A host-side DM message-bubble text selection, in character coordinates
+/// (msg index into the open conversation's `messages` slice, wrapped-line
+/// index within that message's body, char index within that line).
+///
+/// Same shape as `mlc_app_sidebar_content::state::ChatSelection` (the
+/// Agents chat panel's own line-level selection) — not shared across the
+/// two crates because they key different domains (a `LeafId`-addressed
+/// multi-panel chat vs. one open DM conversation at a time), same
+/// precedent `PtySelection`/`ChatSelection` already set for each other in
+/// that crate. Owner ruling 2026-09-10: DM text selection must work "like
+/// the Agents chat" — across wrapped lines and across messages both — see
+/// `dm_overlay.rs::draw_message`'s own doc for the per-line
+/// `TextFieldStore` approach this replaced.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DmMessageSelection {
+    pub start_msg: u16,
+    pub start_line: u16,
+    pub start_char: u16,
+    pub end_msg: u16,
+    pub end_line: u16,
+    pub end_char: u16,
+}
+
+#[cfg(feature = "cloud")]
+impl DmMessageSelection {
+    /// Anchor a fresh selection at the given message/line/character
+    /// position (start == end until a drag extends it).
+    pub fn new_at(msg: u16, line: u16, char_idx: u16) -> Self {
+        Self {
+            start_msg: msg,
+            start_line: line,
+            start_char: char_idx,
+            end_msg: msg,
+            end_line: line,
+            end_char: char_idx,
+        }
+    }
+
+    /// Returns `((lo_msg, lo_line, lo_char), (hi_msg, hi_line, hi_char))`
+    /// in reading order, regardless of which end the drag started from.
+    pub fn ordered(&self) -> ((u16, u16, u16), (u16, u16, u16)) {
+        let s = (self.start_msg, self.start_line, self.start_char);
+        let e = (self.end_msg, self.end_line, self.end_char);
+        if s <= e { (s, e) } else { (e, s) }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.start_msg == self.end_msg && self.start_line == self.end_line && self.start_char == self.end_char
+    }
+}
+
 /// State for the Direct Messages UI (`CommunityTab::Messages`).
 #[cfg(feature = "cloud")]
 #[derive(Clone, Debug)]
@@ -6001,6 +6083,13 @@ pub struct DmState {
     /// the two shells phrase that string slightly differently ("your
     /// vault" vs "the vault"), which a text match would silently mis-sort.
     pub unavailable_reason: DmUnavailableReason,
+    /// Host-side text selection over the open conversation's message
+    /// bubbles — see [`DmMessageSelection`]'s own doc. `None` while nothing
+    /// is selected; cleared on every navigation that already resets
+    /// `view`/`last_error` ([`Self::open_conversation`], [`Self::reset_to_list`]).
+    pub selection: Option<DmMessageSelection>,
+    /// True while a DM message drag-selection is in progress.
+    pub selection_drag_active: bool,
 }
 
 /// See [`DmState::unavailable_reason`].
@@ -6036,6 +6125,8 @@ impl Default for DmState {
             lookup_due_at: None,
             available: false,
             unavailable_reason: DmUnavailableReason::None,
+            selection: None,
+            selection_drag_active: false,
         }
     }
 }
@@ -6059,6 +6150,8 @@ impl DmState {
         self.last_error = None;
         self.request = None;
         self.send_pending = false;
+        self.selection = None;
+        self.selection_drag_active = false;
         self.close_lookup_dropdown();
     }
 
@@ -6071,6 +6164,8 @@ impl DmState {
         self.last_error = None;
         self.request = None;
         self.send_pending = false;
+        self.selection = None;
+        self.selection_drag_active = false;
         self.close_lookup_dropdown();
     }
 
@@ -6243,6 +6338,10 @@ pub struct CommunityState {
     pub forum2: ForumV2State,
     /// Direct messages — see [`DmState`]'s own doc.
     pub dm: DmState,
+    /// Wall-clock ms ([`now_ms`]) this modal was last opened — see
+    /// [`UserSettingsState::focus_seq`]'s own doc for the "last opened is
+    /// on top" rule this drives against that field.
+    pub focus_seq: u64,
 }
 
 #[cfg(feature = "cloud")]
@@ -6260,6 +6359,7 @@ impl Default for CommunityState {
             list_scroll: ScrollState::new(),
             forum2: ForumV2State::default(),
             dm: DmState::default(),
+            focus_seq: 0,
         }
     }
 }
@@ -6273,6 +6373,7 @@ impl CommunityState {
     /// own `forum_view`.
     pub fn open(&mut self) {
         self.is_open = true;
+        self.focus_seq = now_ms();
         self.scroll.reset();
         self.list_scroll.reset();
         self.is_dragging = false;

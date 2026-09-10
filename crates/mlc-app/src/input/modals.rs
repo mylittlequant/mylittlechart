@@ -2411,6 +2411,14 @@ impl ChartApp {
                     self.panel_app.markup_engine_settings_state.close();
                     eprintln!("[ChartApp] close_topmost_modal_layer: markup_engine_settings closed");
                 }
+                // DM vault-unlock mini overlay (owner ruling 2026-09-10,
+                // DM pane item 3) — always dismissible, same as the Vault
+                // tab's own unlock page.
+                #[cfg(feature = "cloud")]
+                "dm_vault_unlock" => {
+                    self.close_dm_vault_unlock_overlay();
+                    eprintln!("[ChartApp] close_topmost_modal_layer: dm_vault_unlock closed");
+                }
                 "profile_manager" => {
                     // Only the mandatory migration/first-run step (no live chart
                     // behind it yet) refuses to dismiss. A locked vault no longer

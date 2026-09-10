@@ -30,7 +30,13 @@ pub fn draw_avatar_placeholder(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r:
 /// primitives_v2::contrasting_text_color` (crate-private there) — same
 /// precedent `mlc-app-input-shell::chrome::render`'s own former copy
 /// documented before it switched to calling this shared function.
-fn contrasting_text_color(bg_hex: &str) -> &'static str {
+///
+/// `pub(crate)` (not private) so other `mlc-app-layout` render sites that
+/// paint text over a THEME-DERIVED (never hardcoded) background — an accent
+/// pill, an accent-tinted bubble — can pick a legible ink without guessing
+/// per-preset (owner ruling 2026-09-10, DM pane theme-tokens pass: no
+/// literal light/dark text color may assume which theme preset is active).
+pub(crate) fn contrasting_text_color(bg_hex: &str) -> &'static str {
     let hex = bg_hex.trim_start_matches('#');
     if hex.len() < 6 {
         return "#ffffff";

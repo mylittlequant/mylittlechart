@@ -44,6 +44,7 @@ use crate::ui::widgets::{
     render_modal_shell, ModalFooter, ModalPlacement, ModalShellSpec, ModalTab, ModalTabs,
     ModalTheme, TabFit,
 };
+use crate::ui::z_order::ZLayer;
 
 use super::cloud_overlay::CloudOverlayResult;
 use super::{dm_overlay, forum_v2_overlay};
@@ -131,6 +132,11 @@ pub fn render_community_modal(
     toolbar_theme: &ToolbarTheme,
     current_time_ms: u64,
     input_coordinator: &mut InputCoordinator,
+    // True when this modal was opened MORE RECENTLY than an already-open
+    // User Settings modal — see `render_user_settings_modal`'s own
+    // `promote_to_overlay` doc for the full "last opened is on top"/
+    // same-z tie-break reasoning this mirrors (owner ruling 2026-09-10).
+    promote_to_overlay: bool,
 ) -> CommunityResult {
     let theme = ModalTheme::from_toolbar(
         &frame_theme.modal_bg,
@@ -157,6 +163,7 @@ pub fn render_community_modal(
     // content-driven frame) would silently make the excess unreachable.
     let spec = ModalShellSpec {
         placement: ModalPlacement::At(state.position),
+        layer: if promote_to_overlay { ZLayer::ModalOverlay } else { ZLayer::Modal },
         ..ModalShellSpec::new("community", title, MODAL_W, content_height(state, active_tab))
         .with_tabs(ModalTabs::Horizontal {
             items: &items,

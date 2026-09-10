@@ -25,6 +25,7 @@ use crate::layout::render_frame::UserSettingsResult;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::Icon;
 use crate::ui::scroll_widget::ScrollableContainer;
+use crate::ui::z_order::ZLayer;
 use crate::layout::modals::profile_manager::{
     render_page_confirm_recovery_key, render_page_create_passphrase, render_page_set_new_passphrase,
     render_page_show_recovery_key, render_page_unlock, render_page_use_recovery_key, VaultPageHost,
@@ -50,6 +51,18 @@ pub fn render_user_settings_modal(
     toolbar_theme: &ToolbarTheme,
     current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
+    // True when this modal was opened MORE RECENTLY than an already-open
+    // Community modal (owner ruling 2026-09-10: "last opened is on top") —
+    // promotes this modal's own layer from the ordinary `ZLayer::Modal`
+    // both share to `ZLayer::ModalOverlay`, a DIFFERENT z-order bucket, so
+    // `InputCoordinator::hit_test_at_filtered`'s z-order sort resolves the
+    // two unambiguously instead of falling into its same-z stable-sort tie
+    // break (which favors whichever layer was PUSHED first in the frame,
+    // not whichever should read as "on top" — see `chart_panel_app.rs::
+    // render_modals`'s own doc for the fuller reasoning). `false` in every
+    // build/caller that has no Community modal to race against
+    // (`mlc-ui-lab`, and this crate's own non-`cloud` build).
+    promote_to_overlay: bool,
 ) -> UserSettingsResult {
     let mut result = UserSettingsResult::default();
 
@@ -93,6 +106,7 @@ pub fn render_user_settings_modal(
         // The body insets itself by `padding`, so the shell adds none.
         padding: 0.0,
         placement: ModalPlacement::At(state.position),
+        layer: if promote_to_overlay { ZLayer::ModalOverlay } else { ZLayer::Modal },
         ..ModalShellSpec::new(
             "user_settings",
             UserSettingsKey::Title.get(current_language()),

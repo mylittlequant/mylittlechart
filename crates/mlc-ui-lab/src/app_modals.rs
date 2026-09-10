@@ -487,6 +487,7 @@ impl AppModalsState {
             AppModalKind::UserSettings => {
                 let result = render_user_settings_modal(
                     ctx, screen_w, screen_h, &self.user_settings, &self.credentials, frame_theme, toolbar_theme, now_ms, coord,
+                    false,
                 );
                 self.last_rect = Some(result.modal_rect);
             }
