@@ -6120,15 +6120,48 @@ impl ChartApp {
                     if !st.forum_entitled {
                         return;
                     }
+                    let action = &rest["dm:".len()..];
+                    // "Unlock your vault to read" (owner ruling 2026-09-10,
+                    // item 2) — reuses the Account tab's own
+                    // `account_open_vault` handler (`open_vault_tab`).
+                    // Checked before `st` reborrows `community_state` below:
+                    // `open_vault_tab` takes the full `&mut self`.
+                    if action == "unlock_vault" {
+                        self.open_vault_tab();
+                        return;
+                    }
                     // `dm` moved to `CommunityState` (community-modal arc
                     // W1) — shadow `st` for the rest of this arm, same idiom
                     // the `"forum2:"` arm above uses.
                     let st = &mut self.panel_app.community_state;
+                    use mlc_app_layout::ui::modal_settings::{DmRequest, DmView};
+
+                    // Navigation works even with the vault sealed —
+                    // `dm.available` (paid + unlocked) gates DECRYPTING and
+                    // SENDING, never seeing that a conversation exists (owner
+                    // ruling 2026-09-10: the conversation list and its
+                    // ciphertext must render, and stay reachable, before the
+                    // vault unlocks).
+                    match action {
+                        rest2 if rest2.starts_with("conversation:") => {
+                            if let Ok(id) = rest2["conversation:".len()..].parse::<i64>() {
+                                unregister_dm_message_fields(&self.input_coordinator, &st.dm.view);
+                                st.dm.open_conversation(id);
+                                st.dm.request = Some(DmRequest::LoadMessages { id, after: None });
+                            }
+                            return;
+                        }
+                        "back" => {
+                            unregister_dm_message_fields(&self.input_coordinator, &st.dm.view);
+                            st.dm.reset_to_list();
+                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                            return;
+                        }
+                        _ => {}
+                    }
                     if !st.dm.available {
                         return;
                     }
-                    use mlc_app_layout::ui::modal_settings::{DmRequest, DmView};
-                    let action = &rest["dm:".len()..];
                     // Recipient-search dropdown (owner ruling 2026-09-09,
                     // community-modal-and-forum-ladder arc, piece 2 item b):
                     // a click on anything else in this tab closes it — same
@@ -6140,16 +6173,6 @@ impl ChartApp {
                         st.dm.close_lookup_dropdown();
                     }
                     match action {
-                        rest2 if rest2.starts_with("conversation:") => {
-                            if let Ok(id) = rest2["conversation:".len()..].parse::<i64>() {
-                                st.dm.open_conversation(id);
-                                st.dm.request = Some(DmRequest::LoadMessages { id, after: None });
-                            }
-                        }
-                        "back" => {
-                            st.dm.reset_to_list();
-                            self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                        }
                         // A row in the recipient-search dropdown. Mirrors
                         // `DM_PEER`'s own Enter-on-top-result path
                         // (`text_input::dispatch::text_action_dm_peer`).
@@ -9301,6 +9324,38 @@ impl ChartApp {
         }
     }
 
+}
+
+/// Drop every per-message `TextFieldStore` registration
+/// (`dm:msg:{id}:{line}` — one read-only field per WRAPPED LINE of a bubble,
+/// not per message: `uzor::input::text::TextFieldState` tracks a single
+/// `(rect, char_positions)` pair with no row axis at all, so a multi-line
+/// bubble needs one field per visual line for drag-select/Ctrl+C to hit-test
+/// correctly — see `dm_overlay.rs::draw_message`'s own doc) belonging to
+/// `view`'s conversation, if it is one. Called right before the DM click
+/// router navigates to a DIFFERENT conversation or back to the list (owner
+/// ruling 2026-09-10, item 3): the old view's fields would otherwise leak in
+/// the store forever, keyed by message ids that no longer render anywhere.
+#[cfg(feature = "cloud")]
+fn unregister_dm_message_fields(
+    coord: &std::cell::RefCell<uzor::input::InputCoordinator>,
+    view: &mlc_app_layout::ui::modal_settings::DmView,
+) {
+    use mlc_app_layout::ui::modal_settings::DmView;
+    let DmView::Conversation { messages, .. } = view else { return };
+    let mut tf = coord.borrow_mut();
+    let tf = tf.text_fields_mut();
+    for m in messages {
+        let mut line = 0usize;
+        loop {
+            let wid = uzor::WidgetId::from(format!("dm:msg:{}:{}", m.id, line));
+            if !tf.has_field(&wid) {
+                break;
+            }
+            tf.unregister(&wid);
+            line += 1;
+        }
+    }
 }
 
 /// Parse a `"SYMBOL:exchange_id:account_type"` composite key (symbols may

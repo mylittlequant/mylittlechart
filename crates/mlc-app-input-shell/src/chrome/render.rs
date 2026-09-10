@@ -976,26 +976,11 @@ fn draw_rect_outline(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, h: f64
     ctx.fill_rect(x + w - t, y + t, t, h - t * 2.0);
 }
 
-/// A round avatar placeholder: a filled circle in the theme accent with the
-/// label's first letter, centered. Stands in for the real avatar set the
-/// owner has not picked yet (2026-09-10 ruling) — one drawing helper so
-/// swapping it for a picked image later touches this one place, the same
-/// reason [`draw_account_button`] itself is one body instead of two.
-#[cfg(feature = "cloud")]
-fn draw_avatar_placeholder(ctx: &mut dyn MlcRenderContext, cx: f64, cy: f64, r: f64, label: &str, bg: &str) {
-    ctx.set_fill_color(bg);
-    ctx.begin_path();
-    ctx.arc(cx, cy, r, 0.0, std::f64::consts::TAU);
-    ctx.fill();
-    if let Some(letter) = label.chars().next() {
-        ctx.set_fill_color(contrasting_text_color(bg));
-        ctx.set_font("600 11px sans-serif");
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        let upper: String = letter.to_uppercase().collect();
-        ctx.fill_text(&upper, cx, cy + 0.5);
-    }
-}
+// Round avatar placeholder — lifted to `mlc_app_layout::ui::widgets::
+// draw_avatar_placeholder` (2026-09-10, DM bubbles/conversation rows need
+// the exact same shape) so this and the DM overlay's own draw sites share
+// one body; see that function's own doc for why the shared home is
+// `mlc-app-layout` rather than this crate (dependency direction).
 
 /// The sign-in / account button: one control with two readings — "Sign in"
 /// while nobody is, the account's own name once somebody is, so the button the
@@ -1051,7 +1036,9 @@ fn draw_account_button(
         if show_avatar {
             let avatar_cx = bp.login_left + USER_BUTTON_PAD + USER_BUTTON_AVATAR_D / 2.0;
             let avatar_cy = CHROME_HEIGHT / 2.0;
-            draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, USER_BUTTON_AVATAR_D / 2.0, label, &c.cta_bg);
+            mlc_app_layout::ui::widgets::draw_avatar_placeholder(
+                ctx, avatar_cx, avatar_cy, USER_BUTTON_AVATAR_D / 2.0, label, &c.cta_bg,
+            );
             if show_nick {
                 text_x = avatar_cx + USER_BUTTON_AVATAR_D / 2.0 + USER_BUTTON_GAP;
             }

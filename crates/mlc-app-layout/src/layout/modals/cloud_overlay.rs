@@ -160,6 +160,17 @@ pub struct CloudOverlayResult {
     /// DM_PEER` (new this pass, see `dm_overlay.rs`'s `draw_open_peer_row`).
     pub dm_peer_rect: Option<WidgetRect>,
     pub dm_peer_char_positions: Vec<f64>,
+    /// DM Conversation view's message-bubble text geometry — one rect per
+    /// WRAPPED LINE of every bubble currently on screen (`dm:msg:{id}:
+    /// {line}` — see `dm_overlay.rs::draw_message`'s own doc for why a
+    /// bubble registers one `TextFieldStore` field per visual line rather
+    /// than one multi-line field per message: `uzor::input::text::
+    /// TextFieldState` tracks a single `(rect, char_positions)` pair, no
+    /// row axis at all). `mlc-app`'s drag pre-dispatch (`input/mod.rs`)
+    /// hit-tests a mouse-down against these before falling through to
+    /// ordinary click routing, same "every modal field needs its own arm"
+    /// contract `dm_draft_rect` above documents.
+    pub dm_message_line_rects: Vec<WidgetRect>,
 }
 
 fn title_for(state: &CloudOverlayState) -> &'static str {
@@ -831,7 +842,10 @@ fn draw_news_detail(
 /// worth it. Returns `None` on anything shorter than `"YYYY-MM-DDTHH:MM:SS"`
 /// or with a non-numeric component; a malformed timestamp then degrades to
 /// the plain trimmed-date fallback in `relative_time`, never a wrong label.
-fn parse_rfc3339_unix_secs(s: &str) -> Option<i64> {
+/// `pub(crate)`: also used by `dm_overlay.rs`'s day separators ("Today" /
+/// "Yesterday" / date between bubbles on different calendar days) — `secs
+/// .div_euclid(86400)` is the days-since-epoch value a separator compares.
+pub(crate) fn parse_rfc3339_unix_secs(s: &str) -> Option<i64> {
     if s.len() < 19 {
         return None;
     }

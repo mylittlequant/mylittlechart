@@ -1093,10 +1093,22 @@ pub enum UserSettingsKey {
     HeaderAccountDisplayLabel       = 50,
     HeaderAccountDisplayNick        = 51,
     HeaderAccountDisplayBoth        = 52,
+
+    // Direct Messages pane (owner ruling 2026-09-10): the right pane's own
+    // notice while the vault is sealed (distinct wording from
+    // `AccountVaultHint`'s Account-tab row — this one addresses the reader
+    // of a ciphertext bubble, not the tab's own status line) and the day
+    // separators between message bubbles.
+    DmUnlockVaultHint               = 53,
+    DmDayToday                      = 54,
+    DmDayYesterday                  = 55,
+    /// Own-message bubble nick line (Telegram-style bubbles, owner ruling
+    /// 2026-09-10) — the peer's row shows their label instead.
+    DmYou                           = 56,
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 53;
+    pub const COUNT: usize = 57;
 
     /// Get translation for this key.
     #[inline]

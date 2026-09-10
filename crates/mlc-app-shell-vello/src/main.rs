@@ -1048,8 +1048,9 @@ fn map_forum2_search_hit_native(
 // ── Direct-message crypto helpers (native) ──────────────────────────────
 // The shell owns the crypto end to end (`mlc_vault::dm`'s own module doc);
 // this crate is where it is actually called from — `mlc-app-layout`'s
-// `DmMessageUi::text` only ever holds plaintext or the literal
-// `"<cannot decrypt>"`, never ciphertext or a key.
+// `DmMessageUi::body` (`DmMessageBody`) never carries a key — only
+// plaintext, raw wire ciphertext (pre-unlock, or before a peer key backfill
+// lands), or the permanent "could not decrypt" marker.
 
 /// AAD binding for one DM message's seal/open — conversation id plus the
 /// SENDING identity's own key fingerprint (not the server's `public_id`:
@@ -1087,34 +1088,83 @@ fn dm_encode(bytes: &[u8]) -> String {
     base64::engine::general_purpose::STANDARD.encode(bytes)
 }
 
-/// Decrypt one wire `DmMessage` into the plaintext (or the literal
-/// `"<cannot decrypt>"`) `DmMessageUi::text` carries — see this module's
-/// own crypto-helpers doc. `ctx = (conversation_key, my_public, peer_public)`,
-/// `None` when either this profile's identity or the conversation's cached
-/// peer key is missing (sealed vault, or the peer key has not been
-/// resolved/backfilled yet).
+/// Decrypt one wire message into a
+/// [`DmMessageBody`](mlc_app_layout::ui::modal_settings::DmMessageBody) —
+/// see this module's own crypto-helpers doc. `ctx = (conversation_key,
+/// my_public, peer_public)`, `None` when either this profile's identity or
+/// the conversation's cached peer key is missing (sealed vault, or the peer
+/// key has not been resolved/backfilled yet) — that case returns
+/// `Ciphertext` (retryable: [`redecrypt_open_conversation`] re-runs this
+/// exact function once new key material lands), never the permanent
+/// `Undecryptable`.
 #[cfg(feature = "cloud")]
 fn decrypt_dm_message_native(
     ctx: Option<&([u8; 32], [u8; 32], [u8; 32])>,
     conversation_id: i64,
-    m: &mlc_updater::DmMessage,
-) -> String {
-    const CANNOT_DECRYPT: &str = "<cannot decrypt>";
+    sender_is_me: bool,
+    nonce_b64: &str,
+    ciphertext_b64: &str,
+) -> mlc_app_layout::ui::modal_settings::DmMessageBody {
+    use mlc_app_layout::ui::modal_settings::DmMessageBody;
     let Some((key, my_public, peer_public)) = ctx else {
-        return CANNOT_DECRYPT.to_string();
+        return DmMessageBody::Ciphertext {
+            nonce_b64: nonce_b64.to_string(),
+            ciphertext_b64: ciphertext_b64.to_string(),
+        };
     };
-    let Some(nonce) = dm_decode_nonce(&m.nonce_b64) else {
-        return CANNOT_DECRYPT.to_string();
+    let Some(nonce) = dm_decode_nonce(nonce_b64) else {
+        return DmMessageBody::Undecryptable;
     };
-    let Some(ciphertext) = base64_decode(&m.ciphertext_b64) else {
-        return CANNOT_DECRYPT.to_string();
+    let Some(ciphertext) = base64_decode(ciphertext_b64) else {
+        return DmMessageBody::Undecryptable;
     };
-    let sender_public = if m.sender_is_me { my_public } else { peer_public };
+    let sender_public = if sender_is_me { my_public } else { peer_public };
     let aad = dm_aad(conversation_id, &mlc_vault::dm::fingerprint(sender_public));
     let sealed = mlc_vault::dm::DmCiphertext { nonce, ciphertext };
     match mlc_vault::dm::open_message(key, &sealed, &aad) {
-        Ok(plaintext) => String::from_utf8_lossy(&plaintext).into_owned(),
-        Err(_) => CANNOT_DECRYPT.to_string(),
+        Ok(plaintext) => DmMessageBody::Plain(String::from_utf8_lossy(&plaintext).into_owned()),
+        Err(_) => DmMessageBody::Undecryptable,
+    }
+}
+
+/// Re-derive `body` for every still-`Ciphertext` message in `win_id`'s
+/// currently open conversation, from each message's own stored
+/// `nonce_b64`/`ciphertext_b64` — no refetch. Idempotent (a no-op once
+/// nothing is left to retry), so [`App::drive_dm`] calls this
+/// unconditionally every frame rather than edge-detecting the two things
+/// that can unblock a message: the vault unlocking (`DmState::available`
+/// flipping true) and a peer-key backfill landing for the open conversation
+/// (owner ruling 2026-09-10: ciphertext shows before unlock, decrypts in
+/// place after — the same principle covers a backfill resolving mid-view).
+/// A free function (not a method) so it borrows only `windows`/`dm_identity`/
+/// `dm_peer_keys` — never all of `self` — and can be called from inside a
+/// loop already borrowing `self.windows` mutably.
+#[cfg(feature = "cloud")]
+fn redecrypt_open_conversation(
+    windows: &mut HashMap<WindowId, PerWindowState>,
+    win_id: WindowId,
+    identity: Option<&mlc_vault::dm::DmIdentity>,
+    peer_keys: &HashMap<i64, [u8; 32]>,
+) {
+    use mlc_app_layout::ui::modal_settings::{DmMessageBody, DmView};
+    let Some(pw) = windows.get_mut(&win_id) else { return };
+    let DmView::Conversation { id, messages, .. } = &mut pw.chart.panel_app.community_state.dm.view else {
+        return;
+    };
+    let conversation_id = *id;
+    let ctx = match (identity, peer_keys.get(&conversation_id)) {
+        (Some(identity), Some(peer_public)) => {
+            let key: [u8; 32] =
+                *mlc_vault::dm::conversation_key(&identity.secret, peer_public, &conversation_id.to_string());
+            Some((key, identity.public, *peer_public))
+        }
+        _ => None,
+    };
+    let Some(ctx) = ctx else { return };
+    for m in messages.iter_mut() {
+        if let DmMessageBody::Ciphertext { nonce_b64, ciphertext_b64 } = &m.body {
+            m.body = decrypt_dm_message_native(Some(&ctx), conversation_id, m.mine, nonce_b64, ciphertext_b64);
+        }
     }
 }
 
@@ -3098,7 +3148,9 @@ impl App<'_> {
     /// `forum_entitled`/`is_paid` elsewhere in this file).
     #[cfg(feature = "cloud")]
     fn apply_dm_result(&mut self, win_id: WindowId, chain: DmChain, state: mlc_updater::DmState) {
-        use mlc_app_layout::ui::modal_settings::{DmConversationUi, DmLookupHitUi, DmMessageUi, DmView};
+        use mlc_app_layout::ui::modal_settings::{
+            DmConversationUi, DmLookupHitUi, DmMessageBody, DmMessageUi, DmView,
+        };
 
         let Some(pw) = self.windows.get_mut(&win_id) else {
             return;
@@ -3178,11 +3230,17 @@ impl App<'_> {
                         let mapped: Vec<DmMessageUi> = messages
                             .into_iter()
                             .map(|m| {
-                                let text = decrypt_dm_message_native(crypto_ctx.as_ref(), conv_id, &m);
+                                let body = decrypt_dm_message_native(
+                                    crypto_ctx.as_ref(),
+                                    conv_id,
+                                    m.sender_is_me,
+                                    &m.nonce_b64,
+                                    &m.ciphertext_b64,
+                                );
                                 DmMessageUi {
                                     id: m.id,
                                     mine: m.sender_is_me,
-                                    text,
+                                    body,
                                     created_at: m.created_at,
                                     read_at: m.read_at,
                                 }
@@ -3203,8 +3261,21 @@ impl App<'_> {
                 }
                 (DmChain::Sending { plaintext }, mlc_updater::DmState::Sent { id, created_at }) => {
                     if let DmView::Conversation { messages, .. } = &mut ov.dm.view {
-                        messages.push(DmMessageUi { id, mine: true, text: plaintext, created_at, read_at: None });
+                        messages.push(DmMessageUi {
+                            id,
+                            mine: true,
+                            body: DmMessageBody::Plain(plaintext),
+                            created_at,
+                            read_at: None,
+                        });
                     }
+                    // Right after a send (owner ruling 2026-09-10, item 1):
+                    // the list is stale the instant this conversation's
+                    // `last_message_at` moves — drop the freshness stamp so
+                    // the very next `drive_dm` frame's passive fetch
+                    // (paid-gated, not tab-gated) picks it up immediately
+                    // instead of waiting out `FORUM_REFRESH_MS`.
+                    ov.dm.invalidate_conversations();
                 }
                 (DmChain::Direct, mlc_updater::DmState::Read) => {
                     if let DmView::Conversation { id, .. } = &ov.dm.view {
@@ -3533,41 +3604,88 @@ impl App<'_> {
         }
     }
 
-    /// Per-frame drive for the Messages tab: identity load/publish, the
+    /// Per-frame drive for Direct Messages: `dm.available`/`dm.last_error`
+    /// on every window, identity derive/publish, redecrypt-in-place, the
     /// shared `dm_rx` channel's settled answer, then — only when nothing
-    /// is in flight — the backfill queue, one explicit user action, or one
-    /// passive fetch. Same structure as [`Self::drive_forum2`].
+    /// is in flight — the passive conversations-list fetch (paid-gated,
+    /// not tied to any window/tab), and, only for whichever window (if
+    /// any) is actually showing Messages: the recipient-search debounce,
+    /// the open conversation's passive message poll, one explicit user
+    /// action, or the peer-key backfill queue. Same structure as
+    /// [`Self::drive_forum2`].
+    ///
+    /// Until 2026-09-10 this whole function returned immediately unless
+    /// SOME window had the Messages tab open, and again if the vault was
+    /// sealed — the root cause of the owner's report that a recipient
+    /// never saw an incoming DM until they searched the sender by nick:
+    /// the conversations list only ever refetched while already looking
+    /// at it. `dm.available` itself also never checked `paid` at all on
+    /// this shell (a second, independent bug fixed in the same pass) —
+    /// see `dm.available`'s own stamping loop below.
     #[cfg(feature = "cloud")]
     fn drive_dm(&mut self) {
-        use mlc_app_layout::ui::modal_settings::{CommunityTab, DmRequest as UiDmRequest};
-
-        // The window (if any) currently showing Messages — used both as the
-        // gate below and as the routing target for actions that are not
-        // tied to a specific request (auto-publish, backfill).
-        let messages_window: Option<WindowId> = self.windows.iter().find_map(|(id, pw)| {
-            let ov = &pw.chart.panel_app.community_state;
-            (ov.is_open && ov.tab == CommunityTab::Messages).then_some(*id)
-        });
-        let Some(messages_window) = messages_window else {
-            return;
+        use mlc_app_layout::ui::modal_settings::{
+            CommunityTab, DmRequest as UiDmRequest, DmUnavailableReason, DmView,
         };
 
+        // Account-level facts — neither needs a specific window/tab on
+        // screen. `entitlements_rx` is the same background-refreshed
+        // signal `forum_entitled` mirrors into every window
+        // (`about_to_wait`'s own entitlements block), read directly here
+        // so this function works even before any window has been stamped
+        // this frame.
+        let paid = self.updater_handle.entitlements_rx.borrow().has("forum");
         let vault_key = self.core.user().vault_key();
-        let Some(vault_key) = vault_key else {
-            if let Some(pw) = self.windows.get_mut(&messages_window) {
-                pw.chart.panel_app.community_state.dm.available = false;
-                pw.chart.panel_app.community_state.dm.last_error =
-                    Some("Unlock the vault to use messages".to_string());
-            }
-            return;
-        };
 
-        if let Some(pw) = self.windows.get_mut(&messages_window) {
-            pw.chart.panel_app.community_state.dm.available = true;
+        // Stamp `dm.available`/`dm.last_error` on every window, every
+        // frame — cheap (two field writes each). Vault gates identity
+        // (send/decrypt); paid gates the feature outright; neither gates
+        // the LIST or the ciphertext fetch below (owner ruling
+        // 2026-09-10: both must render — the list, and messages as raw
+        // ciphertext — before the vault is even unlocked).
+        for pw in self.windows.values_mut() {
+            let comm = &mut pw.chart.panel_app.community_state;
+            let messages_active = comm.is_open && comm.tab == CommunityTab::Messages;
+            if vault_key.is_none() {
+                comm.dm.available = false;
+                comm.dm.unavailable_reason =
+                    if paid { DmUnavailableReason::VaultLocked } else { DmUnavailableReason::NotPaid };
+                if messages_active {
+                    comm.dm.last_error = Some("Unlock the vault to use messages".to_string());
+                }
+            } else if !paid {
+                comm.dm.available = false;
+                comm.dm.unavailable_reason = DmUnavailableReason::NotPaid;
+                if messages_active {
+                    comm.dm.last_error = Some("Messages need a paid account".to_string());
+                }
+            } else {
+                comm.dm.available = true;
+                comm.dm.unavailable_reason = DmUnavailableReason::None;
+            }
         }
 
-        if self.dm_identity.is_none() {
-            self.dm_identity = Some(mlc_vault::dm::DmIdentity::from_vault_key(&vault_key));
+        if let Some(key) = &vault_key {
+            if self.dm_identity.is_none() {
+                self.dm_identity = Some(mlc_vault::dm::DmIdentity::from_vault_key(key));
+            }
+        }
+
+        // Keep already-fetched ciphertext decrypting in place as new key
+        // material lands (the vault unlocking, or a peer-key backfill
+        // landing) — see `redecrypt_open_conversation`'s own doc. Cheap
+        // no-op once nothing is left to retry, so this runs unconditionally
+        // rather than edge-detecting either trigger.
+        let conv_windows: Vec<WindowId> = self
+            .windows
+            .iter()
+            .filter(|(_, pw)| {
+                matches!(pw.chart.panel_app.community_state.dm.view, DmView::Conversation { .. })
+            })
+            .map(|(id, _)| *id)
+            .collect();
+        for win_id in conv_windows {
+            redecrypt_open_conversation(&mut self.windows, win_id, self.dm_identity.as_ref(), &self.dm_peer_keys);
         }
 
         if self.updater_handle.dm_rx.has_changed().unwrap_or(false) {
@@ -3607,20 +3725,20 @@ impl App<'_> {
         // server's last confirmed answer).
         if self.dm_pending.is_none() {
             if let Some(identity) = &self.dm_identity {
-                let (forum_entitled, confirmed_fingerprint) = self
+                // Every window mirrors the same account-level fact (the
+                // `Identity` broadcast above writes it to all of them), so
+                // any one that already has an answer speaks for the
+                // account — no window is `messages_window`-only here
+                // (this fires happily with the Messages tab closed
+                // everywhere, or no window at all yet).
+                let confirmed_fingerprint = self
                     .windows
-                    .get(&messages_window)
-                    .map(|pw| {
-                        (
-                            pw.chart.panel_app.cloud_overlay_state.forum_entitled,
-                            pw.chart.panel_app.community_state.dm.identity_fingerprint.clone(),
-                        )
-                    })
-                    .unwrap_or((false, None));
+                    .values()
+                    .find_map(|pw| pw.chart.panel_app.community_state.dm.identity_fingerprint.clone());
                 let my_fingerprint = mlc_vault::dm::fingerprint(&identity.public);
                 let already_confirmed = confirmed_fingerprint.as_deref() == Some(my_fingerprint.as_str());
                 let already_attempted = self.dm_identity_publish_attempted_for == Some(identity.public);
-                if forum_entitled && !already_confirmed && !already_attempted {
+                if paid && !already_confirmed && !already_attempted {
                     let public_key_b64 = dm_encode(&identity.public);
                     let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
                         mlc_updater::DmRequest::PublishIdentity { public_key_b64 },
@@ -3713,6 +3831,40 @@ impl App<'_> {
             return;
         }
 
+        // Passive: conversations list — independent of the vault and of
+        // which window/tab is open (this function's own doc: the owner
+        // report's root cause). One at a time across every window, same
+        // "found = one candidate, fire it" idiom `drive_forum2`'s own
+        // boards/threads scan uses; also what a 30 s (`FORUM_REFRESH_MS`)
+        // background poll and the envelope badge lighting with the modal
+        // closed both come from for free, since this is not gated on
+        // `messages_window` at all.
+        if paid {
+            let due_win = self.windows.iter().find_map(|(id, pw)| {
+                let dm = &pw.chart.panel_app.community_state.dm;
+                (dm.conversations_fetched_at.is_none() || dm.conversations_due_for_refresh()).then_some(*id)
+            });
+            if let Some(win_id) = due_win {
+                if let Some(pw) = self.windows.get_mut(&win_id) {
+                    pw.chart.panel_app.community_state.dm.conversations_refreshing = true;
+                }
+                let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
+                    mlc_updater::DmRequest::ListConversations,
+                ));
+                self.dm_pending = Some((win_id, DmChain::Direct));
+                return;
+            }
+        }
+
+        // Everything below needs an actual window showing Messages.
+        let messages_window: Option<WindowId> = self.windows.iter().find_map(|(id, pw)| {
+            let ov = &pw.chart.panel_app.community_state;
+            (ov.is_open && ov.tab == CommunityTab::Messages).then_some(*id)
+        });
+        let Some(messages_window) = messages_window else {
+            return;
+        };
+
         // Debounced recipient-search (owner ruling 2026-09-09, community-
         // modal-and-forum-ladder arc, piece 2 item b) — mirrors the web
         // shell's own `drive()` (`cloud_session.rs`): every keystroke into
@@ -3750,6 +3902,31 @@ impl App<'_> {
                 }
             }
             return;
+        }
+
+        // Passive: the open conversation's messages, on open or
+        // due-refresh — silent (no view flip), same tolerance v1's own
+        // thread refresh gives an in-progress draft. Parity with the web
+        // shell's own poll (`cloud_session.rs`'s `drive()`); this native
+        // shell had no cadence here at all before this pass — a
+        // conversation left open never refreshed until it was closed and
+        // reopened.
+        if let Some(pw) = self.windows.get(&messages_window) {
+            if let DmView::Conversation { id, .. } = &pw.chart.panel_app.community_state.dm.view {
+                let id = *id;
+                let dm = &pw.chart.panel_app.community_state.dm;
+                let due = dm.messages_fetched_at.is_none() || dm.messages_due_for_refresh();
+                if due {
+                    if let Some(pw) = self.windows.get_mut(&messages_window) {
+                        pw.chart.panel_app.community_state.dm.messages_refreshing = true;
+                    }
+                    let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
+                        mlc_updater::DmRequest::ListMessages { id, after: None, limit: 50 },
+                    ));
+                    self.dm_pending = Some((messages_window, DmChain::LoadingMessages { append: false }));
+                    return;
+                }
+            }
         }
 
         // Backfill: one peer-key lookup at a time for a LIST-sourced

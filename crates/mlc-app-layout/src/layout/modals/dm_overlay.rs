@@ -4,11 +4,14 @@
 //! Sibling of `cloud_overlay.rs` under `layout::modals`; reuses that file's
 //! shared row/status/scroll helpers (`pub(crate)`). State lives in
 //! `CommunityState::dm` (`DmState`); see that type's own doc for the
-//! plaintext-only contract (the shell decrypts before this crate ever sees
-//! a message). Pure presentation — effects live in the shell driver; click
-//! dispatch lives in `mlc-app`'s `panel_click.rs` (out of scope here). Widget
-//! ids keep their pre-existing `cloud_overlay:dm:*` prefix unchanged — only
-//! the Rust type hosting them moved.
+//! decryption-stage contract (`DmMessageBody`) — the shell decrypts what it
+//! can before this crate ever sees a message, but a sealed vault (or an
+//! unresolved peer key) means it hands over raw ciphertext instead of
+//! refusing to hand over anything at all. Pure presentation — effects live
+//! in the shell driver; click dispatch lives in `mlc-app`'s
+//! `panel_click.rs` (out of scope here). Widget ids keep their pre-existing
+//! `cloud_overlay:dm:*` prefix unchanged — only the Rust type hosting them
+//! moved.
 //!
 //! W2 of the community-modal-and-forum-ladder arc (`docs/mlc/plans/
 //! community-modal-and-forum-ladder-2026-09-09.md`) turned this into a
@@ -20,23 +23,39 @@
 //! box is DOCKED at the bottom of the right pane, with only the messages
 //! above it scrolling — same split `forum_v2_overlay.rs`'s own Thread view
 //! uses for its reply box.
+//!
+//! Owner ruling 2026-09-10 (Telegram-style bubbles + pre-unlock ciphertext):
+//! the right pane renders even while the vault is sealed — a header notice
+//! ([`draw_vault_locked_header`]) plus every message as a dim, clipped,
+//! lock-glyphed block of raw base64 ([`message_visual`]'s `Ciphertext`
+//! branch) — so a caller sees end-to-end encryption is real before they
+//! ever unlock anything. Bubbles carry an avatar (peer side only), a nick
+//! line, wrapped body text, a bottom-right clock, and day separators
+//! between bubbles on different calendar days; every bubble body is a real
+//! read-only `TextFieldStore` field (one per WRAPPED LINE — see
+//! [`draw_message`]'s own doc for why per-line rather than per-message) so
+//! drag-select and Ctrl+C work.
 
 use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::i18n::{current_language, UserSettingsKey};
-use uzor::input::{InputCoordinator, LayerId, Sense};
+use uzor::input::{InputCoordinator, LayerId, Sense, TextFieldConfig};
 use uzor::types::Rect as WidgetRect;
 use uzor::WidgetId;
 
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_ui::toolbar_to_widget_theme;
-use crate::ui::modal_settings::{CommunityState, DmConversationUi, DmMessageUi, DmState, DmView};
+use crate::ui::modal_settings::{
+    CommunityState, DmConversationUi, DmMessageBody, DmMessageUi, DmState, DmUnavailableReason, DmView,
+};
 use crate::ui::scroll_widget::ScrollableContainer;
 use crate::ui::toolbar_theme::ToolbarTheme;
-use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, SETTINGS_BUTTON_RADIUS};
+use crate::ui::widgets::{
+    draw_avatar_placeholder, draw_input, draw_input_cursor, InputConfig, SETTINGS_BUTTON_RADIUS,
+};
 use crate::ui::widgets::types::{WidgetState, WidgetTheme};
 
 use super::cloud_overlay::{
-    draw_action_row, draw_column_divider, draw_status, register_scrollbar_hit_zones,
+    draw_action_row, draw_column_divider, draw_status, parse_rfc3339_unix_secs, register_scrollbar_hit_zones,
     relative_time, scroll_config, wrap_text, CloudOverlayResult, COL_GAP,
     DM_PEER_FIELD, FIELD_H, GOLD, LIST_COL_W, ROW_GAP, ROW_H,
 };
@@ -65,6 +84,35 @@ const LOOKUP_NO_RESULT_ROW_H: f64 = 24.0;
 const LOOKUP_DROPDOWN_MAX_ROWS: usize = 8;
 
 // =============================================================================
+// Telegram-style bubble geometry (owner ruling 2026-09-10) — see this file's
+// own top doc.
+// =============================================================================
+
+/// Bubble avatar diameter — peer messages only. Own messages draw no
+/// avatar at all ("pick left-only like Telegram", the owner's own wording).
+const BUBBLE_AVATAR_D: f64 = 28.0;
+const BUBBLE_AVATAR_GAP: f64 = 8.0;
+/// Conversation-list row avatar diameter.
+const LIST_AVATAR_D: f64 = 32.0;
+const LIST_AVATAR_GAP: f64 = 8.0;
+/// Height of one wrapped line inside a bubble's body.
+const BUBBLE_LINE_H: f64 = 16.0;
+/// Height of the small nick line at the top of a bubble.
+const BUBBLE_NICK_H: f64 = 14.0;
+/// Height of the small clock line at the bottom of a bubble.
+const BUBBLE_TIME_H: f64 = 14.0;
+const BUBBLE_PAD_V: f64 = 8.0;
+/// Gap between one message block and the next.
+const BUBBLE_GAP: f64 = 10.0;
+/// Day-separator row height ("Today" / "Yesterday" / date, centered,
+/// between bubbles on different calendar days).
+const DAY_SEP_H: f64 = 24.0;
+/// A locked (pre-unlock) ciphertext block never shows more than this many
+/// wrapped lines of base64 — owner ruling 2026-09-10: "clipped to ~3 lines
+/// with '…'".
+const CIPHERTEXT_MAX_LINES: usize = 3;
+
+// =============================================================================
 // Entry points — `list_height` sizes the LEFT column's own scroll container;
 // the RIGHT pane's content height is computed inline by `draw` (see
 // `forum_v2_overlay.rs`'s own top doc for why one shared number stopped
@@ -75,10 +123,33 @@ pub(crate) fn list_height(state: &CommunityState) -> f64 {
     list_pane_h(&state.dm, state.forum2.nick_required())
 }
 
+/// [`draw_vault_locked_header`]'s own height, factored out so [`height`]'s
+/// sizing can never drift from what that function actually draws — same
+/// "one shared number" rule [`open_peer_row_h`]/[`list_pane_h`] already
+/// follow for the left column.
+fn vault_locked_header_h() -> f64 {
+    18.0 + 8.0 + (ROW_H - ROW_GAP) + 10.0
+}
+
 /// The right pane's own "wanted" content height — used only for
 /// `ModalShellSpec`'s inert `content_height` (see `forum_v2_overlay.rs`'s
 /// own `height` doc for why that number is inert).
 pub(crate) fn height(state: &CommunityState) -> f64 {
+    match state.dm.unavailable_reason {
+        DmUnavailableReason::NotPaid => {
+            return if state.dm.last_error.is_some() { 20.0 } else { 0.0 };
+        }
+        DmUnavailableReason::VaultLocked => {
+            let body_h = match &state.dm.view {
+                DmView::List => 24.0,
+                DmView::Conversation { messages, .. } => {
+                    conversation_scroll_h(&state.dm, messages) + COMPOSER_H
+                }
+            };
+            return vault_locked_header_h() + body_h;
+        }
+        DmUnavailableReason::None => {}
+    }
     if !state.dm.available {
         return if state.dm.last_error.is_some() { 20.0 } else { 0.0 };
     }
@@ -114,7 +185,8 @@ pub(crate) fn draw(
     // --- Left column: "open a conversation" row + conversation list. Drawn
     // unconditionally (not gated on `available`/identity — see this file's
     // own top doc): a click on either still reaches `panel_click.rs`'s own
-    // `dm:` arm, which already re-gates on `available` itself.
+    // `dm:` arm, which already re-gates on `available` itself (navigation —
+    // opening a row, going back — is exempt; see that arm's own doc).
     let list_drawn_h = list_pane_h(&state.dm, state.forum2.nick_required());
     let list_viewport_rect = WidgetRect::new(x, y, LIST_COL_W, viewport_h);
     coord.register_on_layer("cloud_overlay:scroll_viewport", list_viewport_rect, Sense::SCROLL, layer_id);
@@ -145,7 +217,43 @@ pub(crate) fn draw(
     register_scrollbar_hit_zones(coord, layer_id, &list_scroll_result);
 
     // --- Right pane ---
+    match state.dm.unavailable_reason {
+        DmUnavailableReason::NotPaid => {
+            if let Some(err) = &state.dm.last_error {
+                draw_error_line(ctx, right_w, right_x, y, err);
+            }
+            return;
+        }
+        // Paid, vault sealed (owner ruling 2026-09-10): the header notice +
+        // button draw ABOVE whatever `state.dm.view` already shows — the
+        // list placeholder, or the open conversation's messages as
+        // ciphertext — never REPLACING it, so a conversation opened while
+        // locked stays open once the vault unlocks (no navigation reset).
+        DmUnavailableReason::VaultLocked => {
+            let header_h = draw_vault_locked_header(ctx, coord, layer_id, right_x, y, right_w, tt);
+            let body_y = y + header_h;
+            let body_viewport_h = (viewport_h - header_h).max(0.0);
+            match &state.dm.view {
+                DmView::List => {
+                    draw_status(
+                        ctx, tt, right_x, body_y, right_w,
+                        "Select a conversation from the list on the left, or start a new one above.", None,
+                    );
+                }
+                DmView::Conversation { id, messages, draft_field_id } => draw_right_conversation(
+                    ctx, coord, layer_id, right_x, body_y, right_w, body_viewport_h, state, *id, messages,
+                    draft_field_id, ft, tt, current_time_ms, result,
+                ),
+            }
+            return;
+        }
+        DmUnavailableReason::None => {}
+    }
     if !state.dm.available {
+        // Defensive fallback — `available` and `unavailable_reason` are
+        // always stamped together by both shells, so this arm should be
+        // unreachable; if it ever is, degrade to the old single-line notice
+        // rather than draw controls the caller cannot use.
         if let Some(err) = &state.dm.last_error {
             draw_error_line(ctx, right_w, right_x, y, err);
         }
@@ -181,6 +289,58 @@ fn draw_error_line(ctx: &mut dyn RenderContext, w: f64, x: f64, y: f64, msg: &st
     let m = crate::ui::widgets::fit_text_to_width(ctx, msg, w);
     ctx.fill_text(&m, x, y);
     20.0
+}
+
+/// A small padlock: an arched shackle (stroke) over a rounded-rect body
+/// (fill) — plain vector shapes, not the `IconId` SVG registry (this
+/// crate sits below that registry's own home, and a locked-ciphertext
+/// glyph is one tiny, constant shape, not worth wiring a lookup for).
+fn draw_lock_glyph(ctx: &mut dyn RenderContext, cx: f64, cy: f64, size: f64, color: &str) {
+    let body_w = size;
+    let body_h = size * 0.72;
+    let body_x = cx - body_w / 2.0;
+    let body_y = cy - body_h / 2.0 + size * 0.16;
+    let shackle_r = size * 0.30;
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width((size * 0.16).max(1.0));
+    ctx.begin_path();
+    ctx.arc(cx, body_y, shackle_r, std::f64::consts::PI, std::f64::consts::TAU);
+    ctx.stroke();
+    ctx.set_fill_color(color);
+    ctx.fill_rounded_rect(body_x, body_y, body_w, body_h, size * 0.16);
+}
+
+/// The right pane's header while the vault is sealed but the account is
+/// paid (owner ruling 2026-09-10): one line saying so, and a button that
+/// opens the Vault tab — reuses the Account tab's own `account_open_vault`
+/// handler (`"cloud_overlay:dm:unlock_vault"`, re-gated in `panel_click.rs`
+/// BEFORE the `dm.available` check so it keeps working precisely while this
+/// draws).
+fn draw_vault_locked_header(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    tt: &ToolbarTheme,
+) -> f64 {
+    draw_lock_glyph(ctx, x + 8.0, y + 9.0, 14.0, &tt.item_text_muted);
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let hint = crate::ui::widgets::fit_text_to_width(
+        ctx, UserSettingsKey::DmUnlockVaultHint.get(current_language()), w - 24.0,
+    );
+    ctx.fill_text(&hint, x + 22.0, y + 2.0);
+    let btn_y = y + 18.0 + 8.0;
+    draw_action_row(
+        ctx, coord, layer_id, "cloud_overlay:dm:unlock_vault",
+        WidgetRect::new(x, btn_y, w, ROW_H - ROW_GAP),
+        UserSettingsKey::AccountOpenVault.get(current_language()), tt,
+    );
+    vault_locked_header_h()
 }
 
 fn draw_field(
@@ -371,12 +531,17 @@ fn draw_conversation_row(
         ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
     }
 
+    let avatar_cx = x + 8.0 + LIST_AVATAR_D / 2.0;
+    let avatar_cy = rect.y + rect.height / 2.0;
+    draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, LIST_AVATAR_D / 2.0, &c.peer_label, GOLD);
+    let text_x = x + 8.0 + LIST_AVATAR_D + LIST_AVATAR_GAP;
+
     ctx.set_font("600 13px sans-serif");
     ctx.set_fill_color(if hovered { GOLD } else { &tt.item_text });
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    let label = crate::ui::widgets::fit_text_to_width(ctx, &c.peer_label, w - 60.0);
-    ctx.fill_text(&label, x + 8.0, y + 4.0);
+    let label = crate::ui::widgets::fit_text_to_width(ctx, &c.peer_label, (x + w - text_x - 52.0).max(0.0));
+    ctx.fill_text(&label, text_x, y + 4.0);
 
     if c.unread_count > 0 {
         let badge_label = if c.unread_count > 99 { "99+".to_string() } else { c.unread_count.to_string() };
@@ -400,7 +565,7 @@ fn draw_conversation_row(
         .as_deref()
         .map(|t| relative_time(t, current_time_ms))
         .unwrap_or_else(|| "no messages yet".to_string());
-    ctx.fill_text(&last, x + 8.0, y + 24.0);
+    ctx.fill_text(&last, text_x, y + 24.0);
 
     coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
     CONV_ROW_H
@@ -435,55 +600,246 @@ fn list_pane_h(d: &DmState, nick_required: bool) -> f64 {
 // Messages" row (W2): the left column's permanent conversation list already
 // reaches this view — same reasoning `forum_v2_overlay.rs`'s own doc gives
 // for dropping its `BoardThreads`/`Thread` back rows.
+//
+// Owner ruling 2026-09-10: this view now also renders with the vault
+// SEALED (`DmUnavailableReason::VaultLocked`, hosted under the header
+// notice `draw_vault_locked_header` draws) — every message renders
+// whatever `DmMessageBody` variant it actually holds ([`message_visual`]),
+// and the composer swaps its live draft field for a muted hint
+// (`DmState::available` gates that, read directly off `state.dm` — no
+// separate "locked" parameter needed since this function already takes
+// `state: &CommunityState`).
 // =============================================================================
 
-fn message_h(m: &DmMessageUi) -> f64 {
-    let lines = wrap_text(&m.text, BUBBLE_WRAP_COLS).len().max(1);
-    16.0 + lines as f64 * 16.0 + 16.0 + 10.0
+/// What one bubble actually shows, and how — computed once per message so
+/// [`message_h`] (frame sizing) and [`draw_message`] (paint) can never
+/// disagree about the line count.
+struct MessageVisual {
+    lines: Vec<String>,
+    /// Dim monospace treatment + lock glyph (the raw-ciphertext-before-
+    /// unlock look) vs the ordinary sans-serif bubble text.
+    is_ciphertext_style: bool,
 }
 
+fn message_visual(m: &DmMessageUi, available: bool) -> MessageVisual {
+    match &m.body {
+        DmMessageBody::Plain(text) => {
+            MessageVisual { lines: wrap_text(text, BUBBLE_WRAP_COLS), is_ciphertext_style: false }
+        }
+        DmMessageBody::Undecryptable => {
+            MessageVisual { lines: vec!["<cannot decrypt>".to_string()], is_ciphertext_style: false }
+        }
+        DmMessageBody::Ciphertext { ciphertext_b64, .. } => {
+            if available {
+                // Not vault-locked — a peer-key backfill just has not
+                // landed for this conversation yet (rare, transient): the
+                // shell's own per-frame redecrypt-in-place retry clears
+                // this the moment it does, no user action needed, so this
+                // reads as ordinary bubble text rather than the locked
+                // ciphertext block.
+                MessageVisual { lines: vec!["Decrypting…".to_string()], is_ciphertext_style: false }
+            } else {
+                let mut lines = wrap_text(ciphertext_b64, BUBBLE_WRAP_COLS);
+                if lines.len() > CIPHERTEXT_MAX_LINES {
+                    lines.truncate(CIPHERTEXT_MAX_LINES);
+                    if let Some(last) = lines.last_mut() {
+                        last.push('…');
+                    }
+                }
+                MessageVisual { lines, is_ciphertext_style: true }
+            }
+        }
+    }
+}
+
+fn message_h(m: &DmMessageUi, available: bool) -> f64 {
+    let visual = message_visual(m, available);
+    let line_count = visual.lines.len().max(1);
+    BUBBLE_PAD_V * 2.0 + BUBBLE_NICK_H + line_count as f64 * BUBBLE_LINE_H + BUBBLE_TIME_H + BUBBLE_GAP
+}
+
+/// Screen-x char-boundary positions for one wrapped `line`, starting at
+/// `x` — the per-line equivalent of `widgets::input`'s own
+/// `char_x_positions` (single-line only). Needs `line`'s font already set
+/// on `ctx` (measurement depends on it).
+fn char_positions_for_line(ctx: &mut dyn RenderContext, line: &str, x: f64) -> Vec<f64> {
+    let char_count = line.chars().count();
+    let mut positions = Vec::with_capacity(char_count + 1);
+    for i in 0..=char_count {
+        let slice: String = line.chars().take(i).collect();
+        positions.push(x + ctx.measure_text(&slice));
+    }
+    positions
+}
+
+/// Two messages fall on the same calendar day (UTC — see [`clock_hm`]'s own
+/// doc for why this crate has no local-timezone conversion yet).
+fn same_day(a: &str, b: &str) -> bool {
+    match (parse_rfc3339_unix_secs(a), parse_rfc3339_unix_secs(b)) {
+        (Some(sa), Some(sb)) => sa.div_euclid(86400) == sb.div_euclid(86400),
+        _ => false,
+    }
+}
+
+/// Whether a day separator belongs immediately before `messages[i]` — the
+/// very first message always gets one (Telegram shows a date header even
+/// for a conversation's opening line), every later one only when its day
+/// differs from the message right before it.
+fn day_separator_before(messages: &[DmMessageUi], i: usize) -> bool {
+    i == 0 || !same_day(&messages[i - 1].created_at, &messages[i].created_at)
+}
+
+/// "Today" / "Yesterday" / the plain date, compared against `now_ms`'s own
+/// calendar day (UTC).
+fn day_separator_label(created_at: &str, now_ms: u64) -> String {
+    let fallback = || created_at.split('T').next().unwrap_or(created_at).to_string();
+    let Some(secs) = parse_rfc3339_unix_secs(created_at) else { return fallback() };
+    let day = secs.div_euclid(86400);
+    let today = ((now_ms / 1000) as i64).div_euclid(86400);
+    match today - day {
+        0 => UserSettingsKey::DmDayToday.get(current_language()).to_string(),
+        1 => UserSettingsKey::DmDayYesterday.get(current_language()).to_string(),
+        _ => fallback(),
+    }
+}
+
+fn draw_day_separator(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, label: &str, tt: &ToolbarTheme) -> f64 {
+    ctx.set_font("600 10px sans-serif");
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(label, x + w / 2.0, y + DAY_SEP_H / 2.0);
+    DAY_SEP_H
+}
+
+/// `created_at`'s own `HH:MM` substring, verbatim off the wire ISO-8601
+/// string (server clock, i.e. UTC) — this crate has no bridge to the
+/// viewer's actual local timezone yet (wasm needs the browser's `Date`,
+/// native would need a `chrono`/`time`-zone-database dependency; neither
+/// exists here today), so "local" is a named gap rather than a silently
+/// wrong conversion. `"--:--"` for anything shorter than an ISO timestamp.
+fn clock_hm(created_at: &str) -> &str {
+    created_at.get(11..16).unwrap_or("--:--")
+}
+
+/// One message bubble: an avatar (peer side only), a nick line ("You" for
+/// `m.mine`, the peer's own label otherwise), the wrapped body, and a
+/// bottom-right clock — plain bubbles for [`DmMessageBody::Plain`], a dim
+/// monospace lock-glyphed block for [`DmMessageBody::Ciphertext`] while the
+/// vault is sealed (`!available`).
+///
+/// Registers one READ-ONLY `TextFieldStore` field PER WRAPPED LINE
+/// (`dm:msg:{id}:{line}`), not one per message: `uzor::input::text::
+/// TextFieldState` tracks a single `(rect, char_positions)` pair with no
+/// row axis at all, so a multi-line bubble needs one field per visual line
+/// for the generic drag-select (`TextFieldStore::on_drag_start`, which
+/// hit-tests every registered field's own `last_rect`) to land on the
+/// right line. `mlc-app`'s `panel_click.rs::unregister_dm_message_fields`
+/// drops these again when the conversation changes.
+#[allow(clippy::too_many_arguments)]
 fn draw_message(
     ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
     x: f64,
     y: f64,
     w: f64,
     m: &DmMessageUi,
-    current_time_ms: u64,
+    peer_label: &str,
+    available: bool,
     tt: &ToolbarTheme,
+    result: &mut CloudOverlayResult,
 ) -> f64 {
-    let lines = wrap_text(&m.text, BUBBLE_WRAP_COLS);
-    let line_count = lines.len().max(1);
-    let bubble_w = (w * BUBBLE_WIDTH_FRAC).max(BUBBLE_MIN_W);
-    let bubble_h = line_count as f64 * 16.0 + 16.0;
-    let bx = if m.mine { x + w - bubble_w } else { x };
-    let mut ly = y;
+    let visual = message_visual(m, available);
+    let line_count = visual.lines.len().max(1);
+    let bubble_inner_h = BUBBLE_NICK_H + line_count as f64 * BUBBLE_LINE_H + BUBBLE_TIME_H;
+    let bubble_h = bubble_inner_h + BUBBLE_PAD_V * 2.0;
 
-    ctx.set_font("10px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.set_text_align(if m.mine { TextAlign::Right } else { TextAlign::Left });
-    ctx.set_text_baseline(TextBaseline::Top);
-    let label_x = if m.mine { x + w } else { x };
-    ctx.fill_text(&relative_time(&m.created_at, current_time_ms), label_x, ly);
-    ly += 16.0;
+    let has_avatar = !m.mine;
+    let avatar_reserved = if has_avatar { BUBBLE_AVATAR_D + BUBBLE_AVATAR_GAP } else { 0.0 };
+    let avail_w = (w - avatar_reserved).max(0.0);
+    let bubble_w = (avail_w * BUBBLE_WIDTH_FRAC).max(BUBBLE_MIN_W);
+    let bx = if m.mine { x + w - bubble_w } else { x + avatar_reserved };
+
+    if has_avatar {
+        let avatar_cx = x + BUBBLE_AVATAR_D / 2.0;
+        let avatar_cy = y + bubble_h / 2.0;
+        draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, BUBBLE_AVATAR_D / 2.0, peer_label, GOLD);
+    }
 
     ctx.set_fill_color(if m.mine { GOLD } else { &tt.dropdown_bg });
-    ctx.fill_rounded_rect(bx, ly, bubble_w, bubble_h, SETTINGS_BUTTON_RADIUS);
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(if m.mine { "#101014" } else { &tt.item_text });
+    ctx.fill_rounded_rect(bx, y, bubble_w, bubble_h, SETTINGS_BUTTON_RADIUS);
+
+    if visual.is_ciphertext_style {
+        draw_lock_glyph(ctx, bx + bubble_w - 14.0, y + BUBBLE_PAD_V + 6.0, 10.0, &tt.item_text_muted);
+    }
+
+    // Nick line — "You" for an own message, the peer's label otherwise.
+    let nick_color: &str = if m.mine { "#101014" } else { &tt.item_text_muted };
+    let nick = if m.mine { UserSettingsKey::DmYou.get(current_language()) } else { peer_label };
+    ctx.set_font("600 10px sans-serif");
+    ctx.set_fill_color(nick_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    for (i, line) in lines.iter().enumerate() {
-        ctx.fill_text(line, bx + 10.0, ly + 8.0 + i as f64 * 16.0);
-    }
-    ly += bubble_h + 10.0;
+    let nick_fit = crate::ui::widgets::fit_text_to_width(ctx, nick, bubble_w - 24.0);
+    ctx.fill_text(&nick_fit, bx + 10.0, y + BUBBLE_PAD_V);
 
-    ly - y
+    // Body lines — each one a real, selectable, read-only text field.
+    let (body_font, body_color): (&str, &str) = if visual.is_ciphertext_style {
+        ("11px monospace", &tt.item_text_muted)
+    } else if m.mine {
+        ("12px sans-serif", "#101014")
+    } else {
+        ("12px sans-serif", &tt.item_text)
+    };
+    ctx.set_font(body_font);
+    ctx.set_fill_color(body_color);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    for (i, line) in visual.lines.iter().enumerate() {
+        let line_x = bx + 10.0;
+        let line_y = y + BUBBLE_PAD_V + BUBBLE_NICK_H + i as f64 * BUBBLE_LINE_H;
+        ctx.fill_text(line, line_x, line_y);
+
+        let positions = char_positions_for_line(ctx, line, line_x);
+        let line_rect = WidgetRect::new(line_x, line_y, (bubble_w - 20.0).max(0.0), BUBBLE_LINE_H);
+        let wid = WidgetId::from(format!("dm:msg:{}:{i}", m.id));
+        {
+            let tf = coord.text_fields_mut();
+            tf.register(wid.clone(), TextFieldConfig::read_only());
+            if tf.text(&wid) != line.as_str() {
+                tf.set_text(&wid, line);
+            }
+            tf.update_field(&wid, (line_rect.x, line_rect.y, line_rect.width, line_rect.height), positions);
+        }
+        result.dm_message_line_rects.push(line_rect);
+    }
+
+    // Clock — bottom-right inside the bubble.
+    ctx.set_font("10px monospace");
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_text_align(TextAlign::Right);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let time_y = y + BUBBLE_PAD_V + BUBBLE_NICK_H + line_count as f64 * BUBBLE_LINE_H;
+    ctx.fill_text(clock_hm(&m.created_at), bx + bubble_w - 8.0, time_y);
+
+    bubble_h + BUBBLE_GAP
 }
 
 fn conversation_scroll_h(d: &DmState, messages: &[DmMessageUi]) -> f64 {
     let header_h = 36.0;
     let err_h = if d.last_error.is_some() { 20.0 } else { 0.0 };
-    let msgs_h = if messages.is_empty() { 24.0 } else { messages.iter().map(message_h).sum() };
+    let msgs_h = if messages.is_empty() {
+        24.0
+    } else {
+        messages
+            .iter()
+            .enumerate()
+            .map(|(i, m)| {
+                let sep_h = if day_separator_before(messages, i) { DAY_SEP_H } else { 0.0 };
+                sep_h + message_h(m, d.available)
+            })
+            .sum()
+    };
     header_h + err_h + msgs_h
 }
 
@@ -541,8 +897,12 @@ fn draw_right_conversation(
     if messages.is_empty() {
         draw_status(ctx, tt, sx, sy, sw, "No messages yet.", None);
     } else {
-        for m in messages {
-            sy += draw_message(ctx, sx, sy, sw, m, current_time_ms, tt);
+        for (i, m) in messages.iter().enumerate() {
+            if day_separator_before(messages, i) {
+                let label = day_separator_label(&m.created_at, current_time_ms);
+                sy += draw_day_separator(ctx, sx, sy, sw, &label, tt);
+            }
+            sy += draw_message(ctx, coord, sx, sy, sw, m, peer_label, state.dm.available, tt, result);
         }
     }
 
@@ -556,12 +916,25 @@ fn draw_right_conversation(
     register_scrollbar_hit_zones(coord, layer_id, &scroll_result);
 
     // Docked send box — fixed to the bottom of the pane, outside the
-    // scrollable clip above. Disabled (owner mandate 2026-09-09,
-    // `nick_required`) trades the draft field for a hint line and swaps
-    // "Send" for the same "Choose a nick" trigger the recipient-search row
+    // scrollable clip above.
+    let composer_y = y + (viewport_h - COMPOSER_H).max(0.0);
+    if !state.dm.available {
+        // Vault-locked composer (owner ruling 2026-09-10): a muted hint
+        // only — the actual "Open Vault" button already lives once in the
+        // pane's own header (`draw_vault_locked_header`), not repeated per
+        // conversation.
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(UserSettingsKey::DmUnlockVaultHint.get(current_language()), x, composer_y + 8.0);
+        return;
+    }
+    // Disabled (owner mandate 2026-09-09, `nick_required`) trades the
+    // draft field for a hint line and swaps "Send" for the same
+    // "Choose a nick" trigger the recipient-search row
     // ([`draw_open_peer_row`]) uses — same `COMPOSER_H` footprint either
     // way, so the scroll math above never has to know which is showing.
-    let composer_y = y + (viewport_h - COMPOSER_H).max(0.0);
     if state.forum2.nick_required() {
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(&tt.item_text_muted);

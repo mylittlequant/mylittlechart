@@ -2668,6 +2668,12 @@ impl ChartApp {
             if let Some(ref cm) = result.community {
                 if self.panel_app.community_state.is_open {
                     let ov = &cm.content;
+                    // `dm_message_line_rects` (message-bubble text, one rect
+                    // per wrapped line — owner ruling 2026-09-10, item 3)
+                    // joins the fixed `Option<Rect>` fields above so a
+                    // mouse-down on a bubble's body starts a drag-select
+                    // instead of falling through to ordinary click routing
+                    // (a conversation row, the Send button, ...).
                     let hit = [
                         ov.forum_title_rect,
                         ov.forum_body_rect,
@@ -2678,6 +2684,7 @@ impl ChartApp {
                     ]
                         .into_iter()
                         .flatten()
+                        .chain(ov.dm_message_line_rects.iter().copied())
                         .any(|r| r.contains(x, y));
                     if hit {
                         self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);

@@ -5807,10 +5807,11 @@ impl ForumV2State {
 // Direct messages (paid, end-to-end encrypted — `CommunityTab::Messages`,
 // community-modal arc W1; moved out of the News overlay's own
 // `NewsTab::Messages`, retired). Server: `routes::dm` + `dm_db.rs`. The
-// shell owns the crypto
-// (`mlc_vault::dm`) end to end: this state only ever carries PLAINTEXT
-// already decrypted by the shell (or the literal string `"<cannot
-// decrypt>"` when it could not be) — never ciphertext, never a key.
+// shell owns the crypto (`mlc_vault::dm`) end to end — this crate never
+// holds a key. Owner ruling 2026-09-10: the RAW ciphertext must still be
+// visible (as ciphertext) before the vault unlocks, so people can see the
+// end-to-end encryption is real — see [`DmMessageBody`] for the shape that
+// replaced the old "plaintext or the literal `<cannot decrypt>`" contract.
 // =============================================================================
 
 /// One row of the conversation list. A flat mirror of `routes::dm::
@@ -5828,9 +5829,6 @@ pub struct DmConversationUi {
     pub unread_count: i64,
 }
 
-/// One message bubble. `text` is already-decrypted plaintext (or
-/// `"<cannot decrypt>"`) — see this section's own doc for why the server
-/// contract (`nonce_b64`/`ciphertext_b64`) never appears here at all.
 /// One row of the recipient-search dropdown under the "start a
 /// conversation" field (`GET /api/dm/lookup?q=`, community-modal-and-forum-
 /// ladder arc, piece 2 item b) — a fuzzy nick/label match, server-sorted and
@@ -5847,12 +5845,40 @@ pub struct DmLookupHitUi {
     pub label: String,
 }
 
+/// The wire message's payload, at whatever stage of decryption the shell has
+/// reached — replaces the old "`text` is plaintext or the literal `<cannot
+/// decrypt>`" contract (owner ruling 2026-09-10: ciphertext must render,
+/// dimmed, before the vault unlocks — proof the end-to-end encryption is
+/// real — and decrypt IN PLACE once it does, with no refetch).
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub enum DmMessageBody {
+    /// Decrypted successfully, or authored locally this session (an own
+    /// just-sent message is appended from the plaintext it was typed as —
+    /// never round-tripped through ciphertext at all). Render as an
+    /// ordinary bubble.
+    Plain(String),
+    /// The vault was sealed, or this conversation's peer key had not
+    /// resolved yet, when the message was fetched — `nonce_b64`/
+    /// `ciphertext_b64` are the raw wire bytes, kept so the shell can
+    /// retry decryption IN PLACE the moment either condition clears
+    /// (`DmState::available` flipping true, or a peer-key backfill
+    /// landing), with no refetch. Renders as a dim, monospace, clipped
+    /// block with a lock glyph.
+    Ciphertext { nonce_b64: String, ciphertext_b64: String },
+    /// The vault WAS unlocked and the peer key WAS known, but the seal
+    /// still failed to open (corrupt or foreign payload) — permanent, not
+    /// retried. Renders as a muted "cannot decrypt" line.
+    Undecryptable,
+}
+
+/// One message bubble.
 #[cfg(feature = "cloud")]
 #[derive(Clone, Debug, PartialEq)]
 pub struct DmMessageUi {
     pub id: i64,
     pub mine: bool,
-    pub text: String,
+    pub body: DmMessageBody,
     pub created_at: String,
     pub read_at: Option<String>,
 }
@@ -5966,6 +5992,29 @@ pub struct DmState {
     /// free). Defaults `false` — a shell must opt in explicitly rather than
     /// draw live controls before it can back them.
     pub available: bool,
+    /// WHY `available` is false — read by `dm_overlay.rs` to pick which
+    /// notice the right pane draws (owner ruling 2026-09-10: a sealed
+    /// vault still renders the conversation list and every message's raw
+    /// ciphertext, with an "Unlock your vault to read" header and button;
+    /// "not paid" keeps the older single-line notice unchanged). Kept as
+    /// its own typed field rather than matching on `last_error`'s wording:
+    /// the two shells phrase that string slightly differently ("your
+    /// vault" vs "the vault"), which a text match would silently mis-sort.
+    pub unavailable_reason: DmUnavailableReason,
+}
+
+/// See [`DmState::unavailable_reason`].
+#[cfg(feature = "cloud")]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DmUnavailableReason {
+    /// `available` is true, or nobody has stamped a reason yet this frame.
+    #[default]
+    None,
+    /// Paid, but the vault is sealed — ciphertext still renders.
+    VaultLocked,
+    /// Vault unlocked (or no vault key derivation attempted), but the
+    /// account is not paid — the tab's content stays hidden entirely.
+    NotPaid,
 }
 
 #[cfg(feature = "cloud")]
@@ -5986,6 +6035,7 @@ impl Default for DmState {
             lookup_results: Vec::new(),
             lookup_due_at: None,
             available: false,
+            unavailable_reason: DmUnavailableReason::None,
         }
     }
 }
