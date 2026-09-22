@@ -6,10 +6,12 @@
 //!
 //! Every route requires a `Bearer` agent key minted from inside the app
 //! (`AgentState::agent_key_store`, see `auth.rs`): a sealed key store answers
-//! `423`, a missing or unrecognised key answers `401`, and a mutating method
-//! (`POST`/`PUT`/`PATCH`/`DELETE`) presented by a `ReadOnly` key answers
-//! `403`. The server still only binds `127.0.0.1` — the auth layer bounds
-//! WHO on this machine may act, not WHERE the traffic can come from.
+//! `423`, a missing or unrecognised key answers `401`, an unrecognised key
+//! answers `429` once `auth::BearerFailureTracker`'s sliding-window limit is
+//! reached, and a mutating method (`POST`/`PUT`/`PATCH`/`DELETE`) presented
+//! by a `ReadOnly` key answers `403`. The server still only binds
+//! `127.0.0.1` — the auth layer bounds WHO on this machine may act, not
+//! WHERE the traffic can come from.
 //!
 //! One exception: `routes::vault`'s `POST /api/v1/vault/unlock` and
 //! `GET /api/v1/vault/status` sit OUTSIDE `auth_middleware` entirely — an
@@ -27,7 +29,7 @@ use axum::{Router, extract::State, middleware::Next, response::Response};
 use axum::http::Request;
 use socket2::{Domain, Protocol, Socket, Type};
 
-use auth::{auth_middleware, tier_gate, Tier};
+use auth::{auth_middleware, tier_gate, AuthState, BearerFailureTracker, Tier};
 pub use state::AgentState;
 
 /// Middleware: record the time of every Agent API request.
@@ -69,7 +71,10 @@ pub fn start_server(
     handle: &tokio::runtime::Handle,
     port: u16,
 ) -> tokio::task::JoinHandle<()> {
-    let agent_key_store = state.agent_key_store_handle();
+    let auth_state = AuthState {
+        agent_key_store: state.agent_key_store_handle(),
+        bearer_failures: Arc::new(BearerFailureTracker::new()),
+    };
 
     // Built and `.with_state()`'d on its own, before either layer below is
     // applied — merging this in further down picks up no auth/tier layer.
@@ -97,7 +102,7 @@ pub fn start_server(
             track_access,
         ))
         .layer(axum::middleware::from_fn_with_state(
-            agent_key_store,
+            auth_state,
             auth_middleware,
         ))
         .with_state(state)

@@ -7,6 +7,14 @@
 //! - [`tier_gate`] (per route module, innermost): reads [`CallerTier`] and
 //!   refuses a caller whose key tier is below the route's requirement.
 //!
+//! [`auth_middleware`] also carries its own sliding-window
+//! [`BearerFailureTracker`] over the Bearer-key comparison itself — insurance
+//! against unbounded `401` guessing, not the primary defense (the primary
+//! defense is the loopback-only bind plus the 32-byte key's entropy; see
+//! that struct's doc). Deliberately its own counter, not a reuse of
+//! [`crate::state::AgentState`]'s vault-unlock counter — the two guard
+//! different credentials at different, independently-justified thresholds.
+//!
 //! Mutation permission ([`AgentKeyRole`]) is checked by HTTP method inside
 //! [`auth_middleware`] itself rather than per-route: every `POST`/`PUT`/
 //! `PATCH`/`DELETE` needs [`AgentKeyRole::Control`], every `GET`/`HEAD`
@@ -23,7 +31,8 @@
 //! string-typed `tier`/`admin` permission table — `AgentKeyRole` (`Control`/
 //! `ReadOnly`) plus a route-level [`Tier`] replace it.
 
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 
 use axum::{
     extract::{Request, State},
@@ -148,19 +157,144 @@ pub fn agent_keys_paths(profile_dir: &std::path::Path) -> (std::path::PathBuf, s
 }
 
 // ===========================================================================
+// Bearer-check failure tracking
+// ===========================================================================
+
+/// [`BearerFailureTracker`]'s window: at most [`BEARER_FAILURE_LIMIT`]
+/// failed Bearer-key comparisons inside this many seconds before
+/// [`auth_middleware`] answers `429` without even attempting the next
+/// comparison.
+///
+/// Deliberately loose. The Agent API binds `127.0.0.1` only (see this
+/// crate's doc) and a minted key is 32 random bytes
+/// ([`decode_bearer_key`]) — guessing one is not a realistic threat on this
+/// surface today, so this counter is insurance for the day the
+/// loopback-only assumption stops holding, not an active brute-force
+/// defense (the audit finding this closes:
+/// `nemo/docs/mlc/audits/api-surface-hardening-2026-09-10.md` §5). It is
+/// also deliberately NOT the vault-unlock window
+/// (`crate::state::VAULT_UNLOCK_FAILURE_WINDOW`, 5 failures / 60s) — that
+/// one throttles a PBKDF2-bound passphrase (600,000 rounds per attempt,
+/// genuinely expensive to spam), while this one throttles a cheap in-memory
+/// hash compare against a caller that may legitimately retry a
+/// just-expired/just-revoked key several times in a row while its owner
+/// notices and re-mints. The threshold stays wide (20) and the window short
+/// (10s) so a tripped lock ages itself out within 10 seconds of the last
+/// failure even if the caller never succeeds, and a caller presenting a
+/// freshly minted correct key clears it immediately on the very next match
+/// (see [`BearerFailureTracker::clear`]) rather than staying locked out by
+/// attempts that happened before it.
+const BEARER_FAILURE_WINDOW: Duration = Duration::from_secs(10);
+
+/// See [`BEARER_FAILURE_WINDOW`].
+const BEARER_FAILURE_LIMIT: usize = 20;
+
+/// Sliding-window failure counter over the Bearer-key comparison
+/// [`auth_middleware`] performs against the unlocked key store. See
+/// [`BEARER_FAILURE_WINDOW`]'s doc for the limit/window rationale.
+///
+/// Checked only AFTER the store is confirmed unlocked (a sealed store
+/// already answers `423` before this is ever reached — see
+/// [`auth_middleware`]'s doc) and BEFORE the fingerprint comparison for the
+/// current request, so a rate-limited caller never even reaches the
+/// compare step.
+pub struct BearerFailureTracker {
+    limit: usize,
+    window: Duration,
+    failures: Mutex<Vec<web_time::Instant>>,
+}
+
+impl BearerFailureTracker {
+    /// Production tracker: [`BEARER_FAILURE_LIMIT`] failures inside
+    /// [`BEARER_FAILURE_WINDOW`].
+    pub fn new() -> Self {
+        Self::with_limit(BEARER_FAILURE_LIMIT, BEARER_FAILURE_WINDOW)
+    }
+
+    /// Build a tracker with a caller-chosen limit/window. Used by this
+    /// module's own unit tests to exercise the sliding window without a
+    /// real 10-second sleep; [`Self::new`] is the only production caller.
+    fn with_limit(limit: usize, window: Duration) -> Self {
+        Self {
+            limit,
+            window,
+            failures: Mutex::new(Vec::new()),
+        }
+    }
+
+    fn prune(&self, failures: &mut Vec<web_time::Instant>) {
+        let now = web_time::Instant::now();
+        let window = self.window;
+        failures.retain(|t| now.duration_since(*t) < window);
+    }
+
+    /// Whether [`Self::limit`] failures have already landed inside the
+    /// window — checked by [`auth_middleware`] before it attempts the next
+    /// comparison.
+    pub fn is_rate_limited(&self) -> bool {
+        let mut failures = self
+            .failures
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.prune(&mut failures);
+        failures.len() >= self.limit
+    }
+
+    /// Record one failed Bearer-key comparison (fingerprint matched no
+    /// minted key).
+    pub fn record_failure(&self) {
+        let mut failures = self
+            .failures
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        self.prune(&mut failures);
+        failures.push(web_time::Instant::now());
+    }
+
+    /// Clear the counter — called on a successful Bearer match, so a
+    /// legitimate caller is never throttled by attempts that happened
+    /// before it (same reasoning as
+    /// `crate::state::AgentState::clear_vault_unlock_failures`).
+    pub fn clear(&self) {
+        if let Ok(mut failures) = self.failures.lock() {
+            failures.clear();
+        }
+    }
+}
+
+impl Default for BearerFailureTracker {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// [`auth_middleware`]'s captured state: the key store plus its sibling
+/// [`BearerFailureTracker`]. Kept as a small bespoke struct — not the full
+/// `Arc<AgentState>` — for the same testability reason [`auth_middleware`]'s
+/// own doc gives for the store alone: this middleware can be exercised with
+/// nothing more than a `SecretStore` and a counter, no data bridge or
+/// backend core required.
+#[derive(Clone)]
+pub struct AuthState {
+    pub agent_key_store: Arc<RwLock<Arc<SecretStore>>>,
+    pub bearer_failures: Arc<BearerFailureTracker>,
+}
+
+// ===========================================================================
 // Outer auth middleware
 // ===========================================================================
 
 /// Outermost Agent API middleware (see `lib.rs`'s wiring order).
 ///
-/// Takes `Arc<RwLock<Arc<SecretStore>>>` directly as its captured
-/// middleware state — deliberately not the full `Arc<AgentState>` — so this
-/// decision has no dependency on the data bridge / backend core and can be
-/// exercised in a unit test with nothing more than a `SecretStore` pointed
-/// at a temp directory (see the `tests` module below). The `RwLock` layer
-/// is what lets a profile switch RE-POINT the store this middleware checks
-/// against ([`crate::AgentState::set_agent_key_store`]) without rebuilding
-/// the router: `lib.rs` clones the SAME `Arc<RwLock<..>>` out of
+/// Takes [`AuthState`] directly as its captured middleware state —
+/// deliberately not the full `Arc<AgentState>` — so this decision has no
+/// dependency on the data bridge / backend core and can be exercised in a
+/// unit test with nothing more than a `SecretStore` pointed at a temp
+/// directory and a fresh [`BearerFailureTracker`] (see the `tests` module
+/// below). The `RwLock` layer around the store is what lets a profile
+/// switch RE-POINT the store this middleware checks against
+/// ([`crate::AgentState::set_agent_key_store`]) without rebuilding the
+/// router: `lib.rs` clones the SAME `Arc<RwLock<..>>` out of
 /// `AgentState::agent_key_store` (an `Arc` pointer copy) into this
 /// middleware's state, so the two always agree — a read here takes the
 /// lock fresh on every request rather than trusting a snapshot captured
@@ -176,14 +310,25 @@ pub fn agent_keys_paths(profile_dir: &std::path::Path) -> (std::path::PathBuf, s
 ///   header above, and BEFORE any fingerprinting: an arbitrary string is
 ///   never hashed and compared, only the decoded key bytes are.
 /// - Only once a well-formed (64-hex-char) bearer is in hand: sealed store
-///   (`agent_key_store.get()` → `Err(Sealed)`) → `423`.
-/// - A well-formed bearer whose fingerprint matches no record → `401`.
+///   (`agent_key_store.get()` → `Err(Sealed)`) → `423`. This still runs
+///   BEFORE the failure-throttle check below — the documented
+///   401-before-423 ordering above (a fix in its own right, covered by
+///   `missing_bearer_on_sealed_store_answers_401_not_423` and
+///   `malformed_bearer_on_sealed_store_answers_401_not_423`) is untouched
+///   by the throttle, which only ever runs for a well-formed bearer against
+///   an already-unlocked store.
+/// - [`BearerFailureTracker::is_rate_limited`] already at the limit → `429`,
+///   without attempting the fingerprint comparison for this request.
+/// - A well-formed bearer whose fingerprint matches no record → `401`, and
+///   the failure is recorded ([`BearerFailureTracker::record_failure`]).
 /// - A mutating method (`POST`/`PUT`/`PATCH`/`DELETE`) presented by a
 ///   [`AgentKeyRole::ReadOnly`] key → `403`.
-/// - Otherwise: [`CallerTier`] + [`CallerRole`] extensions are inserted and
-///   the request proceeds to the per-module [`tier_gate`] check.
+/// - Otherwise: the failure counter is cleared
+///   ([`BearerFailureTracker::clear`]), [`CallerTier`] + [`CallerRole`]
+///   extensions are inserted, and the request proceeds to the per-module
+///   [`tier_gate`] check.
 pub async fn auth_middleware(
-    State(agent_key_store): State<Arc<RwLock<Arc<SecretStore>>>>,
+    State(AuthState { agent_key_store, bearer_failures }): State<AuthState>,
     mut req: Request,
     next: Next,
 ) -> Response {
@@ -220,14 +365,31 @@ pub async fn auth_middleware(
         Err(Sealed) => return error_response(StatusCode::LOCKED, "vault sealed"),
     };
 
+    // Throttle checked only once the store is confirmed unlocked (the
+    // sealed-store 423 above already returned otherwise) and BEFORE the
+    // fingerprint comparison — see `BearerFailureTracker`'s doc.
+    if bearer_failures.is_rate_limited() {
+        return error_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            "too many failed bearer attempts, try again later",
+        );
+    }
+
     let fingerprint_hex = hex::encode(fingerprint_sha256(&raw_key));
     let records = parse_key_records(&bytes);
     let Some(record) = records
         .iter()
         .find(|r| constant_time_eq(r.fingerprint_hex.as_bytes(), fingerprint_hex.as_bytes()))
     else {
+        bearer_failures.record_failure();
         return error_response(StatusCode::UNAUTHORIZED, "unauthorized");
     };
+
+    // A matching fingerprint is a successful Bearer authentication even if
+    // the role check below still refuses this particular method — clear
+    // now so a legitimate caller is never throttled by attempts that
+    // happened before it.
+    bearer_failures.clear();
 
     let is_mutating = matches!(
         *req.method(),
@@ -356,6 +518,14 @@ mod tests {
         (hex::encode(raw), hex::encode(fingerprint_sha256(&raw)))
     }
 
+    fn build_router(auth_state: AuthState, min_tier: Tier) -> Router<()> {
+        let router: Router<()> = Router::new()
+            .route("/probe", get(|| async { StatusCode::OK }))
+            .route("/probe", post(|| async { StatusCode::OK }));
+        tier_gate(router, min_tier)
+            .layer(axum::middleware::from_fn_with_state(auth_state, auth_middleware))
+    }
+
     fn test_router(key_store: Arc<SecretStore>, min_tier: Tier) -> Router<()> {
         test_router_shared(Arc::new(RwLock::new(key_store)), min_tier)
     }
@@ -364,11 +534,33 @@ mod tests {
     /// the re-point test below, which needs to swap the store out from under
     /// an already-built router.
     fn test_router_shared(key_store: Arc<RwLock<Arc<SecretStore>>>, min_tier: Tier) -> Router<()> {
-        let router: Router<()> = Router::new()
-            .route("/probe", get(|| async { StatusCode::OK }))
-            .route("/probe", post(|| async { StatusCode::OK }));
-        tier_gate(router, min_tier)
-            .layer(axum::middleware::from_fn_with_state(key_store, auth_middleware))
+        build_router(
+            AuthState {
+                agent_key_store: key_store,
+                bearer_failures: Arc::new(BearerFailureTracker::new()),
+            },
+            min_tier,
+        )
+    }
+
+    /// Same as [`test_router`] but with a caller-supplied
+    /// [`BearerFailureTracker`] (typically built via a small test-only
+    /// limit/window) — used by the failure-throttle tests below, which
+    /// need to observe the SAME counter across a sequence of requests
+    /// against a cloned router (`Router` is a cheap `Arc`-backed clone, see
+    /// `repointed_store_is_read_on_next_request`).
+    fn test_router_with_tracker(
+        key_store: Arc<SecretStore>,
+        min_tier: Tier,
+        bearer_failures: Arc<BearerFailureTracker>,
+    ) -> Router<()> {
+        build_router(
+            AuthState {
+                agent_key_store: Arc::new(RwLock::new(key_store)),
+                bearer_failures,
+            },
+            min_tier,
+        )
     }
 
     fn get_request(bearer: Option<&str>) -> Request<Body> {
@@ -545,5 +737,129 @@ mod tests {
         // checked against profile B's (different) store.
         let res = router.oneshot(get_request(Some(&raw))).await.expect("dispatch");
         assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    // -- BearerFailureTracker ------------------------------------------------
+    //
+    // `matching_control_key_answers_200_on_get` and
+    // `mint_then_present_round_trip_answers_200` above already cover "a
+    // correct key still passes with an empty (freshly built) failure
+    // counter" — every `test_router` call builds a fresh
+    // `BearerFailureTracker`, so those two are also throttle regression
+    // tests. The three below exercise the counter itself.
+
+    /// [`BearerFailureTracker::is_rate_limited`] trips once its limit is
+    /// reached inside the window — even a WELL-FORMED bearer whose
+    /// fingerprint would otherwise be checked gets `429` without a
+    /// comparison once the limit is hit.
+    #[tokio::test]
+    async fn bearer_failure_limit_trips_429_after_threshold_failures_in_window() {
+        let (known_raw, known_fingerprint) = mint_raw_hex(0x10);
+        let (unknown_raw, _unknown_fingerprint) = mint_raw_hex(0x11);
+        let known = control_record(known_fingerprint);
+        let store = unlocked_store_with("auth_mw_throttle_trip", &[known]);
+        let tracker = Arc::new(BearerFailureTracker::with_limit(3, Duration::from_secs(60)));
+        let router = test_router_with_tracker(store, Tier::SignedIn, tracker);
+
+        // Three failures with an unknown (but well-formed) bearer land the
+        // counter exactly at the limit.
+        for _ in 0..3 {
+            let res = router
+                .clone()
+                .oneshot(get_request(Some(&unknown_raw)))
+                .await
+                .expect("dispatch");
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        // The fourth request — even with the CORRECT key — is throttled
+        // before the comparison ever runs.
+        let res = router
+            .oneshot(get_request(Some(&known_raw)))
+            .await
+            .expect("dispatch");
+        assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    /// A successful Bearer match clears [`BearerFailureTracker`] — attempts
+    /// that happened before a legitimate caller's request must never carry
+    /// over and throttle it later.
+    #[tokio::test]
+    async fn successful_bearer_auth_clears_failure_counter() {
+        let (known_raw, known_fingerprint) = mint_raw_hex(0x12);
+        let (unknown_raw, _unknown_fingerprint) = mint_raw_hex(0x13);
+        let known = control_record(known_fingerprint);
+        let store = unlocked_store_with("auth_mw_throttle_clear", &[known]);
+        let tracker = Arc::new(BearerFailureTracker::with_limit(3, Duration::from_secs(60)));
+        let router = test_router_with_tracker(store, Tier::SignedIn, tracker);
+
+        // Two failures — one short of limit=3, so the counter is not yet
+        // tripped.
+        for _ in 0..2 {
+            let res = router
+                .clone()
+                .oneshot(get_request(Some(&unknown_raw)))
+                .await
+                .expect("dispatch");
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        // The correct key succeeds and clears the counter.
+        let res = router
+            .clone()
+            .oneshot(get_request(Some(&known_raw)))
+            .await
+            .expect("dispatch");
+        assert_eq!(res.status(), StatusCode::OK);
+
+        // Two MORE failures still fall short of the limit — if the earlier
+        // two had survived the clear, this pair would already total 4 >= 3
+        // and trip the throttle here instead.
+        for _ in 0..2 {
+            let res = router
+                .clone()
+                .oneshot(get_request(Some(&unknown_raw)))
+                .await
+                .expect("dispatch");
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+    }
+
+    /// Failures older than [`BearerFailureTracker`]'s window are pruned — a
+    /// tripped throttle ages itself out on its own once the offending burst
+    /// is far enough in the past, without needing a success to clear it.
+    #[tokio::test]
+    async fn bearer_failures_older_than_window_are_forgotten() {
+        let (known_raw, known_fingerprint) = mint_raw_hex(0x14);
+        let (unknown_raw, _unknown_fingerprint) = mint_raw_hex(0x15);
+        let known = control_record(known_fingerprint);
+        let store = unlocked_store_with("auth_mw_throttle_window", &[known]);
+        let tracker = Arc::new(BearerFailureTracker::with_limit(2, Duration::from_millis(50)));
+        let router = test_router_with_tracker(store, Tier::SignedIn, tracker);
+
+        // Two failures trip the limit=2 throttle immediately.
+        for _ in 0..2 {
+            let res = router
+                .clone()
+                .oneshot(get_request(Some(&unknown_raw)))
+                .await
+                .expect("dispatch");
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED);
+        }
+        let res = router
+            .clone()
+            .oneshot(get_request(Some(&known_raw)))
+            .await
+            .expect("dispatch");
+        assert_eq!(res.status(), StatusCode::TOO_MANY_REQUESTS);
+
+        // Once the window has fully elapsed, the old failures are pruned
+        // and the correct key passes without needing an explicit clear.
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        let res = router
+            .oneshot(get_request(Some(&known_raw)))
+            .await
+            .expect("dispatch");
+        assert_eq!(res.status(), StatusCode::OK);
     }
 }
