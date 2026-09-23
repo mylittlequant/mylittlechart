@@ -242,7 +242,7 @@ impl ChartPanelApp {
             log::error!("[ChartPanelApp] failed to save profile: {}", e);
         }
 
-        log::info!(
+        log::debug!(
             "[ChartPanelApp] user state loaded: {} presets, {} prim-templates, {} ind-templates",
             presets.len(),
             template_manager.primitive_templates.len(),

@@ -133,7 +133,7 @@ impl ChartApp {
             }
             let eid_str = resolved_exchange.as_str();
             if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
-                log::info!("[ChartApp] Exchange {} is disabled, skipping connector call (sidebar click)", eid_str);
+                log::debug!("[ChartApp] Exchange {} is disabled, skipping connector call (sidebar click)", eid_str);
             } else {
                 let item_at = crate::account_type_from_label(&item_account_type);
                 self.core.ensure_connector(resolved_exchange);
@@ -216,7 +216,7 @@ impl ChartApp {
         }
         self.core.user_mut().profile_mut().ui.welcome_wizard_seen = true;
         self.profile_dirty = true;
-        log::info!("[ChartApp] welcome wizard marked seen for this profile");
+        log::debug!("[ChartApp] welcome wizard marked seen for this profile");
     }
 
     /// Close whichever backdrop-dimming modal is currently open.
@@ -331,7 +331,7 @@ impl ChartApp {
         uss.nick_edit_mode = true;
         uss.nick_edit_focused = true;
         uss.nick_status = mlc_app_layout::ui::modal_settings::NickStatus::Idle;
-        log::info!("[ChartApp] open_account_nick_editor: opened Account tab, prefilled '{}'", current);
+        log::debug!("[ChartApp] open_account_nick_editor: opened Account tab, prefilled '{}'", current);
     }
 
     /// Dispatch a click that landed on a registered widget.
@@ -498,7 +498,7 @@ impl ChartApp {
         // === Right sidebar widgets ===
         if widget_id == "right_sidebar_close" {
             if let Some((_closing, _width)) = self.sidebar_state.close_right() {
-                log::info!("[ChartApp] Sidebar closed via close button");
+                log::debug!("[ChartApp] Sidebar closed via close button");
                 // Sidebar visibility is persisted in UserProfile; mirror the
                 // Toggle* handlers in chart_out_events.rs so the next launch
                 // restores the user's "closed" state.
@@ -519,7 +519,7 @@ impl ChartApp {
                 self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&wl_id);
                 self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::WATCHLIST_SEARCH);
             }
-            log::info!("[Sidebar] Watchlist expand button clicked — opening watchlist modal");
+            log::debug!("[Sidebar] Watchlist expand button clicked — opening watchlist modal");
             return;
         }
 
@@ -527,7 +527,7 @@ impl ChartApp {
             // Toggle the column-config dropdown panel inside the sidebar.
             self.sidebar_state.watchlist_config_dropdown_open =
                 !self.sidebar_state.watchlist_config_dropdown_open;
-            log::info!("[Sidebar] Watchlist column-config dropdown toggled: {}",
+            log::debug!("[Sidebar] Watchlist column-config dropdown toggled: {}",
                 self.sidebar_state.watchlist_config_dropdown_open);
             return;
         }
@@ -537,7 +537,7 @@ impl ChartApp {
             self.sidebar_state.watchlist_sort_mode =
                 (self.sidebar_state.watchlist_sort_mode + 1) % 3;
             let mode = self.sidebar_state.watchlist_sort_mode;
-            log::info!("[Sidebar] watchlist_sort_mode -> {}", mode);
+            log::debug!("[Sidebar] watchlist_sort_mode -> {}", mode);
             let active_list_id = self.watchlist_ui.active_list_id;
             let mut wl = self.core.watchlists_mut();
             if let Some(list) = wl.find_mut(active_list_id) {
@@ -548,7 +548,7 @@ impl ChartApp {
                         if let Some(snap) = list_ui.order_snapshot.take() {
                             list.ungrouped = snap;
                         }
-                        log::info!("[Sidebar] Watchlist sort reset to original order");
+                        log::debug!("[Sidebar] Watchlist sort reset to original order");
                     }
                     1 | 2 => {
                         // Save snapshot if not already saved (first sort from unsorted state).
@@ -578,7 +578,7 @@ impl ChartApp {
                         });
                         list.ungrouped = symbols;
                         let label = if mode == 1 { "red first" } else { "gray first" };
-                        log::info!("[Sidebar] Watchlist sorted: flagged first ({})", label);
+                        log::debug!("[Sidebar] Watchlist sorted: flagged first ({})", label);
                     }
                     _ => {}
                 }
@@ -598,7 +598,7 @@ impl ChartApp {
             // Strip the "show_" prefix to match the action enum keys used by
             // about_to_wait() in main.rs (e.g. "show_volume" → "volume").
             let column_key = field.strip_prefix("show_").unwrap_or(field);
-            log::info!("[Sidebar] watchlist column toggled: {}", field);
+            log::debug!("[Sidebar] watchlist column toggled: {}", field);
             self.watchlist_actions.push(crate::WatchlistAction::ToggleColumnVisibility { column: column_key.to_string() });
             if column_key != "align_columns" {
                 self.watchlist_actions.push(crate::WatchlistAction::ResetSeparatorOffsets);
@@ -670,7 +670,7 @@ impl ChartApp {
                                 });
                                 self.watchlists_dirty = true;
                                 self.persist_watchlists();
-                                log::info!("[Sidebar] Color flag set: {} = {:?}", address.routing_key(), color);
+                                log::debug!("[Sidebar] Color flag set: {} = {:?}", address.routing_key(), color);
                             }
                         }
                         self.sidebar_state.watchlist_color_picker_open = None;
@@ -702,7 +702,7 @@ impl ChartApp {
                     self.watchlist_actions.push(crate::WatchlistAction::ClearOrderSnapshot);
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
-                    log::info!("[Sidebar] Watchlist delete: {}:{}:{} ({})", symbol, exchange, account_type, idx);
+                    log::debug!("[Sidebar] Watchlist delete: {}:{}:{} ({})", symbol, exchange, account_type, idx);
                 }
             }
             return;
@@ -715,7 +715,7 @@ impl ChartApp {
                     let symbol = item.symbol.clone();
                     let item_exchange = item.exchange.clone();
                     let item_account_type = item.account_type.clone();
-                    log::info!("[Sidebar] Watchlist click: {} @ {} ({})", symbol, item_exchange, idx);
+                    log::debug!("[Sidebar] Watchlist click: {} @ {} ({})", symbol, item_exchange, idx);
                     self.apply_instrument_from_sidebar_click(symbol, item_exchange, item_account_type);
                 }
             }
@@ -728,7 +728,7 @@ impl ChartApp {
         if let Some(rest) = widget_id.strip_prefix("screener_row:") {
             let parts: Vec<&str> = rest.splitn(3, ':').collect();
             if let [symbol, item_exchange, item_account_type] = parts[..] {
-                log::info!("[Sidebar] Screener click: {} @ {}", symbol, item_exchange);
+                log::debug!("[Sidebar] Screener click: {} @ {}", symbol, item_exchange);
                 self.apply_instrument_from_sidebar_click(
                     symbol.to_string(), item_exchange.to_string(), item_account_type.to_string(),
                 );
@@ -787,7 +787,7 @@ impl ChartApp {
                 .iter()
                 .map(|item| item.address.clone())
                 .collect();
-            log::info!("[Screener] Scan requested for {} symbols", addresses.len());
+            log::debug!("[Screener] Scan requested for {} symbols", addresses.len());
             for address in addresses {
                 let resolved_exchange = self.core.exchange_symbols()
                     .find_by_label(&address.exchange)
@@ -804,7 +804,7 @@ impl ChartApp {
             if let Some(exchange_id) = widget_id.strip_prefix("connector_row:") {
                 let expanded = self.sidebar_state.connector_expanded.entry(exchange_id.to_string()).or_insert(false);
                 *expanded = !*expanded;
-                log::info!("[Sidebar] Connector row toggled: {} -> expanded={}", exchange_id, *expanded);
+                log::debug!("[Sidebar] Connector row toggled: {} -> expanded={}", exchange_id, *expanded);
             }
             return;
         }
@@ -821,13 +821,13 @@ impl ChartApp {
                 if let Some(eid) = digdigdig3::ExchangeId::from_str(exchange_id_str) {
                     if now_enabled {
                         self.core.bridge_handle().enable_connector(eid);
-                        log::info!("[Sidebar] Connector enabled: {}", exchange_id_str);
+                        log::debug!("[Sidebar] Connector enabled: {}", exchange_id_str);
                     } else {
                         self.core.bridge_handle().disable_connector(eid);
-                        log::info!("[Sidebar] Connector disabled: {}", exchange_id_str);
+                        log::debug!("[Sidebar] Connector disabled: {}", exchange_id_str);
                     }
                 } else {
-                    log::info!("[Sidebar] Connector toggle: {} -> enabled={}", exchange_id_str, now_enabled);
+                    log::debug!("[Sidebar] Connector toggle: {} -> enabled={}", exchange_id_str, now_enabled);
                 }
                 self.persist_profile();
             }
@@ -840,7 +840,7 @@ impl ChartApp {
                 let visible = self.sidebar_state.connector_metrics_visible
                     .entry(exchange_id.to_string()).or_insert(false);
                 *visible = !*visible;
-                log::info!("[Sidebar] Connector metrics toggled: {} -> visible={}", exchange_id, *visible);
+                log::debug!("[Sidebar] Connector metrics toggled: {} -> visible={}", exchange_id, *visible);
             }
             return;
         }
@@ -852,7 +852,7 @@ impl ChartApp {
                     .entry(group_label.to_string())
                     .or_insert(false);
                 *collapsed = !*collapsed;
-                log::info!("[Sidebar] Connector group toggled: {} -> collapsed={}", group_label, *collapsed);
+                log::debug!("[Sidebar] Connector group toggled: {} -> collapsed={}", group_label, *collapsed);
             }
             return;
         }
@@ -870,7 +870,7 @@ impl ChartApp {
                 };
                 if let Some(section) = section {
                     self.sidebar_state.toggle_monitoring_section(section);
-                    log::info!(
+                    log::debug!(
                         "[Sidebar] Monitoring section toggled: {} -> expanded={}",
                         section_key,
                         self.sidebar_state.monitoring_section_expanded(section)
@@ -887,7 +887,7 @@ impl ChartApp {
             let all = RenderBackend::all();
             let idx = all.iter().position(|b| b == current).unwrap_or(0);
             let next = all[(idx + 1) % all.len()];
-            log::info!("[ChartApp] perf: backend -> {}", next.label());
+            log::debug!("[ChartApp] perf: backend -> {}", next.label());
             self.perf_actions.push(crate::PerfAction::SetBackend(next.label().to_string()));
             return;
         }
@@ -902,7 +902,7 @@ impl ChartApp {
                 _ => 30,
             };
             self.perf_actions.push(crate::PerfAction::SetFpsLimit(next));
-            log::info!("[ChartApp] perf: FPS limit -> {}", if next == 0 { "unlimited".to_string() } else { format!("{}", next) });
+            log::debug!("[ChartApp] perf: FPS limit -> {}", if next == 0 { "unlimited".to_string() } else { format!("{}", next) });
             return;
         }
         if widget_id == "perf:msaa" {
@@ -914,7 +914,7 @@ impl ChartApp {
                 _ => 0,
             };
             self.perf_actions.push(crate::PerfAction::SetMsaa(next));
-            log::info!("[ChartApp] perf: MSAA -> {}", if next == 0 { "off".to_string() } else { format!("{}x", next) });
+            log::debug!("[ChartApp] perf: MSAA -> {}", if next == 0 { "off".to_string() } else { format!("{}x", next) });
             return;
         }
         if widget_id == "perf:recalc_mode" {
@@ -926,7 +926,7 @@ impl ChartApp {
                 _ => "PerFrame",
             };
             self.perf_actions.push(crate::PerfAction::SetRecalcMode(next.to_string()));
-            log::info!("[ChartApp] perf: recalc mode -> {}", next);
+            log::debug!("[ChartApp] perf: recalc mode -> {}", next);
             return;
         }
         if widget_id == "perf:log_toggle" {
@@ -1055,7 +1055,7 @@ impl ChartApp {
                     };
                     self.sidebar_state.focused_agent_leaf = Some(leaf_id);
                     self.sidebar_state.agent_docking.inner_mut().set_active_leaf(leaf_id);
-                    log::info!("[ChartApp] agent:spawn:{} mode={:?} — leaf {:?}", cli_str, mode, leaf_id);
+                    log::debug!("[ChartApp] agent:spawn:{} mode={:?} — leaf {:?}", cli_str, mode, leaf_id);
                 }
                 Err(e) => log::warn!("[ChartApp] agent:spawn:{} error: {}", cli_str, e),
             }
@@ -1154,7 +1154,7 @@ impl ChartApp {
                             self.sidebar_state.agent_leaves.insert(sibling_id, desc);
                             self.sidebar_state.focused_agent_leaf = Some(sibling_id);
                             self.sidebar_state.agent_docking.inner_mut().set_active_leaf(sibling_id);
-                            log::info!("[ChartApp] {} — original={:?} sibling={:?}", widget_id, original_id, sibling_id);
+                            log::debug!("[ChartApp] {} — original={:?} sibling={:?}", widget_id, original_id, sibling_id);
                         }
                         Err(e) => log::warn!("[ChartApp] {} create_instance error: {}", widget_id, e),
                     }
@@ -1504,7 +1504,7 @@ impl ChartApp {
                                 if let Some(rt) = self.core.native_rt() {
                                     match rt.block_on(self.agent.start_pty_instance(id, _config)) {
                                         Ok(()) => {
-                                            log::info!("[ChartApp] agent:leaf:{:?}:start PTY started", leaf_id);
+                                            log::debug!("[ChartApp] agent:leaf:{:?}:start PTY started", leaf_id);
                                             self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_PTY);
                                             self.agent_pty_hover_focused = true;
                                         }
@@ -1540,7 +1540,7 @@ impl ChartApp {
                         self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::AGENT_CHAT);
                     }
                     self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
-                    log::info!("[ChartApp] agent leaf chat input focused");
+                    log::debug!("[ChartApp] agent leaf chat input focused");
                 }
                 return;
             }
@@ -1556,7 +1556,7 @@ impl ChartApp {
                         let from_buffer = self.sidebar_state.agent_input_buffers
                             .get(&leaf_id).cloned().unwrap_or_default();
                         let text = if !from_field.is_empty() { from_field } else { from_buffer };
-                        log::info!("[gate4agent::chat] send button leaf={:?} len={}", leaf_id, text.len());
+                        log::debug!("[gate4agent::chat] send button leaf={:?} len={}", leaf_id, text.len());
                         if !text.is_empty() {
                             // Only read on native — no PTY runtime to send to on wasm.
                             let _id = desc.instance_id;
@@ -1566,7 +1566,7 @@ impl ChartApp {
                                     Ok(()) => {
                                         self.sidebar_state.agent_input_buffers.remove(&leaf_id);
                                         self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, "");
-                                        log::info!("[gate4agent::chat] send button OK");
+                                        log::debug!("[gate4agent::chat] send button OK");
                                     }
                                     Err(e) => log::warn!("[gate4agent::chat] send button error: {}", e),
                                 }
@@ -1861,7 +1861,7 @@ impl ChartApp {
                                             self.panels_store.remove(&item);
                                         }
                                         self.sidebar_state.focused_free_leaf = None;
-                                        log::info!(
+                                        log::debug!(
                                             "[ChartApp] slot:{}:close_pane — removed leaf {:?}",
                                             idx, leaf_id
                                         );
@@ -2034,7 +2034,7 @@ impl ChartApp {
                             if self.sidebar_state.focused_free_leaf == Some((idx, leaf_id)) {
                                 self.sidebar_state.focused_free_leaf = None;
                             }
-                            log::info!("[ChartApp] slot:{}:leaf:{}:close", idx, raw);
+                            log::debug!("[ChartApp] slot:{}:leaf:{}:close", idx, raw);
                             self.sidebar_data_dirty = true;
                             self.autosave_snapshot();
                         }
@@ -2084,7 +2084,7 @@ impl ChartApp {
                                     .tree_mut()
                                     .add_leaf_near(new_item, src_leaf);
                                 self.sidebar_state.focused_free_leaf = Some((idx, new_id));
-                                log::info!("[ChartApp] slot:{}:leaf:{}:{} → new leaf {:?}",
+                                log::debug!("[ChartApp] slot:{}:leaf:{}:{} → new leaf {:?}",
                                     idx, raw,
                                     if is_split_h.is_some() { "split_h" } else { "split_v" },
                                     new_id);
@@ -2181,7 +2181,7 @@ impl ChartApp {
                                         _             => 0.0,
                                     };
                                     state.min_volume_filter = next;
-                                    log::info!("[ChartApp] slot:{}:leaf:{}:vol_filter → {}", idx, raw, next);
+                                    log::debug!("[ChartApp] slot:{}:leaf:{}:vol_filter → {}", idx, raw, next);
                                     self.sidebar_data_dirty = true;
                                 }
                             }
@@ -2390,7 +2390,7 @@ impl ChartApp {
                                             Panel::TradingContainer(id) => { if let Some(s) = self.panels_store.trading_container.get_mut(id) { s.source = src; } }
                                             _ => {}
                                         }
-                                        log::info!("[ChartApp] slot:{}:leaf:{}:source_cycle", idx, raw);
+                                        log::debug!("[ChartApp] slot:{}:leaf:{}:source_cycle", idx, raw);
                                         self.sidebar_data_dirty = true;
                                         self.autosave_snapshot();
                                     }
@@ -2411,7 +2411,7 @@ impl ChartApp {
                                 if let Some(mlc_core::state::Panel::Dom(pid)) = item_opt {
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                         state.levels_displayed = (state.levels_displayed + 5).min(100);
-                                        log::info!("[ChartApp] slot:{}:leaf:{}:dom_zoom_in → {}", idx, raw, state.levels_displayed);
+                                        log::debug!("[ChartApp] slot:{}:leaf:{}:dom_zoom_in → {}", idx, raw, state.levels_displayed);
                                         self.sidebar_data_dirty = true;
                                     }
                                 }
@@ -2431,7 +2431,7 @@ impl ChartApp {
                                 if let Some(mlc_core::state::Panel::Dom(pid)) = item_opt {
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                         state.levels_displayed = state.levels_displayed.saturating_sub(5).max(5);
-                                        log::info!("[ChartApp] slot:{}:leaf:{}:dom_zoom_out → {}", idx, raw, state.levels_displayed);
+                                        log::debug!("[ChartApp] slot:{}:leaf:{}:dom_zoom_out → {}", idx, raw, state.levels_displayed);
                                         self.sidebar_data_dirty = true;
                                     }
                                 }
@@ -2451,7 +2451,7 @@ impl ChartApp {
                                 if let Some(mlc_core::state::Panel::Dom(pid)) = item_opt {
                                     if let Some(state) = self.panels_store.dom.get_mut(&pid) {
                                         state.center_price = state.market_price;
-                                        log::info!("[ChartApp] slot:{}:leaf:{}:dom_center → {:.2}", idx, raw, state.center_price);
+                                        log::debug!("[ChartApp] slot:{}:leaf:{}:dom_center → {:.2}", idx, raw, state.center_price);
                                         self.sidebar_data_dirty = true;
                                     }
                                 }
@@ -2780,7 +2780,7 @@ impl ChartApp {
                     self.core.alerts_mut().remove(bid, id);
                     self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot });
                 }
-                log::info!("[Sidebar] Alert deleted: {}", id);
+                log::debug!("[Sidebar] Alert deleted: {}", id);
                 self.sidebar_data_dirty = true;
                 self.autosave_snapshot();
             }
@@ -2802,7 +2802,7 @@ impl ChartApp {
             self.panel_app.alert_settings_state.pin_initial_position(
                 self.content_rect.width, self.content_rect.height,
             );
-            log::info!("[Sidebar] Alert settings modal opened (new, price={:.2})", price);
+            log::debug!("[Sidebar] Alert settings modal opened (new, price={:.2})", price);
             return;
         }
         // Pattern: "alert_{id}" (row click — navigate to alert's window, then open edit modal)
@@ -2816,7 +2816,7 @@ impl ChartApp {
                     let chart_id = mlc_core::ChartId(wid);
                     if let Some(leaf_id) = self.panel_app.panel_grid.leaf_for_container_id(chart_id) {
                         self.panel_app.panel_grid.set_active_leaf(leaf_id);
-                        log::info!("[Sidebar] Alert {}: navigated to window {} (leaf {:?})", alert_id, wid, leaf_id);
+                        log::debug!("[Sidebar] Alert {}: navigated to window {} (leaf {:?})", alert_id, wid, leaf_id);
                     }
                 }
                 // Open the edit modal.
@@ -2824,7 +2824,7 @@ impl ChartApp {
                 self.panel_app.alert_settings_state.pin_initial_position(
                     self.content_rect.width, self.content_rect.height,
                 );
-                log::info!("[Sidebar] Alert edit opened: id={}", alert_id);
+                log::debug!("[Sidebar] Alert edit opened: id={}", alert_id);
             }
             return;
         }
@@ -2833,7 +2833,7 @@ impl ChartApp {
         // Pattern: "events_mark_all_read" — header button.
         if widget_id == "events_mark_all_read" {
             self.mark_all_system_events_read();
-            log::info!("[Sidebar] System events: marked all read");
+            log::debug!("[Sidebar] System events: marked all read");
             return;
         }
         // Pattern: "events:row:{id}" (row click — mark read only, no
@@ -2841,7 +2841,7 @@ impl ChartApp {
         if let Some(id) = widget_id.strip_prefix("events:row:").and_then(|s| s.parse::<u64>().ok()) {
             self.system_events_mut().mark_read(id);
             self.persist_profile();
-            log::info!("[Sidebar] System event {} marked read", id);
+            log::debug!("[Sidebar] System event {} marked read", id);
             return;
         }
 
@@ -2889,7 +2889,7 @@ impl ChartApp {
                     }
                     self.delete_primitive_with_undo(bid, id);
                     self.sidebar_data_dirty = true;
-                    log::info!("[Sidebar] Drawing deleted (bid={:?}): {}", bid, id);
+                    log::debug!("[Sidebar] Drawing deleted (bid={:?}): {}", bid, id);
                     return;
                 }
 
@@ -2919,7 +2919,7 @@ impl ChartApp {
                     if deleted {
                         self.autosave_snapshot();
                         self.sidebar_data_dirty = true;
-                        log::info!("[Sidebar] Group indicator config deleted: {}", id);
+                        log::debug!("[Sidebar] Group indicator config deleted: {}", id);
                     }
                 }
             }
@@ -2932,7 +2932,7 @@ impl ChartApp {
                 if let Some(bid) = active_bid_settings {
                     if self.core.drawings().get_data(bid, id).is_some() {
                         self.panel_app.primitive_settings_state.open(id);
-                        log::info!("[Sidebar] Primitive settings opened: {}", id);
+                        log::debug!("[Sidebar] Primitive settings opened: {}", id);
                     }
                 }
             }
@@ -2942,7 +2942,7 @@ impl ChartApp {
         if widget_id.contains("_ind_settings_") || widget_id.starts_with("ind_settings_") {
             if let Some(id) = widget_id.rsplit('_').next().and_then(|s| s.parse::<u64>().ok()) {
                 self.panel_app.indicator_settings_state.open(id);
-                log::info!("[Sidebar] Indicator settings opened: {}", id);
+                log::debug!("[Sidebar] Indicator settings opened: {}", id);
             }
             return;
         }
@@ -2954,7 +2954,7 @@ impl ChartApp {
                     self.core.drawings_mut().toggle_visibility(bid, id);
                 }
                 self.sidebar_data_dirty = true;
-                log::info!("[Sidebar] Drawing visibility toggled: {}", id);
+                log::debug!("[Sidebar] Drawing visibility toggled: {}", id);
             }
             return;
         }
@@ -2964,7 +2964,7 @@ impl ChartApp {
                 self.core.indicators_mut().toggle_visibility(id);
                 self.sidebar_data_dirty = true;
                 self.autosave_snapshot();
-                log::info!("[Sidebar] Indicator visibility toggled: {}", id);
+                log::debug!("[Sidebar] Indicator visibility toggled: {}", id);
             }
             return;
         }
@@ -2976,7 +2976,7 @@ impl ChartApp {
                     self.core.drawings_mut().toggle_lock_primitive(bid, id);
                 }
                 self.sidebar_data_dirty = true;
-                log::info!("[Sidebar] Drawing lock toggled: {}", id);
+                log::debug!("[Sidebar] Drawing lock toggled: {}", id);
             }
             return;
         }
@@ -3018,7 +3018,7 @@ impl ChartApp {
                         symbol: symbol.clone(),
                         series: snapshot.without_bars(),
                     });
-                    log::info!("[Sidebar] Compare series removed: {} (idx={})", symbol, idx);
+                    log::debug!("[Sidebar] Compare series removed: {} (idx={})", symbol, idx);
                 }
             }
             return;
@@ -3051,7 +3051,7 @@ impl ChartApp {
                         visible: new_vis,
                         previous: prev_vis,
                     });
-                    log::info!("[Sidebar] Compare visibility toggled: {} idx={} -> visible={}", symbol, idx, new_vis);
+                    log::debug!("[Sidebar] Compare visibility toggled: {} idx={} -> visible={}", symbol, idx, new_vis);
                 }
             }
             return;
@@ -3088,7 +3088,7 @@ impl ChartApp {
                     for item in &mut self.sidebar_state.object_tree_items {
                         item.selected = item.id == id && item.category == mlc_core::ObjectCategory::Compare;
                     }
-                    log::info!("[Sidebar] Compare series selected: idx={}", id);
+                    log::debug!("[Sidebar] Compare series selected: idx={}", id);
                 }
                 return;
             }
@@ -3123,7 +3123,7 @@ impl ChartApp {
                 self.panel_app.alert_settings_state.pin_initial_position(
                     self.content_rect.width, self.content_rect.height,
                 );
-                log::info!("[Sidebar] Alert settings opened for drawing {}", id);
+                log::debug!("[Sidebar] Alert settings opened for drawing {}", id);
             }
             return;
         }
@@ -3152,7 +3152,7 @@ impl ChartApp {
                 self.panel_app.alert_settings_state.pin_initial_position(
                     self.content_rect.width, self.content_rect.height,
                 );
-                log::info!("[Sidebar] Alert settings opened for indicator {}", id);
+                log::debug!("[Sidebar] Alert settings opened for indicator {}", id);
             }
             return;
         }
@@ -3169,7 +3169,7 @@ impl ChartApp {
                     self.panel_app.alert_settings_state.pin_initial_position(
                         self.content_rect.width, self.content_rect.height,
                     );
-                    log::info!("[ChartApp] Bell click: opened edit modal for drawing alert id={}", alert.id);
+                    log::debug!("[ChartApp] Bell click: opened edit modal for drawing alert id={}", alert.id);
                 }
             }
             return;
@@ -3187,7 +3187,7 @@ impl ChartApp {
                     self.panel_app.alert_settings_state.pin_initial_position(
                         self.content_rect.width, self.content_rect.height,
                     );
-                    log::info!("[ChartApp] Bell click: opened edit modal for signal alert id={}", alert.id);
+                    log::debug!("[ChartApp] Bell click: opened edit modal for signal alert id={}", alert.id);
                 }
             }
             return;
@@ -3212,7 +3212,7 @@ impl ChartApp {
                     for item in &mut self.sidebar_state.object_tree_items {
                         item.selected = item.id == id;
                     }
-                    log::info!("[Sidebar] Object selected: {}", id);
+                    log::debug!("[Sidebar] Object selected: {}", id);
 
                     // Click-to-center: if a drawing row was clicked, the active
                     // leaf does NOT center itself directly — it raises a
@@ -3297,7 +3297,7 @@ impl ChartApp {
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         window.center_on_bar(bar_index as f64, signal_series.as_active_series());
                     }
-                    log::info!("[Sidebar] Signal clicked: center on bar {}", bar_index);
+                    log::debug!("[Sidebar] Signal clicked: center on bar {}", bar_index);
                 }
             }
             return;
@@ -3310,7 +3310,7 @@ impl ChartApp {
                 } else {
                     self.sidebar_state.collapsed_signal_groups.insert(id);
                 }
-                log::info!("[Sidebar] Signal group toggled: {}", id);
+                log::debug!("[Sidebar] Signal group toggled: {}", id);
             }
             return;
         }
@@ -3358,7 +3358,7 @@ impl ChartApp {
                 use mlc_core::state::drawing_session::DrawingSession;
                 let mut guard = self.core.drawings_mut();
                 let mut session = crate::input::drawing_session::DrawingSessionView::new(&mut guard, bid);
-                log::info!("[ChartToolbar] favorite tool selected: {}", fav_id);
+                log::debug!("[ChartToolbar] favorite tool selected: {}", fav_id);
                 self.panel_app.toolbar_state.active_tool_id = Some(fav_id.to_string());
                 session.set_tool(Some(fav_id));
                 drop(guard);
@@ -3687,7 +3687,7 @@ impl ChartApp {
                 } else {
                     return;
                 };
-                log::info!("[ChartApp] chevron click: toolbar={} forward={} max_scroll={}", toolbar_name, forward, max_scroll);
+                log::debug!("[ChartApp] chevron click: toolbar={} forward={} max_scroll={}", toolbar_name, forward, max_scroll);
                 self.panel_app.toolbar_state.handle_chevron_click(toolbar_name, forward, max_scroll);
                 return;
             }
@@ -3701,14 +3701,14 @@ impl ChartApp {
             // Expand button — toggle expand mode in the split grid.
             if item_id == "expand" {
                 self.panel_app.panel_grid.toggle_expand();
-                log::info!("[ChartApp] Expand button clicked, expanded={}", self.panel_app.panel_grid.is_expanded());
+                log::debug!("[ChartApp] Expand button clicked, expanded={}", self.panel_app.panel_grid.is_expanded());
                 return;
             }
 
             // chart_settings button opens/closes the chart settings modal directly.
             if item_id == "chart_settings" {
                 self.panel_app.chart_settings_state.toggle();
-                log::info!("[ChartApp] chart_settings modal toggled: {}", self.panel_app.chart_settings_state.is_open);
+                log::debug!("[ChartApp] chart_settings modal toggled: {}", self.panel_app.chart_settings_state.is_open);
                 return;
             }
 
@@ -3723,7 +3723,7 @@ impl ChartApp {
                 #[cfg(feature = "cloud")]
                 {
                     self.panel_app.community_state.toggle();
-                    log::info!("[ChartApp] community modal toggled: {}", self.panel_app.community_state.is_open);
+                    log::debug!("[ChartApp] community modal toggled: {}", self.panel_app.community_state.is_open);
                 }
                 return;
             }
@@ -3766,7 +3766,7 @@ impl ChartApp {
                     return;
                 }
                 if self.panel_app.toolbar_state.handle_share_click() {
-                    log::info!("[ChartApp] share_chart double-click — open dropdown");
+                    log::debug!("[ChartApp] share_chart double-click — open dropdown");
                     return;
                 }
                 self.process_chart_out_event(mlc_core::events::ChartOutEvent::ShareLiveChart);
@@ -4918,7 +4918,7 @@ impl ChartApp {
                 // the same action: leave.
                 "close" | "ok" => {
                     self.panel_app.close_tags_tabs();
-                    log::info!("[ChartApp] tags_tabs closed");
+                    log::debug!("[ChartApp] tags_tabs closed");
                 }
                 "modal_bg" | "header" => {
                     // Absorb click — prevent fall-through.
@@ -4955,7 +4955,7 @@ impl ChartApp {
                     if let Ok(gid_val) = id["tags:select_group:".len()..].parse::<u64>() {
                         self.panel_app.tags_tabs_state.selected_group_id = Some(BubbleId(gid_val));
                         self.panel_app.tags_tabs_state.set_tags_tab(TagsTabsTagsTab::Details);
-                        log::info!("[TagsTabs] Selected group {}", gid_val);
+                        log::debug!("[TagsTabs] Selected group {}", gid_val);
                     }
                 }
                 id if id.starts_with("tags:delete_group:") => {
@@ -4967,7 +4967,7 @@ impl ChartApp {
                             self.panel_app.tags_tabs_state.selected_group_id = None;
                             self.panel_app.tags_tabs_state.set_tags_tab(TagsTabsTagsTab::Groups);
                         }
-                        log::info!("[TagsTabs] Deleted group {}", gid_val);
+                        log::debug!("[TagsTabs] Deleted group {}", gid_val);
                     }
                 }
                 id if id.starts_with("tags:toggle_flag:") => {
@@ -4990,7 +4990,7 @@ impl ChartApp {
                                 }
                             }).is_some();
                             if toggled {
-                                log::info!("[TagsTabs] Toggled {} on group {}", flag_str, gid_val);
+                                log::debug!("[TagsTabs] Toggled {} on group {}", flag_str, gid_val);
                             }
                         }
                     }
@@ -5021,7 +5021,7 @@ impl ChartApp {
                                 self.panel_app.overlay_settings_state.target_leaf_id = None;
                                 self.panel_app.overlay_settings_state.selected_node_id = None;
                             }
-                            log::info!("[TagsTabs] Eliminated leaf {}", leaf_id_val);
+                            log::debug!("[TagsTabs] Eliminated leaf {}", leaf_id_val);
                             // Persist the removal (same omission as the
                             // overlay-settings eliminate handler).
                             self.autosave_snapshot();
@@ -5033,7 +5033,7 @@ impl ChartApp {
                         let leaf_id = mlc_core::LeafId(leaf_id_val);
                         let hidden = self.panel_app.panel_grid.docking_mut().tree_mut().hide_leaf(leaf_id);
                         if hidden {
-                            log::info!("[TagsTabs] Hidden leaf {}", leaf_id_val);
+                            log::debug!("[TagsTabs] Hidden leaf {}", leaf_id_val);
                         }
                     }
                 }
@@ -5042,7 +5042,7 @@ impl ChartApp {
                     if let Ok(leaf_id_val) = id[prefix.len()..].parse::<u64>() {
                         let leaf_id = mlc_core::LeafId(leaf_id_val);
                         self.panel_app.panel_grid.docking_mut().tree_mut().show_leaf(leaf_id);
-                        log::info!("[TagsTabs] Shown leaf {}", leaf_id_val);
+                        log::debug!("[TagsTabs] Shown leaf {}", leaf_id_val);
                     }
                 }
                 id if id.starts_with("expand:") => {
@@ -5050,14 +5050,14 @@ impl ChartApp {
                         let leaf_id = mlc_core::LeafId(leaf_id_val);
                         self.panel_app.panel_grid.set_active_leaf(leaf_id);
                         self.panel_app.panel_grid.toggle_expand();
-                        log::info!("[TagsTabs] Toggled expand for leaf {}", leaf_id_val);
+                        log::debug!("[TagsTabs] Toggled expand for leaf {}", leaf_id_val);
                     }
                 }
                 id if id.starts_with("untag:") => {
                     if let Ok(leaf_id_val) = id["untag:".len()..].parse::<u64>() {
                         let leaf_id = mlc_core::LeafId(leaf_id_val);
                         self.perform_desync(leaf_id);
-                        log::info!("[TagsTabs] Untagged leaf {}", leaf_id_val);
+                        log::debug!("[TagsTabs] Untagged leaf {}", leaf_id_val);
                     }
                 }
                 id if id.starts_with("split_h:") => {
@@ -5065,7 +5065,7 @@ impl ChartApp {
                         let leaf_id = mlc_core::LeafId(leaf_id_val);
                         self.panel_app.panel_grid.set_active_leaf(leaf_id);
                         self.do_split(mlc_core::SplitKind::SplitRight);
-                        log::info!("[TagsTabs] Split horizontal for leaf {}", leaf_id_val);
+                        log::debug!("[TagsTabs] Split horizontal for leaf {}", leaf_id_val);
                     }
                 }
                 id if id.starts_with("split_v:") => {
@@ -5073,7 +5073,7 @@ impl ChartApp {
                         let leaf_id = mlc_core::LeafId(leaf_id_val);
                         self.panel_app.panel_grid.set_active_leaf(leaf_id);
                         self.do_split(mlc_core::SplitKind::SplitBottom);
-                        log::info!("[TagsTabs] Split vertical for leaf {}", leaf_id_val);
+                        log::debug!("[TagsTabs] Split vertical for leaf {}", leaf_id_val);
                     }
                 }
                 id if id.starts_with("tag:") => {
@@ -5089,7 +5089,7 @@ impl ChartApp {
                             self.width as f64,
                             self.height as f64,
                         );
-                        log::info!("[TagsTabs] Opening tag color grid for leaf {}", leaf_id_val);
+                        log::debug!("[TagsTabs] Opening tag color grid for leaf {}", leaf_id_val);
                     }
                 }
                 _ => {
@@ -5116,7 +5116,7 @@ impl ChartApp {
                                 self.watchlist_actions.push(crate::WatchlistAction::CreateList { name: name.clone() });
                                 self.watchlists_dirty = true;
                                 self.persist_watchlists();
-                                log::info!("[WatchlistGroupName] created new list '{}' id={}", name, new_id);
+                                log::debug!("[WatchlistGroupName] created new list '{}' id={}", name, new_id);
                             }
                             WatchlistGroupNameMode::Rename(id) => {
                                 let found = {
@@ -5132,7 +5132,7 @@ impl ChartApp {
                                     self.watchlist_actions.push(crate::WatchlistAction::RenameList { id, new_name: name.clone() });
                                     self.watchlists_dirty = true;
                                     self.persist_watchlists();
-                                    log::info!("[WatchlistGroupName] renamed list id={} to '{}'", id, name);
+                                    log::debug!("[WatchlistGroupName] renamed list id={} to '{}'", id, name);
                                 }
                             }
                         }
@@ -5143,7 +5143,7 @@ impl ChartApp {
                 "close" => {
                     self.standalone_panels.wl_group_name_input.close();
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    log::info!("[WatchlistGroupName] aborted");
+                    log::debug!("[WatchlistGroupName] aborted");
                 }
                 "input" => {
                     // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
@@ -5289,13 +5289,13 @@ impl ChartApp {
                     self.panel_app.preset_name_input.close();
                     self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    log::info!("[ChartApp] preset name input committed via Save button");
+                    log::debug!("[ChartApp] preset name input committed via Save button");
                 }
                 "close" => {
                     self.panel_app.preset_name_input.close();
                     self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    log::info!("[ChartApp] preset name input closed via X");
+                    log::debug!("[ChartApp] preset name input closed via X");
                 }
                 "input" => {
                     // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
@@ -5326,12 +5326,12 @@ impl ChartApp {
                     }
                     self.panel_app.share_open_state.close();
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    log::info!("[ChartApp] share_open submitted");
+                    log::debug!("[ChartApp] share_open submitted");
                 }
                 "cancel" | "close" => {
                     self.panel_app.share_open_state.close();
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    log::info!("[ChartApp] share_open closed ({})", rest);
+                    log::debug!("[ChartApp] share_open closed ({})", rest);
                 }
                 "input" => {
                     // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
@@ -5369,10 +5369,10 @@ impl ChartApp {
             match self.shared_chart_meta(preset_id).map(|m| m.token.clone()) {
                 Some(token) => {
                     self.request_clone_share(&token);
-                    log::info!("[ChartApp] share:clone requested for preset '{}'", preset_id);
+                    log::debug!("[ChartApp] share:clone requested for preset '{}'", preset_id);
                 }
                 None => {
-                    log::info!("[ChartApp] share:clone: no shared_chart_meta for preset '{}'", preset_id);
+                    log::debug!("[ChartApp] share:clone: no shared_chart_meta for preset '{}'", preset_id);
                 }
             }
             return;
@@ -5383,7 +5383,7 @@ impl ChartApp {
             if action == "close" {
                 self.panel_app.chart_browser.close();
                 self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
-                log::info!("[ChartApp] chart browser closed via X");
+                log::debug!("[ChartApp] chart browser closed via X");
             } else if action == "modal_bg" {
                 // Absorb click — no-op.
             } else if action == "search_input" {
@@ -5406,19 +5406,19 @@ impl ChartApp {
                         self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&pni_id);
                         self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::PRESET_NAME_INPUT);
                     }
-                    log::info!("[ChartApp] chart browser: rename preset '{}'", preset_id);
+                    log::debug!("[ChartApp] chart browser: rename preset '{}'", preset_id);
                 }
             } else if let Some(preset_id) = action.strip_prefix("delete:") {
                 // Click delete icon — delete preset.
                 let preset_id = preset_id.to_string();
-                log::info!("[ChartApp] chart browser: delete preset '{}'", preset_id);
+                log::debug!("[ChartApp] chart browser: delete preset '{}'", preset_id);
                 self.process_chart_out_event(mlc_core::events::ChartOutEvent::DeletePreset { id: preset_id });
             } else if let Some(preset_id) = action.strip_prefix("item:") {
                 // Click on preset row — load preset and close browser.
                 // Read the flag BEFORE close() resets it.
                 let open_in_new_tab = self.panel_app.chart_browser.open_in_new_tab;
                 let preset_id = preset_id.to_string();
-                log::info!("[ChartApp] chart browser: {} preset '{}' (new_tab={})",
+                log::debug!("[ChartApp] chart browser: {} preset '{}' (new_tab={})",
                     if open_in_new_tab { "open tab" } else { "load" }, preset_id, open_in_new_tab);
                 self.panel_app.chart_browser.close();
                 self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
@@ -5453,7 +5453,7 @@ impl ChartApp {
                     let key = &rest["markup:family:".len()..];
                     match MarkupSettingsFamily::from_id(key) {
                         Some(f) => self.panel_app.markup_engine_settings_state.family = f,
-                        None => log::info!("[ChartApp] markup_engine_settings unknown family: {}", key),
+                        None => log::debug!("[ChartApp] markup_engine_settings unknown family: {}", key),
                     }
                 }
                 "markup:propose" => {
@@ -5467,7 +5467,7 @@ impl ChartApp {
                         self.sync_drawing_back_to_group();
                         self.autosave_snapshot();
                     }
-                    log::info!("[ChartApp] markup_engine_settings: proposed {created} claims");
+                    log::debug!("[ChartApp] markup_engine_settings: proposed {created} claims");
                 }
                 "markup:judge_claims" => {
                     self.apply_markup_engine_edit(
@@ -5492,7 +5492,7 @@ impl ChartApp {
                 }
                 rest if rest.starts_with("markup:snap_bars:") => {
                     let Ok(n) = rest["markup:snap_bars:".len()..].parse::<usize>() else {
-                        log::info!("[ChartApp] markup_engine_settings bad snap_bars: {}", rest);
+                        log::debug!("[ChartApp] markup_engine_settings bad snap_bars: {}", rest);
                         return;
                     };
                     self.apply_markup_engine_edit(
@@ -5503,7 +5503,7 @@ impl ChartApp {
                 }
                 rest if rest.starts_with("markup:chain_window:") => {
                     let Ok(n) = rest["markup:chain_window:".len()..].parse::<usize>() else {
-                        log::info!("[ChartApp] markup_engine_settings bad chain_window: {}", rest);
+                        log::debug!("[ChartApp] markup_engine_settings bad chain_window: {}", rest);
                         return;
                     };
                     // Candles have no chain window at all — the row is not
@@ -5517,7 +5517,7 @@ impl ChartApp {
                 }
                 rest if rest.starts_with("markup:single_print_run:") => {
                     let Ok(n) = rest["markup:single_print_run:".len()..].parse::<usize>() else {
-                        log::info!("[ChartApp] markup_engine_settings bad single_print_run: {}", rest);
+                        log::debug!("[ChartApp] markup_engine_settings bad single_print_run: {}", rest);
                         return;
                     };
                     self.apply_markup_engine_edit(
@@ -5551,7 +5551,7 @@ impl ChartApp {
                         "parallel" => LabelSeparationStyle::Parallel,
                         "triangle" => LabelSeparationStyle::Triangle,
                         _ => {
-                            log::info!("[ChartApp] ewa_engine_settings unknown label_separation: {}", key);
+                            log::debug!("[ChartApp] ewa_engine_settings unknown label_separation: {}", key);
                             return;
                         }
                     };
@@ -5607,13 +5607,13 @@ impl ChartApp {
                 "close" => {
                     if !self.panel_app.user_settings_state.profile_manager_mandatory {
                         self.dismiss_profile_manager();
-                        log::info!("[ChartApp] profile_manager: close clicked, dismissing");
+                        log::debug!("[ChartApp] profile_manager: close clicked, dismissing");
                     }
                 }
                 rest if rest.starts_with("dimmer") => {
                     if !self.panel_app.user_settings_state.profile_manager_mandatory {
                         self.dismiss_profile_manager();
-                        log::info!("[ChartApp] profile_manager: dimmer clicked, dismissing");
+                        log::debug!("[ChartApp] profile_manager: dimmer clicked, dismissing");
                     }
                 }
                 _ => {}
@@ -5649,11 +5649,11 @@ impl ChartApp {
                 "modal_bg" | "header" => { /* absorb / drag handled elsewhere */ }
                 "close" => {
                     self.dismiss_welcome_wizard();
-                    log::info!("[ChartApp] welcome_wizard: close clicked, dismissing");
+                    log::debug!("[ChartApp] welcome_wizard: close clicked, dismissing");
                 }
                 rest if rest.starts_with("dimmer") => {
                     self.dismiss_welcome_wizard();
-                    log::info!("[ChartApp] welcome_wizard: dimmer clicked, dismissing");
+                    log::debug!("[ChartApp] welcome_wizard: dimmer clicked, dismissing");
                 }
                 _ => {}
             }
@@ -6459,7 +6459,7 @@ impl ChartApp {
                 // and this dialog had none until it moved onto it.
                 "close" | "ok" => {
                     self.panel_app.user_settings_state.close();
-                    log::info!("[ChartApp] user settings closed via X");
+                    log::debug!("[ChartApp] user settings closed via X");
                 }
                 "modal_bg" => {
                     // Absorb click — defocus any active inline text inputs.
@@ -6480,7 +6480,7 @@ impl ChartApp {
                         if tab == UserSettingsTab::Vault {
                             self.sync_credentials_from_core();
                         }
-                        log::info!("[ChartApp] user_settings tab switched to: {}", tab_id);
+                        log::debug!("[ChartApp] user_settings tab switched to: {}", tab_id);
                     }
                 }
                 // Recalc mode radio option selected — hit id: "recalc_mode:{Key}"
@@ -6491,7 +6491,7 @@ impl ChartApp {
                         "PerTick"  => "Per Tick",
                         "PerFrame" => "Per Frame",
                         "PerBar"   => "Per Bar",
-                        _ => { log::info!("[ChartApp] user_settings unknown recalc mode: {}", mode_str); return; }
+                        _ => { log::debug!("[ChartApp] user_settings unknown recalc mode: {}", mode_str); return; }
                     };
                     self.panel_app.user_settings_state.recalc_mode_label = label.to_string();
                     let new_mode = match mode_str {
@@ -6506,7 +6506,7 @@ impl ChartApp {
                     self.trade_count = 0;
                     self.recalc_log_timer = web_time::Instant::now();
                     self.core.indicators_mut().clear_pending();
-                    log::info!("[ChartApp] user_settings recalc_mode set to: {}", mode_str);
+                    log::debug!("[ChartApp] user_settings recalc_mode set to: {}", mode_str);
                 }
                 // Language radio option selected — hit id: "language:{code}"
                 rest if rest.starts_with("language:") => {
@@ -6516,12 +6516,12 @@ impl ChartApp {
                     crate::set_language(lang);
                     self.panel_app.user_settings_state.language = lang_code.to_string();
                     self.language_changed = Some(lang_code.to_string());
-                    log::info!("[ChartApp] language set to: {}", lang_code);
+                    log::debug!("[ChartApp] language set to: {}", lang_code);
                 }
                 "diagnostics_toggle" => {
                     self.diagnostics_enabled = !self.diagnostics_enabled;
                     self.panel_app.user_settings_state.diagnostics_enabled = self.diagnostics_enabled;
-                    log::info!("[ChartApp] diagnostics_enabled = {}", self.diagnostics_enabled);
+                    log::debug!("[ChartApp] diagnostics_enabled = {}", self.diagnostics_enabled);
                 }
                 // No widget currently registers this id (the General tab's
                 // old "Manage Exchange Keys & Webhook" row was retired along
@@ -6530,7 +6530,7 @@ impl ChartApp {
                 // any other surface that still names this action.
                 "open_credentials" => {
                     self.open_vault_tab();
-                    log::info!("[ChartApp] user_settings: switching to Vault tab");
+                    log::debug!("[ChartApp] user_settings: switching to Vault tab");
                 }
                 "trading_panel_topbar_takeover" => {
                     self.toggle_trading_panel_topbar_takeover();
@@ -6556,7 +6556,7 @@ impl ChartApp {
                         "BottomLeft" => mlc_core::ToastAnchor::BottomLeft,
                         "BottomRight" => mlc_core::ToastAnchor::BottomRight,
                         _ => {
-                            log::info!("[ChartApp] user_settings unknown toast anchor: {}", anchor_str);
+                            log::debug!("[ChartApp] user_settings unknown toast anchor: {}", anchor_str);
                             return;
                         }
                     };
@@ -6571,7 +6571,7 @@ impl ChartApp {
                         "NickOnly" => mlc_core::HeaderAccountDisplay::NickOnly,
                         "AvatarOnly" => mlc_core::HeaderAccountDisplay::AvatarOnly,
                         _ => {
-                            log::info!("[ChartApp] user_settings unknown header account display: {}", variant_str);
+                            log::debug!("[ChartApp] user_settings unknown header account display: {}", variant_str);
                             return;
                         }
                     };
@@ -6586,7 +6586,7 @@ impl ChartApp {
                         "RoundedSquare" => ControlPointShape::RoundedSquare,
                         "Square" => ControlPointShape::Square,
                         _ => {
-                            log::info!("[ChartApp] user_settings unknown control point shape: {}", shape_str);
+                            log::debug!("[ChartApp] user_settings unknown control point shape: {}", shape_str);
                             return;
                         }
                     };
@@ -6601,7 +6601,7 @@ impl ChartApp {
                         "Medium" => ControlPointSize::Medium,
                         "Large" => ControlPointSize::Large,
                         _ => {
-                            log::info!("[ChartApp] user_settings unknown control point size: {}", size_str);
+                            log::debug!("[ChartApp] user_settings unknown control point size: {}", size_str);
                             return;
                         }
                     };
@@ -6638,7 +6638,7 @@ impl ChartApp {
                             fs.selection_start = None;
                         }
                     }
-                    log::info!("[ChartApp] e2e_passphrase_input: focused");
+                    log::debug!("[ChartApp] e2e_passphrase_input: focused");
                 }
                 // ── Passphrase suggest / copy (owner ruling 2026-09-02) ────────
                 // Drawn only on the two pages where the user CHOOSES a
@@ -6665,14 +6665,14 @@ impl ChartApp {
                     // suggestion there themselves, and that round trip is
                     // what makes the confirm field a real check.
                     self.clipboard_text = Some(pass);
-                    log::info!("[ChartApp] profile_mgr: passphrase suggested and copied to clipboard");
+                    log::debug!("[ChartApp] profile_mgr: passphrase suggested and copied to clipboard");
                 }
                 "profile_mgr:passphrase_copy" => {
                     let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
                     let pass = self.input_coordinator.borrow().text_fields().text(&np_wid).to_string();
                     if !pass.is_empty() {
                         self.clipboard_text = Some(pass);
-                        log::info!("[ChartApp] profile_mgr: passphrase copied to clipboard");
+                        log::debug!("[ChartApp] profile_mgr: passphrase copied to clipboard");
                     }
                 }
                 "show_wizard" => {
@@ -6691,13 +6691,13 @@ impl ChartApp {
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                     self.panel_app.user_settings_state.new_passphrase_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
-                    log::info!("[ChartApp] show_wizard: opening welcome wizard");
+                    log::debug!("[ChartApp] show_wizard: opening welcome wizard");
                 }
                 "server_toggle" => {
                     self.panel_app.user_settings_state.server_enabled =
                         !self.panel_app.user_settings_state.server_enabled;
                     self.server_enabled_changed = Some(self.panel_app.user_settings_state.server_enabled);
-                    log::info!("[ChartApp] server_enabled = {}", self.panel_app.user_settings_state.server_enabled);
+                    log::debug!("[ChartApp] server_enabled = {}", self.panel_app.user_settings_state.server_enabled);
                 }
                 // ── Agent API key manager (Server tab, agent-api-auth-and-
                 // secret-store plan, piece 4) ──────────────────────────────
@@ -6715,7 +6715,7 @@ impl ChartApp {
                 rest if rest.starts_with("key_delete:") => {
                     let fingerprint_hex = rest["key_delete:".len()..].to_string();
                     self.key_delete_request = Some(fingerprint_hex.clone());
-                    log::info!("[ChartApp] user_settings: key_delete requested, fingerprint={}", fingerprint_hex);
+                    log::debug!("[ChartApp] user_settings: key_delete requested, fingerprint={}", fingerprint_hex);
                 }
                 "key_reveal_toggle" => {
                     self.panel_app.user_settings_state.key_reveal_shown =
@@ -6733,7 +6733,7 @@ impl ChartApp {
                                 .duration_since(web_time::UNIX_EPOCH)
                                 .map(|d| d.as_millis() as u64)
                                 .unwrap_or(0);
-                        log::info!("[ChartApp] user_settings: minted key copied to clipboard");
+                        log::debug!("[ChartApp] user_settings: minted key copied to clipboard");
                     }
                 }
                 "key_reveal_dismiss" => {
@@ -6755,12 +6755,12 @@ impl ChartApp {
                     if current_page > 0 {
                         self.panel_app.user_settings_state.wizard_page = current_page - 1;
                     }
-                    log::info!("[ChartApp] wizard: back to page {}", current_page.saturating_sub(1));
+                    log::debug!("[ChartApp] wizard: back to page {}", current_page.saturating_sub(1));
                 }
                 "wizard_open_browser" => {
                     // Start device auth link flow (same as sign_in button)
                     self.pending_updater_cmd = Some("start_device_auth".to_string());
-                    log::info!("[ChartApp] wizard: starting device auth link flow");
+                    log::debug!("[ChartApp] wizard: starting device auth link flow");
                 }
                 // NOTE: this guard shadows every `wizard_lang_*` id, including
                 // the page's own `wizard_lang_next` button — match arms are
@@ -6785,7 +6785,7 @@ impl ChartApp {
                     // records the wizard as seen on the profile. Finishing
                     // and closing must leave identical state behind.
                     self.dismiss_welcome_wizard();
-                    log::info!("[ChartApp] wizard: setup complete");
+                    log::debug!("[ChartApp] wizard: setup complete");
                 }
                 id if id.starts_with("wizard_lang_") => {
                     let code = &id["wizard_lang_".len()..];
@@ -6793,38 +6793,38 @@ impl ChartApp {
                         crate::set_language(lang);
                         self.panel_app.user_settings_state.language = code.to_string();
                         self.language_changed = Some(code.to_string());
-                        log::info!("[ChartApp] wizard: language set to {}", code);
+                        log::debug!("[ChartApp] wizard: language set to {}", code);
                     }
                 }
                 "wizard_theme_dark" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "dark".to_string();
                     self.panel_app.theme_manager.set_preset("dark");
                     self.theme_changed = Some("dark".to_string());
-                    log::info!("[ChartApp] wizard: theme selected → dark");
+                    log::debug!("[ChartApp] wizard: theme selected → dark");
                 }
                 "wizard_theme_light" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "light".to_string();
                     self.panel_app.theme_manager.set_preset("light");
                     self.theme_changed = Some("light".to_string());
-                    log::info!("[ChartApp] wizard: theme selected → light");
+                    log::debug!("[ChartApp] wizard: theme selected → light");
                 }
                 "wizard_theme_high_contrast" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "high_contrast".to_string();
                     self.panel_app.theme_manager.set_preset("high_contrast");
                     self.theme_changed = Some("high_contrast".to_string());
-                    log::info!("[ChartApp] wizard: theme selected → high_contrast");
+                    log::debug!("[ChartApp] wizard: theme selected → high_contrast");
                 }
                 "wizard_theme_high_contrast_mono" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "high_contrast_mono".to_string();
                     self.panel_app.theme_manager.set_preset("high_contrast_mono");
                     self.theme_changed = Some("high_contrast_mono".to_string());
-                    log::info!("[ChartApp] wizard: theme selected → high_contrast_mono");
+                    log::debug!("[ChartApp] wizard: theme selected → high_contrast_mono");
                 }
                 "wizard_theme_mascot" => {
                     self.panel_app.user_settings_state.wizard_selected_theme = "mascot".to_string();
                     self.panel_app.theme_manager.set_preset("mascot");
                     self.theme_changed = Some("mascot".to_string());
-                    log::info!("[ChartApp] wizard: theme selected → mascot");
+                    log::debug!("[ChartApp] wizard: theme selected → mascot");
                 }
                 // `surf` is the one skin preset that stays in
                 // `RuntimeTheme::PRESETS_SHORTLIST` (owner: keep it visible
@@ -6834,12 +6834,12 @@ impl ChartApp {
                     self.panel_app.user_settings_state.wizard_selected_theme = "surf".to_string();
                     self.panel_app.theme_manager.set_preset("surf");
                     self.theme_changed = Some("surf".to_string());
-                    log::info!("[ChartApp] wizard: theme selected → surf");
+                    log::debug!("[ChartApp] wizard: theme selected → surf");
                 }
                 "wizard_theme_next" => {
                     // Page 0 (Theme): go to page 1 (Language)
                     self.panel_app.user_settings_state.wizard_page = 1;
-                    log::info!("[ChartApp] wizard: theme done, going to page 1 (language)");
+                    log::debug!("[ChartApp] wizard: theme done, going to page 1 (language)");
                 }
                 "profile_mgr:run_wizard" => {
                     self.panel_app.user_settings_state.show_welcome_wizard = true;
@@ -6858,7 +6858,7 @@ impl ChartApp {
                     self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                     self.panel_app.user_settings_state.new_passphrase_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
-                    log::info!("[ChartApp] profile_mgr: launching setup wizard");
+                    log::debug!("[ChartApp] profile_mgr: launching setup wizard");
                 }
                 // ── Vault unlock handler (returning encrypted users) ──────────
                 "vault_unlock_btn" => {
@@ -6873,7 +6873,7 @@ impl ChartApp {
                         // Clear any previous error while the request is in flight.
                         self.panel_app.user_settings_state.vault_unlock_error = None;
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
-                        log::info!("[ChartApp] vault_unlock: passphrase submitted, awaiting validation");
+                        log::debug!("[ChartApp] vault_unlock: passphrase submitted, awaiting validation");
                     }
                 }
                 // ── Profile Manager handlers ───────────────────────────────────
@@ -6891,17 +6891,17 @@ impl ChartApp {
                         // Standalone modal (native boot prompt) — unchanged.
                         // Only block Back on ShowRecoveryKey — user MUST acknowledge recovery key
                         if matches!(self.panel_app.user_settings_state.profile_manager_page, ProfileManagerPage::ShowRecoveryKey) {
-                            log::info!("[ChartApp] profile_mgr: back blocked — must acknowledge recovery key");
+                            log::debug!("[ChartApp] profile_mgr: back blocked — must acknowledge recovery key");
                         } else if matches!(self.panel_app.user_settings_state.profile_manager_page, ProfileManagerPage::ProfileList) {
                             // Already on ProfileList — "Back" means dismiss if we have a live profile
                             if !self.panel_app.user_settings_state.runtime_profile_id.is_empty() {
                                 self.close_profile_manager();
-                                log::info!("[ChartApp] profile_mgr: back from profile list — dismissing (live profile exists)");
+                                log::debug!("[ChartApp] profile_mgr: back from profile list — dismissing (live profile exists)");
                             }
                         } else {
                             self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::ProfileList;
                             self.abandon_vault_page_entry();
-                            log::info!("[ChartApp] profile_mgr: back to profile list");
+                            log::debug!("[ChartApp] profile_mgr: back to profile list");
                         }
                     } else {
                         // Vault tab — only UnlockPassphrase/CreatePassphrase/
@@ -6912,7 +6912,7 @@ impl ChartApp {
                         // the add-key form.
                         self.panel_app.credentials_state.view = CredentialsView::List;
                         self.abandon_vault_page_entry();
-                        log::info!("[ChartApp] profile_mgr: back to vault list");
+                        log::debug!("[ChartApp] profile_mgr: back to vault list");
                     }
                 }
                 "profile_mgr:create_new" => {
@@ -6931,7 +6931,7 @@ impl ChartApp {
                             self.input_coordinator.borrow_mut().text_fields_mut().clear(&npn_wid);
                         }
                         self.panel_app.user_settings_state.new_profile_name_focused = false;
-                        log::info!("[ChartApp] profile_mgr: create new profile page");
+                        log::debug!("[ChartApp] profile_mgr: create new profile page");
                     }
                 }
                 "profile_mgr:unlock" => {
@@ -6964,10 +6964,10 @@ impl ChartApp {
                             || self.panel_app.user_settings_state.show_dm_vault_unlock_overlay
                         {
                             self.pending_updater_cmd = Some(format!("cred_unlock:{}", passphrase));
-                            log::info!("[ChartApp] profile_mgr: unlock passphrase submitted (credentials reseal)");
+                            log::debug!("[ChartApp] profile_mgr: unlock passphrase submitted (credentials reseal)");
                         } else {
                             self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
-                            log::info!("[ChartApp] profile_mgr: unlock passphrase submitted");
+                            log::debug!("[ChartApp] profile_mgr: unlock passphrase submitted");
                         }
                     }
                 }
@@ -6981,7 +6981,7 @@ impl ChartApp {
                         self.input_coordinator.borrow_mut().text_fields_mut().blur();
                         self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                         self.pending_updater_cmd = Some(format!("e2e_setup:{}", passphrase));
-                        log::info!("[ChartApp] profile_mgr: create passphrase submitted");
+                        log::debug!("[ChartApp] profile_mgr: create passphrase submitted");
                     }
                 }
                 "profile_mgr:create_confirm" => {
@@ -6989,7 +6989,7 @@ impl ChartApp {
                     let name = self.input_coordinator.borrow().text_fields().text(&npn_wid).trim().to_string();
                     if !name.is_empty() {
                         self.pending_updater_cmd = Some(format!("profile_create:{}", name));
-                        log::info!("[ChartApp] profile_mgr: creating profile '{}'", name);
+                        log::debug!("[ChartApp] profile_mgr: creating profile '{}'", name);
                     }
                 }
                 "profile_mgr:name_input" => {
@@ -7010,7 +7010,7 @@ impl ChartApp {
                             fs.selection_start = None;
                         }
                     }
-                    log::info!("[ChartApp] profile_mgr: name input focused");
+                    log::debug!("[ChartApp] profile_mgr: name input focused");
                 }
                 "profile_mgr:use_recovery_key" => {
                     use mlc_app_layout::ui::modal_settings::{CredentialsView, ProfileManagerPage};
@@ -7031,7 +7031,7 @@ impl ChartApp {
                     }
                     self.panel_app.user_settings_state.recovery_key_display_focused = false;
                     self.panel_app.user_settings_state.vault_unlock_error = None;
-                    log::info!("[ChartApp] profile_mgr: use recovery key page");
+                    log::debug!("[ChartApp] profile_mgr: use recovery key page");
                 }
                 "profile_mgr:recovery_key_input" => {
                     self.panel_app.user_settings_state.recovery_key_display_focused = true;
@@ -7053,7 +7053,7 @@ impl ChartApp {
                             fs.selection_start = None;
                         }
                     }
-                    log::info!("[ChartApp] profile_mgr: recovery key input focused");
+                    log::debug!("[ChartApp] profile_mgr: recovery key input focused");
                 }
                 "profile_mgr:new_passphrase_input" => {
                     self.panel_app.user_settings_state.new_passphrase_focused = true;
@@ -7075,7 +7075,7 @@ impl ChartApp {
                             fs.selection_start = None;
                         }
                     }
-                    log::info!("[ChartApp] profile_mgr: new_passphrase_input focused");
+                    log::debug!("[ChartApp] profile_mgr: new_passphrase_input focused");
                 }
                 "profile_mgr:confirm_passphrase_input" => {
                     self.panel_app.user_settings_state.confirm_passphrase_focused = true;
@@ -7097,7 +7097,7 @@ impl ChartApp {
                             fs.selection_start = None;
                         }
                     }
-                    log::info!("[ChartApp] profile_mgr: confirm_passphrase_input focused");
+                    log::debug!("[ChartApp] profile_mgr: confirm_passphrase_input focused");
                 }
                 "profile_mgr:create_confirm_passphrase_input" => {
                     // Confirm passphrase field on the CreatePassphrase page.
@@ -7119,7 +7119,7 @@ impl ChartApp {
                             fs.selection_start = None;
                         }
                     }
-                    log::info!("[ChartApp] profile_mgr: create_confirm_passphrase_input focused");
+                    log::debug!("[ChartApp] profile_mgr: create_confirm_passphrase_input focused");
                 }
                 "profile_mgr:save_new_passphrase" => {
                     let np_wid = uzor::WidgetId::from(crate::text_input::NEW_PASSPHRASE);
@@ -7132,7 +7132,7 @@ impl ChartApp {
                         self.panel_app.user_settings_state.new_passphrase_focused = false;
                         self.panel_app.user_settings_state.confirm_passphrase_focused = false;
                         self.pending_updater_cmd = Some(format!("set_new_passphrase:{}", passphrase_text));
-                        log::info!("[ChartApp] profile_mgr: save_new_passphrase submitted");
+                        log::debug!("[ChartApp] profile_mgr: save_new_passphrase submitted");
                     } else if passphrase_text != confirm_text {
                         self.panel_app.user_settings_state.set_passphrase_error =
                             "Passphrases do not match".to_string();
@@ -7147,7 +7147,7 @@ impl ChartApp {
                     if !recovery_key_text.is_empty() {
                         self.panel_app.user_settings_state.vault_unlock_error = None;
                         self.pending_updater_cmd = Some(format!("recovery_unlock:{}", recovery_key_text));
-                        log::info!("[ChartApp] profile_mgr: recovery unlock submitted");
+                        log::debug!("[ChartApp] profile_mgr: recovery unlock submitted");
                     }
                 }
                 "profile_mgr:recovery_key_display" => {
@@ -7181,13 +7181,13 @@ impl ChartApp {
                             fs.selection_start = None;
                         }
                     }
-                    log::info!("[ChartApp] profile_mgr: recovery_key_display clicked, cursor positioned");
+                    log::debug!("[ChartApp] profile_mgr: recovery_key_display clicked, cursor positioned");
                 }
                 "profile_mgr:recovery_key_copy" => {
                     // Copy the recovery key to the system clipboard.
                     if let Some(ref key) = self.panel_app.user_settings_state.recovery_key_display {
                         self.clipboard_text = Some(key.clone());
-                        log::info!("[ChartApp] profile_mgr: recovery key copied to clipboard");
+                        log::debug!("[ChartApp] profile_mgr: recovery key copied to clipboard");
                     }
                 }
                 // "I saved it — continue" (label reworded from "I have written
@@ -7210,7 +7210,7 @@ impl ChartApp {
                         self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     }
                     self.panel_app.user_settings_state.recovery_key_display_focused = false;
-                    log::info!("[ChartApp] profile_mgr: routing to recovery key confirm-by-typing");
+                    log::debug!("[ChartApp] profile_mgr: routing to recovery key confirm-by-typing");
                 }
                 // Entry field on `ConfirmRecoveryKey` — same shape as
                 // `"profile_mgr:recovery_key_input"` on `UseRecoveryKey` (shares
@@ -7235,7 +7235,7 @@ impl ChartApp {
                             fs.selection_start = None;
                         }
                     }
-                    log::info!("[ChartApp] profile_mgr: confirm_recovery_input focused");
+                    log::debug!("[ChartApp] profile_mgr: confirm_recovery_input focused");
                 }
                 // "Confirm" on `ConfirmRecoveryKey` — the actual proof step:
                 // compares the typed-back key against `recovery_key_display`
@@ -7250,7 +7250,7 @@ impl ChartApp {
                     if mlc_vault::crypto::recovery_keys_match(&typed, &shown) {
                         self.panel_app.user_settings_state.confirm_recovery_key_error = None;
                         self.pending_updater_cmd = Some("recovery_key_confirmed".to_string());
-                        log::info!("[ChartApp] profile_mgr: recovery key confirmed by typed match");
+                        log::debug!("[ChartApp] profile_mgr: recovery key confirmed by typed match");
                     } else {
                         self.panel_app.user_settings_state.confirm_recovery_key_error =
                             Some(mlc_core::i18n::ProfileKey::RecoveryKeyMismatch.get(mlc_core::i18n::current_language()).to_string());
@@ -7274,7 +7274,7 @@ impl ChartApp {
                         self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     }
                     self.panel_app.user_settings_state.recovery_key_display_focused = false;
-                    log::info!("[ChartApp] profile_mgr: confirm_recovery_key back to ShowRecoveryKey");
+                    log::debug!("[ChartApp] profile_mgr: confirm_recovery_key back to ShowRecoveryKey");
                 }
                 // Shared by every passphrase field on the current page — see
                 // `UserSettingsState::passphrase_revealed`'s own doc for why
@@ -7287,18 +7287,18 @@ impl ChartApp {
                 "wizard_e2e" => {
                     self.panel_app.user_settings_state.wizard_e2e_chosen = true;
                     self.panel_app.user_settings_state.wizard_page = 1;
-                    log::info!("[ChartApp] wizard: legacy wizard_e2e handler");
+                    log::debug!("[ChartApp] wizard: legacy wizard_e2e handler");
                 }
                 // ── Profile inline input focus ─────────────────────────────────
                 "profile_rename_input" => {
                     self.panel_app.user_settings_state.profile_rename_focused = true;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
-                    log::info!("[ChartApp] profile_rename_input: focused");
+                    log::debug!("[ChartApp] profile_rename_input: focused");
                 }
                 "new_profile_name_input" => {
                     self.panel_app.user_settings_state.new_profile_name_focused = true;
                     self.panel_app.user_settings_state.profile_rename_focused = false;
-                    log::info!("[ChartApp] new_profile_name_input: focused");
+                    log::debug!("[ChartApp] new_profile_name_input: focused");
                 }
                 // ── Profile handlers ───────────────────────────────────────────
                 "profile_rename_confirm" => {
@@ -7322,7 +7322,7 @@ impl ChartApp {
                             let tid = target_id.unwrap_or_else(|| self.panel_app.user_settings_state.profile_id.clone());
                             self.panel_app.user_settings_state.profile_rename_target_id = None;
                             self.pending_updater_cmd = Some(format!("profile_rename:{}:{}", tid, new_name));
-                            log::info!("[ChartApp] profile_rename_confirm: id={} new name = {}", tid, new_name);
+                            log::debug!("[ChartApp] profile_rename_confirm: id={} new name = {}", tid, new_name);
                         }
                     }
                 }
@@ -7335,7 +7335,7 @@ impl ChartApp {
                         self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     }
                     self.panel_app.user_settings_state.profile_rename_target_id = None;
-                    log::info!("[ChartApp] profile_rename_cancel");
+                    log::debug!("[ChartApp] profile_rename_cancel");
                 }
                 // ── Account nickname (ACCOUNT-level, `POST /api/account/nick`) ──
                 // Deliberately its own state and hit ids, never
@@ -7366,7 +7366,7 @@ impl ChartApp {
                             self.panel_app.user_settings_state.nick_status =
                                 mlc_app_layout::ui::modal_settings::NickStatus::Working;
                             self.panel_app.user_settings_state.nick_save_requested = true;
-                            log::info!("[ChartApp] account_nick_confirm: submitting '{}'", nick);
+                            log::debug!("[ChartApp] account_nick_confirm: submitting '{}'", nick);
                         }
                         Err(message) => {
                             log::warn!("[ChartApp] account_nick_confirm refused locally: {}", message);
@@ -7383,7 +7383,7 @@ impl ChartApp {
                     let wid = uzor::WidgetId::from(crate::text_input::ACCOUNT_NICK);
                     self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    log::info!("[ChartApp] account_nick_cancel");
+                    log::debug!("[ChartApp] account_nick_cancel");
                 }
                 // ── Account tab: Sign out / "Messages need an unlocked
                 // vault" → Vault (owner ruling 2026-09-09) ─────────────────
@@ -7396,11 +7396,11 @@ impl ChartApp {
                     {
                         self.panel_app.cloud_login_state.sign_out_requested = true;
                     }
-                    log::info!("[ChartApp] account_sign_out");
+                    log::debug!("[ChartApp] account_sign_out");
                 }
                 "account_open_vault" => {
                     self.open_vault_tab();
-                    log::info!("[ChartApp] account_open_vault: switched to Vault tab");
+                    log::debug!("[ChartApp] account_open_vault: switched to Vault tab");
                 }
                 "profile_new" => {
                     // "+ New Profile" is not drawn below the paid tier
@@ -7414,7 +7414,7 @@ impl ChartApp {
                         let npn_wid = uzor::WidgetId::from(crate::text_input::NEW_PROFILE_NAME);
                         self.input_coordinator.borrow_mut().text_fields_mut().clear(&npn_wid);
                         self.input_coordinator.borrow_mut().text_fields_mut().focus(npn_wid);
-                        log::info!("[ChartApp] profile_new: opening dialog");
+                        log::debug!("[ChartApp] profile_new: opening dialog");
                     }
                 }
                 "profile_new_confirm" => {
@@ -7429,7 +7429,7 @@ impl ChartApp {
                             self.panel_app.user_settings_state.new_profile_name_focused = false;
                             self.input_coordinator.borrow_mut().text_fields_mut().clear(&npn_wid);
                             self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                            log::info!("[ChartApp] profile_new_confirm: creating profile '{}'", name);
+                            log::debug!("[ChartApp] profile_new_confirm: creating profile '{}'", name);
                         }
                     }
                 }
@@ -7441,7 +7441,7 @@ impl ChartApp {
                         self.input_coordinator.borrow_mut().text_fields_mut().clear(&npn_wid);
                         self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     }
-                    log::info!("[ChartApp] profile_new_cancel");
+                    log::debug!("[ChartApp] profile_new_cancel");
                 }
                 rest if rest.starts_with("vault_picker_profile:") => {
                     use mlc_app_layout::ui::modal_settings::ProfileManagerPage;
@@ -7464,14 +7464,14 @@ impl ChartApp {
                         self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
                         self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
                         self.panel_app.user_settings_state.profile_manager_target_name = target_name;
-                        log::info!("[ChartApp] vault_picker: passphrase setup for unencrypted profile {}", profile_id);
+                        log::debug!("[ChartApp] vault_picker: passphrase setup for unencrypted profile {}", profile_id);
                     } else {
                         self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::UnlockPassphrase;
                         self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
                         self.panel_app.user_settings_state.profile_manager_target_name = target_name;
                         self.panel_app.user_settings_state.vault_unlock_error = None;
                         self.panel_app.user_settings_state.vault_unlock_attempts = 0;
-                        log::info!("[ChartApp] vault_picker: passphrase prompt for profile {}", profile_id);
+                        log::debug!("[ChartApp] vault_picker: passphrase prompt for profile {}", profile_id);
                     }
                     // Switch to profile_manager modal to show the passphrase page
                     self.panel_app.user_settings_state.show_profile_manager = true;
@@ -7518,7 +7518,7 @@ impl ChartApp {
                             self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
                             self.panel_app.user_settings_state.profile_manager_target_name = target_name;
                             self.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid_sel);
-                            log::info!("[ChartApp] profile_mgr: showing passphrase setup for unencrypted profile {}", profile_id);
+                            log::debug!("[ChartApp] profile_mgr: showing passphrase setup for unencrypted profile {}", profile_id);
                         } else if profile_id == self.panel_app.user_settings_state.runtime_profile_id {
                             if self.panel_app.user_settings_state.needs_vault_unlock {
                                 // Current profile, vault locked — show unlock passphrase page
@@ -7528,11 +7528,11 @@ impl ChartApp {
                                 self.panel_app.user_settings_state.vault_unlock_error = None;
                                 self.panel_app.user_settings_state.vault_unlock_attempts = 0;
                                 self.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid_sel);
-                                log::info!("[ChartApp] profile_mgr: showing unlock for current profile {}", profile_id);
+                                log::debug!("[ChartApp] profile_mgr: showing unlock for current profile {}", profile_id);
                             } else {
                                 // Already on this profile, vault OK — dismiss
                                 self.close_profile_manager();
-                                log::info!("[ChartApp] profile_mgr: selected current profile, dismissing");
+                                log::debug!("[ChartApp] profile_mgr: selected current profile, dismissing");
                             }
                         } else {
                             // Show passphrase prompt BEFORE switching — no hot-reload until validated
@@ -7542,7 +7542,7 @@ impl ChartApp {
                             self.panel_app.user_settings_state.vault_unlock_error = None;
                             self.panel_app.user_settings_state.vault_unlock_attempts = 0;
                             self.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid_sel);
-                            log::info!("[ChartApp] profile_mgr: showing passphrase prompt for profile {}", profile_id);
+                            log::debug!("[ChartApp] profile_mgr: showing passphrase prompt for profile {}", profile_id);
                         }
                     }
                 }
@@ -7575,7 +7575,7 @@ impl ChartApp {
                             fs.cursor = char_count;
                             fs.selection_start = None;
                         }
-                        log::info!("[ChartApp] profile_rename:{}: entering rename mode", id);
+                        log::debug!("[ChartApp] profile_rename:{}: entering rename mode", id);
                     }
                 }
                 rest if rest.starts_with("profile_avatar_toggle:") => {
@@ -7598,7 +7598,7 @@ impl ChartApp {
                         uss.show_avatar_picker = true;
                         uss.profile_avatar_target_id = Some(id.to_string());
                     }
-                    log::info!(
+                    log::debug!(
                         "[ChartApp] profile_avatar_toggle:{}: open = {}",
                         id,
                         uss.show_avatar_picker
@@ -7634,7 +7634,7 @@ impl ChartApp {
                             self.panel_app.user_settings_state.profile_manager_page = ProfileManagerPage::CreatePassphrase;
                             self.panel_app.user_settings_state.profile_manager_target_id = profile_id.to_string();
                             self.panel_app.user_settings_state.profile_manager_target_name = target_name;
-                            log::info!("[ChartApp] profile_switch: passphrase setup for unencrypted {}", profile_id);
+                            log::debug!("[ChartApp] profile_switch: passphrase setup for unencrypted {}", profile_id);
                         } else {
                             // Encrypted — show UnlockPassphrase inline
                             self.panel_app.user_settings_state.show_profile_manager = true;
@@ -7645,7 +7645,7 @@ impl ChartApp {
                             self.panel_app.user_settings_state.profile_manager_target_name = target_name;
                             self.panel_app.user_settings_state.vault_unlock_error = None;
                             self.panel_app.user_settings_state.vault_unlock_attempts = 0;
-                            log::info!("[ChartApp] profile_switch: passphrase prompt for {}", profile_id);
+                            log::debug!("[ChartApp] profile_switch: passphrase prompt for {}", profile_id);
                         }
                     }
                 }
@@ -7664,7 +7664,7 @@ impl ChartApp {
                     if is_active_target {
                         uss.profile_avatar = avatar.to_string();
                         self.pending_updater_cmd = Some(format!("profile_set_avatar:{}", avatar));
-                        log::info!("[ChartApp] profile_avatar:{}: updated active profile avatar", avatar);
+                        log::debug!("[ChartApp] profile_avatar:{}: updated active profile avatar", avatar);
                     }
                     uss.show_avatar_picker = false;
                     uss.profile_avatar_target_id = None;
@@ -7679,16 +7679,16 @@ impl ChartApp {
                     } else {
                         let id = &rest["profile_delete:".len()..];
                         self.pending_updater_cmd = Some(format!("profile_delete:{}", id));
-                        log::info!("[ChartApp] profile_delete: deleting profile id = {}", id);
+                        log::debug!("[ChartApp] profile_delete: deleting profile id = {}", id);
                     }
                 }
                 "profile_mgr:sign_in" => {
                     self.pending_updater_cmd = Some("start_device_auth".to_string());
-                    log::info!("[ChartApp] profile_mgr: sign_in via device auth link");
+                    log::debug!("[ChartApp] profile_mgr: sign_in via device auth link");
                 }
                 "profile_mgr:logout" => {
                     self.pending_updater_cmd = Some("logout".to_string());
-                    log::info!("[ChartApp] profile_mgr: logout requested");
+                    log::debug!("[ChartApp] profile_mgr: logout requested");
                 }
                 _ => {
                     log::warn!("[ChartApp] user_settings unhandled action: {}", action);
@@ -7719,7 +7719,7 @@ impl ChartApp {
                 if !enabled {
                     return;
                 }
-                log::info!("[ChartApp] Context menu action: {}", action);
+                log::debug!("[ChartApp] Context menu action: {}", action);
                 self.on_context_menu_action(action);
                 return;
             }
@@ -7853,7 +7853,7 @@ impl ChartApp {
 
         let Some(slot_kind) = SlotKind::from_index(idx) else { return };
         if !slot_kind.allowed_panel_kinds().contains(&kind_str) {
-            log::info!(
+            log::debug!(
                 "[ChartApp] spawn_panel_in_slot: kind '{}' not allowed in slot {} ({:?}) — ignored",
                 kind_str, idx, slot_kind
             );
@@ -8350,7 +8350,7 @@ impl ChartApp {
 
             // Move focus to the freshly spawned leaf.
             self.sidebar_state.focused_free_leaf = Some((idx, new_leaf));
-            log::info!("[ChartApp] slot:{}:spawn:{} — leaf {:?} layout={:?}", idx, kind_str, new_leaf, layout);
+            log::debug!("[ChartApp] slot:{}:spawn:{} — leaf {:?} layout={:?}", idx, kind_str, new_leaf, layout);
             self.sidebar_state.slot_spawn_dropdown = None;
             self.sidebar_data_dirty = true;
             self.autosave_snapshot();
@@ -9133,7 +9133,7 @@ impl ChartApp {
         };
         self.panel_app.user_settings_state.trading_panel_topbar_takeover = now_on;
         self.autosave_snapshot();
-        log::info!("[ChartApp] trading_panel_topbar_takeover = {}", now_on);
+        log::debug!("[ChartApp] trading_panel_topbar_takeover = {}", now_on);
     }
 
     /// Flip local-persist policy for left-toolbar last-picked tools.
@@ -9259,7 +9259,7 @@ impl ChartApp {
         mlc_core::drawing::primitives_v2::set_control_point_style(style);
         self.panel_app.user_settings_state.control_point_shape = shape;
         self.autosave_snapshot();
-        log::info!("[ChartApp] control_point_shape = {:?}", shape);
+        log::debug!("[ChartApp] control_point_shape = {:?}", shape);
     }
 
     /// Set `ProfileUiSettings::control_point_size` — same shape as
@@ -9277,7 +9277,7 @@ impl ChartApp {
         mlc_core::drawing::primitives_v2::set_control_point_style(style);
         self.panel_app.user_settings_state.control_point_size = size;
         self.autosave_snapshot();
-        log::info!("[ChartApp] control_point_size = {:?}", size);
+        log::debug!("[ChartApp] control_point_size = {:?}", size);
     }
 
     /// Apply one edit to `ProfileUiSettings::ewa_engine`, push it into the
@@ -9348,7 +9348,7 @@ impl ChartApp {
         // it (the render recomputes fresh and the cached verdict does not).
         self.core.drawings_mut().refresh_all_derived();
         self.autosave_snapshot();
-        log::info!("[ChartApp] markup engine config updated");
+        log::debug!("[ChartApp] markup engine config updated");
     }
 
     fn apply_ewa_engine_config_edit(&mut self, edit: impl FnOnce(&mut mlc_core::state::ewa_engine::EwaEngineConfig)) {
@@ -9366,7 +9366,7 @@ impl ChartApp {
         // keep reporting what the engine no longer judges.
         self.core.drawings_mut().refresh_all_derived();
         self.autosave_snapshot();
-        log::info!("[ChartApp] ewa_engine config updated");
+        log::debug!("[ChartApp] ewa_engine config updated");
     }
 
     /// Route a click inside the `symbol_selector` inline fast-search

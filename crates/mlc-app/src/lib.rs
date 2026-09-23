@@ -76,7 +76,7 @@ pub fn debug_log_enabled() -> bool {
 macro_rules! dlog {
     ($($arg:tt)*) => {
         if $crate::debug_log_enabled() {
-            log::info!($($arg)*);
+            log::debug!($($arg)*);
         }
     };
 }
@@ -94,7 +94,7 @@ macro_rules! sglog {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            log::info!($($arg)*);
+            log::debug!($($arg)*);
         }
     }};
 }
@@ -4147,14 +4147,14 @@ impl ChartApp {
         // silently returns None and the chart window is never seeded.
         if self.panel_app.panel_grid.docking().active_leaf().is_none() {
             if let Some(fallback) = self.panel_app.panel_grid.first_leaf_id() {
-                log::info!(
+                log::debug!(
                     "[seed_default_chart] docking().active_leaf() = None before seed; \
                      activating first leaf {:?}",
                     fallback
                 );
                 self.panel_app.panel_grid.set_active_leaf(fallback);
             } else {
-                log::info!(
+                log::debug!(
                     "[seed_default_chart] no leaves in panel_grid — \
                      cannot seed chart for {}/{}", exchange_name, symbol
                 );
@@ -4917,7 +4917,7 @@ impl ChartApp {
                 let nw_reqbars_us = _t_nw_reqbars.elapsed().as_micros();
 
                 let nw_cold_us = _t_nw_cold.elapsed().as_micros();
-                log::info!(
+                log::debug!(
                     "[ChartApp] new_window cold path: load={}us reqbars[{}wins]={}us total={}us",
                     nw_load_us, nw_reqbars_n, nw_reqbars_us, nw_cold_us,
                 );
@@ -5066,7 +5066,7 @@ impl ChartApp {
                     Some(app.core.user().profile().domain.bar_count as usize),
                     false,
                 );
-                log::info!(
+                log::debug!(
                     "[ChartApp] new_window fresh-state path total={}us",
                     _t_nw_fresh.elapsed().as_micros(),
                 );
@@ -11897,7 +11897,7 @@ impl ChartApp {
             self.core.request_kline(eid, &sym, &tf, at, None, Some(bar_count), false);
             warmed += 1;
         }
-        log::info!("[ChartApp] startup: warmed {} background tab series", warmed);
+        log::debug!("[ChartApp] startup: warmed {} background tab series", warmed);
     }
 
     /// Amortized variant of [`warm_background_tabs`] for the post-promote

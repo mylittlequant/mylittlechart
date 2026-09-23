@@ -36,7 +36,7 @@ impl ChartApp {
         let prim_id = match selected_id {
             Some(i) => i,
             None => {
-                log::info!("[ChartApp] inline action '{}' ignored — no primitive selected", action);
+                log::debug!("[ChartApp] inline action '{}' ignored — no primitive selected", action);
                 return;
             }
         };
@@ -55,7 +55,7 @@ impl ChartApp {
             // ── Settings ─────────────────────────────────────────────────────
             "inline:settings" => {
                 self.panel_app.primitive_settings_state.open(prim_id);
-                log::info!("[ChartApp] inline: opened primitive settings for #{}", prim_id);
+                log::debug!("[ChartApp] inline: opened primitive settings for #{}", prim_id);
             }
 
             // ── Stroke color ─────────────────────────────────────────────────
@@ -78,7 +78,7 @@ impl ChartApp {
                     "stroke_color", ax, ay, aw, ah, screen_w, screen_h,
                     current_color.as_deref(),
                 );
-                log::info!("[ChartApp] inline: opened stroke color picker for #{}", prim_id);
+                log::debug!("[ChartApp] inline: opened stroke color picker for #{}", prim_id);
             }
 
             // ── Text color ───────────────────────────────────────────────────
@@ -99,7 +99,7 @@ impl ChartApp {
                     "text_color", ax, ay, aw, ah, screen_w, screen_h,
                     current_color.as_deref(),
                 );
-                log::info!("[ChartApp] inline: opened text color picker for #{}", prim_id);
+                log::debug!("[ChartApp] inline: opened text color picker for #{}", prim_id);
             }
 
             // ── Delete ───────────────────────────────────────────────────────
@@ -113,7 +113,7 @@ impl ChartApp {
                 }
                 if let Some(bid) = active_bid_inline {
                     self.core.drawings_mut().delete(bid, prim_id);
-                    log::info!("[ChartApp] inline: deleted selected primitive");
+                    log::debug!("[ChartApp] inline: deleted selected primitive");
                 }
                 self.sync_drawing_back_to_group();
                 // Alerts attached to the deleted drawing go with it, and come
@@ -130,7 +130,7 @@ impl ChartApp {
             "inline:lock" => {
                 if let Some(bid) = active_bid_inline {
                     self.core.drawings_mut().toggle_lock_primitive(bid, prim_id);
-                    log::info!("[ChartApp] inline: toggled lock on selected primitive");
+                    log::debug!("[ChartApp] inline: toggled lock on selected primitive");
                 }
                 self.sync_drawing_back_to_group();
             }
@@ -153,7 +153,7 @@ impl ChartApp {
                         self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
                     self.sync_drawing_back_to_group();
-                    log::info!("[ChartApp] inline: cycled line style to {}", style_str);
+                    log::debug!("[ChartApp] inline: cycled line style to {}", style_str);
                 }
                 self.snapshot_primitive_settings_to_user_manager(prim_id);
             }
@@ -174,7 +174,7 @@ impl ChartApp {
                         data.width = (data.width + 1.0).clamp(1.0, 20.0);
                         self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
-                    log::info!("[ChartApp] inline: increased line width");
+                    log::debug!("[ChartApp] inline: increased line width");
                 }
                 self.sync_drawing_back_to_group();
                 self.snapshot_primitive_settings_to_user_manager(prim_id);
@@ -182,7 +182,7 @@ impl ChartApp {
 
             // ── Name label — absorb, no action ──────────────────────────────
             "inline:name" => {
-                log::info!("[ChartApp] inline: name label clicked (no-op)");
+                log::debug!("[ChartApp] inline: name label clicked (no-op)");
             }
 
             // ── Alert — open alert settings modal for selected primitive ────
@@ -212,7 +212,7 @@ impl ChartApp {
                         self.panel_app.alert_settings_state.pin_initial_position(
                             self.content_rect.width, self.content_rect.height,
                         );
-                        log::info!("[ChartApp] inline alert: opened modal for primitive {}", prim_id);
+                        log::debug!("[ChartApp] inline alert: opened modal for primitive {}", prim_id);
                     }
                 }
             }
@@ -227,7 +227,7 @@ impl ChartApp {
                 if !was_open {
                     self.panel_app.toolbar_state.open_inline_style_dropdown = true;
                 }
-                log::info!("[ChartApp] inline: style dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_style_dropdown);
+                log::debug!("[ChartApp] inline: style dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_style_dropdown);
             }
 
             // ── Width chevron — toggle width dropdown ────────────────────────
@@ -240,7 +240,7 @@ impl ChartApp {
                 if !was_open {
                     self.panel_app.toolbar_state.open_inline_width_dropdown = true;
                 }
-                log::info!("[ChartApp] inline: width dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_width_dropdown);
+                log::debug!("[ChartApp] inline: width dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_width_dropdown);
             }
 
             // ── Wave button — toggle wave-slot picker dropdown (E2) ──────────
@@ -263,7 +263,7 @@ impl ChartApp {
                 if !was_open {
                     self.panel_app.toolbar_state.open_inline_wave_dropdown = true;
                 }
-                log::info!("[ChartApp] inline: wave dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_wave_dropdown);
+                log::debug!("[ChartApp] inline: wave dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_wave_dropdown);
             }
 
             // ── Wave-succession button — toggle wave-succession picker
@@ -284,7 +284,7 @@ impl ChartApp {
                 if !was_open {
                     self.panel_app.toolbar_state.open_inline_wave_next_dropdown = true;
                 }
-                log::info!("[ChartApp] inline: wave-succession dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_wave_next_dropdown);
+                log::debug!("[ChartApp] inline: wave-succession dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_wave_next_dropdown);
             }
 
             // ── Background absorber — close inline dropdown ──────────────────
@@ -319,7 +319,7 @@ impl ChartApp {
                             self.core.drawings_mut().set_data(bid, prim_id, &data);
                         }
                         self.sync_drawing_back_to_group();
-                        log::info!("[ChartApp] inline: set line style to {}", style_str);
+                        log::debug!("[ChartApp] inline: set line style to {}", style_str);
                     }
                 }
                 self.snapshot_primitive_settings_to_user_manager(prim_id);
@@ -339,7 +339,7 @@ impl ChartApp {
                             self.core.drawings_mut().set_data(bid, prim_id, &data);
                         }
                         self.sync_drawing_back_to_group();
-                        log::info!("[ChartApp] inline: set line width to {}", new_width);
+                        log::debug!("[ChartApp] inline: set line width to {}", new_width);
                     }
                 }
                 self.snapshot_primitive_settings_to_user_manager(prim_id);
@@ -369,7 +369,7 @@ impl ChartApp {
                         self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
                     }
                     [] => {
-                        log::info!("[ChartApp] inline: no legal kinds for slot {} of #{}", slot_id, prim_id);
+                        log::debug!("[ChartApp] inline: no legal kinds for slot {} of #{}", slot_id, prim_id);
                         self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
                         self.panel_app.toolbar_state.pending_wave_slot = None;
                         self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
@@ -393,7 +393,7 @@ impl ChartApp {
                         self.create_wave_child_and_record(active_bid_inline, prim_id, slot_id, kind_id);
                     }
                     None => {
-                        log::info!("[ChartApp] inline: malformed wave_kind action '{}'", action);
+                        log::debug!("[ChartApp] inline: malformed wave_kind action '{}'", action);
                     }
                 }
                 self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
@@ -487,7 +487,7 @@ impl ChartApp {
         }
         use mlc_core::drawing::primitives_v2::elliott::WaveSlot;
         let Some(slot) = WaveSlot::from_id(slot_id) else {
-            log::info!("[ChartApp] inline: unknown wave slot id '{}'", slot_id);
+            log::debug!("[ChartApp] inline: unknown wave slot id '{}'", slot_id);
             return;
         };
         let new_id = bid.and_then(|bid| self.core.drawings_mut().create_wave_child(bid, prim_id, slot, kind_id));
@@ -496,14 +496,14 @@ impl ChartApp {
                 let cmd = bid.and_then(|bid| self.build_create_primitive_command(bid, new_id));
                 if let Some(cmd) = cmd {
                     self.push_undo_command(cmd);
-                    log::info!("[ChartApp] Recorded CreatePrimitive (wave child) {}", new_id);
+                    log::debug!("[ChartApp] Recorded CreatePrimitive (wave child) {}", new_id);
                 }
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
-                log::info!("[ChartApp] inline: created wave child #{} ({}) in slot {} of #{}", new_id, kind_id, slot_id, prim_id);
+                log::debug!("[ChartApp] inline: created wave child #{} ({}) in slot {} of #{}", new_id, kind_id, slot_id, prim_id);
             }
             None => {
-                log::info!("[ChartApp] inline: create_wave_child returned None for kind '{}' in slot {} of #{}", kind_id, slot_id, prim_id);
+                log::debug!("[ChartApp] inline: create_wave_child returned None for kind '{}' in slot {} of #{}", kind_id, slot_id, prim_id);
             }
         }
     }
@@ -529,14 +529,14 @@ impl ChartApp {
                 let cmd = bid.and_then(|bid| self.build_create_primitive_command(bid, new_id));
                 if let Some(cmd) = cmd {
                     self.push_undo_command(cmd);
-                    log::info!("[ChartApp] Recorded CreatePrimitive (wave successor) {}", new_id);
+                    log::debug!("[ChartApp] Recorded CreatePrimitive (wave successor) {}", new_id);
                 }
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
-                log::info!("[ChartApp] created wave successor #{} ({}) after #{}", new_id, type_id, prev_id);
+                log::debug!("[ChartApp] created wave successor #{} ({}) after #{}", new_id, type_id, prev_id);
             }
             None => {
-                log::info!("[ChartApp] create_wave_successor returned None for type '{}' after #{}", type_id, prev_id);
+                log::debug!("[ChartApp] create_wave_successor returned None for type '{}' after #{}", type_id, prev_id);
             }
         }
     }
@@ -574,13 +574,13 @@ impl ChartApp {
                     next_id,
                     previous_follows,
                 });
-                log::info!("[ChartApp] Recorded CreateWavePredecessor {}", new_id);
+                log::debug!("[ChartApp] Recorded CreateWavePredecessor {}", new_id);
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
-                log::info!("[ChartApp] created wave predecessor #{} ({}) before #{}", new_id, type_id, next_id);
+                log::debug!("[ChartApp] created wave predecessor #{} ({}) before #{}", new_id, type_id, next_id);
             }
             None => {
-                log::info!("[ChartApp] create_wave_predecessor returned None for type '{}' before #{}", type_id, next_id);
+                log::debug!("[ChartApp] create_wave_predecessor returned None for type '{}' before #{}", type_id, next_id);
             }
         }
     }
@@ -609,15 +609,15 @@ impl ChartApp {
                 });
                 if let Some(cmd) = cmd {
                     self.push_undo_command(cmd);
-                    log::info!("[ChartApp] Recorded PromoteWaveChain parent=#{}", parent_id);
+                    log::debug!("[ChartApp] Recorded PromoteWaveChain parent=#{}", parent_id);
                 }
                 self.core.drawings_mut().select(bid, parent_id);
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
-                log::info!("[ChartApp] promoted chain into #{}", parent_id);
+                log::debug!("[ChartApp] promoted chain into #{}", parent_id);
             }
             None => {
-                log::info!("[ChartApp] promote_wave_chain returned None for #{}", prim_id);
+                log::debug!("[ChartApp] promote_wave_chain returned None for #{}", prim_id);
             }
         }
     }
@@ -644,10 +644,10 @@ impl ChartApp {
                 self.push_undo_command(mlc_core::Command::ConvertPrimitiveKind { prim_id, before, after, children });
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
-                log::info!("[ChartApp] converted #{} to kind '{}'", prim_id, kind_id);
+                log::debug!("[ChartApp] converted #{} to kind '{}'", prim_id, kind_id);
             }
             None => {
-                log::info!("[ChartApp] convert_primitive_kind returned None for kind '{}' on #{}", kind_id, prim_id);
+                log::debug!("[ChartApp] convert_primitive_kind returned None for kind '{}' on #{}", kind_id, prim_id);
             }
         }
     }
@@ -657,7 +657,7 @@ impl ChartApp {
         match rest {
             "close" => {
                 self.standalone_panels.watchlist_modal.close();
-                log::info!("[WatchlistModal] closed");
+                log::debug!("[WatchlistModal] closed");
             }
             "modal_bg" | "header_drag" | "list_scroll" => {
                 // Absorbed — no-op for backdrop clicks, drag zone, scroll zone
@@ -676,7 +676,7 @@ impl ChartApp {
                     "settings" => self.standalone_panels.watchlist_modal.active_tab = WatchlistModalTab::Settings,
                     _ => {}
                 }
-                log::info!("[WatchlistModal] tab: {}", tab);
+                log::debug!("[WatchlistModal] tab: {}", tab);
             }
             _ if rest.starts_with("item:") => {
                 let composite = &rest["item:".len()..];
@@ -717,7 +717,7 @@ impl ChartApp {
                 if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
                     self.apply_symbol(chart_id, sym_part, resolved_exchange.as_str(), &wl_at_label);
                 }
-                log::info!("[WatchlistModal] symbol selected: {} @ {}", sym_part, exchange_part);
+                log::debug!("[WatchlistModal] symbol selected: {} @ {}", sym_part, exchange_part);
                 self.standalone_panels.watchlist_modal.close();
             }
             _ if rest.starts_with("delete:") => {
@@ -765,7 +765,7 @@ impl ChartApp {
                 self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.to_string(), exchange: exchange.to_string(), account_type: account_type.to_string() });
                 self.watchlists_dirty = true;
                 self.persist_watchlists();
-                log::info!("[WatchlistModal] symbol removed: {}:{}:{}", symbol, exchange, account_type);
+                log::debug!("[WatchlistModal] symbol removed: {}:{}:{}", symbol, exchange, account_type);
             }
             // Switch active watchlist
             _ if rest.starts_with("group:") => {
@@ -775,7 +775,7 @@ impl ChartApp {
                     self.watchlist_actions.push(crate::WatchlistAction::SetActiveList { id });
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
-                    log::info!("[WatchlistModal] switched active list to id={}", id);
+                    log::debug!("[WatchlistModal] switched active list to id={}", id);
                 }
             }
             // Delete a watchlist group (list)
@@ -786,7 +786,7 @@ impl ChartApp {
                     self.watchlist_actions.push(crate::WatchlistAction::DeleteList { id });
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
-                    log::info!("[WatchlistModal] delete list id={} -> {}", id, deleted);
+                    log::debug!("[WatchlistModal] delete list id={} -> {}", id, deleted);
                 }
             }
             // Create new watchlist — open name input modal with auto-generated name
@@ -804,7 +804,7 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&wgn_id);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::WATCHLIST_GROUP_NAME);
                 }
-                log::info!("[WatchlistModal] opening group name input for create new: '{}'", default_name);
+                log::debug!("[WatchlistModal] opening group name input for create new: '{}'", default_name);
             }
             // Rename a watchlist — open name input modal pre-filled with current name
             _ if rest.starts_with("group_rename:") => {
@@ -819,7 +819,7 @@ impl ChartApp {
                             self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&wgn_id);
                             self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::WATCHLIST_GROUP_NAME);
                         }
-                        log::info!("[WatchlistModal] opening group name input for rename id={}", id);
+                        log::debug!("[WatchlistModal] opening group name input for rename id={}", id);
                     }
                 }
             }
@@ -840,7 +840,7 @@ impl ChartApp {
         match rest {
             "sets_tab" => {
                 self.modal_state.toggle_indicator_sets();
-                log::info!("[ChartApp] ind_search: toggled sets view (now={})", self.modal_state.show_indicator_sets);
+                log::debug!("[ChartApp] ind_search: toggled sets view (now={})", self.modal_state.show_indicator_sets);
             }
             "set_create" => {
                 // Compute next available name: "My Indicator Set 1", "My Indicator Set 2", etc.
@@ -867,11 +867,11 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&pni_id);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::PRESET_NAME_INPUT);
                 }
-                log::info!("[ChartApp] ind_search: opening create indicator set modal");
+                log::debug!("[ChartApp] ind_search: opening create indicator set modal");
             }
             _ if rest.starts_with("set_delete:") => {
                 let set_id = &rest["set_delete:".len()..];
-                log::info!("[ChartApp] deleted indicator set: {}", set_id);
+                log::debug!("[ChartApp] deleted indicator set: {}", set_id);
                 self.template_actions.push(crate::TemplateAction::RemoveIndicatorSet { id: set_id.to_string() });
             }
             _ if rest.starts_with("set:") => {
@@ -939,7 +939,7 @@ impl ChartApp {
         }
         // Clear stale overlay states
         self.panel_app.indicator_overlay_states.clear();
-        log::info!("[ChartApp] deploy_indicator_set: removed {} existing indicators", existing_ids.len());
+        log::debug!("[ChartApp] deploy_indicator_set: removed {} existing indicators", existing_ids.len());
 
         // Create new indicators from the set with full params/outputs
         for tmpl in &set.indicators {
@@ -978,7 +978,7 @@ impl ChartApp {
         self.autosave_snapshot();
         self.sidebar_data_dirty = true;
         self.modal_state.close();
-        log::info!("[ChartApp] deployed indicator set '{}' ({} indicators, replaced {})", set.name, set.indicators.len(), existing_ids.len());
+        log::debug!("[ChartApp] deployed indicator set '{}' ({} indicators, replaced {})", set.name, set.indicators.len(), existing_ids.len());
     }
 
     /// Save the current active indicators as a named indicator set.
@@ -1027,7 +1027,7 @@ impl ChartApp {
             &name,
             templates,
         );
-        log::info!("[ChartApp] created indicator set '{}' from {} active indicators", name, templates_count);
+        log::debug!("[ChartApp] created indicator set '{}' from {} active indicators", name, templates_count);
         self.template_actions.push(crate::TemplateAction::AddIndicatorSet(set));
     }
 
@@ -1059,7 +1059,7 @@ impl ChartApp {
         match rest {
             "close" => {
                 self.modal_state.close();
-                log::info!("[ChartApp] search modal closed");
+                log::debug!("[ChartApp] search modal closed");
             }
             "modal_bg" => {
                 // Click inside modal body — no-op (prevents backdrop close)
@@ -1080,7 +1080,7 @@ impl ChartApp {
                 // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
                 // via the global path in mod.rs::on_drag_end (line ~3614).
                 self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
-                log::info!("[ChartApp] search input activated");
+                log::debug!("[ChartApp] search input activated");
             }
             _ if rest.starts_with("star:") => {
                 let composite = &rest["star:".len()..];
@@ -1106,7 +1106,7 @@ impl ChartApp {
                     account_type: at_label,
                 });
                 self.watchlists_dirty = true;
-                log::info!("[ChartApp] star toggle queued: {}:{}", sym_part, exchange_part);
+                log::debug!("[ChartApp] star toggle queued: {}:{}", sym_part, exchange_part);
             }
             _ if rest.starts_with("indstar:") => {
                 // Indicator-row favorite star (indicator-search-favorites arc)
@@ -1120,7 +1120,7 @@ impl ChartApp {
             }
             _ if rest.starts_with("item:") => {
                 let item_id = &rest["item:".len()..];
-                log::info!("[ChartApp] search modal item selected: {}", item_id);
+                log::debug!("[ChartApp] search modal item selected: {}", item_id);
 
                 // Parse composite key "SYMBOL:exchange_id:account_type" — split from the
                 // right twice so that symbols containing ':' (e.g. "tETH2X:USD") are handled
@@ -1261,7 +1261,7 @@ impl ChartApp {
                                         }
                                         self.sync_sub_panes_from_manager();
                                         self.sidebar_data_dirty = true;
-                                        log::info!(
+                                        log::debug!(
                                             "[TradingCenter] created indicator '{}' (id={}) on aux chart {:?} bubble {:?}",
                                             item_id, new_id, aux_cid, bid
                                         );
@@ -1283,7 +1283,7 @@ impl ChartApp {
                             let from_docking = self.panel_app.panel_grid.docking().active_leaf();
                             if from_docking.is_none() {
                                 if let Some(fallback) = self.panel_app.panel_grid.first_leaf_id() {
-                                    log::info!(
+                                    log::debug!(
                                         "[IndicatorSearch] docking().active_leaf() = None; \
                                          activating fallback leaf {:?} so indicator '{}' is not orphaned",
                                         fallback, type_id_str
@@ -1291,7 +1291,7 @@ impl ChartApp {
                                     self.panel_app.panel_grid.set_active_leaf(fallback);
                                     Some(fallback)
                                 } else {
-                                    log::info!(
+                                    log::debug!(
                                         "[IndicatorSearch] no leaves in panel_grid — \
                                          cannot assign indicator '{}'; it will be orphaned",
                                         type_id_str
@@ -1359,7 +1359,7 @@ impl ChartApp {
                                             );
                                         }).is_some();
                                         if pushed {
-                                            log::info!(
+                                            log::debug!(
                                                 "[BubbleStore] Added indicator config id={} '{}' to group {:?}",
                                                 new_id, item_id, group_id
                                             );
@@ -1381,7 +1381,7 @@ impl ChartApp {
                                                     auto_bub.pre_tag_indicator_ids.push(new_id);
                                                 });
                                             }
-                                            log::info!(
+                                            log::debug!(
                                                 "[BubbleStore] sync_indicators=off: recorded id={} in auto_bubble.pre_tag_indicator_ids for leaf {:?}",
                                                 new_id, active_leaf
                                             );
@@ -1395,7 +1395,7 @@ impl ChartApp {
                                 type_id: type_id_str.clone(),
                                 params_json: String::new(),
                             });
-                            log::info!("[ChartApp] Recorded AddIndicator {} id={}", type_id_str, new_id);
+                            log::debug!("[ChartApp] Recorded AddIndicator {} id={}", type_id_str, new_id);
                             // Recalculate the new indicator with current bars.
                             // Bars live on the chart's DataBubble — the cutover sweep
                             // stubbed this to `Vec::new()` (empty) so the recalc was
@@ -1417,7 +1417,7 @@ impl ChartApp {
                             self.sync_sub_panes_from_manager();
                             self.autosave_snapshot();
                             self.sidebar_data_dirty = true;
-                            log::info!("[ChartApp] Created indicator instance: {} (id={})", item_id, new_id);
+                            log::debug!("[ChartApp] Created indicator instance: {} (id={})", item_id, new_id);
                         }
                         self.modal_state.close();
                     }
@@ -1428,12 +1428,12 @@ impl ChartApp {
                 if let Ok(idx) = rest["category:".len()..].parse::<usize>() {
                     if let Some(filter) = IndicatorCategoryFilter::from_index(idx) {
                         self.modal_state.set_category_filter(filter);
-                        log::info!("[ChartApp] search category filter: {:?}", filter);
+                        log::debug!("[ChartApp] search category filter: {:?}", filter);
                     }
                 }
             }
             "scrollbar_track" => {
-                log::info!("[ChartApp] scrollbar track clicked");
+                log::debug!("[ChartApp] scrollbar track clicked");
             }
             _ => {
                 log::warn!("[ChartApp] search modal unhandled: {}", rest);
@@ -1934,7 +1934,7 @@ impl ChartApp {
                 }
 
                 // Dispatch click and record undo if a primitive was just completed.
-                log::info!("[CANVAS_CLICK] screen=({:.0},{:.0}) -> bar={:.2}, price={:.12e}, price_range=[{:.12e}..{:.12e}]", x, y, bar, price, price_min, price_max);
+                log::debug!("[CANVAS_CLICK] screen=({:.0},{:.0}) -> bar={:.2}, price={:.12e}, price_range=[{:.12e}..{:.12e}]", x, y, bar, price, price_min, price_max);
                 let click_bars_main: Vec<mlc_core::Bar> = self.active_chart_bars();
                 let ts_ms = self.panel_app.panel_grid.active_container()
                     .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&click_bars_main[..], bar))
@@ -1955,7 +1955,7 @@ impl ChartApp {
                 if primitive_created {
                     let prim_count = active_bid_tool
                         .map(|bid| self.core.drawings().count(bid)).unwrap_or(0);
-                    log::info!("[ChartApp] Primitive created (main) at bar={:.2}, price={:.12e}, total_primitives={}", bar, price, prim_count);
+                    log::debug!("[ChartApp] Primitive created (main) at bar={:.2}, price={:.12e}, total_primitives={}", bar, price, prim_count);
                     self.intercept_completed_primitive_to_group();
                     // Record undo and propagate to color-tag peers.
                     let cmd = active_bid_tool.and_then(|bid| {
@@ -1963,7 +1963,7 @@ impl ChartApp {
                         self.build_creation_command(bid, prim_id)
                     });
                     if let Some(cmd) = cmd {
-                        log::info!("[ChartApp] Recorded CreatePrimitive (main) {}", cmd.prim_id().unwrap_or_default());
+                        log::debug!("[ChartApp] Recorded CreatePrimitive (main) {}", cmd.prim_id().unwrap_or_default());
                         self.push_undo_command(cmd);
                     }
                     if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
@@ -1977,7 +1977,7 @@ impl ChartApp {
                     .map(|bid| self.core.drawings().is_drawing(bid))
                     .unwrap_or(false)
                 {
-                    log::info!("[ChartApp] Drawing point added (main) at bar={:.2}, price={:.2}", bar, price);
+                    log::debug!("[ChartApp] Drawing point added (main) at bar={:.2}, price={:.2}", bar, price);
                     // Propagate in-progress drawing state so peers show the preview.
                     if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                         self.propagate_drawing_state_to_sync_group(active_leaf);
@@ -1991,7 +1991,7 @@ impl ChartApp {
                 if tool_cleared {
                     self.panel_app.toolbar_state.active_tool_id = None;
                     self.panel_app.toolbar_state.primed_id = Some("cursor_tools".to_string());
-                    log::info!("[ChartApp] Primed tool completed, switched to cursor mode");
+                    log::debug!("[ChartApp] Primed tool completed, switched to cursor mode");
                 }
 
                 return;
@@ -2054,7 +2054,7 @@ impl ChartApp {
                     .unwrap_or(false);
 
                 if primitive_created {
-                    log::info!("[ChartApp] Primitive created (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
+                    log::debug!("[ChartApp] Primitive created (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
                     self.intercept_completed_primitive_to_group();
                     // Extract snapshot then push undo command.
                     let cmd = active_bid_tool.and_then(|bid| {
@@ -2062,7 +2062,7 @@ impl ChartApp {
                         self.build_creation_command(bid, prim_id)
                     });
                     if let Some(cmd) = cmd {
-                        log::info!("[ChartApp] Recorded CreatePrimitive (sub-pane #{}) {}", pane_idx, cmd.prim_id().unwrap_or_default());
+                        log::debug!("[ChartApp] Recorded CreatePrimitive (sub-pane #{}) {}", pane_idx, cmd.prim_id().unwrap_or_default());
                         self.push_undo_command(cmd);
                     }
                     // Propagate the new primitive to sync group peers.
@@ -2077,7 +2077,7 @@ impl ChartApp {
                     .map(|bid| self.core.drawings().is_drawing(bid))
                     .unwrap_or(false)
                 {
-                    log::info!("[ChartApp] Drawing point added (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
+                    log::debug!("[ChartApp] Drawing point added (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
                     // Propagate in-progress drawing state so peers show the preview.
                     if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                         self.propagate_drawing_state_to_sync_group(active_leaf);
@@ -2091,7 +2091,7 @@ impl ChartApp {
                 if tool_cleared {
                     self.panel_app.toolbar_state.active_tool_id = None;
                     self.panel_app.toolbar_state.primed_id = Some("cursor_tools".to_string());
-                    log::info!("[ChartApp] Primed tool completed (sub-pane), switched to cursor mode");
+                    log::debug!("[ChartApp] Primed tool completed (sub-pane), switched to cursor mode");
                 }
 
                 return;
@@ -2151,7 +2151,7 @@ impl ChartApp {
                             let mut guard = self.core.drawings_mut();
                             guard.set_current_pane(bid, None);
                             guard.select(bid, hit_prim_id);
-                            log::info!("[ChartApp] Primitive selected (main): id={}", hit_prim_id);
+                            log::debug!("[ChartApp] Primitive selected (main): id={}", hit_prim_id);
                         }
                         return;
                     }
@@ -2206,7 +2206,7 @@ impl ChartApp {
                             let mut guard = self.core.drawings_mut();
                             guard.set_current_pane(bid, Some(instance_id));
                             guard.select(bid, hit_prim_id);
-                            log::info!("[ChartApp] Primitive selected (sub-pane #{}): id={}", pane_idx, hit_prim_id);
+                            log::debug!("[ChartApp] Primitive selected (sub-pane #{}): id={}", pane_idx, hit_prim_id);
                         }
                         return;
                     }
@@ -2251,7 +2251,7 @@ impl ChartApp {
                             self.core.drawings_mut().deselect(bid);
                         }
                     }
-                    log::info!("[ChartApp] Sub-pane indicator hit: id={}", instance_id);
+                    log::debug!("[ChartApp] Sub-pane indicator hit: id={}", instance_id);
                     return;
                 }
             }
@@ -2279,7 +2279,7 @@ impl ChartApp {
                     for bid in all_bids {
                         self.core.drawings_mut().deselect(bid);
                     }
-                    log::info!("[ChartApp] Indicator selected: id={}", ind_id);
+                    log::debug!("[ChartApp] Indicator selected: id={}", ind_id);
                     return;
                 }
             }
@@ -2338,7 +2338,7 @@ impl ChartApp {
         let layer_id_opt = self.input_coordinator.borrow_mut().topmost_modal_layer().cloned();
         if let Some(layer_id) = layer_id_opt {
             let name = layer_id.0.as_str();
-            log::info!("[ChartApp] close_topmost_modal_layer: {}", name);
+            log::debug!("[ChartApp] close_topmost_modal_layer: {}", name);
             match name {
                 // Color picker layers — close one level (L2→L1 or L1→Closed).
                 "color_picker_primitive" => {
@@ -2392,24 +2392,24 @@ impl ChartApp {
                 // Top-level modals — close when user clicks outside them.
                 "tags_tabs" => {
                     self.panel_app.close_tags_tabs();
-                    log::info!("[ChartApp] close_topmost_modal_layer: tags_tabs closed");
+                    log::debug!("[ChartApp] close_topmost_modal_layer: tags_tabs closed");
                 }
                 "chart_browser" => {
                     self.panel_app.chart_browser.close();
                     self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
-                    log::info!("[ChartApp] close_topmost_modal_layer: chart_browser closed");
+                    log::debug!("[ChartApp] close_topmost_modal_layer: chart_browser closed");
                 }
                 "user_settings" => {
                     self.panel_app.user_settings_state.close();
-                    log::info!("[ChartApp] close_topmost_modal_layer: user_settings closed");
+                    log::debug!("[ChartApp] close_topmost_modal_layer: user_settings closed");
                 }
                 "ewa_engine_settings" => {
                     self.panel_app.ewa_engine_settings_state.close();
-                    log::info!("[ChartApp] close_topmost_modal_layer: ewa_engine_settings closed");
+                    log::debug!("[ChartApp] close_topmost_modal_layer: ewa_engine_settings closed");
                 }
                 "markup_engine_settings" => {
                     self.panel_app.markup_engine_settings_state.close();
-                    log::info!("[ChartApp] close_topmost_modal_layer: markup_engine_settings closed");
+                    log::debug!("[ChartApp] close_topmost_modal_layer: markup_engine_settings closed");
                 }
                 // DM vault-unlock mini overlay (owner ruling 2026-09-10,
                 // DM pane item 3) — always dismissible, same as the Vault
@@ -2417,7 +2417,7 @@ impl ChartApp {
                 #[cfg(feature = "cloud")]
                 "dm_vault_unlock" => {
                     self.close_dm_vault_unlock_overlay();
-                    log::info!("[ChartApp] close_topmost_modal_layer: dm_vault_unlock closed");
+                    log::debug!("[ChartApp] close_topmost_modal_layer: dm_vault_unlock closed");
                 }
                 "profile_manager" => {
                     // Only the mandatory migration/first-run step (no live chart
@@ -2426,45 +2426,45 @@ impl ChartApp {
                     if !self.panel_app.user_settings_state.profile_manager_mandatory {
                         self.dismiss_profile_manager();
                     }
-                    log::info!("[ChartApp] close_topmost_modal_layer: profile_manager (mandatory={})", self.panel_app.user_settings_state.profile_manager_mandatory);
+                    log::debug!("[ChartApp] close_topmost_modal_layer: profile_manager (mandatory={})", self.panel_app.user_settings_state.profile_manager_mandatory);
                 }
                 "welcome_wizard" => {
                     // A first-run courtesy, not a gate — always dismissible.
                     self.dismiss_welcome_wizard();
-                    log::info!("[ChartApp] close_topmost_modal_layer: welcome_wizard closed");
+                    log::debug!("[ChartApp] close_topmost_modal_layer: welcome_wizard closed");
                 }
                 // Preset name input — close only this modal, not the search overlay underneath.
                 "preset_name_input" => {
                     self.panel_app.preset_name_input.close();
-                    log::info!("[ChartApp] close_topmost_modal_layer: preset_name_input closed");
+                    log::debug!("[ChartApp] close_topmost_modal_layer: preset_name_input closed");
                 }
                 // "Open shared chart…" overlay (native-share-viewer arc, 2026-09-06).
                 "share_open" => {
                     self.panel_app.share_open_state.close();
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    log::info!("[ChartApp] close_topmost_modal_layer: share_open closed");
+                    log::debug!("[ChartApp] close_topmost_modal_layer: share_open closed");
                 }
                 // Watchlist group name input L2 modal — close only this layer.
                 "wl_group_name_input" => {
                     self.standalone_panels.wl_group_name_input.close();
-                    log::info!("[ChartApp] close_topmost_modal_layer: wl_group_name_input closed");
+                    log::debug!("[ChartApp] close_topmost_modal_layer: wl_group_name_input closed");
                 }
                 // Watchlist modal — close when user clicks outside it.
                 "watchlist_modal" => {
                     self.standalone_panels.watchlist_modal.close();
-                    log::info!("[ChartApp] close_topmost_modal_layer: watchlist_modal closed");
+                    log::debug!("[ChartApp] close_topmost_modal_layer: watchlist_modal closed");
                 }
                 // Trading Container modal — close when user clicks outside it.
                 "tc_modal" => {
                     self.tc_modal.close();
-                    log::info!("[ChartApp] close_topmost_modal_layer: tc_modal closed");
+                    log::debug!("[ChartApp] close_topmost_modal_layer: tc_modal closed");
                 }
                 // Standalone panel-settings surface (the gear popover).
                 "pset" => {
                     self.panel_settings_open = None;
                 }
                 _ => {
-                    log::info!("[ChartApp] close_topmost_modal_layer: unknown layer '{}'", name);
+                    log::debug!("[ChartApp] close_topmost_modal_layer: unknown layer '{}'", name);
                     return false;
                 }
             }
@@ -2538,7 +2538,7 @@ impl ChartApp {
                 match action {
                     "settings" => {
                         self.panel_app.primitive_settings_state.open(prim_id);
-                        log::info!("[ChartApp] Opened primitive settings for #{}", prim_id);
+                        log::debug!("[ChartApp] Opened primitive settings for #{}", prim_id);
                     }
                     "delete" => {
                         if let Some(bid) = active_bid_ctx {
@@ -2569,13 +2569,13 @@ impl ChartApp {
                             let cmd = active_bid_ctx.and_then(|bid| self.build_create_primitive_command(bid, new_id));
                             if let Some(cmd) = cmd {
                                 self.push_undo_command(cmd);
-                                log::info!("[ChartApp] Recorded CreatePrimitive (clone) {}", new_id);
+                                log::debug!("[ChartApp] Recorded CreatePrimitive (clone) {}", new_id);
                             }
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();
-                            log::info!("[ChartApp] Cloned primitive #{} -> #{}", prim_id, new_id);
+                            log::debug!("[ChartApp] Cloned primitive #{} -> #{}", prim_id, new_id);
                         } else {
-                            log::info!("[ChartApp] Clone primitive #{} returned None", prim_id);
+                            log::debug!("[ChartApp] Clone primitive #{} returned None", prim_id);
                         }
                     }
                     "toggle_lock" => {
@@ -2596,7 +2596,7 @@ impl ChartApp {
                             locked: !previous,
                             previous,
                         });
-                        log::info!("[ChartApp] Recorded SetPrimitiveLock {} locked={}", prim_id, !previous);
+                        log::debug!("[ChartApp] Recorded SetPrimitiveLock {} locked={}", prim_id, !previous);
                         if let Some(bid) = active_bid_ctx {
                             self.core.drawings_mut().toggle_lock_primitive(bid, prim_id);
                         }
@@ -2620,7 +2620,7 @@ impl ChartApp {
                             visible: !previous,
                             previous,
                         });
-                        log::info!("[ChartApp] Recorded SetPrimitiveVisibility {} visible={}", prim_id, !previous);
+                        log::debug!("[ChartApp] Recorded SetPrimitiveVisibility {} visible={}", prim_id, !previous);
                         if let Some(bid) = active_bid_ctx {
                             self.core.drawings_mut().toggle_visibility(bid, prim_id);
                         }
@@ -2634,13 +2634,13 @@ impl ChartApp {
                         if let Some(bid) = active_bid_ctx {
                             self.core.drawings_mut().bring_to_front(bid, prim_id);
                         }
-                        log::info!("[ChartApp] Brought primitive #{} to front", prim_id);
+                        log::debug!("[ChartApp] Brought primitive #{} to front", prim_id);
                     }
                     "send_to_back" => {
                         if let Some(bid) = active_bid_ctx {
                             self.core.drawings_mut().send_to_back(bid, prim_id);
                         }
-                        log::info!("[ChartApp] Sent primitive #{} to back", prim_id);
+                        log::debug!("[ChartApp] Sent primitive #{} to back", prim_id);
                     }
 
                     // ── Wave-gesture menu actions (E5, second control
@@ -2663,7 +2663,7 @@ impl ChartApp {
                                 self.create_wave_child_and_record(active_bid_ctx, prim_id, slot_id, kind_id);
                             }
                             None => {
-                                log::info!("[ChartApp] wave menu: malformed subdivide action '{}'", action);
+                                log::debug!("[ChartApp] wave menu: malformed subdivide action '{}'", action);
                             }
                         }
                     }
@@ -2702,10 +2702,10 @@ impl ChartApp {
                                 self.core.drawings_mut().select(bid, child_id);
                                 self.sync_drawing_back_to_group();
                                 self.autosave_snapshot();
-                                log::info!("[ChartApp] wave menu: selected subdivision #{}", child_id);
+                                log::debug!("[ChartApp] wave menu: selected subdivision #{}", child_id);
                             }
                             _ => {
-                                log::info!("[ChartApp] wave menu: malformed select_child action '{}'", action);
+                                log::debug!("[ChartApp] wave menu: malformed select_child action '{}'", action);
                             }
                         }
                     }
@@ -2716,7 +2716,7 @@ impl ChartApp {
                                 self.delete_primitive_with_undo(bid, child_id);
                             }
                             _ => {
-                                log::info!("[ChartApp] wave menu: malformed delete_child action '{}'", action);
+                                log::debug!("[ChartApp] wave menu: malformed delete_child action '{}'", action);
                             }
                         }
                     }
@@ -2743,7 +2743,7 @@ impl ChartApp {
                                     "truncated_fifth", &PropertyValue::Boolean(!current),
                                 );
                             });
-                            log::info!("[ChartApp] wave menu: toggled truncated_fifth for #{}", prim_id);
+                            log::debug!("[ChartApp] wave menu: toggled truncated_fifth for #{}", prim_id);
                         }
                     }
                     // Trailing "EWA settings" row every wave-gesture popup
@@ -2753,7 +2753,7 @@ impl ChartApp {
                     // itself.
                     "wave_menu:engine_settings" => {
                         self.panel_app.ewa_engine_settings_state.open();
-                        log::info!("[ChartApp] Opened EWA engine settings from wave menu");
+                        log::debug!("[ChartApp] Opened EWA engine settings from wave menu");
                     }
 
                     _ => {
@@ -2765,11 +2765,11 @@ impl ChartApp {
                 match action {
                     "chart_settings" => {
                         self.panel_app.chart_settings_state.toggle();
-                        log::info!("[ChartApp] Chart settings opened from context menu");
+                        log::debug!("[ChartApp] Chart settings opened from context menu");
                     }
                     "reset_zoom" => {
                         self.process_output_actions(vec![ChartOutputAction::ResetTimeScale]);
-                        log::info!("[ChartApp] Reset zoom from context menu");
+                        log::debug!("[ChartApp] Reset zoom from context menu");
                     }
                     "screenshot" => {
                         self.request_screenshot();
@@ -2784,15 +2784,15 @@ impl ChartApp {
                             self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&sym_id);
                             self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::SYMBOL_SEARCH);
                         }
-                        log::info!("[ChartApp] symbol search opened from context menu");
+                        log::debug!("[ChartApp] symbol search opened from context menu");
                     }
                     "reset_cache" => {
                         self.pending_reset_cache = true;
-                        log::info!("[ChartApp] Reset cache requested");
+                        log::debug!("[ChartApp] Reset cache requested");
                     }
                     "reset_storage" => {
                         self.pending_reset_storage = true;
-                        log::info!("[ChartApp] Reset storage requested");
+                        log::debug!("[ChartApp] Reset storage requested");
                     }
                     _ => {
                         log::warn!("[ChartApp] Unhandled background context action: {}", action);
@@ -2800,7 +2800,7 @@ impl ChartApp {
                 }
             }
             ContextMenuTarget::Indicator(id) => {
-                log::info!("[ChartApp] Indicator context action: {} for id={}", action, id);
+                log::debug!("[ChartApp] Indicator context action: {} for id={}", action, id);
             }
             ContextMenuTarget::ColorTag(leaf_id) => {
                 match action {
@@ -2813,7 +2813,7 @@ impl ChartApp {
                 }
             }
             _ => {
-                log::info!("[ChartApp] Context menu action on unknown target: {}", action);
+                log::debug!("[ChartApp] Context menu action on unknown target: {}", action);
             }
         }
     }
@@ -2951,11 +2951,11 @@ impl ChartApp {
                     snapshot: d.snapshot,
                     cascaded: d.cascaded,
                 });
-                log::info!("[ChartApp] Recorded DeletePrimitive {} (+{} cascaded)", prim_id, cascaded_count);
-                log::info!("[ChartApp] Deleted primitive #{}", prim_id);
+                log::debug!("[ChartApp] Recorded DeletePrimitive {} (+{} cascaded)", prim_id, cascaded_count);
+                log::debug!("[ChartApp] Deleted primitive #{}", prim_id);
             }
             None => {
-                log::info!("[ChartApp] Deleted primitive #{} (no undo snapshot)", prim_id);
+                log::debug!("[ChartApp] Deleted primitive #{} (no undo snapshot)", prim_id);
             }
         }
         let removed_alerts = self.core.alerts_mut().clear_for_drawing(prim_id);
@@ -2987,7 +2987,7 @@ impl ChartApp {
             return;
         }
         self.push_undo_command(mlc_core::Command::DeleteAllPrimitives { primitives: primitives.clone() });
-        log::info!("[ChartApp] Recorded DeleteAllPrimitives ({} primitives)", primitives.len());
+        log::debug!("[ChartApp] Recorded DeleteAllPrimitives ({} primitives)", primitives.len());
         self.core.drawings_mut().delete_all(bid);
         for id in &ids {
             let removed_alerts = self.core.alerts_mut().clear_for_drawing(*id);
@@ -2995,7 +2995,7 @@ impl ChartApp {
                 self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot });
             }
         }
-        log::info!("[ChartApp] Deleted all primitives (bid={:?})", bid);
+        log::debug!("[ChartApp] Deleted all primitives (bid={:?})", bid);
         self.sync_drawing_back_to_group();
         self.autosave_snapshot();
     }

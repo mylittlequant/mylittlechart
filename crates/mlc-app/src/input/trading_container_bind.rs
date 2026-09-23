@@ -397,7 +397,7 @@ impl ChartApp {
             );
             self.apply_key_to_panels_in_group(gid);
         } else {
-            log::info!("[ChartApp] section symbol commit: panel {} has no tag group — ignored", pid.0);
+            log::debug!("[ChartApp] section symbol commit: panel {} has no tag group — ignored", pid.0);
         }
         self.autosave_snapshot();
     }

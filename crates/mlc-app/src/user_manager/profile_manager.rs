@@ -135,7 +135,7 @@ impl ProfileManager {
     /// encrypted installs, `None` for plaintext / first-run.
     pub fn load(key: Option<VaultKey>) -> Self {
         let data_dir = active_profile_data_dir();
-        log::info!(
+        log::debug!(
             "[ProfileManager] profile data directory: {}",
             data_dir.display()
         );
@@ -145,7 +145,7 @@ impl ProfileManager {
         // Load the profile (profile.json + optional vault.enc merge).
         let mut profile = match load_profile(key_ref) {
             Ok(p) => {
-                log::info!(
+                log::debug!(
                     "[ProfileManager] loaded profile (active_preset={})",
                     p.ui.active_preset_id
                 );
@@ -179,7 +179,7 @@ impl ProfileManager {
         // Generate profile_id for legacy profiles that have none.
         if profile.domain.profile_id.is_empty() {
             let generated = uuid::Uuid::new_v4().to_string();
-            log::info!(
+            log::debug!(
                 "[ProfileManager] profile_id was empty — generated {}",
                 generated
             );
@@ -189,7 +189,7 @@ impl ProfileManager {
         // Templates.
         let template_manager = {
             let tm = TemplateManager::load_from_default_dir(key_ref);
-            log::info!(
+            log::debug!(
                 "[ProfileManager] loaded templates: {} prim, {} ind, {} cmp, {} chart, {} sets",
                 tm.primitive_templates.len(),
                 tm.indicator_templates.len(),
@@ -217,7 +217,7 @@ impl ProfileManager {
                         }
                     }
                 }
-                log::info!("[ProfileManager] loaded {} presets", presets.len());
+                log::debug!("[ProfileManager] loaded {} presets", presets.len());
             }
             Err(e) => log::warn!("[ProfileManager] failed to list presets: {}", e),
         }
@@ -226,11 +226,11 @@ impl ProfileManager {
         let snapshots_path = active_profile_data_dir().join("settings_snapshots.json");
         let snapshots = match load_json::<SettingsSnapshots>(&snapshots_path, None) {
             Ok(s) => {
-                log::info!("[ProfileManager] loaded settings snapshots");
+                log::debug!("[ProfileManager] loaded settings snapshots");
                 s
             }
             Err(_) => {
-                log::info!("[ProfileManager] no settings snapshots found, using defaults");
+                log::debug!("[ProfileManager] no settings snapshots found, using defaults");
                 SettingsSnapshots::default()
             }
         };

@@ -34,7 +34,7 @@ impl ChartApp {
                 "hover_opacity"           => params.hover_bg_opacity = value as f32,
                 "crosshair_label_opacity" => params.crosshair_label_bg_opacity = value as f32,
                 "blur_radius"             => params.blur_radius = value as f32,
-                _ => log::info!("[ChartApp] apply_slider_value: unknown style param: {}", param_id),
+                _ => log::debug!("[ChartApp] apply_slider_value: unknown style param: {}", param_id),
             }
             self.autosave_snapshot();
             return;
@@ -61,7 +61,7 @@ impl ChartApp {
                         panel.crosshair_options.horz_line.width = value;
                     }
                 }
-                _ => log::info!("[ChartApp] apply_slider_value: unknown scales field: {}", field_id),
+                _ => log::debug!("[ChartApp] apply_slider_value: unknown scales field: {}", field_id),
             }
             self.autosave_snapshot();
             return;
@@ -281,15 +281,15 @@ impl ChartApp {
                 dl.background_bar_count = (value.round() as u32).clamp(300, 10000);
                 let v = dl.background_bar_count;
                 self.panel_app.user_settings_state.data_bg_bars = v;
-                log::info!("[ChartApp] data_load.background_bar_count = {}", v);
+                log::debug!("[ChartApp] data_load.background_bar_count = {}", v);
             }
             "data_max_bars" => {
                 dl.max_loaded_bars = (value.round() as u32).min(50000);
                 let v = dl.max_loaded_bars;
                 self.panel_app.user_settings_state.data_max_bars = v;
-                log::info!("[ChartApp] data_load.max_loaded_bars = {}", v);
+                log::debug!("[ChartApp] data_load.max_loaded_bars = {}", v);
             }
-            _ => log::info!("[ChartApp] apply_data_cache_slider_value: unknown field: {}", field_id),
+            _ => log::debug!("[ChartApp] apply_data_cache_slider_value: unknown field: {}", field_id),
         }
         drop(user_mut);
         self.autosave_snapshot();
@@ -358,7 +358,7 @@ impl ChartApp {
             }
         }
 
-        log::info!("[ChartApp] ind_settings tf_{}_slider {:?}: {}", tf_idx, handle, value);
+        log::debug!("[ChartApp] ind_settings tf_{}_slider {:?}: {}", tf_idx, handle, value);
         self.autosave_snapshot();
     }
 
@@ -376,7 +376,7 @@ impl ChartApp {
                 _ => {}
             }
         });
-        log::info!("[ChartApp] ind_settings tf_{}_min committed: {}", tf_idx, val);
+        log::debug!("[ChartApp] ind_settings tf_{}_min committed: {}", tf_idx, val);
         self.autosave_snapshot();
     }
 
@@ -394,7 +394,7 @@ impl ChartApp {
                 _ => {}
             }
         });
-        log::info!("[ChartApp] ind_settings tf_{}_max committed: {}", tf_idx, val);
+        log::debug!("[ChartApp] ind_settings tf_{}_max committed: {}", tf_idx, val);
         self.autosave_snapshot();
     }
 
@@ -467,7 +467,7 @@ impl ChartApp {
             }
         }
 
-        log::info!("[ChartApp] cmp_settings tf_{}_slider {:?}: {}", tf_idx, handle, value);
+        log::debug!("[ChartApp] cmp_settings tf_{}_slider {:?}: {}", tf_idx, handle, value);
         self.autosave_snapshot();
     }
 

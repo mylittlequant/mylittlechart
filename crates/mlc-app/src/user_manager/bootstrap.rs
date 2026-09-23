@@ -39,13 +39,13 @@ pub fn load_user_state_from_disk(
     Option<VaultKey>,
 ) {
     let data_dir = active_profile_data_dir();
-    log::info!("[user_manager] profile data directory: {}", data_dir.display());
+    log::debug!("[user_manager] profile data directory: {}", data_dir.display());
 
     let key_ref = key.as_ref();
 
     let profile = match load_profile(key_ref) {
         Ok(p) => {
-            log::info!(
+            log::debug!(
                 "[user_manager] loaded profile (active_preset={})",
                 p.ui.active_preset_id
             );
@@ -75,7 +75,7 @@ pub fn load_user_state_from_disk(
     // Templates — pass key so encrypted files are loaded correctly.
     let template_manager = {
         let tm = TemplateManager::load_from_default_dir(key_ref);
-        log::info!(
+        log::debug!(
             "[user_manager] loaded templates: {} prim, {} ind, {} cmp, {} chart, {} sets",
             tm.primitive_templates.len(),
             tm.indicator_templates.len(),
@@ -100,7 +100,7 @@ pub fn load_user_state_from_disk(
                     }
                 }
             }
-            log::info!("[user_manager] loaded {} presets", presets.len());
+            log::debug!("[user_manager] loaded {} presets", presets.len());
         }
         Err(e) => log::warn!("[user_manager] failed to list presets: {}", e),
     }
@@ -109,11 +109,11 @@ pub fn load_user_state_from_disk(
     let snapshots_path = active_profile_data_dir().join("settings_snapshots.json");
     let snapshots = match load_json::<SettingsSnapshots>(&snapshots_path, None) {
         Ok(s) => {
-            log::info!("[user_manager] loaded settings snapshots");
+            log::debug!("[user_manager] loaded settings snapshots");
             s
         }
         Err(_) => {
-            log::info!("[user_manager] no settings snapshots found, using defaults");
+            log::debug!("[user_manager] no settings snapshots found, using defaults");
             SettingsSnapshots::default()
         }
     };

@@ -118,7 +118,7 @@ impl ChartApp {
                 let tags = self.core.tags();
                 tags.members(old_group_id).map_or(0, |m| m.len())
             };
-            log::info!(
+            log::debug!(
                 "[BubbleStore] Disconnected chart {:?} from group {:?} ({} remaining)",
                 chart_id, old_group_id, remaining
             );
@@ -284,7 +284,7 @@ impl ChartApp {
                 gid
             } else {
                 if self.panel_app.panel_grid.container_for_leaf(joining_leaf).is_none() {
-                    log::info!("[sync_group] sync_join_color_group: container_for_leaf({:?}) returned None — skipping join", joining_leaf);
+                    log::debug!("[sync_group] sync_join_color_group: container_for_leaf({:?}) returned None — skipping join", joining_leaf);
                     return;
                 }
                 // The instrument key MUST be inherited from the chart's home
@@ -334,7 +334,7 @@ impl ChartApp {
                 new_gid
             };
             self.attach_chart_to_tag(chart_id, group_id);
-            log::info!(
+            log::debug!(
                 "[BubbleStore] Connected chart {:?} to group {:?} (new={})",
                 chart_id, group_id, is_new_group
             );
@@ -619,7 +619,7 @@ impl ChartApp {
                     group.primitives.len()
                 });
                 if let Some(prim_count) = seeded {
-                    log::info!(
+                    log::debug!(
                         "[BubbleStore] Seeded new tag {:?} with {} primitives, {} indicators",
                         group_id, prim_count, configs_len
                     );
@@ -726,7 +726,7 @@ impl ChartApp {
                         auto_bub.pre_tag_indicator_ids = pre_tag_ids.clone();
                     }).is_some();
                     if stashed {
-                        log::info!(
+                        log::debug!(
                             "[BubbleStore] Stashed command_history and {} pre_tag_ids into auto-bubble {:?}",
                             pre_tag_len, bid
                         );
@@ -765,7 +765,7 @@ impl ChartApp {
             self.sync_group_indicators_to_new_members(group_id, &leaf_chart_ids);
             self.sync_sub_panes_from_manager();
             self.sidebar_data_dirty = true;
-            log::info!("[BubbleStore] Join existing group: cleared window drawings, synced tag content");
+            log::debug!("[BubbleStore] Join existing group: cleared window drawings, synced tag content");
         }
 
         // Dead fallback removed — TagManager handles all sync join logic above.
@@ -854,7 +854,7 @@ impl ChartApp {
                     }
                 }
                 self.attach_chart_to_tag(cid, auto_bid);
-                log::info!("[BubbleStore] do_split: created auto-bubble {:?} for chart {:?} (seeded {} bars)",
+                log::debug!("[BubbleStore] do_split: created auto-bubble {:?} for chart {:?} (seeded {} bars)",
                     auto_bid, cid, source_bars.len());
             }
         }
@@ -948,7 +948,7 @@ impl ChartApp {
                         if new_cid != old_cid {
                             // The chart got a new ID after the split — connect the new one.
                             self.attach_chart_to_tag(new_cid, old_gid);
-                            log::info!("[BubbleStore] (SplitUntagged) Mother re-connected new cid {:?} → group {:?}", new_cid, old_gid);
+                            log::debug!("[BubbleStore] (SplitUntagged) Mother re-connected new cid {:?} → group {:?}", new_cid, old_gid);
                         }
                         // else: same chart_id survived the split, TagManager link is intact.
                     }
@@ -957,7 +957,7 @@ impl ChartApp {
                     if let Some(color) = pre_split_color {
                         self.panel_app.leaf_color_tags.insert(mother_leaf, color);
                     }
-                    log::info!("[BubbleStore] (SplitUntagged) Mother leaf {:?} keeps group {:?}", mother_leaf, old_gid);
+                    log::debug!("[BubbleStore] (SplitUntagged) Mother leaf {:?} keeps group {:?}", mother_leaf, old_gid);
                 }
             }
 
@@ -989,7 +989,7 @@ impl ChartApp {
             for &leaf_id in new_leaves.iter().skip(1) {
                 let new_chart_id = self.panel_app.panel_grid.container_id_for_leaf(leaf_id);
                 if self.panel_app.panel_grid.container_for_leaf(leaf_id).is_none() {
-                    log::info!("[sync_group] split untagged: container_for_leaf({:?}) returned None — skipping new leaf", leaf_id);
+                    log::debug!("[sync_group] split untagged: container_for_leaf({:?}) returned None — skipping new leaf", leaf_id);
                     continue;
                 }
                 let gid = self.create_auto_bubble(
@@ -1013,7 +1013,7 @@ impl ChartApp {
                 }
                 // BubbleStore reverse index updated by attach_chart_to_bubble above.
                 self.panel_app.leaf_color_tags.remove(&leaf_id);
-                log::info!(
+                log::debug!(
                     "[BubbleStore] (SplitUntagged) Created auto group {:?} for new leaf {:?} sym='{}' exch='{}' at='{}' bars={}",
                     gid, leaf_id, split_untagged_sym, split_untagged_exch, split_untagged_at, source_bars.len()
                 );
@@ -1062,7 +1062,7 @@ impl ChartApp {
             // Resolve first-leaf window once — needed by both auto-promote and no-group branches.
             let first_leaf_win = self.panel_app.panel_grid.container_for_leaf(new_leaves[0]);
             if first_leaf_win.is_none() {
-                log::info!("[sync_group] split tagged: container_for_leaf({:?}) returned None — skipping split tag", new_leaves[0]);
+                log::debug!("[sync_group] split tagged: container_for_leaf({:?}) returned None — skipping split tag", new_leaves[0]);
                 return;
             }
             let first_leaf_chart_id = self.panel_app.panel_grid.container_id_for_leaf(new_leaves[0]);
@@ -1082,7 +1082,7 @@ impl ChartApp {
                     let color = self.core.tags().next_unused_color();
                     let gid = self.create_tagged_bubble(color, first_leaf_symbol, first_leaf_timeframe);
                     created_fresh_group = true;
-                    log::info!("[BubbleStore] Split promoted auto group to visible tag {:?}", gid);
+                    log::debug!("[BubbleStore] Split promoted auto group to visible tag {:?}", gid);
                     gid
                 } else {
                     // User-tagged group: all split windows intentionally share it.
@@ -1231,7 +1231,7 @@ impl ChartApp {
                     }
                 }
             }
-            log::info!(
+            log::debug!(
                 "[BubbleStore] {} {:?} with {} members after split",
                 if is_new_group { "Created group" } else { "Joined existing group" },
                 group_id,
@@ -1302,7 +1302,7 @@ impl ChartApp {
                         group.primitives = source_prims;
                     }).is_some();
                     if seeded {
-                        log::info!(
+                        log::debug!(
                             "[BubbleStore] Seeded group {:?} with {} primitives",
                             group_id, count
                         );
@@ -1353,7 +1353,7 @@ impl ChartApp {
                         group.indicator_configs = configs;
                     }).is_some();
                     if seeded {
-                        log::info!(
+                        log::debug!(
                             "[BubbleStore] Seeded group {:?} with {} indicator configs",
                             group_id, count
                         );
@@ -1572,7 +1572,7 @@ impl ChartApp {
                 .unwrap_or(self.active_exchange);
             let eid_str = resolved_exchange.as_str();
             if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
-                log::info!(
+                log::debug!(
                     "[ChartApp] Exchange {} is disabled, skipping request_bars (symbol propagation)",
                     eid_str
                 );
@@ -1587,7 +1587,7 @@ impl ChartApp {
             // chart empty after the identity reset (see the matching
             // comment in chart_out_events.rs's ApplySymbol handler).
             self.core.request_kline(resolved_exchange, &symbol_owned, &timeframe, at, None, Some(bar_count), true);
-            log::info!(
+            log::debug!(
                 "[BubbleStore] Requested bars for peer {} @ {} tf={:?} (symbol propagation)",
                 symbol_owned, eid_str, timeframe
             );
@@ -1620,7 +1620,7 @@ impl ChartApp {
                     );
                 }
             }
-            log::info!(
+            log::debug!(
                 "[BubbleStore] Updated group symbol to '{}' via chart {:?}",
                 symbol, chart_id
             );
@@ -1726,7 +1726,7 @@ impl ChartApp {
                 .unwrap_or(self.active_exchange);
             let eid_str = resolved_exchange.as_str();
             if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
-                log::info!(
+                log::debug!(
                     "[ChartApp] Exchange {} is disabled, skipping request_bars (timeframe propagation)",
                     eid_str
                 );
@@ -1735,7 +1735,7 @@ impl ChartApp {
             let at = crate::account_type_from_label(&at_label);
             self.core.ensure_connector(resolved_exchange);
             self.core.request_kline(resolved_exchange, &symbol, &tf, at, None, Some(bar_count), true);
-            log::info!(
+            log::debug!(
                 "[BubbleStore] Requested bars for peer {} @ {} tf={:?} (timeframe propagation)",
                 symbol, eid_str, tf
             );
@@ -1750,7 +1750,7 @@ impl ChartApp {
             if let Some(bid) = tag_bid {
                 self.core.bubbles_mut().set_timeframe(bid, tf.clone());
             }
-            log::info!(
+            log::debug!(
                 "[BubbleStore] Updated group timeframe to {:?} via chart {:?}",
                 tf, chart_id
             );
@@ -2041,7 +2041,7 @@ impl ChartApp {
                 }
                 let new_id_opt = self.core.indicators_mut().add(Some(group_id), type_id);
                 if let Some(new_id) = new_id_opt {
-                    log::info!(
+                    log::debug!(
                         "[BubbleStore] Split sync: created indicator '{}' (id={}) on bubble {} (chart {:?})",
                         name, new_id, group_bid_raw, chart_id
                     );
@@ -2053,7 +2053,7 @@ impl ChartApp {
             self.core.indicators_mut().recalc_bubble(group_id, &bars);
         }
         self.sync_sub_panes_from_manager();
-        log::info!(
+        log::debug!(
             "[BubbleStore] Synced {} indicator configs to {} new members",
             configs.len(), new_leaf_chart_ids.len()
         );
@@ -2111,7 +2111,7 @@ impl ChartApp {
                 if let Some(bars) = bars {
                     self.core.indicators_mut().recalc_bubble(group_id, &bars);
                 }
-                log::info!(
+                log::debug!(
                     "[BubbleStore] Synced indicator '{}' (id={}) to peer chart {:?}",
                     type_id, new_id, peer_cid
                 );

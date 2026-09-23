@@ -1507,7 +1507,7 @@ impl ChartApp {
                     for id in &needs_heal {
                         self.indicator_heal_attempted.insert(*id);
                     }
-                    log::info!(
+                    log::debug!(
                         "[ChartApp] indicator heal: bubble {} has {} bars, {} never-computed instance(s) {:?} — recalculating",
                         bid, bars.len(), needs_heal.len(), needs_heal
                     );

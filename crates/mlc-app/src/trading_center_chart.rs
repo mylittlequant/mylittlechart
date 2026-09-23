@@ -196,7 +196,7 @@ impl ChartApp {
             .request_kline(eid, symbol, &tf, at3, None, Some(bar_count), true);
 
         self.trading_center_charts.insert(pid, cid);
-        log::info!(
+        log::debug!(
             "[TradingCenter] birthed aux chart {:?} bubble {:?} for container {:?} ({} {} {} {})",
             cid, auto_bid, pid, symbol, exchange, account_type, tf.name,
         );
@@ -294,7 +294,7 @@ impl ChartApp {
         } else {
             let _ = self.apply_chart_type_switch(Some(cid), ct);
         }
-        log::info!(
+        log::debug!(
             "[TradingCenter] rekeyed aux chart {:?} (ct={}): {}·{}·{}·{} -> {}·{}·{}·{}",
             cid, ct, old_symbol, old_exchange, old_at, old_tf_name,
             symbol, exchange, account_type, new_tf.name,

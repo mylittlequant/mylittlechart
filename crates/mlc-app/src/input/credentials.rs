@@ -303,7 +303,7 @@ impl ChartApp {
         // Re-read the freshly-written payload into the sidecar's RAM cache —
         // it was unlocked (off the same key) before this write landed.
         self.sync_vault_sidecars(vault_key);
-        log::info!("[ChartApp] alert secrets: migrated Telegram/webhook secrets from vault.enc into alert_secrets.enc (one-time)");
+        log::debug!("[ChartApp] alert secrets: migrated Telegram/webhook secrets from vault.enc into alert_secrets.enc (one-time)");
     }
 
     /// Seal the vault deliberately (the "Lock" button) — the counterpart a
@@ -331,7 +331,7 @@ impl ChartApp {
         self.panel_app.credentials_state.webhook_url_focused = false;
         self.panel_app.credentials_state.view = CredentialsView::List;
         self.sync_credentials_from_core();
-        log::info!("[ChartApp] credentials: vault sealed");
+        log::debug!("[ChartApp] credentials: vault sealed");
     }
 
     /// Route to the existing vault page, remembering to come back to
@@ -405,7 +405,7 @@ impl ChartApp {
             tf.clear(&uzor::WidgetId::from(text_input::CONFIRM_PASSPHRASE));
             tf.blur();
         }
-        log::info!(
+        log::debug!(
             "[ChartApp] credentials: routing to {}, will return to {:?}",
             if has_vault { "unlock" } else { "vault setup" },
             return_to
@@ -470,7 +470,7 @@ impl ChartApp {
         self.panel_app.credentials_state.error_message = None;
         self.blur_credentials_add_fields();
         self.sync_credentials_from_core();
-        log::info!("[ChartApp] credentials: exchange key added");
+        log::debug!("[ChartApp] credentials: exchange key added");
     }
 
     /// Re-derive the vault key for the CURRENT profile and restore secret
@@ -517,7 +517,7 @@ impl ChartApp {
         // `redecrypt_open_conversation` the moment it sees a key.
         if self.panel_app.user_settings_state.show_dm_vault_unlock_overlay {
             self.panel_app.user_settings_state.show_dm_vault_unlock_overlay = false;
-            log::info!("[ChartApp] credentials: vault unlocked mid-session (DM overlay)");
+            log::debug!("[ChartApp] credentials: vault unlocked mid-session (DM overlay)");
             return;
         }
 
@@ -528,7 +528,7 @@ impl ChartApp {
             self.panel_app.user_settings_state.open();
             self.panel_app.credentials_state.view = view;
         }
-        log::info!("[ChartApp] credentials: vault unlocked mid-session");
+        log::debug!("[ChartApp] credentials: vault unlocked mid-session");
     }
 
     /// Close out a vault-setup flow that ran to its end (the user
@@ -562,7 +562,7 @@ impl ChartApp {
             self.panel_app.user_settings_state.active_tab = UserSettingsTab::Vault;
             self.panel_app.user_settings_state.open();
             self.panel_app.credentials_state.view = view;
-            log::info!("[ChartApp] credentials: vault created, returning to {:?}", view);
+            log::debug!("[ChartApp] credentials: vault created, returning to {:?}", view);
         }
     }
 
@@ -877,7 +877,7 @@ impl ChartApp {
             let records = match mlc_vault::vault::load_encrypted::<serde_json::Value>(&old_key, &vault_path) {
                 Ok(records) => records,
                 Err(e) => {
-                    log::info!("[ChartApp] secret store: {filename} not re-keyed ({}) — likely nothing stored yet", e);
+                    log::debug!("[ChartApp] secret store: {filename} not re-keyed ({}) — likely nothing stored yet", e);
                     continue;
                 }
             };
