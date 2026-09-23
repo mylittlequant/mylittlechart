@@ -580,12 +580,11 @@ pub fn draw_volume_overlay(
         let (bx, by, bw, bh) = (x - bar_width / 2.0, base_y - bar_height, bar_width, bar_height);
         // Volume bars wear the skin's texture layer like the candles do — a
         // glow-on skin that lights the bodies but leaves the volume flat
-        // reads as two different charts stacked.
+        // reads as two different charts stacked. Shared ring set with the
+        // candle glow (`chart_render::draw_glow_rings`) so the two can't
+        // drift out of sync.
         if state.theme.candle_glow {
-            for (grow, alpha) in [(2.0_f64, 0.16_f64), (4.0, 0.07)] {
-                ctx.set_fill_color(&mlc_core::utils::color::apply_opacity(color, alpha));
-                ctx.fill_rect(bx - grow, by - grow, bw + grow * 2.0, bh + grow * 2.0);
-            }
+            crate::chart_render::draw_glow_rings(ctx, color, bx, by, bw, bh);
         }
         ctx.set_fill_color(color);
         ctx.fill_rect(bx, by, bw, bh);

@@ -14,19 +14,17 @@ use mlc_core::theme::CandleStyle;
 use mlc_core::Bar;
 use super::ChartRenderState;
 
-/// Soft glow underlay for a candle body: two widening translucent
-/// rects behind the body rect (canvas2d has no blur — layered alpha
-/// approximates the halo). Cheap: two fills per bar.
+/// Soft glow underlay for a candle body: [`super::GLOW_RINGS`] widening
+/// translucent rects behind the body rect (canvas2d has no blur — layered
+/// alpha approximates the halo). Shared with the volume overlay's glow via
+/// `super::draw_glow_rings`.
 #[inline]
 fn draw_body_glow(
     ctx: &mut dyn RenderContext,
     color: &str,
     x: f64, y: f64, w: f64, h: f64,
 ) {
-    for (grow, alpha) in [(2.0_f64, 0.16_f64), (4.0, 0.07)] {
-        ctx.set_fill_color(&mlc_core::apply_opacity(color, alpha));
-        ctx.fill_rect(x - grow, y - grow, w + grow * 2.0, h + grow * 2.0);
-    }
+    super::draw_glow_rings(ctx, color, x, y, w, h);
 }
 
 /// Paint one candle body in the active skin draw-form. Solid/ThinGlow

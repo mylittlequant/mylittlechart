@@ -23,6 +23,26 @@
 //! }
 //! ```
 
+/// Widening translucent ring(s) drawn behind a candle body or volume bar to
+/// fake a soft glow (canvas2d has no blur primitive). Shared by
+/// `candles::draw_body_glow` and `layout::render_chart::draw_volume_overlay`
+/// so the two halos can never drift out of sync — was two separate hardcoded
+/// copies (`[(2.0, 0.16), (4.0, 0.07)]` each) until the owner asked for it
+/// "much smaller" (2026-09-23): one subtle ring instead of two.
+pub(crate) const GLOW_RINGS: [(f64, f64); 1] = [(1.0, 0.08)];
+
+/// Paint [`GLOW_RINGS`] behind `(x, y, w, h)` in `color`.
+pub(crate) fn draw_glow_rings(
+    ctx: &mut dyn mlc_core::render::RenderContext,
+    color: &str,
+    x: f64, y: f64, w: f64, h: f64,
+) {
+    for (grow, alpha) in GLOW_RINGS {
+        ctx.set_fill_color(&mlc_core::apply_opacity(color, alpha));
+        ctx.fill_rect(x - grow, y - grow, w + grow * 2.0, h + grow * 2.0);
+    }
+}
+
 mod grid;
 mod candles;
 mod series;
