@@ -549,11 +549,13 @@ pub fn chart_toolbar_render_toolbars(
             control_sections = apply_active_states(control_sections, |id| {
                 match id {
                     // Camera button (screenshot-destination arc): highlight
-                    // while its destination dropdown is open, during the
-                    // ~1s post-fire active phase (`is_active` covers both
-                    // via `open_dropdown_id` / `screenshot_active()` —
-                    // owner ruling 2026-09-05), or when a non-default
-                    // destination is remembered.
+                    // while its destination dropdown is open (`is_active`
+                    // covers that via `open_dropdown_id`) or when a non-
+                    // default destination is remembered. NOT during the ~1s
+                    // post-fire active phase — the owner's evening ruling
+                    // 2026-09-05 reversed the same day's earlier call for
+                    // that (see `ChartToolbarState::screenshot_active`'s
+                    // own doc); `is_active` never consults it.
                     "screenshot" => tb.is_active(id)
                         || tb.screenshot_destination != mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard,
                     _ => tb.is_active(id),

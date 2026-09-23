@@ -785,8 +785,11 @@ pub struct ChartToolbarState {
     /// Timestamp of the last screenshot (camera) button click — used both
     /// for double-click detection (same pattern as `last_magnet_click_time`,
     /// window `ChartToolbarState::SCREENSHOT_ACTIVE_MS`) and to drive
-    /// `screenshot_active()`, the ~1s "just fired" visual-active phase
-    /// (owner ruling 2026-09-05).
+    /// `screenshot_active()`, the ~1s "just fired" phase. That phase paints
+    /// NO highlight on the button (owner ruling 2026-09-05 evening reversed
+    /// the same day's earlier call — see `screenshot_active`'s own doc); it
+    /// only gates the double-click-opens-dropdown window and the shell's
+    /// own repaint-at-expiry check.
     /// Single-click fires a screenshot to `screenshot_destination`;
     /// a second click inside the window opens the destination dropdown
     /// instead of firing again.
@@ -963,8 +966,17 @@ impl ChartToolbarState {
     /// True while the camera (screenshot) button's SCREENSHOT_ACTIVE_MS
     /// "just fired" active phase is live. Unlike the destination dropdown,
     /// this is a one-shot pulse that expires on its own — nothing closes
-    /// it early. Consulted by `is_active("screenshot")` so the button paints
-    /// active the same way a drawing tool does (owner ruling 2026-09-05).
+    /// it early.
+    ///
+    /// NOT consulted by `is_active("screenshot")` — the owner's ORIGINAL
+    /// 2026-09-05 ruling had this paint the button active, but the SAME
+    /// day's evening ruling reversed it ("no highlight; the earlier pulse
+    /// stuck on until the next repaint" — see `is_active`'s own doc). The
+    /// only consumer left is the shell's own repaint-scheduling check
+    /// (`mlc-app-shell-vello/main.rs`'s `screenshot_active_prev` compare),
+    /// which needs to know the EXACT millisecond this flips back to
+    /// `false` so it can force one more redraw then — nothing else reads
+    /// this as "should the button glow".
     pub fn screenshot_active(&self) -> bool {
         self.last_screenshot_click_time
             .map(|t| Instant::now().duration_since(t).as_millis() < Self::SCREENSHOT_ACTIVE_MS as u128)
@@ -1847,7 +1859,13 @@ mod tests {
 
         tb.last_screenshot_click_time = Some(Instant::now());
         assert!(tb.screenshot_active());
-        assert!(tb.is_active("screenshot"));
+        // Owner ruling 2026-09-05 evening reversed the same day's earlier
+        // call to paint the button active during this pulse ("no
+        // highlight; the earlier pulse stuck on until the next repaint") —
+        // `is_active("screenshot")` never consults `screenshot_active()`
+        // (see both methods' own docs), so a single fire draws no
+        // highlight at all.
+        assert!(!tb.is_active("screenshot"));
 
         tb.last_screenshot_click_time = Some(Instant::now() - Duration::from_millis(1500));
         assert!(!tb.screenshot_active());

@@ -1854,13 +1854,13 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 450] = [
 // This test fails the build if a key is added without filling all N_LANG
 // columns — so language coverage cannot regress unnoticed.
 // =============================================================================
-// CandlePatternKey table  (34 variants x N_LANG)
+// CandlePatternKey table  (39 variants x N_LANG)
 // =============================================================================
 //
 // En/Ru filled only (col 0 = En, col 1 = Ru); cols 2..14 fall back to En at
 // runtime. See `CandlePatternKey`'s own doc for why this table is excluded
 // from `every_chart_table_is_fully_translated` below.
-pub(super) static CANDLE_PATTERN_KEY_TABLE: [[&str; N_LANG]; 34] = [
+pub(super) static CANDLE_PATTERN_KEY_TABLE: [[&str; N_LANG]; 39] = [
     /*  0 Doji                    */ [ "Doji",                        "Дожи",                            "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /*  1 GravestoneDoji          */ [ "Gravestone Doji",             "Дожи «надгробие»",                "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /*  2 DragonflyDoji           */ [ "Dragonfly Doji",              "Дожи «стрекоза»",                 "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1895,6 +1895,11 @@ pub(super) static CANDLE_PATTERN_KEY_TABLE: [[&str; N_LANG]; 34] = [
     /* 31 FallingThreeMethods     */ [ "Falling Three Methods",       "Метод трёх нисходящих",           "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 32 UpsideGapTwoCrows       */ [ "Upside Gap Two Crows",        "Две вороны с гэпом вверх",        "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 33 DownsideGapThreeMethods */ [ "Downside Gap Three Methods",  "Метод трёх с гэпом вниз",         "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 34 CommonGap                */ [ "Common Gap",                  "Обычный гэп",                     "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 35 BreakawayGap             */ [ "Breakaway Gap",               "Гэп прорыва",                     "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 36 RunawayGap               */ [ "Runaway Gap",                 "Гэп разгона",                     "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 37 ExhaustionGap            */ [ "Exhaustion Gap",              "Гэп истощения",                   "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 38 IslandGap                */ [ "Island Gap",                  "Островной гэп",                   "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

@@ -27,11 +27,12 @@ use super::super::{
     elliott::guard::{self, Violation},
 };
 
-/// The 34 catalogue ids, ordered by `bars_needed()` (1/2/3/5) then by
-/// `mli`'s own [`CandlePatternKind::all`] order — the ordering both
-/// [`CandlePattern::style_properties`]'s own `Select` and
-/// [`super::candle_pattern_scan::CandlePatternScan`]'s own `Table` present
-/// their 34 rows in. `sort_by_key` is STABLE, so the secondary "`all()`
+/// The 39 catalogue ids (34 candlestick shapes + 5 gap kinds), ordered by
+/// `bars_needed()` (1/2/3/5) then by `mli`'s own [`CandlePatternKind::all`]
+/// order — the ordering both [`CandlePattern::style_properties`]'s own
+/// `Select` and [`super::candle_pattern_scan::CandlePatternScan`]'s own
+/// `Table` present their 39 rows in. `sort_by_key` is STABLE, so the
+/// secondary "`all()`
 /// order" criterion falls out of leaving ties in their original relative
 /// order — no explicit tiebreaker needed.
 pub(super) fn sorted_kinds() -> Vec<CandlePatternKind> {
@@ -306,7 +307,7 @@ impl Primitive for CandlePattern {
 
         let chart_height = ctx.chart_height();
         let anchor_x = ctx.ts_to_x_ms(self.anchor_ts);
-        // Half a bar of spacing on each side. Twelve of the 34 kinds are
+        // Half a bar of spacing on each side. Twelve of the 39 kinds are
         // single-bar (Doji, Hammer, Marubozu, Spinning Top, ...), and
         // without this their bracket degenerates to `x1 == x2`: a lone
         // tick with the pattern's name under it, anchored to nothing the

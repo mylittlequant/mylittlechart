@@ -3508,11 +3508,12 @@ impl uzor::i18n::Translate for ConceptKey {
 }
 
 // =============================================================================
-// Candle Pattern Keys  (the 34-pattern catalogue's own display names)
+// Candle Pattern Keys  (the 39-pattern catalogue's own display names)
 // =============================================================================
 
 /// Localized display names for `mli::events::candle_pattern::
-/// CandlePatternKind`'s 34 patterns.
+/// CandlePatternKind`'s 39 patterns (34 candlestick shapes + 5 gap kinds:
+/// common/breakaway/runaway/exhaustion/island).
 ///
 /// The catalogue itself — which patterns exist, what identifies one on the
 /// wire, how many bars it needs, which way it leans — belongs to `mli` and
@@ -3565,10 +3566,15 @@ pub enum CandlePatternKey {
     FallingThreeMethods     = 31,
     UpsideGapTwoCrows       = 32,
     DownsideGapThreeMethods = 33,
+    CommonGap               = 34,
+    BreakawayGap            = 35,
+    RunawayGap              = 36,
+    ExhaustionGap           = 37,
+    IslandGap               = 38,
 }
 
 impl CandlePatternKey {
-    pub const COUNT: usize = 34;
+    pub const COUNT: usize = 39;
 
     /// Get translation for this key.
     #[inline]
@@ -3618,6 +3624,11 @@ impl CandlePatternKey {
             "falling_three_methods"   => Some(Self::FallingThreeMethods),
             "upside_gap_two_crows"    => Some(Self::UpsideGapTwoCrows),
             "downside_gap_three_methods" => Some(Self::DownsideGapThreeMethods),
+            "common_gap"              => Some(Self::CommonGap),
+            "breakaway_gap"           => Some(Self::BreakawayGap),
+            "runaway_gap"             => Some(Self::RunawayGap),
+            "exhaustion_gap"          => Some(Self::ExhaustionGap),
+            "island_gap"              => Some(Self::IslandGap),
             _ => None,
         }
     }
