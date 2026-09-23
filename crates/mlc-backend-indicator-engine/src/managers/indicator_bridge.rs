@@ -8,6 +8,7 @@ use crate::catalog::{
     OutputSpec, OutputType as CatalogOutputType,
     HistogramStyle as CatalogHistogramStyle,
     IndicatorCategory as CatalogCategory,
+    IndicatorRoleKind,
     ParamType as CatalogParamType,
 };
 
@@ -107,6 +108,26 @@ impl IndicatorBridge {
             streams: std::iter::once(info.signature.input_stream)
                 .chain(info.signature.aux_streams.iter().copied())
                 .collect(),
+            // The mlc calculator only ever calls `update_bar`/
+            // `update_bar_with_delta` (`IndicatorCalculator::calculate_with_id`)
+            // — an indicator whose primary stream isn't `Bar` never gets fed
+            // and freezes at its construction-time value. Opaque host-driven
+            // overlays (`machine_id: None` — dom heatmap, funding rate,
+            // liquidation heatmap/projection, OI delta) never go through
+            // `IndicatorCalculator`/`ComputeInstance` at all; they're
+            // rendered straight off the live data bridge regardless of their
+            // declared `input_stream`, so they're always fed. Catalog-listing
+            // consumers filter on this; `self.definitions` (keyed lookup for
+            // instance creation / preset restore) is unaffected.
+            fed_by_engine: info.signature.machine_id.is_none()
+                || matches!(
+                    info.signature.input_stream,
+                    mli::data_loader::stream_kind::StreamKind::Bar
+                ),
+            // Pattern-recognition entries (candlestick, fractals, ...)
+            // belong to the left-toolbar auto-detector scans, not the
+            // indicator catalog — filtered by the same consumers.
+            is_pattern_role: matches!(info.signature.role_kind, Some(IndicatorRoleKind::Pattern)),
         }
     }
 

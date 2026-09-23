@@ -141,21 +141,42 @@ impl IndicatorManager {
         self.definitions.insert(definition.type_id.clone(), definition);
     }
 
-    /// Get all available definitions
+    /// Get all available definitions, filtered down to what belongs in a
+    /// user-facing catalog listing (Add-indicator modal / search /
+    /// favorites, the daemon `/v1/catalog/indicators` route, the native
+    /// Agent API's startup catalog snapshot — every consumer reaches this
+    /// method or `get_by_category`, never `self.definitions` directly).
+    /// Excludes:
+    /// - entries the mlc calculator never feeds (`fed_by_engine == false`)
+    ///   — it only calls `update_bar`/`update_bar_with_delta`, so a
+    ///   non-`Bar`-primary indicator freezes at its construction value;
+    /// - `is_pattern_role == true` entries (candlestick / fractal pattern
+    ///   recognition), which belong to the left-toolbar auto-detector scans.
+    ///
+    /// `self.definitions` itself is untouched — `create_instance` /
+    /// `create_instance_with_id` look definitions up by `type_id` directly,
+    /// so already-persisted preset instances referencing a filtered
+    /// indicator keep restoring.
     pub fn get_definitions(&self) -> Vec<&IndicatorDefinition> {
-        self.definitions.values().collect()
+        self.definitions
+            .values()
+            .filter(|d| d.fed_by_engine && !d.is_pattern_role)
+            .collect()
     }
 
-    /// Get definition by type ID
+    /// Get definition by type ID. Unfiltered — used for instance creation
+    /// and preset restore, which must keep resolving filtered-out catalog
+    /// entries for indicators already added to an existing preset.
     pub fn get_definition(&self, type_id: &str) -> Option<&IndicatorDefinition> {
         self.definitions.get(type_id)
     }
 
-    /// Get definitions by category
+    /// Get definitions by category — same catalog-listing filter as
+    /// [`Self::get_definitions`].
     pub fn get_by_category(&self, category: IndicatorCategory) -> Vec<&IndicatorDefinition> {
         self.definitions
             .values()
-            .filter(|d| d.category == category)
+            .filter(|d| d.category == category && d.fed_by_engine && !d.is_pattern_role)
             .collect()
     }
 
@@ -1695,6 +1716,50 @@ impl IndicatorManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Item 1 (owner review 2026-09-23, indicators-modal-defaults-broken.md
+    /// §3): the mlc calculator only ever calls `update_bar`/
+    /// `update_bar_with_delta` (`IndicatorCalculator::calculate_with_id`) —
+    /// a catalog entry whose primary declared stream isn't `Bar` never gets
+    /// fed and freezes at its construction value. `get_definitions` must not
+    /// offer any such entry, while a live host-rendered overlay
+    /// (`machine_id: None`, rendered off the live data bridge instead of
+    /// through the calculator) must survive despite its non-`Bar` stream,
+    /// and a known Bar-fed indicator must still be there.
+    #[test]
+    fn get_definitions_excludes_unfed_indicators() {
+        let manager = IndicatorManager::new();
+        let defs = manager.get_definitions();
+        assert!(
+            defs.iter().all(|d| d.fed_by_engine),
+            "catalog listing leaked an indicator the calculator never feeds"
+        );
+        assert!(defs.iter().any(|d| d.type_id == "rsi"));
+        assert!(defs.iter().any(|d| d.type_id == "ema"));
+        assert!(
+            !defs.iter().any(|d| d.type_id == "large_trade_filter"),
+            "large_trade_filter needs update_tick and must not be offered"
+        );
+        assert!(
+            defs.iter().any(|d| d.type_id == "overlay_funding_rate"),
+            "opaque host-rendered overlays must survive the fed-by-engine filter"
+        );
+    }
+
+    /// Item 2 (owner review 2026-09-23, same doc §4): `role_kind == Pattern`
+    /// entries (candlestick / fractal pattern recognition) belong to the
+    /// left-toolbar auto-detector scans, not the indicator catalog.
+    #[test]
+    fn get_definitions_excludes_pattern_role() {
+        let manager = IndicatorManager::new();
+        let defs = manager.get_definitions();
+        assert!(
+            defs.iter().all(|d| !d.is_pattern_role),
+            "catalog listing leaked a Pattern role_kind indicator"
+        );
+        assert!(!defs.iter().any(|d| d.type_id == "fractals"));
+        assert!(!defs.iter().any(|d| d.type_id == "heikinashi"));
+    }
 
     #[test]
     fn test_create_instance() {

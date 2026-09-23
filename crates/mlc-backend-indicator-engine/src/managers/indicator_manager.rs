@@ -387,6 +387,22 @@ pub struct IndicatorDefinition {
     /// says so in its signature, and nothing in the app has to know its
     /// name. Empty only for definitions built outside the catalog.
     pub streams: Vec<StreamKind>,
+    /// Whether the mlc calculator's `update_bar`/`update_bar_with_delta`
+    /// path (`IndicatorCalculator::calculate_with_id`) actually feeds this
+    /// indicator — true when its primary `input_stream` is `Bar`. `false`
+    /// means the instance freezes at its construction-time value once
+    /// added (never fed). Catalog-listing consumers (the Add-indicator
+    /// modal / search / favorites, the daemon `/v1/catalog/indicators`
+    /// route, and the native Agent API's startup catalog snapshot) filter
+    /// on this via `IndicatorManager::get_definitions`/`get_by_category`;
+    /// `self.definitions` itself keeps every entry so already-persisted
+    /// preset instances still restore by `type_id`.
+    pub fed_by_engine: bool,
+    /// True when the mli catalog signature's `role_kind` is `Pattern`
+    /// (candlestick / fractal pattern recognition) — these belong to the
+    /// left-toolbar auto-detector scans, not the indicator catalog.
+    /// Filtered by the same catalog-listing consumers as `fed_by_engine`.
+    pub is_pattern_role: bool,
 }
 
 /// An instantiated indicator with configured parameters
@@ -614,6 +630,8 @@ mod tests {
             histogram_style: HistogramStyle::default(),
             machine_id: None,
             streams: Vec::new(),
+            fed_by_engine: true,
+            is_pattern_role: false,
         }
     }
 
