@@ -9,6 +9,7 @@ use web_time::SystemTime;
 
 use super::snapshots::{ChartWindowSnapshot, DataBubbleSnapshot, IndicatorSnapshot};
 use crate::alert::AlertItem;
+use crate::drawing::PrimitiveSnapshot;
 
 // =============================================================================
 // ChartPreset
@@ -433,6 +434,138 @@ impl ChartPreset {
     /// Returns the user-visible display name.
     pub fn name(&self) -> &str {
         &self.name
+    }
+
+    /// Rewrite every process-wide identifier this preset embeds to freshly
+    /// allocated, never-before-used local ids, before the preset is
+    /// inserted into a recipient's own live state — a share-link open or a
+    /// chart clone (`mlc-app::share_viewer`).
+    ///
+    /// A preset built by ANOTHER process (the sharer's own session) carries
+    /// raw numeric ids from THAT process's own counters
+    /// (`ChartId`/`BubbleId`/primitive ids) — small and sequential, so they
+    /// routinely collide with the recipient's own already-live ids. A raw
+    /// keyed insert (`BubbleStore::insert_bubble_raw`) then silently
+    /// aliases/overwrites the recipient's own window/bubble/primitive at
+    /// that id — owner report M5, "VOLUME drawn twice": a shared chart's
+    /// own default Volume bubble landing on the recipient's own bubble 1.
+    ///
+    /// Remaps, consistently, every window id (`ChartWindowSnapshot::
+    /// window_id`) and every bubble id (`DataBubbleSnapshot::id` — the same
+    /// id space a `Tag` is keyed by: see `mlc_core::ids::BubbleId`'s own
+    /// doc), rewriting every in-preset reference to each
+    /// (`bubbles[].members`, chart entries of `member_overrides`,
+    /// `windows[].bubble_id`, `indicators[].bubble_id`) so the preset stays
+    /// internally consistent — a window's `bubble_id` always follows its
+    /// bubble. Also remaps every drawing-primitive id embedded anywhere in
+    /// the preset (bubble-owned, window-owned, stashed, and
+    /// per-symbol-cache primitives) via [`PrimitiveSnapshot::remap_ids`],
+    /// fixing up `origin_id` / `window_id` / Elliott `link.parent_id` /
+    /// `follows` references along with it.
+    ///
+    /// Deliberately NOT remapped:
+    /// - `leaf_id` — purely structural, scoped to this preset's own
+    ///   docking-tree JSON (`layout`), rebuilt fresh on every load and
+    ///   never compared across presets.
+    /// - `PanelId` (`slot_leaves`, `panel_members`, `synced_panel_ids`, the
+    ///   Panel arm of `member_overrides`) and indicator-instance ids
+    ///   (`IndicatorSnapshot::id`/`origin_id`, `IndicatorGroupConfig::id`,
+    ///   primitive `pane_id`) — both live in a store the app
+    ///   wholesale-replaces per preset (`TradingPanelsStore::new()` on
+    ///   park; `IndicatorManager::clear_all()` on cold load), so a numeric
+    ///   collision with a DIFFERENT preset's own ids there cannot alias a
+    ///   live value the way window/bubble/primitive ids — which are NOT
+    ///   reset per preset — can.
+    pub fn remap_ids_for_import(&mut self) {
+        use std::collections::HashMap;
+
+        let window_id_map: HashMap<u64, u64> = self
+            .windows
+            .iter()
+            .map(|w| (w.window_id, crate::ids::generate_chart_id().0))
+            .collect();
+        let bubble_id_map: HashMap<u64, u64> = self
+            .bubbles
+            .iter()
+            .map(|b| (b.id, crate::ids::BubbleId::generate().0))
+            .collect();
+
+        for window in &mut self.windows {
+            if let Some(&new_id) = window_id_map.get(&window.window_id) {
+                window.window_id = new_id;
+            }
+            window.bubble_id = window.bubble_id.and_then(|bid| bubble_id_map.get(&bid).copied());
+        }
+        for bubble in &mut self.bubbles {
+            if let Some(&new_id) = bubble_id_map.get(&bubble.id) {
+                bubble.id = new_id;
+            }
+            bubble.members = bubble
+                .members
+                .iter()
+                .filter_map(|id| window_id_map.get(id).copied())
+                .collect();
+            bubble.member_overrides.retain_mut(|ov| {
+                // kind 0 = Chart (this preset's own window id space —
+                // remap or drop a dangling reference); kind 1 = Panel
+                // (untouched, see the doc comment above).
+                if ov.kind == 0 {
+                    match window_id_map.get(&ov.id) {
+                        Some(&new_id) => {
+                            ov.id = new_id;
+                            true
+                        }
+                        None => false,
+                    }
+                } else {
+                    true
+                }
+            });
+        }
+        for ind in &mut self.indicators {
+            ind.bubble_id = ind.bubble_id.and_then(|bid| bubble_id_map.get(&bid).copied());
+        }
+
+        // Primitive ids: collect one fresh id per unique old id across
+        // every collection that carries `PrimitiveSnapshot`s, then rewrite
+        // every snapshot + every internal reference in a second pass.
+        let mut primitive_id_map: HashMap<u64, u64> = HashMap::new();
+        let mut collect_ids = |snaps: &[PrimitiveSnapshot]| {
+            for snap in snaps {
+                if let Some(old_id) = snap.id() {
+                    primitive_id_map
+                        .entry(old_id)
+                        .or_insert_with(crate::drawing::alloc_primitive_id);
+                }
+            }
+        };
+        for bubble in &self.bubbles {
+            collect_ids(&bubble.primitives);
+        }
+        for window in &self.windows {
+            collect_ids(&window.drawings.primitives);
+            collect_ids(&window.stashed_primitives);
+            for snaps in window.symbol_drawings_snapshots.values() {
+                collect_ids(snaps);
+            }
+        }
+        drop(collect_ids);
+
+        let remap_snaps = |snaps: &mut Vec<PrimitiveSnapshot>| {
+            for snap in snaps.iter_mut() {
+                *snap = snap.remap_ids(&primitive_id_map, &window_id_map);
+            }
+        };
+        for bubble in &mut self.bubbles {
+            remap_snaps(&mut bubble.primitives);
+        }
+        for window in &mut self.windows {
+            remap_snaps(&mut window.drawings.primitives);
+            remap_snaps(&mut window.stashed_primitives);
+            for snaps in window.symbol_drawings_snapshots.values_mut() {
+                remap_snaps(snaps);
+            }
+        }
     }
 }
 

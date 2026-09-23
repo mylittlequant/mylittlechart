@@ -636,13 +636,36 @@ impl BubbleStore {
 
     /// Insert a fully-constructed [`DataBubble`] using its own id.
     ///
-    /// No new id is generated. If a bubble with the same id already exists it
-    /// is silently replaced.
+    /// No new id is generated. Overwriting an id that is still live is a
+    /// caller bug, not a supported replace: every legitimate caller
+    /// restores from a preset whose ids either were never live (a fresh
+    /// `BubbleId`/`ChartId` from this process's own counters) or were just
+    /// remapped to guarantee that (an imported share/clone — see
+    /// `mlc_core::preset::preset::ChartPreset::remap_ids_for_import`).
+    /// Loud, not silent, on the case that guard is supposed to make
+    /// unreachable: a `debug_assert` for local dev/CI, plus a line naming
+    /// both bubbles so a release build that hits it anyway leaves a trail
+    /// instead of a quietly aliased chart.
     ///
     /// Private — the only caller is [`Self::restore_from_snapshots`]. External
     /// callers use that instead (Step 3.2, doctrine-cutover-2026-06-27.md §1A).
     fn insert_bubble_raw(&mut self, bubble: DataBubble) {
         let bubble_id = bubble.id;
+        if let Some(existing) = self.bubbles.get(&bubble_id) {
+            debug_assert!(
+                false,
+                "insert_bubble_raw: bubble id {bubble_id:?} is still live (existing \
+                 instrument {:?}, incoming {:?}) — an id collision reached the store; \
+                 the caller should have remapped ids before restore",
+                existing.address, bubble.address,
+            );
+            eprintln!(
+                "[BubbleStore] WARNING: insert_bubble_raw is overwriting live bubble {bubble_id:?} \
+                 (existing instrument={:?}, incoming instrument={:?}) — an id collision reached \
+                 the store; the caller should have remapped ids before restore",
+                existing.address, bubble.address,
+            );
+        }
         self.bubbles.insert(bubble_id, bubble);
     }
 

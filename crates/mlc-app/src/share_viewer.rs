@@ -106,6 +106,14 @@ impl ChartApp {
                 preset.version, PRESET_VERSION,
             ));
         }
+        // The sharer's own process minted every window/bubble/primitive id
+        // this preset carries from ITS OWN counters — remap them all to
+        // fresh local ids before this preset ever touches live state, so a
+        // numeric collision with the recipient's own ids can't silently
+        // alias/overwrite them (owner report M5: "VOLUME drawn twice").
+        // See `ChartPreset::remap_ids_for_import`'s own doc for the exact
+        // mechanism and what is/isn't in scope.
+        preset.remap_ids_for_import();
         let id = fresh_preset_id("shared");
         preset.id = id.clone();
         preset.name = format!("{} — {}", meta.title, meta.owner_label);
@@ -171,6 +179,9 @@ impl ChartApp {
         mut preset: ChartPreset,
         stripped: Vec<StrippedIndicator>,
     ) -> PresetId {
+        // Same id-collision hazard as `open_shared_preset` — see that
+        // method's doc and `ChartPreset::remap_ids_for_import`'s own doc.
+        preset.remap_ids_for_import();
         let id = fresh_preset_id("preset");
         preset.id = id.clone();
         self.core.presets_mut().insert(id.clone(), preset);
