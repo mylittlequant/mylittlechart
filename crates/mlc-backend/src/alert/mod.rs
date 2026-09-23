@@ -9,10 +9,15 @@
 mod manager;
 mod crossing;
 mod facade;
+mod freshness;
 mod store;
 pub use manager::AlertManager;
 pub use crossing::check_crossings;
 pub use facade::{Alerts, AlertsMut};
+pub use freshness::price_if_fresh;
+
+#[cfg(test)]
+mod teardown_guard_tests;
 
 /// Ring capacity for a bubble created purely to back a Price alert with no
 /// open window (`BackendCore::ensure_alert_bubble`) — a short tail, not the

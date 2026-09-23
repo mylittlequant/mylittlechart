@@ -2668,8 +2668,46 @@ impl BackendCore {
         self.bridge.unsubscribe_depth(exchange_id, symbol, account_type);
     }
 
+    /// Whether an active alert still needs `(exchange_id, symbol,
+    /// account_type)`'s trade stream — the single input [`Self::
+    /// unsubscribe_trades`] consults before letting a teardown reach the
+    /// bridge (owner-review-2026-09-23, `docs/mlc/research/
+    /// owner-review-2026-09-23/alert-bubbles-on-cold-apply.md` item 2).
+    ///
+    /// `true` when ANY bubble at this exact instrument carries
+    /// `has_active_alerts` (kept fresh by `AlertManager::resync_has_alerts`
+    /// on every alert store mutation) — that bubble IS the alert's live
+    /// subscription handle (`Self::ensure_alert_bubble`'s own doc),
+    /// whether or not any window currently displays it.
+    fn alert_still_needs_trades(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) -> bool {
+        let at_label = account_type.short_label();
+        self.bubbles()
+            .bubbles_for_instrument(exchange_id.as_str(), at_label, symbol)
+            .into_iter()
+            .any(|bid| self.bubbles().with_bubble(bid, |b| b.has_active_alerts).unwrap_or(false))
+    }
+
     /// Remove one consumer interest in the trade stream for an instrument.
+    ///
+    /// Release-guard (owner-review-2026-09-23 item 1/2): EVERY caller
+    /// across `mlc-app` — window close, panel close, symbol switch, cold
+    /// preset apply, ... — funnels through this one method before reaching
+    /// [`DataBridge::unsubscribe_trades`], so this is the single choke
+    /// point where "does an active alert still need this instrument" gets
+    /// checked once instead of re-implemented per call site (recon found
+    /// ~20 call sites, only one of which even checked for a sibling
+    /// window, and none checked alerts — see the recon doc). Tearing the
+    /// feed down here while [`Self::alert_still_needs_trades`] is true
+    /// would leave that alert evaluating stale/empty bars with no path
+    /// back to live data until some window happens to resubscribe.
     pub fn unsubscribe_trades(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        if self.alert_still_needs_trades(exchange_id, symbol, account_type) {
+            eprintln!(
+                "[BackendCore] unsubscribe_trades: keeping {}/{}/{} alive — an active alert still needs it",
+                exchange_id.as_str(), account_type.short_label(), symbol,
+            );
+            return;
+        }
         self.bridge.unsubscribe_trades(exchange_id, symbol, account_type);
     }
 
