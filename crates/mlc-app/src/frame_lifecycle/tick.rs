@@ -656,7 +656,12 @@ impl ChartApp {
             // subscription — `AlertManager::on_tick` never evaluates them.
             struct BubbleAlertData {
                 bid: mlc_core::ids::BubbleId,
-                current_price: f64,
+                // `None` = no real price yet (no bars received) — passed
+                // straight through to `AlertManager::on_tick`, which skips
+                // evaluation entirely rather than being fed a fabricated
+                // `0.0` (owner-review-2026-09-23/
+                // alert-bubbles-on-cold-apply.md §3).
+                current_price: Option<f64>,
                 current_bar: f64,
                 drawing_points: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)>,
             }
@@ -677,7 +682,37 @@ impl ChartApp {
                 }
                 let bid = self.core.ensure_alert_bubble(&address);
                 let bubble_bars_alert: Vec<mlc_core::Bar> = self.with_bubble(bid, |b| b.bars.clone()).unwrap_or_default();
-                let current_price = bubble_bars_alert.last().map(|b| b.close).unwrap_or(0.0);
+                // Item 2(b) reconciliation point (owner-review-2026-09-23/
+                // alert-bubbles-on-cold-apply.md §2-3): `ensure_alert_bubble`
+                // only mints the bubble — neither it nor `create_bubble_auto`
+                // ever calls `request_kline`/`subscribe_trades`, and no
+                // window may exist for this address at all. Kick the SAME
+                // kline request a window's own cold-open/subscribe pass uses
+                // (`request_kline`, e.g. `persistence/hydration_impl.rs`'s
+                // Step 10) whenever this bubble still has no bars — this is
+                // the single choke point that both (a) gets a freshly-minted
+                // alert-only bubble its first subscription and (b) self-
+                // heals if some window-close/symbol-switch path elsewhere
+                // ever tore the feed down for this instrument, instead of
+                // auditing every `unsubscribe_trades`/teardown call site
+                // individually. `request_kline(force=false)` is the
+                // bridge's own idempotent form (its dedup-L2 skips the
+                // request once a subscriber for this key is already alive),
+                // so calling it on every no-bars tick is safe — it stops
+                // firing the moment real bars land.
+                if bubble_bars_alert.is_empty() {
+                    if let Some(eid) = digdigdig3::ExchangeId::from_str(&address.exchange) {
+                        if self.sidebar_state.connector_enabled.get(eid.as_str()).copied().unwrap_or(true) {
+                            let at = mlc_backend_data_bridge::account_type_to_dig3(address.account_type);
+                            let tf = self.with_bubble(bid, |b| b.timeframe.clone())
+                                .unwrap_or_else(mlc_core::state::Timeframe::m1);
+                            let bar_count = self.core.user().profile().domain.bar_count as usize;
+                            self.core.ensure_connector(eid);
+                            self.core.request_kline(eid, &address.symbol, &tf, at, None, Some(bar_count), false);
+                        }
+                    }
+                }
+                let current_price = bubble_bars_alert.last().map(|b| b.close);
                 let current_bar = bubble_bars_alert.len().saturating_sub(1) as f64;
                 let drawing_points: Vec<(u64, Vec<(f64, f64)>, mlc_core::alert::DrawingExtendMode)> = {
                     let guard = self.core.drawings();

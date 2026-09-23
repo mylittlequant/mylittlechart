@@ -1307,8 +1307,8 @@ pub fn body_alerts_straddle_fires_on_cross(h: &mut BackendHarness) -> HarnessRes
     let prior_tick: f64 = pivot;
     let new_tick: f64 = pivot * 1.0050; // jumps past target_up
 
-    let _ = h.core.alerts_mut().on_tick(bid, prior_tick, 0.0, &[], &[]);
-    let fired = h.core.alerts_mut().on_tick(bid, new_tick, 1.0, &[], &[]);
+    let _ = h.core.alerts_mut().on_tick(bid, Some(prior_tick), 0.0, &[], &[]);
+    let fired = h.core.alerts_mut().on_tick(bid, Some(new_tick), 1.0, &[], &[]);
     let triggered_up = fired.contains(&id_up);
     let triggered_dn = fired.contains(&id_dn);
     if !triggered_up {
@@ -1350,8 +1350,8 @@ pub fn body_alerts_straddle_fires_on_drop(h: &mut BackendHarness) -> HarnessResu
     let prior_tick: f64 = pivot;
     let new_tick: f64 = pivot * 0.9950; // drops past target_dn
 
-    let _ = h.core.alerts_mut().on_tick(bid, prior_tick, 0.0, &[], &[]);
-    let fired = h.core.alerts_mut().on_tick(bid, new_tick, 1.0, &[], &[]);
+    let _ = h.core.alerts_mut().on_tick(bid, Some(prior_tick), 0.0, &[], &[]);
+    let fired = h.core.alerts_mut().on_tick(bid, Some(new_tick), 1.0, &[], &[]);
     let triggered_up = fired.contains(&id_up);
     let triggered_dn = fired.contains(&id_dn);
     if !triggered_dn {

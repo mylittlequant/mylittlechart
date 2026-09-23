@@ -271,16 +271,28 @@ impl AlertManager {
     /// — no crossing fires on that seed tick, matching the legacy "no
     /// previous price" behavior).
     ///
+    /// `current_price` is `None` when `bid` has no real price yet — no
+    /// bars received (a bare bubble just minted by `ensure_alert_bubble`,
+    /// or one hollowed out and not yet re-subscribed, see
+    /// `docs/mlc/research/owner-review-2026-09-23/
+    /// alert-bubbles-on-cold-apply.md` §3). That case evaluates NOTHING:
+    /// no condition is checked for any alert on `bid`, and `last_price` is
+    /// left untouched — the caller passing an explicit `Option` is the
+    /// "correct signal" the old code lacked; without it every condition
+    /// used to see a fabricated `0.0`, and `LessThan` (`current_price <
+    /// level`, no zero-guard) false-fired on it immediately.
+    ///
     /// Returns the list of triggered alert IDs.
     pub(crate) fn on_tick(
         &mut self,
         bubbles: &BubbleStore,
         bid: BubbleId,
-        current_price: f64,
+        current_price: Option<f64>,
         current_bar: f64,
         drawing_points: &[(u64, Vec<(f64, f64)>, DrawingExtendMode)],
         indicator_values: &[(u64, usize, Vec<f64>)],
     ) -> Vec<u64> {
+        let Some(current_price) = current_price else { return Vec::new() };
         let Some(address) = bubbles.bubble(bid).map(|b| b.address.clone()) else { return Vec::new() };
 
         let prev_price = self.last_price.get(&bid).copied().unwrap_or(0.0);
@@ -615,5 +627,97 @@ mod park_unpark_tests {
 
         assert_eq!(mgr.last_price_for_test(window_a_bid), Some(42.0), "window A's price must survive parking window B's preset");
         assert_eq!(parked_b.last_price_for_test(window_a_bid), None, "extraction must not leak window A's price into window B's payload");
+    }
+}
+
+#[cfg(test)]
+mod on_tick_no_data_tests {
+    //! Item 2(a) coverage (owner-review-2026-09-23,
+    //! `docs/mlc/research/owner-review-2026-09-23/
+    //! alert-bubbles-on-cold-apply.md` §3): a bubble with no real price yet
+    //! (`current_price = None` — no bars received, e.g. right after
+    //! `apply_preset_cold`/`ensure_alert_bubble` recreates it) must never
+    //! fire ANY condition kind, and must never seed `last_price`.
+
+    use super::*;
+    use mlc_core::alert::{AlertCondition, AlertSource, AlertSpec};
+    use mlc_core::state::Timeframe;
+
+    /// A `BubbleStore` holding one bubble at `binance/BTCUSDT`, with no
+    /// bars — mirrors `ensure_alert_bubble`'s own hollow construction
+    /// (`create_bubble_auto` + `set_bubble_instrument`, no
+    /// `subscribe_trades`/`request_bars`).
+    fn bare_bubble() -> (BubbleStore, BubbleId) {
+        let mut bubbles = BubbleStore::new();
+        let bid = bubbles.create_bubble_auto("BTCUSDT".to_string(), Timeframe::h1());
+        bubbles.set_bubble_instrument(bid, "binance".to_string(), "spot".to_string());
+        (bubbles, bid)
+    }
+
+    fn price_spec(condition: AlertCondition, price: f64) -> AlertSpec {
+        AlertSpec {
+            source: AlertSource::Price { symbol: "BTCUSDT".to_string() },
+            name: format!("{condition:?}"),
+            price,
+            condition,
+            // Must match `bare_bubble`'s address — `targets_instrument`
+            // requires exchange equality (only `account_type` is ignored).
+            exchange: "binance".to_string(),
+            ..AlertSpec::price_default()
+        }
+    }
+
+    const ALL_CONDITIONS: [AlertCondition; 5] = [
+        AlertCondition::CrossingUp,
+        AlertCondition::CrossingDown,
+        AlertCondition::Crossing,
+        AlertCondition::GreaterThan,
+        AlertCondition::LessThan,
+    ];
+
+    #[test]
+    fn no_data_tick_fires_nothing_for_any_condition_and_leaves_last_price_unset() {
+        let (mut bubbles, bid) = bare_bubble();
+        let mut mgr = AlertManager::default();
+        let mut ids = Vec::new();
+        for condition in ALL_CONDITIONS {
+            ids.push(mgr.add(&mut bubbles, bid, price_spec(condition, 100.0)));
+        }
+        // `add` returns 0 both for a genuinely-first alert id (`next_id`
+        // starts at 0) and for a `bid` that fails to resolve to a bubble —
+        // assert on ids being distinct instead, which only holds if every
+        // `add` above actually registered against the real bubble.
+        let mut sorted_ids = ids.clone();
+        sorted_ids.sort_unstable();
+        sorted_ids.dedup();
+        assert_eq!(sorted_ids.len(), ids.len(), "every condition must register its own alert: {ids:?}");
+
+        let triggered = mgr.on_tick(&bubbles, bid, None, 0.0, &[], &[]);
+        assert!(triggered.is_empty(), "a no-data bubble must never fire any condition");
+        assert_eq!(mgr.last_price_for_test(bid), None, "a no-data tick must not seed last_price");
+    }
+
+    #[test]
+    fn less_than_regression_no_data_tick_does_not_false_fire_on_a_fabricated_zero() {
+        // The exact defect this guards: `LessThan` (`current_price <
+        // level`) has no zero-guard, so a caller that fed a fabricated
+        // `0.0` for "no data yet" made it fire immediately and
+        // unconditionally on the very first tick after
+        // `ensure_alert_bubble` recreated a hollow bubble. With `None` as
+        // the explicit "no data" signal, that tick evaluates nothing.
+        let (mut bubbles, bid) = bare_bubble();
+        let mut mgr = AlertManager::default();
+        let id = mgr.add(&mut bubbles, bid, price_spec(AlertCondition::LessThan, 100.0));
+
+        let triggered = mgr.on_tick(&bubbles, bid, None, 0.0, &[], &[]);
+        assert!(triggered.is_empty(), "LessThan must not false-fire on a no-data tick");
+        assert_eq!(mgr.last_price_for_test(bid), None);
+
+        // Once a REAL price lands (genuinely below the level), the same
+        // condition correctly fires — proves the guard is about "no data"
+        // specifically, not a blanket suppression of low/zero prices.
+        let triggered = mgr.on_tick(&bubbles, bid, Some(50.0), 1.0, &[], &[]);
+        assert_eq!(triggered, vec![id], "LessThan must fire once a real price satisfies it");
+        assert_eq!(mgr.last_price_for_test(bid), Some(50.0));
     }
 }

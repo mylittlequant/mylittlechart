@@ -104,11 +104,13 @@ impl<'a> AlertsMut<'a> {
     }
 
     /// Check all active alerts on `bid` using dynamic price resolution.
-    /// Returns the list of triggered alert IDs.
+    /// `current_price` is `None` when `bid` has no real price yet — see
+    /// `AlertManager::on_tick`'s own doc. Returns the list of triggered
+    /// alert IDs.
     pub fn on_tick(
         &mut self,
         bid: BubbleId,
-        current_price: f64,
+        current_price: Option<f64>,
         current_bar: f64,
         drawing_points: &[(u64, Vec<(f64, f64)>, DrawingExtendMode)],
         indicator_values: &[(u64, usize, Vec<f64>)],
