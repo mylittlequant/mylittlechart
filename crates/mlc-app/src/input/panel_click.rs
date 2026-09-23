@@ -5872,18 +5872,33 @@ impl ChartApp {
                         _ => {}
                     }
                 }
-                // === Forum v2 tab clicks (paid-only) === What `NewsTab::
-                // Forum` actually renders now (`ForumV2State`'s own doc) —
-                // same disjoint-borrow shape as the v1 `"forum:"` arm above
-                // (`st` plus `self.input_coordinator`, a disjoint field).
-                // Explicitly re-gated on `forum_entitled`: unlike v1, this
-                // tab's own hit zones are new enough that a stale click
+                // === Forum v2 tab clicks (ladder-gated, NOT paid-only) ===
+                // What `NewsTab::Forum` actually renders now (`ForumV2State`'s
+                // own doc) — same disjoint-borrow shape as the v1 `"forum:"`
+                // arm above (`st` plus `self.input_coordinator`, a disjoint
+                // field). Owner ruling E-14 (2026-09-23): the server's access
+                // ladder (`public<user<paid<trusted<moderator<admin`) grants
+                // read/write by class/role regardless of payment — a
+                // moderator/admin role reaches Paid/Trusted even unpaid. So
+                // there is NO single blanket gate here (the old `forum_
+                // entitled` check was `Feature::Forum`, a paid-only flag —
+                // the wrong axis, and it silently no-op'd every click,
+                // including navigation, for a non-paid moderator). Instead,
+                // each arm below gates only what actually needs gating, off
+                // data this state already carries from `GET /api/forum/me`:
+                // navigation/read (open board/thread, search, load more) —
+                // never gated, the server enforces read classes on every
+                // route regardless; content-writing actions (new thread,
+                // post, reply) — gated on `BoardUi::can_write` where the
+                // board is known, else `caller_signed_in`, same "stale click
                 // target should not be trusted to belt the render side's own
-                // gate alone.
+                // gate alone" reasoning the render side's own conditional
+                // rows (`board_can_write`, `is_moderator_or_admin`) rely on;
+                // moderation rows — gated on `ForumV2State::
+                // is_moderator_or_admin`. Leave the `"dm:"` arm's own
+                // `forum_entitled` gate below unchanged — DMs are genuinely
+                // paid-and-above only, server-side.
                 rest if rest.starts_with("forum2:") => {
-                    if !st.forum_entitled {
-                        return;
-                    }
                     use mlc_app_layout::ui::modal_settings::{ForumV2Request, ForumV2View};
                     let action = &rest["forum2:".len()..];
                     // Share-link paragraph inside a thread body/reply — same
@@ -5967,6 +5982,13 @@ impl ChartApp {
                                 ForumV2View::BoardThreads { slug, .. } => slug.clone(),
                                 _ => return,
                             };
+                            // Mirrors the render side's own `board_can_write`
+                            // check (`forum_v2_overlay.rs`) that decides
+                            // whether "New thread" is even drawn — re-checked
+                            // here per this arm's own stale-click reasoning.
+                            if !st.forum2.boards.iter().any(|b| b.slug == slug && b.can_write) {
+                                return;
+                            }
                             st.forum2.view = ForumV2View::Compose { slug };
                             st.forum2.last_error = None;
                             let title_wid = uzor::WidgetId::from(crate::text_input::FORUM_TITLE);
@@ -6026,6 +6048,13 @@ impl ChartApp {
                                 ForumV2View::Compose { slug } => slug.clone(),
                                 _ => return,
                             };
+                            // Same re-check as `new_thread` above — the
+                            // Compose view could in principle be reached
+                            // while stale (e.g. the caller's role changed
+                            // mid-compose).
+                            if !st.forum2.boards.iter().any(|b| b.slug == slug && b.can_write) {
+                                return;
+                            }
                             let validated = mlc_app_layout::ui::modal_settings::validate_forum_title(&title)
                                 .and_then(|()| mlc_app_layout::ui::modal_settings::validate_forum_body(&body));
                             match validated {
@@ -6076,6 +6105,13 @@ impl ChartApp {
                         // `move`, which no row here drives (see
                         // `ForumV2Request::Moderate`'s own doc).
                         rest2 if rest2.starts_with("mod:") => {
+                            // Mirrors the render side's own gate (`draw_mod_
+                            // row` is only drawn while `is_moderator_or_
+                            // admin()` — `forum_v2_overlay.rs`) — re-checked
+                            // here per this arm's own stale-click reasoning.
+                            if !st.forum2.is_moderator_or_admin() {
+                                return;
+                            }
                             if let Some((mod_action, id_str)) = rest2["mod:".len()..].split_once(':') {
                                 if let Ok(thread_id) = id_str.parse::<i64>() {
                                     st.forum2.last_error = None;
@@ -6088,6 +6124,20 @@ impl ChartApp {
                         // Mirrors `FORUM_REPLY`'s own Enter-submit
                         // (`text_input::dispatch::text_action_forum_reply`).
                         "reply_submit" => {
+                            // The Thread view carries no board write-class
+                            // (`ForumThreadV2Detail` has `board_id`, not the
+                            // `slug`/`write_class` `BoardUi` keys on — see
+                            // that type's own doc), so unlike `new_thread`/
+                            // `compose_post` there is no local per-board
+                            // check to re-verify; a signed-in caller reaching
+                            // this composer at all is as far as this state
+                            // can gate — the server remains authoritative for
+                            // "signed in, but this board's write class is out
+                            // of reach", surfaced via `forum2.last_error`
+                            // exactly like a locked-thread refusal already is.
+                            if !st.forum2.caller_signed_in {
+                                return;
+                            }
                             let wid = uzor::WidgetId::from(crate::text_input::FORUM_REPLY);
                             let body = self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
                             let (thread_id, parent_reply_id) = match &st.forum2.view {
@@ -6133,8 +6183,13 @@ impl ChartApp {
                     }
                 }
                 // === Direct Messages tab clicks (paid-only) === Same
-                // disjoint-borrow shape and re-gating reasoning as the
-                // `"forum2:"` arm above.
+                // disjoint-borrow shape as the `"forum2:"` arm above, but
+                // NOT the same gating: DMs stay genuinely paid-and-above
+                // only, server-side (`routes::dm::require_dm_access`, gated
+                // on the same `Feature::Forum`/`is_paid` this `forum_
+                // entitled` flag mirrors) — unlike Forum v2's ladder, there
+                // is no role/class carve-out here, so the blanket check
+                // stays.
                 rest if rest.starts_with("dm:") => {
                     if !st.forum_entitled {
                         return;
