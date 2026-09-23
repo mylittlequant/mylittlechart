@@ -5975,6 +5975,154 @@ pub struct DmMessageUi {
     pub read_at: Option<String>,
 }
 
+/// Which page of a conversation's messages a landed answer represents —
+/// mirrors `mlc_updater::DmRequest::ListMessages`'s own `after`/`before`
+/// query-param pair, but as an enum here since this mailbox never crosses
+/// the wire: makes "both cursors at once" unrepresentable instead of merely
+/// undialled by every caller's own discipline. Drives [`merge_dm_messages`]'s
+/// replace/append/prepend choice and [`dm_has_older`]'s own decision (owner
+/// review 2026-09-23, `forum-messenger-realtime.md` item 1).
+#[cfg(feature = "cloud")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DmMessagePage {
+    /// No cursor — the newest page (server's `dm_db::MessagePage::Newest`;
+    /// the 2026-09-23 F4 fix — this used to silently mean "the oldest
+    /// page"). What opening a conversation asks for.
+    Newest,
+    /// `id > after` — "what's new since the highest id I already hold": the
+    /// 30s passive due-refresh (and, since a just-sent message is already
+    /// the new highest id held, the refresh that follows a `Send`).
+    After(i64),
+    /// `id < before` — "Load older": the newest page strictly below the
+    /// lowest id already held.
+    Before(i64),
+}
+
+/// Number of messages one `ListMessages` page asks for — shared by the wire
+/// request AND by [`dm_has_older`]'s own decision ("did the last page come
+/// back full — i.e. does more OLDER history plausibly exist?"), so the two
+/// can never drift apart.
+#[cfg(feature = "cloud")]
+pub const DM_MESSAGE_PAGE_LIMIT: i64 = 50;
+
+/// Merge a landed `ListMessages` page into the held list per `page`'s own
+/// direction — pure, no I/O (owner review 2026-09-23, `forum-messenger-
+/// realtime.md` item 1; unit-tested directly below). `incoming` is assumed
+/// already ascending by id — the server's own contract on every deployment
+/// (`mlc_updater::dm::list_messages`'s own doc). A duplicate id (present in
+/// both `existing` and `incoming`) keeps the ALREADY-HELD copy: a
+/// `Send`-appended optimistic bubble, or a message already redecrypted in
+/// place, must never be clobbered by a plain refetch of the same id.
+#[cfg(feature = "cloud")]
+pub fn merge_dm_messages(existing: &mut Vec<DmMessageUi>, incoming: Vec<DmMessageUi>, page: DmMessagePage) {
+    match page {
+        DmMessagePage::Newest => *existing = incoming,
+        DmMessagePage::After(_) => {
+            for m in incoming {
+                if !existing.iter().any(|h| h.id == m.id) {
+                    existing.push(m);
+                }
+            }
+        }
+        DmMessagePage::Before(_) => {
+            let mut prefix: Vec<DmMessageUi> =
+                incoming.into_iter().filter(|m| !existing.iter().any(|h| h.id == m.id)).collect();
+            prefix.append(existing);
+            *existing = prefix;
+        }
+    }
+}
+
+/// Whether a landed `page` signals more OLDER history plausibly exists
+/// beyond what is now held — the "Load older" row shows only then. Pure —
+/// takes the PREVIOUS value forward for an `After` page (a passive/
+/// post-send refresh never touches the old end of the list, so it must
+/// never flip this either way); only `Newest`/`Before` pages (the ones that
+/// can extend the old end) recompute it, off the just-landed page's own
+/// length: a full page ([`DM_MESSAGE_PAGE_LIMIT`] messages) means there is
+/// plausibly more; a short page means the conversation's history just ran
+/// out.
+#[cfg(feature = "cloud")]
+pub fn dm_has_older(page: DmMessagePage, page_len: usize, previous: bool) -> bool {
+    match page {
+        DmMessagePage::Newest | DmMessagePage::Before(_) => page_len as i64 >= DM_MESSAGE_PAGE_LIMIT,
+        DmMessagePage::After(_) => previous,
+    }
+}
+
+#[cfg(all(test, feature = "cloud"))]
+mod dm_message_page_tests {
+    use super::{dm_has_older, merge_dm_messages, DmMessageBody, DmMessagePage, DmMessageUi, DM_MESSAGE_PAGE_LIMIT};
+
+    fn msg(id: i64) -> DmMessageUi {
+        DmMessageUi {
+            id,
+            mine: false,
+            body: DmMessageBody::Plain(id.to_string()),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            read_at: None,
+        }
+    }
+
+    #[test]
+    fn newest_replaces_whatever_was_held() {
+        let mut existing = vec![msg(1), msg(2)];
+        merge_dm_messages(&mut existing, vec![msg(10), msg(11)], DmMessagePage::Newest);
+        assert_eq!(existing.iter().map(|m| m.id).collect::<Vec<_>>(), vec![10, 11]);
+    }
+
+    #[test]
+    fn after_appends_and_dedupes_by_id() {
+        let mut existing = vec![msg(1), msg(2)];
+        merge_dm_messages(&mut existing, vec![msg(2), msg(3)], DmMessagePage::After(2));
+        assert_eq!(existing.iter().map(|m| m.id).collect::<Vec<_>>(), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn before_prepends_and_dedupes_by_id() {
+        let mut existing = vec![msg(5), msg(6)];
+        merge_dm_messages(&mut existing, vec![msg(3), msg(4), msg(5)], DmMessagePage::Before(5));
+        assert_eq!(existing.iter().map(|m| m.id).collect::<Vec<_>>(), vec![3, 4, 5, 6]);
+    }
+
+    /// A `Send`-appended optimistic bubble (or an already-redecrypted body)
+    /// must survive a refetch of the same id untouched — see
+    /// `merge_dm_messages`'s own doc.
+    #[test]
+    fn after_keeps_the_already_held_copy_on_a_duplicate_id() {
+        let mut existing = vec![DmMessageUi {
+            id: 1, mine: true, body: DmMessageBody::Plain("optimistic".to_string()),
+            created_at: "t".to_string(), read_at: None,
+        }];
+        let incoming = vec![DmMessageUi {
+            id: 1, mine: true, body: DmMessageBody::Plain("refetched".to_string()),
+            created_at: "t".to_string(), read_at: None,
+        }];
+        merge_dm_messages(&mut existing, incoming, DmMessagePage::After(0));
+        assert_eq!(existing.len(), 1);
+        assert_eq!(existing[0].body, DmMessageBody::Plain("optimistic".to_string()));
+    }
+
+    #[test]
+    fn has_older_true_when_a_full_page_lands() {
+        let full: Vec<DmMessageUi> = (0..DM_MESSAGE_PAGE_LIMIT).map(msg).collect();
+        assert!(dm_has_older(DmMessagePage::Newest, full.len(), false));
+        assert!(dm_has_older(DmMessagePage::Before(1000), full.len(), false));
+    }
+
+    #[test]
+    fn has_older_false_when_the_page_is_short() {
+        assert!(!dm_has_older(DmMessagePage::Newest, 3, true));
+        assert!(!dm_has_older(DmMessagePage::Before(1000), 3, true));
+    }
+
+    #[test]
+    fn has_older_carries_the_previous_value_forward_across_an_after_page() {
+        assert!(dm_has_older(DmMessagePage::After(5), 1, true));
+        assert!(!dm_has_older(DmMessagePage::After(5), 1, false));
+    }
+}
+
 /// Which DM sub-view is showing.
 #[cfg(feature = "cloud")]
 #[derive(Clone, Debug, PartialEq, Default)]
@@ -5993,6 +6141,12 @@ pub enum DmView {
         /// on the view rather than hardcoded at the draw site so a future
         /// per-conversation field id needs no shape change here.
         draft_field_id: String,
+        /// Whether the last landed `Newest`/`Before` page came back FULL —
+        /// see [`dm_has_older`]'s own doc; drives the "Load older" row
+        /// (`dm_overlay.rs`). Unlike Forum v2's `next_before`, DM pages by
+        /// message id, not a server-issued cursor token, so "was the page
+        /// full" is the only signal available.
+        has_older: bool,
     },
 }
 
@@ -6014,7 +6168,7 @@ pub enum DmRequest {
     /// shape exists for a future entry point (e.g. a "Message" action on a
     /// forum post's author).
     Open { with_label: String },
-    LoadMessages { id: i64, after: Option<i64> },
+    LoadMessages { id: i64, page: DmMessagePage },
     /// Send box submit — `plaintext` is the RAW text the shell must encrypt
     /// before it ever reaches the wire (`mlc_vault::dm`); this crate hands
     /// it over exactly as typed.
@@ -6152,6 +6306,19 @@ pub struct DmState {
     pub selection: Option<DmMessageSelection>,
     /// True while a DM message drag-selection is in progress.
     pub selection_drag_active: bool,
+    /// Conversation ids where a peer-key backfill (`GetIdentity`, run for a
+    /// LIST-sourced conversation) landed a DIFFERENT fingerprint than the
+    /// one this session already held for that peer (owner review
+    /// 2026-09-23, `forum-messenger-realtime.md` item 2 — this cache used to
+    /// overwrite silently, and a message sealed under the old key renders
+    /// `DmMessageBody::Undecryptable` forever with no explanation). No
+    /// on-disk peer-key history exists to compare across restarts (see
+    /// [`Self::mark_peer_key_changed`]'s own doc for that gap) — this is
+    /// session-scoped only. A SEPARATE field from `conversations` on
+    /// purpose: that vec is replaced wholesale on every routine
+    /// `ListConversations` refresh (every `FORUM_REFRESH_MS`), which would
+    /// silently clear a per-row flag; this one only ever grows.
+    pub peer_key_changed: std::collections::HashSet<i64>,
 }
 
 /// See [`DmState::unavailable_reason`].
@@ -6189,6 +6356,7 @@ impl Default for DmState {
             unavailable_reason: DmUnavailableReason::None,
             selection: None,
             selection_drag_active: false,
+            peer_key_changed: std::collections::HashSet::new(),
         }
     }
 }
@@ -6206,7 +6374,9 @@ impl DmState {
     /// `ForumV2State::reset_to_boards`'s own "opening something new resets
     /// the narrower bookkeeping" rule.
     pub fn open_conversation(&mut self, id: i64) {
-        self.view = DmView::Conversation { id, messages: Vec::new(), draft_field_id: "dm_draft".to_string() };
+        self.view = DmView::Conversation {
+            id, messages: Vec::new(), draft_field_id: "dm_draft".to_string(), has_older: false,
+        };
         self.messages_fetched_at = None;
         self.messages_refreshing = false;
         self.last_error = None;
@@ -6215,6 +6385,39 @@ impl DmState {
         self.selection = None;
         self.selection_drag_active = false;
         self.close_lookup_dropdown();
+    }
+
+    /// The page to ask for on the passive due-refresh (and the refresh a
+    /// `Send` implicitly gets once due, since the just-sent optimistic
+    /// bubble already carries the new highest id) of the currently open
+    /// conversation — `None` when no conversation is open. `After(highest
+    /// id held)` once this open has landed at least one message;
+    /// `Newest` before that (a brand-new open, or a conversation with zero
+    /// messages so far) — never falls back to re-asking for page 1 forever
+    /// (owner report F4, `forum-messenger-realtime.md` item 2: every call
+    /// site used to pass `after: None`, which pinned any conversation past
+    /// one page to its oldest page, on every refresh, forever).
+    pub fn refresh_page(&self) -> Option<DmMessagePage> {
+        let DmView::Conversation { messages, .. } = &self.view else { return None };
+        Some(match messages.last() {
+            Some(m) => DmMessagePage::After(m.id),
+            None => DmMessagePage::Newest,
+        })
+    }
+
+    /// Whether `conversation_id`'s peer-key backfill has ever landed a
+    /// fingerprint different from the one this session held before —
+    /// see [`Self::peer_key_changed`]'s own doc.
+    pub fn has_peer_key_changed(&self, conversation_id: i64) -> bool {
+        self.peer_key_changed.contains(&conversation_id)
+    }
+
+    /// Record that `conversation_id`'s peer-key backfill landed a
+    /// different fingerprint than the one this session already held for
+    /// that peer. Idempotent, and never cleared for the rest of the
+    /// session — a security-relevant fact, not a transient status.
+    pub fn mark_peer_key_changed(&mut self, conversation_id: i64) {
+        self.peer_key_changed.insert(conversation_id);
     }
 
     /// Drop back to the conversation list — same "reopen always lands here"

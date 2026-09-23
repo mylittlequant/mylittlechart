@@ -6208,14 +6208,16 @@ impl ChartApp {
                     // W1) — shadow `st` for the rest of this arm, same idiom
                     // the `"forum2:"` arm above uses.
                     let st = &mut self.panel_app.community_state;
-                    use mlc_app_layout::ui::modal_settings::{DmRequest, DmView};
+                    use mlc_app_layout::ui::modal_settings::{DmMessagePage, DmRequest, DmView};
 
                     // Navigation works even with the vault sealed —
                     // `dm.available` (paid + unlocked) gates DECRYPTING and
                     // SENDING, never seeing that a conversation exists (owner
                     // ruling 2026-09-10: the conversation list and its
                     // ciphertext must render, and stay reachable, before the
-                    // vault unlocks).
+                    // vault unlocks). "Load older" is the same class of read
+                    // action as `forum2:load_more` — no write, so it stays
+                    // outside the `dm.available` gate below too.
                     match action {
                         rest2 if rest2.starts_with("conversation:") => {
                             if let Ok(id) = rest2["conversation:".len()..].parse::<i64>() {
@@ -6225,13 +6227,29 @@ impl ChartApp {
                                 // to drop any more (owner ruling 2026-09-10,
                                 // item 2: host-side selection replaced it).
                                 st.dm.open_conversation(id);
-                                st.dm.request = Some(DmRequest::LoadMessages { id, after: None });
+                                st.dm.request = Some(DmRequest::LoadMessages { id, page: DmMessagePage::Newest });
                             }
                             return;
                         }
                         "back" => {
                             st.dm.reset_to_list();
                             self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                            return;
+                        }
+                        // "Load older" row at the top of the message list
+                        // (owner review 2026-09-23, `forum-messenger-
+                        // realtime.md` item 1) — mirrors `forum2:load_more`'s
+                        // own shape. `has_older: true` re-checked here (same
+                        // "stale click target" reasoning every other arm in
+                        // this dispatch gives its own render-side gate).
+                        "load_older" => {
+                            if let DmView::Conversation { id, has_older: true, messages, .. } = &st.dm.view {
+                                if let Some(lowest_id) = messages.first().map(|m| m.id) {
+                                    let id = *id;
+                                    st.dm.request =
+                                        Some(DmRequest::LoadMessages { id, page: DmMessagePage::Before(lowest_id) });
+                                }
+                            }
                             return;
                         }
                         _ => {}

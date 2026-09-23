@@ -360,11 +360,12 @@ enum DmChain {
     /// window is even looked up — see `apply_dm_result`'s own doc) /
     /// `ListConversations` / `MarkRead` — apply directly.
     Direct,
-    /// `LoadMessages` is in flight — `append` distinguishes "Load more"
-    /// (`after: Some(_)`, extends the page) from a fresh open or a passive
-    /// due-refresh (`after: None`, replaces it), same split
+    /// `LoadMessages` is in flight — `page` carries the same cursor
+    /// direction the request was sent with, so the landed answer knows
+    /// whether to replace/append/prepend (`mlc_app_layout::ui::
+    /// modal_settings::merge_dm_messages`) — same split
     /// [`Forum2Chain::BoardThreads`] draws for its own pagination.
-    LoadingMessages { append: bool },
+    LoadingMessages { page: mlc_app_layout::ui::modal_settings::DmMessagePage },
     /// A `Send` is in flight — `plaintext` rides along so the settled
     /// `Sent { id, created_at }` can be turned into an optimistic message
     /// bubble without a second round trip to re-fetch what was just sent.
@@ -3149,7 +3150,8 @@ impl App<'_> {
     #[cfg(feature = "cloud")]
     fn apply_dm_result(&mut self, win_id: WindowId, chain: DmChain, state: mlc_updater::DmState) {
         use mlc_app_layout::ui::modal_settings::{
-            DmConversationUi, DmLookupHitUi, DmMessageBody, DmMessageUi, DmView,
+            dm_has_older, merge_dm_messages, DmConversationUi, DmLookupHitUi, DmMessageBody, DmMessagePage,
+            DmMessageUi, DmView,
         };
 
         let Some(pw) = self.windows.get_mut(&win_id) else {
@@ -3206,7 +3208,7 @@ impl App<'_> {
                 (DmChain::OpeningConversation { peer_public_key }, mlc_updater::DmState::ConversationOpened(conversation)) => {
                     opened = Some((conversation, peer_public_key));
                 }
-                (DmChain::LoadingMessages { append }, mlc_updater::DmState::Messages { messages, next_after }) => {
+                (DmChain::LoadingMessages { page }, mlc_updater::DmState::Messages { messages, next_after }) => {
                     let view_id = match &ov.dm.view {
                         DmView::Conversation { id, .. } => Some(*id),
                         _ => None,
@@ -3246,12 +3248,35 @@ impl App<'_> {
                                 }
                             })
                             .collect();
-                        if let DmView::Conversation { id: existing_id, messages: msgs, .. } = &mut ov.dm.view {
+                        let page_len = mapped.len();
+                        let available = ov.dm.available;
+                        let has_error = ov.dm.last_error.is_some();
+                        let key_changed = ov.dm.has_peer_key_changed(conv_id);
+                        if let DmView::Conversation { id: existing_id, messages: msgs, has_older, .. } = &mut ov.dm.view {
                             if *existing_id == conv_id {
-                                if append {
-                                    msgs.extend(mapped);
-                                } else {
-                                    *msgs = mapped;
+                                // "Load older" (`Before`) must keep the
+                                // viewport anchored on whatever message was
+                                // at the top before the page landed — the
+                                // exact height the page added is the only
+                                // way to do that without hardcoding bubble
+                                // geometry a second time here, so read it
+                                // off `dm_overlay`'s own sizing function
+                                // before AND after the merge (owner review
+                                // 2026-09-23, `forum-messenger-realtime.md`
+                                // item 1).
+                                let is_before = matches!(page, DmMessagePage::Before(_));
+                                let old_h = is_before.then(|| {
+                                    mlc_app_layout::layout::modals::dm_overlay::conversation_scroll_h(
+                                        available, has_error, key_changed, *has_older, msgs,
+                                    )
+                                });
+                                merge_dm_messages(msgs, mapped, page);
+                                *has_older = dm_has_older(page, page_len, *has_older);
+                                if let Some(old_h) = old_h {
+                                    let new_h = mlc_app_layout::layout::modals::dm_overlay::conversation_scroll_h(
+                                        available, has_error, key_changed, *has_older, msgs,
+                                    );
+                                    ov.scroll.offset += (new_h - old_h).max(0.0);
                                 }
                                 ov.dm.mark_messages_fetched();
                             }
@@ -3346,6 +3371,19 @@ impl App<'_> {
         if let Some((conversation_id, key, fingerprint)) = backfilled {
             self.dm_peer_keys.insert(conversation_id, key);
             let ov = &mut pw.chart.panel_app.community_state;
+            // Owner review 2026-09-23, `forum-messenger-realtime.md` item 2:
+            // this cache used to overwrite silently — a peer's key rotating
+            // (vault reset, reinstall, different profile) made every
+            // message sealed under the old key permanently `Undecryptable`
+            // with no explanation. `Some(old) != Some(new)` only (never
+            // fires on the FIRST ever fingerprint for this row); read
+            // before the mutable lookup below so the two `find`s never
+            // overlap borrows.
+            let old_fingerprint =
+                ov.dm.conversations.iter().find(|c| c.id == conversation_id).and_then(|c| c.peer_fingerprint.clone());
+            if old_fingerprint.is_some() && old_fingerprint.as_deref() != Some(fingerprint.as_str()) {
+                ov.dm.mark_peer_key_changed(conversation_id);
+            }
             if let Some(row) = ov.dm.conversations.iter_mut().find(|c| c.id == conversation_id) {
                 row.peer_fingerprint = Some(fingerprint);
             }
@@ -3625,7 +3663,7 @@ impl App<'_> {
     #[cfg(feature = "cloud")]
     fn drive_dm(&mut self) {
         use mlc_app_layout::ui::modal_settings::{
-            CommunityTab, DmRequest as UiDmRequest, DmUnavailableReason, DmView,
+            CommunityTab, DmMessagePage, DmRequest as UiDmRequest, DmUnavailableReason, DmView, DM_MESSAGE_PAGE_LIMIT,
         };
 
         // Account-level facts — neither needs a specific window/tab on
@@ -3781,15 +3819,19 @@ impl App<'_> {
                     ));
                     self.dm_pending = Some((win_id, DmChain::OpeningPeerLookup));
                 }
-                UiDmRequest::LoadMessages { id, after } => {
+                UiDmRequest::LoadMessages { id, page } => {
                     if let Some(pw) = self.windows.get_mut(&win_id) {
                         pw.chart.panel_app.community_state.dm.messages_refreshing = true;
                     }
-                    let append = after.is_some();
+                    let (after, before) = match page {
+                        DmMessagePage::Newest => (None, None),
+                        DmMessagePage::After(a) => (Some(a), None),
+                        DmMessagePage::Before(b) => (None, Some(b)),
+                    };
                     let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
-                        mlc_updater::DmRequest::ListMessages { id, after, limit: 50 },
+                        mlc_updater::DmRequest::ListMessages { id, after, before, limit: DM_MESSAGE_PAGE_LIMIT },
                     ));
-                    self.dm_pending = Some((win_id, DmChain::LoadingMessages { append }));
+                    self.dm_pending = Some((win_id, DmChain::LoadingMessages { page }));
                 }
                 UiDmRequest::Send { id, plaintext } => {
                     let Some(identity) = &self.dm_identity else {
@@ -3910,20 +3952,29 @@ impl App<'_> {
         // shell's own poll (`cloud_session.rs`'s `drive()`); this native
         // shell had no cadence here at all before this pass — a
         // conversation left open never refreshed until it was closed and
-        // reopened.
+        // reopened. `after = highest id held` once anything has landed
+        // (`DmState::refresh_page`) — owner report F4 fix, 2026-09-23:
+        // this used to always send `after: None`, which pinned any
+        // conversation past one page to its oldest page forever.
         if let Some(pw) = self.windows.get(&messages_window) {
-            if let DmView::Conversation { id, .. } = &pw.chart.panel_app.community_state.dm.view {
+            let dm = &pw.chart.panel_app.community_state.dm;
+            if let DmView::Conversation { id, .. } = &dm.view {
                 let id = *id;
-                let dm = &pw.chart.panel_app.community_state.dm;
                 let due = dm.messages_fetched_at.is_none() || dm.messages_due_for_refresh();
                 if due {
+                    let page = dm.refresh_page().unwrap_or(DmMessagePage::Newest);
                     if let Some(pw) = self.windows.get_mut(&messages_window) {
                         pw.chart.panel_app.community_state.dm.messages_refreshing = true;
                     }
+                    let (after, before) = match page {
+                        DmMessagePage::Newest => (None, None),
+                        DmMessagePage::After(a) => (Some(a), None),
+                        DmMessagePage::Before(b) => (None, Some(b)),
+                    };
                     let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
-                        mlc_updater::DmRequest::ListMessages { id, after: None, limit: 50 },
+                        mlc_updater::DmRequest::ListMessages { id, after, before, limit: DM_MESSAGE_PAGE_LIMIT },
                     ));
-                    self.dm_pending = Some((messages_window, DmChain::LoadingMessages { append: false }));
+                    self.dm_pending = Some((messages_window, DmChain::LoadingMessages { page }));
                     return;
                 }
             }

@@ -248,18 +248,25 @@ pub async fn open_conversation(client: &reqwest::Client, auth_header: &str, with
     resp.json().await.map_err(|e| format!("Parse error: {}", e))
 }
 
-/// `GET /api/dm/conversations/{id}/messages?after=&limit=` — 404 if the
-/// conversation does not exist or the caller is not a party.
+/// `GET /api/dm/conversations/{id}/messages?after=&before=&limit=` — 404 if
+/// the conversation does not exist or the caller is not a party. No cursor
+/// -> the newest `limit` messages; `after` -> unchanged "what's new"
+/// polling; `before` -> "load older" — mirrors `routes::dm::list_messages`'s
+/// own doc (server F4 fix, 2026-09-23). `after`/`before` are mutually
+/// exclusive; every caller in this tree keeps them exclusive by
+/// construction (see [`crate::state::DmRequest::ListMessages`]'s own doc).
 pub async fn list_messages(
     client: &reqwest::Client,
     auth_header: &str,
     id: i64,
     after: Option<i64>,
+    before: Option<i64>,
     limit: i64,
 ) -> Result<(Vec<DmMessage>, Option<i64>), String> {
-    let url = match after {
-        Some(a) => format!("{}/api/dm/conversations/{}/messages?after={}&limit={}", UPDATE_SERVER, id, a, limit),
-        None => format!("{}/api/dm/conversations/{}/messages?limit={}", UPDATE_SERVER, id, limit),
+    let url = match (after, before) {
+        (Some(a), _) => format!("{}/api/dm/conversations/{}/messages?after={}&limit={}", UPDATE_SERVER, id, a, limit),
+        (None, Some(b)) => format!("{}/api/dm/conversations/{}/messages?before={}&limit={}", UPDATE_SERVER, id, b, limit),
+        (None, None) => format!("{}/api/dm/conversations/{}/messages?limit={}", UPDATE_SERVER, id, limit),
     };
     let resp = client
         .get(&url)

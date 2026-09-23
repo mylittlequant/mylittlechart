@@ -67,8 +67,8 @@ use crate::ui::widgets::{
 use crate::ui::widgets::types::{WidgetState, WidgetTheme};
 
 use super::cloud_overlay::{
-    draw_action_row, draw_column_divider, draw_status, parse_rfc3339_unix_secs, register_scrollbar_hit_zones,
-    relative_time, scroll_config, wrap_text, CloudOverlayResult, COL_GAP,
+    draw_action_row, draw_column_divider, draw_expand_row, draw_status, parse_rfc3339_unix_secs,
+    register_scrollbar_hit_zones, relative_time, scroll_config, wrap_text, CloudOverlayResult, COL_GAP,
     DM_PEER_FIELD, FIELD_H, LIST_COL_W, ROW_GAP, ROW_H,
 };
 use super::community::CommunityListPaneResult;
@@ -119,6 +119,10 @@ const BUBBLE_GAP: f64 = 10.0;
 /// Day-separator row height ("Today" / "Yesterday" / date, centered,
 /// between bubbles on different calendar days).
 const DAY_SEP_H: f64 = 24.0;
+/// The peer-key-changed notice's own height (owner review 2026-09-23,
+/// `forum-messenger-realtime.md` item 2) — one clipped line under the
+/// fingerprint line.
+const KEY_CHANGED_NOTICE_H: f64 = 18.0;
 /// A locked (pre-unlock) ciphertext block never shows more than this many
 /// wrapped lines of base64 — owner ruling 2026-09-10: "clipped to ~3 lines
 /// with '…'".
@@ -143,6 +147,16 @@ fn vault_locked_header_h() -> f64 {
     18.0 + 8.0 + (ROW_H - ROW_GAP) + 10.0
 }
 
+/// Whether `id`'s peer-key backfill has landed a different fingerprint than
+/// this session held before it — see [`DmState::has_peer_key_changed`]'s own
+/// doc. Threaded into every sizing/drawing call below so the header notice
+/// (owner review 2026-09-23, `forum-messenger-realtime.md` item 2) and the
+/// Undecryptable explanation it unlocks never disagree about which
+/// conversation's messages get the explanation.
+fn conversation_key_changed(dm: &DmState, id: i64) -> bool {
+    dm.has_peer_key_changed(id)
+}
+
 /// The right pane's own "wanted" content height — used only for
 /// `ModalShellSpec`'s inert `content_height` (see `forum_v2_overlay.rs`'s
 /// own `height` doc for why that number is inert).
@@ -154,8 +168,10 @@ pub(crate) fn height(state: &CommunityState) -> f64 {
         DmUnavailableReason::VaultLocked => {
             let body_h = match &state.dm.view {
                 DmView::List => 24.0,
-                DmView::Conversation { messages, .. } => {
-                    conversation_scroll_h(&state.dm, messages) + COMPOSER_H
+                DmView::Conversation { id, messages, has_older, .. } => {
+                    let key_changed = conversation_key_changed(&state.dm, *id);
+                    conversation_scroll_h(state.dm.available, state.dm.last_error.is_some(), key_changed, *has_older, messages)
+                        + COMPOSER_H
                 }
             };
             return vault_locked_header_h() + body_h;
@@ -170,7 +186,11 @@ pub(crate) fn height(state: &CommunityState) -> f64 {
     }
     match &state.dm.view {
         DmView::List => 24.0,
-        DmView::Conversation { messages, .. } => conversation_scroll_h(&state.dm, messages) + COMPOSER_H,
+        DmView::Conversation { id, messages, has_older, .. } => {
+            let key_changed = conversation_key_changed(&state.dm, *id);
+            conversation_scroll_h(state.dm.available, state.dm.last_error.is_some(), key_changed, *has_older, messages)
+                + COMPOSER_H
+        }
     }
 }
 
@@ -252,9 +272,9 @@ pub(crate) fn draw(
                         "Select a conversation from the list on the left, or start a new one above.", None,
                     );
                 }
-                DmView::Conversation { id, messages, draft_field_id } => draw_right_conversation(
+                DmView::Conversation { id, messages, draft_field_id, has_older } => draw_right_conversation(
                     ctx, coord, layer_id, right_x, body_y, right_w, body_viewport_h, state, *id, messages,
-                    draft_field_id, ft, tt, current_time_ms, result,
+                    draft_field_id, *has_older, ft, tt, current_time_ms, result,
                 ),
             }
             return;
@@ -282,9 +302,9 @@ pub(crate) fn draw(
                 "Select a conversation from the list on the left, or start a new one above.", None,
             );
         }
-        DmView::Conversation { id, messages, draft_field_id } => draw_right_conversation(
+        DmView::Conversation { id, messages, draft_field_id, has_older } => draw_right_conversation(
             ctx, coord, layer_id, right_x, y, right_w, viewport_h, state, *id, messages,
-            draft_field_id, ft, tt, current_time_ms, result,
+            draft_field_id, *has_older, ft, tt, current_time_ms, result,
         ),
     }
 }
@@ -641,13 +661,24 @@ struct MessageVisual {
     is_ciphertext_style: bool,
 }
 
-fn message_visual(m: &DmMessageUi, available: bool) -> MessageVisual {
+/// `key_changed` — whether THIS message's conversation has a detected
+/// peer-key change ([`DmState::has_peer_key_changed`]) — only changes the
+/// `Undecryptable` branch's own wording (owner review 2026-09-23,
+/// `forum-messenger-realtime.md` item 2): a bubble sealed under a key the
+/// peer has since rotated away from reads differently from a generic
+/// decrypt failure.
+fn message_visual(m: &DmMessageUi, available: bool, key_changed: bool) -> MessageVisual {
     match &m.body {
         DmMessageBody::Plain(text) => {
             MessageVisual { lines: wrap_text(text, BUBBLE_WRAP_COLS), is_ciphertext_style: false }
         }
         DmMessageBody::Undecryptable => {
-            MessageVisual { lines: vec!["<cannot decrypt>".to_string()], is_ciphertext_style: false }
+            let text = if key_changed {
+                UserSettingsKey::DmUndecryptableKeyChanged.get(current_language()).to_string()
+            } else {
+                "<cannot decrypt>".to_string()
+            };
+            MessageVisual { lines: vec![text], is_ciphertext_style: false }
         }
         DmMessageBody::Ciphertext { ciphertext_b64, .. } => {
             if available {
@@ -672,8 +703,8 @@ fn message_visual(m: &DmMessageUi, available: bool) -> MessageVisual {
     }
 }
 
-fn message_h(m: &DmMessageUi, available: bool) -> f64 {
-    let visual = message_visual(m, available);
+fn message_h(m: &DmMessageUi, available: bool, key_changed: bool) -> f64 {
+    let visual = message_visual(m, available, key_changed);
     let line_count = visual.lines.len().max(1);
     BUBBLE_PAD_V * 2.0 + BUBBLE_NICK_H + line_count as f64 * BUBBLE_LINE_H + BUBBLE_TIME_H + BUBBLE_GAP
 }
@@ -753,11 +784,12 @@ fn draw_message(
     m: &DmMessageUi,
     peer_label: &str,
     available: bool,
+    key_changed: bool,
     selection: Option<DmMessageSelection>,
     tt: &ToolbarTheme,
     result: &mut CloudOverlayResult,
 ) -> f64 {
-    let visual = message_visual(m, available);
+    let visual = message_visual(m, available, key_changed);
     let line_count = visual.lines.len().max(1);
     let bubble_inner_h = BUBBLE_NICK_H + line_count as f64 * BUBBLE_LINE_H + BUBBLE_TIME_H;
     let bubble_h = bubble_inner_h + BUBBLE_PAD_V * 2.0;
@@ -882,9 +914,27 @@ fn draw_message(
     bubble_h + BUBBLE_GAP
 }
 
-fn conversation_scroll_h(d: &DmState, messages: &[DmMessageUi]) -> f64 {
-    let header_h = 36.0;
-    let err_h = if d.last_error.is_some() { 20.0 } else { 0.0 };
+/// Total scrollable content height for a conversation's right pane —
+/// header (peer name + fingerprint line, plus the peer-key-changed notice
+/// when `key_changed`), the error line, the "Load older" row when
+/// `has_older`, and every message bubble/day-separator. `pub` (unlike this
+/// file's other geometry helpers) so the shell driver can size the "keep
+/// the viewport anchored" scroll adjustment after a "Load older" page
+/// prepends new messages, without duplicating this file's own bubble
+/// geometry a second time (owner review 2026-09-23, `forum-messenger-
+/// realtime.md` item 1). Takes plain scalars rather than `&DmState` so the
+/// caller can measure BEFORE and AFTER mutating `DmView::Conversation::
+/// messages` without two conflicting borrows of the same state.
+pub fn conversation_scroll_h(
+    available: bool,
+    has_error: bool,
+    key_changed: bool,
+    has_older: bool,
+    messages: &[DmMessageUi],
+) -> f64 {
+    let header_h = 36.0 + if key_changed { KEY_CHANGED_NOTICE_H } else { 0.0 };
+    let err_h = if has_error { 20.0 } else { 0.0 };
+    let more_h = if has_older { ROW_H } else { 0.0 };
     let msgs_h = if messages.is_empty() {
         24.0
     } else {
@@ -893,11 +943,25 @@ fn conversation_scroll_h(d: &DmState, messages: &[DmMessageUi]) -> f64 {
             .enumerate()
             .map(|(i, m)| {
                 let sep_h = if day_separator_before(messages, i) { DAY_SEP_H } else { 0.0 };
-                sep_h + message_h(m, d.available)
+                sep_h + message_h(m, available, key_changed)
             })
             .sum()
     };
-    header_h + err_h + msgs_h
+    header_h + err_h + more_h + msgs_h
+}
+
+/// The peer-key-changed header notice (owner review 2026-09-23,
+/// `forum-messenger-realtime.md` item 2) — one clipped line under the
+/// fingerprint line, in the theme's `danger` tone (a security-relevant
+/// fact, same tone `draw_error_line` already uses for refusals).
+fn draw_key_changed_notice(ctx: &mut dyn RenderContext, tt: &ToolbarTheme, w: f64, x: f64, y: f64) -> f64 {
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&tt.danger);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let msg = crate::ui::widgets::fit_text_to_width(ctx, UserSettingsKey::DmPeerKeyChanged.get(current_language()), w);
+    ctx.fill_text(&msg, x, y);
+    KEY_CHANGED_NOTICE_H
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -913,13 +977,16 @@ fn draw_right_conversation(
     id: i64,
     messages: &[DmMessageUi],
     draft_field_id: &str,
+    has_older: bool,
     ft: &FrameTheme,
     tt: &ToolbarTheme,
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
 ) {
+    let key_changed = conversation_key_changed(&state.dm, id);
     let scroll_h = (viewport_h - COMPOSER_H).max(0.0);
-    let content_h = conversation_scroll_h(&state.dm, messages);
+    let content_h =
+        conversation_scroll_h(state.dm.available, state.dm.last_error.is_some(), key_changed, has_older, messages);
 
     let viewport_rect = WidgetRect::new(x, y, w, scroll_h);
     coord.register_on_layer("cloud_overlay:scroll_viewport", viewport_rect, Sense::SCROLL, layer_id);
@@ -947,8 +1014,24 @@ fn draw_right_conversation(
     ctx.fill_text(&format!("fingerprint: {fingerprint}"), sx, sy);
     sy += 18.0;
 
+    if key_changed {
+        sy += draw_key_changed_notice(ctx, tt, sw, sx, sy);
+    }
+
     if let Some(err) = &state.dm.last_error {
         sy += draw_error_line(ctx, tt, sw, sx, sy, err);
+    }
+
+    // "Load older" row at the top of the message list (owner review
+    // 2026-09-23, `forum-messenger-realtime.md` item 1) — same shape
+    // `forum_v2_overlay.rs`'s own "Load more" row uses.
+    if has_older {
+        draw_expand_row(
+            ctx, coord, layer_id, "cloud_overlay:dm:load_older",
+            WidgetRect::new(sx, sy, sw, ROW_H - ROW_GAP),
+            UserSettingsKey::DmLoadOlder.get(current_language()), false, tt,
+        );
+        sy += ROW_H;
     }
 
     if messages.is_empty() {
@@ -960,7 +1043,8 @@ fn draw_right_conversation(
                 sy += draw_day_separator(ctx, sx, sy, sw, &label, tt);
             }
             sy += draw_message(
-                ctx, sx, sy, sw, i as u16, m, peer_label, state.dm.available, state.dm.selection, tt, result,
+                ctx, sx, sy, sw, i as u16, m, peer_label, state.dm.available, key_changed, state.dm.selection, tt,
+                result,
             );
         }
     }

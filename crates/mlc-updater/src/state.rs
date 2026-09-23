@@ -353,10 +353,17 @@ pub enum DmRequest {
     ListConversations,
     /// `POST /api/dm/conversations` — `{"with": …}`.
     OpenConversation { with: String },
-    /// `GET /api/dm/conversations/{id}/messages?after=&limit=`.
+    /// `GET /api/dm/conversations/{id}/messages?after=&before=&limit=` —
+    /// mutually exclusive cursors, same as the route's own query params
+    /// (server-side 400 if both are `Some`; every caller in this tree keeps
+    /// them exclusive by construction, so this is never actually sent). No
+    /// cursor at all -> the newest `limit` messages (server's own F4 fix,
+    /// 2026-09-23: this used to silently mean "the oldest page"); `after`
+    /// -> "what's new since this id"; `before` -> "load older than this id".
     ListMessages {
         id: i64,
         after: Option<i64>,
+        before: Option<i64>,
         limit: i64,
     },
     /// `POST /api/dm/conversations/{id}/messages`.

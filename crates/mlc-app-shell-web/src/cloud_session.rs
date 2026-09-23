@@ -23,12 +23,12 @@ use wasm_bindgen_futures::{spawn_local, JsFuture};
 
 use mlc_app::ChartApp;
 use mlc_app_layout::ui::modal_settings::{
-    BoardUi, CloudForumReply, CloudForumThread, CloudForumThreadSummary, CloudLoginPhase,
-    CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudReleaseEntry, CommunityTab,
-    DmConversationUi, DmLookupHitUi, DmMessageBody, DmMessageUi, DmRequest as UiDmRequest,
+    dm_has_older, merge_dm_messages, BoardUi, CloudForumReply, CloudForumThread, CloudForumThreadSummary,
+    CloudLoginPhase, CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudReleaseEntry, CommunityTab,
+    DmConversationUi, DmLookupHitUi, DmMessageBody, DmMessagePage, DmMessageUi, DmRequest as UiDmRequest,
     DmUnavailableReason, DmView, ForumListState,
     ForumReplyV2Ui, ForumRequest, ForumSearchHitUi, ForumSubView, ForumThreadV2Detail,
-    ForumThreadV2Ui, ForumV2Request, ForumV2View, RedeemStatus, UserSettingsTab,
+    ForumThreadV2Ui, ForumV2Request, ForumV2View, RedeemStatus, UserSettingsTab, DM_MESSAGE_PAGE_LIMIT,
 };
 use mlc_cloud::{
     dm_error_message, forum_error_message, forum_v2_error_message, redeem_error_message,
@@ -159,11 +159,12 @@ enum FlowResult {
         conversation_id: i64,
         result: Result<mlc_cloud::DmIdentityResponse, String>,
     },
-    /// `DmRequest::LoadMessages` — `append` distinguishes "Load more" from a
-    /// fresh open/background refresh, same split `Forum2BoardThreads` draws.
+    /// `DmRequest::LoadMessages` — `page` carries the cursor direction the
+    /// request was sent with, same split `Forum2BoardThreads` draws for its
+    /// own pagination.
     DmMessages {
         conversation_id: i64,
-        append: bool,
+        page: DmMessagePage,
         result: Result<mlc_cloud::DmMessagesResponse, String>,
     },
     /// `DmRequest::Send` — `plaintext` rides along so the settled answer can
@@ -1569,14 +1570,28 @@ impl CloudSession {
                         Ok(identity) => {
                             if let Some(key) = dm_decode_public_key(&identity.public_key_b64) {
                                 self.inner.borrow_mut().dm_peer_keys.insert(conversation_id, key);
-                                if let Some(row) = chart
-                                    .panel_app
-                                    .community_state
-                                    .dm
+                                let dm = &mut chart.panel_app.community_state.dm;
+                                // Owner review 2026-09-23, `forum-messenger-
+                                // realtime.md` item 2: this cache used to
+                                // overwrite silently — a peer's key rotating
+                                // made every message sealed under the old
+                                // key permanently `Undecryptable` with no
+                                // explanation. `Some(old) != Some(new)` only
+                                // (never fires on the FIRST ever
+                                // fingerprint for this row); read before the
+                                // mutable row lookup so the two lookups
+                                // never overlap borrows.
+                                let old_fingerprint = dm
                                     .conversations
-                                    .iter_mut()
+                                    .iter()
                                     .find(|c| c.id == conversation_id)
+                                    .and_then(|c| c.peer_fingerprint.clone());
+                                if old_fingerprint.is_some()
+                                    && old_fingerprint.as_deref() != Some(identity.fingerprint.as_str())
                                 {
+                                    dm.mark_peer_key_changed(conversation_id);
+                                }
+                                if let Some(row) = dm.conversations.iter_mut().find(|c| c.id == conversation_id) {
                                     row.peer_fingerprint = Some(identity.fingerprint);
                                 }
                             }
@@ -1590,9 +1605,9 @@ impl CloudSession {
                     }
                     self.inner.borrow_mut().dm_in_flight = false;
                 }
-                FlowResult::DmMessages { conversation_id, append, result } => {
-                    let ov = &mut chart.panel_app.community_state.dm;
-                    ov.messages_refreshing = false;
+                FlowResult::DmMessages { conversation_id, page, result } => {
+                    let comm = &mut chart.panel_app.community_state;
+                    comm.dm.messages_refreshing = false;
                     match result {
                         Ok(resp) => {
                             let crypto_ctx = {
@@ -1629,14 +1644,36 @@ impl CloudSession {
                                     }
                                 })
                                 .collect();
-                            if let DmView::Conversation { id: existing_id, messages, .. } = &mut ov.view {
+                            let page_len = mapped.len();
+                            let available = comm.dm.available;
+                            let has_error = comm.dm.last_error.is_some();
+                            let key_changed = comm.dm.has_peer_key_changed(conversation_id);
+                            if let DmView::Conversation { id: existing_id, messages, has_older, .. } = &mut comm.dm.view
+                            {
                                 if *existing_id == conversation_id {
-                                    if append {
-                                        messages.extend(mapped);
-                                    } else {
-                                        *messages = mapped;
+                                    // "Load older" must keep the viewport
+                                    // anchored on whatever message was at
+                                    // the top before the page landed — read
+                                    // the exact height the page added off
+                                    // `dm_overlay`'s own sizing function
+                                    // before AND after the merge (owner
+                                    // review 2026-09-23, `forum-messenger-
+                                    // realtime.md` item 1).
+                                    let is_before = matches!(page, DmMessagePage::Before(_));
+                                    let old_h = is_before.then(|| {
+                                        mlc_app_layout::layout::modals::dm_overlay::conversation_scroll_h(
+                                            available, has_error, key_changed, *has_older, messages,
+                                        )
+                                    });
+                                    merge_dm_messages(messages, mapped, page);
+                                    *has_older = dm_has_older(page, page_len, *has_older);
+                                    if let Some(old_h) = old_h {
+                                        let new_h = mlc_app_layout::layout::modals::dm_overlay::conversation_scroll_h(
+                                            available, has_error, key_changed, *has_older, messages,
+                                        );
+                                        comm.scroll.offset += (new_h - old_h).max(0.0);
                                     }
-                                    ov.mark_messages_fetched();
+                                    comm.dm.mark_messages_fetched();
                                 }
                                 // Else: the caller navigated away before this
                                 // landed — dropped, same tolerance an
@@ -1645,7 +1682,7 @@ impl CloudSession {
                         }
                         Err(e) => {
                             web_sys::console::warn_1(&format!("[dm] messages fetch failed: {}", e).into());
-                            ov.last_error = Some(e);
+                            comm.dm.last_error = Some(e);
                         }
                     }
                     self.inner.borrow_mut().dm_in_flight = false;
@@ -2501,24 +2538,35 @@ impl CloudSession {
                 // Passive: the open conversation's messages, on open or
                 // due-refresh — silent (no view flip), same tolerance v1's
                 // own thread refresh gives an in-progress draft.
+                // `after = highest id held` once anything has landed
+                // (`DmState::refresh_page`) — owner report F4 fix,
+                // 2026-09-23: this used to always send `after: None`, which
+                // pinned any conversation past one page to its oldest page
+                // forever.
                 if !self.inner.borrow().dm_in_flight {
-                    if let DmView::Conversation { id, .. } = &chart.panel_app.community_state.dm.view {
+                    let ov = &chart.panel_app.community_state.dm;
+                    if let DmView::Conversation { id, .. } = &ov.view {
                         let id = *id;
-                        let ov = &chart.panel_app.community_state.dm;
                         let due = ov.messages_fetched_at.is_none() || ov.messages_due_for_refresh();
                         if due {
+                            let page = ov.refresh_page().unwrap_or(DmMessagePage::Newest);
                             chart.panel_app.community_state.dm.messages_refreshing = true;
                             self.inner.borrow_mut().dm_in_flight = true;
                             let inner = self.inner.clone();
                             let transport = self.inner.borrow().transport.snapshot();
+                            let (after, before) = match page {
+                                DmMessagePage::Newest => (None, None),
+                                DmMessagePage::After(a) => (Some(a), None),
+                                DmMessagePage::Before(b) => (None, Some(b)),
+                            };
                             spawn_local(async move {
-                                let raw = transport.dm_messages(id, None, 50).await;
+                                let raw = transport.dm_messages(id, after, before, DM_MESSAGE_PAGE_LIMIT).await;
                                 if let Err(e) = &raw {
                                     mark_unauthorized(&inner, e);
                                 }
                                 let r = raw.map_err(|e| dm_error_message(&e));
                                 inner.borrow_mut().result =
-                                    Some(FlowResult::DmMessages { conversation_id: id, append: false, result: r });
+                                    Some(FlowResult::DmMessages { conversation_id: id, page, result: r });
                             });
                         }
                     }
@@ -2570,20 +2618,24 @@ impl CloudSession {
                                     inner.borrow_mut().result = Some(FlowResult::DmConversationOpened(result));
                                 });
                             }
-                            UiDmRequest::LoadMessages { id, after } => {
-                                let append = after.is_some();
+                            UiDmRequest::LoadMessages { id, page } => {
                                 chart.panel_app.community_state.dm.messages_refreshing = true;
                                 self.inner.borrow_mut().dm_in_flight = true;
                                 let inner = self.inner.clone();
                                 let transport = self.inner.borrow().transport.snapshot();
+                                let (after, before) = match page {
+                                    DmMessagePage::Newest => (None, None),
+                                    DmMessagePage::After(a) => (Some(a), None),
+                                    DmMessagePage::Before(b) => (None, Some(b)),
+                                };
                                 spawn_local(async move {
-                                    let raw = transport.dm_messages(id, after, 50).await;
+                                    let raw = transport.dm_messages(id, after, before, DM_MESSAGE_PAGE_LIMIT).await;
                                     if let Err(e) = &raw {
                                         mark_unauthorized(&inner, e);
                                     }
                                     let r = raw.map_err(|e| dm_error_message(&e));
                                     inner.borrow_mut().result =
-                                        Some(FlowResult::DmMessages { conversation_id: id, append, result: r });
+                                        Some(FlowResult::DmMessages { conversation_id: id, page, result: r });
                                 });
                             }
                             UiDmRequest::Send { id, plaintext } => {

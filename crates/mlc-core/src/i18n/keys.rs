@@ -1105,10 +1105,24 @@ pub enum UserSettingsKey {
     /// Own-message bubble nick line (Telegram-style bubbles, owner ruling
     /// 2026-09-10) — the peer's row shows their label instead.
     DmYou                           = 56,
+
+    // Direct Messages pane (owner review 2026-09-23,
+    // `forum-messenger-realtime.md` item 2): a peer-key backfill landed a
+    // fingerprint different from the one this session held before —
+    // `DmPeerKeyChanged` is the conversation header's own notice line,
+    // `DmUndecryptableKeyChanged` replaces the generic "cannot decrypt"
+    // line on a bubble sealed under the OLD key.
+    DmPeerKeyChanged                = 57,
+    DmUndecryptableKeyChanged       = 58,
+
+    // DM message list (owner review 2026-09-23, `forum-messenger-
+    // realtime.md` item 1) — the "Load older" row at the top of the
+    // message list, shown once the last landed page came back full.
+    DmLoadOlder                     = 59,
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 57;
+    pub const COUNT: usize = 60;
 
     /// Get translation for this key.
     #[inline]

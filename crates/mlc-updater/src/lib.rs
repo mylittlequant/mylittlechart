@@ -977,8 +977,8 @@ async fn updater_loop(
                                             Err(e) => demote_if_rejected_dm!(e),
                                         }
                                     }
-                                    state::DmRequest::ListMessages { id, after, limit } => {
-                                        match dm::list_messages(&http_client, &auth, id, after, limit).await {
+                                    state::DmRequest::ListMessages { id, after, before, limit } => {
+                                        match dm::list_messages(&http_client, &auth, id, after, before, limit).await {
                                             Ok((messages, next_after)) => {
                                                 let _ = dm_tx.send(state::DmState::Messages { messages, next_after });
                                             }

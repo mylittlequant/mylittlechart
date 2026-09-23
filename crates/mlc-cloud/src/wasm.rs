@@ -726,12 +726,23 @@ impl FetchTransport {
         self.decode_success(status, &body)
     }
 
-    /// `GET /api/dm/conversations/{id}/messages?after=&limit=` — 404 if the
-    /// conversation does not exist or the caller is not a party.
-    pub async fn dm_messages(&self, id: i64, after: Option<i64>, limit: i64) -> Result<DmMessagesResponse, CloudError> {
-        let path = match after {
-            Some(a) => format!("/api/dm/conversations/{}/messages?after={}&limit={}", id, a, limit),
-            None => format!("/api/dm/conversations/{}/messages?limit={}", id, limit),
+    /// `GET /api/dm/conversations/{id}/messages?after=&before=&limit=` —
+    /// 404 if the conversation does not exist or the caller is not a party.
+    /// No cursor -> the newest `limit` messages; `after` -> unchanged
+    /// "what's new" polling; `before` -> "load older" (server F4 fix,
+    /// 2026-09-23). Mutually exclusive; every caller here keeps them
+    /// exclusive by construction.
+    pub async fn dm_messages(
+        &self,
+        id: i64,
+        after: Option<i64>,
+        before: Option<i64>,
+        limit: i64,
+    ) -> Result<DmMessagesResponse, CloudError> {
+        let path = match (after, before) {
+            (Some(a), _) => format!("/api/dm/conversations/{}/messages?after={}&limit={}", id, a, limit),
+            (None, Some(b)) => format!("/api/dm/conversations/{}/messages?before={}&limit={}", id, b, limit),
+            (None, None) => format!("/api/dm/conversations/{}/messages?limit={}", id, limit),
         };
         let (status, body) = self.exchange("GET", &path, None, &[]).await?;
         self.decode_success(status, &body)
