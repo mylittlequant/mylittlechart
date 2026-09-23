@@ -168,6 +168,12 @@ pub struct CloudOverlayResult {
     /// a selection, same "every modal field needs its own arm" contract
     /// `dm_draft_rect` above documents.
     pub dm_message_line_rects: Vec<DmMessageLineHit>,
+    /// Forum Thread view's post/reply body text geometry — one entry per
+    /// WRAPPED LINE of every post card currently on screen, same host-side
+    /// line-level text-selection contract as [`Self::dm_message_line_rects`]
+    /// (owner ruling 2026-09-10, extended to Forum post bodies) — see
+    /// [`ForumLineHit`]'s own doc.
+    pub forum_line_rects: Vec<ForumLineHit>,
 }
 
 /// One visual (wrapped) line of a DM message bubble — collected during
@@ -197,6 +203,33 @@ pub struct DmMessageLineHit {
     /// used before calling `measure_text`, or the highlight rect and
     /// character boundaries drift from what is on screen.
     pub mono: bool,
+}
+
+/// One visual (wrapped) line of a Forum post/reply card body — collected
+/// during `forum_v2_overlay::draw_blocks`'s own paint pass, same shape as
+/// [`DmMessageLineHit`] with a post NUMBER (`#N`, the value every card
+/// already shows, unique per thread) standing in for DM's `msg_idx`: posts
+/// are numbered, not indexed, so the key changes shape slightly but not
+/// structure. A parallel type rather than a shared one — forum bodies carry
+/// no ciphertext/monospace distinction, so there is no `mono` field to keep
+/// in sync between the two selection mechanisms.
+#[derive(Clone, Debug)]
+pub struct ForumLineHit {
+    /// The post's own display number (`#N`, `draw_post_card`'s own
+    /// `number`), unique within the open thread.
+    pub post_number: i64,
+    /// Wrapped-line index within that post's body — monotonic across the
+    /// whole body (paragraphs, not just one), so a selection can span
+    /// paragraph breaks the same way DM's own spans wrapped lines.
+    pub line_idx: u16,
+    pub y_top: f64,
+    pub y_bot: f64,
+    /// The line's own text, verbatim — same "re-measured on demand, no
+    /// precomputed char-position table" choice as `DmMessageLineHit::text`.
+    pub text: String,
+    /// Left edge the line's text was drawn from (inside the card's body
+    /// column).
+    pub text_x: f64,
 }
 
 fn title_for(state: &CloudOverlayState) -> &'static str {

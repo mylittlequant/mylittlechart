@@ -374,6 +374,47 @@ impl ChartApp {
         if text.is_empty() { None } else { Some(text) }
     }
 
+    /// Extract the currently selected Forum post-body text, in the open
+    /// thread. Same shape as [`Self::dm_selection_text`], keyed by post
+    /// NUMBER instead of message index (owner ruling 2026-09-10, extended
+    /// to Forum post bodies).
+    ///
+    /// After returning `Some(text)` the caller is responsible for clearing
+    /// the selection (`community_state.forum2.selection = None`).
+    #[cfg(feature = "cloud")]
+    pub fn forum_selection_text(&self) -> Option<String> {
+        let sel = self.panel_app.community_state.forum2.selection?;
+        if sel.is_empty() { return None; }
+        let ((lo_post, lo_line, lo_char), (hi_post, hi_line, hi_char)) = sel.ordered();
+        let rects = self.frame_result.as_ref()
+            .and_then(|r| r.community.as_ref())
+            .map(|cm| &cm.content.forum_line_rects)?;
+        let mut text = String::new();
+        for entry in rects.iter() {
+            let pos = (entry.post_number, entry.line_idx);
+            if pos < (lo_post, lo_line) || pos > (hi_post, hi_line) { continue; }
+            if !text.is_empty() { text.push('\n'); }
+            let is_first = pos == (lo_post, lo_line);
+            let is_last = pos == (hi_post, hi_line);
+            if is_first && is_last {
+                let slice: String = entry.text.chars()
+                    .skip(lo_char as usize)
+                    .take((hi_char as usize).saturating_sub(lo_char as usize))
+                    .collect();
+                text.push_str(&slice);
+            } else if is_first {
+                let slice: String = entry.text.chars().skip(lo_char as usize).collect();
+                text.push_str(&slice);
+            } else if is_last {
+                let slice: String = entry.text.chars().take(hi_char as usize).collect();
+                text.push_str(&slice);
+            } else {
+                text.push_str(&entry.text);
+            }
+        }
+        if text.is_empty() { None } else { Some(text) }
+    }
+
     /// Handle a left-click at screen coordinates `(x, y)`.
     ///
     /// Dispatch order:
@@ -2724,6 +2765,30 @@ impl ChartApp {
                     }
                 }
             }
+            // Forum post/reply bodies — same host-side line-level text
+            // selection mechanism as the DM block above, keyed by
+            // `(post_number, line_idx, char_idx)` instead of `(msg_idx,
+            // line_idx, char_idx)` — posts are numbered (`#1`, `#2`, …), not
+            // indexed (owner ruling 2026-09-10, extended to Forum post
+            // bodies — see `forum_v2_overlay.rs::draw_blocks`'s own doc).
+            // Checked BEFORE the generic community text-field block below,
+            // same reasoning as the DM block above.
+            #[cfg(feature = "cloud")]
+            if let Some(ref cm) = result.community {
+                if self.panel_app.community_state.is_open {
+                    let hit = cm.content.forum_line_rects.iter()
+                        .find(|l| y >= l.y_top && y < l.y_bot)
+                        .map(|l| (l.post_number, l.line_idx, l.text.clone(), l.text_x));
+                    if let Some((post_number, line_idx, line_text, text_x)) = hit {
+                        let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
+                        self.panel_app.community_state.forum2.selection = Some(
+                            mlc_app_layout::ui::modal_settings::ForumBodySelection::new_at(post_number, line_idx, char_idx),
+                        );
+                        self.panel_app.community_state.forum2.selection_drag_active = true;
+                        return false;
+                    }
+                }
+            }
             // Community modal (Forum/DM) — text select drag on whichever
             // field the current sub-view is showing (title+body for
             // Forum-v2 Compose, reply for Forum-v2 Thread, search for
@@ -3924,6 +3989,27 @@ impl ChartApp {
                 let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
                 if let Some(sel) = self.panel_app.community_state.dm.selection.as_mut() {
                     sel.end_msg = msg_idx;
+                    sel.end_line = line_idx;
+                    sel.end_char = char_idx;
+                }
+            }
+            return;
+        }
+
+        // ── Forum post-body host-side selection drag extension ────────────
+        #[cfg(feature = "cloud")]
+        if self.panel_app.community_state.forum2.selection_drag_active {
+            let hit = self.frame_result.as_ref()
+                .and_then(|r| r.community.as_ref())
+                .and_then(|cm| {
+                    cm.content.forum_line_rects.iter()
+                        .find(|l| y >= l.y_top && y < l.y_bot)
+                        .map(|l| (l.post_number, l.line_idx, l.text.clone(), l.text_x))
+                });
+            if let Some((post_number, line_idx, line_text, text_x)) = hit {
+                let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
+                if let Some(sel) = self.panel_app.community_state.forum2.selection.as_mut() {
+                    sel.end_post = post_number;
                     sel.end_line = line_idx;
                     sel.end_char = char_idx;
                 }
@@ -5204,6 +5290,21 @@ impl ChartApp {
                 .unwrap_or(true);
             if is_empty {
                 self.panel_app.community_state.dm.selection = None;
+            }
+            return;
+        }
+
+        // ── End host-side Forum post-body selection drag ────────────────────
+        #[cfg(feature = "cloud")]
+        if self.panel_app.community_state.forum2.selection_drag_active {
+            self.panel_app.community_state.forum2.selection_drag_active = false;
+            // Same "start==end clears the selection" rule as the DM block
+            // above.
+            let is_empty = self.panel_app.community_state.forum2.selection
+                .map(|s| s.is_empty())
+                .unwrap_or(true);
+            if is_empty {
+                self.panel_app.community_state.forum2.selection = None;
             }
             return;
         }

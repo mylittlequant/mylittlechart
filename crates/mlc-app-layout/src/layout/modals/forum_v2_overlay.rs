@@ -64,8 +64,8 @@ use uzor::WidgetId;
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::modal_settings::{
-    BoardUi, CommunityState, ForumReplyV2Ui, ForumSearchHitUi, ForumThreadV2Detail,
-    ForumThreadV2Ui, ForumV2State, ForumV2View,
+    BoardUi, CommunityState, ForumBodySelection, ForumReplyV2Ui, ForumSearchHitUi,
+    ForumThreadV2Detail, ForumThreadV2Ui, ForumV2State, ForumV2View,
 };
 use crate::ui::scroll_state::ScrollState;
 use crate::ui::scroll_widget::ScrollableContainer;
@@ -389,6 +389,18 @@ fn blocks_h(text: &str) -> f64 {
         .sum()
 }
 
+/// Draws `text` as wrapped paragraphs (`blocks`), records one
+/// [`super::cloud_overlay::ForumLineHit`] per WRAPPED TEXT line into
+/// `result.forum_line_rects` for HOST-SIDE text selection (owner ruling
+/// 2026-09-10, extended to Forum post bodies — same mechanism
+/// `dm_overlay.rs`'s own `draw_message` uses for its bubbles, keyed by this
+/// post's own `post_number` instead of a message index), and paints
+/// `selection`'s highlight over whichever of THIS post's own lines the
+/// ordered range covers — same paint-order idiom `draw_message`'s own
+/// selection overlay uses (translucent `tt.selection`, drawn after every
+/// line has painted). A lone-URL paragraph renders as a link row instead
+/// and is not selectable, same as before this pass.
+#[allow(clippy::too_many_arguments)]
 fn draw_blocks(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -397,10 +409,19 @@ fn draw_blocks(
     x: f64,
     y: f64,
     w: f64,
+    post_number: i64,
     text: &str,
+    selection: Option<ForumBodySelection>,
     tt: &ToolbarTheme,
+    result: &mut CloudOverlayResult,
 ) -> f64 {
     let mut ly = y;
+    let mut line_idx: u16 = 0;
+    // (line_idx, y_top, text) for this post's own text lines — collected
+    // first so the selection-highlight pass below and the final push into
+    // `result.forum_line_rects` can both walk it without re-measuring text
+    // that has already scrolled past.
+    let mut pushed: Vec<(u16, f64, String)> = Vec::new();
     for block in blocks(text) {
         match block {
             Block::Text(lines) => {
@@ -410,6 +431,8 @@ fn draw_blocks(
                 ctx.set_text_baseline(TextBaseline::Top);
                 for line in &lines {
                     ctx.fill_text(line, x, ly);
+                    pushed.push((line_idx, ly, line.clone()));
+                    line_idx += 1;
                     ly += 16.0;
                 }
                 ly += 10.0;
@@ -421,6 +444,52 @@ fn draw_blocks(
             }
         }
     }
+
+    if let Some(sel) = selection.filter(|s| !s.is_empty()) {
+        let ((lo_post, lo_line, lo_char), (hi_post, hi_line, hi_char)) = sel.ordered();
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(&tt.selection);
+        ctx.set_global_alpha(0.35);
+        for (li, line_y, line) in &pushed {
+            let pos = (post_number, *li);
+            if pos < (lo_post, lo_line) || pos > (hi_post, hi_line) {
+                continue;
+            }
+            let is_first = pos == (lo_post, lo_line);
+            let is_last = pos == (hi_post, hi_line);
+            let char_prefix = |n: usize| -> String { line.chars().take(n).collect() };
+            let (sel_x, sel_w) = if is_first && is_last {
+                let prefix_w = ctx.measure_text(&char_prefix(lo_char as usize));
+                let end_w = ctx.measure_text(&char_prefix(hi_char as usize));
+                (x + prefix_w, (end_w - prefix_w).max(0.0))
+            } else if is_first {
+                let prefix_w = ctx.measure_text(&char_prefix(lo_char as usize));
+                let full_w = ctx.measure_text(line);
+                (x + prefix_w, (full_w - prefix_w).max(4.0))
+            } else if is_last {
+                let end_w = ctx.measure_text(&char_prefix(hi_char as usize));
+                (x, end_w.max(4.0))
+            } else {
+                (x, ctx.measure_text(line).max(4.0))
+            };
+            if sel_w > 0.0 {
+                ctx.fill_rect(sel_x, *line_y, sel_w, 16.0);
+            }
+        }
+        ctx.set_global_alpha(1.0);
+    }
+
+    for (li, line_y, line) in pushed {
+        result.forum_line_rects.push(super::cloud_overlay::ForumLineHit {
+            post_number,
+            line_idx: li,
+            y_top: line_y,
+            y_bot: line_y + 16.0,
+            text: line,
+            text_x: x,
+        });
+    }
+
     ly - y
 }
 
@@ -1234,7 +1303,9 @@ fn draw_post_card(
     reply_label: &str,
     delete_widget_id: Option<&str>,
     current_time_ms: u64,
+    selection: Option<ForumBodySelection>,
     tt: &ToolbarTheme,
+    result: &mut CloudOverlayResult,
 ) -> f64 {
     let has_footer = reply_widget_id.is_some() || delete_widget_id.is_some();
     let has_rank = rank_label.is_some();
@@ -1310,7 +1381,10 @@ fn draw_post_card(
         ctx.fill_text("[hidden by moderator]", body_x, ly);
         ly += HIDDEN_LINE_H;
     } else {
-        ly += draw_blocks(ctx, coord, layer_id, &format!("cloud_overlay:forum2:post:{number}"), body_x, ly, body_w, body, tt);
+        ly += draw_blocks(
+            ctx, coord, layer_id, &format!("cloud_overlay:forum2:post:{number}"), body_x, ly, body_w,
+            number, body, selection, tt, result,
+        );
     }
 
     if has_footer {
@@ -1501,7 +1575,7 @@ fn draw_right_thread(
 
     draw_right_scrollable(
         ctx, coord, layer_id, x, y, w, scroll_h, &state.scroll, content_h, result,
-        |ctx, coord, layer_id, sx, sy, sw, _result| {
+        |ctx, coord, layer_id, sx, sy, sw, result| {
             let mut ly = sy;
 
             let mut title_x = sx;
@@ -1536,7 +1610,7 @@ fn draw_right_thread(
             ly += draw_post_card(
                 ctx, coord, layer_id, sx, ly, sw,
                 1, &t.author, t.author_rank.as_deref(), &t.created_at, t.hidden, &t.body, None,
-                op_reply_id, "\u{21a9} Reply", None, current_time_ms, tt,
+                op_reply_id, "\u{21a9} Reply", None, current_time_ms, f.selection, tt, result,
             );
 
             for fr in &flat_replies {
@@ -1550,7 +1624,7 @@ fn draw_right_thread(
                     fr.number, &fr.reply.author, fr.reply.author_rank.as_deref(), &fr.reply.created_at,
                     fr.reply.hidden, &fr.reply.body, fr.in_reply_to,
                     composer_visible.then_some(reply_id.as_str()), reply_label,
-                    delete_id.as_deref(), current_time_ms, tt,
+                    delete_id.as_deref(), current_time_ms, f.selection, tt, result,
                 );
             }
         },

@@ -969,6 +969,15 @@ pub fn process_event(
                                 return;
                             }
                         }
+                        #[cfg(feature = "cloud")]
+                        {
+                            let forum_text = chart.forum_selection_text();
+                            if let Some(text) = forum_text {
+                                platform.clipboard_write(&text);
+                                chart.panel_app.community_state.forum2.selection = None;
+                                return;
+                            }
+                        }
                         if chart.is_agent_pty_focused() {
                             let sel_text = chart.pty_selection_text();
                             if !sel_text.is_empty() {

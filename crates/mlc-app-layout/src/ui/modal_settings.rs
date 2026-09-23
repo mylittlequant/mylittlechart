@@ -5624,6 +5624,54 @@ pub enum ForumV2Request {
     Moderate { thread_id: i64, action: String, board: Option<String> },
 }
 
+/// A host-side Forum post-body text selection, in character coordinates
+/// (post NUMBER — `#N`, unique within the open thread — wrapped-line index
+/// within that post's body, char index within that line).
+///
+/// Same shape as [`DmMessageSelection`] (that type's own doc explains the
+/// "Agents-chat-style, across wrapped lines and across messages" mechanism
+/// this mirrors for Forum post cards) — a parallel type rather than a
+/// shared one because posts are numbered (`#1`, `#2`, …) rather than
+/// indexed, so the key changes shape slightly but not structure.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ForumBodySelection {
+    pub start_post: i64,
+    pub start_line: u16,
+    pub start_char: u16,
+    pub end_post: i64,
+    pub end_line: u16,
+    pub end_char: u16,
+}
+
+#[cfg(feature = "cloud")]
+impl ForumBodySelection {
+    /// Anchor a fresh selection at the given post/line/character position
+    /// (start == end until a drag extends it).
+    pub fn new_at(post: i64, line: u16, char_idx: u16) -> Self {
+        Self {
+            start_post: post,
+            start_line: line,
+            start_char: char_idx,
+            end_post: post,
+            end_line: line,
+            end_char: char_idx,
+        }
+    }
+
+    /// Returns `((lo_post, lo_line, lo_char), (hi_post, hi_line, hi_char))`
+    /// in reading order, regardless of which end the drag started from.
+    pub fn ordered(&self) -> ((i64, u16, u16), (i64, u16, u16)) {
+        let s = (self.start_post, self.start_line, self.start_char);
+        let e = (self.end_post, self.end_line, self.end_char);
+        if s <= e { (s, e) } else { (e, s) }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.start_post == self.end_post && self.start_line == self.end_line && self.start_char == self.end_char
+    }
+}
+
 /// State for the Forum-v2 boards/threads/search UI (`CommunityTab::Forum`).
 ///
 /// Same mailbox contract as [`CloudOverlayState`] itself: pure UI state +
@@ -5774,6 +5822,14 @@ pub struct ForumV2State {
     /// navigation, which never sets this flag) — same request/result wire,
     /// two different landings.
     pub quick_search_pending: bool,
+    /// Host-side text selection over the open thread's post/reply card
+    /// bodies — see [`ForumBodySelection`]'s own doc. `None` while nothing
+    /// is selected; cleared on every navigation that already resets `view`
+    /// ([`Self::reset_to_boards`], and every `panel_click.rs` arm that opens
+    /// a thread).
+    pub selection: Option<ForumBodySelection>,
+    /// True while a Forum post-body drag-selection is in progress.
+    pub selection_drag_active: bool,
 }
 
 #[cfg(feature = "cloud")]
@@ -5805,6 +5861,8 @@ impl Default for ForumV2State {
             quick_search_last_seen_text: String::new(),
             quick_search_due_at: None,
             quick_search_pending: false,
+            selection: None,
+            selection_drag_active: false,
         }
     }
 }
@@ -5866,6 +5924,8 @@ impl ForumV2State {
         self.create_thread_pending = false;
         self.reply_pending = false;
         self.open_thread_board_slug = None;
+        self.selection = None;
+        self.selection_drag_active = false;
         self.close_quick_search();
     }
 

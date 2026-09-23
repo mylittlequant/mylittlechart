@@ -5992,6 +5992,8 @@ impl ChartApp {
                                     st.forum2.invalidate_thread();
                                     st.forum2.reply_pending = false;
                                     st.forum2.last_error = None;
+                                    st.forum2.selection = None;
+                                    st.forum2.selection_drag_active = false;
                                     st.forum2.request = Some(ForumV2Request::OpenThread { id });
                                 }
                             }
@@ -6134,6 +6136,8 @@ impl ChartApp {
                                 st.forum2.invalidate_thread();
                                 st.forum2.reply_pending = false;
                                 st.forum2.last_error = None;
+                                st.forum2.selection = None;
+                                st.forum2.selection_drag_active = false;
                                 st.forum2.request = Some(ForumV2Request::OpenThread { id });
                             }
                         }
@@ -6244,6 +6248,8 @@ impl ChartApp {
                                     st.forum2.invalidate_thread();
                                     st.forum2.reply_pending = false;
                                     st.forum2.last_error = None;
+                                    st.forum2.selection = None;
+                                    st.forum2.selection_drag_active = false;
                                     st.forum2.request = Some(ForumV2Request::OpenThread { id });
                                 }
                             }
