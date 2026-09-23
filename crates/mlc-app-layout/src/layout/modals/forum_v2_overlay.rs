@@ -695,6 +695,88 @@ fn draw_crumb_bar(
     h
 }
 
+/// Draws `text` left-aligned at `(x, y)` (font/align/baseline already set by
+/// the caller — this only ever touches fill colour), highlighting every
+/// case-insensitive occurrence of `query` in `tt.accent` — the concept's own
+/// `<mark>` (`forum_concept_v1.html:174,176` — gold in the mockup, but this
+/// crate's own drill-down rewrite already moved every other permanent
+/// emphasis mark, pin glyph and current-breadcrumb-segment off gold onto
+/// `tt.accent`, the one token this file reserves for "the noteworthy one" —
+/// see this file's own top-of-file doc). Char-indexed rather than byte-
+/// indexed so a lowercase expansion (e.g. a German "ß") can never land a
+/// split off a UTF-8 boundary. `query` empty, or matching nothing, draws
+/// `text` plain in `base_color`, same single `fill_text` call as before this
+/// pass.
+fn draw_highlighted_text(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    text: &str,
+    query: &str,
+    base_color: &str,
+    highlight_color: &str,
+) {
+    let chars: Vec<char> = text.chars().collect();
+    let query_chars: Vec<char> = query.chars().collect();
+    let n = chars.len();
+    let m = query_chars.len();
+    if m == 0 || m > n {
+        ctx.set_fill_color(base_color);
+        ctx.fill_text(text, x, y);
+        return;
+    }
+    let matches_at = |i: usize| (0..m).all(|k| chars[i + k].to_lowercase().eq(query_chars[k].to_lowercase()));
+
+    let mut cx = x;
+    let mut i = 0usize;
+    let mut run_start = 0usize;
+    while i < n {
+        if i + m <= n && matches_at(i) {
+            if run_start < i {
+                let plain: String = chars[run_start..i].iter().collect();
+                ctx.set_fill_color(base_color);
+                ctx.fill_text(&plain, cx, y);
+                cx += ctx.measure_text(&plain);
+            }
+            let hi: String = chars[i..i + m].iter().collect();
+            ctx.set_fill_color(highlight_color);
+            ctx.fill_text(&hi, cx, y);
+            cx += ctx.measure_text(&hi);
+            i += m;
+            run_start = i;
+        } else {
+            i += 1;
+        }
+    }
+    if run_start < n {
+        let plain: String = chars[run_start..n].iter().collect();
+        ctx.set_fill_color(base_color);
+        ctx.fill_text(&plain, cx, y);
+    }
+}
+
+/// The search-hit "kind" tag (concept's own `.kind`, `forum_concept_v1.
+/// html:171` — a small bordered pill reading `THREAD`/`REPLY`, drawn before
+/// the heading). Returns the width consumed (pill + trailing gap) so the
+/// caller can offset the heading text past it.
+fn draw_kind_pill(ctx: &mut dyn RenderContext, x: f64, y: f64, kind: &str, tt: &ToolbarTheme) -> f64 {
+    const PILL_H: f64 = 13.0;
+    const PILL_PAD: f64 = 4.0;
+    ctx.set_font("9px monospace");
+    let label = kind.to_uppercase();
+    let w = ctx.measure_text(&label) + PILL_PAD * 2.0;
+    ctx.set_stroke_color(&tt.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rect(x, y, w, PILL_H);
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(&label, x + w / 2.0, y + PILL_H / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    w + 6.0
+}
+
 /// Drawn LAST over whatever view is showing — anchored under `field_rect`
 /// (the breadcrumb bar's own field, `None` when the box is closed, in which
 /// case this is a no-op). Unclipped: the breadcrumb bar sits above every
@@ -709,7 +791,8 @@ fn draw_quick_search_dropdown(
     tt: &ToolbarTheme,
 ) {
     let Some(anchor) = field_rect else { return };
-    if !f.quick_search_open || f.quick_search_query.is_none() {
+    let Some(query) = f.quick_search_query.as_deref() else { return };
+    if !f.quick_search_open {
         return;
     }
     let n = f.quick_search_results.len().min(QUICK_DROPDOWN_MAX_ROWS);
@@ -735,18 +818,20 @@ fn draw_quick_search_dropdown(
                 ctx.set_fill_color(&tt.item_bg_hover);
                 ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
             }
+            let pill_w = draw_kind_pill(ctx, rect.x + 6.0, rect.y + 2.0, &hit.kind, tt);
             let heading = hit.title.clone().unwrap_or_else(|| format!("Reply in thread #{}", hit.thread_id));
             ctx.set_font("600 12px sans-serif");
-            ctx.set_fill_color(if hovered { &tt.item_text_hover } else { &tt.item_text });
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Top);
-            let heading = crate::ui::widgets::fit_text_to_width(ctx, &heading, rect.width - 12.0);
-            ctx.fill_text(&heading, rect.x + 6.0, rect.y + 2.0);
+            let heading_color = if hovered { &tt.item_text_hover } else { &tt.item_text };
+            let heading = crate::ui::widgets::fit_text_to_width(ctx, &heading, rect.width - 12.0 - pill_w);
+            draw_highlighted_text(ctx, rect.x + 6.0 + pill_w, rect.y + 2.0, &heading, query, heading_color, &tt.accent);
 
             ctx.set_font("11px sans-serif");
-            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
             let snippet = crate::ui::widgets::fit_text_to_width(ctx, &hit.snippet, rect.width - 12.0);
-            ctx.fill_text(&snippet, rect.x + 6.0, rect.y + 18.0);
+            draw_highlighted_text(ctx, rect.x + 6.0, rect.y + 18.0, &snippet, query, &tt.item_text_muted, &tt.accent);
 
             coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
             ry += QUICK_RESULT_ROW_H;
