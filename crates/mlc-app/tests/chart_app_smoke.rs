@@ -25,6 +25,7 @@ use std::time::Duration;
 
 use digdigdig3::core::types::{AccountType, ExchangeId};
 use mlc_app::ChartApp;
+use mlc_backend::BubbleEvent;
 use mlc_core::state::Timeframe;
 use mlc_backend_data_bridge::{DataBridge, LiveUpdate};
 
@@ -125,6 +126,8 @@ fn now_ms() -> u64 {
 /// `Timeframe::new("1m", 60)`, which makes `period_secs = 0` and silently
 /// disables the whole TradeUpdatePassthrough aggregation block in react.rs.
 fn tf_m1() -> Timeframe { Timeframe::m1() }
+
+fn tf_h1() -> Timeframe { Timeframe::h1() }
 
 // ─── Test 1: bridge → bubble live trade flow on 1m ───────────────────────────
 
@@ -381,5 +384,190 @@ async fn chart_app_scroll_backfill_triggers_on_view_shift() {
          after scroll-backfill — react.rs ScrollBarsAppended arm did not \
          reconcile viewport (chart would render with stale count)",
         vp_count_after, bars_after
+    );
+}
+
+// ─── Test 3: first-visit hydration lands on the latest bars ────────────────
+//
+// Regression coverage for the owner repro 2026-09-24 ("опять кто-то сломал
+// логику выравнивания данных"): a genuinely fresh profile (no saved preset)
+// landed `view_start` in the middle of history (725/2001 or 1700/2001 bars)
+// instead of at the right edge, while a reload with a saved profile snapped
+// correctly. Root cause: `ChartApp::new_window`'s fresh-state branch
+// (mlc-app/src/lib.rs) never armed `window.pending_symbol_load` /
+// `window.needs_snap_after_backfill` the way every OTHER hydration path
+// (`apply_preset_cold`, `seed_default_chart`) does. Without them, the
+// window's first-ever `BarsLoaded` is misclassified as a BACKFILL
+// (`is_backfill = !pending_symbol_load` reads `!false`) instead of a fresh
+// load in `react_to_bubble_event` — `capture_view_anchor` on the
+// still-empty prior bars returns `None`, so `reconcile_view_keep_anchor`
+// leaves `view_start` at its construction default (0.0). A later backfill
+// page (older bars prepended in front) then anchors relative to that stale
+// `view_start` instead of the right edge, landing the viewport mid-history.
+//
+// This test drives the exact sequence documented in
+// `hydration_impl.rs`("stale cached bars arrive via BarsLoaded first; fresh
+// exchange data arrives later via BackfillComplete") through the real
+// reactor (`ChartApp::react_to_events`, the same entry point `ChartApp::tick`
+// and the multi-window vello host use) with synthesized bars — no network
+// needed, since the bug lives entirely in the reactor's event classification,
+// not in bar delivery itself.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test(flavor = "multi_thread", worker_threads = 2))]
+async fn first_visit_hydration_snaps_to_right_edge_after_prepend() {
+    let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new().await;
+    let bridge = Arc::new(bridge);
+    let core = mlc_backend::BackendCore::new(bridge, None);
+    let mut app = ChartApp::new_empty(core);
+
+    // Mirror `ChartApp::new_window`'s fresh-state branch by hand: create the
+    // auto-bubble, attach it to the active chart, and arm the two
+    // fresh-hydration flags the fix adds.
+    let chart_id = app.panel_app.panel_grid.active_container_id()
+        .expect("new_empty seeds one active window");
+    let bid = app.create_auto_bubble([0.0, 0.0, 0.0, 0.0], "BTCUSDT".to_string(), tf_h1());
+    app.attach_chart_to_tag(chart_id, bid);
+    // `Timeframe::h1().name` is `"1H"` (uppercase) — the reactor's window
+    // match (`win_tf.name == *tf_name`) is a literal string compare against
+    // the `BubbleEvent`'s own `timeframe` field, so every synthesized event
+    // below must carry this exact spelling.
+    let tf_name = tf_h1().name.clone();
+    {
+        let win = app.panel_app.panel_grid.containers_mut().get_mut(&chart_id)
+            .expect("active window");
+        win.auto_tag_id = bid;
+        win.current_tag_id = bid;
+        // The fix under test: every hydration path must arm these two
+        // before the first bar delivery (see doc comment above).
+        win.pending_symbol_load = true;
+        win.needs_snap_after_backfill = true;
+        // Settle geometry up front, matching production reality: the wasm
+        // resize debounce (CLAUDE.md "two-equal-frames") always settles
+        // before the request_bars round-trip returns. `force_viewport_for_test`
+        // only overrides `chart_width` here (`bar_spacing` already defaults
+        // to 8.0, `Viewport::default`, so its own param is a no-op) — but
+        // `consume_cold_snap`'s `reset_to_default()` (armed by
+        // `needs_snap_after_backfill`, fires on the very first bar delivery
+        // below) recomputes `bar_spacing = chart_width / 100` regardless —
+        // 1000.0 / 100 = 10.0, a clean number chosen so the expected-edge
+        // math below matches the real post-reset value exactly.
+        win.force_viewport_for_test(1000.0, 10.0, 0.0);
+    }
+    app.core.bubbles_mut().set_bid_instrument_full(
+        bid, "BTCUSDT".to_string(), "binance".to_string(), "S".to_string(), tf_h1(),
+    );
+
+    let chart_width: f64 = 1000.0;
+    // The value `bar_spacing` settles at after the cold-snap's own
+    // `reset_to_default()` runs on the first bar delivery below (see the
+    // `force_viewport_for_test` comment above) — NOT `Viewport::default`'s
+    // 8.0, which only holds before that first snap.
+    let bar_spacing: f64 = 10.0;
+    let visible_f: f64 = chart_width / bar_spacing;
+    let expected_right_edge = |bar_count: usize| -> f64 {
+        // Mirrors `ChartContainer::snap_to_end`'s progressive-margin formula.
+        let progressive = (0.05 * visible_f).ceil().max(0.0);
+        let margin = mlc_app::chart_container::DEFAULT_SNAP_MARGIN.min(progressive);
+        bar_count as f64 + margin - visible_f
+    };
+
+    // Stage 1: a small CACHE-served batch lands first ("stale cached bars
+    // arrive via BarsLoaded first"). A clean multiple of the 1H bar
+    // interval (3600s) — stage 3's live trade below relies on exact
+    // candle-boundary arithmetic (`react.rs`'s `TradeUpdatePassthrough`
+    // handler: `new_candle_start = (trade_ts_secs / period_secs) * period_secs`).
+    let base_ts: i64 = 1_699_999_200;
+    let cache_bars: Vec<mlc_core::Bar> = (0..100i64)
+        .map(|i| mlc_core::Bar::new(base_ts + i * 3600, 100.0, 101.0, 99.0, 100.5))
+        .collect();
+    // In production `tick_writers` writes the new payload into the bubble
+    // store BEFORE emitting the event (react.rs's own module doc: "the
+    // write half ... has already happened"); `react_to_events` alone does
+    // not, so the audit-D8 active-series resolver `reconcile_view_fresh`
+    // reads for `bar_count` would otherwise still see the bubble's
+    // construction-time empty array. Mirror the write here.
+    app.core.bubbles_mut().replace_bars(bid, cache_bars.clone());
+    app.react_to_events(&[BubbleEvent::BarsLoaded {
+        bid,
+        exchange_id: ExchangeId::Binance,
+        symbol: "BTCUSDT".to_string(),
+        account_type: "S".to_string(),
+        timeframe: tf_name.clone(),
+        bars: cache_bars.clone(),
+        prev_bars: Vec::new(),
+    }], now_ms());
+
+    let vs_after_cache = read_active_view_start(&app);
+    let edge_after_cache = expected_right_edge(cache_bars.len());
+    assert!(
+        (vs_after_cache - edge_after_cache).abs() < 1.0,
+        "[stage 1] cache batch did not snap to its own right edge: \
+         view_start={vs_after_cache} expected~{edge_after_cache} bars={}",
+        cache_bars.len()
+    );
+
+    // Stage 2: the real REST backfill lands later, PREPENDING 1901 older
+    // bars in front of the 100 already shown — full_bars[1901..2001] is
+    // byte-for-byte the same 100 bars as `cache_bars`.
+    let full_bars: Vec<mlc_core::Bar> = (0..2001i64)
+        .map(|i| mlc_core::Bar::new(base_ts + (i - 1901) * 3600, 90.0, 91.0, 89.0, 90.5))
+        .collect();
+    assert_eq!(full_bars.len(), 2001);
+    // Same write-before-emit mirror as stage 1 — `prev_bars: cache_bars`
+    // (already the pre-write snapshot) stays correct since it is passed as
+    // the OLD state, not read back from the store.
+    app.core.bubbles_mut().replace_bars(bid, full_bars.clone());
+    app.react_to_events(&[BubbleEvent::BackfillCompleted {
+        bid,
+        exchange_id: ExchangeId::Binance,
+        symbol: "BTCUSDT".to_string(),
+        account_type: "S".to_string(),
+        timeframe: tf_name.clone(),
+        bars: full_bars.clone(),
+        prev_bars: cache_bars,
+    }], now_ms());
+
+    let vs_after_backfill = read_active_view_start(&app);
+    let bc_after_backfill = read_active_viewport_bar_count(&app);
+    let edge_after_backfill = expected_right_edge(full_bars.len());
+    assert_eq!(bc_after_backfill, 2001, "viewport.bar_count must track the full 2001-bar history");
+    assert!(
+        (vs_after_backfill - edge_after_backfill).abs() < 5.0,
+        "[stage 2 — the owner repro] history prepend left the viewport \
+         mid-history: view_start={vs_after_backfill} (expected ~{edge_after_backfill}, \
+         bar_count={bc_after_backfill}, total=2001) — a fresh window whose first \
+         BarsLoaded was not armed with pending_symbol_load/needs_snap_after_backfill \
+         gets misclassified as a backfill and never reaches the right edge",
+    );
+
+    // Stage 3: one live trade ticks in, past the last bar's candle-close
+    // boundary. `BarUpdatePassthrough` is a read-only repaint signal for
+    // the trade-agg-bar/trade-built-kline family only (react.rs's own
+    // `!is_derived && !is_trade_built { continue; }` gate skips every
+    // plain kline window) — a plain "candles" window's viewport is driven
+    // by `TradeUpdatePassthrough` instead, which both builds the new
+    // candle INTO the bubble store itself and advances the viewport, the
+    // same event a real live trade produces.
+    let last_ts = full_bars.last().map(|b| b.timestamp).expect("full_bars non-empty");
+    let trade_ts_secs = last_ts + 3600; // one full 1H interval past the last bar
+    app.react_to_events(&[BubbleEvent::TradeUpdatePassthrough {
+        exchange_id: ExchangeId::Binance,
+        account_type: "S".to_string(),
+        symbol: "BTCUSDT".to_string(),
+        price: 101.5,
+        quantity: 1.0,
+        timestamp: trade_ts_secs * 1000,
+        is_buyer_maker: false,
+    }], now_ms());
+
+    let vs_after_live = read_active_view_start(&app);
+    let bc_after_live = read_active_viewport_bar_count(&app);
+    assert_eq!(bc_after_live, 2002, "viewport.bar_count must track the live-appended bar");
+    let edge_after_live = expected_right_edge(bc_after_live);
+    assert!(
+        (vs_after_live - edge_after_live).abs() < bar_spacing.max(6.0),
+        "[stage 3] a live tick after correct hydration must keep the viewport \
+         glued to the right edge: view_start={vs_after_live} expected~{edge_after_live} \
+         bar_count={bc_after_live}",
     );
 }

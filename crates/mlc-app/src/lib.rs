@@ -4961,6 +4961,29 @@ impl ChartApp {
                 if let Some(window) = app.panel_app.panel_grid.active_container_mut() {
                     window.data_provider = seed_data_provider;
                     window.toolbar_config = ToolbarConfig::standalone();
+                    // Arm the same pair `apply_preset_cold`/`seed_default_chart`
+                    // arm on every other hydration path (viewport invariant,
+                    // CLAUDE.md "every hydration path lands on ...
+                    // needs_snap_after_backfill = true"). Without this the
+                    // window's first-ever `BarsLoaded` is misclassified as a
+                    // BACKFILL (`is_backfill = !pending_symbol_load` reads
+                    // `!false`) instead of a fresh load in
+                    // `react_to_bubble_event` — `capture_view_anchor` on the
+                    // still-empty prior bars returns `None`, so
+                    // `reconcile_view_keep_anchor` leaves `view_start` at its
+                    // construction default (0) instead of snapping to the
+                    // right edge. A later backfill page (older bars
+                    // prepended) then anchors relative to that stale
+                    // `view_start`, landing the viewport mid-history instead
+                    // of at the latest bar (owner repro 2026-09-24:
+                    // `view_start` 725/2001 or 1700/2001 on a fresh profile,
+                    // the "лендинг в середину истории" bug). The legacy
+                    // `needs_initial_viewport_fit` one-shot below is a weaker
+                    // safety net that only ever fires once and cannot
+                    // recover from a later prepend — it does not substitute
+                    // for these two flags.
+                    window.pending_symbol_load = true;
+                    window.needs_snap_after_backfill = true;
                 }
                 // Create auto-bubble for the initial chart and assign instrument.
                 if let Some(chart_id) = active_chart_id {
