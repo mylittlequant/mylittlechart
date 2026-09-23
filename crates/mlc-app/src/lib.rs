@@ -9979,43 +9979,39 @@ impl ChartApp {
         let toolbar_theme = self.panel_app.toolbar_theme_for_render();
         let toolbar_state = ToolbarState::default();
 
-        // Shared-chart viewer row (native-share-viewer arc, 2026-09-06) —
-        // a slim "Shared by <owner>" banner atop the chart canvas, drawn
-        // here (not in `mlc-app-layout`) because `ChartApp` is the only
-        // layer holding both `is_readonly_tab` and `shared_chart_meta`
-        // (see `share_viewer.rs`'s own module doc). `render_modal_layer`
-        // is called by every shell every frame (same contract as
-        // `render_panel_overlay_popups`), so this needs no separate
-        // shell wiring the way a brand-new host method would.
-        // `draw_share_viewer_row` itself draws nothing and registers no
-        // widget when the link carries no "clone" right — an anonymous
-        // viewer only ever sees the label.
+        // Shared-chart viewer row (native-share-viewer arc, 2026-09-06;
+        // label dropped + moved into the leaf-tab header band, owner ruling
+        // 2026-09-24) — a compact "Clone to my charts" button, drawn here
+        // (not in `mlc-app-layout`) because `ChartApp` is the only layer
+        // holding both `is_readonly_tab` and `shared_chart_meta` (see
+        // `share_viewer.rs`'s own module doc). `render_modal_layer` is
+        // called by every shell every frame (same contract as
+        // `render_panel_overlay_popups`), so this needs no separate shell
+        // wiring the way a brand-new host method would.
+        //
+        // No more "Shared by <owner>" text — the tab title already names
+        // the owner, and the label used to sit right where the leaf's own
+        // legend renders (owner screenshot 2026-09-24: the two overlapped).
+        // The button now shares `render_leaf_tab`'s own band
+        // (`content_rect.y + 2.0`, `LEAF_TAB_HEIGHT` — `mlc-app-layout::
+        // layout::panel_overlay`) instead of a separate row below it, and
+        // stops at the active leaf's plot-area right edge (`main_chart.chart`
+        // already excludes the price scale — same rect `viewport.chart_width`
+        // syncs from, see `sync_viewport_from_layout`) so it never reaches
+        // into the price-scale labels either.
         {
             let active_preset_id = self.panel_app.active_preset_id.clone();
             if self.is_readonly_tab(&active_preset_id) {
                 if let Some(meta) = self.shared_chart_meta(&active_preset_id) {
-                    let owner_label = meta.owner_label.clone();
                     let can_clone = meta.has_right("clone");
-                    // Sit BELOW every leaf's own top-left symbol header
-                    // (`render_leaf_tab`, `mlc-app-layout::layout::
-                    // panel_overlay`) instead of on top of it. That header
-                    // renders at `<leaf/main_chart>_y + 2.0` for
-                    // `LEAF_TAB_HEIGHT` (24px) at the grid's own top-left
-                    // corner in EVERY leaf (single-pane or the first pane of
-                    // a split) — `content_rect.y` (this row's old top) lands
-                    // in that exact same corner, mashing the two texts
-                    // together (owner report, "Untitled 78 — zeng3ld"
-                    // screenshot, 2-pane split, left pane only). One row
-                    // spanning the full `content_rect` width, moved below the
-                    // header band, keeps a single banner/button for the
-                    // whole tab — no duplicate "Clone" hit zones across
-                    // panes — while never overlapping a leaf's own header in
-                    // either layout.
-                    let row_y = content_rect.y
-                        + mlc_app_layout::layout::panel_overlay::LEAF_TAB_HEIGHT
-                        + 4.0;
+                    let row_y = content_rect.y + 2.0;
+                    let row_height = mlc_app_layout::layout::panel_overlay::LEAF_TAB_HEIGHT - 4.0;
+                    let plot_right_edge = {
+                        let extended = self.build_extended_layout();
+                        extended.main_chart.chart.x + extended.main_chart.chart.width
+                    };
                     let row_rect = uzor::types::Rect::new(
-                        content_rect.x, row_y, content_rect.width, 28.0,
+                        content_rect.x, row_y, (plot_right_edge - content_rect.x).max(0.0), row_height,
                     );
                     let mut coord = self.input_coordinator.borrow_mut();
                     mlc_app_layout::ui::share_viewer_row::draw_share_viewer_row(
@@ -10024,7 +10020,6 @@ impl ChartApp {
                         &uzor::input::LayerId::new("toolbar"),
                         row_rect,
                         &active_preset_id,
-                        &owner_label,
                         can_clone,
                         &toolbar_theme,
                     );

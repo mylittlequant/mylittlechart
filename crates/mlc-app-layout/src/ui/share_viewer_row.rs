@@ -3,22 +3,18 @@
 //! §1/§3, step 3 "Web shell").
 //!
 //! Pure presentation, the same split every modal in this crate follows
-//! (`layout::modals::cloud_login`'s own module doc): this file draws the
-//! row and registers ONE `share:clone:<preset_id>` widget id when the
-//! caller says cloning is allowed; the click itself resolves through
-//! `ChartApp::dispatch_panel_click` (`mlc-app`) the same way every other
-//! `<prefix>:<id>` widget in this crate does, ending in
+//! (`layout::modals::cloud_login`'s own module doc): this file draws ONE
+//! "Clone to my charts" button and registers its `share:clone:<preset_id>`
+//! widget id when the caller says cloning is allowed; the click itself
+//! resolves through `ChartApp::dispatch_panel_click` (`mlc-app`) the same
+//! way every other `<prefix>:<id>` widget in this crate does, ending in
 //! `ChartApp::request_clone_share(token)`. This module owns none of that
-//! state — the caller (mlc-app's tab-chrome render, which holds
-//! `ChartApp::shared_chart_meta`/`is_readonly_tab`) supplies the owner
-//! label, the preset id and whether the link's rights include `"clone"`
-//! on every frame.
-//!
-//! Not wired into a live render call yet: the call site lives in `mlc-app`'s
-//! own chrome rendering, out of this slice's scope (concurrent work already
-//! in flight there) — this is the ready-to-call primitive plus the
-//! `share:clone:<preset_id>` hit-id contract the dispatch side (also
-//! `mlc-app`) needs to match on.
+//! state — the caller (`mlc-app`'s `render_modal_layer`, which holds
+//! `ChartApp::shared_chart_meta`/`is_readonly_tab`) supplies the preset id
+//! and whether the link's rights include `"clone"` on every frame, plus a
+//! rect already trimmed to the active leaf's tab-header band (owner ruling
+//! 2026-09-24 — no more "Shared by `<owner>`" text; the tab title already
+//! names the owner, and the label used to overlap the leaf's own legend).
 
 use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
 use uzor::input::{InputCoordinator, LayerId, Sense};
@@ -32,8 +28,15 @@ const BTN_PAD_X: f64 = 12.0;
 /// Corner radius, matching `ui::widgets::button::SETTINGS_BUTTON_RADIUS`.
 const BTN_RADIUS: f64 = 4.0;
 
-/// Draw the shared-chart row: "Shared by `<owner_label>`" plus a "Clone to
-/// my charts" button when `can_clone` is true.
+/// Draw the shared-chart row: a compact "Clone to my charts" button, when
+/// `can_clone` is true — nothing otherwise.
+///
+/// No "Shared by `<owner>`" label (owner ruling 2026-09-24: the tab title
+/// already names the owner; the label used to sit in the same band as the
+/// leaf's legend and overlap it on a read-only shared tab). `rect` is the
+/// caller's leaf-tab header band with the price-scale width already
+/// subtracted off its right edge — this draws only the button, right-aligned
+/// within `rect`, so it never reaches into the price-scale labels either.
 ///
 /// `preset_id` names the read-only tab this row belongs to — it becomes the
 /// tail of the button's widget id (`share:clone:<preset_id>`) so a host with
@@ -51,23 +54,15 @@ pub fn draw_share_viewer_row(
     layer_id: &LayerId,
     rect: WidgetRect,
     preset_id: &str,
-    owner_label: &str,
     can_clone: bool,
     tt: &ToolbarTheme,
 ) {
-    let label = format!("Shared by {owner_label}");
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(&label, rect.x, rect.center_y());
-
     if !can_clone {
         return;
     }
 
     let btn_label = "Clone to my charts";
-    ctx.set_font("600 13px sans-serif");
+    ctx.set_font("600 12px sans-serif");
     let btn_w = ctx.measure_text(btn_label) + BTN_PAD_X * 2.0;
     let btn_rect = WidgetRect::new(rect.x + rect.width - btn_w, rect.y, btn_w, rect.height);
 
@@ -78,6 +73,7 @@ pub fn draw_share_viewer_row(
     ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, BTN_RADIUS);
     ctx.set_fill_color(&tt.item_text);
     ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(btn_label, btn_rect.center_x(), btn_rect.center_y());
 
     coord.register_on_layer(widget_id.as_str(), btn_rect, Sense::CLICK | Sense::HOVER, layer_id);
