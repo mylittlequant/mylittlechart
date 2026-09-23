@@ -100,6 +100,62 @@ impl CloudError {
     }
 }
 
+/// Whether a 401 from an authenticated-only endpoint should demote the
+/// caller's session to signed-out (drop the toast, clear the token, etc.).
+///
+/// `Unauthorized` means "this credential is not valid" — on a caller
+/// holding no credential at all that fact is not a demotion, it is the
+/// expected answer to a request that should not have gone out signed-out
+/// in the first place. Every "sign out on 401" call site MUST hold this
+/// invariant: a session that was never signed in must never see the
+/// sign-out toast.
+///
+/// Owner repro 2026-09-24: `mlc-app-shell-web`'s Forum & Messages modal
+/// fired the caller-identity fetch (`/api/forum/me`) unconditionally on
+/// open, even for a never-signed-in visitor; the resulting 401 flipped the
+/// session to "signed out" and produced a "Signed out — The server no
+/// longer accepts this session — sign in again." toast on a session that
+/// was never signed in. The stray request is fixed at its call site
+/// (gated on `is_signed_in()`); this predicate is the second, independent
+/// guard every `mark_unauthorized`-style call site applies before trusting
+/// a 401 at all — see `mlc-app-shell-web::cloud_session::mark_unauthorized`,
+/// this predicate's caller.
+pub fn is_session_revoked_401(had_token: bool, is_unauthorized: bool) -> bool {
+    had_token && is_unauthorized
+}
+
+#[cfg(test)]
+mod session_revoked_401_tests {
+    use super::is_session_revoked_401;
+
+    #[test]
+    fn a_401_with_no_held_token_is_never_a_revocation() {
+        // The exact shape of the owner repro: a never-signed-in visitor's
+        // stray authenticated-only request comes back 401.
+        assert!(!is_session_revoked_401(false, true));
+    }
+
+    #[test]
+    fn a_401_with_a_held_token_is_a_revocation() {
+        // The intended case this whole mechanism exists for: a
+        // previously-valid token got rejected server-side.
+        assert!(is_session_revoked_401(true, true));
+    }
+
+    #[test]
+    fn no_held_token_and_no_401_is_never_a_revocation() {
+        assert!(!is_session_revoked_401(false, false));
+    }
+
+    #[test]
+    fn a_held_token_with_a_non_401_error_is_never_a_revocation() {
+        // A transport failure / 403 / decode error on a signed-in session
+        // must not be treated as a revocation either — only `Unauthorized`
+        // (401) is.
+        assert!(!is_session_revoked_401(true, false));
+    }
+}
+
 impl std::fmt::Display for CloudError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {

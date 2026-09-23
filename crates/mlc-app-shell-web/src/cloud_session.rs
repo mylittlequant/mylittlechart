@@ -2145,7 +2145,18 @@ impl CloudSession {
             // (`apply_signed_out`, the login-confirm arm further down). Gated
             // on the Community modal's Forum tab OR User Settings' Account
             // tab — either surface reading this fact is enough to fetch it.
-            if (forum2_active || account_tab_visible)
+            //
+            // `self.is_signed_in()` gate (owner repro 2026-09-24): `/forum/me`
+            // is the CALLER's own identity — an anonymous visitor has none to
+            // ask for. Without this gate a never-signed-in visitor who opens
+            // the Forum & Messages modal fires this authenticated-only
+            // request anyway; the server's 401 (no token ever held) used to
+            // land on `mark_unauthorized` and produce a spurious "Signed
+            // out" toast on a session that was never signed in — and, since
+            // a failed fetch never sets `me_fetched_at`, it refired every
+            // frame the tab stayed open.
+            if self.is_signed_in()
+                && (forum2_active || account_tab_visible)
                 && ov.forum2.me_fetched_at.is_none()
                 && !self.inner.borrow().forum2_in_flight
             {
@@ -3083,16 +3094,29 @@ fn clone_error_message(e: &mlc_cloud::CloudError) -> String {
     }
 }
 
-/// Flags [`Inner::unauthorized`] when `e` is a 401 (token invalid/expired/
-/// revoked) — called from inside a `spawn_local` body, before the typed
-/// `CloudError` is turned into a display string for its own mailbox, so
-/// `drive()` can drop to signed-out the same frame the answer lands (Arc
-/// B1, 2026-09-06: "signed in" means "the server agrees"). Deliberately
-/// does nothing for `CloudError::Forbidden` (403 is an entitlement
-/// refusal, not a rejected credential) or a network/transport failure.
+/// Flags [`Inner::unauthorized`] when `e` is a 401 AND a token was actually
+/// held at call time — called from inside a `spawn_local` body, before the
+/// typed `CloudError` is turned into a display string for its own mailbox,
+/// so `drive()` can drop to signed-out the same frame the answer lands (Arc
+/// B1, 2026-09-06: "signed in" means "the server agrees"). Deliberately does
+/// nothing for `CloudError::Forbidden` (403 is an entitlement refusal, not a
+/// rejected credential), a network/transport failure, or a 401 on a client
+/// holding no credential at all — see [`mlc_cloud::is_session_revoked_401`]
+/// for that predicate.
+///
+/// Owner repro 2026-09-24: the Forum & Messages modal fired the
+/// caller-identity fetch (`/api/forum/me`) unconditionally on open, even for
+/// a never-signed-in visitor; the resulting 401 used to flip straight to
+/// signed-out and produce a "Signed out — The server no longer accepts this
+/// session — sign in again." toast on a session that was never signed in.
+/// The stray request is fixed at its call site (gated on `is_signed_in()`
+/// below); this is the second, independent guard so any FUTURE stray
+/// authenticated-only fetch fails silently (console only) instead of
+/// misfiring the toast again.
 fn mark_unauthorized(inner: &Rc<RefCell<Inner>>, e: &mlc_cloud::CloudError) {
-    if e.is_unauthorized() {
-        inner.borrow_mut().unauthorized = true;
+    let mut inner = inner.borrow_mut();
+    if mlc_cloud::is_session_revoked_401(inner.token.is_some(), e.is_unauthorized()) {
+        inner.unauthorized = true;
     }
 }
 
