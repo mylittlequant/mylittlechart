@@ -5309,9 +5309,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 for pw in self.windows.values_mut() {
                     let st = &mut pw.chart.panel_app.cloud_login_state;
                     st.phase = CloudLoginPhase::ChooseProvider;
-                    st.redeem_status = RedeemStatus::Idle;
                     st.is_paid = false;
                     st.paid_until = None;
+                    // `redeem_status`/`redeem_requested` live on
+                    // `UserSettingsState` now (Account tab, not the login
+                    // overlay) — the identity that submitted a code just
+                    // left, so its outcome is not this session's news either.
+                    pw.chart.panel_app.user_settings_state.redeem_requested = false;
+                    pw.chart.panel_app.user_settings_state.redeem_status = RedeemStatus::Idle;
                     // Same-frame gating (owner ruling 2026-09-06): a
                     // ShareLink pick made while signed in must not survive
                     // sign-out and keep firing uploads afterward.
@@ -5339,17 +5344,22 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
         }
 
-        // ── Drain a submitted gift/trial code ────────────────────────
-        // The overlay records that a code was submitted and stops there; the
-        // text itself lives in the shared text-field store, and the round trip
-        // belongs to the updater, which already holds the token and the
-        // client. Same division as the OAuth pick above.
-        #[cfg(feature = "cloud")]
+        // ── Drain a submitted gift/trial code (Settings → Account, NOT the
+        // login overlay) ──────────────────────────────────────────────────
+        // Owner ruling 2026-09-23: moved off `CloudLoginState` onto
+        // `UserSettingsState`, same "compiles in every build" reasoning the
+        // account-nickname block below already documents for its own field
+        // — deliberately NOT `#[cfg(feature = "cloud")]` and NOT gated on
+        // `cloud_login_state.is_open` (the Account tab is a different modal
+        // entirely). The tab records that a code was submitted and stops
+        // there; the text itself lives in the shared text-field store, and
+        // the round trip belongs to the updater, which already holds the
+        // token and the client.
         {
             let submitted = self
                 .windows
                 .values_mut()
-                .any(|pw| std::mem::take(&mut pw.chart.panel_app.cloud_login_state.redeem_requested));
+                .any(|pw| std::mem::take(&mut pw.chart.panel_app.user_settings_state.redeem_requested));
             if submitted {
                 let code = self
                     .windows
@@ -5367,7 +5377,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 if code.is_empty() {
                     use mlc_app_layout::ui::modal_settings::RedeemStatus;
                     for pw in self.windows.values_mut() {
-                        pw.chart.panel_app.cloud_login_state.redeem_status =
+                        pw.chart.panel_app.user_settings_state.redeem_status =
                             RedeemStatus::Failed { message: "Enter a code first".to_string() };
                         pw.overlay_dirty = true;
                         pw.window.request_redraw();
@@ -7315,14 +7325,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 }
             }
             // Outcome of the last submitted gift code. `RedeemState` is the
-            // updater's word for it; `RedeemStatus` is the overlay's. They are
-            // two crates that do not know each other, so the map is here.
-            #[cfg(feature = "cloud")]
+            // updater's word for it; `RedeemStatus` is the Account tab's.
+            // They are two crates that do not know each other, so the map is
+            // here. NOT `cfg(feature = "cloud")`-gated (owner ruling
+            // 2026-09-23: the row it drives moved off the login overlay onto
+            // `UserSettingsState`, same reasoning `nick_status` below
+            // already gives for its own field).
             let redeem_status = if !self.updater_handle.redeem_rx.has_changed().unwrap_or(false) {
                 // Only on the edge. The channel keeps its last outcome for the
                 // life of the process, so copying it every frame would put
-                // last hour's "already used" back on a freshly opened overlay
-                // the instant `CloudLoginState::open` had cleared it.
+                // last hour's "already used" back on a freshly opened tab
+                // the instant `UserSettingsState::close` had cleared it.
                 None
             } else {
                 use mlc_app_layout::ui::modal_settings::RedeemStatus;
@@ -7339,8 +7352,8 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             };
             // Outcome of the last submitted account nickname. `NickState` is
             // the updater's word for it; `NickStatus` is the settings row's.
-            // Unlike `redeem_status` above this is NOT `cfg(feature =
-            // "cloud")`-gated — the row it drives compiles in every build.
+            // Same "compiles in every build" reasoning as `redeem_status`
+            // above.
             let nick_status = if !self.updater_handle.nick_rx.has_changed().unwrap_or(false) {
                 None
             } else {
@@ -7630,11 +7643,29 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     st.is_paid = is_paid;
                     st.paid_until = paid_until.clone();
                     pw.chart.panel_app.cloud_overlay_state.forum_entitled = forum_entitled;
-                    if let Some(status) = redeem_status.as_ref() {
-                        st.redeem_status = status.clone();
-                        pw.overlay_dirty = true;
-                        pw.window.request_redraw();
+                }
+                // `redeem_status` lives on `UserSettingsState` now (Account
+                // tab, not the login overlay) — NOT `cfg(feature =
+                // "cloud")`-gated, same as `nick_status` below.
+                if let Some(status) = redeem_status.as_ref() {
+                    use mlc_app_layout::ui::modal_settings::RedeemStatus;
+                    let redeemed = matches!(status, RedeemStatus::Redeemed { .. });
+                    pw.chart.panel_app.user_settings_state.redeem_status = status.clone();
+                    // Redeeming changes the ladder's `paid` class too (owner
+                    // ask 2026-09-23: "refresh the tier/role line ...
+                    // immediately") — same `invalidate_me` edge a saved nick
+                    // already triggers below, so `account_classes`/
+                    // `account_roles` re-fetch instead of waiting out the
+                    // passive cadence. Entitlements (`is_paid`/`paid_until`
+                    // above) refresh on their own: `mlc_updater`'s own
+                    // `RedeemCode` handler re-polls them immediately on
+                    // success.
+                    #[cfg(feature = "cloud")]
+                    if redeemed {
+                        pw.chart.panel_app.community_state.forum2.invalidate_me();
                     }
+                    pw.overlay_dirty = true;
+                    pw.window.request_redraw();
                 }
                 if let Some(status) = nick_status.as_ref() {
                     use mlc_app_layout::ui::modal_settings::NickStatus;

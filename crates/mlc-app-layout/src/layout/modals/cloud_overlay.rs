@@ -57,7 +57,8 @@ pub(crate) const ACTION_BTN_GAP: f64 = 10.0;
 /// Mirrors `mlc_app::text_input::{FORUM_TITLE, FORUM_BODY, FORUM_REPLY}` —
 /// this crate cannot depend on `mlc-app` (dependency direction is the other
 /// way), so the literal ids are spelled here too, same split
-/// `cloud_login.rs`'s own `REDEEM_FIELD` already has for `REDEEM_CODE`.
+/// `user_settings.rs`'s own `"account_redeem_input"` already has for
+/// `REDEEM_CODE`.
 /// Forum v2's compose view reuses `FORUM_TITLE`/`FORUM_BODY`; its thread
 /// view's reply box reuses `FORUM_REPLY` — same one-`TextFieldStore`-field-
 /// per-purpose idiom v1 used, just pointed at the new views.
@@ -130,7 +131,7 @@ pub struct CloudOverlayResult {
     pub scrollbar_track_rect: Option<WidgetRect>,
     /// Forum compose view's title field geometry — `None` unless that view
     /// is showing. Same "every modal field needs its own arm" contract
-    /// `cloud_login.rs`'s `redeem_input_rect` documents: `mlc-app`'s
+    /// `user_settings.rs`'s `"account_redeem_input"` documents: `mlc-app`'s
     /// `on_drag_start`/per-frame `update_field` passes read this to give
     /// `TextFieldStore` a hit rect and char-boundary positions.
     pub forum_title_rect: Option<WidgetRect>,

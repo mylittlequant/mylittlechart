@@ -24,13 +24,11 @@ use uzor::types::Rect as WidgetRect;
 use uzor::WidgetId;
 
 use crate::layout::render_chart::FrameTheme;
-use crate::ui::modal_settings::{CloudLoginPhase, CloudLoginState, RedeemStatus};
+use crate::ui::modal_settings::{CloudLoginPhase, CloudLoginState};
 use crate::ui::toolbar_theme::ToolbarTheme;
-use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::widgets::{
-    draw_input, draw_input_cursor, register_dimmer_zones, render_modal_shell, InputConfig,
-    ModalFooter, ModalPlacement, ModalShell, ModalShellSpec, ModalTheme, WidgetState,
-    SETTINGS_BUTTON_RADIUS,
+    register_dimmer_zones, render_modal_shell, ModalFooter, ModalPlacement, ModalShell,
+    ModalShellSpec, ModalTheme, SETTINGS_BUTTON_RADIUS,
 };
 use crate::ui::z_order::ZLayer;
 
@@ -44,17 +42,6 @@ const MODAL_W: f64 = 430.0;
 const BTN_H: f64 = 36.0;
 const BTN_GAP: f64 = 10.0;
 
-/// Text-field id for the gift/trial code box in the account view.
-///
-/// A literal, not a shared constant: this crate cannot depend on `mlc-app`,
-/// where `text_input`'s ids live, so every field in every modal here spells its
-/// own id (see `chart_browser.rs`'s `"chart_browser_search"`).
-/// `mlc_app::text_input::REDEEM_CODE` holds the other half of the pair.
-const REDEEM_FIELD: &str = "redeem_code";
-/// Height of the code box and the button beside it.
-const FIELD_H: f64 = 32.0;
-const REDEEM_BTN_W: f64 = 96.0;
-
 /// OAuth providers offered in the modal (id, label).
 pub const OAUTH_PROVIDERS: &[(&str, &str)] = &[
     ("github", "Continue with GitHub"),
@@ -62,21 +49,12 @@ pub const OAUTH_PROVIDERS: &[(&str, &str)] = &[
     ("google", "Continue with Google"),
 ];
 
-/// Geometry the input side needs: the header (drag) and the code field.
-///
-/// The field's rect and char boundaries travel back because
-/// `TextFieldStore` cannot see the screen — `ChartApp::
-/// update_text_field_geometry` feeds them to `update_field` every frame, and
-/// without that a field has no `last_rect`, so the store's `on_drag_start`
-/// hit-test never finds it: no click-to-caret, no drag-selection, and no
-/// engagement, which is what makes the caret blink at all. Every other modal
-/// field in this crate hands the same pair back.
+/// Geometry the input side needs: just the header (drag) — the account
+/// view's own gift-code box moved to Settings → Account (owner ruling
+/// 2026-09-23), which is `UserSettingsResult`'s geometry now, not this
+/// modal's.
 pub struct CloudLoginResult {
     pub header_rect: WidgetRect,
-    /// Where the gift-code box was drawn, when the account view is showing.
-    pub redeem_input_rect: Option<WidgetRect>,
-    /// Char boundary X positions inside that box (len = char count + 1).
-    pub redeem_char_positions: Vec<f64>,
 }
 
 /// Body height per phase — the shell sizes the frame from this.
@@ -89,7 +67,10 @@ fn content_height(state: &CloudLoginState) -> f64 {
         CloudLoginPhase::AwaitingConfirm { .. } => {
             42.0 + OAUTH_PROVIDERS.len() as f64 * (BTN_H + BTN_GAP) + 18.0
         }
-        CloudLoginPhase::SignedIn { .. } => 278.0,
+        // Signed-in text + Sign out button only, now that the gift-code box
+        // moved out (2026-09-23) — see this phase's own doc for why nothing
+        // reaches it in the first place.
+        CloudLoginPhase::SignedIn { .. } => 130.0,
         CloudLoginPhase::Success { .. } => 78.0,
         CloudLoginPhase::Error { .. } => 110.0,
         _ => 52.0,
@@ -104,7 +85,6 @@ pub fn render_cloud_login_modal(
     state: &CloudLoginState,
     frame_theme: &FrameTheme,
     toolbar_theme: &ToolbarTheme,
-    current_time_ms: u64,
     input_coordinator: &mut InputCoordinator,
 ) -> CloudLoginResult {
     let theme = ModalTheme::from_toolbar(
@@ -125,7 +105,6 @@ pub fn render_cloud_login_modal(
         layer: ZLayer::ModalOverlay,
         ..ModalShellSpec::new("cloud_login", title, MODAL_W, content_height(state))
     };
-    let mut field: Option<(WidgetRect, Vec<f64>)> = None;
     let shell = render_modal_shell(
         ctx,
         input_coordinator,
@@ -140,35 +119,22 @@ pub fn render_cloud_login_modal(
                 shell.frame,
                 (window_w, window_h),
             );
-            field = draw_body(
-                ctx, coord, layer_id, shell, state, frame_theme, toolbar_theme,
-                current_time_ms,
-            );
+            draw_body(ctx, coord, layer_id, shell, state, toolbar_theme);
         },
     );
-    let (redeem_input_rect, redeem_char_positions) = match field {
-        Some((rect, positions)) => (Some(rect), positions),
-        None => (None, Vec::new()),
-    };
     CloudLoginResult {
         header_rect: shell.header,
-        redeem_input_rect,
-        redeem_char_positions,
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn draw_body(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
     shell: &ModalShell,
     state: &CloudLoginState,
-    ft: &FrameTheme,
     tt: &ToolbarTheme,
-    current_time_ms: u64,
-) -> Option<(WidgetRect, Vec<f64>)> {
-    let mut redeem_field: Option<(WidgetRect, Vec<f64>)> = None;
+) {
     let x = shell.content.x;
     let y = shell.content.y;
     let w = shell.content.width;
@@ -288,10 +254,6 @@ fn draw_body(
                 BtnStyle::Danger,
                 tt,
             );
-
-            redeem_field = Some(draw_plan_and_redeem(
-                ctx, coord, layer_id, x, y + 126.0, w, state, ft, tt, current_time_ms,
-            ));
         }
 
         CloudLoginPhase::Error { message } => {
@@ -318,161 +280,6 @@ fn draw_body(
             );
         }
     }
-    redeem_field
-}
-
-/// The account view's lower half: which tier this account is on, and the one
-/// way a person can change that today — spend a gift or trial code.
-///
-/// The tier is stated outright rather than implied by which surfaces happen to
-/// be unlocked, so "did my code work" has an answer on the screen and not only
-/// in a line that has already scrolled away.
-#[allow(clippy::too_many_arguments)]
-fn draw_plan_and_redeem(
-    ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
-    layer_id: &LayerId,
-    x: f64,
-    y: f64,
-    w: f64,
-    state: &CloudLoginState,
-    ft: &FrameTheme,
-    tt: &ToolbarTheme,
-    current_time_ms: u64,
-) -> (WidgetRect, Vec<f64>) {
-    ctx.set_fill_color(&tt.separator);
-    ctx.fill_rect(x, y, w, 1.0);
-
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.fill_text("PLAN", x, y + 16.0);
-
-    // A redemption that just succeeded is newer than the entitlements answer
-    // the shell is still holding, so it wins for this frame. Otherwise the
-    // modal would say "Free" for the seconds the re-ask takes, immediately
-    // after telling the user their code worked.
-    let just_paid_until = match &state.redeem_status {
-        RedeemStatus::Redeemed { paid_until } => Some(paid_until.as_str()),
-        _ => None,
-    };
-    let until = just_paid_until.or(state.paid_until.as_deref());
-    let paid = state.is_paid || just_paid_until.is_some();
-    ctx.set_font("600 15px sans-serif");
-    if paid {
-        ctx.set_fill_color(GOLD);
-        // RFC 3339 in, a date out — nobody needs the seconds.
-        let day = until.map(|u| &u[..u.len().min(10)]).unwrap_or("");
-        let label = if day.is_empty() {
-            "Paid".to_string()
-        } else {
-            format!("Paid until {}", day)
-        };
-        ctx.fill_text(&label, x, y + 34.0);
-    } else {
-        ctx.set_fill_color(&tt.item_text);
-        ctx.fill_text("Free", x, y + 34.0);
-    }
-
-    ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.fill_text("GIFT OR TRIAL CODE", x, y + 64.0);
-
-    let row_y = y + 84.0;
-    let field_w = w - REDEEM_BTN_W - BTN_GAP;
-    let field_rect = WidgetRect::new(x, row_y, field_w, FIELD_H);
-    let wid = WidgetId::from(REDEEM_FIELD);
-    let text = coord.text_fields().text(&wid).to_string();
-    let cursor = coord.text_fields().cursor(&wid);
-    let (sel_start, sel_end) = match coord.text_fields().selection_range(&wid) {
-        Some((lo, hi)) => (Some(lo), Some(hi)),
-        None => (None, None),
-    };
-    let engaged = coord.text_fields().is_engaged(&wid);
-    let widget_theme = toolbar_to_widget_theme(tt, ft);
-    let cfg = InputConfig::new(&text)
-        .with_focused(engaged)
-        .with_cursor(cursor)
-        .with_selection(sel_start, sel_end);
-    // The placeholder is a hint about what to type, and it has done its job the
-    // moment a caret lands in the box. Leaving it under the caret reads as text
-    // that is already there.
-    let cfg = if engaged { cfg } else { cfg.with_placeholder("XXXXXXXXXX") };
-    let input_result = draw_input(ctx, &cfg, WidgetState::Normal, field_rect, &widget_theme);
-    if engaged && coord.text_fields().cursor_visible(current_time_ms) {
-        draw_input_cursor(
-            ctx,
-            input_result.cursor_x,
-            input_result.cursor_y,
-            input_result.cursor_height,
-            &tt.item_text,
-        );
-    }
-    coord.register_on_layer("cloud_login:redeem_input", field_rect, Sense::CLICK, layer_id);
-
-    // An empty box has nothing to send, and a submission in flight must not go
-    // twice. In both cases the button is drawn dead rather than removed, so the
-    // row never reflows under the cursor that is about to click it.
-    let working = state.redeem_status == RedeemStatus::Working;
-    let armed = !working && !text.trim().is_empty();
-    let btn_rect = WidgetRect::new(x + field_w + BTN_GAP, row_y, REDEEM_BTN_W, FIELD_H);
-    if armed {
-        draw_button(
-            ctx,
-            coord,
-            layer_id,
-            "cloud_login:redeem",
-            btn_rect,
-            "Redeem",
-            BtnStyle::Primary,
-            tt,
-        );
-    } else {
-        ctx.set_fill_color(&tt.button_bg);
-        ctx.fill_rounded_rect(
-            btn_rect.x,
-            btn_rect.y,
-            btn_rect.width,
-            btn_rect.height,
-            SETTINGS_BUTTON_RADIUS,
-        );
-        ctx.set_font("600 13px sans-serif");
-        ctx.set_fill_color(&tt.item_text_muted);
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(
-            if working { "..." } else { "Redeem" },
-            btn_rect.center_x(),
-            btn_rect.center_y(),
-        );
-    }
-
-    let (msg, color): (String, &str) = match &state.redeem_status {
-        RedeemStatus::Idle => (String::new(), ""),
-        RedeemStatus::Working => (
-            "Checking the code...".to_string(),
-            tt.item_text_muted.as_str(),
-        ),
-        RedeemStatus::Redeemed { paid_until } => {
-            let day = &paid_until[..paid_until.len().min(10)];
-            (
-                format!("Code accepted - paid until {}", day),
-                tt.success.as_str(),
-            )
-        }
-        RedeemStatus::Failed { message } => (message.clone(), tt.danger.as_str()),
-    };
-    if !msg.is_empty() {
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(color);
-        let fitted = crate::ui::widgets::fit_text_to_width(ctx, &msg, w);
-        ctx.fill_text(&fitted, x, row_y + FIELD_H + 12.0);
-    }
-
-    (field_rect, input_result.char_x_positions)
 }
 
 /// Button fills: the gold CTA follows the brandbook, the rest follow the

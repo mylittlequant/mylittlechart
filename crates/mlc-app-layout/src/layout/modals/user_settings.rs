@@ -10,7 +10,9 @@ use uzor::types::Rect as WidgetRect;
 use uzor::input::Sense;
 use mlc_core::i18n::{current_language, Language, TextKey, UserSettingsKey};
 use mlc_core::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
-use crate::ui::modal_settings::{CredentialsState, CredentialsView, NickStatus, UserSettingsState, UserSettingsTab};
+use crate::ui::modal_settings::{
+    CredentialsState, CredentialsView, NickStatus, RedeemStatus, UserSettingsState, UserSettingsTab,
+};
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{ModalTheme, WidgetTheme, RadioOption, draw_radio_group, auto_btn_width, fit_text_to_width};
 use crate::ui::widgets::{
@@ -283,6 +285,7 @@ pub fn render_user_settings_modal(
                 toolbar_theme,
                 frame_theme,
                 &scroll_widget_theme,
+                current_time_ms,
                 input_coordinator,
                 &layer_id,
                 &mut result,
@@ -1985,6 +1988,7 @@ fn render_account_tab(
     toolbar_theme: &ToolbarTheme,
     frame_theme: &FrameTheme,
     scroll_widget_theme: &WidgetTheme,
+    current_time_ms: u64,
     input_coordinator: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
     result: &mut UserSettingsResult,
@@ -2109,6 +2113,135 @@ fn render_account_tab(
         }
         ctx.fill_text(&line, x, cy);
         cy += 22.0;
+    }
+
+    // ── Gift/trial code redeem (owner ruling 2026-09-23: "Redeem moves to
+    // Settings → Account") ──────────────────────────────────────────────
+    // Moved from the old cloud-login overlay's signed-in Account view,
+    // which nothing ever opened for an already-signed-in caller (every
+    // `CloudLoginState::open()`/`is_open = true` call site gates on
+    // `!account_signed_in`; the header's own account button has opened
+    // straight into THIS tab since 0.5.610) and was therefore dead code.
+    // Same field id (`text_input::REDEEM_CODE`, spelled as a literal here
+    // — this crate cannot depend on `mlc-app`, the same split every other
+    // modal field here already has) and the same transport (`POST /api/
+    // account/redeem`); the shell drains `UserSettingsState::
+    // redeem_requested` exactly like `nick_save_requested` above, and on
+    // success invalidates the `Me`/entitlements caches so the tier/role
+    // line above and any paid-gated surface reflect the new tier
+    // immediately (owner ask), same edge nick-save already triggers for
+    // `caller_nick`.
+    {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.75));
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(UserSettingsKey::AccountRedeemLabel.get(current_language()), x, cy);
+        cy += 20.0;
+
+        let redeem_label = UserSettingsKey::AccountRedeemButton.get(current_language());
+        ctx.set_font("11px sans-serif");
+        let btn_w = auto_btn_width(ctx, redeem_label, "11px sans-serif", 8.0, 60.0);
+        let field_h = 26.0;
+        let btn_gap = 8.0;
+        let field_w = (available_w - btn_w - btn_gap).max(1.0);
+        let field_rect = WidgetRect::new(x, cy, field_w, field_h);
+        let wid = uzor::WidgetId::from("account_redeem_input");
+        let text = input_coordinator.text_fields().text(&wid).to_string();
+        let cursor = input_coordinator.text_fields().cursor(&wid);
+        let (sel_start, sel_end) = match input_coordinator.text_fields().selection_range(&wid) {
+            Some((lo, hi)) => (Some(lo), Some(hi)),
+            None => (None, None),
+        };
+        let engaged = input_coordinator.text_fields().is_engaged(&wid);
+        let widget_theme = toolbar_to_widget_theme(toolbar_theme, frame_theme);
+        let cfg = InputConfig::new(&text)
+            .with_focused(engaged)
+            .with_cursor(cursor)
+            .with_selection(sel_start, sel_end);
+        // The placeholder is a hint about what to type, gone the moment a
+        // caret lands — same rule the gift-code box always followed.
+        let cfg = if engaged { cfg } else { cfg.with_placeholder("XXXXXXXXXX") };
+        let input_result = draw_input(ctx, &cfg, WidgetState::Normal, field_rect, &widget_theme);
+        if engaged && input_coordinator.text_fields().cursor_visible(current_time_ms) {
+            draw_input_cursor(
+                ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, text_color,
+            );
+        }
+        // Stamped into `update_field` by `mlc-app`'s `PROFILE_MGR_FIELDS`
+        // table (`lib.rs`, same entry shape as `ACCOUNT_NICK`'s own row) —
+        // without this a click never lands a caret (commit a38c848f).
+        result.content_items.push(("user_settings:account_redeem_input".to_string(), field_rect));
+        result.input_char_positions.push((
+            "user_settings:account_redeem_input".to_string(),
+            input_result.char_x_positions,
+        ));
+        input_coordinator.register_on_layer(
+            "user_settings:account_redeem_input",
+            uzor::types::Rect::new(field_rect.x, field_rect.y, field_rect.width, field_rect.height),
+            Sense::CLICK,
+            layer_id,
+        );
+
+        // An empty box has nothing to send, and a submission in flight must
+        // not go twice — same "dead rather than removed" idiom the old box
+        // used, so the row never reflows under a click about to land.
+        let working = state.redeem_status == RedeemStatus::Working;
+        let armed = !working && !text.trim().is_empty();
+        let btn_rect = WidgetRect::new(x + field_w + btn_gap, cy, btn_w, field_h);
+        if armed {
+            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.success, 0.2));
+            ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
+            ctx.set_stroke_color(&mlc_core::apply_opacity(&toolbar_theme.success, 0.6));
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&toolbar_theme.success);
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(redeem_label, btn_rect.center_x(), btn_rect.center_y());
+            ctx.set_text_align(TextAlign::Left);
+
+            result.content_items.push(("account_redeem".to_string(), btn_rect));
+            input_coordinator.register_on_layer(
+                "user_settings:account_redeem",
+                uzor::types::Rect::new(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height),
+                Sense::CLICK | Sense::HOVER,
+                layer_id,
+            );
+        } else {
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            ctx.fill_rounded_rect(btn_rect.x, btn_rect.y, btn_rect.width, btn_rect.height, 3.0);
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.item_text, 0.5));
+            ctx.set_text_align(TextAlign::Center);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(if working { "..." } else { redeem_label }, btn_rect.center_x(), btn_rect.center_y());
+            ctx.set_text_align(TextAlign::Left);
+        }
+        cy += field_h + 6.0;
+
+        let (msg, color): (String, &str) = match &state.redeem_status {
+            RedeemStatus::Idle | RedeemStatus::Working => (String::new(), ""),
+            RedeemStatus::Redeemed { paid_until } => {
+                let day = &paid_until[..paid_until.len().min(10)];
+                (
+                    format!("{} {}", UserSettingsKey::AccountRedeemSuccessPrefix.get(current_language()), day),
+                    toolbar_theme.success.as_str(),
+                )
+            }
+            RedeemStatus::Failed { message } => (message.clone(), toolbar_theme.danger.as_str()),
+        };
+        if !msg.is_empty() {
+            ctx.set_font("11px sans-serif");
+            ctx.set_fill_color(color);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            let fitted = fit_text_to_width(ctx, &msg, available_w);
+            ctx.fill_text(&fitted, x, cy);
+            cy += 18.0;
+        }
+        cy += 8.0;
     }
 
     // ── Sign out ──────────────────────────────────────────────────────────

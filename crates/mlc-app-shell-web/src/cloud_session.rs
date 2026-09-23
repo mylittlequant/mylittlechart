@@ -465,6 +465,12 @@ impl CloudSession {
         chart.panel_app.user_settings_state.nick_edit_focused = false;
         chart.panel_app.user_settings_state.nick_status =
             mlc_app_layout::ui::modal_settings::NickStatus::Idle;
+        // The identity that submitted a code just left, so its outcome is
+        // not this session's news either — same reset the native shell's
+        // own sign-out already gives `redeem_status` (shell-parity).
+        chart.panel_app.user_settings_state.redeem_requested = false;
+        chart.panel_app.user_settings_state.redeem_status =
+            mlc_app_layout::ui::modal_settings::RedeemStatus::Idle;
         // `Account` is never in the rail while signed out
         // (`UserSettingsTab::visible`) — snap off it here too, the same
         // defensive move the native shell's per-frame sync makes for
@@ -1059,16 +1065,26 @@ impl CloudSession {
                     ov.news_refreshing = false;
                 }
                 FlowResult::Redeem(Ok(paid_until)) => {
-                    st.redeem_status = RedeemStatus::Redeemed {
+                    // Lives on `UserSettingsState` now (Account tab, owner
+                    // ruling 2026-09-23) — `st` above stays untouched on this
+                    // arm's path, same reasoning the `Nick`/`Logout` arms
+                    // already give for reaching `chart` directly.
+                    chart.panel_app.user_settings_state.redeem_status = RedeemStatus::Redeemed {
                         paid_until: paid_until.clone(),
                     };
                     // The tier just changed; the cached entitlements answer is
                     // now wrong. Ask again on the next frame rather than
                     // waiting out a TTL the user did not agree to.
                     self.inner.borrow_mut().next_entitlements_ms = 0.0;
+                    // The ladder's `paid` class changed too — same
+                    // `invalidate_me` edge a saved nick already triggers
+                    // (owner ask: "refresh the tier/role line ...
+                    // immediately"), so `account_classes`/`account_roles`
+                    // re-fetch instead of waiting out the passive cadence.
+                    chart.panel_app.community_state.forum2.invalidate_me();
                 }
                 FlowResult::Redeem(Err(message)) => {
-                    st.redeem_status = RedeemStatus::Failed { message };
+                    chart.panel_app.user_settings_state.redeem_status = RedeemStatus::Failed { message };
                 }
                 FlowResult::Nick(Ok(effective_label)) => {
                     // Persist the new label into the stored token so the
@@ -1803,6 +1819,53 @@ impl CloudSession {
                             .map(|resp| resp.effective_label)
                             .map_err(|e| mlc_cloud::nick_error_message(&e));
                         inner.borrow_mut().result = Some(FlowResult::Nick(r));
+                    });
+                }
+            }
+        }
+
+        // ── Gift/trial code redeem (User Settings modal, NOT the login
+        // overlay) ─────────────────────────────────────────────────────
+        // Owner ruling 2026-09-23: moved off `CloudLoginState` onto
+        // `UserSettingsState`, same "deliberately independent of
+        // `cloud_login_state.is_open`" reasoning the nickname block above
+        // gives for its own field — this row lives in the always-available
+        // Settings → Account tab, not this driver's login/account overlay.
+        // The field keeps its text on a refusal — a refused code is usually
+        // one wrong character, not a reason to retype ten.
+        {
+            let submitted = std::mem::take(&mut chart.panel_app.user_settings_state.redeem_requested);
+            if submitted {
+                let code = {
+                    let coord = chart.input_coordinator.borrow();
+                    coord
+                        .text_fields()
+                        .text(&uzor::WidgetId::from(mlc_app::text_input::REDEEM_CODE))
+                        .trim()
+                        .to_string()
+                };
+                if code.is_empty() {
+                    chart.panel_app.user_settings_state.redeem_status = RedeemStatus::Failed {
+                        message: "Enter a code first".to_string(),
+                    };
+                } else if self.inner.borrow().token.is_none() {
+                    chart.panel_app.user_settings_state.redeem_status = RedeemStatus::Failed {
+                        message: "Sign in first".to_string(),
+                    };
+                } else {
+                    chart.panel_app.user_settings_state.redeem_status = RedeemStatus::Working;
+                    let inner = self.inner.clone();
+                    let transport = self.inner.borrow().transport.snapshot();
+                    self.inner.borrow_mut().in_flight = true;
+                    spawn_local(async move {
+                        let raw = transport.redeem(&code).await;
+                        if let Err(e) = &raw {
+                            mark_unauthorized(&inner, e);
+                        }
+                        let r = raw
+                            .map(|resp| resp.paid_until)
+                            .map_err(|e| redeem_error_message(&e));
+                        inner.borrow_mut().result = Some(FlowResult::Redeem(r));
                     });
                 }
             }
@@ -2759,45 +2822,6 @@ impl CloudSession {
         if let Some(url) = st.open_url_requested.take() {
             open_auth_popup(&url);
         }
-        // A submitted code. The field keeps its text — a refused code is
-        // usually one wrong character, not a reason to retype ten.
-        if st.redeem_requested {
-            st.redeem_requested = false;
-            let code = {
-                let coord = chart.input_coordinator.borrow();
-                coord
-                    .text_fields()
-                    .text(&uzor::WidgetId::from(mlc_app::text_input::REDEEM_CODE))
-                    .trim()
-                    .to_string()
-            };
-            if code.is_empty() {
-                st.redeem_status = RedeemStatus::Failed {
-                    message: "Enter a code first".to_string(),
-                };
-            } else if self.inner.borrow().token.is_none() {
-                st.redeem_status = RedeemStatus::Failed {
-                    message: "Sign in first".to_string(),
-                };
-            } else {
-                st.redeem_status = RedeemStatus::Working;
-                let inner = self.inner.clone();
-                let transport = self.inner.borrow().transport.snapshot();
-                self.inner.borrow_mut().in_flight = true;
-                spawn_local(async move {
-                    let raw = transport.redeem(&code).await;
-                    if let Err(e) = &raw {
-                        mark_unauthorized(&inner, e);
-                    }
-                    let r = raw
-                        .map(|resp| resp.paid_until)
-                        .map_err(|e| redeem_error_message(&e));
-                    inner.borrow_mut().result = Some(FlowResult::Redeem(r));
-                });
-            }
-            return;
-        }
-
         if st.sign_out_requested {
             st.sign_out_requested = false;
             let token = self.inner.borrow().token.as_ref().map(|t| t.token.clone());

@@ -105,6 +105,7 @@ impl ChartApp {
                 | CRED_ADD_PASSPHRASE
                 | PROFILE_RENAME
                 | ACCOUNT_NICK
+                | REDEEM_CODE
                 | NEW_PASSPHRASE
                 | NEW_PROFILE_NAME
                 | RECOVERY_KEY
@@ -117,14 +118,16 @@ impl ChartApp {
                 | AGENT_PTY
                 | AGENT_CHAT
         );
-        // The redeem field is early too, but it only exists in cloud builds
-        // and a `matches!` arm cannot carry a cfg of its own. The three
-        // Forum fields (paid-only tab) are the same shape.
+        // `REDEEM_CODE` moved out of this cfg block 2026-09-23: the row it
+        // drives is the Settings → Account tab now (`ACCOUNT_NICK`'s own
+        // neighbor above), not the cloud-only login overlay — see
+        // `RedeemStatus`'s own doc. The three Forum fields and the two DM
+        // fields (paid-only tab) are still genuinely cloud-only.
         #[cfg(feature = "cloud")]
         {
             is_early_field |= matches!(
                 focused_id.as_str(),
-                REDEEM_CODE | FORUM_TITLE | FORUM_BODY | FORUM_REPLY | FORUM_SEARCH | DM_DRAFT | DM_PEER
+                FORUM_TITLE | FORUM_BODY | FORUM_REPLY | FORUM_SEARCH | DM_DRAFT | DM_PEER
             );
         }
         if !is_early_field {
@@ -270,12 +273,11 @@ impl ChartApp {
             NEW_PROFILE_NAME                 => self.text_action_new_profile_name(ch, action),
             PROFILE_RENAME                   => self.text_action_profile_rename(action),
             ACCOUNT_NICK                     => self.text_action_account_nick(ch, action),
+            REDEEM_CODE                      => self.text_action_redeem_code(ch, action),
             SYMBOL_SEARCH | INDICATOR_SEARCH | COMPARE_SEARCH
                                              => self.text_action_search_overlay(action),
             AGENT_CHAT                       => self.text_action_agent_chat(ch, action),
             AGENT_PTY                        => self.text_action_agent_pty(action),
-            #[cfg(feature = "cloud")]
-            REDEEM_CODE                      => self.text_action_redeem_code(ch, action),
             #[cfg(feature = "cloud")]
             FORUM_TITLE                      => self.text_action_forum_title(ch, action),
             #[cfg(feature = "cloud")]
@@ -1018,17 +1020,21 @@ impl ChartApp {
         }
     }
 
-    /// The account overlay's gift/trial code field.
+    /// The Account tab's gift/trial code field (owner ruling 2026-09-23:
+    /// moved here from the old cloud-login overlay's Account view, which
+    /// nothing ever opened for an already-signed-in caller — see
+    /// `RedeemStatus`'s own doc). NOT `cfg(feature = "cloud")`-gated, same
+    /// reasoning `text_action_account_nick` already gives for its own field:
+    /// the row it drives compiles in every build.
     ///
     /// Enter submits — the same one-shot the "Redeem" button sets, so the two
     /// routes cannot behave differently. Escape just leaves the field; it does
-    /// not close the overlay, because a code half-typed into a modal that also
+    /// not close the modal, because a code half-typed into a tab that also
     /// holds Sign out is not something to discard on a stray key.
     ///
     /// The text is deliberately left in place on submit. The shell reads it
     /// when it drains the flag, and if the code is refused the person can fix
     /// one character rather than retype ten.
-    #[cfg(feature = "cloud")]
     fn text_action_redeem_code(&mut self, ch: char, action: TextAction) {
         let submit = |chart: &mut ChartApp| {
             let wid = WidgetId::from(crate::text_input::REDEEM_CODE);
@@ -1036,7 +1042,7 @@ impl ChartApp {
             if code.is_empty() {
                 return;
             }
-            chart.panel_app.cloud_login_state.redeem_requested = true;
+            chart.panel_app.user_settings_state.redeem_requested = true;
         };
         if ch == '\r' || ch == '\n' {
             submit(self);

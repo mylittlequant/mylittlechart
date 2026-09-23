@@ -148,13 +148,17 @@ pub const ACCOUNT_NICK: &str = "account_nick";
 /// Telegram bot token input (alert settings notifications tab).
 pub const ALERT_TG_TOKEN: &str = "alert_tg_token";
 
-/// Gift/trial code input in the account overlay (cloud builds).
+/// Gift/trial code input, Settings → Account tab (owner ruling 2026-09-23;
+/// moved from the old cloud-login overlay's Account view, `RedeemStatus`'s
+/// own doc has why). Not `cfg(feature = "cloud")`-gated, unlike most of this
+/// crate's other cloud-facing fields: the row that draws it compiles in
+/// every build, same as [`ACCOUNT_NICK`].
 ///
 /// The modal that draws it lives in `mlc-app-layout`, which cannot depend on
 /// this crate, so the id is spelled there as a literal too
-/// (`cloud_login.rs`'s `REDEEM_FIELD`) — the same split every other modal
-/// field in that crate already has. Enter submits, which is what a
-/// ten-character code typed from a message wants.
+/// (`user_settings.rs`'s `"account_redeem_input"`) — the same split every
+/// other modal field in that crate already has. Enter submits, which is
+/// what a ten-character code typed from a message wants.
 pub const REDEEM_CODE: &str = "redeem_code";
 
 /// Forum compose view's title field (cloud builds, paid-only tab). The

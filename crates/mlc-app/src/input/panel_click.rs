@@ -5670,17 +5670,10 @@ impl ChartApp {
                 "header" => { /* drag start handled in mouse_down */ }
                 rest if rest.starts_with("dimmer") => st.close(),
                 "sign_out" => st.sign_out_requested = true,
-                // Submitting a code is the shell's round trip; all that
-                // happens here is the one-shot. Enter in the field sets the
-                // same flag (`text_input::dispatch`), so the button and the
-                // key cannot drift apart.
-                "redeem" => st.redeem_requested = true,
-                // The code box takes its caret from `TextFieldStore::
-                // on_drag_start` on the mousedown, like every other field in
-                // the app. Focusing it again here would clear `engaged` —
-                // `focus` is an arming call and arming is silent — and take
-                // back the caret that click had just placed.
-                "redeem_input" => { /* claimed on mousedown by the store */ }
+                // Gift/trial code redeem moved to Settings → Account (owner
+                // ruling 2026-09-23) — its click/submit wiring lives in the
+                // `user_settings:` arm below now (`"account_redeem"`/
+                // `"account_redeem_input"`).
                 "retry" => {
                     st.phase = mlc_app_layout::ui::modal_settings::CloudLoginPhase::RequestCode;
                 }
@@ -7402,6 +7395,26 @@ impl ChartApp {
                 "account_open_vault" => {
                     self.open_vault_tab();
                     log::debug!("[ChartApp] account_open_vault: switched to Vault tab");
+                }
+                // ── Account tab: gift/trial code redeem (owner ruling
+                // 2026-09-23: "Redeem moves to Settings → Account") — moved
+                // from the old cloud-login overlay's `"cloud_login:redeem"`/
+                // `"cloud_login:redeem_input"` arms. Same one-shot mailbox
+                // (`UserSettingsState::redeem_requested`), same field id
+                // (`text_input::REDEEM_CODE`).
+                "account_redeem_input" => {
+                    // Claimed on mousedown by the store — same "nothing to
+                    // do here" idiom as `account_nick_input` above.
+                }
+                "account_redeem" => {
+                    // The button is drawn dead (no hit id registered) while
+                    // the field is empty or a submission is already in
+                    // flight (`render_account_tab`'s own `armed` check) — a
+                    // click reaching this arm at all means both held true
+                    // the frame it was drawn, same "stale click target"
+                    // tolerance every other pre-validated button here gives.
+                    self.panel_app.user_settings_state.redeem_requested = true;
+                    log::debug!("[ChartApp] account_redeem: submit requested");
                 }
                 "profile_new" => {
                     // "+ New Profile" is not drawn below the paid tier

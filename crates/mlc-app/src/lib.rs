@@ -11075,20 +11075,6 @@ impl ChartApp {
                     cbr.search_char_positions.clone(),
                 );
             }
-            // Account overlay's gift-code box. Without this it had a focus
-            // call and nothing else, which is the same shape the vault fields
-            // shipped with below: no drag-selection, no click-to-position.
-            #[cfg(feature = "cloud")]
-            if let Some(ref cl) = fr.cloud_login {
-                if let Some(r) = cl.redeem_input_rect {
-                    let id = WidgetId::from(text_input::REDEEM_CODE);
-                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
-                        &id,
-                        (r.x, r.y, r.width, r.height),
-                        cl.redeem_char_positions.clone(),
-                    );
-                }
-            }
             // Community modal's Forum title/body (compose) / reply (thread)
             // fields, Forum search box, and DM draft/peer boxes — same
             // "no drag-selection, no click-to-position without this"
@@ -11233,6 +11219,12 @@ impl ChartApp {
                     (text_input::RECOVERY_KEY, &["profile_mgr:recovery_key_input", "profile_mgr:confirm_recovery_input"]),
                     (text_input::RECOVERY_KEY_DISPLAY, &["profile_mgr:recovery_key_display"]),
                     (text_input::ACCOUNT_NICK, &["user_settings:account_nick_input"]),
+                    // Account tab's gift/trial code box (owner ruling
+                    // 2026-09-23: moved here from the old cloud-login
+                    // overlay, which stamped `REDEEM_CODE` via its own
+                    // `fr.cloud_login.redeem_input_rect` — now gone with the
+                    // overlay's own copy of this field).
+                    (text_input::REDEEM_CODE, &["user_settings:account_redeem_input"]),
                 ];
                 for &(store_id, ui_ids) in PROFILE_MGR_FIELDS {
                     for &ui_id in ui_ids {

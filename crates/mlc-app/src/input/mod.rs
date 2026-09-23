@@ -2679,17 +2679,19 @@ impl ChartApp {
                     return false;
                 }
             }
-            // Cloud account overlay — text select drag on the gift-code field.
-            // Every modal field needs its own arm here: the generic
-            // `on_drag_start` claim further down is never reached for a press
-            // that lands on a modal, so a field whose modal is not listed in
-            // this block is a picture of a field. It draws, it registers a
-            // click zone, it publishes geometry, and the store still never
-            // sees the press.
-            #[cfg(feature = "cloud")]
-            if let Some(ref cl) = result.cloud_login {
-                if let Some(r) = cl.redeem_input_rect {
-                    if r.contains(x, y) && self.panel_app.cloud_login_state.is_open {
+            // Account tab (User Settings) — text select drag on the gift/
+            // trial code field (owner ruling 2026-09-23: moved here from the
+            // old cloud-login overlay's own `redeem_input_rect` claim). Every
+            // modal field needs its own arm here: the generic `on_drag_start`
+            // claim further down is never reached for a press that lands on
+            // a modal, so a field whose modal is not listed in this block is
+            // a picture of a field. It draws, it registers a click zone, it
+            // publishes geometry, and the store still never sees the press.
+            if self.panel_app.user_settings_state.is_open {
+                if let Some(ref us) = result.user_settings {
+                    let hit = us.content_items.iter()
+                        .any(|(id, rect)| id.as_str() == "user_settings:account_redeem_input" && rect.contains(x, y));
+                    if hit {
                         self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                         return false;
                     }

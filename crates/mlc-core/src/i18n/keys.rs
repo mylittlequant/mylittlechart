@@ -1120,10 +1120,21 @@ pub enum UserSettingsKey {
     // realtime.md` item 1) — the "Load older" row at the top of the
     // message list, shown once the last landed page came back full.
     DmLoadOlder                     = 59,
+
+    // Account tab — gift/trial code redeem (owner ruling 2026-09-23:
+    // "Redeem moves to Settings → Account"), below the tier/role line.
+    // Moved from the old cloud-login overlay's Account view, which was
+    // never i18n'd at all — these three are new keys, not a relocation of
+    // existing ones. `AccountRedeemSuccessPrefix` is spliced with the RFC
+    // 3339 date's day portion, same `format!` idiom `AccountSignedInAs`/
+    // `AccountVia` already use for "Signed in as … via …".
+    AccountRedeemLabel              = 60,
+    AccountRedeemButton             = 61,
+    AccountRedeemSuccessPrefix      = 62,
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 60;
+    pub const COUNT: usize = 63;
 
     /// Get translation for this key.
     #[inline]

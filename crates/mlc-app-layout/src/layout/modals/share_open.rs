@@ -34,9 +34,9 @@ use crate::ui::widgets::{
 /// Text-field id for the share link/token box.
 ///
 /// A literal, not a shared constant: this crate cannot depend on `mlc-app`,
-/// where `text_input`'s ids live — see `cloud_login.rs`'s own `REDEEM_FIELD`
-/// for the same split. `mlc_app::text_input::SHARE_OPEN_INPUT` holds the
-/// other half of the pair.
+/// where `text_input`'s ids live — see `user_settings.rs`'s own
+/// `"account_redeem_input"` for the same split. `mlc_app::text_input::
+/// SHARE_OPEN_INPUT` holds the other half of the pair.
 const SHARE_OPEN_FIELD: &str = "share_open_input";
 
 const MODAL_W: f64 = 380.0;
@@ -52,7 +52,10 @@ fn content_height() -> f64 {
 
 /// Geometry the input side needs to drive the text field's caret/selection —
 /// same pair every modal field in this crate hands back (see
-/// `cloud_login.rs`'s `CloudLoginResult` doc for why both are required).
+/// `user_settings.rs`'s `render_account_nick_row` doc for why both are
+/// required: without the rect+char-position pair reaching `TextFieldStore::
+/// update_field`, a field has no `last_rect`, so click-to-cursor and
+/// drag-select never work).
 #[derive(Clone, Debug, Default)]
 pub struct ShareOpenResult {
     /// The overlay's own frame — kept for a future click-outside check; the

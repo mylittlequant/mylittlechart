@@ -3610,9 +3610,11 @@ pub enum ProfileManagerPage {
 /// Outcome of the most recent account-nickname submission from the
 /// single-profile row's inline edit — same mailbox idiom as
 /// [`RedeemStatus`] (the shell owns the round trip and writes the result
-/// back here), but NOT `cfg(feature = "cloud")`-gated: the row it drives
+/// back here): NOT `cfg(feature = "cloud")`-gated, since the row it drives
 /// (`crate::layout::modals::user_settings::render_single_profile_row`)
-/// compiles in every build, unlike the login overlay.
+/// compiles in every build. `RedeemStatus` followed the same move once its
+/// own row relocated out of the login overlay (2026-09-23) — see that
+/// type's own doc.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum NickStatus {
     /// Nothing submitted since the edit was last opened.
@@ -3992,6 +3994,22 @@ pub struct UserSettingsState {
     /// caller_roles`.
     pub account_roles: Vec<String>,
 
+    // ── Gift/trial code redeem (owner ruling 2026-09-23: "Redeem moves to
+    // Settings → Account") — moved here from the old cloud-login overlay's
+    // signed-in Account view, which nothing opened for an already-signed-in
+    // caller (the header's account button has opened straight into THIS tab
+    // since 0.5.610) and was therefore unreachable. Same field shapes and
+    // `text_input::REDEEM_CODE` field id as before, just a new home; drawn
+    // below the tier/role line ([`Self::account_classes`]/[`Self::
+    // account_roles`]) in `render_account_tab`.
+    /// One-shot flag set by the Redeem button (or Enter in the code field);
+    /// the shell observes it, submits the code currently in
+    /// `text_input::REDEEM_CODE`, and clears it. Same mailbox idiom as
+    /// [`Self::nick_save_requested`].
+    pub redeem_requested: bool,
+    /// Outcome of the most recent submission. Written by the shell.
+    pub redeem_status: RedeemStatus,
+
     /// Whether the avatar picker popover is open.
     pub show_avatar_picker: bool,
     /// ID of the profile whose avatar picker is open (None = active profile).
@@ -4164,6 +4182,8 @@ impl Default for UserSettingsState {
             account_provider: String::new(),
             account_classes: Vec::new(),
             account_roles: Vec::new(),
+            redeem_requested: false,
+            redeem_status: RedeemStatus::default(),
             show_avatar_picker: false,
             profile_avatar_target_id: None,
             show_new_profile_dialog: false,
@@ -4217,6 +4237,12 @@ impl UserSettingsState {
         self.last_created_key = None;
         self.key_reveal_shown = false;
         self.key_reveal_copied_at_ms = 0;
+        // Last visit's "already used"/"code accepted" is not this visit's
+        // news — same "modal reopened later must not show a stale [state]"
+        // reasoning as the key-reveal reset above (mirrors the old
+        // `CloudLoginState::open`'s own reset, moved here with the field).
+        self.redeem_requested = false;
+        self.redeem_status = RedeemStatus::Idle;
     }
 
     /// Toggle open/closed.
@@ -4601,10 +4627,16 @@ pub enum CloudLoginPhase {
 /// endpoint by different roads — the web one through `mlc-cloud`'s transport,
 /// the desktop one through `mlc-updater`'s watch channel — and this is where
 /// the two meet.
-#[cfg(feature = "cloud")]
+///
+/// NOT `cfg(feature = "cloud")`-gated (owner ruling 2026-09-23: Redeem moved
+/// from the old cloud-login overlay's Account view into the Settings →
+/// Account tab, `UserSettingsState::redeem_status` below) — same reasoning
+/// [`NickStatus`] already gives for its own gate-free shape: the row that
+/// draws this now lives in `render_account_tab`, which compiles in every
+/// build.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub enum RedeemStatus {
-    /// Nothing submitted since the overlay opened.
+    /// Nothing submitted since the tab was last opened.
     #[default]
     Idle,
     /// A submission is in flight — the button is dead and says so.
@@ -4637,12 +4669,6 @@ pub struct CloudLoginState {
     /// One-shot flag set by the "Sign out" button in the account view; the
     /// shell observes it, revokes the token, and clears it.
     pub sign_out_requested: bool,
-    /// One-shot flag set by the "Redeem" button (or Enter in the code field)
-    /// in the account view; the shell observes it, submits the code currently
-    /// in `text_input::REDEEM_CODE`, and clears it.
-    pub redeem_requested: bool,
-    /// What came back from the last submission. Written by the shell.
-    pub redeem_status: RedeemStatus,
     /// Whether this account's paid access is live, as last answered by
     /// `GET /api/entitlements`. Written by the shell every time that answer
     /// lands — never inferred here from a feature name.
@@ -4666,8 +4692,6 @@ impl Default for CloudLoginState {
             oauth_login_requested: None,
             open_url_requested: None,
             sign_out_requested: false,
-            redeem_requested: false,
-            redeem_status: RedeemStatus::Idle,
             is_paid: false,
             paid_until: None,
             position: None,
@@ -4685,9 +4709,6 @@ impl CloudLoginState {
         self.is_open = true;
         self.open_url_requested = None;
         self.sign_out_requested = false;
-        self.redeem_requested = false;
-        // Last visit's "already used" is not this visit's news.
-        self.redeem_status = RedeemStatus::Idle;
         self.phase = CloudLoginPhase::RequestCode;
     }
 
@@ -4697,7 +4718,6 @@ impl CloudLoginState {
         self.is_open = false;
         self.open_url_requested = None;
         self.sign_out_requested = false;
-        self.redeem_requested = false;
         self.is_dragging = false;
         self.drag_offset = None;
     }
