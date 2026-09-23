@@ -172,7 +172,24 @@ impl ChartApp {
     }
 
     /// Process a `ChartOutEvent`  -  route high-level outcomes back to state.
+    ///
+    /// R23 choke point (owner ruling 2026-09-23, see `panel_click.rs`'s
+    /// `close_modals_for_toolbar_dropdown` doc): wraps
+    /// [`Self::process_chart_out_event_impl`] with the same before/after
+    /// `any_toolbar_dropdown_open` transition check `dispatch_panel_click`
+    /// uses, so a dropdown opened via an event (e.g. a hotkey routing
+    /// straight to `OpenSymbolSearch`'s quick-dropdown branch, bypassing
+    /// `dispatch_panel_click` entirely) still closes whatever floating
+    /// modal is open first.
     pub(crate) fn process_chart_out_event(&mut self, event: mlc_core::events::ChartOutEvent) {
+        let dropdown_open_before = self.any_toolbar_dropdown_open();
+        self.process_chart_out_event_impl(event);
+        if !dropdown_open_before && self.any_toolbar_dropdown_open() {
+            self.close_modals_for_toolbar_dropdown();
+        }
+    }
+
+    fn process_chart_out_event_impl(&mut self, event: mlc_core::events::ChartOutEvent) {
         use mlc_core::events::ChartOutEvent;
         use mlc_core::state::Timeframe;
 

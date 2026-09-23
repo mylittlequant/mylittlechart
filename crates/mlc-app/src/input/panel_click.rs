@@ -278,6 +278,54 @@ impl ChartApp {
         false
     }
 
+    /// True while a toolbar-owned dropdown is open on either toolbar
+    /// instance in play: the main topbar (`panel_app.toolbar_state`) or the
+    /// trading-container embedded header (`trading_header_tb`, `tch:`
+    /// widget ids). Chrome's own dropdowns (e.g. the "+" new-tab menu) live
+    /// on the main topbar instance too — `mlc-app-input-shell` sets them on
+    /// the very same `panel_app.toolbar_state.open_dropdown_id` field — so
+    /// this one check already covers that surface.
+    ///
+    /// Used by the R23 choke point (`dispatch_panel_click`,
+    /// `process_chart_out_event`) to detect "this click/event just opened a
+    /// dropdown" by state TRANSITION instead of a per-button allow-list.
+    pub(super) fn any_toolbar_dropdown_open(&self) -> bool {
+        self.panel_app.toolbar_state.open_dropdown_id.is_some()
+            || self.trading_header_tb.open_dropdown_id.is_some()
+    }
+
+    /// R23 (owner ruling 2026-09-23): a toolbar dropdown popping up while a
+    /// floating settings/search modal — e.g. the indicator-settings modal
+    /// for RSI — is still open paints on top of it. Unlike the
+    /// `dim_backdrop` family [`Self::dismiss_dimmed_modal`] already guards,
+    /// these modals draw no backdrop veil of their own to catch the click
+    /// first, so nothing closed them before this arc.
+    ///
+    /// Every toolbar-dropdown open path — `mlc-core`'s `ToolbarState`
+    /// internal `open_dropdown_id` writes, this file's own direct writes
+    /// (favorites-add, trading-header symbol/timeframe/chart-type/agent
+    /// pickers), and `mlc-app-input-shell`'s chrome-level new-tab menu —
+    /// reaches this ONE function: `dispatch_panel_click` and
+    /// `process_chart_out_event` call it on a state transition (see
+    /// [`Self::any_toolbar_dropdown_open`]), and the chrome dispatch calls
+    /// it directly at its own open site. A new dropdown added anywhere in
+    /// that surface is covered automatically — there is no per-button list
+    /// to remember to extend.
+    ///
+    /// Reuses each modal's own dedicated close path (never flips a flag
+    /// directly) so focus release matches the × button exactly — the R13
+    /// focus lifecycle `dismiss_profile_manager`'s doc comment explains.
+    pub fn close_modals_for_toolbar_dropdown(&mut self) {
+        self.dismiss_dimmed_modal();
+        self.close_open_modals();
+        if self.panel_app.alert_settings_state.is_open() {
+            self.panel_app.alert_settings_state.close();
+        }
+        if self.panel_app.compare_settings_state.is_open() {
+            self.panel_app.compare_settings_state.close();
+        }
+    }
+
     /// Hide the Welcome Wizard and reset it to page 0. Shared by the ×
     /// button, the dimmer click and Esc — always allowed, the wizard is a
     /// first-run courtesy, not a gate.
@@ -350,7 +398,27 @@ impl ChartApp {
     /// with an id an agent made up.  `x`/`y` are the real click position for
     /// genuine mouse input; agent dispatch passes `(0.0, 0.0)`, the same
     /// no-real-position sentinel `clock_popup_state.toggle` already uses.
+    ///
+    /// R23 choke point (owner ruling 2026-09-23): wraps
+    /// [`Self::dispatch_panel_click_impl`] with a before/after check of
+    /// [`Self::any_toolbar_dropdown_open`] — any click that just opened a
+    /// toolbar dropdown (main topbar or trading-container header, whichever
+    /// widget id it came in on) runs [`Self::close_modals_for_toolbar_
+    /// dropdown`] right after. Detecting the state TRANSITION here, rather
+    /// than calling the close step from each of the many `open_dropdown_id
+    /// = Some(...)` sites scattered across this file and `mlc-core`'s
+    /// `ToolbarState` (which cannot see modal state at all — layering), is
+    /// what makes this "one helper a new dropdown cannot forget": nothing
+    /// short of adding a whole new dropdown STORAGE field bypasses it.
     pub fn dispatch_panel_click(&mut self, widget_id: &str, x: f64, y: f64) {
+        let dropdown_open_before = self.any_toolbar_dropdown_open();
+        self.dispatch_panel_click_impl(widget_id, x, y);
+        if !dropdown_open_before && self.any_toolbar_dropdown_open() {
+            self.close_modals_for_toolbar_dropdown();
+        }
+    }
+
+    fn dispatch_panel_click_impl(&mut self, widget_id: &str, x: f64, y: f64) {
         // Toast ✕ (owner ask 2026-09-09 restyle-and-anchor pass) — dismisses
         // ONLY that one toast. Checked first: a toast floats above every
         // other layer (`ZLayer::Toast`), so a click here must never also

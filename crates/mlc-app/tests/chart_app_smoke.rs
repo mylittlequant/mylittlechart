@@ -571,3 +571,57 @@ async fn first_visit_hydration_snaps_to_right_edge_after_prepend() {
          bar_count={bc_after_live}",
     );
 }
+
+// ─── Test 4: R23 — opening a toolbar dropdown must close the open modal ────
+//
+// Owner repro 2026-09-23: with a modal open (the indicator-settings modal
+// for RSI in the report), clicking a toolbar button that opens a DROPDOWN
+// opened the dropdown on top of the still-open modal instead of closing it
+// first. Fix (`ChartApp::dispatch_panel_click`, `mlc-app/src/input/
+// panel_click.rs`): a before/after transition check on `open_dropdown_id`
+// (main topbar AND the trading-container header) runs
+// `close_modals_for_toolbar_dropdown` the moment ANY click just opened a
+// dropdown — no per-button allow-list to remember, so a new dropdown added
+// anywhere in `mlc-core`'s `ToolbarState` or this crate is covered for free.
+//
+// Drives the real click path end to end: open the indicator-settings modal
+// exactly as a real RSI-settings click would leave it, then click the
+// `cursor_tools` toolbar dropdown trigger (first click on an unopened
+// dropdown item always opens it — `toolbar_state.rs`) and assert the modal
+// is gone.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test(flavor = "multi_thread", worker_threads = 2))]
+async fn toolbar_dropdown_open_closes_the_open_settings_modal() {
+    let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new().await;
+    let bridge = Arc::new(bridge);
+    let core = mlc_backend::BackendCore::new(bridge, None);
+    let mut app = ChartApp::new_empty(core);
+
+    // Open the indicator-settings modal (the RSI-settings case from the
+    // owner's report) — `indicator_id` is a made-up id; the modal only
+    // needs to report itself open, nothing renders in this test.
+    app.panel_app.indicator_settings_state.open(1);
+    assert!(
+        app.panel_app.indicator_settings_state.is_open(),
+        "setup: indicator-settings modal did not open"
+    );
+    assert!(
+        app.panel_app.toolbar_state.open_dropdown_id.is_none(),
+        "setup: no toolbar dropdown should be open yet"
+    );
+
+    // Click a toolbar dropdown trigger.
+    app.dispatch_panel_click("toolbar:cursor_tools", 0.0, 0.0);
+
+    assert!(
+        app.panel_app.toolbar_state.open_dropdown_id.is_some(),
+        "the toolbar click did not open its dropdown — test setup is wrong, \
+         not exercising the R23 path at all"
+    );
+    assert!(
+        !app.panel_app.indicator_settings_state.is_open(),
+        "[R23] indicator-settings modal is still open after a toolbar \
+         dropdown opened — the dropdown now paints on top of it (owner \
+         repro 2026-09-23, RSI settings modal)"
+    );
+}
