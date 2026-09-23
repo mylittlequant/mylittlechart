@@ -489,7 +489,7 @@ impl IndicatorInstance {
             bubble_id: None,
             origin_id: None,
             signals: Vec::new(),
-            signals_enabled: true, // Enabled by default
+            signals_enabled: false, // Off by default; per-instance toggle in the Signals tab
             signal_display: Default::default(),
         }
     }
@@ -592,4 +592,36 @@ pub struct ComputeCache {
     /// Signal engine for incremental signal generation; present only when
     /// `signals_enabled == true` and a default signal profile exists.
     pub signal_engine: Option<crate::signals::rules::SignalEngine>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stub_definition() -> IndicatorDefinition {
+        IndicatorDefinition {
+            type_id: "sma".to_string(),
+            name: "Simple Moving Average".to_string(),
+            short_name: "SMA".to_string(),
+            description: String::new(),
+            category: IndicatorCategory::Trend,
+            params: Vec::new(),
+            outputs: Vec::new(),
+            overlay: true,
+            precision: 2,
+            bounds: None,
+            zero_baseline: false,
+            histogram_style: HistogramStyle::default(),
+            machine_id: None,
+            streams: Vec::new(),
+        }
+    }
+
+    /// A freshly constructed instance must have signals off — the owner
+    /// never asked for markers on every indicator he adds.
+    #[test]
+    fn new_instance_has_signals_disabled() {
+        let instance = IndicatorInstance::new(1, &stub_definition());
+        assert!(!instance.signals_enabled);
+    }
 }

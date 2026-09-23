@@ -372,6 +372,7 @@ pub struct IndicatorSnapshot {
     /// Origin instance ID (set when this instance was cloned for a sync group).
     pub origin_id: Option<u64>,
     /// Whether signal generation is enabled.
+    #[serde(default)]
     pub signals_enabled: bool,
     /// Timeframe visibility configuration (which timeframes show this indicator).
     /// `None` means visible on all timeframes.
@@ -476,5 +477,32 @@ pub struct DataBubbleSnapshot {
     /// Alerts attached to this bubble.  Absent in old presets → empty vec.
     #[serde(default)]
     pub alerts: Vec<crate::alert::AlertItem>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A preset saved before `signals_enabled` existed on `IndicatorSnapshot`
+    /// must still deserialize, defaulting the field to `false` rather than
+    /// failing to load.
+    #[test]
+    fn indicator_snapshot_without_signals_enabled_field_defaults_to_false() {
+        let json = serde_json::json!({
+            "id": 1,
+            "type_id": "sma",
+            "name": "SMA",
+            "params": {},
+            "pane": 0,
+            "order": 0,
+            "visible": true,
+            "locked": false,
+            "bubble_id": null,
+            "origin_id": null,
+        });
+        let snap: IndicatorSnapshot = serde_json::from_value(json)
+            .expect("old-format snapshot without signals_enabled must deserialize");
+        assert!(!snap.signals_enabled);
+    }
 }
 
