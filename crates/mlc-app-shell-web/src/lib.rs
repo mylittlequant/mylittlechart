@@ -822,6 +822,35 @@ impl WebAppState {
     }
 }
 
+/// Drives `CloudSession` — forum v2 / DM / news polling plus the
+/// login/entitlements flow (owner review 2026-09-23, finding F2). This is
+/// the network half of the per-frame duties: `CloudSession::drive` only
+/// mutates `ChartApp` state and issues `spawn_local` network calls, it
+/// never touches the canvas, so unlike `render_frame` it is safe to run
+/// from the RAF-stall watchdog's `set_interval` as well as the rAF frame
+/// closure — without this second call site, forum/DM/news polling froze
+/// on a backgrounded tab (`requestAnimationFrame` throttles to zero there;
+/// `set_interval` does not, see the watchdog's own doc comment) until
+/// focus or reload.
+///
+/// `last_driven_ms` is a guard shared between both call sites: on the
+/// frame where a stalled rAF resumes, the watchdog's `set_interval`
+/// callback and the newly-resumed frame callback can both observe the
+/// stall condition in the same JS turn — skip a repeat drive for a
+/// timestamp that was already driven (`CloudSession::drive` is keyed off
+/// wall-clock `now_ms` for its own due-checks, so replaying the same
+/// instant twice is redundant, not merely wasteful).
+#[cfg(all(target_arch = "wasm32", feature = "cloud"))]
+fn drive_cloud_network(st: &mut WebAppState, now_ms: u64, last_driven_ms: &Rc<std::cell::Cell<u64>>) {
+    if now_ms <= last_driven_ms.get() {
+        return;
+    }
+    last_driven_ms.set(now_ms);
+    if let Some(cloud) = &st.cloud {
+        cloud.drive(&mut st.chart, now_ms as f64);
+    }
+}
+
 // ─── RAF render loop ───────────────────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
@@ -897,6 +926,13 @@ fn run_render_loop(
     // `set_interval` watchdog further down reads it to detect the stall.
     let last_frame_ms: Rc<std::cell::Cell<f64>> = Rc::new(std::cell::Cell::new(js_sys::Date::now()));
     let last_frame_ms_for_raf = last_frame_ms.clone();
+
+    // Double-drive guard for `drive_cloud_network`, shared with the
+    // RAF-stall watchdog below — see that function's own doc comment.
+    #[cfg(feature = "cloud")]
+    let last_network_drive_ms: Rc<std::cell::Cell<u64>> = Rc::new(std::cell::Cell::new(0));
+    #[cfg(feature = "cloud")]
+    let last_network_drive_ms_for_raf = last_network_drive_ms.clone();
 
     *closure.borrow_mut() = Some(Closure::wrap(Box::new(move || {
         // ── RAF-stall watchdog stamp ─────────────────────────────────────────
@@ -974,14 +1010,11 @@ fn run_render_loop(
             // Cloud session driver: advances the sign-in overlay's
             // device-code flow (spawn_local futures report back through the
             // session's mailbox, applied on the next frame). `None` in a
-            // read-only `?share=` viewer session — nothing to drive.
+            // read-only `?share=` viewer session — nothing to drive. Also
+            // called from the RAF-stall watchdog below — see
+            // `drive_cloud_network`'s own doc comment.
             #[cfg(feature = "cloud")]
-            {
-                let st = &mut *st;
-                if let Some(cloud) = &st.cloud {
-                    cloud.drive(&mut st.chart, now_ms as f64);
-                }
-            }
+            drive_cloud_network(&mut st, now_ms, &last_network_drive_ms_for_raf);
         }
         frame_timer.enter(perf::Phase::Drains);
 
@@ -2240,6 +2273,8 @@ fn run_render_loop(
     // (which would silence the watchdog while RAF is still stalled).
     {
         let state_for_watchdog = state.clone();
+        #[cfg(feature = "cloud")]
+        let last_network_drive_ms_for_watchdog = last_network_drive_ms.clone();
         let watchdog_closure = Closure::wrap(Box::new(move || {
             if js_sys::Date::now() - last_frame_ms.get() > 15_000.0 {
                 // Timestamp source matches the RAF frame closure's own
@@ -2254,6 +2289,15 @@ fn run_render_loop(
                     .unwrap_or(0);
                 if let Ok(mut st) = state_for_watchdog.try_borrow_mut() {
                     st.chart.tick(now_ms);
+                    // Forum/DM/news polling (owner review 2026-09-23,
+                    // finding F2): without this, `CloudSession::drive` was
+                    // called only from the rAF frame closure above, which
+                    // Chrome throttles to zero on a hidden tab — forum/DM
+                    // state froze until focus or reload. `tick` above
+                    // already keeps the broadcast-drain half alive on a
+                    // stall (incident 2026-07-16); this is the cloud half.
+                    #[cfg(feature = "cloud")]
+                    drive_cloud_network(&mut st, now_ms, &last_network_drive_ms_for_watchdog);
                 }
             }
         }) as Box<dyn FnMut()>);
