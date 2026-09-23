@@ -227,6 +227,7 @@ pub fn render_search_overlay(
         let sets_icon_y = sets_btn_y + (tab_button_height - tab_icon_size) / 2.0;
         let sets_icon_color = if is_sets_active { &toolbar_theme.item_text_active } else { &toolbar_theme.item_text_muted };
         draw_svg_icon(ctx, Icon::Layers.svg(), sets_icon_x, sets_icon_y, tab_icon_size, tab_icon_size, sets_icon_color);
+        result.sets_rect = Some(WidgetRect::new(sidebar_x, sets_btn_y, sidebar_width, tab_button_height));
         input_coordinator.register_on_layer(
             "ind_search:sets_tab",
             uzor::types::Rect::new(sidebar_x, sets_btn_y, sidebar_width, tab_button_height),

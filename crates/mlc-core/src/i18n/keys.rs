@@ -1413,10 +1413,35 @@ pub enum ModalKey {
     /// "COMPARE" column header over the search row's trailing + — without it
     /// the icon reads as a second way to pick the symbol.
     ColCompare             = 75,
+
+    // ---- Search Overlay indicator-category sidebar tooltips (owner review
+    // 2026-09-23, item 2: the icon-only category rail had no hover text) ----
+    /// "All" category tooltip
+    IndCatAll              = 76,
+    /// "Favorites" category tooltip
+    IndCatFavorites        = 77,
+    /// "Trend" category tooltip
+    IndCatTrend            = 78,
+    /// "Momentum" category tooltip
+    IndCatMomentum         = 79,
+    /// "Volatility" category tooltip
+    IndCatVolatility       = 80,
+    /// "Volume" category tooltip
+    IndCatVolume           = 81,
+    /// "Oscillators" category tooltip
+    IndCatOscillators      = 82,
+    /// "Averages" category tooltip
+    IndCatAverages         = 83,
+    /// "Overlays" category tooltip
+    IndCatOverlays         = 84,
+    /// "Other" category tooltip
+    IndCatOther            = 85,
+    /// "Indicator Sets" tooltip for the sidebar's bottom "Sets" button
+    IndicatorSetsTooltip   = 86,
 }
 
 impl ModalKey {
-    pub const COUNT: usize = 75;
+    pub const COUNT: usize = 87;
 
     /// Get translation for this key.
     #[inline]

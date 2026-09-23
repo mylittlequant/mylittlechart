@@ -10,6 +10,7 @@
 //!
 //! Core re-exports all of these via `pub use mlc_core::ui::modal_state::*`.
 
+use crate::i18n::{ModalKey, t_modal};
 use crate::state::scroll_state::ScrollState;
 
 // =============================================================================
@@ -426,6 +427,26 @@ impl IndicatorCategoryFilter {
         }
     }
 
+    /// Localized tooltip text for this category's sidebar button in the
+    /// indicator search modal (owner review 2026-09-23, item 2 — the rail is
+    /// icon-only and had no hover text). Unlike `label()`, this goes through
+    /// i18n so the tooltip follows the active UI language.
+    pub fn tooltip(&self) -> &'static str {
+        let key = match self {
+            Self::All => ModalKey::IndCatAll,
+            Self::Favorites => ModalKey::IndCatFavorites,
+            Self::Trend => ModalKey::IndCatTrend,
+            Self::Momentum => ModalKey::IndCatMomentum,
+            Self::Volatility => ModalKey::IndCatVolatility,
+            Self::Volume => ModalKey::IndCatVolume,
+            Self::Oscillator => ModalKey::IndCatOscillators,
+            Self::Average => ModalKey::IndCatAverages,
+            Self::TotalOverlay => ModalKey::IndCatOverlays,
+            Self::Other => ModalKey::IndCatOther,
+        };
+        t_modal(key)
+    }
+
     /// Get icon ID
     pub fn icon_id(&self) -> &'static str {
         match self {
@@ -586,5 +607,21 @@ mod tests {
         let filter = IndicatorCategoryFilter::Momentum;
         assert!(filter.matches(&IndicatorCategory::Momentum));
         assert!(!filter.matches(&IndicatorCategory::Trend));
+    }
+
+    /// Every category button on the search-overlay sidebar (owner review
+    /// 2026-09-23, item 2) must have a non-empty, distinct tooltip so the
+    /// icon-only rail is actually explained on hover.
+    #[test]
+    fn test_indicator_category_filter_tooltip_distinct_and_non_empty() {
+        let filters = IndicatorCategoryFilter::all();
+        let tooltips: Vec<&str> = filters.iter().map(|f| f.tooltip()).collect();
+        for tip in &tooltips {
+            assert!(!tip.is_empty());
+        }
+        let mut unique = tooltips.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        assert_eq!(unique.len(), tooltips.len(), "duplicate category tooltip text");
     }
 }

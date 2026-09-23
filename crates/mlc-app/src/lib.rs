@@ -661,8 +661,12 @@ pub struct ChartApp {
     /// flag needed.
     pub last_loading_spinners: Vec<(mlc_core::LeafId, (f64, f64, f64))>,
 
-    /// Search overlay render result from last frame (used for rect-based hit testing).
-    pub(crate) search_modal_result: Option<ModalSearchResult>,
+    /// Search overlay render result from last frame (used for rect-based hit
+    /// testing) — `pub`, same as `last_sidebar_result` below, so
+    /// `mlc-app-input-shell::dispatch` can hit-test the indicator-modal
+    /// category rail for tooltips the same way it already does the right
+    /// sidebar.
+    pub search_modal_result: Option<ModalSearchResult>,
 
     /// Context menu render result from last frame (used for rect-based hit testing).
     pub(crate) context_menu_result: Option<ContextMenuResult>,

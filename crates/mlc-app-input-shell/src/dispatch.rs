@@ -376,11 +376,19 @@ pub fn process_event(
                 // toolbar-item tooltip would explain — see
                 // `ChartToolbarState::has_open_dropdown` doc comment.
                 let dropdown_open = chart.panel_app.toolbar_state.has_open_dropdown();
+                let modal_category_tip = indicator_modal_category_tooltip(chart, x, chart_y);
                 let hovered_id = chart.panel_app.toolbar_state.hovered_top_toolbar_id.as_deref()
                     .or(chart.panel_app.toolbar_state.hovered_left_toolbar_id.as_deref())
                     .or(chart.panel_app.toolbar_state.hovered_right_toolbar_id.as_deref())
                     .or(chart.panel_app.toolbar_state.hovered_bottom_toolbar_id.as_deref());
-                if let Some(btn_id) = hovered_id {
+                if let Some((wid_str, tip_text)) = modal_category_tip {
+                    // Indicator-search modal category rail / "Sets" button —
+                    // takes priority since the modal sits above the toolbar
+                    // and the chart when open.
+                    let wid = uzor::WidgetId::from(wid_str);
+                    toolbar_tooltip.update(Some(wid.clone()), time_ms, dropdown_open);
+                    toolbar_tooltip.request_tooltip(wid, tip_text.to_string(), (x, y), time_ms);
+                } else if let Some(btn_id) = hovered_id {
                     let wid = uzor::WidgetId::from(format!("toolbar:{}", btn_id));
                     toolbar_tooltip.update(Some(wid.clone()), time_ms, dropdown_open);
                     if let Some(text) = mlc_core::toolbar::find_toolbar_tooltip(btn_id) {
@@ -1218,4 +1226,43 @@ fn cancel_tab_rename(chart: &mut mlc_app::ChartApp, chrome_st: &mut chrome::Chro
         coord.text_fields_mut().blur();
         coord.text_fields_mut().unregister(&wid);
     }
+}
+
+/// Hit-test the indicator-search modal's category rail (and the "Sets"
+/// button below it) against the cursor, returning `(widget_id, tooltip_text)`
+/// when hovering a tab. Mirrors the right-sidebar tooltip branch above —
+/// same cached per-frame hit-test shape (`ModalSearchResult` instead of
+/// `RightSidebarResult`). `None` whenever the search overlay isn't the
+/// indicator-search variant: `sidebar_rect` is only populated by
+/// `render_search_overlay` for `OpenModal::IndicatorSearch` (owner review
+/// 2026-09-23, item 2 — the rail was icon-only with no hover text).
+fn indicator_modal_category_tooltip(
+    chart: &mlc_app::ChartApp,
+    x: f64,
+    y: f64,
+) -> Option<(String, &'static str)> {
+    let smr = chart.search_modal_result.as_ref()?;
+    let sidebar_rect = smr.sidebar_rect?;
+    let in_sidebar = x >= sidebar_rect.x && x < sidebar_rect.x + sidebar_rect.width
+        && y >= sidebar_rect.y && y < sidebar_rect.y + sidebar_rect.height;
+    if !in_sidebar {
+        return None;
+    }
+    for (idx, rect) in &smr.category_rects {
+        if x >= rect.x && x < rect.x + rect.width && y >= rect.y && y < rect.y + rect.height {
+            let filter = mlc_core::state::modal_state::IndicatorCategoryFilter::from_index(*idx)?;
+            return Some((format!("modal_search:category:{}", idx), filter.tooltip()));
+        }
+    }
+    if let Some(sets_rect) = smr.sets_rect {
+        if x >= sets_rect.x && x < sets_rect.x + sets_rect.width
+            && y >= sets_rect.y && y < sets_rect.y + sets_rect.height
+        {
+            return Some((
+                "ind_search:sets_tab".to_string(),
+                mlc_core::i18n::t_modal(mlc_core::i18n::ModalKey::IndicatorSetsTooltip),
+            ));
+        }
+    }
+    None
 }

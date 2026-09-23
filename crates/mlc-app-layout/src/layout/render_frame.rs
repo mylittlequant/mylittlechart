@@ -242,6 +242,9 @@ pub struct ModalSearchResult {
     pub category_rects: Vec<(usize, WidgetRect)>,
     /// Sidebar rect (for indicator search)
     pub sidebar_rect: Option<WidgetRect>,
+    /// "Sets" button rect at the bottom of the indicator search sidebar
+    /// (for tooltip hit-testing — the button itself is not a category filter).
+    pub sets_rect: Option<WidgetRect>,
     /// X positions of character boundaries in the search input field.
     /// Used for click-to-cursor positioning without needing RenderContext.
     pub search_char_positions: Vec<f64>,
