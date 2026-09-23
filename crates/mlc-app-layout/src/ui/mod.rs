@@ -4,6 +4,8 @@ pub mod z_order;
 pub mod avatar_widget;
 pub mod chips_input;
 pub mod count_badge;
+#[cfg(feature = "cloud")]
+pub mod dm_messenger_provider;
 pub mod toggle_widget;
 pub mod toolbar_theme;
 pub mod icons;
