@@ -1629,6 +1629,7 @@ impl IndicatorManager {
             color_params,
             bool_params,
             timeframe_visibility: inst.timeframe_visibility.clone(),
+            bounds: def.bounds,
         })
     }
 
