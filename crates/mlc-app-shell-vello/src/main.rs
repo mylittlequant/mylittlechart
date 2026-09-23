@@ -2440,7 +2440,7 @@ impl App<'_> {
         for pw in self.windows.values_mut() {
             if pw.skeleton {
                 pw.spinner_start = Some(spinner_instant);
-                pw.chart.panel_app.user_settings_state.show_profile_manager = false;
+                pw.chart.close_profile_manager();
                 pw.chart.panel_app.user_settings_state.show_welcome_wizard = false;
                 pw.chart_dirty = true;
                 pw.window.request_redraw();
@@ -5728,7 +5728,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                     pw.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
                                                 }
                                                 pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
-                                                pw.chart.panel_app.user_settings_state.show_profile_manager = false;
+                                                // `close_profile_manager` (not a bare flag write): the
+                                                // `clear()` two lines up empties the passphrase TEXT
+                                                // but does not blur it — the field stayed genuinely
+                                                // focused in TextFieldStore, silently killing every
+                                                // hotkey afterward (owner-review 2026-09-23 audit).
+                                                pw.chart.close_profile_manager();
                                             }
                                         }
                                     }
@@ -5782,7 +5787,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                     pw.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
                                                 }
                                                 pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
-                                                pw.chart.panel_app.user_settings_state.show_profile_manager = false;
+                                                // `close_profile_manager` blurs the (already
+                                                // text-cleared) passphrase field — see the sibling
+                                                // branch below for why a bare flag write here used
+                                                // to leave it focused.
+                                                pw.chart.close_profile_manager();
                                                 // `.close()` (not a raw `is_open = false`) so the
                                                 // one-time key reveal box is dropped along with
                                                 // every other close of this modal.
@@ -5817,8 +5826,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                     pw.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&np_wid);
                                                 }
                                                 pw.chart.panel_app.user_settings_state.new_passphrase_focused = false;
-                                                pw.chart.panel_app.user_settings_state.show_profile_manager = false;
-                                                // See the sibling branch above for why `.close()`.
+                                                // `close_profile_manager` blurs the (already
+                                                // text-cleared) passphrase field — see the sibling
+                                                // branch above for why a bare flag write here used
+                                                // to leave it focused, and for why `.close()`.
+                                                pw.chart.close_profile_manager();
                                                 pw.chart.panel_app.user_settings_state.close();
                                             }
                                         } else {
@@ -6084,10 +6096,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                             {
                                                                 let rk_wid = uzor::WidgetId::from(mlc_app::text_input::RECOVERY_KEY);
                                                                 pw.chart.input_coordinator.borrow_mut().text_fields_mut().clear(&rk_wid);
-                                                                pw.chart.input_coordinator.borrow_mut().text_fields_mut().blur();
                                                             }
                                                             pw.chart.panel_app.user_settings_state.recovery_key_display_focused = false;
-                                                            pw.chart.panel_app.user_settings_state.show_profile_manager = false;
+                                                            // `close_profile_manager` blurs RECOVERY_KEY
+                                                            // (already text-cleared above) — the explicit
+                                                            // `.blur()` this used to do by hand is now the
+                                                            // shared helper every close path routes through.
+                                                            pw.chart.close_profile_manager();
                                                             // `.close()` — see the pre-switch passphrase
                                                             // branches above for why.
                                                             pw.chart.panel_app.user_settings_state.close();
@@ -6334,7 +6349,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         pw.chart.panel_app.user_settings_state.needs_vault_unlock = false;
                         pw.chart.panel_app.user_settings_state.vault_unlock_error = None;
                         pw.chart.panel_app.user_settings_state.vault_unlock_attempts = 0;
-                        pw.chart.panel_app.user_settings_state.show_profile_manager = false;
+                        // `close_profile_manager` (not a bare flag write) blurs
+                        // NEW_PASSPHRASE — the `clear()` below only wipes its
+                        // text, not its focus.
+                        pw.chart.close_profile_manager();
                         pw.chart.panel_app.user_settings_state.show_welcome_wizard = true;
                         pw.chart.panel_app.user_settings_state.wizard_page = 0;
                         // Clear the passphrase field so the wizard starts clean.

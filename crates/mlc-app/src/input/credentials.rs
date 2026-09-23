@@ -521,7 +521,7 @@ impl ChartApp {
             return;
         }
 
-        self.panel_app.user_settings_state.show_profile_manager = false;
+        self.close_profile_manager();
 
         if let Some(view) = self.panel_app.credentials_state.pending_unlock_return.take() {
             self.panel_app.user_settings_state.active_tab = UserSettingsTab::Vault;
@@ -554,7 +554,7 @@ impl ChartApp {
                 entry.3 = true;
             }
         }
-        self.panel_app.user_settings_state.show_profile_manager = false;
+        self.close_profile_manager();
         self.panel_app.user_settings_state.vault_unlock_error = None;
         self.sync_credentials_from_core();
 

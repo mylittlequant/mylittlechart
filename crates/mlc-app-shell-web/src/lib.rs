@@ -1313,9 +1313,13 @@ fn run_render_loop(
                                 );
                             }
                             mlc_app::VaultSetupOutcome::Ready { recovery_key: None } => {
-                                let uss = &mut state.chart.panel_app.user_settings_state;
-                                uss.show_profile_manager = false;
-                                uss.vault_unlock_error = None;
+                                // `close_profile_manager` resets the flag AND
+                                // blurs any of its own fields still holding
+                                // keyboard focus — a bare flag write here used
+                                // to leave that focus behind (owner-review
+                                // 2026-09-23 stale-focus audit).
+                                state.chart.close_profile_manager();
+                                state.chart.panel_app.user_settings_state.vault_unlock_error = None;
                                 web_sys::console::log_1(&"[mlc-app-shell-web] vault unlocked".into());
                             }
                             mlc_app::VaultSetupOutcome::WrongPassphrase(e) => {

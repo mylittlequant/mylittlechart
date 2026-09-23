@@ -153,12 +153,45 @@ impl ChartApp {
         }
     }
 
+    /// Close the Profile Manager modal's own visibility flag AND blur
+    /// whichever of its own text fields currently holds keyboard focus.
+    ///
+    /// The flag alone (`UserSettingsState::show_profile_manager = false`)
+    /// is what makes the modal stop being drawn; the shared
+    /// `TextFieldStore`'s `focused` id is a SEPARATE piece of state a
+    /// close path can forget to reset — leaving it focused means every
+    /// hotkey in the app dies silently afterward (`dispatch_text_key_early`
+    /// / `on_key_press`'s profile-manager gate both consume unconditionally
+    /// while a field they own is focused; see their own docs). This is the
+    /// low-level primitive every profile-manager close path should route
+    /// through instead of writing the flag directly: `dismiss_profile_manager`
+    /// (below — the ×/dimmer/Esc choke point) calls it for the flag+blur
+    /// step; direct callers that need only that, not the page reset and
+    /// field-clear `dismiss_profile_manager` also does (e.g. a vault
+    /// unlock/setup completing mid-session), call it on its own.
+    pub fn close_profile_manager(&mut self) {
+        use crate::text_input::{
+            CONFIRM_PASSPHRASE, NEW_PASSPHRASE, NEW_PROFILE_NAME, RECOVERY_KEY, RECOVERY_KEY_DISPLAY,
+        };
+        self.panel_app.user_settings_state.show_profile_manager = false;
+        let owns_focus = {
+            let ic = self.input_coordinator.borrow();
+            matches!(
+                ic.text_fields().focused().map(|id| id.as_str()),
+                Some(NEW_PASSPHRASE | CONFIRM_PASSPHRASE | NEW_PROFILE_NAME | RECOVERY_KEY | RECOVERY_KEY_DISPLAY)
+            )
+        };
+        if owns_focus {
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+        }
+    }
+
     /// Hide the Profile Manager and reset it to the ordinary entry page.
     /// Shared by the × button, the dimmer click and Esc
     /// (`modals::close_topmost_known_modal_layer`) — callers already checked
     /// `profile_manager_mandatory` before reaching here.
     pub(super) fn dismiss_profile_manager(&mut self) {
-        self.panel_app.user_settings_state.show_profile_manager = false;
+        self.close_profile_manager();
         self.panel_app.user_settings_state.profile_manager_page =
             mlc_app_layout::ui::modal_settings::ProfileManagerPage::ProfileList;
         self.panel_app.user_settings_state.vault_unlock_error = None;
@@ -218,7 +251,12 @@ impl ChartApp {
             return true;
         }
         if self.panel_app.user_settings_state.show_profile_manager {
-            self.panel_app.user_settings_state.show_profile_manager = false;
+            // Found leaking close path (owner-review-2026-09-23 audit): this
+            // used to reset the flag inline, bypassing `dismiss_profile_manager`'s
+            // page reset AND its field blur — a passphrase/name field left
+            // focused here (any page except ProfileList) would swallow every
+            // hotkey afterward with the modal already gone from the screen.
+            self.dismiss_profile_manager();
             return true;
         }
         if self.panel_app.primitive_settings_state.save_template_mode {
@@ -6857,7 +6895,7 @@ impl ChartApp {
                         } else if matches!(self.panel_app.user_settings_state.profile_manager_page, ProfileManagerPage::ProfileList) {
                             // Already on ProfileList — "Back" means dismiss if we have a live profile
                             if !self.panel_app.user_settings_state.runtime_profile_id.is_empty() {
-                                self.panel_app.user_settings_state.show_profile_manager = false;
+                                self.close_profile_manager();
                                 eprintln!("[ChartApp] profile_mgr: back from profile list — dismissing (live profile exists)");
                             }
                         } else {
@@ -7493,7 +7531,7 @@ impl ChartApp {
                                 eprintln!("[ChartApp] profile_mgr: showing unlock for current profile {}", profile_id);
                             } else {
                                 // Already on this profile, vault OK — dismiss
-                                self.panel_app.user_settings_state.show_profile_manager = false;
+                                self.close_profile_manager();
                                 eprintln!("[ChartApp] profile_mgr: selected current profile, dismissing");
                             }
                         } else {

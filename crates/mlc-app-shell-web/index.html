@@ -121,20 +121,17 @@
       } catch (e) { /* localStorage unavailable (private mode) — CSS default stands */ }
     })();
 
-    // The canvas must be focusable AND focused for keydown events to land.
-    // Without this the browser never delivers `keydown` to the canvas
-    // listener registered by uzor-window-web, so text fields, Escape,
-    // Ctrl+C, etc. all stay dead.
-    document.addEventListener('DOMContentLoaded', function() {
-      var c = document.getElementById('chart');
-      if (c) { c.focus(); }
-    });
-    // Re-focus on any pointer interaction in case focus drifts to body.
-    window.addEventListener('pointerdown', function() {
-      var c = document.getElementById('chart');
-      if (c && document.activeElement !== c) c.focus();
-    }, true);
-    // Suppress focus ring on the canvas (we render our own indicators).
+    // `keydown`/`keyup` listeners are on `window`, not the canvas
+    // (`uzor-window-web`'s `WebWindowProvider`), specifically so keyboard
+    // delivery survives DOM focus drift — clipboard (copy/cut/paste)
+    // listeners are on `document` for the same reason. Nothing on this
+    // page reads canvas DOM focus for input routing, so there is no
+    // "must be focused for keydown to land" step here any more; a stale
+    // version of this comment used to claim otherwise. `tabindex="0"`
+    // stays so a keyboard user tabbing through the page can still reach
+    // the canvas (there is no other focusable element on it) — the rule
+    // below just keeps that from drawing an outline, since the app draws
+    // its own focus/selection indicators.
     var _style = document.createElement('style');
     _style.textContent = '#chart:focus { outline: none; }';
     document.head.appendChild(_style);
