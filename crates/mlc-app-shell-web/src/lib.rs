@@ -2719,9 +2719,23 @@ fn render_frame(state: Rc<RefCell<WebAppState>>, timer: &mut perf::FrameTimer) -
     // drawing primitives (cycle_lines/time_cycles), not layout-critical.
     let mut ctx = Canvas2dChartRenderContext::new(raw_ctx, dpr, css_w, css_h);
 
-    let now_ms = win
-        .performance()
-        .map(|p| p.now() as u64)
+    // Wall-clock epoch ms — NOT `win.performance().now()`, which is
+    // monotonic since the PAGE'S OWN navigation start (routinely a small
+    // number of ms), not since the Unix epoch. This `now_ms` reaches
+    // `relative_time()` (`cloud_overlay.rs`, shared by the Forum/DM
+    // overlays) as `current_time_ms`, which compares it against server
+    // RFC3339 timestamps — fed the navigation-relative clock, every delta
+    // went deeply negative and clamped to 0, so every post/board read
+    // "just now" regardless of age. `web_time::SystemTime` is wall-clock on
+    // wasm too (backed by `Date.now()`) — the same primitive `tick()`'s own
+    // `now_ms` above and `modal_settings.rs`'s own `now_ms()` helper (the
+    // one that stamps `boards_fetched_at` et al.) already use; the native
+    // shell's `frame_time` (`mlc-app-shell-vello`'s `screenshot::now_ms()`)
+    // is the same primitive too, so this fix brings wasm in line with what
+    // native, and this crate's own `tick()` call above, always did.
+    let now_ms = web_time::SystemTime::now()
+        .duration_since(web_time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
 
     // ── Perf sample (fps + frame_time) — same EMA as mlc-app-shell-vello ──────

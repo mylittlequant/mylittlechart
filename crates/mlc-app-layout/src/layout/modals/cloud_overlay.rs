@@ -894,9 +894,13 @@ pub(crate) fn parse_rfc3339_unix_secs(s: &str) -> Option<i64> {
     Some(days_since_epoch * 86400 + hour * 3600 + min * 60 + sec)
 }
 
-/// `"just now"` / `"5m ago"` / `"3h ago"` / `"2d ago"` / the trimmed date
-/// past 30 days — `now_ms` is `current_time_ms`, the same clock every other
-/// overlay timestamp compares against. Also used by `forum_v2_overlay`/
+/// `"just now"` / `"5m ago"` / `"3h ago"` / `"2d ago"` / `"3w ago"` / the
+/// trimmed date past 30 days — `now_ms` is `current_time_ms`, the same clock
+/// every other overlay timestamp compares against (and the one whose
+/// wall-clock-vs-monotonic bug made every Forum/DM timestamp read "just
+/// now" regardless of age until 2026-09-23 — see `mlc-app-shell-web`'s own
+/// `render_frame`, the caller that was feeding this a navigation-relative
+/// clock instead of an epoch one). Also used by `forum_v2_overlay`/
 /// `dm_overlay` for their own timestamps.
 pub(crate) fn relative_time(iso: &str, now_ms: u64) -> String {
     let fallback = || iso.split('T').next().unwrap_or(iso).to_string();
@@ -905,11 +909,13 @@ pub(crate) fn relative_time(iso: &str, now_ms: u64) -> String {
     };
     let now_secs = (now_ms / 1000) as i64;
     let delta = (now_secs - secs).max(0);
+    const DAY: i64 = 86_400;
     match delta {
         0..=59 => "just now".to_string(),
         60..=3599 => format!("{}m ago", delta / 60),
         3600..=86399 => format!("{}h ago", delta / 3600),
-        86400..=2591999 => format!("{}d ago", delta / 86400),
+        86400..=604_799 => format!("{}d ago", delta / DAY),
+        604_800..=2_591_999 => format!("{}w ago", delta / (7 * DAY)),
         _ => fallback(),
     }
 }
@@ -1504,7 +1510,7 @@ pub(crate) fn wrap_text(text: &str, width: usize) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{group_release_rows, platform_label, release_rows, wrap_text};
+    use super::{group_release_rows, platform_label, relative_time, release_rows, wrap_text};
     use crate::ui::modal_settings::CloudReleaseEntry;
 
     /// Byte-offset slicing panics inside a multibyte char (an em-dash in a
@@ -1583,5 +1589,88 @@ mod tests {
             labels,
             vec!["Linux (x86-64)", "macOS (arm64)", "macOS (x86-64)", "Windows (x86-64)"]
         );
+    }
+
+    // ── `relative_time` (the "just now" bug fix, 2026-09-23) ────────────
+    //
+    // The bug was never in this parser/formatter — `mlc-app-shell-web`'s
+    // `render_frame` was feeding it `win.performance().now()` (monotonic
+    // since page navigation, not the Unix epoch) as `now_ms`, so every
+    // delta went deeply negative and clamped to 0. These tests pin the
+    // formatter's own contract (bucket boundaries, and parsing the exact
+    // shapes the server actually sends — `chrono::Utc::now().to_rfc3339()`
+    // in `mylittlechart-server/crates/server/src/social_db.rs`, full
+    // nanosecond precision with a `+00:00` offset in practice, `+00:00`
+    // with no fractional part in that file's own seed/test data) so a
+    // regression on either side shows up here, not just visually.
+
+    /// `chrono::Utc::now().to_rfc3339()`'s typical live shape — full
+    /// nanosecond precision, `+00:00` (never `Z`, the server is always UTC).
+    fn ts(y: u32, mo: u32, d: u32, h: u32, mi: u32, s: u32) -> String {
+        format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:{s:02}.123456789+00:00")
+    }
+
+    /// `now_ms` for a fixed reference instant, so every test below reasons
+    /// in whole seconds against it instead of `SystemTime::now()`.
+    const NOW: (u32, u32, u32, u32, u32, u32) = (2026, 9, 23, 12, 0, 0);
+    fn now_ms() -> u64 {
+        // 2026-09-23T12:00:00Z in Unix seconds, computed via this file's own
+        // `parse_rfc3339_unix_secs` so the test never hand-maintains a
+        // second epoch constant that could drift from the parser it tests.
+        let secs = super::parse_rfc3339_unix_secs(&ts(NOW.0, NOW.1, NOW.2, NOW.3, NOW.4, NOW.5)).unwrap();
+        secs as u64 * 1000
+    }
+
+    #[test]
+    fn just_now_under_a_minute() {
+        assert_eq!(relative_time(&ts(2026, 9, 23, 11, 59, 30), now_ms()), "just now");
+    }
+
+    #[test]
+    fn minutes_bucket() {
+        assert_eq!(relative_time(&ts(2026, 9, 23, 11, 55, 0), now_ms()), "5m ago");
+        assert_eq!(relative_time(&ts(2026, 9, 23, 11, 15, 0), now_ms()), "45m ago");
+    }
+
+    #[test]
+    fn hours_bucket() {
+        assert_eq!(relative_time(&ts(2026, 9, 23, 10, 0, 0), now_ms()), "2h ago");
+        assert_eq!(relative_time(&ts(2026, 9, 23, 4, 0, 0), now_ms()), "8h ago");
+    }
+
+    #[test]
+    fn days_bucket() {
+        assert_eq!(relative_time(&ts(2026, 9, 22, 12, 0, 0), now_ms()), "1d ago");
+        assert_eq!(relative_time(&ts(2026, 9, 19, 12, 0, 0), now_ms()), "4d ago");
+    }
+
+    #[test]
+    fn weeks_bucket() {
+        assert_eq!(relative_time(&ts(2026, 9, 16, 12, 0, 0), now_ms()), "1w ago");
+        assert_eq!(relative_time(&ts(2026, 8, 26, 12, 0, 0), now_ms()), "4w ago");
+    }
+
+    /// Past 30 days the formatter gives up on relative and falls back to
+    /// the plain date — same as a malformed timestamp, never a wrong label.
+    #[test]
+    fn falls_back_to_the_date_past_thirty_days() {
+        assert_eq!(relative_time(&ts(2026, 6, 1, 12, 0, 0), now_ms()), "2026-06-01");
+    }
+
+    /// The exact shape `social_db.rs`'s own seed/test data uses — whole
+    /// seconds, `+00:00`, no fractional part — must parse identically to
+    /// the nanosecond-precision live shape every other test here uses.
+    #[test]
+    fn parses_whole_second_offset_timestamps() {
+        assert_eq!(relative_time("2026-09-23T10:00:00+00:00", now_ms()), "2h ago");
+    }
+
+    /// A malformed/too-short timestamp degrades to the fallback date
+    /// (whatever precedes the first `T`, or the whole string) rather than
+    /// panicking or lying with a relative label.
+    #[test]
+    fn malformed_timestamp_falls_back_without_panicking() {
+        assert_eq!(relative_time("not-a-date", now_ms()), "not-a-date");
+        assert_eq!(relative_time("2026-09-23", now_ms()), "2026-09-23");
     }
 }
