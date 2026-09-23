@@ -64,6 +64,11 @@ impl ChartApp {
             ui: mlc_core::user_profile::profile::ProfileUiSettings {
                 active_preset_id: self.panel_app.active_preset_id.clone(),
                 open_tabs: self.panel_app.open_tabs.clone(),
+                // Legacy top-level mirror of `windows[0].open_shared_tabs`
+                // — same "windows[0]" mirroring `open_tabs` above already
+                // does. See `share_viewer::ChartApp::collect_open_shared_
+                // tabs`'s own doc (shared-tab-reload-anchor arc).
+                open_shared_tabs: self.collect_open_shared_tabs(),
                 // Carried from the loaded profile, never recomputed: this
                 // snapshot is built from live UI state, and "has the wizard
                 // been shown" is not UI state — it is a fact about the
@@ -275,6 +280,9 @@ impl ChartApp {
         mlc_core::WindowState {
             window_id: self.window_id.clone(),
             open_tabs: self.panel_app.open_tabs.clone(),
+            // See `share_viewer::ChartApp::collect_open_shared_tabs`'s own
+            // doc (shared-tab-reload-anchor arc, item 1/2).
+            open_shared_tabs: self.collect_open_shared_tabs(),
             active_preset_id: self.panel_app.active_preset_id.clone(),
             x: self.window_x,
             y: self.window_y,

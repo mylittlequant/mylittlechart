@@ -351,6 +351,107 @@ async fn resolve_share_boot(token: Option<String>) -> ShareBoot {
     }
 }
 
+/// Boot-time re-fetch of every shared tab `ChartApp::new_window`'s restore
+/// path re-anchored as a placeholder (shared-tab-reload-anchor arc,
+/// 2026-09-23) — one throwaway anonymous fetch per entry, same transport
+/// shape `resolve_share_boot` above uses for the `?share=` boot path. Each
+/// outcome is applied back through `state` (`try_borrow_mut`, same
+/// defensive pattern `install_persistence_flush_hooks` already uses for a
+/// background callback that can race a live frame's borrow) rather than
+/// panicking on a double-borrow — a fetch settling mid-frame just waits for
+/// the next JS microtask tick to apply.
+#[cfg(all(target_arch = "wasm32", feature = "cloud"))]
+fn spawn_share_reopen_fetches(
+    state: Rc<RefCell<WebAppState>>,
+    pending: Vec<mlc_app::share_viewer::PendingReopenShare>,
+) {
+    for entry in pending {
+        let state = state.clone();
+        spawn_local(async move {
+            let transport = mlc_cloud::FetchTransport::new(mlc_cloud::CloudConfig {
+                server_url: String::new(),
+                token: None,
+                profile_id: String::new(),
+                device_id: String::new(),
+                attestation: None,
+            });
+            match transport.share_get_public(&entry.token).await {
+                Ok(mlc_cloud::SharePublicResponse::Live { preset, title, owner, expires_at, rights, .. }) => {
+                    match serde_json::from_value::<mlc_core::preset::preset::ChartPreset>(preset) {
+                        Ok(p) if p.version == mlc_core::preset::preset::PRESET_VERSION => {
+                            let meta = mlc_app::SharedChartMeta {
+                                token: entry.token.clone(),
+                                title,
+                                owner_label: owner,
+                                kind: "live".to_string(),
+                                rights,
+                                expires_at,
+                            };
+                            if let Ok(mut st) = state.try_borrow_mut() {
+                                if let Err(e) = st.chart.fill_shared_placeholder(&entry.placeholder_id, meta, p) {
+                                    web_sys::console::error_1(&format!("[share] reopen fill failed: {}", e).into());
+                                }
+                            }
+                        }
+                        Ok(p) => {
+                            // A schema version this build can never restore
+                            // — retrying it on the next boot would not help.
+                            web_sys::console::error_1(
+                                &format!("[share] reopen '{}': preset version {} unsupported (this build is on {})",
+                                    entry.token, p.version, mlc_core::preset::preset::PRESET_VERSION).into(),
+                            );
+                            if let Ok(mut st) = state.try_borrow_mut() {
+                                st.chart.share_reopen_gone(&entry.placeholder_id);
+                            }
+                        }
+                        Err(e) => {
+                            web_sys::console::error_1(
+                                &format!("[share] reopen '{}': shared preset did not deserialize: {}", entry.token, e).into(),
+                            );
+                            if let Ok(mut st) = state.try_borrow_mut() {
+                                st.chart.share_reopen_gone(&entry.placeholder_id);
+                            }
+                        }
+                    }
+                }
+                Ok(mlc_cloud::SharePublicResponse::Screenshot { .. }) => {
+                    // A screenshot share has no chart to re-anchor — same
+                    // "nothing left to retry" verdict as a 404.
+                    if let Ok(mut st) = state.try_borrow_mut() {
+                        st.chart.share_reopen_gone(&entry.placeholder_id);
+                    }
+                }
+                Err(mlc_cloud::CloudError::Http { status: 404, .. })
+                | Err(mlc_cloud::CloudError::Http { status: 403, .. }) => {
+                    if let Ok(mut st) = state.try_borrow_mut() {
+                        st.chart.share_reopen_gone(&entry.placeholder_id);
+                    }
+                }
+                Err(e) => {
+                    // Offline / 5xx / decode failure — worth retrying on
+                    // the next boot rather than dropping the entry for good.
+                    web_sys::console::warn_1(
+                        &format!("[share] reopen '{}' transient failure: {}", entry.token, e).into(),
+                    );
+                    if let Ok(mut st) = state.try_borrow_mut() {
+                        st.chart.share_reopen_transient(&entry.placeholder_id, &entry.token);
+                    }
+                }
+            }
+        });
+    }
+}
+
+/// Non-`cloud` builds carry no `mlc-cloud` transport dependency at all —
+/// a placeholder installed by a prior `cloud` build's save just stays
+/// "Loading shared chart…" until a `cloud`-enabled build reopens it.
+#[cfg(all(target_arch = "wasm32", not(feature = "cloud")))]
+fn spawn_share_reopen_fetches(
+    _state: Rc<RefCell<WebAppState>>,
+    _pending: Vec<mlc_app::share_viewer::PendingReopenShare>,
+) {
+}
+
 // ─── Boot-time theme helpers ────────────────────────────────────────────────
 
 /// Resolve the starting theme from the browser's own colour-scheme
@@ -855,12 +956,23 @@ fn drive_cloud_network(st: &mut WebAppState, now_ms: u64, last_driven_ms: &Rc<st
 
 #[cfg(target_arch = "wasm32")]
 fn run_render_loop(
-    app: ChartApp,
+    mut app: ChartApp,
     provider: WebWindowProvider,
     bridge: Arc<mlc_backend_data_bridge::DataBridge>,
     profile_manager: mlc_app::user_manager::ProfileManager,
 ) -> Result<(), JsValue> {
+    // Boot-time reopen queue (shared-tab-reload-anchor arc, 2026-09-23):
+    // `ChartApp::new_window`'s restore path (in `run`, above) already
+    // seeded a placeholder + queue entry per shared tab that survived a
+    // reload at its saved slot. Drain it before `app` moves into
+    // `WebAppState` below — once fetched, each outcome is applied through
+    // the same `Rc<RefCell<WebAppState>>` every other post-boot async call
+    // in this shell uses (`cloud_session.rs`'s own `spawn_local` idiom).
+    // `spawn_share_reopen_fetches` itself no-ops in a non-`cloud` build
+    // (no `mlc-cloud` transport dependency there at all).
+    let reopen_queue = app.take_pending_reopen_shares();
     let state = Rc::new(RefCell::new(WebAppState::new(app, "chart", bridge.clone(), profile_manager)));
+    spawn_share_reopen_fetches(state.clone(), reopen_queue);
 
     // ── Perf snapshot export (owner ruling 2026-09-05: the chart keeps the
     // MEASUREMENT only; display/collection moved to dig2browser's CDP driver,

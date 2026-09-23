@@ -84,6 +84,7 @@ pub use keys::{
     ShellKey,
     ConceptKey,
     CandlePatternKey,
+    ShareViewerKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.
@@ -227,6 +228,12 @@ pub fn t_shell(key: ShellKey) -> &'static str {
 /// Translate an archetype-modal design-concept key using current global language
 #[inline]
 pub fn t_concept(key: ConceptKey) -> &'static str {
+    key.get(current_language())
+}
+
+/// Translate a share-viewer boot-time-reopen toast key using current global language
+#[inline]
+pub fn t_share_viewer(key: ShareViewerKey) -> &'static str {
     key.get(current_language())
 }
 

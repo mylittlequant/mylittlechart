@@ -52,7 +52,7 @@ pub mod watchlist_ui;
 pub mod workspace;
 
 pub use panels_store::TradingPanelsStore;
-pub use share_viewer::{PresetId, SharedChartMeta, StrippedIndicator};
+pub use share_viewer::{PendingReopenShare, PresetId, SharedChartMeta, StrippedIndicator};
 
 pub use input::KeyPress;
 pub use input::VaultSetupOutcome;
@@ -1029,6 +1029,37 @@ pub struct ChartApp {
 
     /// Pending "clone this share" request — mirror of `pending_open_share`.
     pub(crate) pending_clone_share: Option<String>,
+
+    /// Boot-time re-fetch queue for shared tabs that were open when the
+    /// profile was last saved (shared-tab-reload-anchor arc, 2026-09-23).
+    /// `new_window`'s restore path seeds one entry per placeholder it
+    /// installs via `share_viewer::ChartApp::install_shared_tab_
+    /// placeholders`; the shell drains this once via
+    /// [`Self::take_pending_reopen_shares`] and re-fetches each token
+    /// through whatever transport it already uses for a fresh
+    /// `open_shared_preset`, then reports the outcome back via
+    /// `fill_shared_placeholder`/`share_reopen_gone`/
+    /// `share_reopen_transient`.
+    pub(crate) pending_reopen_shares: Vec<share_viewer::PendingReopenShare>,
+
+    /// `placeholder preset id -> share token` for every boot-time
+    /// placeholder still waiting on its re-fetch outcome. `shared_chart_meta`
+    /// only gains an entry once the real preset lands (`open_shared_preset`/
+    /// `fill_shared_placeholder`), so a still-pending placeholder has no
+    /// other record of which token it came from — needed by
+    /// `share_viewer::ChartApp::collect_open_shared_tabs` so a save that
+    /// lands mid-fetch still persists the tab's slot instead of losing it.
+    pub(crate) pending_share_tokens: std::collections::HashMap<String, String>,
+
+    /// Shared tabs this session gave up re-fetching after a TRANSIENT
+    /// failure (offline / 5xx — item 2 of the shared-tab-reload-anchor
+    /// arc): the placeholder tab is dropped for the rest of THIS session
+    /// (no retry loop), but the token + saved index are kept here so the
+    /// NEXT boot tries again, unlike a GONE (404/410/403) outcome, which
+    /// drops the entry for good. Folded into `open_shared_tabs` at save
+    /// time by `collect_open_shared_tabs` in addition to whatever is still
+    /// live in `open_tabs`.
+    pub(crate) deferred_share_reopens: Vec<mlc_core::user_profile::profile::PersistedSharedTab>,
 
     /// Queued settings snapshot mutations — drained by App each frame and applied to AppState.
     pub snapshot_actions: Vec<SnapshotAction>,
@@ -3493,6 +3524,9 @@ impl ChartApp {
             shared_chart_meta: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
+            pending_reopen_shares: Vec::new(),
+            pending_share_tokens: std::collections::HashMap::new(),
+            deferred_share_reopens: Vec::new(),
             snapshot_actions: Vec::new(),
             template_actions: Vec::new(),
             perf_actions: Vec::new(),
@@ -3887,6 +3921,9 @@ impl ChartApp {
             shared_chart_meta: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
+            pending_reopen_shares: Vec::new(),
+            pending_share_tokens: std::collections::HashMap::new(),
+            deferred_share_reopens: Vec::new(),
             snapshot_actions: Vec::new(),
             template_actions: Vec::new(),
             perf_actions: Vec::new(),
@@ -4488,6 +4525,9 @@ impl ChartApp {
             shared_chart_meta: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
+            pending_reopen_shares: Vec::new(),
+            pending_share_tokens: std::collections::HashMap::new(),
+            deferred_share_reopens: Vec::new(),
             snapshot_actions: Vec::new(),
             template_actions: Vec::new(),
             perf_actions: Vec::new(),
@@ -4610,7 +4650,23 @@ impl ChartApp {
             {
                 let presets_guard = app.core.presets();
                 app.panel_app.open_tabs.retain(|id| presets_guard.contains_key(id));
+                drop(presets_guard);
 
+                // Re-anchor shared (read-only) tabs at their saved slot
+                // instead of letting the `retain` above silently drop them
+                // (owner report, item 1: "tabs change places after a
+                // reload" — see `install_shared_tab_placeholders`'s doc).
+                // Skipped when a per-window `restore` is coming (the block
+                // below runs its OWN reconcile against `ws.open_shared_tabs`
+                // and overwrites `open_tabs` wholesale) so a shared tab
+                // never gets two placeholders + two queued re-fetches from
+                // the legacy top-level list AND the per-window one.
+                if restore.is_none() {
+                    let shared = user_manager.profile.ui.open_shared_tabs.clone();
+                    app.install_shared_tab_placeholders(&shared);
+                }
+
+                let presets_guard = app.core.presets();
                 // Migration: old data has no open_tabs — open only the active preset.
                 if app.panel_app.open_tabs.is_empty() && !presets_guard.is_empty() {
                     if !app.panel_app.active_preset_id.is_empty()
@@ -4665,8 +4721,17 @@ impl ChartApp {
                     .cloned()
                     .collect()
             };
-            if !valid_tabs.is_empty() {
+            // Only touch `open_tabs` when this window's own restore has
+            // something to contribute (a surviving real tab or a shared
+            // one to re-anchor) — an empty `ws` otherwise falls through to
+            // whatever the legacy top-level seed above already produced,
+            // same as the pre-existing `!valid_tabs.is_empty()` gate.
+            if !valid_tabs.is_empty() || !ws.open_shared_tabs.is_empty() {
                 app.panel_app.open_tabs = valid_tabs;
+                // Re-anchor this window's own shared tabs — see the
+                // matching (and, for this restore path, deliberately
+                // skipped) block in the legacy top-level seed above.
+                app.install_shared_tab_placeholders(&ws.open_shared_tabs);
             }
             if !ws.active_preset_id.is_empty()
                 && app.core.presets().contains_key(&ws.active_preset_id)

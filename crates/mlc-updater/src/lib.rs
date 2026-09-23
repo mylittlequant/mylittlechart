@@ -28,7 +28,7 @@ pub mod auth_probe;
 pub mod me;
 pub mod tier_store;
 
-pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState, NickState, ForumCommand, ForumState, ForumV2Request, ForumV2State, DmRequest, DmState, ShareState, ShareOpenState};
+pub use state::{UpdaterHandle, UpdaterCommand, UpdateStatus, UpdateInfo, AuthStatus, SyncStatus, BuildAttestation, SyncConflict, ConflictResolution, Entitlements, RedeemState, NickState, ForumCommand, ForumState, ForumV2Request, ForumV2State, DmRequest, DmState, ShareState, ShareOpenState, ShareReopenState};
 pub use share::{SharedChartResponse, SharedChartMetaWire, ClonePresetResponse, StrippedIndicatorWire};
 pub use forum::{ForumThreadSummary, ForumThread, ForumReply};
 pub use forum_v2::{ForumBoard, ForumThreadV2Summary, ForumThreadV2, ForumReplyNode, ForumSearchHit, ForumMe};
@@ -231,6 +231,11 @@ pub fn start(
     // starts Idle, republished on every `OpenShare`/`CloneShare` command.
     let (share_open_tx, share_open_rx) = watch::channel(state::ShareOpenState::Idle);
 
+    // Channel for the outcome of the most recent boot-time `ReopenShare`
+    // request — starts Idle, republished on every such command. Separate
+    // from `share_open_tx` (see `ShareReopenState`'s own doc).
+    let (share_reopen_tx, share_reopen_rx) = watch::channel(state::ShareReopenState::Idle);
+
     // Channel for cloud sync status — starts Idle, updated by the updater loop.
     let (sync_status_tx, sync_status_rx) = watch::channel(state::SyncStatus::Idle);
 
@@ -252,11 +257,12 @@ pub fn start(
         dm_rx,
         share_rx,
         share_open_rx,
+        share_reopen_rx,
         sync_status_rx,
         sync_checksums_rx,
     };
 
-    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, redeem_tx, nick_tx, forum_tx, forum_v2_tx, dm_tx, share_tx, share_open_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
+    runtime.spawn(updater_loop(status_tx, auth_tx, entitlements_tx, redeem_tx, nick_tx, forum_tx, forum_v2_tx, dm_tx, share_tx, share_open_tx, share_reopen_tx, sync_status_tx, sync_checksums_tx, cmd_rx, telemetry_source, connected, initial_synced_items, initial_last_synced_checksums, data_dir, build_attest, profile_id, server_port));
 
     handle
 }
@@ -279,6 +285,7 @@ async fn updater_loop(
     dm_tx: watch::Sender<state::DmState>,
     share_tx: watch::Sender<state::ShareState>,
     share_open_tx: watch::Sender<state::ShareOpenState>,
+    share_reopen_tx: watch::Sender<state::ShareReopenState>,
     sync_status_tx: watch::Sender<state::SyncStatus>,
     sync_checksums_tx: watch::Sender<std::collections::HashMap<String, String>>,
     mut cmd_rx: mpsc::UnboundedReceiver<state::UpdaterCommand>,
@@ -1180,6 +1187,42 @@ async fn updater_loop(
                                         let _ = share_open_tx.send(state::ShareOpenState::Failed { message: e });
                                     }
                                 }
+                            }
+                        }
+                    }
+                    state::UpdaterCommand::ReopenShare { token, placeholder_id } => {
+                        // Anonymous-ok, same reasoning as `OpenShare` above
+                        // — the token is the capability.
+                        let stored = token_store::load_token();
+                        let auth_header = stored.as_ref().map(|t| format!("Bearer {}", t.token));
+                        match share::get_share_classified(&http_client, auth_header.as_deref(), &token).await {
+                            Ok(resp) => {
+                                log::info!("[Updater] reopen_share: ok, kind={}", resp.kind);
+                                let share::SharedChartResponse { kind, title, owner, preset, expires_at, rights } = resp;
+                                let meta = share::SharedChartMetaWire {
+                                    kind,
+                                    title,
+                                    owner_label: owner,
+                                    rights,
+                                    expires_at,
+                                };
+                                let _ = share_reopen_tx.send(state::ShareReopenState::Opened {
+                                    placeholder_id,
+                                    meta,
+                                    preset_json: preset,
+                                });
+                            }
+                            Err(share::ShareFetchError::Gone) => {
+                                log::info!("[Updater] reopen_share: gone (404/403) for placeholder '{}'", placeholder_id);
+                                let _ = share_reopen_tx.send(state::ShareReopenState::Gone { placeholder_id });
+                            }
+                            Err(share::ShareFetchError::Transient(message)) => {
+                                log::warn!("[Updater] reopen_share transient failure: {}", message);
+                                let _ = share_reopen_tx.send(state::ShareReopenState::Transient {
+                                    placeholder_id,
+                                    token,
+                                    message,
+                                });
                             }
                         }
                     }

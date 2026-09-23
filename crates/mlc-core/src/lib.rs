@@ -441,6 +441,7 @@ pub use user_profile::{
     UserProfile,
     VaultSecrets,
     WindowState,
+    PersistedSharedTab,
     ProfileError,
     ProfileMeta,
     ProfileIndex,

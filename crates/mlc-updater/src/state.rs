@@ -204,6 +204,39 @@ pub enum ShareOpenState {
     Failed { message: String },
 }
 
+/// Outcome of the most recent [`UpdaterCommand::ReopenShare`], broadcast
+/// via [`UpdaterHandle::share_reopen_rx`] — a separate mailbox from
+/// [`ShareOpenState`] (not reused) because a boot-time reopen can be one of
+/// SEVERAL in flight for different placeholder tabs at once, and because
+/// its failure needs the Gone/Transient split `crate::share::
+/// ShareFetchError` provides, which `ShareOpenState::Failed`'s flat
+/// `message: String` does not carry.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum ShareReopenState {
+    /// No reopen outcome since the last one was drained.
+    #[default]
+    Idle,
+    /// The share resolved — `preset_json` is `None` only for a
+    /// `"screenshot"` share (nothing to re-anchor as a live tab; the
+    /// caller treats this the same as `Gone`).
+    Opened {
+        placeholder_id: String,
+        meta: crate::share::SharedChartMetaWire,
+        preset_json: Option<serde_json::Value>,
+    },
+    /// 404/403 — permanently gone (unknown, expired, revoked, or access
+    /// withdrawn). The caller drops the placeholder for good.
+    Gone { placeholder_id: String },
+    /// Network failure or a 5xx — worth retrying on the next boot. The
+    /// caller drops the placeholder for THIS session only, keeping `token`
+    /// for the next boot's retry.
+    Transient {
+        placeholder_id: String,
+        token: String,
+        message: String,
+    },
+}
+
 /// Commands for the paid-only forum board, wrapped in
 /// [`UpdaterCommand::Forum`].
 #[derive(Debug, Clone)]
@@ -522,6 +555,16 @@ pub enum UpdaterCommand {
     /// `UpdaterCommand::RedeemCode`. Outcome broadcast via
     /// [`UpdaterHandle::share_open_rx`].
     CloneShare { token: String },
+    /// Boot-time silent re-fetch of a shared tab that was open when the
+    /// profile was last saved (shared-tab-reload-anchor arc, 2026-09-23,
+    /// items 1/2) — distinct from `OpenShare` (a fresh, user-initiated
+    /// open) because the outcome must distinguish "gone" from "transient"
+    /// (`share::ShareFetchError`) so `ChartApp` can drop the placeholder
+    /// for good vs. keep it queued for the next boot. `placeholder_id`
+    /// rides along so the outcome lands on the right tab regardless of
+    /// which window installed it. Anonymous-ok, same as `OpenShare`.
+    /// Outcome broadcast via [`UpdaterHandle::share_reopen_rx`].
+    ReopenShare { token: String, placeholder_id: String },
     /// Enable or disable cloud connectivity at runtime.
     /// `true` = cloud enabled (OTA, sync, telemetry),
     /// `false` = cloud disabled (stop all network activity).
@@ -698,6 +741,12 @@ pub struct UpdaterHandle {
     /// Same polling contract as [`Self::redeem_rx`]; starts at
     /// [`ShareOpenState::Idle`].
     pub share_open_rx: watch::Receiver<ShareOpenState>,
+    /// Outcome of the most recent [`UpdaterCommand::ReopenShare`] attempt.
+    ///
+    /// Same polling contract as [`Self::redeem_rx`]; starts at
+    /// [`ShareReopenState::Idle`]. Separate mailbox from `share_open_rx` —
+    /// see [`ShareReopenState`]'s own doc for why.
+    pub share_reopen_rx: watch::Receiver<ShareReopenState>,
     /// Current cloud sync status.
     ///
     /// The UI polls `has_changed()` each frame and displays progress

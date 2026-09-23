@@ -101,6 +101,46 @@ pub struct WindowState {
     /// into the `DockingManager`.
     #[serde(default)]
     pub agents_tab_leaves: Vec<PersistedAgentLeaf>,
+
+    /// Shared (read-only) tabs open in this window at save time
+    /// (shared-tab-reload-anchor arc, 2026-09-23). The frozen preset a
+    /// shared tab shows is deliberately NEVER written to disk (it must
+    /// stay read-only — see `mlc-app`'s `share_viewer` module doc), so
+    /// without this list the tab's id would sit in `open_tabs` pointing at
+    /// nothing: on the next boot it silently drops and every tab to its
+    /// right reflows left (owner report: "tabs change places after a
+    /// reload"). `ChartApp::install_shared_tab_placeholders` re-anchors
+    /// each entry at its saved `index` instead, with a placeholder queued
+    /// for re-fetch through whatever transport the shell already uses to
+    /// open a share link. `#[serde(default)]` — older profile files carry
+    /// no such list and load with an empty one.
+    #[serde(default)]
+    pub open_shared_tabs: Vec<PersistedSharedTab>,
+}
+
+// =============================================================================
+// PersistedSharedTab
+// =============================================================================
+
+/// One shared (read-only) tab that was open when the profile was last
+/// saved — see [`WindowState::open_shared_tabs`] / [`ProfileUiSettings::
+/// open_shared_tabs`]'s own doc for why this exists. Never carries the
+/// preset itself, only enough to re-anchor the tab's slot and re-fetch it:
+/// the share token, which window it belongs to, and its index in that
+/// window's `open_tabs` at save time.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PersistedSharedTab {
+    /// The share token `ChartApp::open_shared_preset` was (or will be)
+    /// opened from — every resolution path (web `?share=` query, the
+    /// native `mylittlechart://share/<token>` deep link, and the Agent API
+    /// `share/open` command) collapses to this token before reaching
+    /// `share_viewer`.
+    pub token: String,
+    /// Which window this tab belongs to (`ChartApp::window_id`).
+    #[serde(default)]
+    pub window_id: String,
+    /// Index in that window's `open_tabs` at save time.
+    pub index: usize,
 }
 
 // =============================================================================
@@ -635,6 +675,14 @@ pub struct ProfileUiSettings {
     #[serde(default)]
     pub windows: Vec<WindowState>,
 
+    /// Legacy top-level mirror of `windows[0].open_shared_tabs` — same
+    /// "windows[0]" mirroring [`Self::open_tabs`]'s own doc already
+    /// explains, kept for the same single-window / no-`windows[]`-yet
+    /// fallback case. See [`WindowState::open_shared_tabs`] for the field's
+    /// own rationale.
+    #[serde(default)]
+    pub open_shared_tabs: Vec<PersistedSharedTab>,
+
     /// User-visible profile name ("Default", "Trading", "Debug", etc.) —
     /// cosmetic profile-picker label.
     #[serde(default = "default_profile_name")]
@@ -865,6 +913,7 @@ impl ProfileUiSettings {
             device_name: String::new(),
             language: default_language(),
             windows: Vec::new(),
+            open_shared_tabs: Vec::new(),
             // An anonymous profile's identity is its UUID (`profile_id`);
             // it carries no user-facing name at all (owner's identity ruling
             // 2026-09-02). A nickname is an ACCOUNT attribute obtained
@@ -1517,6 +1566,27 @@ mod json_compat_tests {
         // Fixture predates `pin_granularity_favorites` (кусок 3) — must
         // default to false, never fail deserialization.
         assert!(!profile.ui.pin_granularity_favorites);
+        // Fixture also predates `open_shared_tabs`
+        // (shared-tab-reload-anchor arc, 2026-09-23) — must default to
+        // empty, never fail deserialization.
+        assert!(profile.ui.open_shared_tabs.is_empty());
+    }
+
+    #[test]
+    fn legacy_window_state_without_open_shared_tabs_deserializes() {
+        // A `WindowState` saved before the shared-tab-reload-anchor arc
+        // carries no `open_shared_tabs` key at all — same
+        // `#[serde(default)]` regression gate as `ProfileUiSettings`'s own
+        // fixture above, isolated to the per-window struct.
+        let json = r#"{
+            "window_id": "win_1",
+            "open_tabs": ["preset_1"],
+            "active_preset_id": "preset_1"
+        }"#;
+        let ws: WindowState = serde_json::from_str(json)
+            .expect("legacy WindowState json must deserialize");
+        assert!(ws.open_shared_tabs.is_empty());
+        assert_eq!(ws.open_tabs, vec!["preset_1".to_string()]);
     }
 
     #[test]

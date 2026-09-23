@@ -70,6 +70,21 @@ pub struct StrippedIndicator {
     pub name: String,
 }
 
+/// One boot-time re-fetch request queued by
+/// [`ChartApp::install_shared_tab_placeholders`] — see
+/// [`crate::ChartApp`]'s `pending_reopen_shares` field doc. The shell
+/// drains these via [`ChartApp::take_pending_reopen_shares`], re-fetches
+/// `token` through whatever transport it already uses for a fresh
+/// `open_shared_preset`, and reports the outcome back via
+/// [`ChartApp::fill_shared_placeholder`] / [`ChartApp::share_reopen_gone`] /
+/// [`ChartApp::share_reopen_transient`], naming `placeholder_id` so the
+/// outcome lands on the right tab.
+#[derive(Debug, Clone)]
+pub struct PendingReopenShare {
+    pub token: String,
+    pub placeholder_id: PresetId,
+}
+
 /// Build a fresh, collision-safe preset id in the same shape
 /// `ChartPreset::new` uses (`"{prefix}_{unix_secs}_{nanos_suffix}"`), with a
 /// caller-chosen prefix so a shared-viewer tab (`"shared"`) and a cloned tab
@@ -204,5 +219,294 @@ impl ChartApp {
         self.push_system_event(SystemEventKind::Share, "Chart cloned", body, true);
 
         id
+    }
+
+    // =========================================================================
+    // Boot-time reopen (shared-tab-reload-anchor arc, 2026-09-23)
+    // =========================================================================
+    //
+    // A shared tab's frozen preset is deliberately never written to disk (see
+    // this module's own header doc), so a plain `open_tabs.retain(|id|
+    // presets.contains_key(id))` on boot silently drops its id and reflows
+    // every tab to its right — owner report: "tabs change places after a
+    // reload if one of them was imported from another user." The methods
+    // below re-anchor the tab's SLOT instead: a placeholder preset goes in
+    // at the saved index (so the tab strip shows something instead of
+    // nothing), the shell re-fetches the token through the same transport a
+    // fresh share-open already uses, and the outcome lands back on that
+    // exact placeholder id — never a fresh append.
+
+    /// Mint a fresh, bubble-less placeholder preset for a shared tab whose
+    /// real content isn't on hand yet, insert it under a fresh id (so the
+    /// tab strip's `presets.get(id)` lookup shows something instead of
+    /// silently vanishing), mark it read-only exactly like a fully-opened
+    /// share, and queue `token` for the shell to re-fetch via
+    /// [`Self::take_pending_reopen_shares`]. Returns the placeholder's id.
+    fn queue_shared_tab_placeholder(&mut self, token: &str) -> PresetId {
+        let id = fresh_preset_id("shared");
+        let mut placeholder = ChartPreset::new("Loading shared chart…".to_string());
+        placeholder.id = id.clone();
+        self.readonly_preset_ids.insert(id.clone());
+        self.core.presets_mut().insert(id.clone(), placeholder);
+        self.pending_share_tokens.insert(id.clone(), token.to_string());
+        self.pending_reopen_shares.push(PendingReopenShare {
+            token: token.to_string(),
+            placeholder_id: id.clone(),
+        });
+        id
+    }
+
+    /// Re-anchor every entry of `shared` into `open_tabs` at its saved
+    /// index, replacing whatever the caller's own dead-id filter already
+    /// dropped. `open_tabs` must already be filtered down to ids that
+    /// survive that filter (`presets.contains_key`) BEFORE this runs — see
+    /// [`reinsert_at_saved_indices`]'s own doc for why that ordering
+    /// matters and is proven separately.
+    pub(crate) fn install_shared_tab_placeholders(
+        &mut self,
+        shared: &[mlc_core::user_profile::profile::PersistedSharedTab],
+    ) {
+        let entries: Vec<(usize, PresetId)> = shared
+            .iter()
+            .map(|entry| (entry.index, self.queue_shared_tab_placeholder(&entry.token)))
+            .collect();
+        reinsert_at_saved_indices(&mut self.panel_app.open_tabs, &entries);
+    }
+
+    /// One-shot drain of the boot-time reopen queue — see
+    /// `ChartApp::pending_reopen_shares`'s own doc.
+    pub fn take_pending_reopen_shares(&mut self) -> Vec<PendingReopenShare> {
+        std::mem::take(&mut self.pending_reopen_shares)
+    }
+
+    /// Fill a placeholder installed by [`Self::install_shared_tab_placeholders`]
+    /// with the real, fetched preset. Same restore shape `open_shared_preset`
+    /// takes (version check, id remap, read-only marking, meta) but keeps
+    /// the placeholder's OWN id — already anchored in `open_tabs` at the
+    /// right slot — instead of minting a new one, so the tab strip needs no
+    /// further reconciliation. Materializes the chart live only when
+    /// `placeholder_id` is this window's currently active tab (the tab the
+    /// user is staring at, which would otherwise sit on empty placeholder
+    /// content); otherwise the ordinary click-to-load cold path picks up
+    /// the now-real preset the next time the tab is clicked, exactly like
+    /// any other closed background tab.
+    pub fn fill_shared_placeholder(
+        &mut self,
+        placeholder_id: &str,
+        mut meta: SharedChartMeta,
+        mut preset: ChartPreset,
+    ) -> Result<(), String> {
+        if preset.version != PRESET_VERSION {
+            return Err(format!(
+                "shared preset version {} unsupported (this build is on {})",
+                preset.version, PRESET_VERSION,
+            ));
+        }
+        preset.remap_ids_for_import();
+        preset.id = placeholder_id.to_string();
+        preset.name = format!("{} — {}", meta.title, meta.owner_label);
+
+        // A boot-time re-fetch (`UpdaterCommand::ReopenShare`) doesn't
+        // round-trip the token through its outcome (it would be redundant —
+        // the shell sent it in the request) — recover it from
+        // `pending_share_tokens`, which `queue_shared_tab_placeholder` set
+        // at boot and nothing else has touched since. A fresh
+        // `open_shared_preset` never reaches this method, so `meta.token`
+        // (set by the caller there) is the only other source and is left
+        // untouched when there is no pending entry.
+        if let Some(token) = self.pending_share_tokens.remove(placeholder_id) {
+            meta.token = token;
+        }
+
+        self.readonly_preset_ids.insert(placeholder_id.to_string());
+        self.shared_chart_meta.insert(placeholder_id.to_string(), meta);
+        self.core.presets_mut().insert(placeholder_id.to_string(), preset);
+        if self.panel_app.active_preset_id == placeholder_id {
+            self.load_preset(placeholder_id);
+        }
+        Ok(())
+    }
+
+    /// Drop a placeholder tab from `open_tabs`/`presets`/
+    /// `readonly_preset_ids`, falling back the active tab exactly like an
+    /// ordinary `CloseTab` when it was the one showing. Shared by
+    /// [`Self::share_reopen_gone`] and [`Self::share_reopen_transient`] —
+    /// see their own docs for what happens to the token afterward.
+    fn remove_shared_placeholder_tab(&mut self, placeholder_id: &str) {
+        self.panel_app.open_tabs.retain(|t| t != placeholder_id);
+        self.readonly_preset_ids.remove(placeholder_id);
+        self.shared_chart_meta.remove(placeholder_id);
+        self.pending_share_tokens.remove(placeholder_id);
+        self.core.presets_mut().remove(placeholder_id);
+        if self.panel_app.active_preset_id == placeholder_id {
+            if let Some(next) = self.panel_app.open_tabs.last().cloned() {
+                self.process_chart_out_event(mlc_core::events::ChartOutEvent::LoadPreset { id: next });
+            } else {
+                self.panel_app.active_preset_id = "__default__".to_string();
+            }
+        }
+        self.persist_profile();
+    }
+
+    /// The re-fetch for `placeholder_id` came back GONE — 404/410/403
+    /// (unknown, expired, or revoked token, or access withdrawn — the
+    /// server bundles all three into one bare 404 by design, see
+    /// `mlc-updater/src/share.rs::error_message`'s own doc). Drops the
+    /// placeholder for good: no reorder of the remaining tabs beyond
+    /// closing that one slot, one toast through the existing system-event/
+    /// toast path, and the entry never comes back in `open_shared_tabs` on
+    /// the next save (it is no longer in `open_tabs` for
+    /// `collect_open_shared_tabs` to find).
+    pub fn share_reopen_gone(&mut self, placeholder_id: &str) {
+        self.remove_shared_placeholder_tab(placeholder_id);
+        self.push_system_event(
+            SystemEventKind::Share,
+            mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneTitle),
+            mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneBody),
+            true,
+        );
+    }
+
+    /// The re-fetch for `placeholder_id` failed TRANSIENTLY — offline or a
+    /// 5xx, not a verdict on the share itself. Drops the placeholder for
+    /// the REST OF THIS SESSION (no in-session retry loop) but keeps
+    /// `token` + the tab's current index in `deferred_share_reopens`, which
+    /// `collect_open_shared_tabs` folds into the next save's
+    /// `open_shared_tabs` regardless of `open_tabs` membership — so the
+    /// NEXT boot's `install_shared_tab_placeholders` tries again. No toast:
+    /// this is not "gone," just "couldn't reach it right now."
+    pub fn share_reopen_transient(&mut self, placeholder_id: &str, token: &str) {
+        if let Some(index) = self.panel_app.open_tabs.iter().position(|t| t == placeholder_id) {
+            self.deferred_share_reopens.push(mlc_core::user_profile::profile::PersistedSharedTab {
+                token: token.to_string(),
+                window_id: self.window_id.clone(),
+                index,
+            });
+        }
+        self.remove_shared_placeholder_tab(placeholder_id);
+    }
+
+    /// Whether `preset_id` is currently open as a tab in this window — used
+    /// by shells to route a re-fetch outcome to the window that actually
+    /// holds the matching placeholder (presets live in the shared
+    /// `BackendCore`, but `open_tabs`/`readonly_preset_ids` are per-window
+    /// `ChartApp` fields).
+    pub fn has_open_tab(&self, preset_id: &str) -> bool {
+        self.panel_app.open_tabs.iter().any(|t| t == preset_id)
+    }
+
+    /// Build the persisted list of currently-open shared (read-only) tabs
+    /// — used by both `build_user_profile` (legacy top-level mirror) and
+    /// `build_window_state` (per-window) so a reload can re-anchor them
+    /// instead of silently dropping their ids (item 1). Includes both
+    /// fully-resolved shared tabs (`shared_chart_meta`) and still-pending
+    /// placeholders queued this session but not yet fetched
+    /// (`pending_share_tokens` — their token isn't in `shared_chart_meta`
+    /// yet, so nothing else remembers it), plus carries forward
+    /// `deferred_share_reopens` — placeholders this session gave up on
+    /// after a transient re-fetch failure, kept for the NEXT boot to retry
+    /// even though their placeholder tab is already gone from `open_tabs`
+    /// (item 2).
+    pub(crate) fn collect_open_shared_tabs(
+        &self,
+    ) -> Vec<mlc_core::user_profile::profile::PersistedSharedTab> {
+        let mut out: Vec<mlc_core::user_profile::profile::PersistedSharedTab> = self
+            .panel_app
+            .open_tabs
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| self.is_readonly_tab(id))
+            .filter_map(|(index, id)| {
+                let token = self
+                    .shared_chart_meta
+                    .get(id)
+                    .map(|meta| meta.token.clone())
+                    .or_else(|| self.pending_share_tokens.get(id).cloned())?;
+                Some(mlc_core::user_profile::profile::PersistedSharedTab {
+                    token,
+                    window_id: self.window_id.clone(),
+                    index,
+                })
+            })
+            .collect();
+        out.extend(self.deferred_share_reopens.iter().cloned());
+        out
+    }
+}
+
+/// Re-insert `entries` (each an ORIGINAL, pre-drop `(index, id)` pair) into
+/// `open_tabs` in ascending-index order, reproducing the exact order the
+/// list had before every entry's stale id was dropped by a dead-id
+/// `retain`. Each `Vec::insert` shifts only the entries after its own
+/// index, which have not been processed yet (they're still ahead in
+/// `entries`, sorted) — so processing low-to-high undoes the retain's
+/// left-shift exactly, even for several shared tabs at once. Split out of
+/// [`ChartApp::install_shared_tab_placeholders`] as a free, `ChartApp`-free
+/// function so this ordering invariant is unit-testable on its own (see
+/// `tests` below) without constructing a `ChartApp`/`BackendCore`.
+fn reinsert_at_saved_indices(open_tabs: &mut Vec<PresetId>, entries: &[(usize, PresetId)]) {
+    let mut ordered: Vec<&(usize, PresetId)> = entries.iter().collect();
+    ordered.sort_by_key(|(index, _)| *index);
+    for (index, id) in ordered {
+        let at = (*index).min(open_tabs.len());
+        open_tabs.insert(at, id.clone());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn s(text: &str) -> String {
+        text.to_string()
+    }
+
+    #[test]
+    fn reinsert_single_slot_restores_original_order() {
+        // Saved order was [A, B, shared, C] (shared@index 2); the dead-id
+        // retain already dropped it, leaving [A, B, C].
+        let mut open_tabs = vec![s("A"), s("B"), s("C")];
+        reinsert_at_saved_indices(&mut open_tabs, &[(2, s("ph1"))]);
+        assert_eq!(open_tabs, vec![s("A"), s("B"), s("ph1"), s("C")]);
+    }
+
+    #[test]
+    fn reinsert_multiple_slots_restores_original_order() {
+        // Saved order was [A, B, shared1, C, shared2, D]
+        // (shared1@2, shared2@4); retain dropped both, leaving [A, B, C, D].
+        let mut open_tabs = vec![s("A"), s("B"), s("C"), s("D")];
+        reinsert_at_saved_indices(
+            &mut open_tabs,
+            &[(4, s("ph2")), (2, s("ph1"))], // deliberately out of order
+        );
+        assert_eq!(
+            open_tabs,
+            vec![s("A"), s("B"), s("ph1"), s("C"), s("ph2"), s("D")]
+        );
+    }
+
+    #[test]
+    fn reinsert_adjacent_slots_keep_their_own_relative_order() {
+        // Two shared tabs saved back-to-back at indices 1 and 2.
+        let mut open_tabs = vec![s("A"), s("D")];
+        reinsert_at_saved_indices(&mut open_tabs, &[(1, s("ph1")), (2, s("ph2"))]);
+        assert_eq!(open_tabs, vec![s("A"), s("ph1"), s("ph2"), s("D")]);
+    }
+
+    #[test]
+    fn reinsert_index_past_end_clamps_to_append() {
+        // A saved index beyond the current (shorter) list length — e.g. the
+        // shared tab was last in a strip whose other tabs also went away —
+        // appends instead of panicking.
+        let mut open_tabs = vec![s("A")];
+        reinsert_at_saved_indices(&mut open_tabs, &[(9, s("ph1"))]);
+        assert_eq!(open_tabs, vec![s("A"), s("ph1")]);
+    }
+
+    #[test]
+    fn reinsert_empty_entries_leaves_open_tabs_untouched() {
+        let mut open_tabs = vec![s("A"), s("B")];
+        reinsert_at_saved_indices(&mut open_tabs, &[]);
+        assert_eq!(open_tabs, vec![s("A"), s("B")]);
     }
 }

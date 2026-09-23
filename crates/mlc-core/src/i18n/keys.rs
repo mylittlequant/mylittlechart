@@ -29,6 +29,7 @@ use super::tables::{
     POSITION_POINT_KEY_TABLE,
     SHELL_KEY_TABLE,
     CONCEPT_KEY_TABLE,
+    SHARE_VIEWER_KEY_TABLE,
 };
 
 // =============================================================================
@@ -3589,6 +3590,44 @@ impl uzor::i18n::Translate for CandlePatternKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&CANDLE_PATTERN_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Share Viewer Keys (boot-time reopen toast)
+// =============================================================================
+
+/// Strings for the share-viewer's boot-time re-fetch toast
+/// (shared-tab-reload-anchor arc, 2026-09-23): shown when a shared tab that
+/// was open at the last save no longer resolves (404/410/403 — revoked,
+/// expired, or access withdrawn) via `ChartApp::share_reopen_gone`, through
+/// the existing system-event/toast path (`push_system_event`).
+///
+/// Variant order is **frozen** — discriminant == row index in
+/// `SHARE_VIEWER_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum ShareViewerKey {
+    /// Toast title: "Shared chart unavailable".
+    SharedChartGoneTitle = 0,
+    /// Toast body: "This shared chart is no longer available.".
+    SharedChartGoneBody = 1,
+}
+
+impl ShareViewerKey {
+    pub const COUNT: usize = 2;
+
+    /// Get translation for this key, with En fallback for empty cells.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&SHARE_VIEWER_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for ShareViewerKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&SHARE_VIEWER_KEY_TABLE[self as usize], lang_index)
     }
 }
 

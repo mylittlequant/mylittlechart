@@ -7454,6 +7454,68 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     mlc_updater::ShareOpenState::Idle | mlc_updater::ShareOpenState::Working => {}
                 }
             }
+            // Boot-time reopen outcome (shared-tab-reload-anchor arc,
+            // 2026-09-23) — edge-triggered same as `share_open_rx` above,
+            // but routed by `placeholder_id` to WHICHEVER window actually
+            // holds that tab (`ChartApp::has_open_tab`) rather than
+            // `system_event_window_mut()`'s "one window speaks for the
+            // profile" pick: presets live in the shared `BackendCore`, but
+            // `open_tabs`/`readonly_preset_ids` are per-window `ChartApp`
+            // fields, so the outcome must land on the SAME window that
+            // installed the placeholder.
+            if self.updater_handle.share_reopen_rx.has_changed().unwrap_or(false) {
+                let outcome = self.updater_handle.share_reopen_rx.borrow_and_update().clone();
+                match outcome {
+                    mlc_updater::ShareReopenState::Opened { placeholder_id, meta, preset_json } => {
+                        let outcome: Result<(), String> = if meta.kind != "live" {
+                            Err("a screenshot share has no chart to re-anchor".to_string())
+                        } else {
+                            match preset_json {
+                                None => Err("server sent no preset for a live share".to_string()),
+                                Some(value) => match serde_json::from_value::<mlc_core::preset::preset::ChartPreset>(value) {
+                                    Err(e) => Err(format!("could not read shared preset: {}", e)),
+                                    Ok(preset) => {
+                                        let shared_meta = mlc_app::SharedChartMeta {
+                                            // `fill_shared_placeholder` recovers the real
+                                            // token from its own `pending_share_tokens`
+                                            // (`ShareReopenState::Opened` doesn't carry
+                                            // one — see that variant's doc).
+                                            token: String::new(),
+                                            title: meta.title,
+                                            owner_label: meta.owner_label,
+                                            kind: meta.kind,
+                                            rights: meta.rights,
+                                            expires_at: meta.expires_at,
+                                        };
+                                        match self.windows.values_mut().find(|pw| pw.chart.has_open_tab(&placeholder_id)) {
+                                            None => Ok(()), // tab already closed this session — nothing to fill
+                                            Some(pw) => pw.chart.fill_shared_placeholder(&placeholder_id, shared_meta, preset).map(|_| ()),
+                                        }
+                                    }
+                                },
+                            }
+                        };
+                        if let Err(message) = outcome {
+                            eprintln!("[ChartApp] reopen_share '{}' failed to apply: {}", placeholder_id, message);
+                            if let Some(pw) = self.windows.values_mut().find(|pw| pw.chart.has_open_tab(&placeholder_id)) {
+                                pw.chart.share_reopen_gone(&placeholder_id);
+                            }
+                        }
+                    }
+                    mlc_updater::ShareReopenState::Gone { placeholder_id } => {
+                        if let Some(pw) = self.windows.values_mut().find(|pw| pw.chart.has_open_tab(&placeholder_id)) {
+                            pw.chart.share_reopen_gone(&placeholder_id);
+                        }
+                    }
+                    mlc_updater::ShareReopenState::Transient { placeholder_id, token, message } => {
+                        eprintln!("[ChartApp] reopen_share '{}' transient failure: {}", placeholder_id, message);
+                        if let Some(pw) = self.windows.values_mut().find(|pw| pw.chart.has_open_tab(&placeholder_id)) {
+                            pw.chart.share_reopen_transient(&placeholder_id, &token);
+                        }
+                    }
+                    mlc_updater::ShareReopenState::Idle => {}
+                }
+            }
             // Forum board state — edge-triggered same as `redeem_rx`/
             // `nick_rx` above, held as the raw `mlc_updater::ForumState`
             // (not mapped into a UI shape here) because interpreting it
@@ -8174,6 +8236,21 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     .updater_handle
                     .cmd_tx
                     .send(mlc_updater::UpdaterCommand::CloneShare { token });
+            }
+
+            // Boot-time reopen queue (shared-tab-reload-anchor arc,
+            // 2026-09-23): `ChartApp::new_window`'s restore path seeded a
+            // placeholder + queue entry per shared tab that survived a
+            // reload at its saved slot — fire one `ReopenShare` per entry,
+            // same "ChartApp does no network IO itself" hand-off as the two
+            // blocks above. The reply lands on `share_reopen_rx` below and
+            // is routed back by `placeholder_id`, not by window, so it does
+            // not matter that this loop iterates every window every frame.
+            for pending in pw.chart.take_pending_reopen_shares() {
+                let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::ReopenShare {
+                    token: pending.token,
+                    placeholder_id: pending.placeholder_id,
+                });
             }
 
             // Tooltip tick — fires when cursor is stationary (no CursorMoved events)

@@ -222,6 +222,58 @@ pub async fn get_share(
     resp.json::<SharedChartResponse>().await.map_err(|e| format!("Parse error: {}", e))
 }
 
+/// Classification of a boot-time share re-fetch failure
+/// (shared-tab-reload-anchor arc, 2026-09-23, `UpdaterCommand::ReopenShare`)
+/// — distinguishes "this share is permanently gone" from "could not reach
+/// the server right now" so the caller can drop a re-anchored placeholder
+/// tab for good in the first case, but only for THIS session in the
+/// second (item 2 of the arc).
+#[derive(Debug)]
+pub enum ShareFetchError {
+    /// 404/403 — unknown, expired, or revoked token, or access withdrawn.
+    /// The server bundles all three into one bare 404 by design (this
+    /// module's own doc on [`error_message`]); a 403 reads the same way
+    /// here (no rights left on the link for this caller).
+    Gone,
+    /// Network failure (offline) or a 5xx — worth retrying on the next
+    /// boot rather than dropping the tab's slot for good.
+    Transient(String),
+}
+
+/// Same wire call as [`get_share`], but classifies a failure instead of
+/// collapsing it into one opaque sentence — see [`ShareFetchError`]'s own
+/// doc for why the boot-time reopen path needs this and the interactive
+/// "open a share link" path (`get_share`) does not: a person watching an
+/// error message doesn't need it split into "retry automatically" vs.
+/// "don't bother," a silent boot-time re-fetch does.
+pub async fn get_share_classified(
+    client: &reqwest::Client,
+    auth_header: Option<&str>,
+    token: &str,
+) -> Result<SharedChartResponse, ShareFetchError> {
+    let url = format!("{}/api/share/{}", UPDATE_SERVER, token);
+    let mut req = client.get(&url);
+    if let Some(auth) = auth_header {
+        req = req.header("Authorization", auth);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| ShareFetchError::Transient(format!("Request failed: {}", e)))?;
+
+    let status = resp.status();
+    if status.is_success() {
+        return resp
+            .json::<SharedChartResponse>()
+            .await
+            .map_err(|e| ShareFetchError::Transient(format!("Parse error: {}", e)));
+    }
+    if status.as_u16() == 404 || status.as_u16() == 403 {
+        return Err(ShareFetchError::Gone);
+    }
+    Err(ShareFetchError::Transient(format!("Server returned {}", status)))
+}
+
 /// `POST /api/share/{token}/clone` — auth required. 403 when the caller's
 /// effective rights on this token do not include `"clone"`; 400 when the
 /// token names a `"screenshot"` share (nothing to clone); same bare-404

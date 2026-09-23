@@ -1882,6 +1882,52 @@ pub(super) static CANDLE_PATTERN_KEY_TABLE: [[&str; N_LANG]; 34] = [
     /* 33 DownsideGapThreeMethods */ [ "Downside Gap Three Methods",  "Метод трёх с гэпом вниз",         "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
+// =============================================================================
+// ShareViewerKey table  (2 variants x N_LANG)
+// =============================================================================
+//
+// Every column filled (shared-tab-reload-anchor arc, 2026-09-23) — unlike
+// `CANDLE_PATTERN_KEY_TABLE` above, this one IS part of
+// `every_chart_table_is_fully_translated` below. Column order matches
+// `Language::all()` (`lang.rs`): en, ru, es, de, fr, pt, zh, ja, ko, ar, it,
+// tr, pl, uk, hi.
+pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 2] = [
+    /* 0 SharedChartGoneTitle */ [
+        "Shared chart unavailable",
+        "Общий график недоступен",
+        "Gráfico compartido no disponible",
+        "Geteiltes Chart nicht verfügbar",
+        "Graphique partagé indisponible",
+        "Gráfico compartilhado indisponível",
+        "共享图表不可用",
+        "共有チャートは利用できません",
+        "공유 차트를 사용할 수 없습니다",
+        "المخطط المشترك غير متاح",
+        "Grafico condiviso non disponibile",
+        "Paylaşılan grafik kullanılamıyor",
+        "Udostępniony wykres niedostępny",
+        "Спільний графік недоступний",
+        "साझा चार्ट अनुपलब्ध",
+    ],
+    /* 1 SharedChartGoneBody  */ [
+        "This shared chart is no longer available.",
+        "Этот общий график больше недоступен.",
+        "Este gráfico compartido ya no está disponible.",
+        "Dieses geteilte Chart ist nicht mehr verfügbar.",
+        "Ce graphique partagé n'est plus disponible.",
+        "Este gráfico compartilhado não está mais disponível.",
+        "此共享图表已不再可用。",
+        "この共有チャートは利用できなくなりました。",
+        "이 공유 차트는 더 이상 사용할 수 없습니다.",
+        "لم يعد هذا المخطط المشترك متاحًا.",
+        "Questo grafico condiviso non è più disponibile.",
+        "Bu paylaşılan grafik artık kullanılamıyor.",
+        "Ten udostępniony wykres nie jest już dostępny.",
+        "Цей спільний графік більше не доступний.",
+        "यह साझा चार्ट अब उपलब्ध नहीं है।",
+    ],
+];
+
 #[cfg(test)]
 mod completeness {
     use super::*;
@@ -1928,5 +1974,6 @@ mod completeness {
         assert_full("CITY_KEY_TABLE", &CITY_KEY_TABLE);
         assert_full("HEAD_SHOULDERS_KEY_TABLE", &HEAD_SHOULDERS_KEY_TABLE);
         assert_full("POSITION_POINT_KEY_TABLE", &POSITION_POINT_KEY_TABLE);
+        assert_full("SHARE_VIEWER_KEY_TABLE", &SHARE_VIEWER_KEY_TABLE);
     }
 }
