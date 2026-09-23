@@ -1,0 +1,13 @@
+[package]
+name = "mylittlechart-messenger-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "View-model contract for the messenger UI — plain Matrix-shaped types (rooms, timeline items, members, tags) plus a synchronous MessengerProvider trait. No uzor, no network, no async: the UI reads snapshots and enqueues intents, wasm-compatible by construction (pure std, zero external deps)."
+
+[lib]
+name = "mlc_messenger_model"
+path = "src/lib.rs"
+
+[lints]
+workspace = true
