@@ -48,6 +48,23 @@ pub struct ContextMenuItemState {
     pub is_danger: bool,
     /// Is this item enabled?
     pub enabled: bool,
+    /// `Some(checked)` draws a checkbox glyph in the icon slot instead of
+    /// `icon` — the messenger concept's `.cb`/`.cb.on` rows (e.g. an
+    /// "Add to folder ▸" submenu's per-folder checklist). `None` draws no
+    /// checkbox (harvest-ready menu/checkbox pass, community-messenger
+    /// arc).
+    pub checkbox: Option<bool>,
+    /// A non-empty submenu — a right-chevron draws at the row's own right
+    /// edge whenever this is non-empty, regardless of [`Self::
+    /// submenu_open`] (harvest-ready menu/submenu pass, community-
+    /// messenger arc).
+    pub submenu: Vec<ContextMenuItemState>,
+    /// Whether THIS item's own `submenu` is currently drawn open —
+    /// [`render_context_menu`] only READS this (draws the nested panel
+    /// when it is `true` and `submenu` is non-empty); setting it on
+    /// hover/click is a later pass's own dispatch wiring, out of scope
+    /// here.
+    pub submenu_open: bool,
 }
 
 impl ContextMenuItemState {
@@ -60,6 +77,9 @@ impl ContextMenuItemState {
             is_separator: false,
             is_danger: false,
             enabled: true,
+            checkbox: None,
+            submenu: Vec::new(),
+            submenu_open: false,
         }
     }
 
@@ -72,6 +92,9 @@ impl ContextMenuItemState {
             is_separator: false,
             is_danger: false,
             enabled: true,
+            checkbox: None,
+            submenu: Vec::new(),
+            submenu_open: false,
         }
     }
 
@@ -84,6 +107,9 @@ impl ContextMenuItemState {
             is_separator: true,
             is_danger: false,
             enabled: true,
+            checkbox: None,
+            submenu: Vec::new(),
+            submenu_open: false,
         }
     }
 
@@ -96,6 +122,9 @@ impl ContextMenuItemState {
             is_separator: false,
             is_danger: true,
             enabled: true,
+            checkbox: None,
+            submenu: Vec::new(),
+            submenu_open: false,
         }
     }
 
@@ -108,12 +137,29 @@ impl ContextMenuItemState {
             is_separator: false,
             is_danger: true,
             enabled: true,
+            checkbox: None,
+            submenu: Vec::new(),
+            submenu_open: false,
         }
     }
 
     /// Set enabled state
     pub fn set_enabled(mut self, enabled: bool) -> Self {
         self.enabled = enabled;
+        self
+    }
+
+    /// Draw a checkbox in the icon slot instead of `icon` — the concept's
+    /// `.cb`/`.cb.on`.
+    pub fn with_checkbox(mut self, checked: bool) -> Self {
+        self.checkbox = Some(checked);
+        self
+    }
+
+    /// Attach a submenu (a right-chevron draws at the row's own right
+    /// edge) — the concept's `Mute ▸`/`Add to folder ▸` rows.
+    pub fn with_submenu(mut self, items: Vec<ContextMenuItemState>) -> Self {
+        self.submenu = items;
         self
     }
 }
