@@ -3763,8 +3763,14 @@ fn render_monitoring_tab_bar(
 // =============================================================================
 
 // SVG paths for capability indicators — no unicode characters.
-const ICON_CHECK_SVG: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>"#;
-const ICON_X_SVG: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>"#;
+// Root stroke-width pinned to 1.5, not "3": uzor's SVG renderer used to
+// ignore the root stroke-width entirely (fixed ~1.5 regardless of the
+// declared value); uzor commit f11176c made it honor the root directly, so
+// keeping "3" here would have doubled these glyphs' weight. 1.5 preserves
+// the pre-fix rendered weight exactly (see `mlc-core::state::icons`'s
+// `icon_stroke_width_guard` test doc comment for the full history).
+const ICON_CHECK_SVG: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5L20 7"/></svg>"#;
+const ICON_X_SVG: &str = r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>"#;
 
 /// Render the Connectors sidebar panel.
 ///
