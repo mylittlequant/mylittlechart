@@ -5979,6 +5979,13 @@ impl ChartApp {
                                 let hit_thread_id = st.forum2.quick_search_results.get(i).map(|h| h.thread_id);
                                 if let Some(id) = hit_thread_id {
                                     st.forum2.close_quick_search();
+                                    // A search hit carries `board_id: i64`,
+                                    // not a slug — this crate has no id→slug
+                                    // table, so the breadcrumb's own "Board"
+                                    // segment stays absent for this thread
+                                    // (see `open_thread_board_slug`'s own
+                                    // doc) rather than showing a wrong one.
+                                    st.forum2.open_thread_board_slug = None;
                                     st.forum2.view = ForumV2View::Thread {
                                         id, thread: None, replies_tree: Vec::new(), reply_to: None,
                                     };
@@ -5999,8 +6006,15 @@ impl ChartApp {
                                 st.forum2.request = Some(ForumV2Request::Search { q, board: None });
                             }
                         }
-                        rest2 if rest2.starts_with("board:") => {
-                            let slug = rest2["board:".len()..].to_string();
+                        // A board row in the full-width board index, OR the
+                        // breadcrumb bar's own "Board" segment
+                        // (`crumb_board:{slug}`, drill-down arc 2026-09-23) —
+                        // same destination either way, so one arm serves
+                        // both ids; the slug is everything after the first
+                        // `:`, which is exactly where it sits in both ids.
+                        rest2 if rest2.starts_with("board:") || rest2.starts_with("crumb_board:") => {
+                            let Some((_, slug)) = rest2.split_once(':') else { return };
+                            let slug = slug.to_string();
                             st.forum2.view = ForumV2View::BoardThreads {
                                 slug: slug.clone(), threads: Vec::new(), next_before: None,
                             };
@@ -6030,7 +6044,12 @@ impl ChartApp {
                             tf.clear(&body_wid);
                             tf.focus(title_wid);
                         }
-                        "back" => {
+                        // The breadcrumb bar's own "Forum" segment
+                        // (drill-down arc 2026-09-23) — replaces the old
+                        // per-view "← Forum" row (`"back"`), which drew from
+                        // three different views before the breadcrumb
+                        // unified them into one.
+                        "crumb_forum" => {
                             st.forum2.reset_to_boards();
                             self.input_coordinator.borrow_mut().text_fields_mut().blur();
                         }
@@ -6099,6 +6118,16 @@ impl ChartApp {
                         }
                         rest2 if rest2.starts_with("thread:") => {
                             if let Ok(id) = rest2["thread:".len()..].parse::<i64>() {
+                                // This row only ever draws from the
+                                // full-width thread list of an OPEN board
+                                // (`ForumV2View::BoardThreads`) — read its
+                                // slug before the match below overwrites
+                                // `view`, so the breadcrumb bar can offer a
+                                // "Board" segment back to it.
+                                st.forum2.open_thread_board_slug = match &st.forum2.view {
+                                    ForumV2View::BoardThreads { slug, .. } => Some(slug.clone()),
+                                    _ => None,
+                                };
                                 st.forum2.view = ForumV2View::Thread {
                                     id, thread: None, replies_tree: Vec::new(), reply_to: None,
                                 };
@@ -6193,6 +6222,10 @@ impl ChartApp {
                                     _ => None,
                                 };
                                 if let Some(id) = hit_thread_id {
+                                    // Same "no id→slug table" reasoning as
+                                    // the quick-search dropdown's own hit
+                                    // row above.
+                                    st.forum2.open_thread_board_slug = None;
                                     st.forum2.view = ForumV2View::Thread {
                                         id, thread: None, replies_tree: Vec::new(), reply_to: None,
                                     };

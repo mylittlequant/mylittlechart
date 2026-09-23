@@ -5706,6 +5706,25 @@ pub struct ForumV2State {
     /// `FORUM_REPLY` (and `ForumV2View::Thread::reply_to`).
     pub reply_pending: bool,
 
+    /// The board a currently-open `ForumV2View::Thread` was reached FROM,
+    /// when known — community-modal-drill-down arc (2026-09-23): the
+    /// breadcrumb bar's own "Board" segment. Set by the click side
+    /// (`mlc-app`'s `panel_click.rs`) whenever a thread is opened from its
+    /// board's own thread list (the one place the slug is known at click
+    /// time); left `None` for a thread reached via a search hit or the
+    /// quick-search dropdown (`ForumSearchHitUi`/quick-search results only
+    /// carry `board_id: i64`, and this crate has no id→slug table to
+    /// resolve it from — the breadcrumb then reads "Forum › <thread
+    /// title>", one segment short, rather than a wrong or stale board).
+    /// Deliberately NOT part of `ForumV2View::Thread` itself: that enum is
+    /// also constructed by both shells' own cloud-session drivers when a
+    /// fetch answer lands (`mlc-app-shell-vello`/`mlc-app-shell-web`), and
+    /// this field has nothing to do with that wire-application path — a
+    /// sibling field on this state avoids threading a new required field
+    /// through every one of those construction sites for a value they never
+    /// need to touch.
+    pub open_thread_board_slug: Option<String>,
+
     // ── Inline compact search (owner review 2026-09-09, community-modal-
     // and-forum-ladder arc, piece 2 item d) — replaces the old full-width
     // search box + big "Search" button that used to open directly into
@@ -5770,6 +5789,7 @@ impl Default for ForumV2State {
             thread_refreshing: false,
             create_thread_pending: false,
             reply_pending: false,
+            open_thread_board_slug: None,
             quick_search_open: false,
             quick_search_query: None,
             quick_search_results: Vec::new(),
@@ -5836,6 +5856,7 @@ impl ForumV2State {
         self.request = None;
         self.create_thread_pending = false;
         self.reply_pending = false;
+        self.open_thread_board_slug = None;
         self.close_quick_search();
     }
 
