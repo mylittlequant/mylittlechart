@@ -32,6 +32,7 @@ use crate::ui::modal_settings::{
 };
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig, ScrollableResult};
 use crate::ui::toolbar_theme::ToolbarTheme;
+use crate::ui::widgets::avatar::contrasting_text_color;
 use crate::ui::widgets::{
     register_dimmer_zones, render_modal_shell, ModalPlacement, ModalShell, ModalShellSpec,
     ModalTab, ModalTabs, ModalTheme, TabFit, SETTINGS_BUTTON_RADIUS,
@@ -39,10 +40,6 @@ use crate::ui::widgets::{
 use crate::ui::widgets::types::WidgetTheme;
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
-
-/// Accent colour shared by every overlay in this file family — also read by
-/// `forum_v2_overlay`/`dm_overlay` (siblings under `layout::modals`).
-pub(crate) const GOLD: &str = "#f4cd63";
 
 const MODAL_W: f64 = 420.0;
 pub(crate) const ROW_H: f64 = 40.0;
@@ -753,7 +750,7 @@ fn draw_news_post(
     ctx.fill_text(&post.date, x + 8.0, y + 6.0);
 
     ctx.set_font("600 13px sans-serif");
-    ctx.set_fill_color(if hovered { GOLD } else { &tt.item_text });
+    ctx.set_fill_color(if hovered { &tt.accent } else { &tt.item_text });
     ctx.fill_text(display_title(post), x + 8.0, y + 22.0);
 
     ctx.set_font("12px sans-serif");
@@ -843,7 +840,7 @@ fn draw_news_detail(
     ly += 16.0;
 
     ctx.set_font("600 14px sans-serif");
-    ctx.set_fill_color(GOLD);
+    ctx.set_fill_color(&tt.accent);
     ctx.fill_text(&post.title, x, ly);
     ly += 26.0;
 
@@ -1002,7 +999,7 @@ fn draw_update_phase(
             let track_y = y + 26.0;
             ctx.set_fill_color(&tt.dropdown_bg);
             ctx.fill_rounded_rect(x, track_y, row_w, 6.0, 3.0);
-            ctx.set_fill_color(GOLD);
+            ctx.set_fill_color(&tt.accent);
             ctx.fill_rounded_rect(x, track_y, row_w * (*percent as f64 / 100.0), 6.0, 3.0);
         }
 
@@ -1047,9 +1044,15 @@ fn draw_update_phase(
 }
 
 /// A row that DOES something in this window, as opposed to [`draw_link_row`],
-/// which leaves for a URL. Gold surface, centred label, no external glyph —
-/// the glyph is the whole difference the user reads. Also used by
+/// which leaves for a URL. Accent-filled surface, centred label, no external
+/// glyph — the glyph is the whole difference the user reads. Also used by
 /// `forum_v2_overlay`/`dm_overlay`.
+///
+/// Colours are theme tokens only (owner ruling 09-10: no hardcoded colours):
+/// the fill is `tt.accent`, and the label colour is picked for contrast
+/// against that same fill via [`contrasting_text_color`] — the identical
+/// derivation `dm_overlay.rs`'s own "mine" bubble uses for its text colour,
+/// just against the plain accent instead of an accent-tinted mix.
 pub(crate) fn draw_action_row(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -1060,7 +1063,7 @@ pub(crate) fn draw_action_row(
     tt: &ToolbarTheme,
 ) {
     let hovered = coord.is_hovered(&WidgetId::from(widget_id));
-    ctx.set_fill_color(GOLD);
+    ctx.set_fill_color(&tt.accent);
     ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
     if hovered {
         // The accent is already the brightest thing in the dialog, so hover
@@ -1069,7 +1072,7 @@ pub(crate) fn draw_action_row(
         ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
     }
     ctx.set_font("600 13px sans-serif");
-    ctx.set_fill_color("#101014");
+    ctx.set_fill_color(contrasting_text_color(&tt.accent));
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(label, rect.center_x(), rect.center_y());
