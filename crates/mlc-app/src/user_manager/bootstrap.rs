@@ -39,13 +39,13 @@ pub fn load_user_state_from_disk(
     Option<VaultKey>,
 ) {
     let data_dir = active_profile_data_dir();
-    eprintln!("[user_manager] profile data directory: {}", data_dir.display());
+    log::info!("[user_manager] profile data directory: {}", data_dir.display());
 
     let key_ref = key.as_ref();
 
     let profile = match load_profile(key_ref) {
         Ok(p) => {
-            eprintln!(
+            log::info!(
                 "[user_manager] loaded profile (active_preset={})",
                 p.ui.active_preset_id
             );
@@ -53,13 +53,13 @@ pub fn load_user_state_from_disk(
         }
         Err(e) => {
             if key_ref.is_some() {
-                eprintln!(
+                log::error!(
                     "[user_manager] WARNING: decryption failed with provided key, falling back to defaults \
                     — this should not happen after passphrase validation: {}",
                     e
                 );
             } else {
-                eprintln!("[user_manager] failed to load profile: {}, using defaults", e);
+                log::warn!("[user_manager] failed to load profile: {}, using defaults", e);
             }
             let mut fallback = UserProfile::new();
             if let Some(dir_name) = data_dir.file_name().and_then(|n| n.to_str()) {
@@ -75,7 +75,7 @@ pub fn load_user_state_from_disk(
     // Templates — pass key so encrypted files are loaded correctly.
     let template_manager = {
         let tm = TemplateManager::load_from_default_dir(key_ref);
-        eprintln!(
+        log::info!(
             "[user_manager] loaded templates: {} prim, {} ind, {} cmp, {} chart, {} sets",
             tm.primitive_templates.len(),
             tm.indicator_templates.len(),
@@ -96,24 +96,24 @@ pub fn load_user_state_from_disk(
                         presets.insert(meta.id.clone(), preset);
                     }
                     Err(e) => {
-                        eprintln!("[user_manager] failed to load preset {}: {}", meta.id, e);
+                        log::warn!("[user_manager] failed to load preset {}: {}", meta.id, e);
                     }
                 }
             }
-            eprintln!("[user_manager] loaded {} presets", presets.len());
+            log::info!("[user_manager] loaded {} presets", presets.len());
         }
-        Err(e) => eprintln!("[user_manager] failed to list presets: {}", e),
+        Err(e) => log::warn!("[user_manager] failed to list presets: {}", e),
     }
 
     // Settings snapshots — always plaintext, never encrypted.
     let snapshots_path = active_profile_data_dir().join("settings_snapshots.json");
     let snapshots = match load_json::<SettingsSnapshots>(&snapshots_path, None) {
         Ok(s) => {
-            eprintln!("[user_manager] loaded settings snapshots");
+            log::info!("[user_manager] loaded settings snapshots");
             s
         }
         Err(_) => {
-            eprintln!("[user_manager] no settings snapshots found, using defaults");
+            log::info!("[user_manager] no settings snapshots found, using defaults");
             SettingsSnapshots::default()
         }
     };

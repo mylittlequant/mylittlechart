@@ -66,7 +66,7 @@ impl ChartApp {
                     // `by_id(...).unwrap_or("candles")`.
                     for w in preset.windows.iter_mut() {
                         if let Some(count) = w.timeframe.tick_count() {
-                            eprintln!(
+                            log::info!(
                                 "[ChartApp] migrating legacy tick TF '{}' (window {}) -> chart_type=tick_bar param={}",
                                 w.timeframe.name, w.window_id, count,
                             );
@@ -91,7 +91,7 @@ impl ChartApp {
                     // field every `timeframe_for_chart` read actually uses.
                     for b in preset.bubbles.iter_mut() {
                         if b.timeframe.is_tick() {
-                            eprintln!(
+                            log::info!(
                                 "[ChartApp] migrating legacy tick TF '{}' (bubble {}) -> timeframe=1m (chart_type migrated via window snapshot)",
                                 b.timeframe.name, b.id,
                             );
@@ -99,7 +99,7 @@ impl ChartApp {
                         }
                     }
                     let prep_us = _t_prep.elapsed().as_micros();
-                    eprintln!(
+                    log::info!(
                         "[ChartApp] applying preset '{}' COLD path: {} windows, {} groups, {} indicators (materialized={}us autosave={}us park={}us unpark_miss={}us clone={}us)",
                         preset.name, preset.windows.len(), preset.bubbles.len(), preset.indicators.len(),
                         lp_materialized_us, lp_autosave_us, lp_park_us, lp_unpark_us, lp_clone_us,
@@ -296,7 +296,7 @@ impl ChartApp {
                                     // Snap to end only after the fresh data lands.
                                     window.needs_snap_after_backfill = true;
 
-                                    eprintln!(
+                                    log::info!(
                                         "[ChartApp] built window {} -> {}/{} ({} drawings)",
                                         snap.window_id, snap.symbol, snap.timeframe.name,
                                         snap.drawings.primitives.len()
@@ -352,10 +352,10 @@ impl ChartApp {
                                         if self.panel_app.panel_grid.docking().active_leaf().is_none() {
                                             if let Some(lid) = self.panel_app.panel_grid.first_leaf_id() {
                                                 self.panel_app.panel_grid.set_active_leaf(lid);
-                                                eprintln!("[ChartApp] active_leaf was None after restore — activated first leaf {:?}", lid);
+                                                log::info!("[ChartApp] active_leaf was None after restore — activated first leaf {:?}", lid);
                                             }
                                         }
-                                        eprintln!("[ChartApp] layout topology restored");
+                                        log::info!("[ChartApp] layout topology restored");
                                         true
                                     }
                                     Err(e) => {
@@ -382,7 +382,7 @@ impl ChartApp {
                                             }
                                         }
 
-                                        eprintln!("[ChartApp] restore_tree failed: {} - salvaged flat layout with {} windows", e, n);
+                                        log::warn!("[ChartApp] restore_tree failed: {} - salvaged flat layout with {} windows", e, n);
 
                                         self.panel_app.panel_grid.replace_docking(flat_tree);
                                         self.panel_app.panel_grid.replace_containers(new_containers);
@@ -395,12 +395,12 @@ impl ChartApp {
                                 }
                             }
                             Err(e) => {
-                                eprintln!("[ChartApp] layout deserialize failed: {} - falling back to patch", e);
+                                log::warn!("[ChartApp] layout deserialize failed: {} - falling back to patch", e);
                                 false
                             }
                         }
                     } else {
-                        eprintln!("[ChartApp] preset has no layout snapshot - falling back to patch");
+                        log::info!("[ChartApp] preset has no layout snapshot - falling back to patch");
                         false
                     };
 
@@ -534,7 +534,7 @@ impl ChartApp {
                                         guard.migrate_legacy_timestamps(bid);
                                     }
 
-                                    eprintln!("[ChartApp] patched window {}  ->  {}/{} ({} drawings)",
+                                    log::info!("[ChartApp] patched window {}  ->  {}/{} ({} drawings)",
                                         snap.window_id, snap.symbol, snap.timeframe.name,
                                         snap.drawings.primitives.len());
                                 }
@@ -649,7 +649,7 @@ impl ChartApp {
                     let restored_bubble_ids = self.core.bubbles_mut().restore_from_snapshots(&preset.bubbles);
                     let panel_syncs = self.core.tags_mut().restore_from_snapshots(&preset.bubbles);
                     if !alert_ids.is_empty() {
-                        eprintln!(
+                        log::info!(
                             "[ChartApp] apply_preset_cold: preserved {} alerted bubble(s) across the clear ({:?})",
                             alert_ids.len(), alert_ids,
                         );
@@ -659,7 +659,7 @@ impl ChartApp {
                     for (member, gid) in panel_syncs {
                         self.set_panel_synced(member, gid);
                     }
-                    eprintln!("[ChartApp] restored {} sync groups", preset.bubbles.len());
+                    log::info!("[ChartApp] restored {} sync groups", preset.bubbles.len());
 
                     // Restore chart_type/param/interval onto each window's FINAL
                     // bubble. Must run here — after `bubbles_mut().clear()` +
@@ -791,7 +791,7 @@ impl ChartApp {
                                 })
                             }).unwrap_or(0);
                             if reid_count > 0 {
-                                eprintln!(
+                                log::info!(
                                     "[ChartApp] Re-IDed {} auto-bubble primitive(s) in window {:?} (legacy autosave collision fix)",
                                     reid_count, chart_id
                                 );
@@ -804,7 +804,7 @@ impl ChartApp {
                     // (from historical clone paths that didn't re-ID).
                     let total_dedup = self.core.drawings_mut().dedup_primitive_ids();
                     if total_dedup > 0 {
-                        eprintln!("[ChartApp] Re-IDed {} duplicate primitive(s) across all groups", total_dedup);
+                        log::info!("[ChartApp] Re-IDed {} duplicate primitive(s) across all groups", total_dedup);
                     }
 
                     // Elliott WaveLink/follows integrity re-sweep (2026-08-14
@@ -845,7 +845,7 @@ impl ChartApp {
                         self.core.drawings_mut().refresh_wave_guards(bid);
                     }
                     if total_dangling_links > 0 {
-                        eprintln!(
+                        log::info!(
                             "[ChartApp] cleared {} dangling Elliott wave link(s)/follows across {} restored bubble(s)",
                             total_dangling_links, restored_bubble_ids.len(),
                         );
@@ -858,7 +858,7 @@ impl ChartApp {
                     if preset.bubbles.is_empty() && !self.panel_app.panel_grid.containers().is_empty() {
                         // Auto groups get transparent color  -  never occupy palette slots
                         let Some((_, first_win)) = self.panel_app.panel_grid.iter_containers().next() else {
-                            eprintln!("[sync_group] preset restore step 5b: iter_containers empty despite non-empty guard - skipping auto group");
+                            log::info!("[sync_group] preset restore step 5b: iter_containers empty despite non-empty guard - skipping auto group");
                             return;
                         };
                         // Phase 4 S2.7.1c: read via branch_meta (B6 capture flip).
@@ -885,7 +885,7 @@ impl ChartApp {
                                 window.current_tag_id = group_id;
                             }
                         }
-                        eprintln!("[ChartApp] Auto-created invisible sync group {:?} for {} orphaned windows", group_id, leaf_chart_ids.len());
+                        log::info!("[ChartApp] Auto-created invisible sync group {:?} for {} orphaned windows", group_id, leaf_chart_ids.len());
                     }
 
                     // Step 5c: membership safety net. Step 5b only fires when the
@@ -936,7 +936,7 @@ impl ChartApp {
                                     pid,
                                 );
                             }
-                            eprintln!(
+                            log::info!(
                                 "[ChartApp] Step 5c: re-membered orphaned window {:?} into auto group {:?} ({})",
                                 chart_id, group_id, sym
                             );
@@ -967,7 +967,7 @@ impl ChartApp {
                             self.core.indicators_mut().restore_from_snapshot(ind_snap);
                         }
                     }
-                    eprintln!("[ChartApp] restored {} indicators", preset.indicators.len());
+                    log::info!("[ChartApp] restored {} indicators", preset.indicators.len());
                     let indicators_us = _t_indicators.elapsed().as_micros();
 
                     // Neither heatmap overlay needs a post-load reconcile:
@@ -1000,7 +1000,7 @@ impl ChartApp {
                         let bars = self.bars_for_chart(cid);
                         self.core.indicators_mut().recalc_bubble(mlc_core::ids::BubbleId(window_id), &bars);
                     }
-                    eprintln!("[ChartApp] recalculated indicators for all windows with bars");
+                    log::info!("[ChartApp] recalculated indicators for all windows with bars");
                     let recalc_us = _t_recalc.elapsed().as_micros();
 
                     // ----------------------------------------------------------------
@@ -1032,7 +1032,7 @@ impl ChartApp {
                         }
                     }
                     if !self.pending_sub_pane_ratios.is_empty() {
-                        eprintln!(
+                        log::info!(
                             "[ChartApp] staged sub-pane height ratios for {} windows",
                             self.pending_sub_pane_ratios.len()
                         );
@@ -1051,7 +1051,7 @@ impl ChartApp {
                         let leaf_id = mlc_core::LeafId(leaf_raw);
                         self.panel_app.leaf_color_tags.insert(leaf_id, color);
                     }
-                    eprintln!(
+                    log::info!(
                         "[ChartApp] Step7: restored {} leaf_color_tags from snapshot",
                         self.panel_app.leaf_color_tags.len()
                     );
@@ -1102,7 +1102,7 @@ impl ChartApp {
                             self.core.alerts_mut().restore_item(alert);
                             total_restored += 1;
                         }
-                        eprintln!(
+                        log::warn!(
                             "[ChartApp] restored {} alerts into account '{}' ({} duplicate, {} total now in store)",
                             total_restored,
                             account_id,
@@ -1673,7 +1673,7 @@ impl ChartApp {
                                             };
                                             if let Some(sk) = slot_kind {
                                                 if !sk.allowed_panel_kinds().contains(&item.kind_str()) {
-                                                    eprintln!(
+                                                    log::info!(
                                                         "[ChartApp] slot{} hydration: dropping leaf {} — kind '{}' does not match slot type {:?}",
                                                         i + 1, leaf_id, item.kind_str(), sk
                                                     );
@@ -1688,13 +1688,13 @@ impl ChartApp {
                                                 )
                                             }
                                             Err(e) => {
-                                                eprintln!("[ChartApp] slot{} restore_tree failed: {} - empty fallback", i + 1, e);
+                                                log::warn!("[ChartApp] slot{} restore_tree failed: {} - empty fallback", i + 1, e);
                                                 mlc_app_sidebar_content::SlotDockingManager::new()
                                             }
                                         }
                                     }
                                     Err(e) => {
-                                        eprintln!("[ChartApp] slot{} from_json failed: {} - empty fallback", i + 1, e);
+                                        log::warn!("[ChartApp] slot{} from_json failed: {} - empty fallback", i + 1, e);
                                         mlc_app_sidebar_content::SlotDockingManager::new()
                                     }
                                 }
@@ -1810,14 +1810,14 @@ impl ChartApp {
                             continue;
                         }
                         if alert_addresses.contains(&(*eid, symbol.clone())) {
-                            eprintln!(
+                            log::info!(
                                 "[ChartApp] apply_preset_cold: keeping trade subscription {}/{} alive — an active alert still needs it",
                                 eid.as_str(), symbol,
                             );
                             continue;
                         }
                         self.core.unsubscribe_trades(*eid, symbol, digdigdig3::AccountType::default());
-                        eprintln!("[ChartApp] unsubscribed trades: {}/{}", eid.as_str(), symbol);
+                        log::info!("[ChartApp] unsubscribed trades: {}/{}", eid.as_str(), symbol);
                     }
                     let unsubs_us = _t_unsubs.elapsed().as_micros();
 
@@ -1875,7 +1875,7 @@ impl ChartApp {
                     // `ignite_derived_windows`, same call-site shape as the
                     // startup/new-window post-load loops in `lib.rs`.
                     self.ignite_legacy_heatmap_overlays();
-                    eprintln!("[ChartApp] LoadPreset: requesting bars for {} windows", bars_requested);
+                    log::info!("[ChartApp] LoadPreset: requesting bars for {} windows", bars_requested);
                     // Default companions (klines → VOLUME, footprint → CVD)
                     // for the freshly hydrated windows — ChangeChartType
                     // never ran for them.
@@ -1926,7 +1926,7 @@ impl ChartApp {
                             self.remove_panel_completely(member);
                         }
                         if pruned > 0 {
-                            eprintln!("[ChartApp] preset restore: pruned {} orphan panel members from sync groups", pruned);
+                            log::info!("[ChartApp] preset restore: pruned {} orphan panel members from sync groups", pruned);
                         }
                     }
                     let orphan_prune_us = _t_orphan_prune.elapsed().as_micros();
@@ -1972,7 +1972,7 @@ impl ChartApp {
         }
 
         let lp_cold_body_us = lp_cold_start.elapsed().as_micros();
-        eprintln!("[ChartApp] preset '{}' fully restored (cold_body={}us total={}us)",
+        log::info!("[ChartApp] preset '{}' fully restored (cold_body={}us total={}us)",
             preset.name, lp_cold_body_us, _lp_total.elapsed().as_micros());
 
         // ── COLD BODY PER-STEP BREAKDOWN ──────────────────────────────────────
@@ -1986,7 +1986,7 @@ impl ChartApp {
         // touch `self.core.bridge.*` (`depth_subs`, `unsubs`, `request_bars`,
         // and parts of `slots`) cannot move off main today; everything
         // else is pure CPU and is the target of the worker thread.
-        eprintln!(
+        log::info!(
             "[ChartApp] cold_body[{}] breakdown (us): prep={} old_subs={} layout={} bubbles={} rebind={} seed_ids={} orphans={} indicators={} recalc[{}wins]={} sub_panes={} leaf_tags={} alerts={} slots={} depth_subs={} unsubs={} request_bars={} orphan_prune={}",
             preset.name,
             prep_us,

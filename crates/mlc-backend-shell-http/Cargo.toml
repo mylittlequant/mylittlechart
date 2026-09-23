@@ -8,6 +8,7 @@ name = "mlc_backend_shell_http"
 
 [dependencies]
 web-time = "1"
+log = "0.4"
 axum = "0.7"
 tokio = { version = "1", features = ["full"] }
 serde = { version = "1", features = ["derive"] }

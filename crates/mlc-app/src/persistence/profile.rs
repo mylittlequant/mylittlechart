@@ -365,7 +365,7 @@ impl ChartApp {
         if self.core.try_claim_preset(id, &self.window_id) {
             true
         } else {
-            eprintln!(
+            log::warn!(
                 "[ChartApp] REFUSED: preset '{}' cold-load in window '{}' — already claimed by \
                  another window (same-preset-two-windows hazard, shared-backend-core-2026-07-03.md §5.3.5)",
                 id, self.window_id,
@@ -404,7 +404,7 @@ impl ChartApp {
         // does not yet own: `ChartApp::try_claim_preset_for_cold_load`,
         // gating `apply_preset_cold` (see `chart_out_events.rs`).
         if !self.core.try_claim_preset(id, &self.window_id) {
-            eprintln!(
+            log::warn!(
                 "[ChartApp] WARNING: preset '{}' parked by window '{}' while claim registry \
                  shows a different owner — claim-registry invariant violated, \
                  see shared-backend-core-2026-07-03.md §5.3.5",
@@ -492,7 +492,7 @@ impl ChartApp {
         let t0 = web_time::Instant::now();
         self.live_preset_cache.insert(id.to_string(), state);
         let pk_insert_us = t0.elapsed().as_micros();
-        eprintln!(
+        log::info!(
             "[ChartApp] Parked preset '{}' into live cache ({} total cached) park_total={}us grid={}us bubble={}us ind={}us alert={}us drawing={}us takes={}us slots={}us panels={}us insert={}us",
             id, self.live_preset_cache.len(), pk_total.elapsed().as_micros(),
             pk_grid_us, pk_bubble_us, pk_ind_us, pk_alert_us, pk_drawing_us, pk_takes_us, pk_slots_us, pk_panels_us, pk_insert_us,
@@ -514,7 +514,7 @@ impl ChartApp {
         // removed from the cache, so refusing here would strand it
         // (neither restored to `self` nor left recoverable in the cache).
         if !self.core.try_claim_preset(id, &self.window_id) {
-            eprintln!(
+            log::warn!(
                 "[ChartApp] WARNING: preset '{}' unparked by window '{}' while claim registry \
                  shows a different owner — same-preset-two-windows hazard, \
                  see shared-backend-core-2026-07-03.md §5.3.5",
@@ -557,7 +557,7 @@ impl ChartApp {
         let up_panels_us = t0.elapsed().as_micros();
         self.sidebar_state.focused_free_leaf = state.focused_free_leaf;
         self.sidebar_data_dirty = true;
-        eprintln!(
+        log::info!(
             "[ChartApp] Unpacked preset '{}' from live cache unpark_total={}us remove={}us grid={}us bubble={}us ind={}us alert={}us drawing={}us misc={}us slots={}us panels={}us",
             id, up_total.elapsed().as_micros(),
             up_remove_us, up_grid_us, up_bubble_us, up_ind_us, up_alert_us, up_drawing_us, up_misc_us, up_slots_us, up_panels_us,
@@ -579,7 +579,7 @@ impl ChartApp {
         // (clippy::significant_drop_in_scrutinee).
         let save_result = self.core.templates().save_to_default_dir(None);
         if let Err(e) = save_result {
-            eprintln!("[persist] templates: {:?}", e);
+            log::info!("[persist] templates: {:?}", e);
         }
     }
 
@@ -627,7 +627,7 @@ impl ChartApp {
         let items = self.core.alerts().items_all();
         let path = mlc_core::active_profile_data_dir().join("alerts.json");
         if let Err(e) = mlc_core::save_json(&path, &items, None) {
-            eprintln!("[persist] alerts: {:?}", e);
+            log::info!("[persist] alerts: {:?}", e);
         }
         // Tell the shell's per-frame drain to push an alerts sync cycle —
         // see `alerts_sync_dirty`'s own doc.
@@ -706,7 +706,7 @@ impl ChartApp {
                 self.system_events = profile.ui.system_events.clone();
             }
             Err(e) => {
-                eprintln!("[UserProfile] Failed to load profile: {}", e);
+                log::warn!("[UserProfile] Failed to load profile: {}", e);
             }
         }
 
@@ -721,7 +721,7 @@ impl ChartApp {
         match mlc_core::load_json::<mlc_backend::watchlist::WatchlistManager>(&watchlists_path, None) {
             Ok(manager) => self.adopt_loaded_watchlists(manager),
             Err(e) => {
-                eprintln!("[UserProfile] no saved watchlists ({}) — keeping defaults", e);
+                log::info!("[UserProfile] no saved watchlists ({}) — keeping defaults", e);
             }
         }
 
@@ -739,10 +739,10 @@ impl ChartApp {
                 for item in items {
                     self.core.alerts_mut().restore_item(item);
                 }
-                eprintln!("[UserProfile] restored {} alerts from alerts.json", restored);
+                log::info!("[UserProfile] restored {} alerts from alerts.json", restored);
             }
             Err(e) => {
-                eprintln!("[UserProfile] no saved alerts.json ({}) — starting empty", e);
+                log::info!("[UserProfile] no saved alerts.json ({}) — starting empty", e);
             }
         }
     }
@@ -759,7 +759,7 @@ impl ChartApp {
         match mlc_core::load_json::<mlc_backend::watchlist::WatchlistManager>(&watchlists_path, None) {
             Ok(manager) => self.adopt_loaded_watchlists(manager),
             Err(e) => {
-                eprintln!("[UserProfile] no saved watchlists ({}) — keeping defaults", e);
+                log::info!("[UserProfile] no saved watchlists ({}) — keeping defaults", e);
             }
         }
     }
@@ -767,7 +767,7 @@ impl ChartApp {
     fn adopt_loaded_watchlists(&mut self, manager: mlc_backend::watchlist::WatchlistManager) {
         self.core.watchlists_mut().replace_all(manager);
         if self.core.watchlists_mut().apply_seed_migration() {
-            eprintln!("[UserProfile] watchlist seed migration — missing venues appended");
+            log::info!("[UserProfile] watchlist seed migration — missing venues appended");
             self.persist_watchlists();
         }
     }

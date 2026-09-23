@@ -46,7 +46,7 @@ impl ChartApp {
             self.content_rect.width,
             self.content_rect.height,
         );
-        eprintln!("[ChartApp] compare settings opened: idx={idx}");
+        log::info!("[ChartApp] compare settings opened: idx={idx}");
     }
 
     /// After a CVD indicator instance was just added to `bid` (created on
@@ -163,7 +163,7 @@ impl ChartApp {
                     return;
                 }
             }
-            eprintln!("[ChartApp] cmp_overlay leaf prefix malformed: {}", rest);
+            log::info!("[ChartApp] cmp_overlay leaf prefix malformed: {}", rest);
             return;
         }
 
@@ -178,7 +178,7 @@ impl ChartApp {
                 if let Ok(idx) = action["vis:".len()..].parse::<usize>() {
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         let new_vis = window.compare_overlay.toggle_visibility(idx);
-                        eprintln!("[ChartApp] cmp_overlay vis toggled: idx={} -> visible={}", idx, new_vis);
+                        log::info!("[ChartApp] cmp_overlay vis toggled: idx={} -> visible={}", idx, new_vis);
                     }
                 }
             }
@@ -186,7 +186,7 @@ impl ChartApp {
                 if let Ok(idx) = action["delete:".len()..].parse::<usize>() {
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         if let Some(symbol) = window.compare_overlay.remove_series(idx) {
-                            eprintln!("[ChartApp] cmp_overlay deleted: idx={} symbol={}", idx, symbol);
+                            log::info!("[ChartApp] cmp_overlay deleted: idx={} symbol={}", idx, symbol);
                         }
                     }
                 }
@@ -216,14 +216,14 @@ impl ChartApp {
                     self.panel_app.alert_settings_state.pin_initial_position(
                         self.content_rect.width, self.content_rect.height,
                     );
-                    eprintln!("[ChartApp] cmp_overlay alert opened: idx={}", idx);
+                    log::info!("[ChartApp] cmp_overlay alert opened: idx={}", idx);
                 }
             }
             _ if action.starts_with("row:") => {
                 // Row hit zone — no action needed.
             }
             _ => {
-                eprintln!("[ChartApp] cmp_overlay unhandled action: {}", action);
+                log::warn!("[ChartApp] cmp_overlay unhandled action: {}", action);
             }
         }
     }
@@ -237,7 +237,7 @@ impl ChartApp {
                 if let Ok(idx) = action["vis:".len()..].parse::<usize>() {
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         let new_vis = window.compare_overlay.toggle_visibility(idx);
-                        eprintln!("[ChartApp] cmp_overlay leaf {} vis toggled: idx={} -> visible={}", leaf_id.0, idx, new_vis);
+                        log::info!("[ChartApp] cmp_overlay leaf {} vis toggled: idx={} -> visible={}", leaf_id.0, idx, new_vis);
                     }
                 }
             }
@@ -245,7 +245,7 @@ impl ChartApp {
                 if let Ok(idx) = action["delete:".len()..].parse::<usize>() {
                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                         if let Some(symbol) = window.compare_overlay.remove_series(idx) {
-                            eprintln!("[ChartApp] cmp_overlay leaf {} deleted: idx={} symbol={}", leaf_id.0, idx, symbol);
+                            log::info!("[ChartApp] cmp_overlay leaf {} deleted: idx={} symbol={}", leaf_id.0, idx, symbol);
                         }
                     }
                 }
@@ -271,7 +271,7 @@ impl ChartApp {
                                 self.content_rect.width,
                                 self.content_rect.height,
                             );
-                            eprintln!("[ChartApp] cmp_overlay leaf {} settings opened: idx={}", leaf_id.0, idx);
+                            log::info!("[ChartApp] cmp_overlay leaf {} settings opened: idx={}", leaf_id.0, idx);
                         }
                     }
                 }
@@ -296,14 +296,14 @@ impl ChartApp {
                     self.panel_app.alert_settings_state.pin_initial_position(
                         self.content_rect.width, self.content_rect.height,
                     );
-                    eprintln!("[ChartApp] cmp_overlay leaf {} alert opened: idx={}", leaf_id.0, idx);
+                    log::info!("[ChartApp] cmp_overlay leaf {} alert opened: idx={}", leaf_id.0, idx);
                 }
             }
             _ if action.starts_with("row:") => {
                 // Row hit zone — no action needed.
             }
             _ => {
-                eprintln!("[ChartApp] cmp_overlay leaf {} unhandled action: {}", leaf_id.0, action);
+                log::warn!("[ChartApp] cmp_overlay leaf {} unhandled action: {}", leaf_id.0, action);
             }
         }
     }
@@ -331,7 +331,7 @@ impl ChartApp {
             "close" | "ok" => {
                 self.panel_app.compare_settings_state.close();
                 self.autosave_snapshot();
-                eprintln!("[ChartApp] cmp_settings closed ({})", rest);
+                log::info!("[ChartApp] cmp_settings closed ({})", rest);
             }
             // The Cancel that used to sit here reverted colour, width, style,
             // chart type and TF visibility from a snapshot taken on open. It is
@@ -348,7 +348,7 @@ impl ChartApp {
                 use mlc_app_layout::ui::modal_settings::CompareSettingsTab;
                 if let Some(tab) = CompareSettingsTab::from_id(&id["tab:".len()..]) {
                     self.panel_app.compare_settings_state.set_tab(tab);
-                    eprintln!("[ChartApp] cmp_settings tab: {:?}", tab);
+                    log::info!("[ChartApp] cmp_settings tab: {:?}", tab);
                 }
             }
             "color_swatch" => {
@@ -369,7 +369,7 @@ impl ChartApp {
                         self.content_rect.height,
                         Some(&current_color),
                     );
-                    eprintln!("[ChartApp] cmp_settings color picker opened");
+                    log::info!("[ChartApp] cmp_settings color picker opened");
                 }
             }
             "line_width_slider" => {
@@ -388,7 +388,7 @@ impl ChartApp {
                         track.min_val,
                         track.max_val,
                     );
-                    eprintln!("[ChartApp] cmp_settings line_width slider drag started");
+                    log::info!("[ChartApp] cmp_settings line_width slider drag started");
                 }
             }
             "toggle_visible" => {
@@ -402,7 +402,7 @@ impl ChartApp {
                     let previous = window.compare_overlay.series.get(idx).map(|s| s.visible);
                     let new_vis = window.compare_overlay.toggle_visibility(idx);
                     self.panel_app.compare_settings_state.cached_visible = new_vis;
-                    eprintln!("[ChartApp] cmp_settings toggle_visible: idx={} -> visible={}", idx, new_vis);
+                    log::info!("[ChartApp] cmp_settings toggle_visible: idx={} -> visible={}", idx, new_vis);
                     symbol.zip(previous).map(|(symbol, previous)| (symbol, previous, new_vis))
                 } else {
                     None
@@ -418,7 +418,7 @@ impl ChartApp {
                 // Toggle the line style dropdown open/closed.
                 self.panel_app.compare_settings_state.line_style_dropdown_open =
                     !self.panel_app.compare_settings_state.line_style_dropdown_open;
-                eprintln!("[ChartApp] cmp_settings line_style_dd toggled: {}", self.panel_app.compare_settings_state.line_style_dropdown_open);
+                log::info!("[ChartApp] cmp_settings line_style_dd toggled: {}", self.panel_app.compare_settings_state.line_style_dropdown_open);
             }
             id if id.starts_with("line_style_option:") => {
                 let style = &id["line_style_option:".len()..];
@@ -427,13 +427,13 @@ impl ChartApp {
                 self.panel_app.compare_settings_state.line_style_dropdown_open = false;
                 self.edit_compare_style(idx, |ov| ov.set_series_line_style_by_index(idx, style));
                 self.autosave_snapshot();
-                eprintln!("[ChartApp] cmp_settings line_style set to: {}", style);
+                log::info!("[ChartApp] cmp_settings line_style set to: {}", style);
             }
             "chart_type_dd" => {
                 // Toggle the chart-type dropdown open/closed.
                 self.panel_app.compare_settings_state.chart_type_dropdown_open =
                     !self.panel_app.compare_settings_state.chart_type_dropdown_open;
-                eprintln!("[ChartApp] cmp_settings chart_type_dd toggled: {}", self.panel_app.compare_settings_state.chart_type_dropdown_open);
+                log::info!("[ChartApp] cmp_settings chart_type_dd toggled: {}", self.panel_app.compare_settings_state.chart_type_dropdown_open);
             }
             id if id.starts_with("chart_type_option:") => {
                 let chart_type = &id["chart_type_option:".len()..];
@@ -442,7 +442,7 @@ impl ChartApp {
                 self.panel_app.compare_settings_state.chart_type_dropdown_open = false;
                 self.edit_compare_style(idx, |ov| ov.set_series_chart_type_by_index(idx, chart_type));
                 self.autosave_snapshot();
-                eprintln!("[ChartApp] cmp_settings chart_type set to: {}", chart_type);
+                log::info!("[ChartApp] cmp_settings chart_type set to: {}", chart_type);
             }
             // ---- Visibility tab: tf_*_toggle ----
             id if id.starts_with("item:tf_") && id.ends_with("_toggle") => {
@@ -492,7 +492,7 @@ impl ChartApp {
                             handle,
                             x,
                         );
-                        eprintln!("[ChartApp] cmp_settings tf_{} slider drag started {:?}", tf_idx, handle);
+                        log::info!("[ChartApp] cmp_settings tf_{} slider drag started {:?}", tf_idx, handle);
                     }
                 }
             }
@@ -533,7 +533,7 @@ impl ChartApp {
                             fs.selection_start = Some(0);
                         }
                     }
-                    eprintln!("[ChartApp] cmp_settings editing tf_{} {}", tf_idx, if is_min { "min" } else { "max" });
+                    log::info!("[ChartApp] cmp_settings editing tf_{} {}", tf_idx, if is_min { "min" } else { "max" });
                 }
             }
             // `template`, not `template_dropdown`: the footer bar is the modal
@@ -556,7 +556,7 @@ impl ChartApp {
                 let field_id = uzor::WidgetId::from(crate::text_input::COMPARE_SETTINGS_TEMPLATE_NAME);
                 self.input_coordinator.borrow_mut().text_fields_mut().focus(field_id.clone());
                 self.input_coordinator.borrow_mut().text_fields_mut().set_text(&field_id, &default_name);
-                eprintln!("[ChartApp] cmp_settings template save-as opened");
+                log::info!("[ChartApp] cmp_settings template save-as opened");
             }
             "template_default" => {
                 self.panel_app.compare_settings_state.template_dropdown_open = false;
@@ -573,14 +573,14 @@ impl ChartApp {
                 });
                 self.autosave_snapshot();
                 self.snapshot_compare_settings_to_user_manager();
-                eprintln!("[ChartApp] cmp_settings reset to developer defaults");
+                log::info!("[ChartApp] cmp_settings reset to developer defaults");
             }
             "template_dropdown_menu" => {
                 // Absorb click inside dropdown, keep it open
             }
             id if id.starts_with("template_delete:") => {
                 let tmpl_id = &id["template_delete:".len()..];
-                eprintln!("[ChartApp] cmp_settings deleted compare template: {}", tmpl_id);
+                log::info!("[ChartApp] cmp_settings deleted compare template: {}", tmpl_id);
                 if self.panel_app.compare_settings_state.applied_template_id.as_deref() == Some(tmpl_id) {
                     self.panel_app.compare_settings_state.applied_template_id = None;
                 }
@@ -604,11 +604,11 @@ impl ChartApp {
                     });
                     self.autosave_snapshot();
                     self.snapshot_compare_settings_to_user_manager();
-                    eprintln!("[ChartApp] cmp_settings template applied: {}", tmpl.name);
+                    log::info!("[ChartApp] cmp_settings template applied: {}", tmpl.name);
                 }
             }
             _ => {
-                eprintln!("[ChartApp] cmp_settings unhandled: {}", rest);
+                log::warn!("[ChartApp] cmp_settings unhandled: {}", rest);
             }
         }
         let _ = (x, y); // suppress unused warning
@@ -639,7 +639,7 @@ impl ChartApp {
             ov.set_series_timeframe_visibility(series_idx, tf_config);
         });
         self.autosave_snapshot();
-        eprintln!("[ChartApp] cmp_settings tf_{} toggled", tf_idx);
+        log::info!("[ChartApp] cmp_settings tf_{} toggled", tf_idx);
     }
 
     /// Apply a committed min/max value from the compare settings text input.
@@ -714,7 +714,7 @@ impl ChartApp {
             ov.set_series_timeframe_visibility(series_idx, tf_config);
         });
         self.autosave_snapshot();
-        eprintln!("[ChartApp] cmp_settings tf_{} {:?} committed: {}", tf_idx, handle, new_val);
+        log::info!("[ChartApp] cmp_settings tf_{} {:?} committed: {}", tf_idx, handle, new_val);
     }
 
     /// Commit the active compare-settings sub-field from TextFieldStore (Wave 2b).
@@ -769,7 +769,7 @@ impl ChartApp {
                     return;
                 }
             }
-            eprintln!("[ChartApp] ind_overlay leaf prefix malformed: {}", rest);
+            log::info!("[ChartApp] ind_overlay leaf prefix malformed: {}", rest);
             return;
         }
 
@@ -782,11 +782,11 @@ impl ChartApp {
         match action {
             "toggle" => {
                 self.panel_app.indicator_overlay_state.toggle();
-                eprintln!("[ChartApp] indicator overlay toggled: {}", self.panel_app.indicator_overlay_state.is_open);
+                log::info!("[ChartApp] indicator overlay toggled: {}", self.panel_app.indicator_overlay_state.is_open);
             }
             "close" => {
                 self.panel_app.indicator_overlay_state.close();
-                eprintln!("[ChartApp] indicator overlay closed");
+                log::info!("[ChartApp] indicator overlay closed");
             }
             _ if action.starts_with("vis:") => {
                 if let Ok(id) = action["vis:".len()..].parse::<u64>() {
@@ -797,13 +797,13 @@ impl ChartApp {
                     // (owner report 2026-08-02). The save and restore paths were
                     // both already correct; nothing was writing the snapshot.
                     self.autosave_snapshot();
-                    eprintln!("[ChartApp] indicator {} visibility toggled", id);
+                    log::info!("[ChartApp] indicator {} visibility toggled", id);
                 }
             }
             _ if action.starts_with("settings:") => {
                 if let Ok(id) = action["settings:".len()..].parse::<u64>() {
                     self.panel_app.indicator_settings_state.open(id);
-                    eprintln!("[ChartApp] indicator {} settings opened", id);
+                    log::info!("[ChartApp] indicator {} settings opened", id);
                 }
             }
             _ if action.starts_with("delete:") => {
@@ -835,12 +835,12 @@ impl ChartApp {
                         self.panel_app.alert_settings_state.pin_initial_position(
                             self.content_rect.width, self.content_rect.height,
                         );
-                        eprintln!("[ChartApp] ind_overlay alert: opened modal for indicator {} ({})", id, label);
+                        log::info!("[ChartApp] ind_overlay alert: opened modal for indicator {} ({})", id, label);
                     }
                 }
             }
             _ => {
-                eprintln!("[ChartApp] ind_overlay unhandled: {}", action);
+                log::warn!("[ChartApp] ind_overlay unhandled: {}", action);
             }
         }
     }
@@ -851,24 +851,24 @@ impl ChartApp {
             "toggle" => {
                 let state = self.panel_app.indicator_overlay_state_for_leaf_mut(leaf_id);
                 state.toggle();
-                eprintln!("[ChartApp] leaf {} indicator overlay toggled: {}", leaf_id.0, state.is_open);
+                log::info!("[ChartApp] leaf {} indicator overlay toggled: {}", leaf_id.0, state.is_open);
             }
             "close" => {
                 let state = self.panel_app.indicator_overlay_state_for_leaf_mut(leaf_id);
                 state.close();
-                eprintln!("[ChartApp] leaf {} indicator overlay closed", leaf_id.0);
+                log::info!("[ChartApp] leaf {} indicator overlay closed", leaf_id.0);
             }
             _ if action.starts_with("vis:") => {
                 if let Ok(id) = action["vis:".len()..].parse::<u64>() {
                     self.core.indicators_mut().toggle_visibility(id);
                     self.autosave_snapshot();
-                    eprintln!("[ChartApp] indicator {} visibility toggled (leaf {})", id, leaf_id.0);
+                    log::info!("[ChartApp] indicator {} visibility toggled (leaf {})", id, leaf_id.0);
                 }
             }
             _ if action.starts_with("settings:") => {
                 if let Ok(id) = action["settings:".len()..].parse::<u64>() {
                     self.panel_app.indicator_settings_state.open(id);
-                    eprintln!("[ChartApp] indicator {} settings opened (leaf {})", id, leaf_id.0);
+                    log::info!("[ChartApp] indicator {} settings opened (leaf {})", id, leaf_id.0);
                 }
             }
             _ if action.starts_with("delete:") => {
@@ -900,7 +900,7 @@ impl ChartApp {
                         self.panel_app.alert_settings_state.pin_initial_position(
                             self.content_rect.width, self.content_rect.height,
                         );
-                        eprintln!("[ChartApp] ind_overlay alert (leaf {}): opened modal for indicator {} ({})", leaf_id.0, id, label);
+                        log::info!("[ChartApp] ind_overlay alert (leaf {}): opened modal for indicator {} ({})", leaf_id.0, id, label);
                     }
                 }
             }
@@ -908,7 +908,7 @@ impl ChartApp {
                 // row is registered for hit-zone coverage but has no action.
             }
             _ => {
-                eprintln!("[ChartApp] ind_overlay leaf {} unhandled action: {}", leaf_id.0, action);
+                log::warn!("[ChartApp] ind_overlay leaf {} unhandled action: {}", leaf_id.0, action);
             }
         }
     }
@@ -924,7 +924,7 @@ impl ChartApp {
         // (legend gear, object tree, context menu, trading-center aux
         // chart); see `edit_indicator_recorded`'s twin comment (`input/mod.rs`).
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] delete_indicator_instance refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] delete_indicator_instance refused: active tab is read-only (shared chart)");
             return;
         }
         // Bound first so the `indicators()` read guard drops before the match
@@ -949,7 +949,7 @@ impl ChartApp {
             type_id: type_id.clone(),
             params_json: String::new(),
         });
-        eprintln!("[ChartApp] Recorded RemoveIndicator {} id={}", type_id, id);
+        log::info!("[ChartApp] Recorded RemoveIndicator {} id={}", type_id, id);
 
         // Resolve the bubble the active chart points at — indicator ownership
         // is by bubble, so peer instances live with the same `bubble_id`,
@@ -972,7 +972,7 @@ impl ChartApp {
                         Some(())
                     }).flatten();
                     if removed.is_some() {
-                        eprintln!(
+                        log::info!(
                             "[BubbleStore] Removed 1 indicator config with type_id={} from group {:?}",
                             type_id,
                             group_id,
@@ -1034,7 +1034,7 @@ impl ChartApp {
         self.sync_sub_panes_from_manager();
         self.autosave_snapshot();
         self.sidebar_data_dirty = true;
-        eprintln!(
+        log::info!(
             "[ChartApp] indicator {} deleted (type={}, removed {} instance(s))",
             id,
             type_id,

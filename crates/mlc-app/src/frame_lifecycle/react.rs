@@ -386,7 +386,7 @@ impl ChartApp {
                                         &main_tf,
                                         &main_bars,
                                     );
-                                    eprintln!(
+                                    log::warn!(
                                         "[Compare] Retry {} on cid={}: {}",
                                         pending.symbol,
                                         cid.0,
@@ -405,7 +405,7 @@ impl ChartApp {
                                 self.push_undo_command(mlc_core::Command::AddCompareSeries {
                                     series: series.without_bars(),
                                 });
-                                eprintln!("[Compare] Recorded AddCompareSeries {} (retry)", pending.symbol);
+                                log::warn!("[Compare] Recorded AddCompareSeries {} (retry)", pending.symbol);
                                 self.autosave_snapshot();
                             }
                         }

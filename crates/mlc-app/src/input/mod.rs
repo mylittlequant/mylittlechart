@@ -401,7 +401,7 @@ impl ChartApp {
                     }
                 }
             }
-            eprintln!("[ChartApp] click dispatched to: {}", id);
+            log::info!("[ChartApp] click dispatched to: {}", id);
             self.dispatch_panel_click(&id, x, y);
             return;
         }
@@ -840,7 +840,7 @@ impl ChartApp {
         let w = self.width as f64;
         let h = self.height as f64;
         self.panel_app.context_menu_state.open_smart(x, y, ContextMenuTarget::Primitive(prim_id), items, w, h);
-        eprintln!("[ChartApp] wave gesture menu opened for primitive #{}", prim_id);
+        log::info!("[ChartApp] wave gesture menu opened for primitive #{}", prim_id);
         true
     }
 
@@ -1013,13 +1013,13 @@ impl ChartApp {
                     items,
                     w, h,
                 );
-                eprintln!("[ChartApp] Context menu opened for primitive #{}", prim_id);
+                log::info!("[ChartApp] Context menu opened for primitive #{}", prim_id);
             }
             crate::panel_grid::ChartRightClickHit::Indicator { indicator_id } => {
                 // Right-clicked on an indicator line — select it and open its settings.
                 self.selected_indicator_id = Some(indicator_id);
                 self.panel_app.indicator_settings_state.open(indicator_id);
-                eprintln!("[ChartApp] Indicator right-clicked: id={}, settings opened", indicator_id);
+                log::info!("[ChartApp] Indicator right-clicked: id={}, settings opened", indicator_id);
             }
             crate::panel_grid::ChartRightClickHit::Background => {
                 // Right-clicked on empty chart background — build chart background menu.
@@ -1030,7 +1030,7 @@ impl ChartApp {
                     items,
                     w, h,
                 );
-                eprintln!("[ChartApp] Context menu opened for chart background");
+                log::info!("[ChartApp] Context menu opened for chart background");
             }
             crate::panel_grid::ChartRightClickHit::Miss => {}
         }
@@ -1065,7 +1065,7 @@ impl ChartApp {
                 || id.starts_with("rtb:")
                 || id.starts_with("dropdown:");
             if is_toolbar {
-                eprintln!("[ChartApp] double-click on toolbar widget: {}", id);
+                log::info!("[ChartApp] double-click on toolbar widget: {}", id);
                 self.dispatch_panel_click(&id, x, y);
                 return;
             }
@@ -1485,7 +1485,7 @@ impl ChartApp {
                 .unwrap_or(false);
             if is_pty_leaf {
                 if let Some((row, col)) = self.pty_cell_at(x, y) {
-                    eprintln!("[gate4agent::pty] drag_start @ row={} col={}", row, col);
+                    log::info!("[gate4agent::pty] drag_start @ row={} col={}", row, col);
                     if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                         self.sidebar_state.agent_pty_selections.insert(
                             leaf_id,
@@ -1770,7 +1770,7 @@ impl ChartApp {
                 let _ = area_left_abs; // will use sep_offset_at_start directly
                 self.sidebar_state.watchlist_sep_drag = Some((sep_idx, x, sep_offset_at_start));
                 self.ui_drag_active = true;
-                eprintln!("[Sidebar] Watchlist sep drag started: sep={}, x={:.0}, offset={:.0}", sep_idx, x, sep_offset_at_start);
+                log::info!("[Sidebar] Watchlist sep drag started: sep={}, x={:.0}, offset={:.0}", sep_idx, x, sep_offset_at_start);
                 return false;
             }
         }
@@ -1788,7 +1788,7 @@ impl ChartApp {
                     self.sidebar_state.watchlist_drag_y = y;
                     self.sidebar_state.watchlist_drop_index = Some(idx);
                     self.ui_drag_active = true;
-                    eprintln!("[Sidebar] Watchlist drag started: row {}", idx);
+                    log::info!("[Sidebar] Watchlist drag started: row {}", idx);
                     return false;
                 }
             }
@@ -2660,7 +2660,7 @@ impl ChartApp {
                             }
                         }
                         self.panel_app.user_settings_state.profile_mgr_text_select_dragging = Some(field_id.clone());
-                        eprintln!("[ChartApp] profile_mgr text select drag started: {} at char {}", field_id, drag_cursor);
+                        log::info!("[ChartApp] profile_mgr text select drag started: {} at char {}", field_id, drag_cursor);
                         return false;
                     }
                 }
@@ -2908,7 +2908,7 @@ impl ChartApp {
                         // in on_mouse_move once the pointer moves >= 5 px.
                         // This ensures short clicks reach on_click properly.
                         self.standalone_panels.watchlist_modal.drag_reorder_pending = Some((idx, x, y));
-                        eprintln!("[WatchlistModal] drag-reorder pending: row {}", idx);
+                        log::info!("[WatchlistModal] drag-reorder pending: row {}", idx);
                         // Do NOT return early — let the drag-start flow continue
                         // so other drag handlers (e.g. modal header) get checked.
                     }
@@ -2934,7 +2934,7 @@ impl ChartApp {
                 if on_name_label {
                     self.panel_app.toolbar_state.floating_inline_bar.start_drag(x, y, &bar_rect);
                     self.ui_drag_active = true;
-                    eprintln!("[ChartApp] inline bar drag started (by label)");
+                    log::info!("[ChartApp] inline bar drag started (by label)");
                     return false;
                 }
             }
@@ -2953,7 +2953,7 @@ impl ChartApp {
                 if on_bar_chrome {
                     self.panel_app.toolbar_state.favorites_bar.start_drag(x, y, &bar_rect);
                     self.ui_drag_active = true;
-                    eprintln!("[ChartApp] favorites bar drag started");
+                    log::info!("[ChartApp] favorites bar drag started");
                     return false;
                 }
             }
@@ -3308,7 +3308,7 @@ impl ChartApp {
                             opacity_rect: (opacity.x, opacity.y, opacity.width, opacity.height),
                         });
                         self.apply_color_picker_drag(x, y);
-                        eprintln!("[ChartApp] color_picker SV drag started ({})", src);
+                        log::info!("[ChartApp] color_picker SV drag started ({})", src);
                         return false;
                     }
                     if hue.contains(x, y) {
@@ -3320,7 +3320,7 @@ impl ChartApp {
                             opacity_rect: (opacity.x, opacity.y, opacity.width, opacity.height),
                         });
                         self.apply_color_picker_drag(x, y);
-                        eprintln!("[ChartApp] color_picker hue drag started ({})", src);
+                        log::info!("[ChartApp] color_picker hue drag started ({})", src);
                         return false;
                     }
                     if opacity.contains(x, y) {
@@ -3332,7 +3332,7 @@ impl ChartApp {
                             opacity_rect: (opacity.x, opacity.y, opacity.width, opacity.height),
                         });
                         self.apply_color_picker_drag(x, y);
-                        eprintln!("[ChartApp] color_picker L2 opacity drag started ({})", src);
+                        log::info!("[ChartApp] color_picker L2 opacity drag started ({})", src);
                         return false;
                     }
                 }
@@ -3349,7 +3349,7 @@ impl ChartApp {
                                 opacity_rect: (opacity.x, opacity.y, opacity.width, opacity.height),
                             });
                             self.apply_color_picker_drag(x, y);
-                            eprintln!("[ChartApp] color_picker L1 opacity drag started ({})", src);
+                            log::info!("[ChartApp] color_picker L1 opacity drag started ({})", src);
                             return false;
                         }
                     }
@@ -3546,7 +3546,7 @@ impl ChartApp {
             .map(|bid| self.core.drawings().is_freehand_tool(bid))
             .unwrap_or(false);
         if freehand_tool_active_ds && self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] freehand drag-start refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] freehand drag-start refused: active tab is read-only (shared chart)");
             return false;
         }
         // Same rule as the click path: bars come from the bubble already
@@ -3573,7 +3573,7 @@ impl ChartApp {
                 return false;
             }
             ChartDragStartHit::SubPaneSeparator { instance_id } => {
-                eprintln!("[ChartApp] sub-pane sep drag START instance_id={}", instance_id);
+                log::info!("[ChartApp] sub-pane sep drag START instance_id={}", instance_id);
                 // Pre-cutover this called sync_sub_panes_from_manager() — that
                 // function walks every container, takes the indicators read
                 // guard once, then for each pane id takes a write guard via
@@ -3747,7 +3747,7 @@ impl ChartApp {
                 } else {
                     window.drag_sub_pane_separator(instance_id, dy, content_h, content_w)
                 };
-                eprintln!(
+                log::info!(
                     "[ChartApp] sub-pane sep DRAG id={} dy={:.1} content_h={:.0} ok={}",
                     instance_id, dy, content_h, ok
                 );
@@ -4074,7 +4074,7 @@ impl ChartApp {
                 self.standalone_panels.watchlist_modal.drag_reorder = Some((pending_idx, y));
                 self.standalone_panels.watchlist_modal.drop_index = Some(pending_idx);
                 self.ui_drag_active = true;
-                eprintln!("[WatchlistModal] drag-reorder promoted: row {}", pending_idx);
+                log::info!("[WatchlistModal] drag-reorder promoted: row {}", pending_idx);
             }
         }
 
@@ -4112,7 +4112,7 @@ impl ChartApp {
                 self.panel_app.primitive_settings_state.template_drag_reorder_pending = None;
                 self.panel_app.primitive_settings_state.template_drag_reorder = Some((pending_key.clone(), y));
                 self.ui_drag_active = true;
-                eprintln!("[ChartApp] prim_settings template menu drag-reorder promoted: {}", pending_key);
+                log::info!("[ChartApp] prim_settings template menu drag-reorder promoted: {}", pending_key);
             }
         }
 
@@ -4464,7 +4464,7 @@ impl ChartApp {
             let dist = ((x - sx).powi(2) + (y - sy).powi(2)).sqrt();
             if dist >= 5.0 {
                 self.fav_item_drag = Some((tool_id, x, y));
-                eprintln!("[ChartApp] favorites item drag started: {}", self.fav_item_drag.as_ref().unwrap().0);
+                log::info!("[ChartApp] favorites item drag started: {}", self.fav_item_drag.as_ref().unwrap().0);
             } else {
                 // Not yet past the threshold — keep the pending press.
                 self.fav_item_drag_pending = Some((tool_id, sx, sy));
@@ -4479,7 +4479,7 @@ impl ChartApp {
         if let Some((group_id, sx, sy)) = self.fav_group_drag_pending.take() {
             let dist = ((x - sx).powi(2) + (y - sy).powi(2)).sqrt();
             if dist >= 5.0 {
-                eprintln!("[ChartApp] favorites group drag started: {}", group_id);
+                log::info!("[ChartApp] favorites group drag started: {}", group_id);
                 self.fav_group_drag = Some(group_id);
             } else {
                 self.fav_group_drag_pending = Some((group_id, sx, sy));
@@ -5015,7 +5015,7 @@ impl ChartApp {
                 .map(|r| r.contains(cx, cy))
                 .unwrap_or(false);
             if !over_bar {
-                eprintln!("[ChartApp] favorites item dropped outside bar — removing: {}", tool_id);
+                log::info!("[ChartApp] favorites item dropped outside bar — removing: {}", tool_id);
                 self.process_chart_out_event(
                     mlc_core::events::ChartOutEvent::ToggleFavoritePrimitive { tool_id }
                 );
@@ -5026,7 +5026,7 @@ impl ChartApp {
                 let to_index = self.fav_drop_index(cx);
                 if let Some(from_index) = from_index {
                     if from_index != to_index {
-                        eprintln!(
+                        log::info!(
                             "[ChartApp] favorites item reordered: {} {} -> {}",
                             tool_id, from_index, to_index
                         );
@@ -5037,7 +5037,7 @@ impl ChartApp {
                             }
                         );
                     } else {
-                        eprintln!("[ChartApp] favorites item drag cancelled (same slot): {}", tool_id);
+                        log::info!("[ChartApp] favorites item drag cancelled (same slot): {}", tool_id);
                     }
                 }
             }
@@ -5071,7 +5071,7 @@ impl ChartApp {
                     // not a toggle-off (`ToggleFavoritePrimitive` flips).
                     let already = self.core.user().profile().ui.favorite_primitives.contains(&tool_id);
                     if !already {
-                        eprintln!("[ChartApp] dragged into favorites bar: {} -> {}", group_id, tool_id);
+                        log::info!("[ChartApp] dragged into favorites bar: {} -> {}", group_id, tool_id);
                         self.process_chart_out_event(
                             mlc_core::events::ChartOutEvent::ToggleFavoritePrimitive { tool_id }
                         );
@@ -5225,7 +5225,7 @@ impl ChartApp {
         if self.sidebar_separator_drag_active {
             self.sidebar_separator_drag_active = false;
             self.persist_profile();
-            eprintln!("[ChartApp] Sidebar width: {:.0}", self.sidebar_state.right_width());
+            log::info!("[ChartApp] Sidebar width: {:.0}", self.sidebar_state.right_width());
             return;
         }
 
@@ -5245,7 +5245,7 @@ impl ChartApp {
             self.watchlists_dirty = true;
             self.sidebar_state.watchlist_sep_drag = None;
             self.persist_watchlists();
-            eprintln!("[ChartApp] Watchlist sep drag ended");
+            log::info!("[ChartApp] Watchlist sep drag ended");
             return;
         }
 
@@ -5276,7 +5276,7 @@ impl ChartApp {
                 }
                 new_order.insert(to_idx.min(new_order.len()), removed);
                 if new_order != keys {
-                    eprintln!("[ChartApp] prim_settings template menu reordered: {} -> {}", from_key, to_idx);
+                    log::info!("[ChartApp] prim_settings template menu reordered: {} -> {}", from_key, to_idx);
                     self.template_actions.push(crate::TemplateAction::ReorderPrimitiveTemplates { order: new_order });
                 }
             }
@@ -5305,7 +5305,7 @@ impl ChartApp {
                     self.sidebar_state.watchlist_sort_mode = 0;
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
-                    eprintln!("[WatchlistModal] reorder: {} -> {}", from_idx, clamped_to);
+                    log::info!("[WatchlistModal] reorder: {} -> {}", from_idx, clamped_to);
                     // Manual reorder invalidates any saved sort snapshot — the new
                     // order becomes the "original" and sort mode resets to unsorted.
                     self.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
@@ -5335,7 +5335,7 @@ impl ChartApp {
                 self.sidebar_state.watchlist_sort_mode = 0;
                 self.watchlists_dirty = true;
                 self.persist_watchlists();
-                eprintln!("[Sidebar] Watchlist reorder: {} -> {}", drag_idx, clamped_drop);
+                log::info!("[Sidebar] Watchlist reorder: {} -> {}", drag_idx, clamped_drop);
                 // Manual reorder invalidates any saved sort snapshot — the new
                 // order becomes the "original" and sort mode resets to unsorted.
                 self.watchlist_ui.list_mut(active_list_id).order_snapshot = None;
@@ -5398,17 +5398,17 @@ impl ChartApp {
         // End any in-progress modal drag.
         if self.panel_app.primitive_settings_state.is_dragging {
             self.panel_app.primitive_settings_state.end_drag();
-            eprintln!("[ChartApp] prim_settings modal drag ended");
+            log::info!("[ChartApp] prim_settings modal drag ended");
             return;
         }
         if self.panel_app.chart_settings_state.is_dragging {
             self.panel_app.chart_settings_state.end_drag();
-            eprintln!("[ChartApp] chart_settings modal drag ended");
+            log::info!("[ChartApp] chart_settings modal drag ended");
             return;
         }
         if self.panel_app.overlay_settings_state.is_dragging {
             self.panel_app.overlay_settings_state.end_drag();
-            eprintln!("[ChartApp] overlay_settings modal drag ended");
+            log::info!("[ChartApp] overlay_settings modal drag ended");
             return;
         }
         if self.tc_modal.is_dragging {
@@ -5424,32 +5424,32 @@ impl ChartApp {
         }
         if self.panel_app.tags_tabs_state.is_dragging {
             self.panel_app.tags_tabs_state.end_drag();
-            eprintln!("[ChartApp] tags_tabs modal drag ended");
+            log::info!("[ChartApp] tags_tabs modal drag ended");
             return;
         }
         if self.panel_app.indicator_settings_state.is_dragging {
             self.panel_app.indicator_settings_state.end_drag();
-            eprintln!("[ChartApp] ind_settings modal drag ended");
+            log::info!("[ChartApp] ind_settings modal drag ended");
             return;
         }
         if self.panel_app.alert_settings_state.is_dragging {
             self.panel_app.alert_settings_state.end_drag();
-            eprintln!("[ChartApp] alert_settings modal drag ended");
+            log::info!("[ChartApp] alert_settings modal drag ended");
             return;
         }
         if self.panel_app.compare_settings_state.is_dragging {
             self.panel_app.compare_settings_state.end_drag();
-            eprintln!("[ChartApp] compare_settings modal drag ended");
+            log::info!("[ChartApp] compare_settings modal drag ended");
             return;
         }
         if self.panel_app.user_settings_state.is_dragging {
             self.panel_app.user_settings_state.end_drag();
-            eprintln!("[ChartApp] user_settings modal drag ended");
+            log::info!("[ChartApp] user_settings modal drag ended");
             return;
         }
         if self.panel_app.user_settings_state.wizard_is_dragging {
             self.panel_app.user_settings_state.wizard_end_drag();
-            eprintln!("[ChartApp] welcome_wizard modal drag ended");
+            log::info!("[ChartApp] welcome_wizard modal drag ended");
             return;
         }
         #[cfg(feature = "cloud")]
@@ -5467,18 +5467,18 @@ impl ChartApp {
             // this was missing.
             if self.panel_app.community_state.is_dragging {
                 self.panel_app.community_state.end_drag();
-                eprintln!("[ChartApp] community modal drag ended");
+                log::info!("[ChartApp] community modal drag ended");
                 return;
             }
         }
         if self.panel_app.ewa_engine_settings_state.is_dragging {
             self.panel_app.ewa_engine_settings_state.end_drag();
-            eprintln!("[ChartApp] ewa_engine_settings modal drag ended");
+            log::info!("[ChartApp] ewa_engine_settings modal drag ended");
             return;
         }
         if self.panel_app.markup_engine_settings_state.is_dragging {
             self.panel_app.markup_engine_settings_state.end_drag();
-            eprintln!("[ChartApp] markup_engine_settings modal drag ended");
+            log::info!("[ChartApp] markup_engine_settings modal drag ended");
             return;
         }
         // Profile manager text select drag end.
@@ -5509,27 +5509,27 @@ impl ChartApp {
                     }
                 }
             }
-            eprintln!("[ChartApp] profile_mgr text select drag ended: {}", field_id);
+            log::info!("[ChartApp] profile_mgr text select drag ended: {}", field_id);
             return;
         }
         if self.panel_app.preset_name_input.is_dragging {
             self.panel_app.preset_name_input.end_drag();
-            eprintln!("[ChartApp] preset_name_input modal drag ended");
+            log::info!("[ChartApp] preset_name_input modal drag ended");
             return;
         }
         if self.panel_app.chart_browser.scroll.is_dragging {
             self.panel_app.chart_browser.scroll.end_drag();
-            eprintln!("[ChartApp] chart_browser scrollbar drag ended");
+            log::info!("[ChartApp] chart_browser scrollbar drag ended");
             return;
         }
         if self.panel_app.chart_browser.is_dragging {
             self.panel_app.chart_browser.end_drag();
-            eprintln!("[ChartApp] chart_browser modal drag ended");
+            log::info!("[ChartApp] chart_browser modal drag ended");
             return;
         }
         if self.standalone_panels.watchlist_modal.is_dragging {
             self.standalone_panels.watchlist_modal.end_drag();
-            eprintln!("[ChartApp] watchlist_modal drag ended");
+            log::info!("[ChartApp] watchlist_modal drag ended");
             return;
         }
         // text_select_dragging for all 4 settings modals is handled by
@@ -5537,21 +5537,21 @@ impl ChartApp {
         // The old per-modal blocks have been removed (Wave 2b migration).
         if self.standalone_panels.wl_group_name_input.is_dragging {
             self.standalone_panels.wl_group_name_input.end_drag();
-            eprintln!("[ChartApp] wl_group_name_input modal drag ended");
+            log::info!("[ChartApp] wl_group_name_input modal drag ended");
             return;
         }
 
         // === Search overlay modal drag end ===
         if self.modal_state.is_dragging {
             self.modal_state.end_drag();
-            eprintln!("[ChartApp] search_modal modal drag ended");
+            log::info!("[ChartApp] search_modal modal drag ended");
             return;
         }
 
         // === Floating inline bar drag end ===
         if self.panel_app.toolbar_state.floating_inline_bar.dragging {
             self.panel_app.toolbar_state.floating_inline_bar.end_drag();
-            eprintln!("[ChartApp] inline bar drag ended");
+            log::info!("[ChartApp] inline bar drag ended");
             self.persist_profile();
             return;
         }
@@ -5559,7 +5559,7 @@ impl ChartApp {
         // === Floating favorites bar drag end (favorite-primitives arc) ===
         if self.panel_app.toolbar_state.favorites_bar.dragging {
             self.panel_app.toolbar_state.favorites_bar.end_drag();
-            eprintln!("[ChartApp] favorites bar drag ended");
+            log::info!("[ChartApp] favorites bar drag ended");
             self.persist_profile();
             return;
         }
@@ -5567,7 +5567,7 @@ impl ChartApp {
         // === Scrollbar drag end ===
         if self.panel_app.chart_settings_state.scroll.is_dragging {
             self.panel_app.chart_settings_state.scroll.end_drag();
-            eprintln!("[ChartApp] chart_settings scrollbar drag ended");
+            log::info!("[ChartApp] chart_settings scrollbar drag ended");
             return;
         }
         if self.tc_modal.scroll.is_dragging {
@@ -5576,17 +5576,17 @@ impl ChartApp {
         }
         if self.panel_app.indicator_settings_state.scroll.is_dragging {
             self.panel_app.indicator_settings_state.scroll.end_drag();
-            eprintln!("[ChartApp] ind_settings scrollbar drag ended");
+            log::info!("[ChartApp] ind_settings scrollbar drag ended");
             return;
         }
         if self.panel_app.primitive_settings_state.scroll.is_dragging {
             self.panel_app.primitive_settings_state.scroll.end_drag();
-            eprintln!("[ChartApp] prim_settings scrollbar drag ended");
+            log::info!("[ChartApp] prim_settings scrollbar drag ended");
             return;
         }
         if self.panel_app.alert_settings_state.list_scroll.is_dragging {
             self.panel_app.alert_settings_state.list_scroll.end_drag();
-            eprintln!("[ChartApp] alert_settings scrollbar drag ended");
+            log::info!("[ChartApp] alert_settings scrollbar drag ended");
             return;
         }
         // Tags & Tabs scrollbar drag end
@@ -5695,7 +5695,7 @@ impl ChartApp {
                         window.compare_overlay.set_series_line_width_by_index(idx, width);
                     }
                     self.autosave_snapshot();
-                    eprintln!("[ChartApp] cmp_settings line_width committed: {}", width);
+                    log::info!("[ChartApp] cmp_settings line_width committed: {}", width);
                 }
                 // ONE command for the whole gesture, against the style the
                 // drag started from — the live per-pixel writes above are not
@@ -5720,14 +5720,14 @@ impl ChartApp {
         // === Color picker L2 drag end ===
         if self.color_picker_drag.is_some() {
             self.color_picker_drag = None;
-            eprintln!("[ChartApp] color_picker drag ended");
+            log::info!("[ChartApp] color_picker drag ended");
             return;
         }
 
         // === Search modal scrollbar drag end ===
         if self.modal_state.scroll.is_dragging {
             self.modal_state.scroll.end_drag();
-            eprintln!("[ChartApp] search_modal scrollbar drag ended");
+            log::info!("[ChartApp] search_modal scrollbar drag ended");
             return;
         }
 
@@ -5753,7 +5753,7 @@ impl ChartApp {
             .unwrap_or(false)
             && self.is_readonly_tab(&self.panel_app.active_preset_id);
         if freehand_readonly_blocked {
-            eprintln!("[ChartApp] freehand drag-end refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] freehand drag-end refused: active tab is read-only (shared chart)");
         }
         let freehand_cf = if freehand_readonly_blocked {
             None
@@ -5793,7 +5793,7 @@ impl ChartApp {
                     }).flatten());
                 if let Some(cmd) = group_create_cmd {
                     self.push_undo_command(cmd);
-                    eprintln!("[ChartApp] Recorded CreatePrimitive (freehand, grouped) via group.primitives");
+                    log::info!("[ChartApp] Recorded CreatePrimitive (freehand, grouped) via group.primitives");
                 }
             }
             // propagate_drawing_state_to_sync_group is a no-op stub under the
@@ -7476,7 +7476,7 @@ impl ChartApp {
                                     if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                                         window.compare_overlay.set_series_timeframe_visibility(series_idx, tf_config);
                                     }
-                                    eprintln!("[ChartApp] cmp_settings scroll on tf_{}_slider", tf_idx);
+                                    log::info!("[ChartApp] cmp_settings scroll on tf_{}_slider", tf_idx);
                                 }
                             }
                         }
@@ -7497,7 +7497,7 @@ impl ChartApp {
                             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                                 window.compare_overlay.set_series_line_width_by_index(series_idx, new_val);
                             }
-                            eprintln!("[ChartApp] cmp_settings scroll on line_width: {}", new_val);
+                            log::info!("[ChartApp] cmp_settings scroll on line_width: {}", new_val);
                         }
                     }
                     // compare_settings always swallows wheel
@@ -7941,35 +7941,35 @@ impl ChartApp {
         if self.panel_app.chart_browser.is_open {
             self.panel_app.chart_browser.close();
             self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
-            eprintln!("[ChartApp] chart browser closed via Escape");
+            log::info!("[ChartApp] chart browser closed via Escape");
             return;
         }
 
         // If Tags & Tabs modal is open, close it.
         if self.panel_app.tags_tabs_state.is_open {
             self.panel_app.close_tags_tabs();
-            eprintln!("[ChartApp] tags_tabs closed via Escape");
+            log::info!("[ChartApp] tags_tabs closed via Escape");
             return;
         }
 
         // If the Trading Container modal is open, close it.
         if self.tc_modal.is_open {
             self.tc_modal.close();
-            eprintln!("[ChartApp] tc_modal closed via Escape");
+            log::info!("[ChartApp] tc_modal closed via Escape");
             return;
         }
 
         // If a standalone panel-settings surface is open, close it.
         if self.panel_settings_open.is_some() {
             self.panel_settings_open = None;
-            eprintln!("[ChartApp] panel settings closed via Escape");
+            log::info!("[ChartApp] panel settings closed via Escape");
             return;
         }
 
         // If watchlist group name input is open, close it.
         if self.standalone_panels.wl_group_name_input.is_open() {
             self.standalone_panels.wl_group_name_input.close();
-            eprintln!("[ChartApp] wl_group_name_input cancelled");
+            log::info!("[ChartApp] wl_group_name_input cancelled");
             return;
         }
 
@@ -7977,7 +7977,7 @@ impl ChartApp {
         if self.panel_app.preset_name_input.is_open {
             self.panel_app.preset_name_input.close();
             self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
-            eprintln!("[ChartApp] preset name input cancelled");
+            log::info!("[ChartApp] preset name input cancelled");
             return;
         }
 
@@ -8007,25 +8007,25 @@ impl ChartApp {
         if self.panel_app.primitive_settings_state.active_field_id.is_some() {
             self.panel_app.primitive_settings_state.active_field_id = None;
             self.input_coordinator.borrow_mut().text_fields_mut().blur();
-            eprintln!("[ChartApp] prim_settings text editing cancelled");
+            log::info!("[ChartApp] prim_settings text editing cancelled");
             return;
         }
         if self.panel_app.indicator_settings_state.active_field_id.is_some() {
             self.panel_app.indicator_settings_state.active_field_id = None;
             self.input_coordinator.borrow_mut().text_fields_mut().blur();
-            eprintln!("[ChartApp] ind_settings text editing cancelled");
+            log::info!("[ChartApp] ind_settings text editing cancelled");
             return;
         }
         if self.panel_app.chart_settings_state.active_field_id.is_some() {
             self.panel_app.chart_settings_state.active_field_id = None;
             self.input_coordinator.borrow_mut().text_fields_mut().blur();
-            eprintln!("[ChartApp] chart_settings text editing cancelled");
+            log::info!("[ChartApp] chart_settings text editing cancelled");
             return;
         }
         if self.panel_app.compare_settings_state.active_field_id.is_some() {
             self.panel_app.compare_settings_state.active_field_id = None;
             self.input_coordinator.borrow_mut().text_fields_mut().blur();
-            eprintln!("[ChartApp] cmp_settings text editing cancelled");
+            log::info!("[ChartApp] cmp_settings text editing cancelled");
             return;
         }
 
@@ -8626,7 +8626,7 @@ impl ChartApp {
                             w.compare_overlay.add_series(s.clone());
                         }
                     }
-                    eprintln!("[Undo/Redo] Restored {} compare series", series.len());
+                    log::info!("[Undo/Redo] Restored {} compare series", series.len());
                 }
             }
             Command::AddIndicator { instance_id, type_id, .. } => {
@@ -8652,9 +8652,9 @@ impl ChartApp {
                         });
                     }
                     self.sync_sub_panes_from_manager();
-                    eprintln!("[Undo/Redo] Re-created indicator {} (id={}) window_id={}", type_id, instance_id, chart_id_val.0);
+                    log::info!("[Undo/Redo] Re-created indicator {} (id={}) window_id={}", type_id, instance_id, chart_id_val.0);
                 } else {
-                    eprintln!("[Undo/Redo] Failed to re-create indicator {} (id={})", type_id, instance_id);
+                    log::warn!("[Undo/Redo] Failed to re-create indicator {} (id={})", type_id, instance_id);
                 }
             }
             Command::RemoveIndicator { instance_id, .. } => {
@@ -8673,9 +8673,9 @@ impl ChartApp {
                         });
                     }
                     self.sync_sub_panes_from_manager();
-                    eprintln!("[Undo/Redo] Removed indicator instance {}", instance_id);
+                    log::info!("[Undo/Redo] Removed indicator instance {}", instance_id);
                 } else {
-                    eprintln!("[Undo/Redo] Indicator instance {} not found", instance_id);
+                    log::warn!("[Undo/Redo] Indicator instance {} not found", instance_id);
                 }
             }
             Command::ModifyPrimitiveFull { prim_id, type_id, new_json, .. } => {
@@ -8713,7 +8713,7 @@ impl ChartApp {
                         self.core.alerts_mut().restore_one(bid, snapshot.clone());
                     }
                     self.sidebar_data_dirty = true;
-                    eprintln!("[Undo/Redo] Restored alert id={}", alert_id);
+                    log::info!("[Undo/Redo] Restored alert id={}", alert_id);
                 }
             }
             Command::DeleteAlert { snapshot } => {
@@ -8722,7 +8722,7 @@ impl ChartApp {
                 if let Some(bid) = bid_opt {
                     self.core.alerts_mut().remove(bid, alert_id);
                     self.sidebar_data_dirty = true;
-                    eprintln!("[Undo/Redo] Deleted alert id={}", alert_id);
+                    log::info!("[Undo/Redo] Deleted alert id={}", alert_id);
                 }
             }
         }
@@ -9002,14 +9002,14 @@ impl ChartApp {
         };
 
         let Some(cmd) = cmd else {
-            eprintln!("[ChartApp] Nothing to undo");
+            log::info!("[ChartApp] Nothing to undo");
             return;
         };
         let desc = cmd.description();
         let inverse = cmd.inverse();
         self.apply_command_to_active_window(&inverse);
         self.post_apply_command_effects(&inverse);
-        eprintln!("[ChartApp] Undo ({}): {}", if take_group { "group" } else { "local" }, desc);
+        log::info!("[ChartApp] Undo ({}): {}", if take_group { "group" } else { "local" }, desc);
     }
 
     /// Execute a redo step, routing through the group history for shared
@@ -9044,13 +9044,13 @@ impl ChartApp {
         };
 
         let Some(cmd) = cmd else {
-            eprintln!("[ChartApp] Nothing to redo");
+            log::info!("[ChartApp] Nothing to redo");
             return;
         };
         let desc = cmd.description();
         self.apply_command_to_active_window(&cmd);
         self.post_apply_command_effects(&cmd);
-        eprintln!("[ChartApp] Redo ({}): {}", if take_group { "group" } else { "local" }, desc);
+        log::info!("[ChartApp] Redo ({}): {}", if take_group { "group" } else { "local" }, desc);
     }
 
     /// Post-apply hook: run side-effects that the forward path does but
@@ -9201,7 +9201,7 @@ impl ChartApp {
         // undo. Every call site here returns `()`, so `R::default()` never
         // fabricates a value the caller would mistake for real data.
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] indicator edit refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] indicator edit refused: active tab is read-only (shared chart)");
             return R::default();
         }
         if self.edit_recording_depth > 0 {
@@ -9282,7 +9282,7 @@ impl ChartApp {
         // BEFORE `edit` runs so a read-only tab's drawings are provably
         // untouched.
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] primitive edit refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] primitive edit refused: active tab is read-only (shared chart)");
             return R::default();
         }
         if self.edit_recording_depth > 0 {
@@ -9422,7 +9422,7 @@ impl ChartApp {
             });
         }
         if !remap.is_empty() || dropped > 0 {
-            eprintln!(
+            log::info!(
                 "[ChartApp] History reconciled after load: {} primitive id(s) rewritten, {} command(s) dropped",
                 remap.len(),
                 dropped
@@ -9564,7 +9564,7 @@ impl ChartApp {
         // overwrite the real preset file on disk with placeholder content.
         // This is the `7a9d1d2` disaster path closed in code.
         if !crate::persistence::autosave::is_persist_safe(&self.load_state) {
-            eprintln!(
+            log::warn!(
                 "[ChartApp] autosave skipped — load_state={:?} (cold hydrate in flight, refusing to persist placeholder)",
                 self.load_state,
             );
@@ -9586,7 +9586,7 @@ impl ChartApp {
         // active_preset_id is changed, or be done synchronously in the
         // LoadPreset handler (still TODO — see below).
         if target_id != self.panel_app.active_preset_id {
-            eprintln!(
+            log::warn!(
                 "[ChartApp] autosave skipped — target='{}' but active='{}' (warm switch race, outgoing autosave should run synchronously)",
                 target_id, self.panel_app.active_preset_id,
             );
@@ -9600,7 +9600,7 @@ impl ChartApp {
         } else if id == "__default__" {
             "Default".to_string()
         } else {
-            eprintln!("[ChartApp] autosave: preset id '{}' not found in presets map", id);
+            log::warn!("[ChartApp] autosave: preset id '{}' not found in presets map", id);
             return;
         };
 
@@ -9612,7 +9612,7 @@ impl ChartApp {
         if let Some(preset) = saved_preset {
             self.preset_actions.push(crate::PresetAction::Upsert(preset));
         }
-        eprintln!(
+        log::info!(
             "[ChartApp] autosave snapshot for '{}' (persisted) collect_us={}",
             name, _t0.elapsed().as_micros(),
         );
@@ -9685,7 +9685,7 @@ impl ChartApp {
                 // S2.7.1e: read symbol/timeframe via branch_meta (B6);
                 // no longer need a shared borrow of the window for these fields.
                 if self.panel_app.panel_grid.container_for_leaf(active_leaf).is_none() {
-                    eprintln!("[sync_group] new_pane: container_for_leaf({:?}) returned None — skipping auto group", active_leaf);
+                    log::info!("[sync_group] new_pane: container_for_leaf({:?}) returned None — skipping auto group", active_leaf);
                     return;
                 }
                 let group_id = self.create_auto_bubble(
@@ -9778,7 +9778,7 @@ impl ChartApp {
             self.preset_actions.push(crate::PresetAction::Upsert(preset));
         }
         self.persist_profile();
-        eprintln!("[ChartApp] new chart '{}' created (id={})", new_name, new_id);
+        log::info!("[ChartApp] new chart '{}' created (id={})", new_name, new_id);
     }
 
     // -------------------------------------------------------------------------
@@ -9801,7 +9801,7 @@ impl ChartApp {
         // drains it to disk). Nothing legitimate calls this during a cold
         // hydrate — refuse and bail.
         if self.load_state.is_loading() {
-            eprintln!(
+            log::warn!(
                 "[ChartApp] collect_state_into_preset refused for id={} — load_state={:?}",
                 id, self.load_state,
             );

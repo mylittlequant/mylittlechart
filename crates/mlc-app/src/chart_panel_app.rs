@@ -239,10 +239,10 @@ impl ChartPanelApp {
 
         // Save profile immediately to persist the updated launch record.
         if let Err(e) = mlc_core::user_profile::storage::save_profile(&profile, vault_key.as_ref()) {
-            eprintln!("[ChartPanelApp] failed to save profile: {}", e);
+            log::error!("[ChartPanelApp] failed to save profile: {}", e);
         }
 
-        eprintln!(
+        log::info!(
             "[ChartPanelApp] user state loaded: {} presets, {} prim-templates, {} ind-templates",
             presets.len(),
             template_manager.primitive_templates.len(),

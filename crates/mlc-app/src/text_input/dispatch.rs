@@ -540,7 +540,7 @@ impl ChartApp {
                             self.watchlist_actions.push(crate::WatchlistAction::CreateList { name: name.clone() });
                             self.watchlists_dirty = true;
                             self.persist_watchlists();
-                            eprintln!("[WatchlistGroupName] created new list '{}' id={}", name, new_id);
+                            log::info!("[WatchlistGroupName] created new list '{}' id={}", name, new_id);
                         }
                         WatchlistGroupNameMode::Rename(id) => {
                             let found = {
@@ -556,7 +556,7 @@ impl ChartApp {
                                 self.watchlist_actions.push(crate::WatchlistAction::RenameList { id, new_name: name.clone() });
                                 self.watchlists_dirty = true;
                                 self.persist_watchlists();
-                                eprintln!("[WatchlistGroupName] renamed list id={} to '{}'", id, name);
+                                log::info!("[WatchlistGroupName] renamed list id={} to '{}'", id, name);
                             }
                         }
                     }
@@ -719,7 +719,7 @@ impl ChartApp {
                             uss.set_passphrase_error.clear();
                             uss.confirm_passphrase_focused = false;
                             self.pending_updater_cmd = Some(format!("set_new_passphrase:{}", passphrase_text));
-                            eprintln!("[ChartApp] profile_mgr: set_new_passphrase submitted via Enter");
+                            log::info!("[ChartApp] profile_mgr: set_new_passphrase submitted via Enter");
                         } else if confirm_text != passphrase_text {
                             uss.set_passphrase_error = "Passphrases do not match".to_string();
                         }
@@ -747,7 +747,7 @@ impl ChartApp {
                         if key_text.len() >= 40 {
                             uss.vault_unlock_error = None;
                             self.pending_updater_cmd = Some(format!("recovery_unlock:{}", key_text));
-                            eprintln!("[ChartApp] profile_mgr: recovery unlock submitted via Enter");
+                            log::info!("[ChartApp] profile_mgr: recovery unlock submitted via Enter");
                         }
                         uss.recovery_key_display_focused = false;
                     }
@@ -923,7 +923,7 @@ impl ChartApp {
                     coord.text_fields().text(&chat_id).to_string()
                 }
             };
-            eprintln!("[gate4agent::chat] Enter via on_char text_len={}", text.len());
+            log::info!("[gate4agent::chat] Enter via on_char text_len={}", text.len());
             if !text.is_empty() {
                 if let Some(leaf_id) = self.sidebar_state.focused_agent_leaf {
                     let desc = self.sidebar_state.agent_leaves.get(&leaf_id).cloned();
@@ -937,9 +937,9 @@ impl ChartApp {
                                         .entry(leaf_id).or_default();
                                     buf.clear();
                                     self.input_coordinator.borrow_mut().text_fields_mut().set_text(&chat_id, "");
-                                    eprintln!("[gate4agent::chat] Enter via on_char OK");
+                                    log::info!("[gate4agent::chat] Enter via on_char OK");
                                 }
-                                Err(e) => eprintln!("[gate4agent::chat] Enter via on_char error: {}", e),
+                                Err(e) => log::warn!("[gate4agent::chat] Enter via on_char error: {}", e),
                             }
                         }
                     }

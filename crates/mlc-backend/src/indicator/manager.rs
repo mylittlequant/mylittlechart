@@ -318,7 +318,7 @@ impl IndicatorManager {
             self.compute_caches.remove(&id);
         }
         if count > 0 {
-            eprintln!("[IndicatorManager] Purged all {} instances for bubble {}", count, target_bubble_id);
+            log::info!("[IndicatorManager] Purged all {} instances for bubble {}", count, target_bubble_id);
         }
     }
 

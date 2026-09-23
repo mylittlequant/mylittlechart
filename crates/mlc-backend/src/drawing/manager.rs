@@ -1729,7 +1729,7 @@ impl DrawingManager {
                     prim.data_mut().color.fill = Some(color.to_string());
                 }
             }
-            _ => eprintln!("[DrawingManager] Unknown color field: {field}"),
+            _ => log::info!("[DrawingManager] Unknown color field: {field}"),
         }
     }
 
@@ -1847,7 +1847,7 @@ impl DrawingManager {
                     store.insert(type_id.clone(), style);
                 }
                 Err(e) => {
-                    eprintln!("[DrawingManager] load_last_styles: failed to deserialize style for '{type_id}': {e}");
+                    log::warn!("[DrawingManager] load_last_styles: failed to deserialize style for '{type_id}': {e}");
                 }
             }
         }

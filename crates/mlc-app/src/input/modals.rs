@@ -36,7 +36,7 @@ impl ChartApp {
         let prim_id = match selected_id {
             Some(i) => i,
             None => {
-                eprintln!("[ChartApp] inline action '{}' ignored — no primitive selected", action);
+                log::info!("[ChartApp] inline action '{}' ignored — no primitive selected", action);
                 return;
             }
         };
@@ -55,7 +55,7 @@ impl ChartApp {
             // ── Settings ─────────────────────────────────────────────────────
             "inline:settings" => {
                 self.panel_app.primitive_settings_state.open(prim_id);
-                eprintln!("[ChartApp] inline: opened primitive settings for #{}", prim_id);
+                log::info!("[ChartApp] inline: opened primitive settings for #{}", prim_id);
             }
 
             // ── Stroke color ─────────────────────────────────────────────────
@@ -78,7 +78,7 @@ impl ChartApp {
                     "stroke_color", ax, ay, aw, ah, screen_w, screen_h,
                     current_color.as_deref(),
                 );
-                eprintln!("[ChartApp] inline: opened stroke color picker for #{}", prim_id);
+                log::info!("[ChartApp] inline: opened stroke color picker for #{}", prim_id);
             }
 
             // ── Text color ───────────────────────────────────────────────────
@@ -99,7 +99,7 @@ impl ChartApp {
                     "text_color", ax, ay, aw, ah, screen_w, screen_h,
                     current_color.as_deref(),
                 );
-                eprintln!("[ChartApp] inline: opened text color picker for #{}", prim_id);
+                log::info!("[ChartApp] inline: opened text color picker for #{}", prim_id);
             }
 
             // ── Delete ───────────────────────────────────────────────────────
@@ -108,12 +108,12 @@ impl ChartApp {
                 // 2026-09-06) — see `edit_primitive_recorded`'s twin comment
                 // (`input/mod.rs`).
                 if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-                    eprintln!("[ChartApp] inline:delete refused: active tab is read-only (shared chart)");
+                    log::warn!("[ChartApp] inline:delete refused: active tab is read-only (shared chart)");
                     return;
                 }
                 if let Some(bid) = active_bid_inline {
                     self.core.drawings_mut().delete(bid, prim_id);
-                    eprintln!("[ChartApp] inline: deleted selected primitive");
+                    log::info!("[ChartApp] inline: deleted selected primitive");
                 }
                 self.sync_drawing_back_to_group();
                 // Alerts attached to the deleted drawing go with it, and come
@@ -130,7 +130,7 @@ impl ChartApp {
             "inline:lock" => {
                 if let Some(bid) = active_bid_inline {
                     self.core.drawings_mut().toggle_lock_primitive(bid, prim_id);
-                    eprintln!("[ChartApp] inline: toggled lock on selected primitive");
+                    log::info!("[ChartApp] inline: toggled lock on selected primitive");
                 }
                 self.sync_drawing_back_to_group();
             }
@@ -153,7 +153,7 @@ impl ChartApp {
                         self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
                     self.sync_drawing_back_to_group();
-                    eprintln!("[ChartApp] inline: cycled line style to {}", style_str);
+                    log::info!("[ChartApp] inline: cycled line style to {}", style_str);
                 }
                 self.snapshot_primitive_settings_to_user_manager(prim_id);
             }
@@ -174,7 +174,7 @@ impl ChartApp {
                         data.width = (data.width + 1.0).clamp(1.0, 20.0);
                         self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
-                    eprintln!("[ChartApp] inline: increased line width");
+                    log::info!("[ChartApp] inline: increased line width");
                 }
                 self.sync_drawing_back_to_group();
                 self.snapshot_primitive_settings_to_user_manager(prim_id);
@@ -182,7 +182,7 @@ impl ChartApp {
 
             // ── Name label — absorb, no action ──────────────────────────────
             "inline:name" => {
-                eprintln!("[ChartApp] inline: name label clicked (no-op)");
+                log::info!("[ChartApp] inline: name label clicked (no-op)");
             }
 
             // ── Alert — open alert settings modal for selected primitive ────
@@ -212,7 +212,7 @@ impl ChartApp {
                         self.panel_app.alert_settings_state.pin_initial_position(
                             self.content_rect.width, self.content_rect.height,
                         );
-                        eprintln!("[ChartApp] inline alert: opened modal for primitive {}", prim_id);
+                        log::info!("[ChartApp] inline alert: opened modal for primitive {}", prim_id);
                     }
                 }
             }
@@ -227,7 +227,7 @@ impl ChartApp {
                 if !was_open {
                     self.panel_app.toolbar_state.open_inline_style_dropdown = true;
                 }
-                eprintln!("[ChartApp] inline: style dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_style_dropdown);
+                log::info!("[ChartApp] inline: style dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_style_dropdown);
             }
 
             // ── Width chevron — toggle width dropdown ────────────────────────
@@ -240,7 +240,7 @@ impl ChartApp {
                 if !was_open {
                     self.panel_app.toolbar_state.open_inline_width_dropdown = true;
                 }
-                eprintln!("[ChartApp] inline: width dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_width_dropdown);
+                log::info!("[ChartApp] inline: width dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_width_dropdown);
             }
 
             // ── Wave button — toggle wave-slot picker dropdown (E2) ──────────
@@ -263,7 +263,7 @@ impl ChartApp {
                 if !was_open {
                     self.panel_app.toolbar_state.open_inline_wave_dropdown = true;
                 }
-                eprintln!("[ChartApp] inline: wave dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_wave_dropdown);
+                log::info!("[ChartApp] inline: wave dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_wave_dropdown);
             }
 
             // ── Wave-succession button — toggle wave-succession picker
@@ -284,7 +284,7 @@ impl ChartApp {
                 if !was_open {
                     self.panel_app.toolbar_state.open_inline_wave_next_dropdown = true;
                 }
-                eprintln!("[ChartApp] inline: wave-succession dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_wave_next_dropdown);
+                log::info!("[ChartApp] inline: wave-succession dropdown toggled to {}", self.panel_app.toolbar_state.open_inline_wave_next_dropdown);
             }
 
             // ── Background absorber — close inline dropdown ──────────────────
@@ -319,7 +319,7 @@ impl ChartApp {
                             self.core.drawings_mut().set_data(bid, prim_id, &data);
                         }
                         self.sync_drawing_back_to_group();
-                        eprintln!("[ChartApp] inline: set line style to {}", style_str);
+                        log::info!("[ChartApp] inline: set line style to {}", style_str);
                     }
                 }
                 self.snapshot_primitive_settings_to_user_manager(prim_id);
@@ -339,7 +339,7 @@ impl ChartApp {
                             self.core.drawings_mut().set_data(bid, prim_id, &data);
                         }
                         self.sync_drawing_back_to_group();
-                        eprintln!("[ChartApp] inline: set line width to {}", new_width);
+                        log::info!("[ChartApp] inline: set line width to {}", new_width);
                     }
                 }
                 self.snapshot_primitive_settings_to_user_manager(prim_id);
@@ -369,7 +369,7 @@ impl ChartApp {
                         self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
                     }
                     [] => {
-                        eprintln!("[ChartApp] inline: no legal kinds for slot {} of #{}", slot_id, prim_id);
+                        log::info!("[ChartApp] inline: no legal kinds for slot {} of #{}", slot_id, prim_id);
                         self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
                         self.panel_app.toolbar_state.pending_wave_slot = None;
                         self.panel_app.toolbar_state.hovered_inline_dropdown_item = None;
@@ -393,7 +393,7 @@ impl ChartApp {
                         self.create_wave_child_and_record(active_bid_inline, prim_id, slot_id, kind_id);
                     }
                     None => {
-                        eprintln!("[ChartApp] inline: malformed wave_kind action '{}'", action);
+                        log::info!("[ChartApp] inline: malformed wave_kind action '{}'", action);
                     }
                 }
                 self.panel_app.toolbar_state.open_inline_wave_dropdown = false;
@@ -463,7 +463,7 @@ impl ChartApp {
             }
 
             _ => {
-                eprintln!("[ChartApp] inline: unhandled action '{}'", action);
+                log::warn!("[ChartApp] inline: unhandled action '{}'", action);
             }
         }
     }
@@ -482,12 +482,12 @@ impl ChartApp {
         // drawings are provably untouched — see `edit_primitive_recorded`'s
         // twin comment (`input/mod.rs`).
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] create_wave_child refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] create_wave_child refused: active tab is read-only (shared chart)");
             return;
         }
         use mlc_core::drawing::primitives_v2::elliott::WaveSlot;
         let Some(slot) = WaveSlot::from_id(slot_id) else {
-            eprintln!("[ChartApp] inline: unknown wave slot id '{}'", slot_id);
+            log::info!("[ChartApp] inline: unknown wave slot id '{}'", slot_id);
             return;
         };
         let new_id = bid.and_then(|bid| self.core.drawings_mut().create_wave_child(bid, prim_id, slot, kind_id));
@@ -496,14 +496,14 @@ impl ChartApp {
                 let cmd = bid.and_then(|bid| self.build_create_primitive_command(bid, new_id));
                 if let Some(cmd) = cmd {
                     self.push_undo_command(cmd);
-                    eprintln!("[ChartApp] Recorded CreatePrimitive (wave child) {}", new_id);
+                    log::info!("[ChartApp] Recorded CreatePrimitive (wave child) {}", new_id);
                 }
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
-                eprintln!("[ChartApp] inline: created wave child #{} ({}) in slot {} of #{}", new_id, kind_id, slot_id, prim_id);
+                log::info!("[ChartApp] inline: created wave child #{} ({}) in slot {} of #{}", new_id, kind_id, slot_id, prim_id);
             }
             None => {
-                eprintln!("[ChartApp] inline: create_wave_child returned None for kind '{}' in slot {} of #{}", kind_id, slot_id, prim_id);
+                log::info!("[ChartApp] inline: create_wave_child returned None for kind '{}' in slot {} of #{}", kind_id, slot_id, prim_id);
             }
         }
     }
@@ -520,7 +520,7 @@ impl ChartApp {
         // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
         // — see `create_wave_child_and_record`'s twin comment.
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] create_wave_successor refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] create_wave_successor refused: active tab is read-only (shared chart)");
             return;
         }
         let new_id = bid.and_then(|bid| self.core.drawings_mut().create_wave_successor(bid, prev_id, type_id));
@@ -529,14 +529,14 @@ impl ChartApp {
                 let cmd = bid.and_then(|bid| self.build_create_primitive_command(bid, new_id));
                 if let Some(cmd) = cmd {
                     self.push_undo_command(cmd);
-                    eprintln!("[ChartApp] Recorded CreatePrimitive (wave successor) {}", new_id);
+                    log::info!("[ChartApp] Recorded CreatePrimitive (wave successor) {}", new_id);
                 }
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
-                eprintln!("[ChartApp] created wave successor #{} ({}) after #{}", new_id, type_id, prev_id);
+                log::info!("[ChartApp] created wave successor #{} ({}) after #{}", new_id, type_id, prev_id);
             }
             None => {
-                eprintln!("[ChartApp] create_wave_successor returned None for type '{}' after #{}", type_id, prev_id);
+                log::info!("[ChartApp] create_wave_successor returned None for type '{}' after #{}", type_id, prev_id);
             }
         }
     }
@@ -558,7 +558,7 @@ impl ChartApp {
         // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
         // — see `create_wave_child_and_record`'s twin comment.
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] create_wave_predecessor refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] create_wave_predecessor refused: active tab is read-only (shared chart)");
             return;
         }
         let Some(bid) = bid else { return };
@@ -574,13 +574,13 @@ impl ChartApp {
                     next_id,
                     previous_follows,
                 });
-                eprintln!("[ChartApp] Recorded CreateWavePredecessor {}", new_id);
+                log::info!("[ChartApp] Recorded CreateWavePredecessor {}", new_id);
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
-                eprintln!("[ChartApp] created wave predecessor #{} ({}) before #{}", new_id, type_id, next_id);
+                log::info!("[ChartApp] created wave predecessor #{} ({}) before #{}", new_id, type_id, next_id);
             }
             None => {
-                eprintln!("[ChartApp] create_wave_predecessor returned None for type '{}' before #{}", type_id, next_id);
+                log::info!("[ChartApp] create_wave_predecessor returned None for type '{}' before #{}", type_id, next_id);
             }
         }
     }
@@ -598,7 +598,7 @@ impl ChartApp {
         // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
         // — see `create_wave_child_and_record`'s twin comment.
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] promote_wave_chain refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] promote_wave_chain refused: active tab is read-only (shared chart)");
             return;
         }
         let result = self.core.drawings_mut().promote_wave_chain(bid, prim_id);
@@ -609,15 +609,15 @@ impl ChartApp {
                 });
                 if let Some(cmd) = cmd {
                     self.push_undo_command(cmd);
-                    eprintln!("[ChartApp] Recorded PromoteWaveChain parent=#{}", parent_id);
+                    log::info!("[ChartApp] Recorded PromoteWaveChain parent=#{}", parent_id);
                 }
                 self.core.drawings_mut().select(bid, parent_id);
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
-                eprintln!("[ChartApp] promoted chain into #{}", parent_id);
+                log::info!("[ChartApp] promoted chain into #{}", parent_id);
             }
             None => {
-                eprintln!("[ChartApp] promote_wave_chain returned None for #{}", prim_id);
+                log::info!("[ChartApp] promote_wave_chain returned None for #{}", prim_id);
             }
         }
     }
@@ -635,7 +635,7 @@ impl ChartApp {
         // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
         // — see `create_wave_child_and_record`'s twin comment.
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] convert_primitive_kind refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] convert_primitive_kind refused: active tab is read-only (shared chart)");
             return;
         }
         let result = bid.and_then(|bid| self.core.drawings_mut().convert_primitive_kind(bid, prim_id, kind_id));
@@ -644,10 +644,10 @@ impl ChartApp {
                 self.push_undo_command(mlc_core::Command::ConvertPrimitiveKind { prim_id, before, after, children });
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
-                eprintln!("[ChartApp] converted #{} to kind '{}'", prim_id, kind_id);
+                log::info!("[ChartApp] converted #{} to kind '{}'", prim_id, kind_id);
             }
             None => {
-                eprintln!("[ChartApp] convert_primitive_kind returned None for kind '{}' on #{}", kind_id, prim_id);
+                log::info!("[ChartApp] convert_primitive_kind returned None for kind '{}' on #{}", kind_id, prim_id);
             }
         }
     }
@@ -657,7 +657,7 @@ impl ChartApp {
         match rest {
             "close" => {
                 self.standalone_panels.watchlist_modal.close();
-                eprintln!("[WatchlistModal] closed");
+                log::info!("[WatchlistModal] closed");
             }
             "modal_bg" | "header_drag" | "list_scroll" => {
                 // Absorbed — no-op for backdrop clicks, drag zone, scroll zone
@@ -676,7 +676,7 @@ impl ChartApp {
                     "settings" => self.standalone_panels.watchlist_modal.active_tab = WatchlistModalTab::Settings,
                     _ => {}
                 }
-                eprintln!("[WatchlistModal] tab: {}", tab);
+                log::info!("[WatchlistModal] tab: {}", tab);
             }
             _ if rest.starts_with("item:") => {
                 let composite = &rest["item:".len()..];
@@ -717,7 +717,7 @@ impl ChartApp {
                 if let Some(chart_id) = self.panel_app.panel_grid.active_container_id() {
                     self.apply_symbol(chart_id, sym_part, resolved_exchange.as_str(), &wl_at_label);
                 }
-                eprintln!("[WatchlistModal] symbol selected: {} @ {}", sym_part, exchange_part);
+                log::info!("[WatchlistModal] symbol selected: {} @ {}", sym_part, exchange_part);
                 self.standalone_panels.watchlist_modal.close();
             }
             _ if rest.starts_with("delete:") => {
@@ -765,7 +765,7 @@ impl ChartApp {
                 self.watchlist_actions.push(crate::WatchlistAction::Remove { symbol: symbol.to_string(), exchange: exchange.to_string(), account_type: account_type.to_string() });
                 self.watchlists_dirty = true;
                 self.persist_watchlists();
-                eprintln!("[WatchlistModal] symbol removed: {}:{}:{}", symbol, exchange, account_type);
+                log::info!("[WatchlistModal] symbol removed: {}:{}:{}", symbol, exchange, account_type);
             }
             // Switch active watchlist
             _ if rest.starts_with("group:") => {
@@ -775,7 +775,7 @@ impl ChartApp {
                     self.watchlist_actions.push(crate::WatchlistAction::SetActiveList { id });
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
-                    eprintln!("[WatchlistModal] switched active list to id={}", id);
+                    log::info!("[WatchlistModal] switched active list to id={}", id);
                 }
             }
             // Delete a watchlist group (list)
@@ -786,7 +786,7 @@ impl ChartApp {
                     self.watchlist_actions.push(crate::WatchlistAction::DeleteList { id });
                     self.watchlists_dirty = true;
                     self.persist_watchlists();
-                    eprintln!("[WatchlistModal] delete list id={} -> {}", id, deleted);
+                    log::info!("[WatchlistModal] delete list id={} -> {}", id, deleted);
                 }
             }
             // Create new watchlist — open name input modal with auto-generated name
@@ -804,7 +804,7 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&wgn_id);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::WATCHLIST_GROUP_NAME);
                 }
-                eprintln!("[WatchlistModal] opening group name input for create new: '{}'", default_name);
+                log::info!("[WatchlistModal] opening group name input for create new: '{}'", default_name);
             }
             // Rename a watchlist — open name input modal pre-filled with current name
             _ if rest.starts_with("group_rename:") => {
@@ -819,12 +819,12 @@ impl ChartApp {
                             self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&wgn_id);
                             self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::WATCHLIST_GROUP_NAME);
                         }
-                        eprintln!("[WatchlistModal] opening group name input for rename id={}", id);
+                        log::info!("[WatchlistModal] opening group name input for rename id={}", id);
                     }
                 }
             }
             _ => {
-                eprintln!("[WatchlistModal] unhandled: {}", rest);
+                log::warn!("[WatchlistModal] unhandled: {}", rest);
             }
         }
     }
@@ -840,7 +840,7 @@ impl ChartApp {
         match rest {
             "sets_tab" => {
                 self.modal_state.toggle_indicator_sets();
-                eprintln!("[ChartApp] ind_search: toggled sets view (now={})", self.modal_state.show_indicator_sets);
+                log::info!("[ChartApp] ind_search: toggled sets view (now={})", self.modal_state.show_indicator_sets);
             }
             "set_create" => {
                 // Compute next available name: "My Indicator Set 1", "My Indicator Set 2", etc.
@@ -867,11 +867,11 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&pni_id);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::PRESET_NAME_INPUT);
                 }
-                eprintln!("[ChartApp] ind_search: opening create indicator set modal");
+                log::info!("[ChartApp] ind_search: opening create indicator set modal");
             }
             _ if rest.starts_with("set_delete:") => {
                 let set_id = &rest["set_delete:".len()..];
-                eprintln!("[ChartApp] deleted indicator set: {}", set_id);
+                log::info!("[ChartApp] deleted indicator set: {}", set_id);
                 self.template_actions.push(crate::TemplateAction::RemoveIndicatorSet { id: set_id.to_string() });
             }
             _ if rest.starts_with("set:") => {
@@ -879,7 +879,7 @@ impl ChartApp {
                 self.deploy_indicator_set(set_id);
             }
             _ => {
-                eprintln!("[ChartApp] ind_search: unhandled action: {}", rest);
+                log::warn!("[ChartApp] ind_search: unhandled action: {}", rest);
             }
         }
     }
@@ -893,7 +893,7 @@ impl ChartApp {
         // as the single-indicator add path below (`OpenModal::
         // IndicatorSearch` in `handle_search_modal_click`).
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] deploy_indicator_set refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] deploy_indicator_set refused: active tab is read-only (shared chart)");
             return;
         }
         let set = self.core.templates().indicator_sets()
@@ -902,7 +902,7 @@ impl ChartApp {
             .cloned();
 
         let Some(set) = set else {
-            eprintln!("[ChartApp] deploy_indicator_set: set not found: {}", set_id);
+            log::warn!("[ChartApp] deploy_indicator_set: set not found: {}", set_id);
             return;
         };
 
@@ -939,7 +939,7 @@ impl ChartApp {
         }
         // Clear stale overlay states
         self.panel_app.indicator_overlay_states.clear();
-        eprintln!("[ChartApp] deploy_indicator_set: removed {} existing indicators", existing_ids.len());
+        log::info!("[ChartApp] deploy_indicator_set: removed {} existing indicators", existing_ids.len());
 
         // Create new indicators from the set with full params/outputs
         for tmpl in &set.indicators {
@@ -978,7 +978,7 @@ impl ChartApp {
         self.autosave_snapshot();
         self.sidebar_data_dirty = true;
         self.modal_state.close();
-        eprintln!("[ChartApp] deployed indicator set '{}' ({} indicators, replaced {})", set.name, set.indicators.len(), existing_ids.len());
+        log::info!("[ChartApp] deployed indicator set '{}' ({} indicators, replaced {})", set.name, set.indicators.len(), existing_ids.len());
     }
 
     /// Save the current active indicators as a named indicator set.
@@ -1027,7 +1027,7 @@ impl ChartApp {
             &name,
             templates,
         );
-        eprintln!("[ChartApp] created indicator set '{}' from {} active indicators", name, templates_count);
+        log::info!("[ChartApp] created indicator set '{}' from {} active indicators", name, templates_count);
         self.template_actions.push(crate::TemplateAction::AddIndicatorSet(set));
     }
 
@@ -1059,7 +1059,7 @@ impl ChartApp {
         match rest {
             "close" => {
                 self.modal_state.close();
-                eprintln!("[ChartApp] search modal closed");
+                log::info!("[ChartApp] search modal closed");
             }
             "modal_bg" => {
                 // Click inside modal body — no-op (prevents backdrop close)
@@ -1080,7 +1080,7 @@ impl ChartApp {
                 // Click-to-cursor — reposition caret. on_drag_end fires on mouseup
                 // via the global path in mod.rs::on_drag_end (line ~3614).
                 self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
-                eprintln!("[ChartApp] search input activated");
+                log::info!("[ChartApp] search input activated");
             }
             _ if rest.starts_with("star:") => {
                 let composite = &rest["star:".len()..];
@@ -1106,7 +1106,7 @@ impl ChartApp {
                     account_type: at_label,
                 });
                 self.watchlists_dirty = true;
-                eprintln!("[ChartApp] star toggle queued: {}:{}", sym_part, exchange_part);
+                log::info!("[ChartApp] star toggle queued: {}:{}", sym_part, exchange_part);
             }
             _ if rest.starts_with("indstar:") => {
                 // Indicator-row favorite star (indicator-search-favorites arc)
@@ -1120,7 +1120,7 @@ impl ChartApp {
             }
             _ if rest.starts_with("item:") => {
                 let item_id = &rest["item:".len()..];
-                eprintln!("[ChartApp] search modal item selected: {}", item_id);
+                log::info!("[ChartApp] search modal item selected: {}", item_id);
 
                 // Parse composite key "SYMBOL:exchange_id:account_type" — split from the
                 // right twice so that symbols containing ':' (e.g. "tETH2X:USD") are handled
@@ -1201,7 +1201,7 @@ impl ChartApp {
                         // `deploy_indicator_set`'s own gate for the bulk
                         // "sets" tab of this same modal.
                         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-                            eprintln!("[ChartApp] indicator add refused: active tab is read-only (shared chart)");
+                            log::warn!("[ChartApp] indicator add refused: active tab is read-only (shared chart)");
                             self.modal_state.close();
                             return;
                         }
@@ -1261,7 +1261,7 @@ impl ChartApp {
                                         }
                                         self.sync_sub_panes_from_manager();
                                         self.sidebar_data_dirty = true;
-                                        eprintln!(
+                                        log::info!(
                                             "[TradingCenter] created indicator '{}' (id={}) on aux chart {:?} bubble {:?}",
                                             item_id, new_id, aux_cid, bid
                                         );
@@ -1283,7 +1283,7 @@ impl ChartApp {
                             let from_docking = self.panel_app.panel_grid.docking().active_leaf();
                             if from_docking.is_none() {
                                 if let Some(fallback) = self.panel_app.panel_grid.first_leaf_id() {
-                                    eprintln!(
+                                    log::info!(
                                         "[IndicatorSearch] docking().active_leaf() = None; \
                                          activating fallback leaf {:?} so indicator '{}' is not orphaned",
                                         fallback, type_id_str
@@ -1291,7 +1291,7 @@ impl ChartApp {
                                     self.panel_app.panel_grid.set_active_leaf(fallback);
                                     Some(fallback)
                                 } else {
-                                    eprintln!(
+                                    log::info!(
                                         "[IndicatorSearch] no leaves in panel_grid — \
                                          cannot assign indicator '{}'; it will be orphaned",
                                         type_id_str
@@ -1359,7 +1359,7 @@ impl ChartApp {
                                             );
                                         }).is_some();
                                         if pushed {
-                                            eprintln!(
+                                            log::info!(
                                                 "[BubbleStore] Added indicator config id={} '{}' to group {:?}",
                                                 new_id, item_id, group_id
                                             );
@@ -1381,7 +1381,7 @@ impl ChartApp {
                                                     auto_bub.pre_tag_indicator_ids.push(new_id);
                                                 });
                                             }
-                                            eprintln!(
+                                            log::info!(
                                                 "[BubbleStore] sync_indicators=off: recorded id={} in auto_bubble.pre_tag_indicator_ids for leaf {:?}",
                                                 new_id, active_leaf
                                             );
@@ -1395,7 +1395,7 @@ impl ChartApp {
                                 type_id: type_id_str.clone(),
                                 params_json: String::new(),
                             });
-                            eprintln!("[ChartApp] Recorded AddIndicator {} id={}", type_id_str, new_id);
+                            log::info!("[ChartApp] Recorded AddIndicator {} id={}", type_id_str, new_id);
                             // Recalculate the new indicator with current bars.
                             // Bars live on the chart's DataBubble — the cutover sweep
                             // stubbed this to `Vec::new()` (empty) so the recalc was
@@ -1417,7 +1417,7 @@ impl ChartApp {
                             self.sync_sub_panes_from_manager();
                             self.autosave_snapshot();
                             self.sidebar_data_dirty = true;
-                            eprintln!("[ChartApp] Created indicator instance: {} (id={})", item_id, new_id);
+                            log::info!("[ChartApp] Created indicator instance: {} (id={})", item_id, new_id);
                         }
                         self.modal_state.close();
                     }
@@ -1428,15 +1428,15 @@ impl ChartApp {
                 if let Ok(idx) = rest["category:".len()..].parse::<usize>() {
                     if let Some(filter) = IndicatorCategoryFilter::from_index(idx) {
                         self.modal_state.set_category_filter(filter);
-                        eprintln!("[ChartApp] search category filter: {:?}", filter);
+                        log::info!("[ChartApp] search category filter: {:?}", filter);
                     }
                 }
             }
             "scrollbar_track" => {
-                eprintln!("[ChartApp] scrollbar track clicked");
+                log::info!("[ChartApp] scrollbar track clicked");
             }
             _ => {
-                eprintln!("[ChartApp] search modal unhandled: {}", rest);
+                log::warn!("[ChartApp] search modal unhandled: {}", rest);
             }
         }
     }
@@ -1831,7 +1831,7 @@ impl ChartApp {
             // land here). Refuse BEFORE `on_canvas_click` places a point so
             // a read-only tab never grows a new primitive from either path.
             if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-                eprintln!("[ChartApp] drawing-tool click refused: active tab is read-only (shared chart)");
+                log::warn!("[ChartApp] drawing-tool click refused: active tab is read-only (shared chart)");
                 return;
             }
             // Read the frame-cached layout so we get the exact same main_chart rect
@@ -1934,7 +1934,7 @@ impl ChartApp {
                 }
 
                 // Dispatch click and record undo if a primitive was just completed.
-                eprintln!("[CANVAS_CLICK] screen=({:.0},{:.0}) -> bar={:.2}, price={:.12e}, price_range=[{:.12e}..{:.12e}]", x, y, bar, price, price_min, price_max);
+                log::info!("[CANVAS_CLICK] screen=({:.0},{:.0}) -> bar={:.2}, price={:.12e}, price_range=[{:.12e}..{:.12e}]", x, y, bar, price, price_min, price_max);
                 let click_bars_main: Vec<mlc_core::Bar> = self.active_chart_bars();
                 let ts_ms = self.panel_app.panel_grid.active_container()
                     .map(|_w| mlc_core::bar_f64_to_timestamp_ms(&click_bars_main[..], bar))
@@ -1955,7 +1955,7 @@ impl ChartApp {
                 if primitive_created {
                     let prim_count = active_bid_tool
                         .map(|bid| self.core.drawings().count(bid)).unwrap_or(0);
-                    eprintln!("[ChartApp] Primitive created (main) at bar={:.2}, price={:.12e}, total_primitives={}", bar, price, prim_count);
+                    log::info!("[ChartApp] Primitive created (main) at bar={:.2}, price={:.12e}, total_primitives={}", bar, price, prim_count);
                     self.intercept_completed_primitive_to_group();
                     // Record undo and propagate to color-tag peers.
                     let cmd = active_bid_tool.and_then(|bid| {
@@ -1963,7 +1963,7 @@ impl ChartApp {
                         self.build_creation_command(bid, prim_id)
                     });
                     if let Some(cmd) = cmd {
-                        eprintln!("[ChartApp] Recorded CreatePrimitive (main) {}", cmd.prim_id().unwrap_or_default());
+                        log::info!("[ChartApp] Recorded CreatePrimitive (main) {}", cmd.prim_id().unwrap_or_default());
                         self.push_undo_command(cmd);
                     }
                     if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
@@ -1977,7 +1977,7 @@ impl ChartApp {
                     .map(|bid| self.core.drawings().is_drawing(bid))
                     .unwrap_or(false)
                 {
-                    eprintln!("[ChartApp] Drawing point added (main) at bar={:.2}, price={:.2}", bar, price);
+                    log::info!("[ChartApp] Drawing point added (main) at bar={:.2}, price={:.2}", bar, price);
                     // Propagate in-progress drawing state so peers show the preview.
                     if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                         self.propagate_drawing_state_to_sync_group(active_leaf);
@@ -1991,7 +1991,7 @@ impl ChartApp {
                 if tool_cleared {
                     self.panel_app.toolbar_state.active_tool_id = None;
                     self.panel_app.toolbar_state.primed_id = Some("cursor_tools".to_string());
-                    eprintln!("[ChartApp] Primed tool completed, switched to cursor mode");
+                    log::info!("[ChartApp] Primed tool completed, switched to cursor mode");
                 }
 
                 return;
@@ -2054,7 +2054,7 @@ impl ChartApp {
                     .unwrap_or(false);
 
                 if primitive_created {
-                    eprintln!("[ChartApp] Primitive created (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
+                    log::info!("[ChartApp] Primitive created (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
                     self.intercept_completed_primitive_to_group();
                     // Extract snapshot then push undo command.
                     let cmd = active_bid_tool.and_then(|bid| {
@@ -2062,7 +2062,7 @@ impl ChartApp {
                         self.build_creation_command(bid, prim_id)
                     });
                     if let Some(cmd) = cmd {
-                        eprintln!("[ChartApp] Recorded CreatePrimitive (sub-pane #{}) {}", pane_idx, cmd.prim_id().unwrap_or_default());
+                        log::info!("[ChartApp] Recorded CreatePrimitive (sub-pane #{}) {}", pane_idx, cmd.prim_id().unwrap_or_default());
                         self.push_undo_command(cmd);
                     }
                     // Propagate the new primitive to sync group peers.
@@ -2077,7 +2077,7 @@ impl ChartApp {
                     .map(|bid| self.core.drawings().is_drawing(bid))
                     .unwrap_or(false)
                 {
-                    eprintln!("[ChartApp] Drawing point added (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
+                    log::info!("[ChartApp] Drawing point added (sub-pane #{}) at bar={:.2}, price={:.2}", pane_idx, bar, price);
                     // Propagate in-progress drawing state so peers show the preview.
                     if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
                         self.propagate_drawing_state_to_sync_group(active_leaf);
@@ -2091,7 +2091,7 @@ impl ChartApp {
                 if tool_cleared {
                     self.panel_app.toolbar_state.active_tool_id = None;
                     self.panel_app.toolbar_state.primed_id = Some("cursor_tools".to_string());
-                    eprintln!("[ChartApp] Primed tool completed (sub-pane), switched to cursor mode");
+                    log::info!("[ChartApp] Primed tool completed (sub-pane), switched to cursor mode");
                 }
 
                 return;
@@ -2151,7 +2151,7 @@ impl ChartApp {
                             let mut guard = self.core.drawings_mut();
                             guard.set_current_pane(bid, None);
                             guard.select(bid, hit_prim_id);
-                            eprintln!("[ChartApp] Primitive selected (main): id={}", hit_prim_id);
+                            log::info!("[ChartApp] Primitive selected (main): id={}", hit_prim_id);
                         }
                         return;
                     }
@@ -2206,7 +2206,7 @@ impl ChartApp {
                             let mut guard = self.core.drawings_mut();
                             guard.set_current_pane(bid, Some(instance_id));
                             guard.select(bid, hit_prim_id);
-                            eprintln!("[ChartApp] Primitive selected (sub-pane #{}): id={}", pane_idx, hit_prim_id);
+                            log::info!("[ChartApp] Primitive selected (sub-pane #{}): id={}", pane_idx, hit_prim_id);
                         }
                         return;
                     }
@@ -2251,7 +2251,7 @@ impl ChartApp {
                             self.core.drawings_mut().deselect(bid);
                         }
                     }
-                    eprintln!("[ChartApp] Sub-pane indicator hit: id={}", instance_id);
+                    log::info!("[ChartApp] Sub-pane indicator hit: id={}", instance_id);
                     return;
                 }
             }
@@ -2279,7 +2279,7 @@ impl ChartApp {
                     for bid in all_bids {
                         self.core.drawings_mut().deselect(bid);
                     }
-                    eprintln!("[ChartApp] Indicator selected: id={}", ind_id);
+                    log::info!("[ChartApp] Indicator selected: id={}", ind_id);
                     return;
                 }
             }
@@ -2338,7 +2338,7 @@ impl ChartApp {
         let layer_id_opt = self.input_coordinator.borrow_mut().topmost_modal_layer().cloned();
         if let Some(layer_id) = layer_id_opt {
             let name = layer_id.0.as_str();
-            eprintln!("[ChartApp] close_topmost_modal_layer: {}", name);
+            log::info!("[ChartApp] close_topmost_modal_layer: {}", name);
             match name {
                 // Color picker layers — close one level (L2→L1 or L1→Closed).
                 "color_picker_primitive" => {
@@ -2392,24 +2392,24 @@ impl ChartApp {
                 // Top-level modals — close when user clicks outside them.
                 "tags_tabs" => {
                     self.panel_app.close_tags_tabs();
-                    eprintln!("[ChartApp] close_topmost_modal_layer: tags_tabs closed");
+                    log::info!("[ChartApp] close_topmost_modal_layer: tags_tabs closed");
                 }
                 "chart_browser" => {
                     self.panel_app.chart_browser.close();
                     self.panel_app.active_modal = mlc_core::modal::ChartOpenModal::None;
-                    eprintln!("[ChartApp] close_topmost_modal_layer: chart_browser closed");
+                    log::info!("[ChartApp] close_topmost_modal_layer: chart_browser closed");
                 }
                 "user_settings" => {
                     self.panel_app.user_settings_state.close();
-                    eprintln!("[ChartApp] close_topmost_modal_layer: user_settings closed");
+                    log::info!("[ChartApp] close_topmost_modal_layer: user_settings closed");
                 }
                 "ewa_engine_settings" => {
                     self.panel_app.ewa_engine_settings_state.close();
-                    eprintln!("[ChartApp] close_topmost_modal_layer: ewa_engine_settings closed");
+                    log::info!("[ChartApp] close_topmost_modal_layer: ewa_engine_settings closed");
                 }
                 "markup_engine_settings" => {
                     self.panel_app.markup_engine_settings_state.close();
-                    eprintln!("[ChartApp] close_topmost_modal_layer: markup_engine_settings closed");
+                    log::info!("[ChartApp] close_topmost_modal_layer: markup_engine_settings closed");
                 }
                 // DM vault-unlock mini overlay (owner ruling 2026-09-10,
                 // DM pane item 3) — always dismissible, same as the Vault
@@ -2417,7 +2417,7 @@ impl ChartApp {
                 #[cfg(feature = "cloud")]
                 "dm_vault_unlock" => {
                     self.close_dm_vault_unlock_overlay();
-                    eprintln!("[ChartApp] close_topmost_modal_layer: dm_vault_unlock closed");
+                    log::info!("[ChartApp] close_topmost_modal_layer: dm_vault_unlock closed");
                 }
                 "profile_manager" => {
                     // Only the mandatory migration/first-run step (no live chart
@@ -2426,45 +2426,45 @@ impl ChartApp {
                     if !self.panel_app.user_settings_state.profile_manager_mandatory {
                         self.dismiss_profile_manager();
                     }
-                    eprintln!("[ChartApp] close_topmost_modal_layer: profile_manager (mandatory={})", self.panel_app.user_settings_state.profile_manager_mandatory);
+                    log::info!("[ChartApp] close_topmost_modal_layer: profile_manager (mandatory={})", self.panel_app.user_settings_state.profile_manager_mandatory);
                 }
                 "welcome_wizard" => {
                     // A first-run courtesy, not a gate — always dismissible.
                     self.dismiss_welcome_wizard();
-                    eprintln!("[ChartApp] close_topmost_modal_layer: welcome_wizard closed");
+                    log::info!("[ChartApp] close_topmost_modal_layer: welcome_wizard closed");
                 }
                 // Preset name input — close only this modal, not the search overlay underneath.
                 "preset_name_input" => {
                     self.panel_app.preset_name_input.close();
-                    eprintln!("[ChartApp] close_topmost_modal_layer: preset_name_input closed");
+                    log::info!("[ChartApp] close_topmost_modal_layer: preset_name_input closed");
                 }
                 // "Open shared chart…" overlay (native-share-viewer arc, 2026-09-06).
                 "share_open" => {
                     self.panel_app.share_open_state.close();
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                    eprintln!("[ChartApp] close_topmost_modal_layer: share_open closed");
+                    log::info!("[ChartApp] close_topmost_modal_layer: share_open closed");
                 }
                 // Watchlist group name input L2 modal — close only this layer.
                 "wl_group_name_input" => {
                     self.standalone_panels.wl_group_name_input.close();
-                    eprintln!("[ChartApp] close_topmost_modal_layer: wl_group_name_input closed");
+                    log::info!("[ChartApp] close_topmost_modal_layer: wl_group_name_input closed");
                 }
                 // Watchlist modal — close when user clicks outside it.
                 "watchlist_modal" => {
                     self.standalone_panels.watchlist_modal.close();
-                    eprintln!("[ChartApp] close_topmost_modal_layer: watchlist_modal closed");
+                    log::info!("[ChartApp] close_topmost_modal_layer: watchlist_modal closed");
                 }
                 // Trading Container modal — close when user clicks outside it.
                 "tc_modal" => {
                     self.tc_modal.close();
-                    eprintln!("[ChartApp] close_topmost_modal_layer: tc_modal closed");
+                    log::info!("[ChartApp] close_topmost_modal_layer: tc_modal closed");
                 }
                 // Standalone panel-settings surface (the gear popover).
                 "pset" => {
                     self.panel_settings_open = None;
                 }
                 _ => {
-                    eprintln!("[ChartApp] close_topmost_modal_layer: unknown layer '{}'", name);
+                    log::info!("[ChartApp] close_topmost_modal_layer: unknown layer '{}'", name);
                     return false;
                 }
             }
@@ -2538,7 +2538,7 @@ impl ChartApp {
                 match action {
                     "settings" => {
                         self.panel_app.primitive_settings_state.open(prim_id);
-                        eprintln!("[ChartApp] Opened primitive settings for #{}", prim_id);
+                        log::info!("[ChartApp] Opened primitive settings for #{}", prim_id);
                     }
                     "delete" => {
                         if let Some(bid) = active_bid_ctx {
@@ -2550,7 +2550,7 @@ impl ChartApp {
                         // arc, 2026-09-06) — see `edit_primitive_recorded`'s
                         // twin comment (`input/mod.rs`).
                         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-                            eprintln!("[ChartApp] context-menu clone refused: active tab is read-only (shared chart)");
+                            log::warn!("[ChartApp] context-menu clone refused: active tab is read-only (shared chart)");
                             return;
                         }
                         let cloned_id = active_bid_ctx
@@ -2569,13 +2569,13 @@ impl ChartApp {
                             let cmd = active_bid_ctx.and_then(|bid| self.build_create_primitive_command(bid, new_id));
                             if let Some(cmd) = cmd {
                                 self.push_undo_command(cmd);
-                                eprintln!("[ChartApp] Recorded CreatePrimitive (clone) {}", new_id);
+                                log::info!("[ChartApp] Recorded CreatePrimitive (clone) {}", new_id);
                             }
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();
-                            eprintln!("[ChartApp] Cloned primitive #{} -> #{}", prim_id, new_id);
+                            log::info!("[ChartApp] Cloned primitive #{} -> #{}", prim_id, new_id);
                         } else {
-                            eprintln!("[ChartApp] Clone primitive #{} returned None", prim_id);
+                            log::info!("[ChartApp] Clone primitive #{} returned None", prim_id);
                         }
                     }
                     "toggle_lock" => {
@@ -2583,7 +2583,7 @@ impl ChartApp {
                         // arc, 2026-09-06) — see `edit_primitive_recorded`'s
                         // twin comment (`input/mod.rs`).
                         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-                            eprintln!("[ChartApp] context-menu toggle_lock refused: active tab is read-only (shared chart)");
+                            log::warn!("[ChartApp] context-menu toggle_lock refused: active tab is read-only (shared chart)");
                             return;
                         }
                         // Read current state BEFORE mutating.
@@ -2596,7 +2596,7 @@ impl ChartApp {
                             locked: !previous,
                             previous,
                         });
-                        eprintln!("[ChartApp] Recorded SetPrimitiveLock {} locked={}", prim_id, !previous);
+                        log::info!("[ChartApp] Recorded SetPrimitiveLock {} locked={}", prim_id, !previous);
                         if let Some(bid) = active_bid_ctx {
                             self.core.drawings_mut().toggle_lock_primitive(bid, prim_id);
                         }
@@ -2607,7 +2607,7 @@ impl ChartApp {
                         // arc, 2026-09-06) — see `edit_primitive_recorded`'s
                         // twin comment (`input/mod.rs`).
                         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-                            eprintln!("[ChartApp] context-menu toggle_visibility refused: active tab is read-only (shared chart)");
+                            log::warn!("[ChartApp] context-menu toggle_visibility refused: active tab is read-only (shared chart)");
                             return;
                         }
                         // Read current state BEFORE mutating.
@@ -2620,7 +2620,7 @@ impl ChartApp {
                             visible: !previous,
                             previous,
                         });
-                        eprintln!("[ChartApp] Recorded SetPrimitiveVisibility {} visible={}", prim_id, !previous);
+                        log::info!("[ChartApp] Recorded SetPrimitiveVisibility {} visible={}", prim_id, !previous);
                         if let Some(bid) = active_bid_ctx {
                             self.core.drawings_mut().toggle_visibility(bid, prim_id);
                         }
@@ -2634,13 +2634,13 @@ impl ChartApp {
                         if let Some(bid) = active_bid_ctx {
                             self.core.drawings_mut().bring_to_front(bid, prim_id);
                         }
-                        eprintln!("[ChartApp] Brought primitive #{} to front", prim_id);
+                        log::info!("[ChartApp] Brought primitive #{} to front", prim_id);
                     }
                     "send_to_back" => {
                         if let Some(bid) = active_bid_ctx {
                             self.core.drawings_mut().send_to_back(bid, prim_id);
                         }
-                        eprintln!("[ChartApp] Sent primitive #{} to back", prim_id);
+                        log::info!("[ChartApp] Sent primitive #{} to back", prim_id);
                     }
 
                     // ── Wave-gesture menu actions (E5, second control
@@ -2663,7 +2663,7 @@ impl ChartApp {
                                 self.create_wave_child_and_record(active_bid_ctx, prim_id, slot_id, kind_id);
                             }
                             None => {
-                                eprintln!("[ChartApp] wave menu: malformed subdivide action '{}'", action);
+                                log::info!("[ChartApp] wave menu: malformed subdivide action '{}'", action);
                             }
                         }
                     }
@@ -2702,10 +2702,10 @@ impl ChartApp {
                                 self.core.drawings_mut().select(bid, child_id);
                                 self.sync_drawing_back_to_group();
                                 self.autosave_snapshot();
-                                eprintln!("[ChartApp] wave menu: selected subdivision #{}", child_id);
+                                log::info!("[ChartApp] wave menu: selected subdivision #{}", child_id);
                             }
                             _ => {
-                                eprintln!("[ChartApp] wave menu: malformed select_child action '{}'", action);
+                                log::info!("[ChartApp] wave menu: malformed select_child action '{}'", action);
                             }
                         }
                     }
@@ -2716,7 +2716,7 @@ impl ChartApp {
                                 self.delete_primitive_with_undo(bid, child_id);
                             }
                             _ => {
-                                eprintln!("[ChartApp] wave menu: malformed delete_child action '{}'", action);
+                                log::info!("[ChartApp] wave menu: malformed delete_child action '{}'", action);
                             }
                         }
                     }
@@ -2743,7 +2743,7 @@ impl ChartApp {
                                     "truncated_fifth", &PropertyValue::Boolean(!current),
                                 );
                             });
-                            eprintln!("[ChartApp] wave menu: toggled truncated_fifth for #{}", prim_id);
+                            log::info!("[ChartApp] wave menu: toggled truncated_fifth for #{}", prim_id);
                         }
                     }
                     // Trailing "EWA settings" row every wave-gesture popup
@@ -2753,11 +2753,11 @@ impl ChartApp {
                     // itself.
                     "wave_menu:engine_settings" => {
                         self.panel_app.ewa_engine_settings_state.open();
-                        eprintln!("[ChartApp] Opened EWA engine settings from wave menu");
+                        log::info!("[ChartApp] Opened EWA engine settings from wave menu");
                     }
 
                     _ => {
-                        eprintln!("[ChartApp] Unhandled primitive context action: {}", action);
+                        log::warn!("[ChartApp] Unhandled primitive context action: {}", action);
                     }
                 }
             }
@@ -2765,11 +2765,11 @@ impl ChartApp {
                 match action {
                     "chart_settings" => {
                         self.panel_app.chart_settings_state.toggle();
-                        eprintln!("[ChartApp] Chart settings opened from context menu");
+                        log::info!("[ChartApp] Chart settings opened from context menu");
                     }
                     "reset_zoom" => {
                         self.process_output_actions(vec![ChartOutputAction::ResetTimeScale]);
-                        eprintln!("[ChartApp] Reset zoom from context menu");
+                        log::info!("[ChartApp] Reset zoom from context menu");
                     }
                     "screenshot" => {
                         self.request_screenshot();
@@ -2784,23 +2784,23 @@ impl ChartApp {
                             self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&sym_id);
                             self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::SYMBOL_SEARCH);
                         }
-                        eprintln!("[ChartApp] symbol search opened from context menu");
+                        log::info!("[ChartApp] symbol search opened from context menu");
                     }
                     "reset_cache" => {
                         self.pending_reset_cache = true;
-                        eprintln!("[ChartApp] Reset cache requested");
+                        log::info!("[ChartApp] Reset cache requested");
                     }
                     "reset_storage" => {
                         self.pending_reset_storage = true;
-                        eprintln!("[ChartApp] Reset storage requested");
+                        log::info!("[ChartApp] Reset storage requested");
                     }
                     _ => {
-                        eprintln!("[ChartApp] Unhandled background context action: {}", action);
+                        log::warn!("[ChartApp] Unhandled background context action: {}", action);
                     }
                 }
             }
             ContextMenuTarget::Indicator(id) => {
-                eprintln!("[ChartApp] Indicator context action: {} for id={}", action, id);
+                log::info!("[ChartApp] Indicator context action: {} for id={}", action, id);
             }
             ContextMenuTarget::ColorTag(leaf_id) => {
                 match action {
@@ -2808,12 +2808,12 @@ impl ChartApp {
                         self.perform_desync(leaf_id);
                     }
                     _ => {
-                        eprintln!("[ChartApp] Unhandled color tag context action: {}", action);
+                        log::warn!("[ChartApp] Unhandled color tag context action: {}", action);
                     }
                 }
             }
             _ => {
-                eprintln!("[ChartApp] Context menu action on unknown target: {}", action);
+                log::info!("[ChartApp] Context menu action on unknown target: {}", action);
             }
         }
     }
@@ -2938,7 +2938,7 @@ impl ChartApp {
         // the object tree's own delete button; see `edit_primitive_recorded`'s
         // twin comment (`input/mod.rs`).
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] delete_primitive_with_undo refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] delete_primitive_with_undo refused: active tab is read-only (shared chart)");
             return;
         }
         let deleted = self.core.drawings_mut().delete_with_snapshot(bid, prim_id);
@@ -2951,11 +2951,11 @@ impl ChartApp {
                     snapshot: d.snapshot,
                     cascaded: d.cascaded,
                 });
-                eprintln!("[ChartApp] Recorded DeletePrimitive {} (+{} cascaded)", prim_id, cascaded_count);
-                eprintln!("[ChartApp] Deleted primitive #{}", prim_id);
+                log::info!("[ChartApp] Recorded DeletePrimitive {} (+{} cascaded)", prim_id, cascaded_count);
+                log::info!("[ChartApp] Deleted primitive #{}", prim_id);
             }
             None => {
-                eprintln!("[ChartApp] Deleted primitive #{} (no undo snapshot)", prim_id);
+                log::info!("[ChartApp] Deleted primitive #{} (no undo snapshot)", prim_id);
             }
         }
         let removed_alerts = self.core.alerts_mut().clear_for_drawing(prim_id);
@@ -2974,7 +2974,7 @@ impl ChartApp {
         // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
         // — see `delete_primitive_with_undo`'s twin comment.
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] delete_all_primitives_with_undo refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] delete_all_primitives_with_undo refused: active tab is read-only (shared chart)");
             return;
         }
         let (ids, primitives): (Vec<u64>, Vec<mlc_core::drawing::PrimitiveSnapshot>) = {
@@ -2987,7 +2987,7 @@ impl ChartApp {
             return;
         }
         self.push_undo_command(mlc_core::Command::DeleteAllPrimitives { primitives: primitives.clone() });
-        eprintln!("[ChartApp] Recorded DeleteAllPrimitives ({} primitives)", primitives.len());
+        log::info!("[ChartApp] Recorded DeleteAllPrimitives ({} primitives)", primitives.len());
         self.core.drawings_mut().delete_all(bid);
         for id in &ids {
             let removed_alerts = self.core.alerts_mut().clear_for_drawing(*id);
@@ -2995,7 +2995,7 @@ impl ChartApp {
                 self.push_undo_command(mlc_core::Command::DeleteAlert { snapshot });
             }
         }
-        eprintln!("[ChartApp] Deleted all primitives (bid={:?})", bid);
+        log::info!("[ChartApp] Deleted all primitives (bid={:?})", bid);
         self.sync_drawing_back_to_group();
         self.autosave_snapshot();
     }
@@ -3043,7 +3043,7 @@ impl ChartApp {
         // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
         // — see `edit_primitive_recorded`'s twin comment (`input/mod.rs`).
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] paste_primitive_from_clipboard refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] paste_primitive_from_clipboard refused: active tab is read-only (shared chart)");
             return;
         }
         let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else { return };
@@ -3145,7 +3145,7 @@ impl ChartApp {
         // Shared-viewer read-only gate (native-share-viewer arc, 2026-09-06)
         // — see `edit_primitive_recorded`'s twin comment (`input/mod.rs`).
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] paste_primitive_at_cursor refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] paste_primitive_at_cursor refused: active tab is read-only (shared chart)");
             return;
         }
         if self.primitive_clipboard.is_none() {

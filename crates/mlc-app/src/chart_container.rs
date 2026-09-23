@@ -1678,12 +1678,12 @@ impl ChartContainer {
     /// caller (Phase 4 B — instrument fields removed from ChartContainer).
     pub fn add_compare_symbol(&mut self, symbol: &str, main_symbol: &str, main_timeframe: &Timeframe, main_bars: &[Bar]) -> bool {
         if self.compare_overlay.has_symbol(symbol) || symbol == main_symbol {
-            eprintln!("[Compare] Symbol {} already compared or is main symbol", symbol);
+            log::info!("[Compare] Symbol {} already compared or is main symbol", symbol);
             return false;
         }
 
         let Some(bars) = self.data_provider.get_bars(symbol, main_timeframe) else {
-            eprintln!(
+            log::info!(
                 "[Compare] Data not available for symbol={} tf={}",
                 symbol,
                 main_timeframe.name
@@ -1691,7 +1691,7 @@ impl ChartContainer {
             return false;
         };
         if bars.is_empty() {
-            eprintln!("[Compare] No bars loaded for {}", symbol);
+            log::info!("[Compare] No bars loaded for {}", symbol);
             return false;
         }
 
@@ -1706,7 +1706,7 @@ impl ChartContainer {
             self.compare_overlay.set_main_base(base_bar.close, base_bar.timestamp);
         }
 
-        eprintln!(
+        log::info!(
             "[Compare] Added {} (color: {}, now {} series)",
             symbol,
             color,
@@ -1722,7 +1722,7 @@ impl ChartContainer {
         }
 
         self.compare_overlay.remove_series_by_symbol(symbol);
-        eprintln!(
+        log::info!(
             "[Compare] Removed {} (now {} series)",
             symbol,
             self.compare_overlay.series.len()
@@ -1734,7 +1734,7 @@ impl ChartContainer {
     pub fn clear_compare_symbols(&mut self) {
         let count = self.compare_overlay.series.len();
         self.compare_overlay.clear();
-        eprintln!("[Compare] Cleared {} series", count);
+        log::info!("[Compare] Cleared {} series", count);
     }
 
     // =========================================================================

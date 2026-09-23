@@ -303,7 +303,7 @@ async fn updater_loop(
     let current_version = env!("CARGO_PKG_VERSION");
     let channel = get_channel();
     let interval_secs = CHECK_INTERVAL.as_secs();
-    eprintln!("[{} Updater] Starting — current version: v{}, device_id: {}", now_ts(), current_version, device_id);
+    log::info!("[{} Updater] Starting — current version: v{}, device_id: {}", now_ts(), current_version, device_id);
     log::info!("[Updater] channel={}, interval={}s", &channel, interval_secs);
 
     // Shared HTTP client for key sync requests.
@@ -329,7 +329,7 @@ async fn updater_loop(
                     token_store::clear_token();
                     tier_store::clear_tier();
                     let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
-                    eprintln!(
+                    log::warn!(
                         "[{} Updater] stored token rejected by the server — signed out",
                         now_ts()
                     );
@@ -574,7 +574,7 @@ async fn updater_loop(
                                             token_store::clear_token();
                                             tier_store::clear_tier();
                                             let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
-                                            eprintln!(
+                                            log::warn!(
                                                 "[{} Updater] session rejected during redeem — signed out",
                                                 now_ts()
                                             );
@@ -625,7 +625,7 @@ async fn updater_loop(
                                             token_store::clear_token();
                                             tier_store::clear_tier();
                                             let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
-                                            eprintln!(
+                                            log::warn!(
                                                 "[{} Updater] session rejected during set_nick — signed out",
                                                 now_ts()
                                             );
@@ -670,7 +670,7 @@ async fn updater_loop(
                                             token_store::clear_token();
                                             tier_store::clear_tier();
                                             let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
-                                            eprintln!(
+                                            log::warn!(
                                                 "[{} Updater] session rejected during forum call — signed out",
                                                 now_ts()
                                             );
@@ -797,7 +797,7 @@ async fn updater_loop(
                                             token_store::clear_token();
                                             tier_store::clear_tier();
                                             let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
-                                            eprintln!(
+                                            log::warn!(
                                                 "[{} Updater] session rejected during forum_v2 call — signed out",
                                                 now_ts()
                                             );
@@ -932,7 +932,7 @@ async fn updater_loop(
                                             token_store::clear_token();
                                             tier_store::clear_tier();
                                             let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
-                                            eprintln!(
+                                            log::warn!(
                                                 "[{} Updater] session rejected during dm call — signed out",
                                                 now_ts()
                                             );
@@ -1045,7 +1045,7 @@ async fn updater_loop(
                                             token_store::clear_token();
                                             tier_store::clear_tier();
                                             let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
-                                            eprintln!(
+                                            log::warn!(
                                                 "[{} Updater] session rejected during share_live — signed out",
                                                 now_ts()
                                             );
@@ -1083,7 +1083,7 @@ async fn updater_loop(
                                             token_store::clear_token();
                                             tier_store::clear_tier();
                                             let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
-                                            eprintln!(
+                                            log::warn!(
                                                 "[{} Updater] session rejected during share_screenshot — signed out",
                                                 now_ts()
                                             );
@@ -1133,7 +1133,7 @@ async fn updater_loop(
                                         token_store::clear_token();
                                         tier_store::clear_tier();
                                         let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
-                                        eprintln!(
+                                        log::warn!(
                                             "[{} Updater] session rejected during open_share — signed out",
                                             now_ts()
                                         );
@@ -1179,7 +1179,7 @@ async fn updater_loop(
                                             token_store::clear_token();
                                             tier_store::clear_tier();
                                             let _ = auth_tx.send(state::AuthStatus::NotLoggedIn);
-                                            eprintln!(
+                                            log::warn!(
                                                 "[{} Updater] session rejected during clone_share — signed out",
                                                 now_ts()
                                             );
@@ -1278,7 +1278,7 @@ async fn updater_loop(
                         if enabled && connected {
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
-                                eprintln!("[{} Updater] Sync enabled — triggering immediate sync", now_ts());
+                                log::info!("[{} Updater] Sync enabled — triggering immediate sync", now_ts());
                                 run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, &mut pending_conflicts, &profile_id, &device_id).await;
                             }
                         }
@@ -1302,11 +1302,11 @@ async fn updater_loop(
                     // sync_vault and sync_recovery_key are always true (Cloud = always ZT)
                     state::UpdaterCommand::SetDataDir(path) => {
                         data_dir = path;
-                        eprintln!("[{} Updater] data_dir updated to {:?}", now_ts(), data_dir);
+                        log::info!("[{} Updater] data_dir updated to {:?}", now_ts(), data_dir);
                     }
                     state::UpdaterCommand::SetProfileId(id) => {
                         profile_id = id;
-                        eprintln!("[{} Updater] profile_id updated to {}", now_ts(), profile_id);
+                        log::info!("[{} Updater] profile_id updated to {}", now_ts(), profile_id);
                     }
                     state::UpdaterCommand::ResolveConflict { sync_id, resolution } => {
                         let conflict = match pending_conflicts.remove(&sync_id) {
@@ -1471,7 +1471,7 @@ async fn updater_loop(
                         if connected && sync_state.enabled {
                             let token = token_store::load_token();
                             if let Some(ref td) = token {
-                                eprintln!("[{} Updater] SyncPushChanged: {:?}", now_ts(), categories);
+                                log::info!("[{} Updater] SyncPushChanged: {:?}", now_ts(), categories);
                                 run_sync_pipeline(&http_client, &td.token, &sync_status_tx, &sync_checksums_tx, &mut sync_state, &data_dir, &build_attest, &mut pending_conflicts, &profile_id, &device_id).await;
                             } else {
                                 log::debug!("[Updater] SyncPushChanged ignored — not logged in");
@@ -1502,7 +1502,7 @@ async fn updater_loop(
                                 .await
                                 {
                                     Ok(profiles) => {
-                                        eprintln!(
+                                        log::info!(
                                             "[{} Updater] ListCloudProfiles: {} profile(s) found",
                                             now_ts(),
                                             profiles.len()
@@ -1534,7 +1534,7 @@ async fn updater_loop(
                                 );
                             }
                             Some(ref td) => {
-                                eprintln!(
+                                log::info!(
                                     "[{} Updater] RestoreCloudProfile: downloading profile '{}'",
                                     now_ts(),
                                     restore_id
@@ -1657,7 +1657,7 @@ async fn updater_loop(
                                             // will be retried on the next profile scan.
                                         }
 
-                                        eprintln!(
+                                        log::info!(
                                             "[{} Updater] RestoreCloudProfile: profile '{}' restored ({} item(s))",
                                             now_ts(),
                                             restore_id,
@@ -1679,7 +1679,7 @@ async fn updater_loop(
                         // and loud so a caller that still sends it is found
                         // rather than silently ignored.
                         if new_channel != channel {
-                            eprintln!(
+                            log::warn!(
                                 "[{} Updater] SetChannel({}) refused — one track only, staying on '{}'",
                                 now_ts(), new_channel, channel
                             );
@@ -1824,7 +1824,7 @@ async fn do_check(
     match check::fetch_latest(auth_header, channel).await {
         Ok(manifest) => {
             if check::is_newer(current_version, &manifest.version) {
-                eprintln!("[{} Updater] OTA: update available v{} → v{}", now_ts(), current_version, manifest.version);
+                log::info!("[{} Updater] OTA: update available v{} → v{}", now_ts(), current_version, manifest.version);
                 let info = UpdateInfo {
                     version: manifest.version,
                     sha256: manifest.sha256,
@@ -1835,12 +1835,12 @@ async fn do_check(
                 };
                 let _ = status_tx.send(UpdateStatus::UpdateAvailable(info));
             } else {
-                eprintln!("[{} Updater] OTA: up to date (local v{}, server v{})", now_ts(), current_version, manifest.version);
+                log::info!("[{} Updater] OTA: up to date (local v{}, server v{})", now_ts(), current_version, manifest.version);
                 let _ = status_tx.send(UpdateStatus::Idle);
             }
         }
         Err(e) => {
-            eprintln!("[{} Updater] OTA check failed: {}", now_ts(), e);
+            log::warn!("[{} Updater] OTA check failed: {}", now_ts(), e);
             log::warn!("Update check failed: {}", e);
             let _ = status_tx.send(UpdateStatus::Idle);
         }

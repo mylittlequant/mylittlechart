@@ -66,7 +66,7 @@ impl ChartApp {
                 let tab_id = &rest["tab:".len()..];
                 if let Some(tab) = ChartSettingsTab::from_id(tab_id) {
                     self.panel_app.chart_settings_state.set_tab(tab);
-                    eprintln!("[ChartApp] chart_settings tab: {}", tab_id);
+                    log::info!("[ChartApp] chart_settings tab: {}", tab_id);
                 }
             }
             _ if rest.starts_with("item:") => {
@@ -116,7 +116,7 @@ impl ChartApp {
                         let field_id = uzor::WidgetId::from(crate::text_input::CHART_SETTINGS_TEMPLATE_NAME);
                         self.input_coordinator.borrow_mut().text_fields_mut().focus(field_id.clone());
                         self.input_coordinator.borrow_mut().text_fields_mut().set_text(&field_id, &default_name);
-                        eprintln!("[ChartApp] chart_settings template save-as opened");
+                        log::info!("[ChartApp] chart_settings template save-as opened");
                     }
                     "template_default" => {
                         self.panel_app.chart_settings_state.template_dropdown_open = false;
@@ -124,14 +124,14 @@ impl ChartApp {
                         let defaults = mlc_core::templates::ChartTemplate::developer_defaults();
                         self.apply_chart_template(&defaults);
                         self.snapshot_chart_settings_to_user_manager();
-                        eprintln!("[ChartApp] chart_settings reset to developer defaults");
+                        log::info!("[ChartApp] chart_settings reset to developer defaults");
                     }
                     "template_dropdown_menu" => {
                         // Absorb click inside dropdown, keep it open
                     }
                     _ if btn_id.starts_with("template_delete:") => {
                         let tmpl_id = &btn_id["template_delete:".len()..];
-                        eprintln!("[ChartApp] chart_settings deleted chart template: {}", tmpl_id);
+                        log::info!("[ChartApp] chart_settings deleted chart template: {}", tmpl_id);
                         if self.panel_app.chart_settings_state.applied_template_id.as_deref() == Some(tmpl_id) {
                             self.panel_app.chart_settings_state.applied_template_id = None;
                         }
@@ -145,16 +145,16 @@ impl ChartApp {
                             self.panel_app.chart_settings_state.template_dropdown_open = false;
                             self.apply_chart_template(&tmpl);
                             self.snapshot_chart_settings_to_user_manager();
-                            eprintln!("[ChartApp] chart_settings template applied: {}", tmpl.name);
+                            log::info!("[ChartApp] chart_settings template applied: {}", tmpl.name);
                         }
                     }
                     _ => {
-                        eprintln!("[ChartApp] chart_settings footer: {}", btn_id);
+                        log::info!("[ChartApp] chart_settings footer: {}", btn_id);
                     }
                 }
             }
             _ => {
-                eprintln!("[ChartApp] chart_settings unhandled: {}", rest);
+                log::warn!("[ChartApp] chart_settings unhandled: {}", rest);
             }
         }
     }
@@ -181,9 +181,9 @@ impl ChartApp {
                     }
                 }
             }
-            eprintln!("[ChartApp] chart_settings watermark_text auto-committed: {}", text);
+            log::info!("[ChartApp] chart_settings watermark_text auto-committed: {}", text);
         } else {
-            eprintln!("[ChartApp] chart_settings '{}' editing auto-closed (value: {})", field, text);
+            log::info!("[ChartApp] chart_settings '{}' editing auto-closed (value: {})", field, text);
         }
     }
 
@@ -199,7 +199,7 @@ impl ChartApp {
         // mutates chart state exactly like any other click-driven edit, see
         // `edit_primitive_recorded`'s twin comment (`input/mod.rs`).
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-            eprintln!("[ChartApp] apply_chart_template refused: active tab is read-only (shared chart)");
+            log::warn!("[ChartApp] apply_chart_template refused: active tab is read-only (shared chart)");
             return;
         }
         use mlc_app_layout::layout::modals::chart_settings::{
@@ -332,22 +332,22 @@ impl ChartApp {
                 "use_prev_close" => {
                     self.panel_app.chart_settings_state.instrument_use_prev_close =
                         !self.panel_app.chart_settings_state.instrument_use_prev_close;
-                    eprintln!("[ChartApp] instrument:use_prev_close = {}", self.panel_app.chart_settings_state.instrument_use_prev_close);
+                    log::info!("[ChartApp] instrument:use_prev_close = {}", self.panel_app.chart_settings_state.instrument_use_prev_close);
                 }
                 "body_enabled" => {
                     self.panel_app.chart_settings_state.instrument_body_enabled =
                         !self.panel_app.chart_settings_state.instrument_body_enabled;
-                    eprintln!("[ChartApp] instrument:body_enabled = {}", self.panel_app.chart_settings_state.instrument_body_enabled);
+                    log::info!("[ChartApp] instrument:body_enabled = {}", self.panel_app.chart_settings_state.instrument_body_enabled);
                 }
                 "border_enabled" => {
                     self.panel_app.chart_settings_state.instrument_border_enabled =
                         !self.panel_app.chart_settings_state.instrument_border_enabled;
-                    eprintln!("[ChartApp] instrument:border_enabled = {}", self.panel_app.chart_settings_state.instrument_border_enabled);
+                    log::info!("[ChartApp] instrument:border_enabled = {}", self.panel_app.chart_settings_state.instrument_border_enabled);
                 }
                 "wick_enabled" => {
                     self.panel_app.chart_settings_state.instrument_wick_enabled =
                         !self.panel_app.chart_settings_state.instrument_wick_enabled;
-                    eprintln!("[ChartApp] instrument:wick_enabled = {}", self.panel_app.chart_settings_state.instrument_wick_enabled);
+                    log::info!("[ChartApp] instrument:wick_enabled = {}", self.panel_app.chart_settings_state.instrument_wick_enabled);
                 }
                 "footprint_show_abs_markers" => {
                     let new_value = !self.panel_app.chart_settings_state.footprint_show_abs_markers;
@@ -356,7 +356,7 @@ impl ChartApp {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.footprint_display.show_abs_markers = new_value;
                     }
-                    eprintln!("[ChartApp] instrument:footprint_show_abs_markers = {}", new_value);
+                    log::info!("[ChartApp] instrument:footprint_show_abs_markers = {}", new_value);
                 }
                 "footprint_show_volume_text" => {
                     let new_value = !self.panel_app.chart_settings_state.footprint_show_volume_text;
@@ -365,7 +365,7 @@ impl ChartApp {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.footprint_display.show_volume_text = new_value;
                     }
-                    eprintln!("[ChartApp] instrument:footprint_show_volume_text = {}", new_value);
+                    log::info!("[ChartApp] instrument:footprint_show_volume_text = {}", new_value);
                 }
                 "tick_intensity" => {
                     let new_value = !self.panel_app.chart_settings_state.tick_intensity;
@@ -374,7 +374,7 @@ impl ChartApp {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.tick_intensity = new_value;
                     }
-                    eprintln!("[ChartApp] instrument:tick_intensity = {}", new_value);
+                    log::info!("[ChartApp] instrument:tick_intensity = {}", new_value);
                 }
                 "bar_family_wicks" => {
                     let new_value = !self.panel_app.chart_settings_state.bar_family_wicks;
@@ -383,66 +383,66 @@ impl ChartApp {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.bar_family_wicks = new_value;
                     }
-                    eprintln!("[ChartApp] instrument:bar_family_wicks = {}", new_value);
+                    log::info!("[ChartApp] instrument:bar_family_wicks = {}", new_value);
                 }
                 "tpo_show_session_dates" => {
                     if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.tpo_display.show_session_dates = !panel.tpo_display.show_session_dates;
-                        eprintln!("[ChartApp] instrument:tpo_show_session_dates = {}", panel.tpo_display.show_session_dates);
+                        log::info!("[ChartApp] instrument:tpo_show_session_dates = {}", panel.tpo_display.show_session_dates);
                     }
                 }
                 "tpo_show_poc" => {
                     if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.tpo_display.show_poc = !panel.tpo_display.show_poc;
-                        eprintln!("[ChartApp] instrument:tpo_show_poc = {}", panel.tpo_display.show_poc);
+                        log::info!("[ChartApp] instrument:tpo_show_poc = {}", panel.tpo_display.show_poc);
                     }
                 }
                 "tpo_show_value_area" => {
                     if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.tpo_display.show_value_area = !panel.tpo_display.show_value_area;
-                        eprintln!("[ChartApp] instrument:tpo_show_value_area = {}", panel.tpo_display.show_value_area);
+                        log::info!("[ChartApp] instrument:tpo_show_value_area = {}", panel.tpo_display.show_value_area);
                     }
                 }
                 "tpo_show_single_prints" => {
                     if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.tpo_display.show_single_prints = !panel.tpo_display.show_single_prints;
-                        eprintln!("[ChartApp] instrument:tpo_show_single_prints = {}", panel.tpo_display.show_single_prints);
+                        log::info!("[ChartApp] instrument:tpo_show_single_prints = {}", panel.tpo_display.show_single_prints);
                     }
                 }
                 "tpo_show_poor_hl" => {
                     if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.tpo_display.show_poor_hl = !panel.tpo_display.show_poor_hl;
-                        eprintln!("[ChartApp] instrument:tpo_show_poor_hl = {}", panel.tpo_display.show_poor_hl);
+                        log::info!("[ChartApp] instrument:tpo_show_poor_hl = {}", panel.tpo_display.show_poor_hl);
                     }
                 }
                 "tpo_show_initial_balance" => {
                     if let Some(pid) = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id) {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.tpo_display.show_initial_balance = !panel.tpo_display.show_initial_balance;
-                        eprintln!("[ChartApp] instrument:tpo_show_initial_balance = {}", panel.tpo_display.show_initial_balance);
+                        log::info!("[ChartApp] instrument:tpo_show_initial_balance = {}", panel.tpo_display.show_initial_balance);
                     }
                 }
                 "use_24h" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.time_format.use_24h = !w.scale_settings.time_format.use_24h;
-                        eprintln!("[ChartApp] instrument:use_24h = {}", w.scale_settings.time_format.use_24h);
+                        log::info!("[ChartApp] instrument:use_24h = {}", w.scale_settings.time_format.use_24h);
                     }
                 }
                 "show_utc_prefix" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.time_format.show_utc_prefix = !w.scale_settings.time_format.show_utc_prefix;
-                        eprintln!("[ChartApp] instrument:show_utc_prefix = {}", w.scale_settings.time_format.show_utc_prefix);
+                        log::info!("[ChartApp] instrument:show_utc_prefix = {}", w.scale_settings.time_format.show_utc_prefix);
                     }
                 }
                 "date_format_cycle" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.time_format.date_format = w.scale_settings.time_format.date_format.next();
-                        eprintln!("[ChartApp] instrument:date_format_cycle = {:?}", w.scale_settings.time_format.date_format);
+                        log::info!("[ChartApp] instrument:date_format_cycle = {:?}", w.scale_settings.time_format.date_format);
                     }
                 }
                 "date_format_menu" => {
@@ -456,25 +456,25 @@ impl ChartApp {
                 "show_day_of_week" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.time_format.show_day_of_week = !w.scale_settings.time_format.show_day_of_week;
-                        eprintln!("[ChartApp] instrument:show_day_of_week = {}", w.scale_settings.time_format.show_day_of_week);
+                        log::info!("[ChartApp] instrument:show_day_of_week = {}", w.scale_settings.time_format.show_day_of_week);
                     }
                 }
                 "show_bar_countdown" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.show_bar_countdown = !w.scale_settings.show_bar_countdown;
-                        eprintln!("[ChartApp] instrument:show_bar_countdown = {}", w.scale_settings.show_bar_countdown);
+                        log::info!("[ChartApp] instrument:show_bar_countdown = {}", w.scale_settings.show_bar_countdown);
                     }
                 }
                 "price_tick_extend_right" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.price_tick_extend_right = !w.scale_settings.price_tick_extend_right;
-                        eprintln!("[ChartApp] instrument:price_tick_extend_right = {}", w.scale_settings.price_tick_extend_right);
+                        log::info!("[ChartApp] instrument:price_tick_extend_right = {}", w.scale_settings.price_tick_extend_right);
                     }
                 }
                 "price_tick_extend_left" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.price_tick_extend_left = !w.scale_settings.price_tick_extend_left;
-                        eprintln!("[ChartApp] instrument:price_tick_extend_left = {}", w.scale_settings.price_tick_extend_left);
+                        log::info!("[ChartApp] instrument:price_tick_extend_left = {}", w.scale_settings.price_tick_extend_left);
                     }
                 }
                 "body_up_color" | "body_down_color"
@@ -535,10 +535,10 @@ impl ChartApp {
                     self.panel_app.chart_settings_state.open_color_picker_smart(
                         field, ax, ay, aw, ah, screen_w, screen_h, current_color.as_deref(),
                     );
-                    eprintln!("[ChartApp] chart_settings opened color picker for: {}", field);
+                    log::info!("[ChartApp] chart_settings opened color picker for: {}", field);
                 }
                 _ => {
-                    eprintln!("[ChartApp] chart_settings instrument unknown: {}", field);
+                    log::info!("[ChartApp] chart_settings instrument unknown: {}", field);
                 }
             }
             return;
@@ -554,7 +554,7 @@ impl ChartApp {
                         let current = panel.grid_options.vert_lines.visible && panel.grid_options.horz_lines.visible;
                         panel.grid_options.vert_lines.visible = !current;
                         panel.grid_options.horz_lines.visible = !current;
-                        eprintln!("[ChartApp] scales:show_grid = {}", !current);
+                        log::info!("[ChartApp] scales:show_grid = {}", !current);
                     }
                 }
                 "vert_lines" => {
@@ -562,7 +562,7 @@ impl ChartApp {
                     if let Some(pid) = pid {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.grid_options.vert_lines.visible = !panel.grid_options.vert_lines.visible;
-                        eprintln!("[ChartApp] scales:vert_lines = {}", panel.grid_options.vert_lines.visible);
+                        log::info!("[ChartApp] scales:vert_lines = {}", panel.grid_options.vert_lines.visible);
                     }
                 }
                 "horz_lines" => {
@@ -570,7 +570,7 @@ impl ChartApp {
                     if let Some(pid) = pid {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.grid_options.horz_lines.visible = !panel.grid_options.horz_lines.visible;
-                        eprintln!("[ChartApp] scales:horz_lines = {}", panel.grid_options.horz_lines.visible);
+                        log::info!("[ChartApp] scales:horz_lines = {}", panel.grid_options.horz_lines.visible);
                     }
                 }
                 "price_scale_right" => {
@@ -579,7 +579,7 @@ impl ChartApp {
                             PriceScalePosition::Hidden => PriceScalePosition::Right,
                             _ => PriceScalePosition::Hidden,
                         };
-                        eprintln!("[ChartApp] scales:price_scale_right toggled: {:?}", w.scale_settings.price_scale_position);
+                        log::info!("[ChartApp] scales:price_scale_right toggled: {:?}", w.scale_settings.price_scale_position);
                     }
                 }
                 "time_scale_bottom" => {
@@ -588,7 +588,7 @@ impl ChartApp {
                             TimeScalePosition::Hidden => TimeScalePosition::Bottom,
                             _ => TimeScalePosition::Hidden,
                         };
-                        eprintln!("[ChartApp] scales:time_scale_bottom toggled: {:?}", w.scale_settings.time_scale_position);
+                        log::info!("[ChartApp] scales:time_scale_bottom toggled: {:?}", w.scale_settings.time_scale_position);
                     }
                 }
                 "auto_scale" => {
@@ -599,7 +599,7 @@ impl ChartApp {
                         let auto_series = self.active_chart_active_series();
                         if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                             w.set_scale_mode_with_recalc(next, auto_series.as_active_series());
-                            eprintln!("[ChartApp] scales:auto_scale -> {:?}", next);
+                            log::info!("[ChartApp] scales:auto_scale -> {:?}", next);
                         }
                         // Propagate scale_mode change to sync-group peers.
                         if let Some(active_leaf) = self.panel_app.panel_grid.docking().active_leaf() {
@@ -615,7 +615,7 @@ impl ChartApp {
                 "show_bar_countdown" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.show_bar_countdown = !w.scale_settings.show_bar_countdown;
-                        eprintln!("[ChartApp] scales:show_bar_countdown = {}", w.scale_settings.show_bar_countdown);
+                        log::info!("[ChartApp] scales:show_bar_countdown = {}", w.scale_settings.show_bar_countdown);
                     }
                 }
                 "show_prev_close" => {
@@ -623,19 +623,19 @@ impl ChartApp {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.show_prev_close_line = !w.scale_settings.show_prev_close_line;
                         w.update_prev_close_line(&pc_bars);
-                        eprintln!("[ChartApp] scales:show_prev_close = {}", w.scale_settings.show_prev_close_line);
+                        log::info!("[ChartApp] scales:show_prev_close = {}", w.scale_settings.show_prev_close_line);
                     }
                 }
                 "use_24h" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.time_format.use_24h = !w.scale_settings.time_format.use_24h;
-                        eprintln!("[ChartApp] scales:use_24h = {}", w.scale_settings.time_format.use_24h);
+                        log::info!("[ChartApp] scales:use_24h = {}", w.scale_settings.time_format.use_24h);
                     }
                 }
                 "show_day_of_week" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.time_format.show_day_of_week = !w.scale_settings.time_format.show_day_of_week;
-                        eprintln!("[ChartApp] scales:show_day_of_week = {}", w.scale_settings.time_format.show_day_of_week);
+                        log::info!("[ChartApp] scales:show_day_of_week = {}", w.scale_settings.time_format.show_day_of_week);
                     }
                 }
                 "crosshair_line_color" => {
@@ -649,47 +649,47 @@ impl ChartApp {
                     self.panel_app.chart_settings_state.open_color_picker_smart(
                         "crosshair_line_color", ax, ay, aw, ah, screen_w, screen_h, current_color.as_deref(),
                     );
-                    eprintln!("[ChartApp] chart_settings opened color picker for crosshair_line_color");
+                    log::info!("[ChartApp] chart_settings opened color picker for crosshair_line_color");
                 }
                 "price_width_increase" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         let new_w = (w.scale_settings.price_scale_width + 10.0).min(150.0);
                         w.scale_settings.price_scale_width = new_w;
-                        eprintln!("[ChartApp] price_scale_width = {}", new_w);
+                        log::info!("[ChartApp] price_scale_width = {}", new_w);
                     }
                 }
                 "price_width_decrease" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         let new_w = (w.scale_settings.price_scale_width - 10.0).max(50.0);
                         w.scale_settings.price_scale_width = new_w;
-                        eprintln!("[ChartApp] price_scale_width = {}", new_w);
+                        log::info!("[ChartApp] price_scale_width = {}", new_w);
                     }
                 }
                 "time_height_increase" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         let new_h = (w.scale_settings.time_scale_height + 5.0).min(60.0);
                         w.scale_settings.time_scale_height = new_h;
-                        eprintln!("[ChartApp] time_scale_height = {}", new_h);
+                        log::info!("[ChartApp] time_scale_height = {}", new_h);
                     }
                 }
                 "time_height_decrease" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         let new_h = (w.scale_settings.time_scale_height - 5.0).max(20.0);
                         w.scale_settings.time_scale_height = new_h;
-                        eprintln!("[ChartApp] time_scale_height = {}", new_h);
+                        log::info!("[ChartApp] time_scale_height = {}", new_h);
                     }
                 }
                 "dropdown_cycle:date_format" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.time_format.date_format = w.scale_settings.time_format.date_format.next();
-                        eprintln!("[ChartApp] scales:date_format cycled: {:?}", w.scale_settings.time_format.date_format);
+                        log::info!("[ChartApp] scales:date_format cycled: {:?}", w.scale_settings.time_format.date_format);
                     }
                 }
                 "dropdown_menu:date_format" => {
                     self.panel_app.chart_settings_state.toggle_dropdown("date_format");
                 }
                 _ => {
-                    eprintln!("[ChartApp] chart_settings scales unknown: {}", field);
+                    log::info!("[ChartApp] chart_settings scales unknown: {}", field);
                 }
             }
             return;
@@ -708,7 +708,7 @@ impl ChartApp {
                             LegendPosition::BottomRight => LegendPosition::BottomLeft,
                             LegendPosition::BottomLeft  => LegendPosition::TopLeft,
                         };
-                        eprintln!("[ChartApp] legend position cycled: {:?}", panel.legend.position);
+                        log::info!("[ChartApp] legend position cycled: {:?}", panel.legend.position);
                     }
                 }
                 "dropdown_menu:legend_position" => {
@@ -731,7 +731,7 @@ impl ChartApp {
                     if let Some(pid) = pid {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.legend.show_ohlc = !panel.legend.show_ohlc;
-                        eprintln!("[ChartApp] legend_show_ohlc = {}", panel.legend.show_ohlc);
+                        log::info!("[ChartApp] legend_show_ohlc = {}", panel.legend.show_ohlc);
                     }
                 }
                 "legend_show_change" => {
@@ -739,7 +739,7 @@ impl ChartApp {
                     if let Some(pid) = pid {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.legend.show_change = !panel.legend.show_change;
-                        eprintln!("[ChartApp] legend_show_change = {}", panel.legend.show_change);
+                        log::info!("[ChartApp] legend_show_change = {}", panel.legend.show_change);
                     }
                 }
                 "legend_show_percent" => {
@@ -747,7 +747,7 @@ impl ChartApp {
                     if let Some(pid) = pid {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.legend.show_percent = !panel.legend.show_percent;
-                        eprintln!("[ChartApp] legend_show_percent = {}", panel.legend.show_percent);
+                        log::info!("[ChartApp] legend_show_percent = {}", panel.legend.show_percent);
                     }
                 }
                 "tooltip_visible" => {
@@ -755,7 +755,7 @@ impl ChartApp {
                     if let Some(pid) = pid {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.tooltip.visible = !panel.tooltip.visible;
-                        eprintln!("[ChartApp] tooltip_visible = {}", panel.tooltip.visible);
+                        log::info!("[ChartApp] tooltip_visible = {}", panel.tooltip.visible);
                     }
                 }
                 "tooltip_follow" => {
@@ -763,7 +763,7 @@ impl ChartApp {
                     if let Some(pid) = pid {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.tooltip.follow_cursor = !panel.tooltip.follow_cursor;
-                        eprintln!("[ChartApp] tooltip_follow = {}", panel.tooltip.follow_cursor);
+                        log::info!("[ChartApp] tooltip_follow = {}", panel.tooltip.follow_cursor);
                     }
                 }
                 "dropdown_cycle:watermark_position" => {
@@ -778,7 +778,7 @@ impl ChartApp {
                                 (HorzAlign::Left, VertAlign::Bottom) => { watermark.horz_align = HorzAlign::Center; watermark.vert_align = VertAlign::Center; }
                                 _ => { watermark.horz_align = HorzAlign::Left; watermark.vert_align = VertAlign::Top; }
                             }
-                            eprintln!("[ChartApp] watermark position cycled: {:?} {:?}", watermark.horz_align, watermark.vert_align);
+                            log::info!("[ChartApp] watermark position cycled: {:?} {:?}", watermark.horz_align, watermark.vert_align);
                         }
                     }
                 }
@@ -806,7 +806,7 @@ impl ChartApp {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         if let Some(ref mut watermark) = panel.watermark {
                             watermark.visible = !watermark.visible;
-                            eprintln!("[ChartApp] watermark_visible = {}", watermark.visible);
+                            log::info!("[ChartApp] watermark_visible = {}", watermark.visible);
                         }
                     }
                 }
@@ -823,7 +823,7 @@ impl ChartApp {
                     self.panel_app.chart_settings_state.open_color_picker_smart(
                         "watermark_color", ax, ay, aw, ah, screen_w, screen_h, current_color.as_deref(),
                     );
-                    eprintln!("[ChartApp] chart_settings opened color picker for watermark_color");
+                    log::info!("[ChartApp] chart_settings opened color picker for watermark_color");
                 }
                 "watermark_text" => {
                     let pid2 = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
@@ -841,15 +841,15 @@ impl ChartApp {
                     if let Some(fs) = coord.text_fields_mut().field_state_mut(&wid) {
                         fs.selection_start = Some(0);
                     }
-                    eprintln!("[ChartApp] chart_settings watermark_text editing started");
+                    log::info!("[ChartApp] chart_settings watermark_text editing started");
                 }
                 "show_indicator_overlay" => {
                     self.panel_app.indicator_overlay_state.visible = !self.panel_app.indicator_overlay_state.visible;
-                    eprintln!("[ChartApp] indicator_overlay visible = {}", self.panel_app.indicator_overlay_state.visible);
+                    log::info!("[ChartApp] indicator_overlay visible = {}", self.panel_app.indicator_overlay_state.visible);
                     self.autosave_snapshot();
                 }
                 _ => {
-                    eprintln!("[ChartApp] chart_settings status unknown: {}", field);
+                    log::info!("[ChartApp] chart_settings status unknown: {}", field);
                 }
             }
             return;
@@ -862,7 +862,7 @@ impl ChartApp {
                 self.panel_app.theme_manager.set_preset(theme_id);
                 // Signal the App-level coordinator to propagate this change to all windows.
                 self.theme_changed = Some(theme_id.to_string());
-                eprintln!("[ChartApp] theme preset: {}", theme_id);
+                log::info!("[ChartApp] theme preset: {}", theme_id);
                 return;
             }
 
@@ -872,7 +872,7 @@ impl ChartApp {
                 if let Some(style) = UIStyle::from_index(style_index) {
                     self.panel_app.theme_manager.current_mut().set_style(style);
                     self.profile_dirty = true;
-                    eprintln!("[ChartApp] UI style: {:?}", style);
+                    log::info!("[ChartApp] UI style: {:?}", style);
                 }
                 return;
             }
@@ -889,9 +889,9 @@ impl ChartApp {
                 self.panel_app.chart_settings_state.open_color_picker_smart(
                     field, ax, ay, aw, ah, screen_w, screen_h, Some(color),
                 );
-                eprintln!("[ChartApp] chart_settings opened color picker for appearance:{}", field);
+                log::info!("[ChartApp] chart_settings opened color picker for appearance:{}", field);
             } else {
-                eprintln!("[ChartApp] chart_settings appearance unknown: {}", field);
+                log::info!("[ChartApp] chart_settings appearance unknown: {}", field);
             }
             return;
         }
@@ -914,7 +914,7 @@ impl ChartApp {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.crosshair.mode = new_mode;
                     }
-                    eprintln!("[ChartApp] crosshair_mode = {:?}", new_mode);
+                    log::info!("[ChartApp] crosshair_mode = {:?}", new_mode);
                 }
                 "crosshair_line_style" => {
                     use mlc_core::drawing::primitives_v2::LineStyle;
@@ -932,7 +932,7 @@ impl ChartApp {
                         panel.crosshair_options.vert_line.style = new_style;
                         panel.crosshair_options.horz_line.style = new_style;
                     }
-                    eprintln!("[ChartApp] crosshair_line_style = {:?}", new_style);
+                    log::info!("[ChartApp] crosshair_line_style = {:?}", new_style);
                 }
                 "price_position" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
@@ -942,7 +942,7 @@ impl ChartApp {
                             "hidden" => PriceScalePosition::Hidden,
                             _ => PriceScalePosition::Right,
                         };
-                        eprintln!("[ChartApp] price_scale_position = {:?}", w.scale_settings.price_scale_position);
+                        log::info!("[ChartApp] price_scale_position = {:?}", w.scale_settings.price_scale_position);
                     }
                 }
                 "time_position" => {
@@ -953,7 +953,7 @@ impl ChartApp {
                             "hidden" => TimeScalePosition::Hidden,
                             _ => TimeScalePosition::Bottom,
                         };
-                        eprintln!("[ChartApp] time_scale_position = {:?}", w.scale_settings.time_scale_position);
+                        log::info!("[ChartApp] time_scale_position = {:?}", w.scale_settings.time_scale_position);
                     }
                 }
                 "corner_visibility" => {
@@ -963,7 +963,7 @@ impl ChartApp {
                             "never"  => ScaleCornerVisibility::Never,
                             _ => ScaleCornerVisibility::Always,
                         };
-                        eprintln!("[ChartApp] corner_visibility = {:?}", w.scale_settings.corner_visibility);
+                        log::info!("[ChartApp] corner_visibility = {:?}", w.scale_settings.corner_visibility);
                     }
                 }
                 "price_tick_style" => {
@@ -973,7 +973,7 @@ impl ChartApp {
                             "solid"  => "solid".to_string(),
                             _        => "dotted".to_string(),
                         };
-                        eprintln!("[ChartApp] price_tick_style = {}", w.scale_settings.price_tick_style);
+                        log::info!("[ChartApp] price_tick_style = {}", w.scale_settings.price_tick_style);
                     }
                 }
                 "date_format" => {
@@ -984,7 +984,7 @@ impl ChartApp {
                             "day_month_short" | "day_month_full" => DateFormat::DayMonthShort,
                             _ => DateFormat::YearMonthDay,
                         };
-                        eprintln!("[ChartApp] date_format = {:?}", w.scale_settings.time_format.date_format);
+                        log::info!("[ChartApp] date_format = {:?}", w.scale_settings.time_format.date_format);
                     }
                 }
                 "legend_position" => {
@@ -999,7 +999,7 @@ impl ChartApp {
                     if let Some(pid) = pid {
                         crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid).legend.position = new_pos;
                     }
-                    eprintln!("[ChartApp] legend_position = {:?}", new_pos);
+                    log::info!("[ChartApp] legend_position = {:?}", new_pos);
                 }
                 "watermark_position" => {
                     let (horz, vert) = match value.as_str() {
@@ -1016,7 +1016,7 @@ impl ChartApp {
                         if let Some(ref mut watermark) = panel.watermark {
                             watermark.horz_align = horz;
                             watermark.vert_align = vert;
-                            eprintln!("[ChartApp] watermark_position = {:?} {:?}", horz, vert);
+                            log::info!("[ChartApp] watermark_position = {:?} {:?}", horz, vert);
                         }
                     }
                 }
@@ -1040,7 +1040,7 @@ impl ChartApp {
                             );
                         }
                     }
-                    eprintln!("[ChartApp] chart_type_param = {} (chart_type={})", value, active_chart_type);
+                    log::info!("[ChartApp] chart_type_param = {} (chart_type={})", value, active_chart_type);
                 }
                 "footprint_heat_intensity" => {
                     let intensity = mlc_core::chart::FootprintHeatIntensity::from_id(&value.to_lowercase());
@@ -1048,7 +1048,7 @@ impl ChartApp {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.footprint_display.heat_intensity = intensity;
                     }
-                    eprintln!("[ChartApp] instrument:footprint_heat_intensity = {}", value);
+                    log::info!("[ChartApp] instrument:footprint_heat_intensity = {}", value);
                 }
                 "footprint_row_grouping" => {
                     // Row-grouping preset (0/2/5/10 ticks, canon-fix wave 2
@@ -1063,7 +1063,7 @@ impl ChartApp {
                     self.process_chart_out_event(
                         mlc_core::events::ChartOutEvent::UpdateFootprintGroupTicks { ticks }
                     );
-                    eprintln!("[ChartApp] instrument:footprint_row_grouping = {} ticks", ticks);
+                    log::info!("[ChartApp] instrument:footprint_row_grouping = {} ticks", ticks);
                 }
                 "footprint_imbalance_threshold" => {
                     // Stacked-imbalance cell ratio preset (1.5x/2x/3x/4x,
@@ -1075,7 +1075,7 @@ impl ChartApp {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.footprint_display.imbalance_threshold = ratio;
                     }
-                    eprintln!("[ChartApp] instrument:footprint_imbalance_threshold = {}x", ratio);
+                    log::info!("[ChartApp] instrument:footprint_imbalance_threshold = {}x", ratio);
                 }
                 "footprint_cell_mode" => {
                     // Cell layout mode (doctrine §8) — pure render-gate
@@ -1088,7 +1088,7 @@ impl ChartApp {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.footprint_display.cell_mode = mode;
                     }
-                    eprintln!("[ChartApp] instrument:footprint_cell_mode = {}", value);
+                    log::info!("[ChartApp] instrument:footprint_cell_mode = {}", value);
                 }
                 "tpo_ib_periods" => {
                     let periods: u8 = value.parse().unwrap_or(2);
@@ -1096,7 +1096,7 @@ impl ChartApp {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.tpo_display.ib_periods = periods;
                     }
-                    eprintln!("[ChartApp] instrument:tpo_ib_periods = {}", periods);
+                    log::info!("[ChartApp] instrument:tpo_ib_periods = {}", periods);
                 }
                 "line_width" | "step_line_width" | "area_line_width" | "baseline_line_width" => {
                     // Simple line-family per-type width presets (owner-
@@ -1113,7 +1113,7 @@ impl ChartApp {
                             _ => {}
                         }
                     }
-                    eprintln!("[ChartApp] instrument:{} = {}px", field, px);
+                    log::info!("[ChartApp] instrument:{} = {}px", field, px);
                 }
                 "line_markers_style" => {
                     let style = mlc_core::chart::LineMarkerStyle::from_id(&value.to_lowercase());
@@ -1121,7 +1121,7 @@ impl ChartApp {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.line_family_display.marker_style = style;
                     }
-                    eprintln!("[ChartApp] instrument:line_markers_style = {}", value);
+                    log::info!("[ChartApp] instrument:line_markers_style = {}", value);
                 }
                 "line_markers_size" => {
                     let px: f64 = value.parse().unwrap_or(3.0);
@@ -1129,7 +1129,7 @@ impl ChartApp {
                         let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                         panel.line_family_display.marker_size = px;
                     }
-                    eprintln!("[ChartApp] instrument:line_markers_size = {}px", px);
+                    log::info!("[ChartApp] instrument:line_markers_size = {}px", px);
                 }
                 "candle_style" => {
                     // Skin texture layer manual pick — sets the candle
@@ -1143,10 +1143,10 @@ impl ChartApp {
                     let rt = self.panel_app.theme_manager.current_mut();
                     rt.panel_style.candle_style = style;
                     rt.panel_style.glow = style != CandleStyle::Solid;
-                    eprintln!("[ChartApp] instrument:candle_style = {:?}", style);
+                    log::info!("[ChartApp] instrument:candle_style = {:?}", style);
                 }
                 _ => {
-                    eprintln!("[ChartApp] chart_settings dropdown_option unknown field: {}", field);
+                    log::info!("[ChartApp] chart_settings dropdown_option unknown field: {}", field);
                 }
             }
             self.panel_app.chart_settings_state.active_dropdown = None;
@@ -1160,13 +1160,13 @@ impl ChartApp {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.user_precision = cycle_precision(w.scale_settings.user_precision);
                         w.set_price_precision(w.scale_settings.user_precision);
-                        eprintln!("[ChartApp] precision cycled: {:?}", w.scale_settings.user_precision);
+                        log::info!("[ChartApp] precision cycled: {:?}", w.scale_settings.user_precision);
                     }
                 }
                 "timezone" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.time_format.cycle_timezone();
-                        eprintln!("[ChartApp] timezone cycled: {}", w.scale_settings.time_format.timezone_label());
+                        log::info!("[ChartApp] timezone cycled: {}", w.scale_settings.time_format.timezone_label());
                     }
                 }
                 "crosshair_mode" => {
@@ -1178,7 +1178,7 @@ impl ChartApp {
                             CrosshairMode::Hidden    => CrosshairMode::Normal,
                         };
                         w.crosshair.mode = new_mode;
-                        eprintln!("[ChartApp] crosshair_mode cycled: {:?}", new_mode);
+                        log::info!("[ChartApp] crosshair_mode cycled: {:?}", new_mode);
                     }
                 }
                 "crosshair_line_style" => {
@@ -1195,25 +1195,25 @@ impl ChartApp {
                         };
                         panel.crosshair_options.vert_line.style = new_style;
                         panel.crosshair_options.horz_line.style = new_style;
-                        eprintln!("[ChartApp] crosshair_line_style cycled: {:?}", new_style);
+                        log::info!("[ChartApp] crosshair_line_style cycled: {:?}", new_style);
                     }
                 }
                 "price_position" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.price_scale_position = w.scale_settings.price_scale_position.next();
-                        eprintln!("[ChartApp] price_position cycled: {:?}", w.scale_settings.price_scale_position);
+                        log::info!("[ChartApp] price_position cycled: {:?}", w.scale_settings.price_scale_position);
                     }
                 }
                 "time_position" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.time_scale_position = w.scale_settings.time_scale_position.next();
-                        eprintln!("[ChartApp] time_position cycled: {:?}", w.scale_settings.time_scale_position);
+                        log::info!("[ChartApp] time_position cycled: {:?}", w.scale_settings.time_scale_position);
                     }
                 }
                 "corner_visibility" => {
                     if let Some(w) = self.panel_app.panel_grid.active_container_mut() {
                         w.scale_settings.corner_visibility = w.scale_settings.corner_visibility.next();
-                        eprintln!("[ChartApp] corner_visibility cycled: {:?}", w.scale_settings.corner_visibility);
+                        log::info!("[ChartApp] corner_visibility cycled: {:?}", w.scale_settings.corner_visibility);
                     }
                 }
                 "price_tick_style" => {
@@ -1223,7 +1223,7 @@ impl ChartApp {
                             "dashed" => "solid".to_string(),
                             _        => "dotted".to_string(),
                         };
-                        eprintln!("[ChartApp] price_tick_style cycled: {}", w.scale_settings.price_tick_style);
+                        log::info!("[ChartApp] price_tick_style cycled: {}", w.scale_settings.price_tick_style);
                     }
                 }
                 "chart_type_param" => {
@@ -1279,10 +1279,10 @@ impl ChartApp {
                     };
                     rt.panel_style.candle_style = next;
                     rt.panel_style.glow = next != CandleStyle::Solid;
-                    eprintln!("[ChartApp] candle_style cycled: {:?}", next);
+                    log::info!("[ChartApp] candle_style cycled: {:?}", next);
                 }
                 _ => {
-                    eprintln!("[ChartApp] chart_settings dropdown_cycle unknown: {}", name);
+                    log::info!("[ChartApp] chart_settings dropdown_cycle unknown: {}", name);
                 }
             }
             return;
@@ -1290,7 +1290,7 @@ impl ChartApp {
 
         if let Some(name) = item_id.strip_prefix("dropdown_menu:") {
             self.panel_app.chart_settings_state.toggle_dropdown(name);
-            eprintln!("[ChartApp] chart_settings dropdown_menu toggled: {}", name);
+            log::info!("[ChartApp] chart_settings dropdown_menu toggled: {}", name);
             return;
         }
 
@@ -1298,10 +1298,10 @@ impl ChartApp {
         match item_id {
             "footer:ok" | "footer:cancel" => {
                 self.panel_app.chart_settings_state.close();
-                eprintln!("[ChartApp] chart_settings closed via: {}", item_id);
+                log::info!("[ChartApp] chart_settings closed via: {}", item_id);
             }
             _ => {
-                eprintln!("[ChartApp] chart_settings item unhandled: {}", item_id);
+                log::warn!("[ChartApp] chart_settings item unhandled: {}", item_id);
             }
         }
     }
@@ -1376,7 +1376,7 @@ impl ChartApp {
                 };
                 if let Some(t) = tab {
                     self.panel_app.primitive_settings_state.set_tab(t);
-                    eprintln!("[ChartApp] prim_settings tab: {}", tab_id);
+                    log::info!("[ChartApp] prim_settings tab: {}", tab_id);
                 }
             }
             _ if rest.starts_with("item:") => {
@@ -1404,7 +1404,7 @@ impl ChartApp {
                 self.handle_prim_settings_item(item_id, x, y);
             }
             _ => {
-                eprintln!("[ChartApp] prim_settings unhandled: {}", rest);
+                log::warn!("[ChartApp] prim_settings unhandled: {}", rest);
             }
         }
     }
@@ -1476,7 +1476,7 @@ impl ChartApp {
                 }
             }
             self.sync_drawing_back_to_group();
-            eprintln!("[ChartApp] prim_settings text_content auto-committed: {}", text);
+            log::info!("[ChartApp] prim_settings text_content auto-committed: {}", text);
         } else if field == "stroke_width_value" || field == "stroke_width" {
             if let Ok(width) = text.trim().parse::<f64>() {
                 if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
@@ -1519,7 +1519,7 @@ impl ChartApp {
                     }
                 }
             }
-            eprintln!("[ChartApp] prim_settings text_font_size auto-committed: {}", text);
+            log::info!("[ChartApp] prim_settings text_font_size auto-committed: {}", text);
         } else if field.starts_with("tf_") && (field.ends_with("_min") || field.ends_with("_max")) {
             if let Ok(val) = text.trim().parse::<u32>() {
                 if let (Some(prim_id), Some(bid)) = (self.panel_app.primitive_settings_state.primitive_id, active_bid_prim) {
@@ -1591,7 +1591,7 @@ impl ChartApp {
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
-            eprintln!("[ChartApp] prim_settings {} auto-committed: {}", field, text);
+            log::info!("[ChartApp] prim_settings {} auto-committed: {}", field, text);
         } else if field.starts_with("coord_") && field.ends_with("_price") {
             if let Ok(price) = text.trim().parse::<f64>() {
                 if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
@@ -1656,7 +1656,7 @@ impl ChartApp {
             } else if let Some(id) = fid.strip_prefix("level_prop:") {
                 (mlc_core::drawing::primitives_v2::PropertyKind::Level, id)
             } else {
-                eprintln!("[ChartApp] prim_settings table cell '{}' commit has no recognised family prefix", field);
+                log::info!("[ChartApp] prim_settings table cell '{}' commit has no recognised family prefix", field);
                 return;
             };
             if let (Some(prim_id), Some(bid)) = (self.panel_app.primitive_settings_state.primitive_id, active_bid_prim) {
@@ -1665,7 +1665,7 @@ impl ChartApp {
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
-            eprintln!("[ChartApp] prim_settings table cell '{}' auto-committed: {}", field, text);
+            log::info!("[ChartApp] prim_settings table cell '{}' auto-committed: {}", field, text);
         } else if let Some(prop_id) = field.strip_prefix("text_prop:") {
             use mlc_core::drawing::primitives_v2::config::{PropertyValue, PropertyType};
             if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
@@ -1698,7 +1698,7 @@ impl ChartApp {
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
-            eprintln!("[ChartApp] prim_settings text_prop '{}' auto-committed: {}", prop_id, text);
+            log::info!("[ChartApp] prim_settings text_prop '{}' auto-committed: {}", prop_id, text);
         } else if let Some(prop_id) = field.strip_prefix("style_prop:") {
             use mlc_core::drawing::primitives_v2::config::PropertyValue;
             if let Ok(val) = text.trim().parse::<f64>() {
@@ -1710,7 +1710,7 @@ impl ChartApp {
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
-            eprintln!("[ChartApp] prim_settings style_prop '{}' auto-committed: {}", prop_id, text);
+            log::info!("[ChartApp] prim_settings style_prop '{}' auto-committed: {}", prop_id, text);
         } else if let Some(prop_id) = field.strip_prefix("level_prop:") {
             use mlc_core::drawing::primitives_v2::config::PropertyValue;
             if let Ok(val) = text.trim().parse::<f64>() {
@@ -1722,7 +1722,7 @@ impl ChartApp {
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
-            eprintln!("[ChartApp] prim_settings level_prop '{}' auto-committed: {}", prop_id, text);
+            log::info!("[ChartApp] prim_settings level_prop '{}' auto-committed: {}", prop_id, text);
         } else if let Some(tmpl_id) = field.strip_prefix("template_name:") {
             // Template menu rename-in-place commit (item 4, 2026-08-08
             // review) — an empty name is silently rejected, same as the
@@ -1733,10 +1733,10 @@ impl ChartApp {
                     id: tmpl_id.to_string(),
                     name: new_name.to_string(),
                 });
-                eprintln!("[ChartApp] prim_settings template renamed: {} -> {}", tmpl_id, new_name);
+                log::info!("[ChartApp] prim_settings template renamed: {} -> {}", tmpl_id, new_name);
             }
         } else {
-            eprintln!("[ChartApp] prim_settings '{}' editing auto-closed (value: {})", field, text);
+            log::info!("[ChartApp] prim_settings '{}' editing auto-closed (value: {})", field, text);
         }
         // Snapshot after any committed text change.
         if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
@@ -1811,7 +1811,7 @@ impl ChartApp {
         // handled before the `prim_id` requirement below.
         if item_id == "open_ewa_engine_settings" {
             self.panel_app.ewa_engine_settings_state.open();
-            eprintln!("[ChartApp] Opened EWA engine settings from primitive settings modal");
+            log::info!("[ChartApp] Opened EWA engine settings from primitive settings modal");
             return;
         }
 
@@ -1823,9 +1823,9 @@ impl ChartApp {
             match MarkupSettingsFamily::from_id(key) {
                 Some(family) => {
                     self.panel_app.markup_engine_settings_state.open_on(family);
-                    eprintln!("[ChartApp] Opened Price Action engine settings ({key}) from primitive settings modal");
+                    log::info!("[ChartApp] Opened Price Action engine settings ({key}) from primitive settings modal");
                 }
-                None => eprintln!("[ChartApp] open_markup_engine_settings unknown family: {key}"),
+                None => log::info!("[ChartApp] open_markup_engine_settings unknown family: {key}"),
             }
             return;
         }
@@ -1857,7 +1857,7 @@ impl ChartApp {
         let prim_id = match self.panel_app.primitive_settings_state.primitive_id {
             Some(i) => i,
             None => {
-                eprintln!("[ChartApp] prim_settings item clicked but no primitive selected");
+                log::info!("[ChartApp] prim_settings item clicked but no primitive selected");
                 return;
             }
         };
@@ -1900,7 +1900,7 @@ impl ChartApp {
                         }
                     }
                     self.sync_drawing_back_to_group();
-                    eprintln!("[ChartApp] prim_settings line_style selected: {}", val);
+                    log::info!("[ChartApp] prim_settings line_style selected: {}", val);
                 }
                 self.snapshot_primitive_settings_to_user_manager(prim_id);
                 return;
@@ -1913,7 +1913,7 @@ impl ChartApp {
                 }
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
-                eprintln!("[ChartApp] prim_settings style_prop '{}' selected: {}", prop_id, val);
+                log::info!("[ChartApp] prim_settings style_prop '{}' selected: {}", prop_id, val);
                 return;
             }
 
@@ -1922,7 +1922,7 @@ impl ChartApp {
                 if let Some(bid) = active_bid_prim {
                     self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, prop_id, &new_val);
                 }
-                eprintln!("[ChartApp] prim_settings text_prop '{}' selected: {}", prop_id, val);
+                log::info!("[ChartApp] prim_settings text_prop '{}' selected: {}", prop_id, val);
                 return;
             }
 
@@ -1933,11 +1933,11 @@ impl ChartApp {
                 }
                 self.sync_drawing_back_to_group();
                 self.autosave_snapshot();
-                eprintln!("[ChartApp] prim_settings level_prop '{}' selected: {}", prop_id, val);
+                log::info!("[ChartApp] prim_settings level_prop '{}' selected: {}", prop_id, val);
                 return;
             }
 
-            eprintln!("[ChartApp] prim_settings dropdown option unhandled field: {}", fid);
+            log::warn!("[ChartApp] prim_settings dropdown option unhandled field: {}", fid);
             return;
         }
 
@@ -1965,7 +1965,7 @@ impl ChartApp {
             } else if let Some(id) = fid.strip_prefix("level_prop:") {
                 (PropertyKind::Level, id)
             } else {
-                eprintln!("[ChartApp] prim_settings table cell '{}' has no recognised family prefix", item_id);
+                log::info!("[ChartApp] prim_settings table cell '{}' has no recognised family prefix", item_id);
                 return;
             };
 
@@ -1990,7 +1990,7 @@ impl ChartApp {
             match cell {
                 Some(TableCell::EditableText(current)) => {
                     self.start_prim_field_editing(item_id, &current, true);
-                    eprintln!("[ChartApp] prim_settings table cell '{}' text editing started", item_id);
+                    log::info!("[ChartApp] prim_settings table cell '{}' text editing started", item_id);
                 }
                 Some(TableCell::EditableCheck(checked)) => {
                     if let Some(bid) = active_bid_prim {
@@ -1999,7 +1999,7 @@ impl ChartApp {
                     }
                     self.sync_drawing_back_to_group();
                     self.autosave_snapshot();
-                    eprintln!("[ChartApp] prim_settings table cell '{}' toggled", item_id);
+                    log::info!("[ChartApp] prim_settings table cell '{}' toggled", item_id);
                 }
                 Some(TableCell::EditableSwatch(current_color)) => {
                     let widget_id_str = format!("prim_settings:item:{}", item_id);
@@ -2008,10 +2008,10 @@ impl ChartApp {
                     self.panel_app.primitive_settings_state.open_color_picker_smart(
                         item_id, ax, ay, aw, ah, screen_w, screen_h, Some(&current_color),
                     );
-                    eprintln!("[ChartApp] prim_settings table cell '{}' color picker opened", item_id);
+                    log::info!("[ChartApp] prim_settings table cell '{}' color picker opened", item_id);
                 }
                 _ => {
-                    eprintln!("[ChartApp] prim_settings table cell '{}' inert or not found", item_id);
+                    log::warn!("[ChartApp] prim_settings table cell '{}' inert or not found", item_id);
                 }
             }
             return;
@@ -2034,7 +2034,7 @@ impl ChartApp {
             self.panel_app.primitive_settings_state.open_color_picker_smart(
                 item_id, ax, ay, aw, ah, screen_w, screen_h, current_color.as_deref(),
             );
-            eprintln!("[ChartApp] prim_settings opened color picker for: {}", item_id);
+            log::info!("[ChartApp] prim_settings opened color picker for: {}", item_id);
             return;
         }
 
@@ -2069,7 +2069,7 @@ impl ChartApp {
                     }
                 }
                 self.sync_drawing_back_to_group();
-                eprintln!("[ChartApp] prim_settings line_style cycled to: {}", style_str);
+                log::info!("[ChartApp] prim_settings line_style cycled to: {}", style_str);
             }
             self.snapshot_primitive_settings_to_user_manager(prim_id);
             return;
@@ -2099,7 +2099,7 @@ impl ChartApp {
             if let Some(t) = track {
                 let value = ((x - t.track_x) / t.track_width).clamp(0.0, 1.0) * (t.max_val - t.min_val) + t.min_val;
                 self.apply_slider_value("levels_global_opacity", value);
-                eprintln!("[ChartApp] prim_settings levels_global_opacity click-applied: {value:.3}");
+                log::info!("[ChartApp] prim_settings levels_global_opacity click-applied: {value:.3}");
             }
             return;
         }
@@ -2151,7 +2151,7 @@ impl ChartApp {
             }
             self.sync_drawing_back_to_group();
             self.autosave_snapshot();
-            eprintln!("[ChartApp] prim_settings levels_global_fill_toggle: {} -> {}", current, !current);
+            log::info!("[ChartApp] prim_settings levels_global_fill_toggle: {} -> {}", current, !current);
             return;
         }
 
@@ -2172,7 +2172,7 @@ impl ChartApp {
                 .and_then(|data| data.text.map(|t| t.content.clone()))
                 .unwrap_or_default();
             self.start_prim_field_editing("text_content", &current_text, false);
-            eprintln!("[ChartApp] prim_settings text_content editing started");
+            log::info!("[ChartApp] prim_settings text_content editing started");
             return;
         }
 
@@ -2183,7 +2183,7 @@ impl ChartApp {
                 .and_then(|data| data.text.map(|t| format!("{:.0}", t.font_size)))
                 .unwrap_or_else(|| "14".to_string());
             self.start_prim_field_editing("text_font_size", &current_font_size, true);
-            eprintln!("[ChartApp] prim_settings text_font_size editing started");
+            log::info!("[ChartApp] prim_settings text_font_size editing started");
             return;
         }
 
@@ -2215,7 +2215,7 @@ impl ChartApp {
                     );
                     self.sync_drawing_back_to_group();
                     self.autosave_snapshot();
-                    eprintln!("[ChartApp] prim_settings {} -> {}={}", item_id, prop_id, new_value);
+                    log::info!("[ChartApp] prim_settings {} -> {}={}", item_id, prop_id, new_value);
                 }
             }
             return;
@@ -2237,7 +2237,7 @@ impl ChartApp {
                         })
                         .unwrap_or_default();
                     self.start_prim_field_editing(item_id, &current_val, true);
-                    eprintln!("[ChartApp] prim_settings {} editing started", item_id);
+                    log::info!("[ChartApp] prim_settings {} editing started", item_id);
                     return;
                 }
             }
@@ -2255,7 +2255,7 @@ impl ChartApp {
                         self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
                     self.sync_drawing_back_to_group();
-                    eprintln!("[ChartApp] prim_settings text_bold = {}", new_bold);
+                    log::info!("[ChartApp] prim_settings text_bold = {}", new_bold);
                 }
             }
             return;
@@ -2273,7 +2273,7 @@ impl ChartApp {
                         self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
                     self.sync_drawing_back_to_group();
-                    eprintln!("[ChartApp] prim_settings text_italic = {}", new_italic);
+                    log::info!("[ChartApp] prim_settings text_italic = {}", new_italic);
                 }
             }
             return;
@@ -2299,7 +2299,7 @@ impl ChartApp {
                         self.core.drawings_mut().set_data(bid, prim_id, &data);
                     }
                     self.sync_drawing_back_to_group();
-                    eprintln!("[ChartApp] prim_settings text_pos: {}", item_id);
+                    log::info!("[ChartApp] prim_settings text_pos: {}", item_id);
                 }
             }
             return;
@@ -2328,7 +2328,7 @@ impl ChartApp {
                         self.sync_drawing_back_to_group();
                     }
                 }
-                eprintln!("[ChartApp] prim_settings placement intent: {:?}", intent);
+                log::info!("[ChartApp] prim_settings placement intent: {:?}", intent);
                 return;
             }
         }
@@ -2385,7 +2385,7 @@ impl ChartApp {
                     // already there.
                 }
             }
-            eprintln!("[ChartApp] prim_settings levels intent: {:?}", intent);
+            log::info!("[ChartApp] prim_settings levels intent: {:?}", intent);
             return;
         }
 
@@ -2426,7 +2426,7 @@ impl ChartApp {
                     self.panel_app.primitive_settings_state.open_color_picker_smart(
                         item_id, ax, ay, aw, ah, screen_w, screen_h, current_color.as_deref(),
                     );
-                    eprintln!("[ChartApp] prim_settings opened color picker for {}", item_id);
+                    log::info!("[ChartApp] prim_settings opened color picker for {}", item_id);
                     return;
                 }
             }
@@ -2462,7 +2462,7 @@ impl ChartApp {
                 String::new()
             };
             self.start_prim_field_editing(item_id, &current_val, true);
-            eprintln!("[ChartApp] prim_settings {} editing started", item_id);
+            log::info!("[ChartApp] prim_settings {} editing started", item_id);
             return;
         }
 
@@ -2491,7 +2491,7 @@ impl ChartApp {
                         }
                         self.sync_drawing_back_to_group();
                         self.autosave_snapshot();
-                        eprintln!("[ChartApp] prim_settings style_prop '{}' toggled: {} -> {}", prop_id, current, !current);
+                        log::info!("[ChartApp] prim_settings style_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
                     // `Pills` shares this arm: a Pills row's own segments
                     // register `{fid}::opt:{value}` ids directly (handled
@@ -2512,7 +2512,7 @@ impl ChartApp {
                             }
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();
-                            eprintln!("[ChartApp] prim_settings style_prop '{}' cycled: {} -> {}", prop_id, current, next_value);
+                            log::info!("[ChartApp] prim_settings style_prop '{}' cycled: {} -> {}", prop_id, current, next_value);
                         }
                     }
                     PropertyType::Color => {
@@ -2523,7 +2523,7 @@ impl ChartApp {
                         self.panel_app.primitive_settings_state.open_color_picker_smart(
                             item_id, ax, ay, aw, ah, screen_w, screen_h, Some(current_color),
                         );
-                        eprintln!("[ChartApp] prim_settings style_prop '{}' color picker opened", prop_id);
+                        log::info!("[ChartApp] prim_settings style_prop '{}' color picker opened", prop_id);
                     }
                     PropertyType::Number { .. } => {
                         let current_val = match prop_value {
@@ -2532,14 +2532,14 @@ impl ChartApp {
                             _ => String::new(),
                         };
                         self.start_prim_field_editing(item_id, &current_val, true);
-                        eprintln!("[ChartApp] prim_settings style_prop '{}' number editing started", prop_id);
+                        log::info!("[ChartApp] prim_settings style_prop '{}' number editing started", prop_id);
                     }
                     _ => {
-                        eprintln!("[ChartApp] prim_settings style_prop '{}' unsupported type", prop_id);
+                        log::info!("[ChartApp] prim_settings style_prop '{}' unsupported type", prop_id);
                     }
                 }
             } else {
-                eprintln!("[ChartApp] prim_settings style_prop '{}' not found", prop_id);
+                log::warn!("[ChartApp] prim_settings style_prop '{}' not found", prop_id);
             }
             return;
         }
@@ -2573,7 +2573,7 @@ impl ChartApp {
                         }
                         self.sync_drawing_back_to_group();
                         self.autosave_snapshot();
-                        eprintln!("[ChartApp] prim_settings level_prop '{}' toggled: {} -> {}", prop_id, current, !current);
+                        log::info!("[ChartApp] prim_settings level_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
                     // See the `style_prop:` block's own Select|Pills arm
                     // doc above — same reasoning, Level family.
@@ -2589,7 +2589,7 @@ impl ChartApp {
                             }
                             self.sync_drawing_back_to_group();
                             self.autosave_snapshot();
-                            eprintln!("[ChartApp] prim_settings level_prop '{}' cycled: {} -> {}", prop_id, current, next_value);
+                            log::info!("[ChartApp] prim_settings level_prop '{}' cycled: {} -> {}", prop_id, current, next_value);
                         }
                     }
                     PropertyType::Color => {
@@ -2600,7 +2600,7 @@ impl ChartApp {
                         self.panel_app.primitive_settings_state.open_color_picker_smart(
                             item_id, ax, ay, aw, ah, screen_w, screen_h, Some(current_color),
                         );
-                        eprintln!("[ChartApp] prim_settings level_prop '{}' color picker opened", prop_id);
+                        log::info!("[ChartApp] prim_settings level_prop '{}' color picker opened", prop_id);
                     }
                     PropertyType::Number { .. } => {
                         let current_val = match prop_value {
@@ -2609,14 +2609,14 @@ impl ChartApp {
                             _ => String::new(),
                         };
                         self.start_prim_field_editing(item_id, &current_val, true);
-                        eprintln!("[ChartApp] prim_settings level_prop '{}' number editing started", prop_id);
+                        log::info!("[ChartApp] prim_settings level_prop '{}' number editing started", prop_id);
                     }
                     _ => {
-                        eprintln!("[ChartApp] prim_settings level_prop '{}' unsupported type", prop_id);
+                        log::info!("[ChartApp] prim_settings level_prop '{}' unsupported type", prop_id);
                     }
                 }
             } else {
-                eprintln!("[ChartApp] prim_settings level_prop '{}' not found", prop_id);
+                log::warn!("[ChartApp] prim_settings level_prop '{}' not found", prop_id);
             }
             return;
         }
@@ -2643,7 +2643,7 @@ impl ChartApp {
                         if let Some(bid) = active_bid_prim {
                             self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, prop_id, &new_val);
                         }
-                        eprintln!("[ChartApp] prim_settings text_prop '{}' toggled: {} -> {}", prop_id, current, !current);
+                        log::info!("[ChartApp] prim_settings text_prop '{}' toggled: {} -> {}", prop_id, current, !current);
                     }
                     // See the `style_prop:` block's own Select|Pills arm
                     // doc above — same reasoning, Text family.
@@ -2657,7 +2657,7 @@ impl ChartApp {
                             if let Some(bid) = active_bid_prim {
                                 self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Text, prop_id, &new_val);
                             }
-                            eprintln!("[ChartApp] prim_settings text_prop '{}' cycled: {} -> {}", prop_id, current, next_value);
+                            log::info!("[ChartApp] prim_settings text_prop '{}' cycled: {} -> {}", prop_id, current, next_value);
                         }
                     }
                     PropertyType::Color => {
@@ -2668,7 +2668,7 @@ impl ChartApp {
                         self.panel_app.primitive_settings_state.open_color_picker_smart(
                             item_id, ax, ay, aw, ah, screen_w, screen_h, Some(current_color),
                         );
-                        eprintln!("[ChartApp] prim_settings text_prop '{}' color picker opened", prop_id);
+                        log::info!("[ChartApp] prim_settings text_prop '{}' color picker opened", prop_id);
                     }
                     PropertyType::Text { .. } | PropertyType::Number { .. } => {
                         let current_val = match &prop_value {
@@ -2678,14 +2678,14 @@ impl ChartApp {
                             _ => String::new(),
                         };
                         self.start_prim_field_editing(item_id, &current_val, true);
-                        eprintln!("[ChartApp] prim_settings text_prop '{}' editing started", prop_id);
+                        log::info!("[ChartApp] prim_settings text_prop '{}' editing started", prop_id);
                     }
                     _ => {
-                        eprintln!("[ChartApp] prim_settings text_prop '{}' unsupported type", prop_id);
+                        log::info!("[ChartApp] prim_settings text_prop '{}' unsupported type", prop_id);
                     }
                 }
             } else {
-                eprintln!("[ChartApp] prim_settings text_prop '{}' not found", prop_id);
+                log::warn!("[ChartApp] prim_settings text_prop '{}' not found", prop_id);
             }
             return;
         }
@@ -2697,7 +2697,7 @@ impl ChartApp {
 
         // ── Template delete button (trash) ─────────────────────────────────────
         if let Some(tmpl_id) = item_id.strip_prefix("template_delete:") {
-            eprintln!("[ChartApp] prim_settings deleted primitive template: {}", tmpl_id);
+            log::info!("[ChartApp] prim_settings deleted primitive template: {}", tmpl_id);
             // Nothing to un-mark here: a primitive still referencing the
             // deleted template resolves it to nothing, which reads as drift
             // (no row current, "Save as…" shown) the next time the menu is
@@ -2717,7 +2717,7 @@ impl ChartApp {
                 .unwrap_or_default();
             let field_id = format!("template_name:{}", tmpl_id);
             self.start_prim_field_editing(&field_id, &current_name, true);
-            eprintln!("[ChartApp] prim_settings template rename started: {}", tmpl_id);
+            log::info!("[ChartApp] prim_settings template rename started: {}", tmpl_id);
             return;
         }
 
@@ -2745,7 +2745,7 @@ impl ChartApp {
                 // Shared-viewer read-only gate (native-share-viewer arc,
                 // 2026-09-06) — see `apply_chart_template`'s twin comment.
                 if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-                    eprintln!("[ChartApp] prim_settings template apply refused: active tab is read-only (shared chart)");
+                    log::warn!("[ChartApp] prim_settings template apply refused: active tab is read-only (shared chart)");
                     return;
                 }
                 self.panel_app.primitive_settings_state.template_dropdown_open = false;
@@ -2768,7 +2768,7 @@ impl ChartApp {
                 // `PrimitiveTemplate::apply_to_primitive_data` above, so the
                 // reference can never disagree with what was actually just
                 // applied.
-                eprintln!("[ChartApp] prim_settings template applied: {}", tmpl.name);
+                log::info!("[ChartApp] prim_settings template applied: {}", tmpl.name);
             }
             return;
         }
@@ -2788,7 +2788,7 @@ impl ChartApp {
             let field_id = uzor::WidgetId::from(crate::text_input::PRIMITIVE_SETTINGS_TEMPLATE_NAME);
             self.input_coordinator.borrow_mut().text_fields_mut().focus(field_id.clone());
             self.input_coordinator.borrow_mut().text_fields_mut().set_text(&field_id, &default_name);
-            eprintln!("[ChartApp] prim_settings template save-as opened");
+            log::info!("[ChartApp] prim_settings template save-as opened");
             return;
         }
 
@@ -2800,7 +2800,7 @@ impl ChartApp {
         // chart settings and indicator settings, which keep their own
         // separate menus and did not change.
 
-        eprintln!("[ChartApp] prim_settings item not handled: {}", item_id);
+        log::info!("[ChartApp] prim_settings item not handled: {}", item_id);
     }
 
     // =========================================================================
@@ -2822,7 +2822,7 @@ impl ChartApp {
             "close" => {
                 self.panel_app.primitive_settings_state.save_template_mode = false;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                eprintln!("[ChartApp] prim_tmpl modal cancelled");
+                log::info!("[ChartApp] prim_tmpl modal cancelled");
             }
             // The shell calls a creator's primary action `create`.
             "create" => {
@@ -2849,7 +2849,7 @@ impl ChartApp {
                             .map(|p| mlc_core::templates::PrimitiveTemplate::from_primitive(p.as_ref(), &name))
                     });
                     if let Some(tmpl) = tmpl {
-                        eprintln!("[ChartApp] prim_tmpl saved: {}", name);
+                        log::info!("[ChartApp] prim_tmpl saved: {}", name);
                         // Re-establish the reference from the template just
                         // minted (item 5, 2026-08-08 review): the current
                         // settings ARE what it stores the instant it is
@@ -2867,7 +2867,7 @@ impl ChartApp {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             _ => {
-                eprintln!("[ChartApp] prim_tmpl: unhandled: {}", rest);
+                log::warn!("[ChartApp] prim_tmpl: unhandled: {}", rest);
             }
         }
     }
@@ -2883,7 +2883,7 @@ impl ChartApp {
             "close" => {
                 self.panel_app.indicator_settings_state.save_template_mode = false;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                eprintln!("[ChartApp] ind_tmpl modal cancelled");
+                log::info!("[ChartApp] ind_tmpl modal cancelled");
             }
             // The shell calls a creator's primary action `create`.
             "create" => {
@@ -2910,7 +2910,7 @@ impl ChartApp {
                         let tmpl = mlc_core::templates::IndicatorTemplate::new(
                             &type_id, &name, true, params, std::collections::HashMap::new(),
                         );
-                        eprintln!("[ChartApp] ind_tmpl saved: {}", name);
+                        log::info!("[ChartApp] ind_tmpl saved: {}", name);
                         self.template_actions.push(crate::TemplateAction::AddIndicator(tmpl));
                     }
                 }
@@ -2918,7 +2918,7 @@ impl ChartApp {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             _ => {
-                eprintln!("[ChartApp] ind_tmpl: unhandled: {}", rest);
+                log::warn!("[ChartApp] ind_tmpl: unhandled: {}", rest);
             }
         }
     }
@@ -2934,7 +2934,7 @@ impl ChartApp {
             "close" => {
                 self.panel_app.compare_settings_state.save_template_mode = false;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                eprintln!("[ChartApp] cmp_tmpl modal cancelled");
+                log::info!("[ChartApp] cmp_tmpl modal cancelled");
             }
             // The shell calls a creator's primary action `create`.
             "create" => {
@@ -2947,14 +2947,14 @@ impl ChartApp {
                     let tmpl = mlc_core::templates::CompareTemplate::new(
                         &name, &color, line_width, &line_style,
                     );
-                    eprintln!("[ChartApp] cmp_tmpl saved: {}", name);
+                    log::info!("[ChartApp] cmp_tmpl saved: {}", name);
                     self.template_actions.push(crate::TemplateAction::AddCompare(tmpl));
                 }
                 self.panel_app.compare_settings_state.save_template_mode = false;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             _ => {
-                eprintln!("[ChartApp] cmp_tmpl: unhandled: {}", rest);
+                log::warn!("[ChartApp] cmp_tmpl: unhandled: {}", rest);
             }
         }
     }
@@ -2972,7 +2972,7 @@ impl ChartApp {
             "close" => {
                 self.panel_app.chart_settings_state.save_template_mode = false;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
-                eprintln!("[ChartApp] chart_tmpl modal cancelled");
+                log::info!("[ChartApp] chart_tmpl modal cancelled");
             }
             // The shell calls a creator's primary action `create`.
             "create" => {
@@ -2981,14 +2981,14 @@ impl ChartApp {
                 if !name.is_empty() {
                     let data = self.build_chart_settings_data();
                     let tmpl = mlc_core::templates::ChartTemplate::new(&name, &data);
-                    eprintln!("[ChartApp] chart_tmpl saved: {}", name);
+                    log::info!("[ChartApp] chart_tmpl saved: {}", name);
                     self.template_actions.push(crate::TemplateAction::AddChart(tmpl));
                 }
                 self.panel_app.chart_settings_state.save_template_mode = false;
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
             _ => {
-                eprintln!("[ChartApp] chart_tmpl: unhandled: {}", rest);
+                log::warn!("[ChartApp] chart_tmpl: unhandled: {}", rest);
             }
         }
     }
@@ -3100,7 +3100,7 @@ impl ChartApp {
                         self.push_undo_command(mlc_core::Command::AddAlert { snapshot: snap });
                     }
                 }
-                eprintln!("[AlertSettings] Alert saved: id={}", alert_id);
+                log::info!("[AlertSettings] Alert saved: id={}", alert_id);
                 self.sidebar_data_dirty = true;
                 self.panel_app.alert_settings_state.close();
                 self.autosave_snapshot();
@@ -3119,7 +3119,7 @@ impl ChartApp {
                         if idx < conditions.len() {
                             self.panel_app.alert_settings_state.condition = conditions[idx];
                             self.panel_app.alert_settings_state.condition_dropdown_open = false;
-                            eprintln!("[AlertSettings] Condition set to: {}", conditions[idx].display_name());
+                            log::info!("[AlertSettings] Condition set to: {}", conditions[idx].display_name());
                         }
                     }
                 }
@@ -3235,7 +3235,7 @@ impl ChartApp {
                 s.tg_test_pending = true;
                 s.notification_settings_dirty = true;
                 s.tg_status_message = "Sending test...".to_string();
-                eprintln!("[AlertSettings] Telegram test requested");
+                log::info!("[AlertSettings] Telegram test requested");
             }
             "notif:tg_detect" => {
                 if !self.panel_app.alert_settings_state.secrets_available {
@@ -3248,7 +3248,7 @@ impl ChartApp {
                 s.tg_detect_pending = true;
                 s.notification_settings_dirty = true;
                 s.tg_status_message = "Detecting users...".to_string();
-                eprintln!("[AlertSettings] Telegram detect users requested");
+                log::info!("[AlertSettings] Telegram detect users requested");
             }
             _ if rest.starts_with("notif:tg_sub_toggle:") => {
                 if !self.panel_app.alert_settings_state.secrets_available {
@@ -3363,7 +3363,7 @@ impl ChartApp {
                 }
             }
             _ => {
-                eprintln!("[AlertSettings] Unhandled click: {}", rest);
+                log::warn!("[AlertSettings] Unhandled click: {}", rest);
             }
         }
     }
@@ -3492,14 +3492,14 @@ impl ChartApp {
                         let field_id = uzor::WidgetId::from(crate::text_input::INDICATOR_SETTINGS_TEMPLATE_NAME);
                         self.input_coordinator.borrow_mut().text_fields_mut().focus(field_id.clone());
                         self.input_coordinator.borrow_mut().text_fields_mut().set_text(&field_id, &default_name);
-                        eprintln!("[ChartApp] ind_settings template save-as opened");
+                        log::info!("[ChartApp] ind_settings template save-as opened");
                     }
                     "template_default" => {
                         // Shared-viewer read-only gate (native-share-viewer
                         // arc, 2026-09-06) — see `apply_chart_template`'s
                         // twin comment.
                         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-                            eprintln!("[ChartApp] ind_settings template reset refused: active tab is read-only (shared chart)");
+                            log::warn!("[ChartApp] ind_settings template reset refused: active tab is read-only (shared chart)");
                             return;
                         }
                         self.panel_app.indicator_settings_state.template_dropdown_open = false;
@@ -3513,14 +3513,14 @@ impl ChartApp {
                             }
                         }
                         self.snapshot_indicator_settings_to_user_manager();
-                        eprintln!("[ChartApp] ind_settings template reset to defaults");
+                        log::info!("[ChartApp] ind_settings template reset to defaults");
                     }
                     "template_dropdown_menu" => {
                         // Absorb click inside dropdown, keep it open
                     }
                     _ if btn_id.starts_with("template_delete:") => {
                         let tmpl_id = &btn_id["template_delete:".len()..];
-                        eprintln!("[ChartApp] ind_settings deleted indicator template: {}", tmpl_id);
+                        log::info!("[ChartApp] ind_settings deleted indicator template: {}", tmpl_id);
                         if self.panel_app.indicator_settings_state.applied_template_id.as_deref() == Some(tmpl_id) {
                             self.panel_app.indicator_settings_state.applied_template_id = None;
                         }
@@ -3534,7 +3534,7 @@ impl ChartApp {
                             // arc, 2026-09-06) — see `apply_chart_template`'s
                             // twin comment.
                             if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-                                eprintln!("[ChartApp] ind_settings template apply refused: active tab is read-only (shared chart)");
+                                log::warn!("[ChartApp] ind_settings template apply refused: active tab is read-only (shared chart)");
                                 return;
                             }
                             self.panel_app.indicator_settings_state.applied_template_id = Some(tmpl.id.clone());
@@ -3558,11 +3558,11 @@ impl ChartApp {
                                 }
                             }
                             self.snapshot_indicator_settings_to_user_manager();
-                            eprintln!("[ChartApp] ind_settings template applied: {}", tmpl.name);
+                            log::info!("[ChartApp] ind_settings template applied: {}", tmpl.name);
                         }
                     }
                     _ => {
-                        eprintln!("[ChartApp] ind_settings footer: {}", btn_id);
+                        log::info!("[ChartApp] ind_settings footer: {}", btn_id);
                     }
                 }
             }
@@ -3577,12 +3577,12 @@ impl ChartApp {
                             let bars = self.active_chart_bars();
                             self.core.indicators_mut().recalc_bubble(active_bid, &bars);
                         }
-                        eprintln!("[ChartApp] Signals toggle: {}", enabled);
+                        log::info!("[ChartApp] Signals toggle: {}", enabled);
                     }
                 }
             }
             _ => {
-                eprintln!("[ChartApp] ind_settings unhandled: {}", rest);
+                log::warn!("[ChartApp] ind_settings unhandled: {}", rest);
             }
         }
     }
@@ -3622,7 +3622,7 @@ impl ChartApp {
                     self.core.indicators_mut().recalc_bubble(active_bid, &bars);
                 }
             }
-            eprintln!("[ChartApp] ind_settings param '{}' auto-committed: {}", param_name, text);
+            log::info!("[ChartApp] ind_settings param '{}' auto-committed: {}", param_name, text);
         } else if field.starts_with("tf_") && field.ends_with("_min") {
             if let Ok(val) = text.trim().parse::<u32>() {
                 if let Some(tf_idx) = field.strip_prefix("tf_")
@@ -3630,7 +3630,7 @@ impl ChartApp {
                     .and_then(|s| s.parse::<usize>().ok())
                 {
                     self.apply_ind_tf_min_value(tf_idx, val);
-                    eprintln!("[ChartApp] ind_settings tf_{}_min auto-committed: {}", tf_idx, val);
+                    log::info!("[ChartApp] ind_settings tf_{}_min auto-committed: {}", tf_idx, val);
                 }
             }
         } else if field.starts_with("tf_") && field.ends_with("_max") {
@@ -3640,7 +3640,7 @@ impl ChartApp {
                     .and_then(|s| s.parse::<usize>().ok())
                 {
                     self.apply_ind_tf_max_value(tf_idx, val);
-                    eprintln!("[ChartApp] ind_settings tf_{}_max auto-committed: {}", tf_idx, val);
+                    log::info!("[ChartApp] ind_settings tf_{}_max auto-committed: {}", tf_idx, val);
                 }
             }
         }
@@ -3695,7 +3695,7 @@ impl ChartApp {
                 screen_w, screen_h,
                 current_color.as_deref(),
             );
-            eprintln!("[ChartApp] ind_settings opened color picker for output: {}", output_name);
+            log::info!("[ChartApp] ind_settings opened color picker for output: {}", output_name);
             return;
         }
 
@@ -3706,7 +3706,7 @@ impl ChartApp {
             } else {
                 self.panel_app.indicator_settings_state.open_param_dropdown = Some(param_name.to_string());
             }
-            eprintln!("[ChartApp] ind_settings dropdown_menu toggled: {}", param_name);
+            log::info!("[ChartApp] ind_settings dropdown_menu toggled: {}", param_name);
             return;
         }
 
@@ -3748,9 +3748,9 @@ impl ChartApp {
                     }
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
-                    eprintln!("[ChartApp] ind_settings dropdown_cycle: {} = {}", param_name, next_val);
+                    log::info!("[ChartApp] ind_settings dropdown_cycle: {} = {}", param_name, next_val);
                 } else {
-                    eprintln!("[ChartApp] ind_settings dropdown_cycle: param '{}' not found or no options", param_name);
+                    log::warn!("[ChartApp] ind_settings dropdown_cycle: param '{}' not found or no options", param_name);
                 }
             }
             return;
@@ -3788,7 +3788,7 @@ impl ChartApp {
                 }
                 self.autosave_snapshot();
                 self.snapshot_indicator_settings_to_user_manager();
-                eprintln!("[ChartApp] ind_settings param_option: {} = {}", param_name, value);
+                log::info!("[ChartApp] ind_settings param_option: {} = {}", param_name, value);
             }
             return;
         }
@@ -3808,9 +3808,9 @@ impl ChartApp {
                     }
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
-                    eprintln!("[ChartApp] ind_settings toggle: {} = {}", param_name, !cur);
+                    log::info!("[ChartApp] ind_settings toggle: {} = {}", param_name, !cur);
                 } else {
-                    eprintln!("[ChartApp] ind_settings toggle: param '{}' not found or not bool", param_name);
+                    log::warn!("[ChartApp] ind_settings toggle: param '{}' not found or not bool", param_name);
                 }
             }
             return;
@@ -3835,7 +3835,7 @@ impl ChartApp {
                             _ => {}
                         }
                     });
-                    eprintln!("[ChartApp] ind_settings tf_{}_toggle toggled", tf_idx);
+                    log::info!("[ChartApp] ind_settings tf_{}_toggle toggled", tf_idx);
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
                 }
@@ -3871,7 +3871,7 @@ impl ChartApp {
                 String::new()
             };
             self.start_ind_field_editing(item_id, &current_val, true);
-            eprintln!("[ChartApp] ind_settings {} editing started", item_id);
+            log::info!("[ChartApp] ind_settings {} editing started", item_id);
             return;
         }
 
@@ -3884,7 +3884,7 @@ impl ChartApp {
                 .unwrap_or_default();
             let field_id = format!("indicator_param:{}", param_name);
             self.start_ind_field_editing(&field_id, &current_value, false);
-            eprintln!("[ChartApp] ind_settings text input editing started: {}", param_name);
+            log::info!("[ChartApp] ind_settings text input editing started: {}", param_name);
             return;
         }
 
@@ -3899,12 +3899,12 @@ impl ChartApp {
                         "circle"   => SignalShape::Circle,
                         "diamond"  => SignalShape::Diamond,
                         _ => {
-                            eprintln!("[ChartApp] ind_settings unknown signal shape: {}", shape_str);
+                            log::info!("[ChartApp] ind_settings unknown signal shape: {}", shape_str);
                             return;
                         }
                     };
                     self.core.indicators_mut().set_signal_shape(ind_id, shape);
-                    eprintln!("[ChartApp] ind_settings signal_shape = {:?}", shape);
+                    log::info!("[ChartApp] ind_settings signal_shape = {:?}", shape);
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
                 } else if item_id == "ind_set:signal_bullish_color" {
@@ -3925,7 +3925,7 @@ impl ChartApp {
                         screen_w, screen_h,
                         current_color.as_deref(),
                     );
-                    eprintln!("[ChartApp] ind_settings opened color picker for signal_bullish_color");
+                    log::info!("[ChartApp] ind_settings opened color picker for signal_bullish_color");
                 } else if item_id == "ind_set:signal_bearish_color" {
                     let screen_w = self.width as f64;
                     let screen_h = self.height as f64;
@@ -3944,43 +3944,43 @@ impl ChartApp {
                         screen_w, screen_h,
                         current_color.as_deref(),
                     );
-                    eprintln!("[ChartApp] ind_settings opened color picker for signal_bearish_color");
+                    log::info!("[ChartApp] ind_settings opened color picker for signal_bearish_color");
                 } else if item_id == "ind_set:signal_size_inc" {
                     let cur = self.core.indicators().signal_display_of(ind_id).map(|sd| sd.size).unwrap_or(0.0);
                     let new_size = (cur + 2.0).min(24.0);
                     self.core.indicators_mut().set_signal_size(ind_id, new_size);
-                    eprintln!("[ChartApp] ind_settings signal_size = {}", new_size);
+                    log::info!("[ChartApp] ind_settings signal_size = {}", new_size);
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
                 } else if item_id == "ind_set:signal_size_dec" {
                     let cur = self.core.indicators().signal_display_of(ind_id).map(|sd| sd.size).unwrap_or(0.0);
                     let new_size = (cur - 2.0).max(8.0);
                     self.core.indicators_mut().set_signal_size(ind_id, new_size);
-                    eprintln!("[ChartApp] ind_settings signal_size = {}", new_size);
+                    log::info!("[ChartApp] ind_settings signal_size = {}", new_size);
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
                 } else if item_id == "ind_set:signal_offset_inc" {
                     let cur = self.core.indicators().signal_display_of(ind_id).map(|sd| sd.offset).unwrap_or(0.0);
                     let new_offset = (cur + 2.0).min(16.0);
                     self.core.indicators_mut().set_signal_offset(ind_id, new_offset);
-                    eprintln!("[ChartApp] ind_settings signal_offset = {}", new_offset);
+                    log::info!("[ChartApp] ind_settings signal_offset = {}", new_offset);
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
                 } else if item_id == "ind_set:signal_offset_dec" {
                     let cur = self.core.indicators().signal_display_of(ind_id).map(|sd| sd.offset).unwrap_or(0.0);
                     let new_offset = (cur - 2.0).max(0.0);
                     self.core.indicators_mut().set_signal_offset(ind_id, new_offset);
-                    eprintln!("[ChartApp] ind_settings signal_offset = {}", new_offset);
+                    log::info!("[ChartApp] ind_settings signal_offset = {}", new_offset);
                     self.autosave_snapshot();
                     self.snapshot_indicator_settings_to_user_manager();
                 } else {
-                    eprintln!("[ChartApp] ind_settings item unhandled: {}", item_id);
+                    log::warn!("[ChartApp] ind_settings item unhandled: {}", item_id);
                 }
             }
             return;
         }
 
-        eprintln!("[ChartApp] ind_settings item unhandled: {}", item_id);
+        log::warn!("[ChartApp] ind_settings item unhandled: {}", item_id);
     }
 
     /// Is `param_name` on this instance the set-valued venue picker?
@@ -4048,7 +4048,7 @@ impl ChartApp {
             .set_param(instance_id, param_name, IndValue::StringList(chosen.clone()));
         self.autosave_snapshot();
         self.snapshot_indicator_settings_to_user_manager();
-        eprintln!(
+        log::info!(
             "[ChartApp] ind_settings venue toggled: {} {} -> [{}]",
             param_name, venue, chosen.join(",")
         );

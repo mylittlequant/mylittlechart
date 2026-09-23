@@ -659,7 +659,7 @@ impl BubbleStore {
                  the caller should have remapped ids before restore",
                 existing.address, bubble.address,
             );
-            eprintln!(
+            log::warn!(
                 "[BubbleStore] WARNING: insert_bubble_raw is overwriting live bubble {bubble_id:?} \
                  (existing instrument={:?}, incoming instrument={:?}) — an id collision reached \
                  the store; the caller should have remapped ids before restore",

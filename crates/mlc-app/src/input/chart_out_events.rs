@@ -31,7 +31,7 @@ impl ChartApp {
             self.core.ensure_connector(eid);
             self.core.request_kline(eid, &sym, &tf, at, None, Some(bar_count), force);
         }
-        eprintln!("[ChartApp] drained {} cure jobs in {}us", n, drain_t0.elapsed().as_micros());
+        log::info!("[ChartApp] drained {} cure jobs in {}us", n, drain_t0.elapsed().as_micros());
     }
 
     /// Seed `pending_background_warm` once with every `open_tabs` entry
@@ -68,7 +68,7 @@ impl ChartApp {
         }
         self.background_warm_seeded = true;
         if !self.pending_background_warm.is_empty() {
-            eprintln!(
+            log::info!(
                 "[ChartApp] background-warm seeded: {} open_tab preset(s) queued for pre-hydration",
                 self.pending_background_warm.len(),
             );
@@ -107,7 +107,7 @@ impl ChartApp {
         // (pre-hydrate into cache for a snappier future switch), never
         // worth stealing a preset another window is actively showing.
         if !self.try_claim_preset_for_cold_load(&target_id) {
-            eprintln!(
+            log::warn!(
                 "[ChartApp] background-warm SKIPPED '{}' — already claimed by another window",
                 target_id,
             );
@@ -128,12 +128,12 @@ impl ChartApp {
         let unpark_ok = self.unpark_preset(&active);
         self.panel_app.active_preset_id = active.clone();
         if !unpark_ok {
-            eprintln!(
+            log::warn!(
                 "[ChartApp] background-warm WARNING: failed to unpark active '{}' after warming '{}' — active slot left as placeholder",
                 active, target_id,
             );
         }
-        eprintln!(
+        log::info!(
             "[ChartApp] background-warm processed '{}' in {}us (queue {} remaining)",
             target_id,
             t0.elapsed().as_micros(),
@@ -152,7 +152,7 @@ impl ChartApp {
     pub fn drain_pending_cold_apply(&mut self) {
         let Some(stash) = self.pending_cold_apply.take() else { return; };
         let waited_us = stash.stashed_at.elapsed().as_micros();
-        eprintln!(
+        log::info!(
             "[ChartApp] draining pending cold apply for preset '{}' (waited {}us for skeleton frame)",
             stash.preset.name, waited_us,
         );
@@ -181,7 +181,7 @@ impl ChartApp {
 
         match event {
             ChartOutEvent::ChangeTimeframe { timeframe_id } => {
-                eprintln!("[ChartApp] ChangeTimeframe: {}", timeframe_id);
+                log::info!("[ChartApp] ChangeTimeframe: {}", timeframe_id);
                 // Generic parse (consolidation, user-granularity-templates-
                 // inner arc, кусок 1): strips the `tf_` dropdown-id prefix
                 // and hands the bare name to `Timeframe::parse`, which
@@ -193,7 +193,7 @@ impl ChartApp {
                 let timeframe = match timeframe {
                     Some(tf) => Some(tf),
                     None => {
-                        eprintln!("[ChartApp] unknown timeframe_id: {}", timeframe_id);
+                        log::info!("[ChartApp] unknown timeframe_id: {}", timeframe_id);
                         None
                     }
                 };
@@ -305,7 +305,7 @@ impl ChartApp {
                         let prev_tf_opt = previous_timeframe;
                         let tf_changed = match prev_tf_opt {
                             Some(ref prev_tf) if *prev_tf != tf => {
-                                eprintln!("[ChartApp] Timeframe {} -> {}", prev_tf.name, tf.name);
+                                log::info!("[ChartApp] Timeframe {} -> {}", prev_tf.name, tf.name);
                                 true
                             }
                             Some(_) => false,
@@ -371,7 +371,7 @@ impl ChartApp {
                                 .unwrap_or(self.active_exchange);
                             let eid_str = chart_eid.as_str();
                             if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
-                                eprintln!("[ChartApp] Exchange {} is disabled, skipping data fetch (timeframe change)", eid_str);
+                                log::info!("[ChartApp] Exchange {} is disabled, skipping data fetch (timeframe change)", eid_str);
                             } else {
                                 let at = mlc_backend_data_bridge::account_type_to_dig3(at_tf);
                                 // Drop the OLD kline forwarder so it stops piping
@@ -396,7 +396,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::ChangeChartType { chart_type } => {
-                eprintln!("[ChartApp] ChangeChartType: {}", chart_type);
+                log::info!("[ChartApp] ChangeChartType: {}", chart_type);
                 // Full pipeline extracted to `apply_chart_type_switch`
                 // (target-aware — also drives the trading container's
                 // embedded center chart). Active chart here, verbatim
@@ -408,7 +408,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::UpdateChartTypeParam { value } => {
-                eprintln!("[ChartApp] UpdateChartTypeParam: {}", value);
+                log::info!("[ChartApp] UpdateChartTypeParam: {}", value);
                 if value <= 0.0 {
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     return;
@@ -556,7 +556,7 @@ impl ChartApp {
             // out of scope for this arc; a future "keep ATR fresh" mode would
             // need its own deferred-recompute machine, not built here.
             ChartOutEvent::SetChartTypeParamAtr14 => {
-                eprintln!("[ChartApp] SetChartTypeParamAtr14");
+                log::info!("[ChartApp] SetChartTypeParamAtr14");
                 let Some(cid) = self.panel_app.panel_grid.active_container_id() else {
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     return;
@@ -567,7 +567,7 @@ impl ChartApp {
                 };
                 let active_ct: &'static str = self.core.bubbles().chart_type(bid).unwrap_or("candles");
                 if !matches!(active_ct, "renko" | "kagi") {
-                    eprintln!("[ChartApp] SetChartTypeParamAtr14: ignored, active chart_type={active_ct} is not renko/kagi");
+                    log::info!("[ChartApp] SetChartTypeParamAtr14: ignored, active chart_type={active_ct} is not renko/kagi");
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     return;
                 }
@@ -578,7 +578,7 @@ impl ChartApp {
                 self.core.bubbles_mut().set_chart_type_param_mode(bid, mlc_core::chart_type::ParamMode::Atr14);
                 // 2. Compute the box.
                 let Some(symbol) = self.symbol_for_chart(cid).filter(|s| !s.is_empty()) else {
-                    eprintln!("[ChartApp] SetChartTypeParamAtr14: no active symbol, leaving param untouched");
+                    log::info!("[ChartApp] SetChartTypeParamAtr14: no active symbol, leaving param untouched");
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     return;
                 };
@@ -597,7 +597,7 @@ impl ChartApp {
                         return;
                     }
                     None => {
-                        eprintln!(
+                        log::info!(
                             "[ChartApp] SetChartTypeParamAtr14: fewer than 15 completed hourly bars (or tick_size<=0) for {symbol}, leaving param untouched"
                         );
                     }
@@ -606,7 +606,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::UpdateChartTypeInterval { interval } => {
-                eprintln!("[ChartApp] UpdateChartTypeInterval: {}", interval);
+                log::info!("[ChartApp] UpdateChartTypeInterval: {}", interval);
                 // Free-text inline field (footprint's toolbar text input) —
                 // only wall-clock-minute-and-up values are accepted here;
                 // the dropdown path (`ChangeTimeframe`, whitelist-gated by
@@ -635,12 +635,12 @@ impl ChartApp {
                 state_mutated = true;
             }
             ChartOutEvent::UpdateFootprintGroupTicks { ticks } => {
-                eprintln!("[ChartApp] UpdateFootprintGroupTicks: {}", ticks);
+                log::info!("[ChartApp] UpdateFootprintGroupTicks: {}", ticks);
                 self.apply_footprint_group_ticks(ticks);
                 state_mutated = true;
             }
             ChartOutEvent::CommitGranularityCustom { target } => {
-                eprintln!("[ChartApp] CommitGranularityCustom: {:?}", target);
+                log::info!("[ChartApp] CommitGranularityCustom: {:?}", target);
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 // Edit mode: remove the original custom (+ its star, if any)
                 // BEFORE adding the new value — a rename keeps its star
@@ -655,7 +655,7 @@ impl ChartApp {
                             mlc_core::chart_type::GranularityTarget::Param { chart_type, .. } => chart_type.clone(),
                             mlc_core::chart_type::GranularityTarget::Tf { .. }
                             | mlc_core::chart_type::GranularityTarget::Interval { .. } => {
-                                eprintln!("[ChartApp] CommitGranularityCustom: EditParam target mismatch, ignored");
+                                log::warn!("[ChartApp] CommitGranularityCustom: EditParam target mismatch, ignored");
                                 return;
                             }
                         };
@@ -692,7 +692,7 @@ impl ChartApp {
                 match &target {
                     mlc_core::chart_type::GranularityTarget::Tf { name } => {
                         if Timeframe::parse(name).is_none() {
-                            eprintln!("[ChartApp] CommitGranularityCustom: invalid TF name, ignored: {}", name);
+                            log::info!("[ChartApp] CommitGranularityCustom: invalid TF name, ignored: {}", name);
                             return;
                         }
                         let mut user_mut = self.core.user_mut();
@@ -713,7 +713,7 @@ impl ChartApp {
                     }
                     mlc_core::chart_type::GranularityTarget::Param { chart_type, value } => {
                         if *value <= 0.0 {
-                            eprintln!("[ChartApp] CommitGranularityCustom: non-positive value, ignored: {}", value);
+                            log::info!("[ChartApp] CommitGranularityCustom: non-positive value, ignored: {}", value);
                             return;
                         }
                         let mut user_mut = self.core.user_mut();
@@ -750,7 +750,7 @@ impl ChartApp {
                         // profile, so an invalid/out-of-range custom bucket
                         // never gets persisted.
                         let Some(static_iv) = Self::footprint_interval_static(name) else {
-                            eprintln!("[ChartApp] CommitGranularityCustom: invalid/out-of-range interval, ignored: {}", name);
+                            log::info!("[ChartApp] CommitGranularityCustom: invalid/out-of-range interval, ignored: {}", name);
                             return;
                         };
                         let mut user_mut = self.core.user_mut();
@@ -776,7 +776,7 @@ impl ChartApp {
                 }
             }
             ChartOutEvent::DeleteGranularityCustom { target } => {
-                eprintln!("[ChartApp] DeleteGranularityCustom: {:?}", target);
+                log::info!("[ChartApp] DeleteGranularityCustom: {:?}", target);
                 let mut user_mut = self.core.user_mut();
                 let favs = &mut user_mut.profile_mut().domain.granularity_favorites;
                 match &target {
@@ -798,7 +798,7 @@ impl ChartApp {
                 return;
             }
             ChartOutEvent::ToggleGranularityStar { target } => {
-                eprintln!("[ChartApp] ToggleGranularityStar: {:?}", target);
+                log::info!("[ChartApp] ToggleGranularityStar: {:?}", target);
                 let mut user_mut = self.core.user_mut();
                 let favs = &mut user_mut.profile_mut().domain.granularity_favorites;
                 match &target {
@@ -836,13 +836,13 @@ impl ChartApp {
                 let mut user_mut = self.core.user_mut();
                 let ui = &mut user_mut.profile_mut().ui;
                 ui.pin_granularity_favorites = !ui.pin_granularity_favorites;
-                eprintln!("[ChartApp] ToggleGranularityPin: {}", ui.pin_granularity_favorites);
+                log::info!("[ChartApp] ToggleGranularityPin: {}", ui.pin_granularity_favorites);
                 drop(user_mut);
                 self.autosave_snapshot();
                 return;
             }
             ChartOutEvent::ToggleFavoritePrimitive { tool_id } => {
-                eprintln!("[ChartApp] ToggleFavoritePrimitive: {}", tool_id);
+                log::info!("[ChartApp] ToggleFavoritePrimitive: {}", tool_id);
                 let mut user_mut = self.core.user_mut();
                 let favs = &mut user_mut.profile_mut().ui.favorite_primitives;
                 if favs.iter().any(|t| t == &tool_id) {
@@ -860,7 +860,7 @@ impl ChartApp {
                 return;
             }
             ChartOutEvent::ReorderFavoritePrimitive { from_index, to_index } => {
-                eprintln!(
+                log::info!(
                     "[ChartApp] ReorderFavoritePrimitive: {} -> {}",
                     from_index, to_index
                 );
@@ -873,7 +873,7 @@ impl ChartApp {
                 return;
             }
             ChartOutEvent::ToggleIndicatorStar { type_id } => {
-                eprintln!("[ChartApp] ToggleIndicatorStar: {}", type_id);
+                log::info!("[ChartApp] ToggleIndicatorStar: {}", type_id);
                 let mut user_mut = self.core.user_mut();
                 let favs = &mut user_mut.profile_mut().ui.favorite_indicators;
                 if favs.iter().any(|t| t == &type_id) {
@@ -891,7 +891,7 @@ impl ChartApp {
             }
             ChartOutEvent::ReorderGranularity { family, section, from_index, to_index } => {
                 use mlc_core::chart_type::{GranularityFamily, GranularitySection};
-                eprintln!(
+                log::info!(
                     "[ChartApp] ReorderGranularity: family={:?} section={:?} {} -> {}",
                     family, section, from_index, to_index
                 );
@@ -933,7 +933,7 @@ impl ChartApp {
                 } else {
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 }
-                eprintln!("[ChartApp] indicator search modal toggled: {:?}", self.modal_state.current);
+                log::info!("[ChartApp] indicator search modal toggled: {:?}", self.modal_state.current);
             }
             ChartOutEvent::OpenSymbolSearch => {
                 // Toolbar merge (symbol-search-compare-inner arc, Wave 2,
@@ -964,7 +964,7 @@ impl ChartApp {
                     return;
                 }
                 self.open_symbol_search_modal_direct();
-                eprintln!("[ChartApp] symbol search modal opened");
+                log::info!("[ChartApp] symbol search modal opened");
             }
             ChartOutEvent::ApplySymbol { chart_id, symbol, exchange, account_type } => {
                 use mlc_core::state::ChartId;
@@ -1070,7 +1070,7 @@ impl ChartApp {
                 }
                 let eid_str = resolved_exchange.as_str();
                 if !self.sidebar_state.connector_enabled.get(eid_str).copied().unwrap_or(true) {
-                    eprintln!("[ChartApp] ApplySymbol: exchange {} disabled, skipping connector call", eid_str);
+                    log::info!("[ChartApp] ApplySymbol: exchange {} disabled, skipping connector call", eid_str);
                 } else {
                     let at_typed: mlc_core::instrument::AccountType = account_type.parse().unwrap_or_default();
                     let at = mlc_backend_data_bridge::account_type_to_dig3(at_typed);
@@ -1144,7 +1144,7 @@ impl ChartApp {
                 }
 
                 if previous_symbol != symbol {
-                    eprintln!("[ChartApp] ApplySymbol {} -> {} (chart {})", previous_symbol, symbol, chart_id);
+                    log::info!("[ChartApp] ApplySymbol {} -> {} (chart {})", previous_symbol, symbol, chart_id);
                     if let Some(leaf) = target_leaf {
                         self.propagate_symbol_to_sync_group(leaf, &symbol, resolved_exchange.as_str(), &account_type);
                     }
@@ -1166,7 +1166,7 @@ impl ChartApp {
                 // 2026-09-06) — see `edit_primitive_recorded`'s twin comment
                 // (`input/mod.rs`).
                 if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-                    eprintln!("[ChartApp] AddCompareSymbol refused: active tab is read-only (shared chart)");
+                    log::warn!("[ChartApp] AddCompareSymbol refused: active tab is read-only (shared chart)");
                     return;
                 }
                 // Canonical compare-add path (2026-07-16 hard cutover — moved
@@ -1197,7 +1197,7 @@ impl ChartApp {
                 let main_bars_for_cmp = self.active_chart_bars();
                 let added_series = if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                     let added = window.add_compare_symbol(&symbol, &main_sym_for_cmp, &main_tf_for_cmp, &main_bars_for_cmp);
-                    eprintln!(
+                    log::warn!(
                         "[ChartApp] Compare symbol {}: {}",
                         symbol,
                         if added { "added" } else { "queuing retry (bars not yet cached)" }
@@ -1217,7 +1217,7 @@ impl ChartApp {
                     self.push_undo_command(mlc_core::Command::AddCompareSeries {
                         series: series.without_bars(),
                     });
-                    eprintln!("[ChartApp] Recorded AddCompareSeries {}", symbol);
+                    log::info!("[ChartApp] Recorded AddCompareSeries {}", symbol);
                     self.autosave_snapshot();
                 } else if let Some(cid) = active_cmp_cid {
                     self.compare_add_queued = self.compare_add_queued.saturating_add(1);
@@ -1248,7 +1248,7 @@ impl ChartApp {
                         Some(self.core.user().profile().domain.bar_count as usize),
                         true,
                     );
-                    eprintln!(
+                    log::warn!(
                         "[Compare] Queued retry + bridge.request_bars for {}@{} ({})",
                         symbol,
                         resolved_exchange.as_str(),
@@ -1273,12 +1273,12 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&cmp_id);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::COMPARE_SEARCH);
                 }
-                eprintln!("[ChartApp] compare search modal opened");
+                log::info!("[ChartApp] compare search modal opened");
             }
             // Chart settings modal  -  opened by gear dropdown "Chart Settings..." item.
             ChartOutEvent::OpenChartSettings => {
                 self.panel_app.chart_settings_state.toggle();
-                eprintln!("[ChartApp] chart_settings modal toggled via settings dropdown: {}", self.panel_app.chart_settings_state.is_open);
+                log::info!("[ChartApp] chart_settings modal toggled via settings dropdown: {}", self.panel_app.chart_settings_state.is_open);
             }
 
             // User settings modal  -  opened by the chrome gear button.
@@ -1296,7 +1296,7 @@ impl ChartApp {
                 if self.panel_app.user_settings_state.is_open {
                     self.sync_credentials_from_core();
                 }
-                eprintln!("[ChartApp] user_settings modal toggled: {}", self.panel_app.user_settings_state.is_open);
+                log::info!("[ChartApp] user_settings modal toggled: {}", self.panel_app.user_settings_state.is_open);
             }
 
             // Quick-settings toggles from the settings gear dropdown.
@@ -1325,7 +1325,7 @@ impl ChartApp {
                         panel.grid_options.horz_lines.visible = h;
                     }
                 }
-                eprintln!("[ChartApp] grid toggled (all windows)");
+                log::info!("[ChartApp] grid toggled (all windows)");
                 state_mutated = true;
             }
             // `ToggleVolumeProfileOverlay`, `CycleVolumeProfileMode`,
@@ -1357,7 +1357,7 @@ impl ChartApp {
                         w.crosshair.enabled = val;
                     }
                 }
-                eprintln!("[ChartApp] crosshair toggled (all windows)");
+                log::info!("[ChartApp] crosshair toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::ToggleLegend => {
@@ -1365,7 +1365,7 @@ impl ChartApp {
                 if let Some(pid) = pid {
                     let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                     panel.legend.visible = !panel.legend.visible;
-                    eprintln!("[ChartApp] legend toggled -> {}", panel.legend.visible);
+                    log::info!("[ChartApp] legend toggled -> {}", panel.legend.visible);
                 }
                 state_mutated = true;
             }
@@ -1385,13 +1385,13 @@ impl ChartApp {
                         if let Some(ref mut wm) = panel.watermark { wm.visible = val; }
                     }
                 }
-                eprintln!("[ChartApp] watermark toggled (all windows)");
+                log::info!("[ChartApp] watermark toggled (all windows)");
                 state_mutated = true;
             }
 
             // Left panel  -  no sidebar in standalone mode.
             ChartOutEvent::ToggleLeftPanel => {
-                eprintln!("[ChartApp] Not available in standalone mode: {:?}", event);
+                log::info!("[ChartApp] Not available in standalone mode: {:?}", event);
             }
 
             // Right sidebar panels  -  handled via SidebarState.
@@ -1404,7 +1404,7 @@ impl ChartApp {
                     mlc_app_sidebar_content::state::RightSidebarPanel::Watchlist,
                 );
                 if let Some((opening, _width)) = result {
-                    eprintln!("[ChartApp] Watchlist panel: {}", if opening { "opened" } else { "closed" });
+                    log::info!("[ChartApp] Watchlist panel: {}", if opening { "opened" } else { "closed" });
                 }
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
@@ -1414,7 +1414,7 @@ impl ChartApp {
                     mlc_app_sidebar_content::state::RightSidebarPanel::Screener,
                 );
                 if let Some((opening, _width)) = result {
-                    eprintln!("[ChartApp] Screener panel: {}", if opening { "opened" } else { "closed" });
+                    log::info!("[ChartApp] Screener panel: {}", if opening { "opened" } else { "closed" });
                 }
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
@@ -1424,7 +1424,7 @@ impl ChartApp {
                     mlc_app_sidebar_content::state::RightSidebarPanel::Alerts,
                 );
                 if let Some((opening, _width)) = result {
-                    eprintln!("[ChartApp] Alerts panel: {}", if opening { "opened" } else { "closed" });
+                    log::info!("[ChartApp] Alerts panel: {}", if opening { "opened" } else { "closed" });
                 }
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
@@ -1434,7 +1434,7 @@ impl ChartApp {
                     mlc_app_sidebar_content::state::RightSidebarPanel::ObjectTree,
                 );
                 if let Some((opening, _width)) = result {
-                    eprintln!("[ChartApp] Object Tree panel: {}", if opening { "opened" } else { "closed" });
+                    log::info!("[ChartApp] Object Tree panel: {}", if opening { "opened" } else { "closed" });
                 }
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
@@ -1444,7 +1444,7 @@ impl ChartApp {
                     mlc_app_sidebar_content::state::RightSidebarPanel::Signals,
                 );
                 if let Some((opening, _width)) = result {
-                    eprintln!("[ChartApp] Signals panel: {}", if opening { "opened" } else { "closed" });
+                    log::info!("[ChartApp] Signals panel: {}", if opening { "opened" } else { "closed" });
                 }
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
@@ -1454,7 +1454,7 @@ impl ChartApp {
                     mlc_app_sidebar_content::state::RightSidebarPanel::Monitoring,
                 );
                 if let Some((opening, _width)) = result {
-                    eprintln!("[ChartApp] Monitoring panel: {}", if opening { "opened" } else { "closed" });
+                    log::info!("[ChartApp] Monitoring panel: {}", if opening { "opened" } else { "closed" });
                 }
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
@@ -1464,7 +1464,7 @@ impl ChartApp {
                     mlc_app_sidebar_content::state::RightSidebarPanel::Agents,
                 );
                 if let Some((opening, _width)) = result {
-                    eprintln!("[ChartApp] Agents panel: {}", if opening { "opened" } else { "closed" });
+                    log::info!("[ChartApp] Agents panel: {}", if opening { "opened" } else { "closed" });
                     // One-shot magic-hat animation (owner report 2026-09-10):
                     // this "Bot" toolbar button IS the trigger for this exact
                     // sidebar — opening/closing it behind the hat must
@@ -1490,7 +1490,7 @@ impl ChartApp {
                     mlc_app_sidebar_content::state::RightSidebarPanel::Events,
                 );
                 if let Some((opening, _width)) = result {
-                    eprintln!("[ChartApp] Events panel: {}", if opening { "opened" } else { "closed" });
+                    log::info!("[ChartApp] Events panel: {}", if opening { "opened" } else { "closed" });
                 }
                 self.sidebar_data_dirty = true;
                 self.persist_profile();
@@ -1610,7 +1610,7 @@ impl ChartApp {
                             .grid_options.vert_lines.visible = val;
                     }
                 }
-                eprintln!("[ChartApp] grid vertical toggled (all windows)");
+                log::info!("[ChartApp] grid vertical toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::ToggleGridHorizontal => {
@@ -1627,7 +1627,7 @@ impl ChartApp {
                             .grid_options.horz_lines.visible = val;
                     }
                 }
-                eprintln!("[ChartApp] grid horizontal toggled (all windows)");
+                log::info!("[ChartApp] grid horizontal toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::ToggleLegendOHLC => {
@@ -1635,7 +1635,7 @@ impl ChartApp {
                 if let Some(pid) = pid {
                     let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                     panel.legend.show_ohlc = !panel.legend.show_ohlc;
-                    eprintln!("[ChartApp] legend OHLC toggled -> {}", panel.legend.show_ohlc);
+                    log::info!("[ChartApp] legend OHLC toggled -> {}", panel.legend.show_ohlc);
                 }
                 state_mutated = true;
             }
@@ -1644,7 +1644,7 @@ impl ChartApp {
                 if let Some(pid) = pid {
                     let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                     panel.legend.show_change = !panel.legend.show_change;
-                    eprintln!("[ChartApp] legend change toggled -> {}", panel.legend.show_change);
+                    log::info!("[ChartApp] legend change toggled -> {}", panel.legend.show_change);
                 }
                 state_mutated = true;
             }
@@ -1653,7 +1653,7 @@ impl ChartApp {
                 if let Some(pid) = pid {
                     let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                     panel.legend.show_percent = !panel.legend.show_percent;
-                    eprintln!("[ChartApp] legend percent toggled -> {}", panel.legend.show_percent);
+                    log::info!("[ChartApp] legend percent toggled -> {}", panel.legend.show_percent);
                 }
                 state_mutated = true;
             }
@@ -1670,7 +1670,7 @@ impl ChartApp {
                         crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid).tooltip.visible = val;
                     }
                 }
-                eprintln!("[ChartApp] tooltip toggled (all windows)");
+                log::info!("[ChartApp] tooltip toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::ToggleTooltipFollow => {
@@ -1686,7 +1686,7 @@ impl ChartApp {
                         crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid).tooltip.follow_cursor = val;
                     }
                 }
-                eprintln!("[ChartApp] tooltip follow toggled (all windows)");
+                log::info!("[ChartApp] tooltip follow toggled (all windows)");
                 state_mutated = true;
             }
             ChartOutEvent::FocusWatermarkText => {
@@ -1716,7 +1716,7 @@ impl ChartApp {
                         None => { let mut wm = mlc_core::Watermark::default(); wm.set_text(text.to_string()); panel.watermark = Some(wm); }
                     }
                 }
-                eprintln!("[ChartApp] watermark text set to {} (all windows)", text);
+                log::info!("[ChartApp] watermark text set to {} (all windows)", text);
                 state_mutated = true;
             }
             ChartOutEvent::SetWatermarkPosition(pos) => {
@@ -1737,7 +1737,7 @@ impl ChartApp {
                         None => { panel.watermark = Some(mlc_core::Watermark { horz_align: horz, vert_align: vert, ..mlc_core::Watermark::default() }); }
                     }
                 }
-                eprintln!("[ChartApp] watermark position set to {} (all windows)", pos);
+                log::info!("[ChartApp] watermark position set to {} (all windows)", pos);
                 state_mutated = true;
             }
             // === Presets (in-memory HashMap) ===
@@ -1748,14 +1748,14 @@ impl ChartApp {
                 // never asked to create; see `edit_primitive_recorded`'s
                 // twin comment (`input/mod.rs`).
                 if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-                    eprintln!("[ChartApp] SavePreset (save-as) refused: active tab is read-only (shared chart)");
+                    log::warn!("[ChartApp] SavePreset (save-as) refused: active tab is read-only (shared chart)");
                     return;
                 }
                 // "Save As"  -  create a new named preset from current state.
                 use mlc_core::preset::preset::unix_timestamp_parts;
                 let (secs, nanos) = unix_timestamp_parts();
                 let id = format!("preset_{}_{}", secs, nanos);
-                eprintln!("[ChartApp] save-as preset '{}'  ->  id={}", name, id);
+                log::info!("[ChartApp] save-as preset '{}'  ->  id={}", name, id);
                 self.collect_state_into_preset(&id, &name);
                 self.panel_app.active_preset_id = id.clone();
                 // Add the new preset to open_tabs.
@@ -1770,7 +1770,7 @@ impl ChartApp {
                 }
                 self.persist_profile();
                 if let Some(p) = self.core.presets().get(&id) {
-                    eprintln!(
+                    log::info!(
                         "[ChartApp] preset '{}' saved ({} windows, {} groups, {} indicators)",
                         id, p.windows.len(), p.bubbles.len(), p.indicators.len()
                     );
@@ -1879,7 +1879,7 @@ impl ChartApp {
                     if let Some(preset) = outgoing_preset {
                         self.preset_actions.push(crate::PresetAction::Upsert(preset));
                     }
-                    eprintln!(
+                    log::info!(
                         "[ChartApp] LoadPreset: persisted outgoing preset '{}' synchronously before switch (active='{}')",
                         prev_id, self.panel_app.active_preset_id,
                     );
@@ -1999,7 +1999,7 @@ impl ChartApp {
                     }
                     let _ = bar_count; // bar_count moves to drain_pending_cure
                     let lp_cure_us = _lp_t_cure.elapsed().as_micros();
-                    eprintln!(
+                    log::info!(
                         "[ChartApp] LoadPreset (cache): cure requested force={} lazy={} (cure={}us total={}us)",
                         bars_requested_force, bars_requested_lazy,
                         lp_cure_us, _lp_total.elapsed().as_micros(),
@@ -2041,7 +2041,7 @@ impl ChartApp {
                                 lp_clone_us,
                             },
                         });
-                        eprintln!(
+                        log::info!(
                             "[ChartApp] LoadPreset '{}' COLD path: stashed for deferred apply (skeleton-frame-first, lp_handler={}us)",
                             id, _lp_total.elapsed().as_micros(),
                         );
@@ -2049,7 +2049,7 @@ impl ChartApp {
                         // LoadState anyway, and "Loading" is not a state
                         // worth persisting.
                     } else {
-                        eprintln!("[ChartApp] preset '{}' not found in memory (clone_attempt={}us total={}us)",
+                        log::warn!("[ChartApp] preset '{}' not found in memory (clone_attempt={}us total={}us)",
                             id, lp_clone_us, _lp_total.elapsed().as_micros());
                     }
                 }
@@ -2058,7 +2058,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::DeletePreset { id } => {
-                eprintln!("[ChartApp] delete preset: {}", id);
+                log::info!("[ChartApp] delete preset: {}", id);
                 // Also remove from open_tabs when deleting.
                 self.panel_app.open_tabs.retain(|t| t != &id);
                 // Release this window's claim (if any) — a deleted preset
@@ -2068,14 +2068,14 @@ impl ChartApp {
                 if self.core.presets_mut().remove(&id).is_some() {
                     self.preset_actions.push(crate::PresetAction::Delete { id: id.clone() });
                     self.persist_profile();
-                    eprintln!("[ChartApp] preset '{}' removed from memory", id);
+                    log::info!("[ChartApp] preset '{}' removed from memory", id);
                 } else {
-                    eprintln!("[ChartApp] preset '{}' not found", id);
+                    log::warn!("[ChartApp] preset '{}' not found", id);
                 }
             }
 
             ChartOutEvent::CloseTab { id } => {
-                eprintln!("[ChartApp] close tab: {}", id);
+                log::info!("[ChartApp] close tab: {}", id);
                 // One-shot magic-hat "squash" (owner ruling 2026-09-10) —
                 // a new trigger always replaces whatever was running.
                 self.panel_app.toolbar_state.trigger_mascot_anim(
@@ -2118,7 +2118,7 @@ impl ChartApp {
             }
 
             ChartOutEvent::OpenTab { id } => {
-                eprintln!("[ChartApp] open tab: {}", id);
+                log::info!("[ChartApp] open tab: {}", id);
                 // One-shot magic-hat "tip" (owner ruling 2026-09-10) — a
                 // new trigger always replaces whatever was running.
                 self.panel_app.toolbar_state.trigger_mascot_anim(
@@ -2145,7 +2145,7 @@ impl ChartApp {
                 // name in place; see `edit_primitive_recorded`'s twin
                 // comment (`input/mod.rs`).
                 if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-                    eprintln!("[ChartApp] RenamePreset refused: active tab is read-only (shared chart)");
+                    log::warn!("[ChartApp] RenamePreset refused: active tab is read-only (shared chart)");
                     return;
                 }
                 // Resolve the target preset: empty id means "active preset".
@@ -2156,14 +2156,14 @@ impl ChartApp {
                 };
 
                 if target_id == "__default__" || target_id.is_empty() {
-                    eprintln!("[ChartApp] no active named preset to rename");
+                    log::info!("[ChartApp] no active named preset to rename");
                 } else {
                     // Generate a name if none was supplied by the caller.
                     let final_name = if new_name.is_empty() {
                         if let Some(preset) = self.core.presets().get(&target_id) {
                             format!("{} (renamed)", preset.name)
                         } else {
-                            eprintln!("[ChartApp] preset '{}' not found for rename", target_id);
+                            log::warn!("[ChartApp] preset '{}' not found for rename", target_id);
                             return;
                         }
                     } else {
@@ -2171,7 +2171,7 @@ impl ChartApp {
                     };
 
                     if let Some(preset) = self.core.presets_mut().get_mut(&target_id) {
-                        eprintln!(
+                        log::info!(
                             "[ChartApp] renamed preset '{}' -> '{}'",
                             preset.name, final_name
                         );
@@ -2181,7 +2181,7 @@ impl ChartApp {
                             new_name: final_name,
                         });
                     } else {
-                        eprintln!("[ChartApp] preset '{}' not found for rename", target_id);
+                        log::warn!("[ChartApp] preset '{}' not found for rename", target_id);
                     }
                 }
             }
@@ -2203,14 +2203,14 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&pni_id);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::PRESET_NAME_INPUT);
                 }
-                eprintln!("[ChartApp] opened preset name input (save-as), default='{}'", default_name);
+                log::info!("[ChartApp] opened preset name input (save-as), default='{}'", default_name);
             }
 
             ChartOutEvent::OpenPresetRename => {
                 // Open the preset name input modal in "Rename" mode for the active preset.
                 let target_id = self.panel_app.active_preset_id.clone();
                 if target_id == "__default__" || target_id.is_empty() {
-                    eprintln!("[ChartApp] no active named preset to rename");
+                    log::info!("[ChartApp] no active named preset to rename");
                 } else if let Some(preset) = self.core.presets().get(&target_id) {
                     let current_name = preset.name.clone();
                     self.panel_app.preset_name_input.open_rename(&target_id, &current_name, 0);
@@ -2221,9 +2221,9 @@ impl ChartApp {
                         self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&pni_id);
                         self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::PRESET_NAME_INPUT);
                     }
-                    eprintln!("[ChartApp] opened preset name input (rename), preset='{}'", target_id);
+                    log::info!("[ChartApp] opened preset name input (rename), preset='{}'", target_id);
                 } else {
-                    eprintln!("[ChartApp] preset '{}' not found for rename modal", target_id);
+                    log::warn!("[ChartApp] preset '{}' not found for rename modal", target_id);
                 }
             }
 
@@ -2240,7 +2240,7 @@ impl ChartApp {
                         if let Some(preset) = saved_preset {
                             self.preset_actions.push(crate::PresetAction::Upsert(preset));
                         }
-                        eprintln!("[ChartApp] saved snapshot into preset '{}' (id={})", name, id);
+                        log::info!("[ChartApp] saved snapshot into preset '{}' (id={})", name, id);
                     }
                 } else {
                     // No active named preset  -  treat as Save As
@@ -2250,7 +2250,7 @@ impl ChartApp {
 
             ChartOutEvent::ToggleAutosave => {
                 self.panel_app.autosave_enabled = !self.panel_app.autosave_enabled;
-                eprintln!("[ChartApp] autosave = {}", self.panel_app.autosave_enabled);
+                log::info!("[ChartApp] autosave = {}", self.panel_app.autosave_enabled);
             }
 
             ChartOutEvent::OpenChartBrowser => {
@@ -2262,7 +2262,7 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&cb_id);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::CHART_BROWSER_SEARCH);
                 }
-                eprintln!("[ChartApp] chart browser opened");
+                log::info!("[ChartApp] chart browser opened");
             }
 
             ChartOutEvent::OpenChartBrowserInNewTab => {
@@ -2275,7 +2275,7 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&cb_id);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::CHART_BROWSER_SEARCH);
                 }
-                eprintln!("[ChartApp] chart browser opened (new-tab mode)");
+                log::info!("[ChartApp] chart browser opened (new-tab mode)");
             }
 
             ChartOutEvent::NewChart => {
@@ -2298,7 +2298,7 @@ impl ChartApp {
                     let autosave_id = format!("preset_{}_{}", secs, nanos);
                     self.collect_state_into_preset(&autosave_id, &autosave_name);
                     self.panel_app.active_preset_id = autosave_id.clone();
-                    eprintln!("[ChartApp] auto-saved __default__ as '{}' (id={})", autosave_name, autosave_id);
+                    log::info!("[ChartApp] auto-saved __default__ as '{}' (id={})", autosave_name, autosave_id);
                 }
 
                 // Now compute the next "Untitled N"  -  the auto-saved one is already counted.
@@ -2316,23 +2316,23 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().begin_edit(&pni_id);
                     self.input_coordinator.borrow_mut().text_fields_mut().focus(crate::text_input::PRESET_NAME_INPUT);
                 }
-                eprintln!("[ChartApp] opened preset name input (new-chart), default='{}'", default_name);
+                log::info!("[ChartApp] opened preset name input (new-chart), default='{}'", default_name);
             }
 
             ChartOutEvent::SetTheme(name) => {
                 self.panel_app.theme_manager.set_preset(name);
                 // Signal the App-level coordinator to propagate this change to all windows.
                 self.theme_changed = Some(name.to_string());
-                eprintln!("[ChartApp] SetTheme: preset={}", name);
+                log::info!("[ChartApp] SetTheme: preset={}", name);
             }
 
             ChartOutEvent::SetStyle(name) => {
                 if let Some(style) = UIStyle::from_name(name) {
                     self.panel_app.theme_manager.current_mut().set_style(style);
                     self.profile_dirty = true;
-                    eprintln!("[ChartApp] SetStyle: style={:?} (from name={})", style, name);
+                    log::info!("[ChartApp] SetStyle: style={:?} (from name={})", style, name);
                 } else {
-                    eprintln!("[ChartApp] SetStyle: unknown style name '{}'", name);
+                    log::info!("[ChartApp] SetStyle: unknown style name '{}'", name);
                 }
             }
 
@@ -2348,10 +2348,10 @@ impl ChartApp {
                     });
                     if let Some(new_flag) = toggled_symbol {
                         newly_enabled = new_flag;
-                        eprintln!("[ChartApp] InternalToggleSyncSymbol: group={:?} sync_symbol={}", gid, new_flag);
+                        log::info!("[ChartApp] InternalToggleSyncSymbol: group={:?} sync_symbol={}", gid, new_flag);
                     }
                 } else {
-                    eprintln!("[ChartApp] InternalToggleSyncSymbol: no active group");
+                    log::info!("[ChartApp] InternalToggleSyncSymbol: no active group");
                 }
                 // When sync is turned ON, immediately propagate active leaf's instrument key to peers.
                 // Phase 4 S2.7.1c: read via branch_meta (B1 flip).
@@ -2390,10 +2390,10 @@ impl ChartApp {
                     });
                     if let Some(new_flag) = toggled_timeframe {
                         newly_enabled = new_flag;
-                        eprintln!("[ChartApp] InternalToggleSyncTimeframe: group={:?} sync_timeframe={}", gid, new_flag);
+                        log::info!("[ChartApp] InternalToggleSyncTimeframe: group={:?} sync_timeframe={}", gid, new_flag);
                     }
                 } else {
-                    eprintln!("[ChartApp] InternalToggleSyncTimeframe: no active group");
+                    log::info!("[ChartApp] InternalToggleSyncTimeframe: no active group");
                 }
                 // When sync is turned ON, immediately propagate active leaf's TF to peers.
                 // Phase 4 S2.7.1c: read via branch_meta (B1 flip).
@@ -2421,10 +2421,10 @@ impl ChartApp {
                     });
                     if let Some(new_flag) = toggled_crosshair {
                         newly_enabled = new_flag;
-                        eprintln!("[ChartApp] InternalToggleSyncCrosshair: group={:?} sync_crosshair={}", gid, new_flag);
+                        log::info!("[ChartApp] InternalToggleSyncCrosshair: group={:?} sync_crosshair={}", gid, new_flag);
                     }
                 } else {
-                    eprintln!("[ChartApp] InternalToggleSyncCrosshair: no active group");
+                    log::info!("[ChartApp] InternalToggleSyncCrosshair: no active group");
                 }
                 // When sync is turned ON, immediately propagate active window's crosshair to peers
                 // so that peer price ranges are re-synced and the horizontal line becomes visible.
@@ -2461,10 +2461,10 @@ impl ChartApp {
                     if let Some(was_on) = toggled_viewport {
                         newly_enabled = !was_on;
                         newly_disabled = was_on;
-                        eprintln!("[ChartApp] InternalToggleSyncViewport: group={:?} sync_viewport={}", gid, !was_on);
+                        log::info!("[ChartApp] InternalToggleSyncViewport: group={:?} sync_viewport={}", gid, !was_on);
                     }
                 } else {
-                    eprintln!("[ChartApp] InternalToggleSyncViewport: no active group");
+                    log::info!("[ChartApp] InternalToggleSyncViewport: no active group");
                 }
                 // OFF -> ON: adopt the active leaf's current scale_mode as the group mode,
                 // stash each peer's prior mode, then push mode + viewport to all peers.
@@ -2544,7 +2544,7 @@ impl ChartApp {
                     });
                     let new_sync = match toggled_drawings {
                         Some(new_sync) => {
-                            eprintln!("[BubbleStore] sync_drawings toggled to {}", new_sync);
+                            log::info!("[BubbleStore] sync_drawings toggled to {}", new_sync);
                             new_sync
                         }
                         None => return,
@@ -2577,7 +2577,7 @@ impl ChartApp {
                             self.core.bubbles_mut().with_bubble_mut(bid, |auto_bub| {
                                 auto_bub.primitives = local;
                             });
-                            eprintln!(
+                            log::info!(
                                 "[BubbleStore] sync_drawings ON: stashed {} primitives into auto-bubble {:?}",
                                 stash_count, bid
                             );
@@ -2588,13 +2588,13 @@ impl ChartApp {
                                 .unwrap_or_default();
                         let count = restored.len();
                         self.core.drawings_mut().adopt(active_bid, restored);
-                        eprintln!(
+                        log::info!(
                             "[BubbleStore] sync_drawings OFF: restored {} primitives from auto-bubble {:?}",
                             count, bid
                         );
                     }
                 } else {
-                    eprintln!("[ChartApp] InternalToggleSyncDrawings: no active group");
+                    log::info!("[ChartApp] InternalToggleSyncDrawings: no active group");
                 }
                 let _ = chart_id; // chart_id reserved for future per-chart filtering
                 state_mutated = true;
@@ -2613,7 +2613,7 @@ impl ChartApp {
                     });
                     let new_sync = match toggled_indicators {
                         Some(new_sync) => {
-                            eprintln!("[BubbleStore] sync_indicators toggled to {}", new_sync);
+                            log::info!("[BubbleStore] sync_indicators toggled to {}", new_sync);
                             new_sync
                         }
                         None => return,
@@ -2653,7 +2653,7 @@ impl ChartApp {
                         for id in &to_hide {
                             self.core.indicators_mut().set_visible(*id, false);
                         }
-                        eprintln!(
+                        log::info!(
                             "[BubbleStore] sync_indicators ON: hid {} home indicators",
                             to_hide.len()
                         );
@@ -2674,20 +2674,20 @@ impl ChartApp {
                         for id in &to_show {
                             self.core.indicators_mut().set_visible(*id, true);
                         }
-                        eprintln!(
+                        log::info!(
                             "[BubbleStore] sync_indicators OFF: unhid {} window-local indicators",
                             to_show.len()
                         );
                     }
                 } else {
-                    eprintln!("[ChartApp] InternalToggleSyncIndicators: no active group");
+                    log::info!("[ChartApp] InternalToggleSyncIndicators: no active group");
                 }
                 state_mutated = true;
             }
 
             ChartOutEvent::InternalToggleSplitUntagged => {
                 self.split_without_group = !self.split_without_group;
-                eprintln!("[ChartApp] split_without_group toggled to {}", self.split_without_group);
+                log::info!("[ChartApp] split_without_group toggled to {}", self.split_without_group);
             }
 
             ChartOutEvent::Undo => {
@@ -2707,7 +2707,7 @@ impl ChartApp {
             }
 
             ref other => {
-                eprintln!("[ChartApp] unhandled event: {:?}", other);
+                log::warn!("[ChartApp] unhandled event: {:?}", other);
             }
         }
 
@@ -3093,7 +3093,7 @@ impl ChartApp {
         } else if let Some(subscribe) = mlc_backend::chart_type::ops_by_id(ct).and_then(|ops| ops.subscribe) {
             subscribe(self.core.bridge_handle(), eid, &sym, at, &tf, params);
         }
-        eprintln!("[ChartApp] ignited derived sub for window {:?} ct={} iv={} param={}", cid, ct, iv, param);
+        log::info!("[ChartApp] ignited derived sub for window {:?} ct={} iv={} param={}", cid, ct, iv, param);
     }
 
     /// Ignite the live overlay subscription for every restored window whose
@@ -3131,7 +3131,7 @@ impl ChartApp {
             let at_dig3 = mlc_backend_data_bridge::account_type_to_dig3(at);
             self.core.ensure_connector(eid);
             self.core.subscribe_dom_heatmap(eid, &sym, at_dig3);
-            eprintln!("[ChartApp] ignited DOM heatmap overlay for restored window {:?}", cid);
+            log::info!("[ChartApp] ignited DOM heatmap overlay for restored window {:?}", cid);
         }
 
         // The liquidation twin of the block above is deliberately absent:
@@ -3235,7 +3235,7 @@ impl ChartApp {
                     type_id: lower.clone(),
                     params_json: String::new(),
                 });
-                eprintln!(
+                log::info!(
                     "[ChartApp] auto-added default indicator '{}' (id={}) for chart_type='{}'",
                     id, new_id, chart_type
                 );
@@ -3266,7 +3266,7 @@ impl ChartApp {
             .collect();
         for id in to_remove {
             self.delete_indicator_instance(id);
-            eprintln!(
+            log::info!(
                 "[ChartApp] auto-removed default indicator id={} on switch to chart_type='{}'",
                 id, chart_type
             );
@@ -3971,7 +3971,7 @@ impl crate::ChartApp {
         chart_type: &str,
     ) -> bool {
         let mut switched = false;
-        eprintln!("[ChartApp] ChangeChartType: {}", chart_type);
+        log::info!("[ChartApp] ChangeChartType: {}", chart_type);
         // Map the incoming String to a &'static str used by ChartContainer.
         let static_type: Option<&'static str> = match chart_type {
             "candles"       => Some("candles"),
@@ -4021,7 +4021,7 @@ impl crate::ChartApp {
             // fall into the `_` arm below and hydrate to "candles" via
             // `hydration_impl.rs`'s `by_id(...).unwrap_or("candles")`.
             _ => {
-                eprintln!("[ChartApp] unknown chart_type: {}", chart_type);
+                log::info!("[ChartApp] unknown chart_type: {}", chart_type);
                 None
             }
         };

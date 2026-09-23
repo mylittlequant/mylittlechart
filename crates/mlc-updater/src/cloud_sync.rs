@@ -212,7 +212,7 @@ fn file_modified_ms(path: impl AsRef<Path>) -> i64 {
 /// - New categories are included: template_compare, template_indicator_set,
 ///   salt, and recovery_key.
 pub fn collect_local_items(data_dir: &Path) -> LocalItems {
-    eprintln!("[{} CloudSync] collect_local_items: data_dir={:?}", crate::now_ts(), data_dir);
+    log::info!("[{} CloudSync] collect_local_items: data_dir={:?}", crate::now_ts(), data_dir);
     let mut items: Vec<LocalItem> = Vec::new();
 
     // --- CloudSync tier ---
@@ -562,7 +562,7 @@ pub fn collect_local_items(data_dir: &Path) -> LocalItems {
         }
     }
 
-    eprintln!(
+    log::info!(
         "[{} CloudSync] collect_local_items: {} total items",
         crate::now_ts(),
         items.len()
@@ -983,7 +983,7 @@ pub async fn push_items(
     let builder = crate::attest::with_attestation(builder, build_attest);
 
     let resp = builder.send().await.map_err(|e| {
-        eprintln!("[{} CloudSync] push_items send error: {}", crate::now_ts(), e);
+        log::warn!("[{} CloudSync] push_items send error: {}", crate::now_ts(), e);
         format!("sync push request: {}", e)
     })?;
 
@@ -992,7 +992,7 @@ pub async fn push_items(
         .text()
         .await
         .map_err(|e| format!("sync push read body: {}", e))?;
-    eprintln!(
+    log::info!(
         "[{} CloudSync] push_items response: status={} body_len={} body={}",
         crate::now_ts(),
         status,
@@ -1012,7 +1012,7 @@ pub async fn push_items(
         serde_json::from_str(&body).map_err(|e| format!("sync push parse: {}", e))?;
 
     if !data.rejected.is_empty() {
-        eprintln!(
+        log::warn!(
             "[{} CloudSync] Push: {} item(s) rejected by server: {:?}",
             crate::now_ts(),
             data.rejected.len(),
@@ -1236,7 +1236,7 @@ pub async fn do_cloud_sync(
     device_id: &str,
 ) -> Result<SyncCycleResult, String> {
     if profile_id.is_empty() {
-        eprintln!("[CloudSync] skipping sync — empty profile_id");
+        log::info!("[CloudSync] skipping sync — empty profile_id");
         return Ok(SyncCycleResult {
             pushed: 0,
             pulled: 0,
@@ -1418,9 +1418,9 @@ pub async fn do_cloud_sync(
     // CloudSync pushes plaintext — no client-side encryption.
     let items_to_push = &to_push;
 
-    eprintln!("[{} CloudSync] do_cloud_sync: to_push={}", crate::now_ts(), to_push.len());
+    log::info!("[{} CloudSync] do_cloud_sync: to_push={}", crate::now_ts(), to_push.len());
     for item in &to_push {
-        eprintln!(
+        log::info!(
             "[{} CloudSync]   push: id={} cat={} bytes={}",
             crate::now_ts(),
             item.sync_id,
@@ -1433,7 +1433,7 @@ pub async fn do_cloud_sync(
     let mut pushed_ids: Vec<String> = Vec::new();
 
     for batch in items_to_push.chunks(50) {
-        eprintln!(
+        log::info!(
             "[{} CloudSync] pushing batch of {} items to {}/api/sync/push",
             crate::now_ts(),
             batch.len(),
@@ -1443,14 +1443,14 @@ pub async fn do_cloud_sync(
             .await
         {
             Ok(n) => {
-                eprintln!("[{} CloudSync] push OK: accepted={}", crate::now_ts(), n);
+                log::info!("[{} CloudSync] push OK: accepted={}", crate::now_ts(), n);
                 pushed_count += n;
                 for item in batch {
                     pushed_ids.push(item.sync_id.clone());
                 }
             }
             Err(e) => {
-                eprintln!("[{} CloudSync] push FAILED: {}", crate::now_ts(), e);
+                log::warn!("[{} CloudSync] push FAILED: {}", crate::now_ts(), e);
             }
         }
     }
@@ -1543,7 +1543,7 @@ pub async fn do_zt_blob_push(
     device_id: &str,
 ) -> Result<ZtBlobResult, String> {
     if profile_id.is_empty() {
-        eprintln!("[CloudSync] skipping ZT blob push — empty profile_id");
+        log::info!("[CloudSync] skipping ZT blob push — empty profile_id");
         return Ok(ZtBlobResult { pushed: 0, id_to_checksum: Default::default() });
     }
 
@@ -1574,7 +1574,7 @@ pub async fn do_zt_blob_push(
         });
     }
 
-    eprintln!("[{} CloudSync] do_zt_blob_push: pushing {} blob(s)", crate::now_ts(), blobs.len());
+    log::info!("[{} CloudSync] do_zt_blob_push: pushing {} blob(s)", crate::now_ts(), blobs.len());
 
     let mut pushed_count = 0usize;
     let mut id_to_checksum: std::collections::HashMap<String, String> =

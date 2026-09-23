@@ -135,7 +135,7 @@ impl ProfileManager {
     /// encrypted installs, `None` for plaintext / first-run.
     pub fn load(key: Option<VaultKey>) -> Self {
         let data_dir = active_profile_data_dir();
-        eprintln!(
+        log::info!(
             "[ProfileManager] profile data directory: {}",
             data_dir.display()
         );
@@ -145,7 +145,7 @@ impl ProfileManager {
         // Load the profile (profile.json + optional vault.enc merge).
         let mut profile = match load_profile(key_ref) {
             Ok(p) => {
-                eprintln!(
+                log::info!(
                     "[ProfileManager] loaded profile (active_preset={})",
                     p.ui.active_preset_id
                 );
@@ -153,12 +153,12 @@ impl ProfileManager {
             }
             Err(e) => {
                 if key_ref.is_some() {
-                    eprintln!(
+                    log::error!(
                         "[ProfileManager] WARNING: decryption failed with provided key, falling back to defaults: {}",
                         e
                     );
                 } else {
-                    eprintln!(
+                    log::warn!(
                         "[ProfileManager] failed to load profile: {}, using defaults",
                         e
                     );
@@ -179,7 +179,7 @@ impl ProfileManager {
         // Generate profile_id for legacy profiles that have none.
         if profile.domain.profile_id.is_empty() {
             let generated = uuid::Uuid::new_v4().to_string();
-            eprintln!(
+            log::info!(
                 "[ProfileManager] profile_id was empty — generated {}",
                 generated
             );
@@ -189,7 +189,7 @@ impl ProfileManager {
         // Templates.
         let template_manager = {
             let tm = TemplateManager::load_from_default_dir(key_ref);
-            eprintln!(
+            log::info!(
                 "[ProfileManager] loaded templates: {} prim, {} ind, {} cmp, {} chart, {} sets",
                 tm.primitive_templates.len(),
                 tm.indicator_templates.len(),
@@ -210,27 +210,27 @@ impl ProfileManager {
                             presets.insert(meta.id.clone(), preset);
                         }
                         Err(e) => {
-                            eprintln!(
+                            log::warn!(
                                 "[ProfileManager] failed to load preset {}: {}",
                                 meta.id, e
                             );
                         }
                     }
                 }
-                eprintln!("[ProfileManager] loaded {} presets", presets.len());
+                log::info!("[ProfileManager] loaded {} presets", presets.len());
             }
-            Err(e) => eprintln!("[ProfileManager] failed to list presets: {}", e),
+            Err(e) => log::warn!("[ProfileManager] failed to list presets: {}", e),
         }
 
         // Settings snapshots — always plaintext, never encrypted.
         let snapshots_path = active_profile_data_dir().join("settings_snapshots.json");
         let snapshots = match load_json::<SettingsSnapshots>(&snapshots_path, None) {
             Ok(s) => {
-                eprintln!("[ProfileManager] loaded settings snapshots");
+                log::info!("[ProfileManager] loaded settings snapshots");
                 s
             }
             Err(_) => {
-                eprintln!("[ProfileManager] no settings snapshots found, using defaults");
+                log::info!("[ProfileManager] no settings snapshots found, using defaults");
                 SettingsSnapshots::default()
             }
         };
@@ -399,12 +399,12 @@ impl ProfileManager {
                     self.pending_recovery_key = Some(crypto::format_recovery_key(&recovery_key));
                     let recovery_path = profile_dir.join("recovery_key.enc");
                     if let Err(e) = global_storage().write(&path_key(&recovery_path), &encrypted) {
-                        eprintln!("[ProfileManager] failed to write recovery_key.enc: {}", e);
+                        log::warn!("[ProfileManager] failed to write recovery_key.enc: {}", e);
                     }
                     self.encrypted_master_key = Some(encrypted);
                 }
                 Err(e) => {
-                    eprintln!("[ProfileManager] failed to encrypt master key for recovery: {}", e);
+                    log::warn!("[ProfileManager] failed to encrypt master key for recovery: {}", e);
                 }
             }
         }
@@ -450,12 +450,12 @@ impl ProfileManager {
                     self.pending_recovery_key = Some(crypto::format_recovery_key(&recovery_key));
                     let recovery_path = dir.join("recovery_key.enc");
                     if let Err(e) = global_storage().write(&path_key(&recovery_path), &encrypted) {
-                        eprintln!("[ProfileManager] failed to write recovery_key.enc: {}", e);
+                        log::warn!("[ProfileManager] failed to write recovery_key.enc: {}", e);
                     }
                     self.encrypted_master_key = Some(encrypted);
                 }
                 Err(e) => {
-                    eprintln!(
+                    log::warn!(
                         "[ProfileManager] failed to encrypt master key for recovery: {}",
                         e
                     );

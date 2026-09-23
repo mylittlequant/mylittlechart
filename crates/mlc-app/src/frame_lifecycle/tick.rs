@@ -52,7 +52,7 @@ impl ChartApp {
             let (rings_dropped, bars_dropped, skipped_alerted) = state.bubble_store.clear_all_kline_layers();
             state.needs_initial_viewport_fit = true;
             state.bars_released = true;
-            eprintln!(
+            log::warn!(
                 "[ChartApp] Released idle preset '{}': dropped {} ring points, {} bars, skipped {} alerted (parked {}s)",
                 id, rings_dropped, bars_dropped, skipped_alerted, state.parked_at.elapsed().as_secs(),
             );
@@ -71,7 +71,7 @@ impl ChartApp {
             let (rings_dropped, bars_dropped, skipped_alerted) = state.bubble_store.clear_all_kline_layers();
             state.needs_initial_viewport_fit = true;
             state.bars_released = true;
-            eprintln!(
+            log::warn!(
                 "[ChartApp] Released parked preset '{}': dropped {} ring points, {} bars, skipped {} alerted (manual)",
                 id, rings_dropped, bars_dropped, skipped_alerted,
             );
@@ -324,7 +324,7 @@ impl ChartApp {
         // Evict entries that timed out without a BarsLoaded response (~10 s at 60 fps).
         self.pending_compare.retain_mut(|p| {
             if p.deadline_frames == 0 {
-                eprintln!(
+                log::warn!(
                     "[Compare] Timed out waiting for bars: symbol={} exchange={} at={}",
                     p.symbol,
                     p.exchange.as_str(),
@@ -1441,7 +1441,7 @@ impl ChartApp {
 
         // ── Tick spike log ───────────────────────────────────────────────────
         if self.last_tick_us > 3000 && std::env::var("MLC_PERF_LOG").is_ok() {
-            eprintln!(
+            log::debug!(
                 "[TICK-SPIKE] tick={}us events={}us recalc={}us autoscale={}us obpanel={}us(n={}) dom={}us l2={}us heat={}us trpanel={}us(n={}) barapply={}us | drained={} (bars={} backfill={} scroll={} trade={} ticker={} conn={} other={}) lag_events={}",
                 self.last_tick_us,
                 self.last_event_process_us,
@@ -1462,7 +1462,7 @@ impl ChartApp {
 
         // ── Startup-wave log ─────────────────────────────────────────────────
         if (n_connector > 0 || n_symbols > 0) && std::env::var("MLC_PERF_LOG").is_ok() {
-            eprintln!(
+            log::debug!(
                 "[STARTUP-WAVE] conn_ready={} symbols_loaded={}(total_syms={} insert={}us) tick={}us events={}us drained={} | skeleton_window={}",
                 n_connector, n_symbols, n_symbols_total, symbols_insert_us,
                 self.last_tick_us, self.last_event_process_us, _drain_count,
@@ -1507,7 +1507,7 @@ impl ChartApp {
                     for id in &needs_heal {
                         self.indicator_heal_attempted.insert(*id);
                     }
-                    eprintln!(
+                    log::info!(
                         "[ChartApp] indicator heal: bubble {} has {} bars, {} never-computed instance(s) {:?} — recalculating",
                         bid, bars.len(), needs_heal.len(), needs_heal
                     );

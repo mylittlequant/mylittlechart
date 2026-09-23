@@ -2631,11 +2631,11 @@ impl BackendCore {
                     if let Some(metrics) = crate::screener::compute_screener_metrics(&bars) {
                         metrics_map.insert(key, metrics);
                     } else {
-                        eprintln!("[screener] {} scan returned too few bars for RSI/ATR(14)", symbol_owned);
+                        log::info!("[screener] {} scan returned too few bars for RSI/ATR(14)", symbol_owned);
                     }
                 }
                 Err(e) => {
-                    eprintln!("[screener] {} scan failed: {}", symbol_owned, e);
+                    log::warn!("[screener] {} scan failed: {}", symbol_owned, e);
                 }
             },
         );
@@ -2702,7 +2702,7 @@ impl BackendCore {
     /// back to live data until some window happens to resubscribe.
     pub fn unsubscribe_trades(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
         if self.alert_still_needs_trades(exchange_id, symbol, account_type) {
-            eprintln!(
+            log::info!(
                 "[BackendCore] unsubscribe_trades: keeping {}/{}/{} alive — an active alert still needs it",
                 exchange_id.as_str(), account_type.short_label(), symbol,
             );

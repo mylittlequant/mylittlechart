@@ -128,13 +128,13 @@ pub fn start_server(
                     Err(e) => {
                         attempts += 1;
                         if attempts >= 3 {
-                            eprintln!(
+                            log::error!(
                                 "[zengeld-server] port {} unavailable after {} attempts — giving up: {}",
                                 port, attempts, e
                             );
                             return;
                         }
-                        eprintln!(
+                        log::warn!(
                             "[zengeld-server] port {} unavailable ({}), retry {}/3 in 5s",
                             port, e, attempts
                         );
@@ -144,9 +144,9 @@ pub fn start_server(
             }
         };
 
-        eprintln!("[zengeld-server] Agent API listening on http://{addr}");
+        log::info!("[zengeld-server] Agent API listening on http://{addr}");
         if let Err(e) = axum::serve(listener, app).await {
-            eprintln!("[zengeld-server] server error: {}", e);
+            log::error!("[zengeld-server] server error: {}", e);
         }
     })
 }

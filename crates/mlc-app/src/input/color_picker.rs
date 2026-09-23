@@ -581,7 +581,7 @@ impl ChartApp {
                             };
                             self.connect_member(member, target_gid);
                             self.core.tags_mut().unmark_synced(member);
-                            eprintln!(
+                            log::info!(
                                 "[ChartApp] Panel {} → color group [{:.2},{:.2},{:.2}]",
                                 panel_id, new_color[0], new_color[1], new_color[2]
                             );
@@ -739,7 +739,7 @@ impl ChartApp {
             }
         }
         self.sync_drawing_back_to_group();
-        eprintln!("[ChartApp] applied primitive color: {} = {}", field, color);
+        log::info!("[ChartApp] applied primitive color: {} = {}", field, color);
         self.autosave_snapshot();
         if let Some(prim_id) = self.panel_app.primitive_settings_state.primitive_id {
             self.snapshot_primitive_settings_to_user_manager(prim_id);
@@ -752,15 +752,15 @@ impl ChartApp {
             match output_name {
                 "signal_bullish_color" => {
                     self.core.indicators_mut().set_signal_bullish_color(ind_id, color);
-                    eprintln!("[ChartApp] applied indicator signal_bullish_color: {} = {}", ind_id, color);
+                    log::info!("[ChartApp] applied indicator signal_bullish_color: {} = {}", ind_id, color);
                 }
                 "signal_bearish_color" => {
                     self.core.indicators_mut().set_signal_bearish_color(ind_id, color);
-                    eprintln!("[ChartApp] applied indicator signal_bearish_color: {} = {}", ind_id, color);
+                    log::info!("[ChartApp] applied indicator signal_bearish_color: {} = {}", ind_id, color);
                 }
                 _ => {
                     if self.core.indicators_mut().set_output_color(ind_id, output_name, color) {
-                        eprintln!("[ChartApp] applied indicator color: {} output '{}' = {}", ind_id, output_name, color);
+                        log::info!("[ChartApp] applied indicator color: {} output '{}' = {}", ind_id, output_name, color);
                     }
                 }
             }
@@ -779,128 +779,128 @@ impl ChartApp {
                     let panel = crate::chart_panel_bridge::ensure_chart_panel_state(&mut self.panels_store, pid);
                     panel.crosshair_options.vert_line.color = color.to_string();
                     panel.crosshair_options.horz_line.color = color.to_string();
-                    eprintln!("[ChartApp] applied crosshair_line_color: {}", color);
+                    log::info!("[ChartApp] applied crosshair_line_color: {}", color);
                 }
             }
             "body_up_color" => {
                 self.panel_app.theme_manager.current_mut().series.candle_up_body = color.to_string();
-                eprintln!("[ChartApp] applied body_up_color: {}", color);
+                log::info!("[ChartApp] applied body_up_color: {}", color);
             }
             "body_down_color" => {
                 self.panel_app.theme_manager.current_mut().series.candle_down_body = color.to_string();
-                eprintln!("[ChartApp] applied body_down_color: {}", color);
+                log::info!("[ChartApp] applied body_down_color: {}", color);
             }
             "border_up_color" => {
                 self.panel_app.theme_manager.current_mut().series.candle_up_border = Some(color.to_string());
-                eprintln!("[ChartApp] applied border_up_color: {}", color);
+                log::info!("[ChartApp] applied border_up_color: {}", color);
             }
             "border_down_color" => {
                 self.panel_app.theme_manager.current_mut().series.candle_down_border = Some(color.to_string());
-                eprintln!("[ChartApp] applied border_down_color: {}", color);
+                log::info!("[ChartApp] applied border_down_color: {}", color);
             }
             "wick_up_color" => {
                 self.panel_app.theme_manager.current_mut().series.candle_up_wick = color.to_string();
-                eprintln!("[ChartApp] applied wick_up_color: {}", color);
+                log::info!("[ChartApp] applied wick_up_color: {}", color);
             }
             "wick_down_color" => {
                 self.panel_app.theme_manager.current_mut().series.candle_down_wick = color.to_string();
-                eprintln!("[ChartApp] applied wick_down_color: {}", color);
+                log::info!("[ChartApp] applied wick_down_color: {}", color);
             }
             "footprint_buy_color" => {
                 self.panel_app.theme_manager.current_mut().series.footprint_buy = color.to_string();
-                eprintln!("[ChartApp] applied footprint_buy_color: {}", color);
+                log::info!("[ChartApp] applied footprint_buy_color: {}", color);
             }
             "footprint_sell_color" => {
                 self.panel_app.theme_manager.current_mut().series.footprint_sell = color.to_string();
-                eprintln!("[ChartApp] applied footprint_sell_color: {}", color);
+                log::info!("[ChartApp] applied footprint_sell_color: {}", color);
             }
             "renko_up_color" => {
                 self.panel_app.theme_manager.current_mut().series.renko_up = color.to_string();
-                eprintln!("[ChartApp] applied renko_up_color: {}", color);
+                log::info!("[ChartApp] applied renko_up_color: {}", color);
             }
             "renko_down_color" => {
                 self.panel_app.theme_manager.current_mut().series.renko_down = color.to_string();
-                eprintln!("[ChartApp] applied renko_down_color: {}", color);
+                log::info!("[ChartApp] applied renko_down_color: {}", color);
             }
             "pnf_x_color" => {
                 self.panel_app.theme_manager.current_mut().series.pnf_x = color.to_string();
-                eprintln!("[ChartApp] applied pnf_x_color: {}", color);
+                log::info!("[ChartApp] applied pnf_x_color: {}", color);
             }
             "pnf_o_color" => {
                 self.panel_app.theme_manager.current_mut().series.pnf_o = color.to_string();
-                eprintln!("[ChartApp] applied pnf_o_color: {}", color);
+                log::info!("[ChartApp] applied pnf_o_color: {}", color);
             }
             "tlb_up_color" => {
                 self.panel_app.theme_manager.current_mut().series.tlb_up = color.to_string();
-                eprintln!("[ChartApp] applied tlb_up_color: {}", color);
+                log::info!("[ChartApp] applied tlb_up_color: {}", color);
             }
             "tlb_down_color" => {
                 self.panel_app.theme_manager.current_mut().series.tlb_down = color.to_string();
-                eprintln!("[ChartApp] applied tlb_down_color: {}", color);
+                log::info!("[ChartApp] applied tlb_down_color: {}", color);
             }
             "kagi_yang_color" => {
                 self.panel_app.theme_manager.current_mut().series.kagi_yang = color.to_string();
-                eprintln!("[ChartApp] applied kagi_yang_color: {}", color);
+                log::info!("[ChartApp] applied kagi_yang_color: {}", color);
             }
             "kagi_yin_color" => {
                 self.panel_app.theme_manager.current_mut().series.kagi_yin = color.to_string();
-                eprintln!("[ChartApp] applied kagi_yin_color: {}", color);
+                log::info!("[ChartApp] applied kagi_yin_color: {}", color);
             }
             "hollow_up_color" => {
                 self.panel_app.theme_manager.current_mut().series.hollow_up = color.to_string();
-                eprintln!("[ChartApp] applied hollow_up_color: {}", color);
+                log::info!("[ChartApp] applied hollow_up_color: {}", color);
             }
             "hollow_down_color" => {
                 self.panel_app.theme_manager.current_mut().series.hollow_down = color.to_string();
-                eprintln!("[ChartApp] applied hollow_down_color: {}", color);
+                log::info!("[ChartApp] applied hollow_down_color: {}", color);
             }
             "line_color" => {
                 self.panel_app.theme_manager.current_mut().series.line_color = color.to_string();
-                eprintln!("[ChartApp] applied line_color: {}", color);
+                log::info!("[ChartApp] applied line_color: {}", color);
             }
             "step_line_color" => {
                 self.panel_app.theme_manager.current_mut().series.step_line_color = color.to_string();
-                eprintln!("[ChartApp] applied step_line_color: {}", color);
+                log::info!("[ChartApp] applied step_line_color: {}", color);
             }
             "area_line_color" => {
                 self.panel_app.theme_manager.current_mut().series.area_line = color.to_string();
-                eprintln!("[ChartApp] applied area_line_color: {}", color);
+                log::info!("[ChartApp] applied area_line_color: {}", color);
             }
             "area_top_color" => {
                 self.panel_app.theme_manager.current_mut().series.area_top = color.to_string();
-                eprintln!("[ChartApp] applied area_top_color: {}", color);
+                log::info!("[ChartApp] applied area_top_color: {}", color);
             }
             "area_bottom_color" => {
                 self.panel_app.theme_manager.current_mut().series.area_bottom = color.to_string();
-                eprintln!("[ChartApp] applied area_bottom_color: {}", color);
+                log::info!("[ChartApp] applied area_bottom_color: {}", color);
             }
             "baseline_top_line_color" => {
                 self.panel_app.theme_manager.current_mut().series.baseline_top_line = color.to_string();
-                eprintln!("[ChartApp] applied baseline_top_line_color: {}", color);
+                log::info!("[ChartApp] applied baseline_top_line_color: {}", color);
             }
             "baseline_top_fill_color" => {
                 self.panel_app.theme_manager.current_mut().series.baseline_top_fill = color.to_string();
-                eprintln!("[ChartApp] applied baseline_top_fill_color: {}", color);
+                log::info!("[ChartApp] applied baseline_top_fill_color: {}", color);
             }
             "baseline_bottom_line_color" => {
                 self.panel_app.theme_manager.current_mut().series.baseline_bottom_line = color.to_string();
-                eprintln!("[ChartApp] applied baseline_bottom_line_color: {}", color);
+                log::info!("[ChartApp] applied baseline_bottom_line_color: {}", color);
             }
             "baseline_bottom_fill_color" => {
                 self.panel_app.theme_manager.current_mut().series.baseline_bottom_fill = color.to_string();
-                eprintln!("[ChartApp] applied baseline_bottom_fill_color: {}", color);
+                log::info!("[ChartApp] applied baseline_bottom_fill_color: {}", color);
             }
             "bars_up_color" => {
                 self.panel_app.theme_manager.current_mut().series.bar_up = color.to_string();
-                eprintln!("[ChartApp] applied bars_up_color: {}", color);
+                log::info!("[ChartApp] applied bars_up_color: {}", color);
             }
             "bars_down_color" => {
                 self.panel_app.theme_manager.current_mut().series.bar_down = color.to_string();
-                eprintln!("[ChartApp] applied bars_down_color: {}", color);
+                log::info!("[ChartApp] applied bars_down_color: {}", color);
             }
             "line_markers_color" => {
                 self.panel_app.theme_manager.current_mut().series.line_markers_color = color.to_string();
-                eprintln!("[ChartApp] applied line_markers_color: {}", color);
+                log::info!("[ChartApp] applied line_markers_color: {}", color);
             }
             "watermark_color" => {
                 let pid = self.panel_app.panel_grid.active_container().map(|w| w.chart_panel_id);
@@ -909,7 +909,7 @@ impl ChartApp {
                     if let Some(ref mut watermark) = panel.watermark {
                         if let Some(line) = watermark.lines.first_mut() {
                             line.color = color.to_string();
-                            eprintln!("[ChartApp] applied watermark_color: {}", color);
+                            log::info!("[ChartApp] applied watermark_color: {}", color);
                         }
                     }
                 }
@@ -922,9 +922,9 @@ impl ChartApp {
                     other,
                     color,
                 ) {
-                    eprintln!("[ChartApp] applied appearance color '{}' = {}", other, color);
+                    log::info!("[ChartApp] applied appearance color '{}' = {}", other, color);
                 } else {
-                    eprintln!("[ChartApp] apply_chart_settings_color: unknown field '{}' = {}", other, color);
+                    log::info!("[ChartApp] apply_chart_settings_color: unknown field '{}' = {}", other, color);
                 }
             }
         }
@@ -942,7 +942,7 @@ impl ChartApp {
         let idx = self.panel_app.compare_settings_state.series_index;
         self.panel_app.compare_settings_state.cached_color = color.to_string();
         self.edit_compare_style(idx, |ov| ov.set_series_color_by_index(idx, color));
-        eprintln!("[ChartApp] cmp_settings color applied: idx={} color={}", idx, color);
+        log::info!("[ChartApp] cmp_settings color applied: idx={} color={}", idx, color);
         self.snapshot_compare_settings_to_user_manager();
     }
 
