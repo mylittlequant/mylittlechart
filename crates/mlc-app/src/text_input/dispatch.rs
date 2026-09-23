@@ -401,15 +401,21 @@ impl ChartApp {
     fn blur_if_stale_focus(&mut self, focused_id: &WidgetId) -> bool {
         #[cfg(debug_assertions)]
         {
+            // A warning, not a debug_assert: the owner's wasm stand is a
+            // `--dev` build, where a panic here would take the whole app
+            // down over a missing stamp — and a field focused in the same
+            // frame a key arrives, before its first draw, is legitimately
+            // unstamped for that one frame.
             let never_stamped = self.input_coordinator.borrow().text_fields().focused_was_never_stamped();
-            debug_assert!(
-                !never_stamped,
-                "[stale-focus] text field '{}' is focused but has NEVER been stamped via \
-                 update_field()/mark_seen() — its draw site is missing the stamp call that \
-                 TextFieldStore::focused_is_stale() needs to self-heal a leaked focus. \
-                 Add the missing stamp at wherever this field is drawn.",
-                focused_id.as_str()
-            );
+            if never_stamped {
+                log::warn!(
+                    "[stale-focus] text field '{}' is focused but has NEVER been stamped via \
+                     update_field()/mark_seen() — its draw site is missing the stamp call that \
+                     TextFieldStore::focused_is_stale() needs to self-heal a leaked focus. \
+                     Add the missing stamp at wherever this field is drawn.",
+                    focused_id.as_str()
+                );
+            }
         }
         if !self.input_coordinator.borrow().text_fields().focused_is_stale() {
             return false;
