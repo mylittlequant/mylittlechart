@@ -1024,7 +1024,8 @@ impl CloudSession {
                     chart.panel_app.cloud_overlay_state.data = CloudOverlayData::Error { message: e };
                 }
                 FlowResult::News(Ok(posts)) => {
-                    chart.panel_app.cloud_overlay_state.data = CloudOverlayData::News {
+                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    ov.data = CloudOverlayData::News {
                         posts: posts
                             .into_iter()
                             .map(|p| CloudNewsPost {
@@ -1039,9 +1040,22 @@ impl CloudSession {
                             })
                             .collect(),
                     };
+                    ov.mark_news_fetched();
                 }
                 FlowResult::News(Err(e)) => {
-                    chart.panel_app.cloud_overlay_state.data = CloudOverlayData::Error { message: e };
+                    let ov = &mut chart.panel_app.cloud_overlay_state;
+                    // A due-refresh failure must not blank an already-shown
+                    // page — only an initial (still-`Loading`) fetch's error
+                    // replaces `data`; a background refresh just clears its
+                    // own in-flight flag and quietly retries next cadence,
+                    // same "leave the current page on screen" contract the
+                    // Forum tab's own background refresh gives.
+                    if matches!(ov.data, CloudOverlayData::Loading) {
+                        ov.data = CloudOverlayData::Error { message: e };
+                    } else {
+                        web_sys::console::warn_1(&format!("[news] refresh failed: {}", e).into());
+                    }
+                    ov.news_refreshing = false;
                 }
                 FlowResult::Redeem(Ok(paid_until)) => {
                     st.redeem_status = RedeemStatus::Redeemed {
@@ -1766,8 +1780,23 @@ impl CloudSession {
                 }
                 let needs_data = matches!(ov.kind, CloudOverlayKind::News | CloudOverlayKind::Download)
                     && matches!(ov.data, CloudOverlayData::Empty);
-                if needs_data && !self.inner.borrow().in_flight {
-                    ov.data = CloudOverlayData::Loading;
+                // News-only quiet re-fetch (recon item F1): `open()` already
+                // struck `news_fetched_at` stale on every open, and the
+                // passive `FORUM_REFRESH_MS` cadence keeps it stale while the
+                // panel stays open — same idiom the Forum tab's own
+                // `forum_list_due_for_refresh()` uses. Deliberately NOT
+                // extended to `Download`: that overlay reads the release
+                // manifest, which the desktop build's own in-process updater
+                // already polls on its own cadence.
+                let news_due_refresh = ov.kind == CloudOverlayKind::News
+                    && matches!(ov.data, CloudOverlayData::News { .. })
+                    && ov.news_due_for_refresh();
+                if (needs_data || news_due_refresh) && !self.inner.borrow().in_flight {
+                    if news_due_refresh {
+                        ov.news_refreshing = true;
+                    } else {
+                        ov.data = CloudOverlayData::Loading;
+                    }
                     let kind = ov.kind;
                     let inner = self.inner.clone();
                     let transport = self.inner.borrow().transport.snapshot();

@@ -6581,30 +6581,48 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 }
             }
 
-            // News: one fetch per Empty→open transition, fire-and-forget on
-            // the live-data runtime (never `block_on` here — this runs on
-            // the render thread every frame). The result comes back through
-            // `news_feed_rx`, polled below with a non-blocking `try_recv`.
+            // News: one fetch per Empty→open transition, PLUS a quiet
+            // background re-fetch on the same `FORUM_REFRESH_MS` cadence the
+            // Forum tab's own `forum_list_due_for_refresh()` uses while the
+            // panel stays open (recon item F1 — nothing used to reset `data`
+            // back to `Empty` once it became `News{..}`, so a post published
+            // after this run's first fetch was invisible until a full
+            // restart). Fire-and-forget on the live-data runtime (never
+            // `block_on` here — this runs on the render thread every frame).
+            // The result comes back through `news_feed_rx`, polled below
+            // with a non-blocking `try_recv`.
             #[cfg(feature = "cloud")]
             {
                 use mlc_app_layout::ui::modal_settings::{CloudOverlayData, CloudOverlayKind};
-                let needs_fetch = self.windows.values().any(|pw| {
+                let needs_initial_fetch = self.windows.values().any(|pw| {
                     let ov = &pw.chart.panel_app.cloud_overlay_state;
                     ov.is_open
                         && ov.kind == CloudOverlayKind::News
                         && matches!(ov.data, CloudOverlayData::Empty)
                 });
-                if needs_fetch {
+                let needs_refresh = self.windows.values().any(|pw| {
+                    let ov = &pw.chart.panel_app.cloud_overlay_state;
+                    ov.is_open
+                        && ov.kind == CloudOverlayKind::News
+                        && matches!(ov.data, CloudOverlayData::News { .. })
+                        && ov.news_due_for_refresh()
+                });
+                if needs_initial_fetch || needs_refresh {
                     for pw in self.windows.values_mut() {
                         let ov = &mut pw.chart.panel_app.cloud_overlay_state;
-                        if ov.is_open
-                            && ov.kind == CloudOverlayKind::News
-                            && matches!(ov.data, CloudOverlayData::Empty)
-                        {
+                        if !(ov.is_open && ov.kind == CloudOverlayKind::News) {
+                            continue;
+                        }
+                        if matches!(ov.data, CloudOverlayData::Empty) {
                             ov.data = CloudOverlayData::Loading;
                             pw.chart_dirty = true;
                             pw.overlay_dirty = true;
                             pw.window.request_redraw();
+                        } else if matches!(ov.data, CloudOverlayData::News { .. }) && ov.news_due_for_refresh() {
+                            // Quiet: `data` stays on screen as-is, only the
+                            // in-flight flag flips — no redraw needed for
+                            // this branch, nothing visible changed yet.
+                            ov.news_refreshing = true;
                         }
                     }
                     let tx = self.news_feed_tx.clone();
@@ -6617,15 +6635,33 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 if let Ok(result) = self.news_feed_rx.try_recv() {
                     for pw in self.windows.values_mut() {
                         let ov = &mut pw.chart.panel_app.cloud_overlay_state;
-                        if matches!(ov.data, CloudOverlayData::Loading) {
-                            ov.data = match &result {
-                                Ok(posts) => CloudOverlayData::News { posts: posts.clone() },
-                                Err(e) => CloudOverlayData::Error { message: e.clone() },
-                            };
-                            pw.chart_dirty = true;
-                            pw.overlay_dirty = true;
-                            pw.window.request_redraw();
+                        let is_initial = matches!(ov.data, CloudOverlayData::Loading);
+                        let is_refresh = ov.kind == CloudOverlayKind::News && ov.news_refreshing;
+                        if !is_initial && !is_refresh {
+                            continue;
                         }
+                        match &result {
+                            Ok(posts) => {
+                                ov.data = CloudOverlayData::News { posts: posts.clone() };
+                                ov.mark_news_fetched();
+                            }
+                            Err(e) => {
+                                // A due-refresh failure must not blank an
+                                // already-shown page — only the initial
+                                // (still-`Loading`) fetch's error replaces
+                                // `data`; a refresh just clears its own
+                                // in-flight flag and quietly retries next
+                                // cadence, same tolerance the Forum tab's own
+                                // background refresh gives its failures.
+                                if is_initial {
+                                    ov.data = CloudOverlayData::Error { message: e.clone() };
+                                }
+                                ov.news_refreshing = false;
+                            }
+                        }
+                        pw.chart_dirty = true;
+                        pw.overlay_dirty = true;
+                        pw.window.request_redraw();
                     }
                 }
             }

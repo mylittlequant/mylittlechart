@@ -5162,6 +5162,21 @@ pub struct CloudOverlayState {
     pub forum_reply_pending: bool,
     /// One-shot mailbox for a Forum action the shell should perform.
     pub forum_request: Option<ForumRequest>,
+    /// Wall-clock ms ([`now_ms`]) `data` last landed a successful News fetch
+    /// (`CloudOverlayData::News`) — `None` until the first page lands. Same
+    /// pair shape as `forum_list_fetched_at`/`forum_list_refreshing` above
+    /// and `ForumV2State::boards_fetched_at`/`boards_refreshing`, added so
+    /// the News overlay stops being the one surface in this file that
+    /// fetches exactly once per app run: without this, nothing ever reset
+    /// `data` back to `Empty` once it became `News{..}`, so a post published
+    /// after the client's first fetch this run was invisible until a full
+    /// reload (owner review 2026-09-23, recon item F1).
+    pub news_fetched_at: Option<u64>,
+    /// A News fetch (initial or due-refresh) is in flight — read by
+    /// [`Self::news_due_for_refresh`] so the passive poll never fires a
+    /// second request on top of one already landing, same reasoning
+    /// `forum_list_refreshing` gives for its own pair.
+    pub news_refreshing: bool,
 }
 
 #[cfg(feature = "cloud")]
@@ -5189,6 +5204,8 @@ impl Default for CloudOverlayState {
             forum_thread_refreshing: false,
             forum_reply_pending: false,
             forum_request: None,
+            news_fetched_at: None,
+            news_refreshing: false,
         }
     }
 }
@@ -5227,6 +5244,20 @@ impl CloudOverlayState {
         if !keep {
             self.data = CloudOverlayData::Empty;
         }
+        // News: every open requests a fresh read — `keep` above already
+        // leaves an already-fetched `News{..}` page on screen (so the panel
+        // never blanks to "Loading…" on a reopen), but the timestamp is
+        // struck stale so the passive poll's `news_due_for_refresh()` fires
+        // a quiet background refetch on the very next frame instead of
+        // waiting out the rest of `FORUM_REFRESH_MS` from whenever the FIRST
+        // fetch this run happened to land (recon item F1 — see
+        // `news_fetched_at`'s own doc). Harmless no-op when `kind` is not
+        // `News` (`news_fetched_at`/`news_refreshing` simply go unread) or
+        // when `!keep` already reset `data` to `Empty` (the ordinary
+        // `Empty`-triggers-a-fetch idiom fires instead).
+        if kind == CloudOverlayKind::News {
+            self.invalidate_news();
+        }
         // Forum: always drop back to the list sub-view on reopen — a stale
         // open thread or an abandoned compose form must not resurface.
         // `forum_list` itself is kept when already `Loaded` (same "what to
@@ -5264,6 +5295,7 @@ impl CloudOverlayState {
         self.forum_thread_refreshing = false;
         self.forum_reply_pending = false;
         self.forum_request = None;
+        self.news_refreshing = false;
     }
 
     pub fn toggle(&mut self, kind: CloudOverlayKind) {
@@ -5329,6 +5361,36 @@ impl CloudOverlayState {
     pub fn mark_forum_thread_fetched(&mut self) {
         self.forum_thread_fetched_at = Some(now_ms());
         self.forum_thread_refreshing = false;
+    }
+
+    /// Strikes `news_fetched_at` stale (past the epoch, already older than
+    /// [`FORUM_REFRESH_MS`]) WITHOUT touching `data` — the next passive
+    /// poll's [`Self::news_due_for_refresh`] fires immediately while the
+    /// currently-shown page stays on screen, same "invalidate but keep
+    /// showing the old page" contract [`Self::invalidate_forum_list`] would
+    /// give if News were wrapped in an enum with its own `Empty` state
+    /// instead of sharing `data`'s. Called by [`Self::open`].
+    pub fn invalidate_news(&mut self) {
+        self.news_fetched_at = Some(0);
+        self.news_refreshing = false;
+    }
+
+    /// True once [`FORUM_REFRESH_MS`] has passed since `data` last landed a
+    /// successful News fetch, and no background refresh is already in
+    /// flight — same shape as [`Self::forum_list_due_for_refresh`]. Read by
+    /// both shells' passive-fetch poll alongside their existing
+    /// `data == Empty` check to decide "reissue quietly" for an
+    /// already-`News{..}` page.
+    pub fn news_due_for_refresh(&self) -> bool {
+        !self.news_refreshing
+            && matches!(self.news_fetched_at, Some(t) if now_ms().saturating_sub(t) >= FORUM_REFRESH_MS)
+    }
+
+    /// Stamps `data` as freshly fetched — call once a News fetch (initial,
+    /// due-refresh, or the one `open()` forces) lands successfully.
+    pub fn mark_news_fetched(&mut self) {
+        self.news_fetched_at = Some(now_ms());
+        self.news_refreshing = false;
     }
 
     pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {
