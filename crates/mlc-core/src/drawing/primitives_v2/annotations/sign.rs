@@ -93,9 +93,17 @@ impl SignType {
             SignType::Diamond => r#"<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="12,2 22,12 12,22 2,12"/></svg>"#,
             SignType::Triangle => r#"<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="12,2 22,22 2,22"/></svg>"#,
             SignType::Star => r#"<svg viewBox="0 0 24 24" fill="currentColor"><polygon points="12,2 15,9 22,9 17,14 19,22 12,17 5,22 7,14 2,9 9,9"/></svg>"#,
-            SignType::Cross => r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="4" y1="12" x2="20" y2="12"/><line x1="12" y1="4" x2="12" y2="20"/></svg>"#,
-            SignType::Check => r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="4,12 9,17 20,6"/></svg>"#,
-            SignType::X => r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>"#,
+            // Root stroke-width pinned to 1.5 (not the "3" a naive Lucide-style
+            // read suggests): uzor's SVG renderer used to ignore the root
+            // stroke-width entirely and always render at its own fixed ~1.5
+            // (see `icons.rs`'s `icon_stroke_width_guard` test doc comment for
+            // the full history); uzor commit f11176c made it honor the root
+            // value directly, so keeping "3" here would have tripled these
+            // markers' weight on both the picker cell and the chart-drawn
+            // glyph. 1.5 preserves the pre-fix rendered weight exactly.
+            SignType::Cross => r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="4" y1="12" x2="20" y2="12"/><line x1="12" y1="4" x2="12" y2="20"/></svg>"#,
+            SignType::Check => r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="4,12 9,17 20,6"/></svg>"#,
+            SignType::X => r#"<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="5" y1="5" x2="19" y2="19"/><line x1="19" y1="5" x2="5" y2="19"/></svg>"#,
         }
     }
 }
