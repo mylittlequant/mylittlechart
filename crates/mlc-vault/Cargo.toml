@@ -42,6 +42,14 @@ subtle = "2"
 # promotes an already-vetted, already-locked crate rather than adding a
 # second curve implementation for the same math.
 curve25519-dalek = "4"
+# Ed25519 (channel post signing, `src/channel.rs`) via `SigningKey`/
+# `VerifyingKey`. Already a `[workspace.dependencies]` entry (pinned to
+# 2.2.0 in the lockfile, `features = ["std"]`) — `mlc-updater` already
+# depends on it directly for update-binary signature verification, and
+# `curve25519-dalek` above is already pulled in transitively through it.
+# Depending on it directly here (rather than duplicating its primitives)
+# promotes an already-vetted, already-locked crate.
+ed25519-dalek.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 web-sys = { version = "0.3", features = ["Window", "Storage"] }

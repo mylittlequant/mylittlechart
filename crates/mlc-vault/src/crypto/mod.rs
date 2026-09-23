@@ -42,6 +42,26 @@ pub const HKDF_DM_INFO: &[u8] = b"mylittlechart-dm-v1";
 /// from related material one HKDF call away from each other.
 pub const HKDF_DM_IDENTITY_INFO: &[u8] = b"mylittlechart dm identity v1";
 
+/// HKDF info string prefix binding a derived key to one group epoch's
+/// key-wrap — see [`crate::group::wrap_group_key`]/[`crate::group::
+/// unwrap_group_key`]. The group (conversation) id and epoch number are
+/// appended after this prefix (own delimiter, see that module) so wrapping
+/// the same raw group key for the same two identities under a different
+/// group or a different epoch always derives a different AES key —
+/// distinct from [`HKDF_DM_INFO`] so a group wrap can never collide with an
+/// ordinary DM conversation key even if the group id happened to equal a
+/// conversation id.
+pub const HKDF_GROUP_WRAP_INFO: &[u8] = b"mylittlechart-group-wrap-v1";
+
+/// HKDF info string prefix binding a channel's Ed25519 signing identity to
+/// the vault key it is derived from — see [`crate::channel::
+/// ChannelSigningIdentity::from_vault_key`]. The channel id is appended
+/// after this prefix (same reasoning as [`HKDF_GROUP_WRAP_INFO`]) so the
+/// same vault derives an unrelated signing key per channel it owns.
+/// Distinct from [`HKDF_DM_IDENTITY_INFO`] — a channel signing key and a
+/// DM identity key must never coincide even for the same vault.
+pub const HKDF_CHANNEL_SIGNING_INFO: &[u8] = b"mylittlechart channel signing v1";
+
 /// AES-GCM nonce size in bytes.
 const NONCE_SIZE: usize = 12;
 
