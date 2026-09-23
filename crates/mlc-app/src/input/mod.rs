@@ -4089,7 +4089,7 @@ impl ChartApp {
                 // Modal list layout constants (must match render_overview_tab).
                 let item_h = 28.0_f64;
                 let list_top = wl.list_viewport_rect.y;
-                let scroll = self.standalone_panels.watchlist_modal.scroll.offset;
+                let scroll = self.standalone_panels.watchlist_modal.scroll.animated_offset();
                 let relative_y = y - list_top + scroll;
                 let row_count = wl.item_rects.len();
                 let drop = if relative_y < 0.0 {

@@ -2525,7 +2525,19 @@ fn map_platform_event_to_shell(
             Some(ShellEvent::CursorLeft)
         }
         PlatformEvent::Scroll { dx, dy } => {
-            Some(ShellEvent::Scroll { dx, dy })
+            // `PlatformEvent::Scroll` carries CSS pixels on web (uzor's own
+            // wheel listener already normalizes `deltaMode` — see its doc
+            // comment). Convert to this crate's "~20 units per notch"
+            // contract the same way native's `PixelDelta` branch does
+            // (recon: item 1, `docs/mlc/research/owner-review-2026-09-23/
+            // input-hotkeys-and-modal-wheel.md`) — previously passed
+            // through raw pixel-mode deltas (~100-120/notch), ~5-6x more
+            // sensitive than native for the same physical wheel click.
+            use mlc_app_input_shell::pixels_to_notch_units;
+            Some(ShellEvent::Scroll {
+                dx: pixels_to_notch_units(dx),
+                dy: pixels_to_notch_units(dy),
+            })
         }
         PlatformEvent::WindowResized { width, height } => {
             Some(ShellEvent::Resized { w: width, h: height })

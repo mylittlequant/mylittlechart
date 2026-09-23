@@ -232,11 +232,16 @@ pub struct ScrollableContainer {
 impl ScrollableContainer {
     pub fn new(viewport: WidgetRect, scroll_state: &ScrollState, config: Option<ScrollableConfig>) -> Self {
         let config = config.unwrap_or_default();
+        // Single choke point (recon: `docs/mlc/research/owner-review-2026-09-23/
+        // input-hotkeys-and-modal-wheel.md` item 2): every modal that uses
+        // `ScrollableContainer` reads the eased, animated offset here — none
+        // of the ~30 call sites need their own animation wiring.
+        let offset = scroll_state.animated_offset();
         Self {
-            content_y: viewport.y - scroll_state.offset,
+            content_y: viewport.y - offset,
             content_width: viewport.width - config.scrollbar_width,
             viewport,
-            scroll_offset: scroll_state.offset,
+            scroll_offset: offset,
             is_dragging: scroll_state.is_dragging,
             config,
         }

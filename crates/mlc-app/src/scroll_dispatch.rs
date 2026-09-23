@@ -7,6 +7,8 @@
 use mlc_core::state::scroll_state::ScrollState;
 use uzor::types::Rect as WidgetRect;
 
+use crate::ChartApp;
+
 /// Info about one scrollable area, collected from render results.
 pub struct ScrollableInfo {
     /// Scrollbar handle rect (if visible)
@@ -100,6 +102,58 @@ pub fn try_handle_wheel(
             }
         }
     }
+    false
+}
+
+/// True while any modal's `ScrollState` is still easing its painted offset
+/// toward its wheel target — the repaint gate both shells poll once a frame
+/// (same shape as the mascot hat's `MascotAnim::is_live()`, see
+/// `mascot_animating` in `mlc-app-shell-vello/src/main.rs`'s `about_to_wait`)
+/// so the ease actually paints instead of freezing on an intermediate frame.
+///
+/// Enumerates every `ScrollState` field wired into [`crate::ChartApp::
+/// on_scroll`]'s modal routing (recon: `docs/mlc/research/owner-review-
+/// 2026-09-23/input-hotkeys-and-modal-wheel.md` item 2). A closed modal's
+/// scroll can never diverge from its own target — nothing feeds it wheel
+/// input while hidden — so checking all of them unconditionally, open or
+/// not, is correct and cheap (each check is an `Option` test plus, at most,
+/// one `Instant::elapsed()`).
+pub fn any_modal_scroll_animating(chart: &ChartApp) -> bool {
+    chart.panel_app.chart_settings_state.scroll.is_animating()
+        || chart.tc_modal.scroll.is_animating()
+        || chart.panel_app.indicator_settings_state.scroll.is_animating()
+        || chart.panel_app.primitive_settings_state.scroll.is_animating()
+        || chart.panel_app.alert_settings_state.list_scroll.is_animating()
+        || chart.panel_app.user_settings_state.profile_list_scroll.is_animating()
+        || chart.panel_app.user_settings_state.general_tab_scroll.is_animating()
+        || chart.panel_app.user_settings_state.sync_tab_scroll.is_animating()
+        || chart.panel_app.user_settings_state.vault_tab_scroll.is_animating()
+        || chart.panel_app.user_settings_state.persistence_tab_scroll.is_animating()
+        || chart.panel_app.user_settings_state.server_tab_scroll.is_animating()
+        || chart.panel_app.user_settings_state.performance_tab_scroll.is_animating()
+        || chart.panel_app.user_settings_state.account_tab_scroll.is_animating()
+        || chart.standalone_panels.watchlist_modal.scroll.is_animating()
+        || chart.panel_app.chart_browser.scroll.is_animating()
+        || chart.panel_app.tags_tabs_state.tabs_scroll.is_animating()
+        || chart.panel_app.tags_tabs_state.tags_groups_scroll.is_animating()
+        || chart.panel_app.tags_tabs_state.tags_details_scroll.is_animating()
+        || any_cloud_scroll_animating(chart)
+        || chart.modal_state.scroll.is_animating()
+}
+
+/// Cloud/Community overlay's 3 scroll regions (release catalogue + News
+/// "All" tab, Community's hosted content pane, Community's boards/
+/// conversations list) — cloud-build-only, mirrors `ChartApp::on_scroll`'s
+/// `#[cfg(feature = "cloud")]` `"cloud_overlay:scroll_viewport"` arm.
+#[cfg(feature = "cloud")]
+fn any_cloud_scroll_animating(chart: &ChartApp) -> bool {
+    chart.panel_app.cloud_overlay_state.scroll.is_animating()
+        || chart.panel_app.community_state.scroll.is_animating()
+        || chart.panel_app.community_state.list_scroll.is_animating()
+}
+
+#[cfg(not(feature = "cloud"))]
+fn any_cloud_scroll_animating(_chart: &ChartApp) -> bool {
     false
 }
 

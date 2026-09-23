@@ -17,6 +17,8 @@ use mlc_app_input_shell::{
     MouseBtn,
     LogicalKey,
     PhysicalKey,
+    UNITS_PER_NOTCH,
+    pixels_to_notch_units,
 };
 use crate::window::vello_platform::VelloPlatform;
 
@@ -95,9 +97,16 @@ impl App<'_> {
             WindowEvent::MouseWheel { delta, .. } => {
                 let (dx, dy) = match delta {
                     winit::event::MouseScrollDelta::LineDelta(x, y) => {
-                        (x as f64 * 20.0, y as f64 * 20.0)
+                        (x as f64 * UNITS_PER_NOTCH, y as f64 * UNITS_PER_NOTCH)
                     }
-                    winit::event::MouseScrollDelta::PixelDelta(pos) => (pos.x, pos.y),
+                    // Trackpad: raw pixels, same contract conversion the web
+                    // shell applies to its own CSS-pixel deltas (recon: item
+                    // 1, `docs/mlc/research/owner-review-2026-09-23/
+                    // input-hotkeys-and-modal-wheel.md`) — previously passed
+                    // through unnormalized.
+                    winit::event::MouseScrollDelta::PixelDelta(pos) => {
+                        (pixels_to_notch_units(pos.x), pixels_to_notch_units(pos.y))
+                    }
                 };
                 ShellEvent::Scroll { dx, dy }
             }

@@ -502,7 +502,7 @@ fn render_overview_tab(
     ctx.save();
     ctx.clip_rect(modal_x, list_top, modal_w, list_h);
 
-    let scroll = state.scroll.offset;
+    let scroll = state.scroll.animated_offset();
     let mut current_y = list_top - scroll;
 
     for entry in &filtered {
@@ -640,13 +640,13 @@ fn render_overview_tab(
     // -------------------------------------------------------------------------
     if let Some((drag_idx, _drag_y)) = state.drag_reorder {
         // Highlight the dragged row with a semi-transparent accent overlay.
-        let drag_row_y = list_top - state.scroll.offset + drag_idx as f64 * item_h;
+        let drag_row_y = list_top - state.scroll.animated_offset() + drag_idx as f64 * item_h;
         ctx.set_fill_color(&mlc_core::apply_opacity(&toolbar_theme.accent, 0.2));
         ctx.fill_rect(modal_x, drag_row_y, modal_w, item_h);
 
         // Drop indicator: a 2 px horizontal line at the drop position.
         if let Some(drop_idx) = state.drop_index {
-            let drop_line_y = list_top - state.scroll.offset + drop_idx as f64 * item_h;
+            let drop_line_y = list_top - state.scroll.animated_offset() + drop_idx as f64 * item_h;
             ctx.set_stroke_color(&toolbar_theme.accent);
             ctx.set_stroke_width(2.0);
             ctx.begin_path();
@@ -666,7 +666,7 @@ fn render_overview_tab(
     if needs_scrollbar {
         let sb_x = modal_x + modal_w - scrollbar_w - 2.0;
         let sb_rect = WidgetRect::new(sb_x, list_top, scrollbar_w, list_h);
-        let sb_config = ScrollbarConfig::new(total_h, list_h, state.scroll.offset);
+        let sb_config = ScrollbarConfig::new(total_h, list_h, state.scroll.animated_offset());
         let sb_state = if state.scroll.is_dragging {
             ScrollbarState::Dragging
         } else {

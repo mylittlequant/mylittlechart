@@ -3276,7 +3276,7 @@ impl App<'_> {
                                     let new_h = mlc_app_layout::layout::modals::dm_overlay::conversation_scroll_h(
                                         available, has_error, key_changed, *has_older, msgs,
                                     );
-                                    ov.scroll.offset += (new_h - old_h).max(0.0);
+                                    ov.scroll.nudge((new_h - old_h).max(0.0));
                                 }
                                 ov.dm.mark_messages_fetched();
                             }
@@ -8884,7 +8884,21 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // The hat is painted by the toolbar pass too.
                 pw.toolbar_dirty = true;
             }
-            if spinner_up || per_chart_loading || cold_apply_stashed || clock_hovered || mascot_animating {
+            // Modal wheel-scroll ease (owner ask 2026-09-23: "сделать скролл
+            // колёсиком менее чувствительным") — same time-boxed-pulse shape
+            // as the two flags above: keep redrawing only while some modal's
+            // `ScrollState` is still catching up to its wheel target, then
+            // let it settle on its own (`ScrollState::is_animating`). Modals
+            // are painted by the chart-content pass (`chart_dirty`), not the
+            // toolbar or overlay passes — see scene_builder.rs's "Chart
+            // content (chart panels, modals)" comment.
+            let modal_scroll_animating = mlc_app::scroll_dispatch::any_modal_scroll_animating(&pw.chart);
+            if modal_scroll_animating {
+                pw.chart_dirty = true;
+            }
+            if spinner_up || per_chart_loading || cold_apply_stashed || clock_hovered || mascot_animating
+                || modal_scroll_animating
+            {
                 pw.window.request_redraw();
             }
         }

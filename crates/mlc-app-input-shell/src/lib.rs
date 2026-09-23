@@ -16,7 +16,10 @@ pub use chrome::{
     CHROME_HEIGHT,
     render, render_tooltip, render_tooltip_themed, render_context_menu, render_tab_list, update_tab_widths,
 };
-pub use events::{ShellEvent, NormalizedModifiers, MouseBtn, LogicalKey, PhysicalKey, ResizeDir};
+pub use events::{
+    ShellEvent, NormalizedModifiers, MouseBtn, LogicalKey, PhysicalKey, ResizeDir,
+    PIXELS_PER_NOTCH, UNITS_PER_NOTCH, pixels_to_notch_units,
+};
 pub use platform::{Platform, DispatchOut};
 pub use state::{InputState, DirtyFlags};
 pub use tooltip::{TooltipState, TooltipRequest, calculate_tooltip_position};

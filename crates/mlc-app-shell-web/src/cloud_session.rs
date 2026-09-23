@@ -1671,7 +1671,7 @@ impl CloudSession {
                                         let new_h = mlc_app_layout::layout::modals::dm_overlay::conversation_scroll_h(
                                             available, has_error, key_changed, *has_older, messages,
                                         );
-                                        comm.scroll.offset += (new_h - old_h).max(0.0);
+                                        comm.scroll.nudge((new_h - old_h).max(0.0));
                                     }
                                     comm.dm.mark_messages_fetched();
                                 }

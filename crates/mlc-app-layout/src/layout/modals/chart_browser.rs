@@ -244,7 +244,7 @@ pub fn render_chart_browser(
     ctx.save();
     ctx.clip_rect(modal_x, list_top, modal_w, list_h);
 
-    let scroll = state.scroll.offset;
+    let scroll = state.scroll.animated_offset();
     let mut current_y = list_top - scroll;
 
     for preset in &sorted_presets {
@@ -385,7 +385,7 @@ pub fn render_chart_browser(
         if needs_scrollbar {
             let sb_x = modal_x + modal_w - scrollbar_w - 2.0;
             let sb_rect = WidgetRect::new(sb_x, list_top, scrollbar_w, list_h);
-            let sb_config = ScrollbarConfig::new(total_h, list_h, state.scroll.offset);
+            let sb_config = ScrollbarConfig::new(total_h, list_h, state.scroll.animated_offset());
             let sb_state = if state.scroll.is_dragging {
                 SbState::Dragging
             } else {
