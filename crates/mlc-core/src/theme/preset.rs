@@ -134,9 +134,13 @@ pub struct SeriesColors {
     pub ma_slow: &'static str,
     pub ma_third: &'static str,  // For 3rd MA if needed
 
-    // Volume
-    pub volume_up: &'static str,
-    pub volume_down: &'static str,
+    // Volume — hue is NOT stored here. Volume bars always derive their hue
+    // from `candle_up_body`/`candle_down_body` (owner ruling 2026-09-24,
+    // R21: "volume bars and candles must share ONE hue in every theme").
+    // Only the alpha — the one thing a preset is allowed to vary — lives
+    // here; see `mlc_core::utils::color::apply_opacity`.
+    pub volume_up_alpha: f64,
+    pub volume_down_alpha: f64,
 
     // Footprint clusters (buy/sell volume text + heat fill)
     pub footprint_buy: &'static str,
@@ -279,8 +283,8 @@ impl ChartTheme {
                 ma_slow: "#ff6d00",
                 ma_third: "#e040fb",
 
-                volume_up: "rgba(38, 166, 154, 0.5)",
-                volume_down: "rgba(239, 83, 80, 0.5)",
+                volume_up_alpha: 0.5,
+                volume_down_alpha: 0.5,
 
                 footprint_buy: "#26a69a",
                 footprint_sell: "#ef5350",
@@ -396,8 +400,8 @@ impl ChartTheme {
                 ma_slow: "#ff6d00",
                 ma_third: "#e040fb",
 
-                volume_up: "rgba(38, 166, 154, 0.5)",
-                volume_down: "rgba(239, 83, 80, 0.5)",
+                volume_up_alpha: 0.5,
+                volume_down_alpha: 0.5,
 
                 footprint_buy: "#26a69a",
                 footprint_sell: "#ef5350",
@@ -513,8 +517,8 @@ impl ChartTheme {
                 ma_slow: "#ffff00",
                 ma_third: "#ff00ff",
 
-                volume_up: "rgba(0, 255, 0, 0.5)",
-                volume_down: "rgba(255, 0, 0, 0.5)",
+                volume_up_alpha: 0.5,
+                volume_down_alpha: 0.5,
 
                 footprint_buy: "#26a69a",
                 footprint_sell: "#ef5350",
@@ -632,8 +636,8 @@ impl ChartTheme {
                 ma_slow: "#aaaaaa",
                 ma_third: "#666666",
 
-                volume_up: "rgba(255, 255, 255, 0.4)",
-                volume_down: "rgba(255, 255, 255, 0.15)",
+                volume_up_alpha: 0.4,
+                volume_down_alpha: 0.15,
 
                 footprint_buy: "#26a69a",
                 footprint_sell: "#ef5350",
@@ -749,8 +753,8 @@ impl ChartTheme {
                 ma_slow: "#F4CD63",   // Gold from mascot stars
                 ma_third: "#EBA25D", // Orange from mascot nose
 
-                volume_up: "rgba(38,166,154,0.5)",
-                volume_down: "rgba(239,83,80,0.5)",
+                volume_up_alpha: 0.5,
+                volume_down_alpha: 0.5,
 
                 footprint_buy: "#26a69a",
                 footprint_sell: "#ef5350",
@@ -1522,6 +1526,71 @@ mod per_type_color_tests {
             assert_eq!(s.kagi_yin, down, "{}: kagi_yin should default to candle_down_body", theme.name);
             assert_eq!(s.hollow_up, up, "{}: hollow_up should default to candle_up_body", theme.name);
             assert_eq!(s.hollow_down, down, "{}: hollow_down should default to candle_down_body", theme.name);
+        }
+    }
+}
+
+#[cfg(test)]
+mod volume_hue_tests {
+    //! Owner ruling 2026-09-24 (R21): "volume bars and candles must share
+    //! ONE hue in every theme" — for every preset, the derived volume
+    //! colour's RGB must equal that same preset's own candle body RGB
+    //! (alpha may differ; hue may not). This exercises the exact function
+    //! the renderer calls (`ChartTheme::derive_volume_colors`), not a
+    //! hand-rolled re-implementation of it.
+    use super::ChartTheme;
+    use crate::chart::render_data::ChartTheme as RenderChartTheme;
+    use crate::utils::color::parse_css_color;
+
+    fn all_presets() -> Vec<ChartTheme> {
+        vec![
+            ChartTheme::dark(),
+            ChartTheme::light(),
+            ChartTheme::high_contrast(),
+            ChartTheme::high_contrast_mono(),
+            ChartTheme::mascot(),
+        ]
+    }
+
+    #[test]
+    fn volume_hue_matches_candle_hue_per_preset() {
+        for theme in all_presets() {
+            let s = &theme.series;
+            let (volume_up, volume_down) = RenderChartTheme::derive_volume_colors(
+                s.candle_up_body,
+                s.candle_down_body,
+                s.volume_up_alpha,
+                s.volume_down_alpha,
+            );
+
+            let (cr, cg, cb, _) = parse_css_color(s.candle_up_body);
+            let (vr, vg, vb, _) = parse_css_color(&volume_up);
+            assert_eq!(
+                (cr, cg, cb), (vr, vg, vb),
+                "{}: volume_up hue must match candle_up_body hue", theme.name,
+            );
+
+            let (cr, cg, cb, _) = parse_css_color(s.candle_down_body);
+            let (vr, vg, vb, _) = parse_css_color(&volume_down);
+            assert_eq!(
+                (cr, cg, cb), (vr, vg, vb),
+                "{}: volume_down hue must match candle_down_body hue", theme.name,
+            );
+        }
+    }
+
+    #[test]
+    fn volume_alpha_is_in_valid_range_per_preset() {
+        for theme in all_presets() {
+            let s = &theme.series;
+            assert!(
+                (0.0..=1.0).contains(&s.volume_up_alpha),
+                "{}: volume_up_alpha {} out of [0, 1]", theme.name, s.volume_up_alpha,
+            );
+            assert!(
+                (0.0..=1.0).contains(&s.volume_down_alpha),
+                "{}: volume_down_alpha {} out of [0, 1]", theme.name, s.volume_down_alpha,
+            );
         }
     }
 }

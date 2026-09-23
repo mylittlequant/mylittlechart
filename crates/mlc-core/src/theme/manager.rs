@@ -458,15 +458,10 @@ impl ThemeManager {
         self.dirty = true;
     }
 
-    pub fn set_volume_up(&mut self, color: &str) {
-        self.current.series.volume_up = color.to_string();
-        self.dirty = true;
-    }
-
-    pub fn set_volume_down(&mut self, color: &str) {
-        self.current.series.volume_down = color.to_string();
-        self.dirty = true;
-    }
+    // Volume has no independent setter: its hue always derives from
+    // `candle_up_body`/`candle_down_body` (owner ruling 2026-09-24, R21) —
+    // there is nothing for a user to override separately. See
+    // `mlc_core::utils::color::apply_opacity` call sites.
 
     // =========================================================================
     // Individual setters - Fonts
@@ -911,8 +906,6 @@ pub enum ThemeColorPath {
     MaFast,
     MaSlow,
     MaThird,
-    VolumeUp,
-    VolumeDown,
 }
 
 impl ThemeColorPath {
@@ -989,8 +982,6 @@ impl ThemeColorPath {
             Self::MaFast => &theme.series.ma_fast,
             Self::MaSlow => &theme.series.ma_slow,
             Self::MaThird => &theme.series.ma_third,
-            Self::VolumeUp => &theme.series.volume_up,
-            Self::VolumeDown => &theme.series.volume_down,
         }
     }
 
@@ -1067,8 +1058,6 @@ impl ThemeColorPath {
             Self::MaFast => manager.set_ma_fast(color),
             Self::MaSlow => manager.set_ma_slow(color),
             Self::MaThird => manager.set_ma_third(color),
-            Self::VolumeUp => manager.set_volume_up(color),
-            Self::VolumeDown => manager.set_volume_down(color),
         }
     }
 }
@@ -1184,8 +1173,10 @@ impl ThemeSettingsPanel {
                 ThemeColorField { label: "MA Fast", id: "ma_fast", path: ThemeColorPath::MaFast },
                 ThemeColorField { label: "MA Slow", id: "ma_slow", path: ThemeColorPath::MaSlow },
                 ThemeColorField { label: "MA Third", id: "ma_third", path: ThemeColorPath::MaThird },
-                ThemeColorField { label: "Volume Up", id: "volume_up", path: ThemeColorPath::VolumeUp },
-                ThemeColorField { label: "Volume Down", id: "volume_down", path: ThemeColorPath::VolumeDown },
+                // No "Volume Up"/"Volume Down" swatches: volume hue always
+                // derives from Candle Up/Down Body above it (owner ruling
+                // 2026-09-24, R21) — an independent override would let it
+                // drift from the candle colour again.
             ],
         },
     ];

@@ -2,6 +2,7 @@
 
 use crate::chart::types::{Viewport, PriceScale, TimeScale, GridOptions, Crosshair, Legend, TimeTick};
 use crate::chart::annotations::LineStyle;
+use crate::utils::color::apply_opacity;
 use crate::Bar;
 
 /// Chart area rectangle
@@ -204,16 +205,36 @@ pub struct ChartTheme {
     /// Ask side of the same pair.
     pub heat_ask: String,
     pub heat_ask_hot: String,
-    /// Volume-bar colours straight from the skin. The volume overlay used
-    /// to synthesise its own by pasting a 50%-alpha suffix onto the candle
-    /// colour, which is why it read as washed-out next to everything else
-    /// the same skin paints.
+    /// Volume-bar colours. ALWAYS derived from `candle_up`/`candle_down`
+    /// (owner ruling 2026-09-24, R21: "volume bars and candles must share
+    /// ONE hue in every theme") — never stored or set independently, so
+    /// there is no code path left where the two can drift apart. Alpha is
+    /// the one axis of variation, and it comes from the skin/preset's own
+    /// `volume_up_alpha`/`volume_down_alpha` — see
+    /// `ChartTheme::with_volume_from_candles`.
     pub volume_up: String,
     pub volume_down: String,
 }
 
+impl ChartTheme {
+    /// Derive volume-bar colours from the candle body colours — the ONLY
+    /// place volume colour is computed (owner ruling 2026-09-24, R21):
+    /// same hue as the candle body, alpha applied on top.
+    /// `up_alpha`/`down_alpha` come from the active skin/preset's own
+    /// `volume_up_alpha`/`volume_down_alpha`.
+    pub fn derive_volume_colors(
+        candle_up: &str,
+        candle_down: &str,
+        up_alpha: f64,
+        down_alpha: f64,
+    ) -> (String, String) {
+        (apply_opacity(candle_up, up_alpha), apply_opacity(candle_down, down_alpha))
+    }
+}
+
 impl Default for ChartTheme {
     fn default() -> Self {
+        let (volume_up, volume_down) = ChartTheme::derive_volume_colors("#26a69a", "#ef5350", 0.5, 0.5);
         Self {
             background: "#1e222d".to_string(),
             grid_line: "#2a2e39".to_string(),
@@ -260,8 +281,8 @@ impl Default for ChartTheme {
             heat_bid_hot: "#30ff76".to_string(),
             heat_ask: "#dc352b".to_string(),
             heat_ask_hot: "#ffd311".to_string(),
-            volume_up: "#26a69a".to_string(),
-            volume_down: "#ef5350".to_string(),
+            volume_up,
+            volume_down,
         }
     }
 }

@@ -261,12 +261,15 @@ impl SkinTokens {
         s.ma_fast = self.accent.to_string();
         s.ma_slow = self.accent_secondary.to_string();
         s.ma_third = mix_colors(self.accent, self.text, 0.5);
-        // Volume bars carry the side colour at FULL strength. They used to
-        // be dimmed to 55%, which read as washed-out next to every other
-        // surface the same skin paints — the panel ladders, the candles and
-        // now the on-chart heat all use the token undimmed.
-        s.volume_up = self.bids.to_string();
-        s.volume_down = self.asks.to_string();
+        // Volume bars carry the side colour at FULL strength (alpha 1.0).
+        // They used to be dimmed to 55%, which read as washed-out next to
+        // every other surface the same skin paints — the panel ladders, the
+        // candles and now the on-chart heat all use the token undimmed. The
+        // hue itself is never stored here: it always derives from
+        // `candle_up_body`/`candle_down_body` (== `self.bids`/`self.asks`,
+        // set just above) at read time — see `apply_opacity` call sites.
+        s.volume_up_alpha = 1.0;
+        s.volume_down_alpha = 1.0;
         s.heat_bid = self.bids.to_string();
         s.heat_bid_hot = self.bids_secondary.to_string();
         s.heat_ask = self.asks.to_string();
