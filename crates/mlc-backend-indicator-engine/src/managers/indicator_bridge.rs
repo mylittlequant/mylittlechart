@@ -394,21 +394,23 @@ impl IndicatorBridge {
             .map(|info| self.to_definition(&info))
     }
 
-    /// Get all overlay indicators
+    /// Get all overlay indicators — by `IndicatorDefinition::overlay`, the
+    /// space `to_definition` derives (signature `metadata("kind")` first),
+    /// not mli's own `is_overlay()`, which ignores `kind` and disagrees for
+    /// the host-rendered entries (e.g. `overlay_volume_profile`).
     pub fn get_overlay_definitions(&self) -> Vec<IndicatorDefinition> {
-        self.catalog
-            .get_overlay_indicators()
-            .iter()
-            .map(|info| self.to_definition(info))
+        self.get_all_definitions()
+            .into_iter()
+            .filter(|d| d.overlay)
             .collect()
     }
 
-    /// Get all sub-pane indicators
+    /// Get all sub-pane indicators — same source of truth as
+    /// [`Self::get_overlay_definitions`].
     pub fn get_subpane_definitions(&self) -> Vec<IndicatorDefinition> {
-        self.catalog
-            .get_subpane_indicators()
-            .iter()
-            .map(|info| self.to_definition(info))
+        self.get_all_definitions()
+            .into_iter()
+            .filter(|d| !d.overlay)
             .collect()
     }
 
