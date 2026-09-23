@@ -9887,8 +9887,26 @@ impl ChartApp {
                 if let Some(meta) = self.shared_chart_meta(&active_preset_id) {
                     let owner_label = meta.owner_label.clone();
                     let can_clone = meta.has_right("clone");
+                    // Sit BELOW every leaf's own top-left symbol header
+                    // (`render_leaf_tab`, `mlc-app-layout::layout::
+                    // panel_overlay`) instead of on top of it. That header
+                    // renders at `<leaf/main_chart>_y + 2.0` for
+                    // `LEAF_TAB_HEIGHT` (24px) at the grid's own top-left
+                    // corner in EVERY leaf (single-pane or the first pane of
+                    // a split) — `content_rect.y` (this row's old top) lands
+                    // in that exact same corner, mashing the two texts
+                    // together (owner report, "Untitled 78 — zeng3ld"
+                    // screenshot, 2-pane split, left pane only). One row
+                    // spanning the full `content_rect` width, moved below the
+                    // header band, keeps a single banner/button for the
+                    // whole tab — no duplicate "Clone" hit zones across
+                    // panes — while never overlapping a leaf's own header in
+                    // either layout.
+                    let row_y = content_rect.y
+                        + mlc_app_layout::layout::panel_overlay::LEAF_TAB_HEIGHT
+                        + 4.0;
                     let row_rect = uzor::types::Rect::new(
-                        content_rect.x, content_rect.y, content_rect.width, 28.0,
+                        content_rect.x, row_y, content_rect.width, 28.0,
                     );
                     let mut coord = self.input_coordinator.borrow_mut();
                     mlc_app_layout::ui::share_viewer_row::draw_share_viewer_row(
