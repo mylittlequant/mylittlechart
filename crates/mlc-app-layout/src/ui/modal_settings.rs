@@ -5776,6 +5776,30 @@ impl ForumV2State {
         self.caller_signed_in && self.caller_nick.is_none()
     }
 
+    /// The single client-side source of truth for whether the whole
+    /// messenger surface is usable at all (owner ruling E-14, 2026-09-23:
+    /// the messenger follows the server's access ladder — class and role,
+    /// not payment). `caller_classes` is cumulative membership from `GET
+    /// /api/forum/me` (`"paid"` present for paid/trusted/moderator/admin
+    /// alike — a moderator/admin role reaches it via the ladder even
+    /// unpaid), same field [`Self::is_moderator_or_admin`] and
+    /// `CommunityState::messages_tab_visible` already read; `caller_signed_in`
+    /// is checked explicitly rather than trusting an empty `caller_classes`
+    /// alone (mirrors [`Self::nick_required`]'s own reasoning — classes stay
+    /// empty both while signed out AND while a fetch is still pending, and
+    /// only the former should read as "not available").
+    ///
+    /// The tab's own visibility, the `"dm:"` click arm, `DmState::available`
+    /// (ANDed with the vault being unlocked), the passive conversation-list
+    /// fetch, and recipient lookup/search in both shells all read this ONE
+    /// predicate — no other payment/entitlement check belongs on the DM
+    /// path (`entitlements_rx`/`Feature::Forum`/`forum_entitled` answer a
+    /// different question: whether the account is a paying customer, not
+    /// whether the ladder grants messenger access).
+    pub fn messenger_available(&self) -> bool {
+        self.caller_signed_in && self.caller_classes.iter().any(|c| c == "paid")
+    }
+
     /// Drop back to the board list — called when the overlay (re)opens
     /// (mirrors v1's own `CloudOverlayState::open` resetting `forum_view`)
     /// and by the "back" row from any deeper view. `boards` itself and its
@@ -6282,13 +6306,15 @@ pub struct DmState {
     /// actually work in this shell right now. Both shells derive this the
     /// same way (owner ruling 2026-09-09: paid web users hold the vault too,
     /// end-to-end DMs ride through the server, which never decrypts) — set
-    /// once the vault is unlocked AND the account is paid (the DM identity
-    /// is then derivable on-demand, always successfully — see
+    /// once the vault is unlocked AND [`ForumV2State::messenger_available`]
+    /// holds (owner ruling E-14, 2026-09-23: ladder class/role, not payment
+    /// — a moderator/admin role reaches it too; the DM identity is then
+    /// derivable on-demand, always successfully — see
     /// `mlc_vault::dm::DmIdentity::from_vault_key`), cleared with the
     /// matching notice in `last_error` ("Unlock your vault to use messages"
-    /// while sealed; "Messages need a paid account" while unlocked but
-    /// free). Defaults `false` — a shell must opt in explicitly rather than
-    /// draw live controls before it can back them.
+    /// while sealed; "Messages need a paid account" while unlocked but the
+    /// ladder does not grant access). Defaults `false` — a shell must opt in
+    /// explicitly rather than draw live controls before it can back them.
     pub available: bool,
     /// WHY `available` is false — read by `dm_overlay.rs` to pick which
     /// notice the right pane draws (owner ruling 2026-09-10: a sealed
@@ -6693,18 +6719,17 @@ impl CommunityState {
     }
 
     /// Whether the Messages tab is visible for this caller — ladder rank
-    /// `paid` or above, read directly off [`ForumV2State::caller_classes`]
-    /// (cumulative membership: `"paid"` is present for paid/trusted/
-    /// moderator/admin alike, per the ladder in `docs/mlc/plans/
-    /// community-modal-and-forum-ladder-2026-09-09.md`). Empty/not-yet-
-    /// fetched classes (signed out, or the fetch has not landed) read as
-    /// not-visible — the same safe default `forum2_can_write` uses.
+    /// `paid` or above, read via [`ForumV2State::messenger_available`] (the
+    /// one client-side predicate the whole DM path shares; see that
+    /// method's own doc). Empty/not-yet-fetched classes (signed out, or the
+    /// fetch has not landed) read as not-visible — the same safe default
+    /// `forum2_can_write` uses.
     ///
-    /// Deliberately NOT [`DmState::available`] (vault+paid) — that one
-    /// keeps gating the tab's CONTENT (needs the vault unlocked too), this
-    /// one gates whether the tab exists at all.
+    /// Deliberately NOT [`DmState::available`] (ladder access + vault
+    /// unlocked) — that one keeps gating the tab's CONTENT (needs the vault
+    /// unlocked too), this one gates whether the tab exists at all.
     pub fn messages_tab_visible(&self) -> bool {
-        self.forum2.caller_classes.iter().any(|c| c == "paid")
+        self.forum2.messenger_available()
     }
 
     /// The tab to actually draw/act on — falls back to Forum when `tab`
@@ -6741,3 +6766,48 @@ impl CommunityState {
 impl_resizable_modal!(
     CommunityState => (520.0, 400.0),
 );
+
+#[cfg(all(test, feature = "cloud"))]
+mod messenger_available_tests {
+    use super::ForumV2State;
+
+    fn forum2(signed_in: bool, classes: &[&str]) -> ForumV2State {
+        ForumV2State {
+            caller_signed_in: signed_in,
+            caller_classes: classes.iter().map(|c| c.to_string()).collect(),
+            ..ForumV2State::default()
+        }
+    }
+
+    /// Owner ruling E-14 (2026-09-23): a moderator role reaches the
+    /// `"paid"` class via the ladder even with an expired/absent payment —
+    /// this is the exact prod symptom (`admin`, paid expired) the messenger
+    /// predicate exists to fix.
+    #[test]
+    fn unpaid_admin_role_is_available() {
+        let st = forum2(true, &["public", "user", "paid", "trusted", "moderator", "admin"]);
+        assert!(st.messenger_available());
+    }
+
+    #[test]
+    fn unpaid_moderator_role_is_available() {
+        let st = forum2(true, &["public", "user", "paid", "trusted", "moderator"]);
+        assert!(st.messenger_available());
+    }
+
+    #[test]
+    fn plain_user_is_not_available() {
+        let st = forum2(true, &["public", "user"]);
+        assert!(!st.messenger_available());
+    }
+
+    /// Signed out reads as unavailable even if a stale `caller_classes`
+    /// from a previous session lingered past the edge — `caller_signed_in`
+    /// is checked explicitly rather than trusting an empty-classes guess
+    /// (see the predicate's own doc).
+    #[test]
+    fn signed_out_is_not_available() {
+        let st = forum2(false, &["public", "user", "paid"]);
+        assert!(!st.messenger_available());
+    }
+}

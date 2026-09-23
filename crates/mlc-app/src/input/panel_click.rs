@@ -6220,16 +6220,17 @@ impl ChartApp {
                         _ => {}
                     }
                 }
-                // === Direct Messages tab clicks (paid-only) === Same
-                // disjoint-borrow shape as the `"forum2:"` arm above, but
-                // NOT the same gating: DMs stay genuinely paid-and-above
-                // only, server-side (`routes::dm::require_dm_access`, gated
-                // on the same `Feature::Forum`/`is_paid` this `forum_
-                // entitled` flag mirrors) — unlike Forum v2's ladder, there
-                // is no role/class carve-out here, so the blanket check
-                // stays.
+                // === Direct Messages tab clicks (ladder-gated, same axis as
+                // Forum v2) === Same disjoint-borrow shape as the `"forum2:"`
+                // arm above. Owner ruling E-14 (2026-09-23): the messenger
+                // follows the server's access ladder — class and role, not
+                // payment — same as Forum v2 above, so this reads the same
+                // ONE predicate (`ForumV2State::messenger_available`) rather
+                // than the old `forum_entitled` flag (`Feature::Forum`/
+                // `is_paid`, a payment-only signal that silently no-op'd
+                // every click for a non-paid moderator).
                 rest if rest.starts_with("dm:") => {
-                    if !st.forum_entitled {
+                    if !self.panel_app.community_state.forum2.messenger_available() {
                         return;
                     }
                     let action = &rest["dm:".len()..];

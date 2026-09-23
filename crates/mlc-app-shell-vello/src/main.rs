@@ -3673,18 +3673,27 @@ impl App<'_> {
         };
 
         // Account-level facts — neither needs a specific window/tab on
-        // screen. `entitlements_rx` is the same background-refreshed
-        // signal `forum_entitled` mirrors into every window
-        // (`about_to_wait`'s own entitlements block), read directly here
-        // so this function works even before any window has been stamped
-        // this frame.
-        let paid = self.updater_handle.entitlements_rx.borrow().has("forum");
+        // screen. `messenger_ok` is the single ladder-class predicate
+        // (`ForumV2State::messenger_available` — owner ruling E-14,
+        // 2026-09-23: class and role, not payment) the Messages tab itself
+        // gates on; deliberately NOT `entitlements_rx`/`forum_entitled`,
+        // which answer a payment question the ladder no longer asks here.
+        // `caller_classes`/`caller_signed_in` are broadcast identically to
+        // every window on each `Me` answer (`apply_forum2_result`'s own
+        // `Me` arm), so any one window speaks for the account — same
+        // "one candidate answers for all" idiom `confirmed_fingerprint`
+        // below already relies on.
+        let messenger_ok = self
+            .windows
+            .values()
+            .next()
+            .is_some_and(|pw| pw.chart.panel_app.community_state.forum2.messenger_available());
         let vault_key = self.core.user().vault_key();
 
         // Stamp `dm.available`/`dm.last_error` on every window, every
         // frame — cheap (two field writes each). Vault gates identity
-        // (send/decrypt); paid gates the feature outright; neither gates
-        // the LIST or the ciphertext fetch below (owner ruling
+        // (send/decrypt); `messenger_ok` gates the feature outright; neither
+        // gates the LIST or the ciphertext fetch below (owner ruling
         // 2026-09-10: both must render — the list, and messages as raw
         // ciphertext — before the vault is even unlocked).
         for pw in self.windows.values_mut() {
@@ -3693,11 +3702,11 @@ impl App<'_> {
             if vault_key.is_none() {
                 comm.dm.available = false;
                 comm.dm.unavailable_reason =
-                    if paid { DmUnavailableReason::VaultLocked } else { DmUnavailableReason::NotPaid };
+                    if messenger_ok { DmUnavailableReason::VaultLocked } else { DmUnavailableReason::NotPaid };
                 if messages_active {
                     comm.dm.last_error = Some("Unlock the vault to use messages".to_string());
                 }
-            } else if !paid {
+            } else if !messenger_ok {
                 comm.dm.available = false;
                 comm.dm.unavailable_reason = DmUnavailableReason::NotPaid;
                 if messages_active {
@@ -3782,7 +3791,7 @@ impl App<'_> {
                 let my_fingerprint = mlc_vault::dm::fingerprint(&identity.public);
                 let already_confirmed = confirmed_fingerprint.as_deref() == Some(my_fingerprint.as_str());
                 let already_attempted = self.dm_identity_publish_attempted_for == Some(identity.public);
-                if paid && !already_confirmed && !already_attempted {
+                if messenger_ok && !already_confirmed && !already_attempted {
                     let public_key_b64 = dm_encode(&identity.public);
                     let _ = self.updater_handle.cmd_tx.send(mlc_updater::UpdaterCommand::Dm(
                         mlc_updater::DmRequest::PublishIdentity { public_key_b64 },
@@ -3887,7 +3896,7 @@ impl App<'_> {
         // background poll and the envelope badge lighting with the modal
         // closed both come from for free, since this is not gated on
         // `messages_window` at all.
-        if paid {
+        if messenger_ok {
             let due_win = self.windows.iter().find_map(|(id, pw)| {
                 let dm = &pw.chart.panel_app.community_state.dm;
                 (dm.conversations_fetched_at.is_none() || dm.conversations_due_for_refresh()).then_some(*id)
@@ -3904,10 +3913,15 @@ impl App<'_> {
             }
         }
 
-        // Everything below needs an actual window showing Messages.
+        // Everything below needs an actual window showing Messages, ladder-
+        // available (`messenger_ok`'s own per-window mirror) — a stale
+        // `tab == Messages` surviving a sign-out or a role change mid-
+        // session must not keep firing the recipient-search/backfill
+        // fetches below (same "stale click target" reasoning the render
+        // side's `active_tab()` fallback already applies).
         let messages_window: Option<WindowId> = self.windows.iter().find_map(|(id, pw)| {
             let ov = &pw.chart.panel_app.community_state;
-            (ov.is_open && ov.tab == CommunityTab::Messages).then_some(*id)
+            (ov.is_open && ov.tab == CommunityTab::Messages && ov.forum2.messenger_available()).then_some(*id)
         });
         let Some(messages_window) = messages_window else {
             return;

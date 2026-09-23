@@ -2353,6 +2353,15 @@ impl CloudSession {
             }
         }
 
+        // The single ladder-class predicate the whole messenger surface
+        // shares (owner ruling E-14, 2026-09-23: class and role, not
+        // payment — `ForumV2State::messenger_available`'s own doc).
+        // Deliberately NOT `cloud_overlay_state.forum_entitled`
+        // (`entitlements_rx`/`Feature::Forum`), a payment-only signal that
+        // used to gate this whole surface and silently no-op'd it for a
+        // non-paid moderator/admin.
+        let messenger_ok = chart.panel_app.community_state.forum2.messenger_available();
+
         // ── DM recipient-search dropdown (owner ruling 2026-09-09,
         // community-modal-and-forum-ladder arc, piece 2 item b) ──────────
         // Debounced `GET /api/dm/lookup?q=` for the "start a conversation"
@@ -2361,10 +2370,11 @@ impl CloudSession {
         // through `DmState::request`, same "debounce fires inline" idiom
         // the Forum v2 quick-search block above uses. Shares `dm_in_flight`
         // with every other DM action below: not worth a second flag for a
-        // box idle almost all the time.
+        // box idle almost all the time. Gated on `messenger_ok`, same as
+        // every other fetch on this path.
         {
             let due = chart.panel_app.community_state.dm.lookup_due();
-            if due && !self.inner.borrow().dm_in_flight {
+            if due && messenger_ok && !self.inner.borrow().dm_in_flight {
                 let q = {
                     let coord = chart.input_coordinator.borrow();
                     coord
@@ -2407,13 +2417,12 @@ impl CloudSession {
                 && chart.panel_app.community_state.tab == CommunityTab::Messages;
 
             let vault_key = chart.core.user().vault_key();
-            let paid = chart.panel_app.cloud_overlay_state.forum_entitled;
 
             match vault_key {
                 None => {
                     chart.panel_app.community_state.dm.available = false;
                     chart.panel_app.community_state.dm.unavailable_reason =
-                        if paid { DmUnavailableReason::VaultLocked } else { DmUnavailableReason::NotPaid };
+                        if messenger_ok { DmUnavailableReason::VaultLocked } else { DmUnavailableReason::NotPaid };
                     if messages_active {
                         chart.panel_app.community_state.dm.last_error = Some(DM_LOCKED_MESSAGE.to_string());
                     }
@@ -2423,7 +2432,7 @@ impl CloudSession {
                     inner.dm_identity_publish_attempted_for = None;
                 }
                 Some(key) => {
-                    if !paid {
+                    if !messenger_ok {
                         chart.panel_app.community_state.dm.available = false;
                         chart.panel_app.community_state.dm.unavailable_reason = DmUnavailableReason::NotPaid;
                         if messages_active {
@@ -2474,7 +2483,7 @@ impl CloudSession {
             // `messages_tab_visible`) light with the modal closed.
             let conv_needs = {
                 let ov = &chart.panel_app.community_state.dm;
-                paid && (ov.conversations_fetched_at.is_none() || ov.conversations_due_for_refresh())
+                messenger_ok && (ov.conversations_fetched_at.is_none() || ov.conversations_due_for_refresh())
             };
             if conv_needs && !self.inner.borrow().dm_in_flight {
                 chart.panel_app.community_state.dm.conversations_refreshing = true;
@@ -2502,7 +2511,7 @@ impl CloudSession {
                     let should_publish = {
                         let inner = self.inner.borrow();
                         match &inner.dm_identity {
-                            Some(identity) if paid => {
+                            Some(identity) if messenger_ok => {
                                 let my_fingerprint = mlc_vault::dm::fingerprint(&identity.public);
                                 let already_confirmed = chart
                                     .panel_app
