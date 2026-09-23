@@ -445,37 +445,6 @@ fn resolve_board_can_write(f: &ForumV2State) -> Option<bool> {
     f.open_thread_board_slug.as_deref().map(|slug| board_can_write(f, slug))
 }
 
-/// The caller's OWN ladder rank, as a short badge label — resolved from
-/// `ForumV2State::caller_roles`/`caller_classes` (the same `GET /api/forum/
-/// me` fetch [`ForumV2State::is_moderator_or_admin`] already reads),
-/// highest-first. `None` while signed out or before the `Me` fetch answers.
-///
-/// Forum-v2's wire shapes (`ForumReplyNode`/`ForumThreadV2`, mirrored here
-/// as [`ForumReplyV2Ui`]/[`ForumThreadV2Detail`]) carry no per-author rank
-/// at all — only the CALLER's own is ever resolved, server-side, and only
-/// for the caller. So every OTHER author's post card renders with no rank
-/// badge at all rather than a guessed one (`forum_concept_v1.html`'s own
-/// mockup shows one per author, but that data does not exist on the wire
-/// today); adding it is a separate, server-side, owner-gated arc.
-fn caller_rank_label(f: &ForumV2State) -> Option<&'static str> {
-    if f.caller_roles.iter().any(|r| r == "admin") {
-        return Some("admin");
-    }
-    if f.caller_roles.iter().any(|r| r == "moderator") {
-        return Some("moderator");
-    }
-    if f.caller_classes.iter().any(|c| c == "trusted") {
-        return Some("trusted");
-    }
-    if f.caller_classes.iter().any(|c| c == "paid") {
-        return Some("paid");
-    }
-    if f.caller_classes.iter().any(|c| c == "user") {
-        return Some("user");
-    }
-    None
-}
-
 /// Whether the docked reply composer — and every per-post "↩ Reply" link —
 /// should render at all (owner report 2026-09-23, closed by
 /// `forum_concept_v1.html` states 3/4: a signed-out reader used to see both
@@ -1241,9 +1210,11 @@ fn draw_post_footer(
 /// `#N` + absolute/relative time row, an optional "in reply to @nick #N"
 /// line, the body (hidden posts read "[hidden by moderator]" instead,
 /// regardless of caller — same rule the old per-node view already applied),
-/// and a text-link footer. `rank_label` is `None` for every author but the
-/// caller themselves — see [`caller_rank_label`]'s own doc for why. Returns
-/// the full slot height consumed, [`post_card_h`].
+/// and a text-link footer. `rank_label` is this POST's own author's rank
+/// (`ForumReplyV2Ui::author_rank`/`ForumThreadV2Detail::author_rank`, off
+/// the server's `resolve_author_ranks`) — `None` when the server has not
+/// resolved one for this author. Returns the full slot height consumed,
+/// [`post_card_h`].
 #[allow(clippy::too_many_arguments)]
 fn draw_post_card(
     ctx: &mut dyn RenderContext,
@@ -1436,16 +1407,15 @@ fn thread_scroll_content_h(t: &ForumThreadV2Detail, replies_tree: &[ForumReplyV2
     let header_h = TITLE_LINE_H + META_LINE_H + HEADER_GAP;
     let mod_h = if f.is_moderator_or_admin() { ROW_H } else { 0.0 };
     let composer_visible = thread_composer_visible(f.caller_signed_in, resolve_board_can_write(f));
-    let rank_for = |is_me: bool| is_me && caller_rank_label(f).is_some();
 
-    let op_h = post_card_h(&t.body, t.hidden, false, composer_visible, rank_for(t.author_is_me));
+    let op_h = post_card_h(&t.body, t.hidden, false, composer_visible, t.author_rank.is_some());
     let flat = flatten_replies_chronological(replies_tree, 2);
     let replies_h: f64 = flat
         .iter()
         .map(|fr| {
             post_card_h(
                 &fr.reply.body, fr.reply.hidden, fr.in_reply_to.is_some(),
-                composer_visible || fr.reply.author_is_me, rank_for(fr.reply.author_is_me),
+                composer_visible || fr.reply.author_is_me, fr.reply.author_rank.is_some(),
             )
         })
         .sum();
@@ -1524,7 +1494,6 @@ fn draw_right_thread(
     let f = &state.forum2;
     let composer_visible = thread_composer_visible(f.caller_signed_in, resolve_board_can_write(f));
     let flat_replies = flatten_replies_chronological(replies_tree, 2);
-    let rank_for = |is_me: bool| if is_me { caller_rank_label(f) } else { None };
 
     let composer_h = thread_composer_h(f, reply_to);
     let scroll_h = (viewport_h - composer_h).max(0.0);
@@ -1566,7 +1535,7 @@ fn draw_right_thread(
             let op_reply_id: Option<&str> = composer_visible.then_some("cloud_overlay:forum2:reply_to_op");
             ly += draw_post_card(
                 ctx, coord, layer_id, sx, ly, sw,
-                1, &t.author, rank_for(t.author_is_me), &t.created_at, t.hidden, &t.body, None,
+                1, &t.author, t.author_rank.as_deref(), &t.created_at, t.hidden, &t.body, None,
                 op_reply_id, "\u{21a9} Reply", None, current_time_ms, tt,
             );
 
@@ -1574,13 +1543,11 @@ fn draw_right_thread(
                 let reply_id = format!("cloud_overlay:forum2:reply_to:{}", fr.reply.id);
                 let targeted = reply_to == Some(fr.reply.id);
                 let reply_label = if targeted { "Replying…" } else { "\u{21a9} Reply" };
-                let delete_id = fr
-                    .reply
-                    .author_is_me
+                let delete_id = (fr.reply.author_is_me || f.is_moderator_or_admin())
                     .then(|| format!("cloud_overlay:forum2:delete_reply:{}", fr.reply.id));
                 ly += draw_post_card(
                     ctx, coord, layer_id, sx, ly, sw,
-                    fr.number, &fr.reply.author, rank_for(fr.reply.author_is_me), &fr.reply.created_at,
+                    fr.number, &fr.reply.author, fr.reply.author_rank.as_deref(), &fr.reply.created_at,
                     fr.reply.hidden, &fr.reply.body, fr.in_reply_to,
                     composer_visible.then_some(reply_id.as_str()), reply_label,
                     delete_id.as_deref(), current_time_ms, tt,
@@ -1842,6 +1809,7 @@ mod tests {
             depth,
             author: author.to_string(),
             author_is_me: false,
+            author_rank: None,
             body: "body".to_string(),
             created_at: created_at.to_string(),
             hidden: false,

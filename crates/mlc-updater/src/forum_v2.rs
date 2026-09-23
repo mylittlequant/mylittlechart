@@ -54,6 +54,13 @@ pub struct ForumThreadV2Summary {
     pub author: String,
     #[serde(default)]
     pub author_is_me: bool,
+    /// The thread starter's ladder rank (`"user"|"paid"|"trusted"|
+    /// "moderator"|"admin"`), or `None` for an unresolved/anonymous author.
+    /// `#[serde(default)]` — same soft-rollout idiom as `ForumBoard::
+    /// thread_count`'s own copy: the server change landing this field is a
+    /// separate in-flight deploy.
+    #[serde(default)]
+    pub author_rank: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     #[serde(default)]
@@ -80,6 +87,9 @@ pub struct ForumReplyNode {
     pub author: String,
     #[serde(default)]
     pub author_is_me: bool,
+    /// See `ForumThreadV2Summary::author_rank`'s own doc.
+    #[serde(default)]
+    pub author_rank: Option<String>,
     pub body: String,
     pub created_at: String,
     #[serde(default)]
@@ -98,6 +108,8 @@ pub struct ForumThreadV2 {
     pub title: String,
     pub author: String,
     pub author_is_me: bool,
+    /// See `ForumThreadV2Summary::author_rank`'s own doc.
+    pub author_rank: Option<String>,
     pub body: String,
     pub created_at: String,
     pub updated_at: String,
@@ -142,6 +154,8 @@ struct ThreadDetailWire {
     author: String,
     #[serde(default)]
     author_is_me: bool,
+    #[serde(default)]
+    author_rank: Option<String>,
     body: String,
     created_at: String,
     updated_at: String,
@@ -334,6 +348,7 @@ pub async fn get_thread(client: &reqwest::Client, auth_header: Option<&str>, id:
         title: wire.thread.title,
         author: wire.thread.author,
         author_is_me: wire.thread.author_is_me,
+        author_rank: wire.thread.author_rank,
         body: wire.thread.body,
         created_at: wire.thread.created_at,
         updated_at: wire.thread.updated_at,

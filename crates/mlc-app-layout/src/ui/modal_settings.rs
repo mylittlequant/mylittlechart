@@ -5481,6 +5481,11 @@ pub struct ForumThreadV2Ui {
     pub title: String,
     pub author: String,
     pub author_is_me: bool,
+    /// The thread starter's ladder rank (`"user"|"paid"|"trusted"|
+    /// "moderator"|"admin"`), or `None` for an unresolved/anonymous author —
+    /// see the server's `resolve_author_ranks`/`author_rank_json`
+    /// (`routes::forum_v2.rs`).
+    pub author_rank: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub last_reply_at: Option<String>,
@@ -5501,6 +5506,8 @@ pub struct ForumReplyV2Ui {
     pub depth: i64,
     pub author: String,
     pub author_is_me: bool,
+    /// See `ForumThreadV2Ui::author_rank`'s own doc.
+    pub author_rank: Option<String>,
     pub body: String,
     pub created_at: String,
     /// Hidden by a moderator — the server omits a hidden reply's CHILDREN
@@ -5522,6 +5529,8 @@ pub struct ForumThreadV2Detail {
     pub title: String,
     pub author: String,
     pub author_is_me: bool,
+    /// See `ForumThreadV2Ui::author_rank`'s own doc.
+    pub author_rank: Option<String>,
     pub body: String,
     pub created_at: String,
     pub updated_at: String,

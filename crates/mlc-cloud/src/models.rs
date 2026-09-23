@@ -646,6 +646,12 @@ pub struct ForumThreadV2Summary {
     pub title: String,
     pub author: String,
     pub author_is_me: bool,
+    /// The thread starter's ladder rank (`"user"|"paid"|"trusted"|
+    /// "moderator"|"admin"`), or `None` for an unresolved/anonymous author.
+    /// `#[serde(default)]` — same soft-rollout idiom as `ForumBoard::
+    /// thread_count`'s own copy of it above.
+    #[serde(default)]
+    pub author_rank: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub last_reply_at: Option<String>,
@@ -671,6 +677,9 @@ pub struct ForumThreadV2 {
     pub title: String,
     pub author: String,
     pub author_is_me: bool,
+    /// See `ForumThreadV2Summary::author_rank`'s own doc.
+    #[serde(default)]
+    pub author_rank: Option<String>,
     pub body: String,
     pub created_at: String,
     pub updated_at: String,
@@ -694,6 +703,9 @@ pub struct ForumReplyNode {
     pub depth: i64,
     pub author: String,
     pub author_is_me: bool,
+    /// See `ForumThreadV2Summary::author_rank`'s own doc.
+    #[serde(default)]
+    pub author_rank: Option<String>,
     pub body: String,
     pub created_at: String,
     /// `true` only reaches this caller when they are a moderator/admin — a
