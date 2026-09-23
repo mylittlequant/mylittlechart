@@ -67,8 +67,14 @@ async fn bind_callback_listener() -> Result<(tokio::net::TcpListener, u16), Stri
 pub(crate) fn open_url(url: &str) -> Result<(), String> {
     #[cfg(target_os = "windows")]
     {
+        use std::os::windows::process::CommandExt;
+        /// `CREATE_NO_WINDOW` — the app runs windowless (GUI subsystem) in
+        /// release; without this flag `cmd /c start` would still flash its
+        /// own console box since a console-subsystem child always gets one.
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         std::process::Command::new("cmd")
             .args(["/c", "start", "", url])
+            .creation_flags(CREATE_NO_WINDOW)
             .spawn()
             .map_err(|e| format!("Failed to open browser: {}", e))?;
     }

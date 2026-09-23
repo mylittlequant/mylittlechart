@@ -1,5 +1,6 @@
 //! Screenshot capture, PNG encoding, and timestamp filename helpers.
 
+use tracing::{error, warn};
 use vello::util::RenderSurface;
 use vello::wgpu;
 
@@ -122,7 +123,7 @@ pub(crate) fn capture_screenshot(
     let full_height = size.height;
 
     if full_width == 0 || full_height == 0 {
-        eprintln!("[Screenshot] Texture has zero dimension ({full_width}x{full_height})");
+        error!("[Screenshot] Texture has zero dimension ({full_width}x{full_height})");
         return None;
     }
 
@@ -185,14 +186,14 @@ pub(crate) fn capture_screenshot(
         match device.poll(wgpu::PollType::Poll) {
             Ok(_) => {}
             Err(e) => {
-                eprintln!("[Screenshot] Device poll error: {e:?}");
+                error!("[Screenshot] Device poll error: {e:?}");
                 return None;
             }
         }
         match rx.try_recv() {
             Ok(Ok(())) => break,
             Ok(Err(e)) => {
-                eprintln!("[Screenshot] Buffer map error: {e:?}");
+                error!("[Screenshot] Buffer map error: {e:?}");
                 return None;
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
@@ -200,7 +201,7 @@ pub(crate) fn capture_screenshot(
                 std::hint::spin_loop();
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                eprintln!("[Screenshot] Map channel disconnected unexpectedly");
+                error!("[Screenshot] Map channel disconnected unexpectedly");
                 return None;
             }
         }
@@ -229,7 +230,7 @@ pub(crate) fn capture_screenshot(
         let ch = ch.min(full_height - cy);
 
         if cw == 0 || ch == 0 {
-            eprintln!("[Screenshot] Crop rect is empty after clamping — using full frame");
+            warn!("[Screenshot] Crop rect is empty after clamping — using full frame");
             (full_pixels, full_width, full_height)
         } else {
             let mut cropped = Vec::with_capacity((cw * ch * bytes_per_pixel) as usize);
@@ -305,12 +306,12 @@ pub(crate) fn encode_png(pixels: &[u8], width: u32, height: u32) -> Option<Vec<u
         let mut writer = match encoder.write_header() {
             Ok(w) => w,
             Err(e) => {
-                eprintln!("[Screenshot] PNG header error: {e}");
+                error!("[Screenshot] PNG header error: {e}");
                 return None;
             }
         };
         if let Err(e) = writer.write_image_data(pixels) {
-            eprintln!("[Screenshot] PNG write error: {e}");
+            error!("[Screenshot] PNG write error: {e}");
             return None;
         }
         // writer (and encoder) drop here, releasing the borrow on png_bytes

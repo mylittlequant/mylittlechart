@@ -9,6 +9,7 @@ name = "mylittlechart"
 path = "src/main.rs"
 
 [dependencies]
+tracing = "0.1"
 web-time = "1"
 mlc-shell-diagnostics = { path = "../mlc-shell-diagnostics", package = "mylittlechart-shell-diagnostics" }
 mlc-app = { path = "../mlc-app", package = "mylittlechart-app" }

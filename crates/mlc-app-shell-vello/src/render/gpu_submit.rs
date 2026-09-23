@@ -3,6 +3,7 @@
 use vello::AaConfig;
 use vello::util::RenderContext;
 use mlc_core::state::toolbar_state::ScreenshotDestination;
+use tracing::{error, info, warn};
 use crate::{
     chrome,
     screenshot,
@@ -78,12 +79,12 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
                                 bytes: std::borrow::Cow::Borrowed(&pixels),
                             };
                             if let Err(e) = clipboard.set_image(img) {
-                                eprintln!("[Screenshot] Clipboard error: {e}");
+                                error!("[Screenshot] Clipboard error: {e}");
                             } else {
-                                eprintln!("[Screenshot] Copied to clipboard");
+                                info!("[Screenshot] Copied to clipboard");
                             }
                         }
-                        Err(e) => eprintln!("[Screenshot] Failed to open clipboard: {e}"),
+                        Err(e) => error!("[Screenshot] Failed to open clipboard: {e}"),
                     }
                 }
                 if destination == ScreenshotDestination::DownloadFile {
@@ -91,8 +92,8 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
                         let filename = format!("screenshot_{}.png", screenshot::timestamp_for_filename());
                         let path = screenshot::screenshot_save_dir().join(&filename);
                         match std::fs::write(&path, &png_bytes) {
-                            Ok(_) => eprintln!("[Screenshot] Saved {} bytes to: {}", png_bytes.len(), path.display()),
-                            Err(e) => eprintln!("[Screenshot] Failed to write file: {e}"),
+                            Ok(_) => info!("[Screenshot] Saved {} bytes to: {}", png_bytes.len(), path.display()),
+                            Err(e) => error!("[Screenshot] Failed to write file: {e}"),
                         }
                     }
                 }
@@ -105,7 +106,7 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
                         // here. The pixels already landed in the clipboard
                         // (the `Clipboard | ShareLink` match above) — just
                         // skip the upload.
-                        eprintln!("[share] screenshot upload skipped: account_signed_in=false");
+                        warn!("[share] screenshot upload skipped: account_signed_in=false");
                     } else {
                         // The clipboard already holds the pixels (the
                         // `Clipboard | ShareLink` match above) — this is the
@@ -125,12 +126,12 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
                             .unwrap_or_else(|| "chart".to_string());
                         match screenshot::encode_png(&pixels, img_width, img_height) {
                             Some(png_bytes) => pw.pending_share_screenshot = Some((title, png_bytes)),
-                            None => eprintln!("[share] screenshot PNG encoding failed"),
+                            None => error!("[share] screenshot PNG encoding failed"),
                         }
                     }
                 }
             }
-            None => eprintln!("[Screenshot] Capture failed"),
+            None => error!("[Screenshot] Capture failed"),
         }
     }
 
@@ -144,7 +145,7 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
                 Some((pixels, img_width, img_height)) => {
                     match screenshot::encode_png(&pixels, img_width, img_height) {
                         Some(png_bytes) => {
-                            eprintln!(
+                            info!(
                                 "[AlertScreenshot] Captured {}x{} PNG ({} bytes) for {} alert(s)",
                                 img_width, img_height, png_bytes.len(),
                                 pw.chart.pending_delivery_events.len()
@@ -153,10 +154,10 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
                                 event.screenshot = Some(png_bytes.clone());
                             }
                         }
-                        None => eprintln!("[AlertScreenshot] PNG encoding failed"),
+                        None => error!("[AlertScreenshot] PNG encoding failed"),
                     }
                 }
-                None => eprintln!("[AlertScreenshot] GPU capture failed"),
+                None => error!("[AlertScreenshot] GPU capture failed"),
             }
         }
     }
@@ -171,7 +172,7 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
                 Some((pixels, w, h)) => {
                     match screenshot::encode_png(&pixels, w, h) {
                         Some(png_bytes) => {
-                            eprintln!(
+                            info!(
                                 "[AgentScreenshot] Captured {}x{} PNG ({} bytes) for chart {}",
                                 w, h, png_bytes.len(), chart_id
                             );
@@ -182,13 +183,13 @@ pub(crate) fn submit_window_gpu(pw: &mut PerWindowState, render_cx: &RenderConte
                             }));
                         }
                         None => {
-                            eprintln!("[AgentScreenshot] PNG encoding failed for chart {}", chart_id);
+                            error!("[AgentScreenshot] PNG encoding failed for chart {}", chart_id);
                             let _ = tx.send(Err("PNG encoding failed".to_string()));
                         }
                     }
                 }
                 None => {
-                    eprintln!("[AgentScreenshot] GPU capture failed for chart {}", chart_id);
+                    error!("[AgentScreenshot] GPU capture failed for chart {}", chart_id);
                     let _ = tx.send(Err("screenshot capture failed".to_string()));
                 }
             }
@@ -327,12 +328,12 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
                                 bytes: std::borrow::Cow::Borrowed(&pixels),
                             };
                             if let Err(e) = clipboard.set_image(img) {
-                                eprintln!("[Screenshot] Clipboard error: {e}");
+                                error!("[Screenshot] Clipboard error: {e}");
                             } else {
-                                eprintln!("[Screenshot] Copied to clipboard");
+                                info!("[Screenshot] Copied to clipboard");
                             }
                         }
-                        Err(e) => eprintln!("[Screenshot] Failed to open clipboard: {e}"),
+                        Err(e) => error!("[Screenshot] Failed to open clipboard: {e}"),
                     }
                 }
                 if destination == ScreenshotDestination::DownloadFile {
@@ -340,8 +341,8 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
                         let filename = format!("screenshot_{}.png", screenshot::timestamp_for_filename());
                         let path = screenshot::screenshot_save_dir().join(&filename);
                         match std::fs::write(&path, &png_bytes) {
-                            Ok(_) => eprintln!("[Screenshot] Saved {} bytes to: {}", png_bytes.len(), path.display()),
-                            Err(e) => eprintln!("[Screenshot] Failed to write file: {e}"),
+                            Ok(_) => info!("[Screenshot] Saved {} bytes to: {}", png_bytes.len(), path.display()),
+                            Err(e) => error!("[Screenshot] Failed to write file: {e}"),
                         }
                     }
                 }
@@ -354,7 +355,7 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
                         // here. The pixels already landed in the clipboard
                         // (the `Clipboard | ShareLink` match above) — just
                         // skip the upload.
-                        eprintln!("[share] screenshot upload skipped: account_signed_in=false");
+                        warn!("[share] screenshot upload skipped: account_signed_in=false");
                     } else {
                         // The clipboard already holds the pixels (the
                         // `Clipboard | ShareLink` match above) — this is the
@@ -374,12 +375,12 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
                             .unwrap_or_else(|| "chart".to_string());
                         match screenshot::encode_png(&pixels, img_width, img_height) {
                             Some(png_bytes) => pw.pending_share_screenshot = Some((title, png_bytes)),
-                            None => eprintln!("[share] screenshot PNG encoding failed"),
+                            None => error!("[share] screenshot PNG encoding failed"),
                         }
                     }
                 }
             }
-            None => eprintln!("[Screenshot] Capture failed"),
+            None => error!("[Screenshot] Capture failed"),
         }
     }
 
@@ -393,7 +394,7 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
                 Some((pixels, img_width, img_height)) => {
                     match screenshot::encode_png(&pixels, img_width, img_height) {
                         Some(png_bytes) => {
-                            eprintln!(
+                            info!(
                                 "[AlertScreenshot] Captured {}x{} PNG ({} bytes) for {} alert(s)",
                                 img_width, img_height, png_bytes.len(),
                                 pw.chart.pending_delivery_events.len()
@@ -402,10 +403,10 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
                                 event.screenshot = Some(png_bytes.clone());
                             }
                         }
-                        None => eprintln!("[AlertScreenshot] PNG encoding failed"),
+                        None => error!("[AlertScreenshot] PNG encoding failed"),
                     }
                 }
-                None => eprintln!("[AlertScreenshot] GPU capture failed"),
+                None => error!("[AlertScreenshot] GPU capture failed"),
             }
         }
     }
@@ -420,7 +421,7 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
                 Some((pixels, w, h)) => {
                     match screenshot::encode_png(&pixels, w, h) {
                         Some(png_bytes) => {
-                            eprintln!(
+                            info!(
                                 "[AgentScreenshot] Captured {}x{} PNG ({} bytes) for chart {}",
                                 w, h, png_bytes.len(), chart_id
                             );
@@ -431,13 +432,13 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
                             }));
                         }
                         None => {
-                            eprintln!("[AgentScreenshot] PNG encoding failed for chart {}", chart_id);
+                            error!("[AgentScreenshot] PNG encoding failed for chart {}", chart_id);
                             let _ = tx.send(Err("PNG encoding failed".to_string()));
                         }
                     }
                 }
                 None => {
-                    eprintln!("[AgentScreenshot] GPU capture failed for chart {}", chart_id);
+                    error!("[AgentScreenshot] GPU capture failed for chart {}", chart_id);
                     let _ = tx.send(Err("screenshot capture failed".to_string()));
                 }
             }
@@ -454,7 +455,7 @@ pub(crate) fn submit_window_gpu_from_gpu_scene(
             return (render_tex_us, 0);
         }
         other => {
-            eprintln!("[GPU] Surface error: {:?}, reconfiguring", other);
+            error!("[GPU] Surface error: {:?}, reconfiguring", other);
             pw.surface.surface.configure(device, &pw.surface.config);
             // Reconfiguring the surface rebuilds the swapchain, which bumps the
             // resource generation. The cached `target_texture`/`target_view` were

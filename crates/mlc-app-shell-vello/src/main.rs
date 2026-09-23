@@ -4,6 +4,11 @@
 //! connector pool).  Each window has its own ChartApp with independent
 //! tabs/presets but receives live updates via broadcast channels.
 //! Creates windows on demand; closing the last window exits the process.
+//!
+//! No console window on a release Windows launch — logs go through
+//! `mlc_shell_diagnostics`'s tracing file sink instead of a console the user
+//! never asked for. Debug builds keep the console (`cargo run` convenience).
+#![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
 mod agent;
 mod app_state;
@@ -22,6 +27,7 @@ use platform::win32::{win32_border, win32_capture};
 use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
+use tracing::{debug, error, info, warn};
 use web_time::SystemTime;
 use web_time::UNIX_EPOCH;
 
@@ -1201,7 +1207,7 @@ fn seed_core_from_profile(
             // Watchlists are always plaintext — pass None regardless of vault key.
             mlc_core::load_json::<mlc_app::WatchlistManager>(&watchlists_path, None)
                 .unwrap_or_else(|e| {
-                    eprintln!("[App] Failed to load watchlists: {}", e);
+                    warn!("[App] Failed to load watchlists: {}", e);
                     default_watchlist()
                 })
         } else {
@@ -1214,7 +1220,7 @@ fn seed_core_from_profile(
         let watchlists_path = mlc_core::user_profile::storage::watchlists_path();
         let snap = core.watchlists().snapshot();
         if let Err(e) = mlc_core::save_json(&watchlists_path, &snap, None) {
-            eprintln!("[App] Failed to persist migrated watchlists: {}", e);
+            warn!("[App] Failed to persist migrated watchlists: {}", e);
         }
     }
     core.presets_mut().replace_all(profile_manager.presets.clone());
@@ -1269,7 +1275,7 @@ fn build_secret_sidecar(
     ));
     if let Some(vault_key) = initial_key {
         if let Err(e) = store.unlock_with_key(vault_key) {
-            eprintln!("[App] {label} store: failed to unlock at startup: {}", e);
+            warn!("[App] {label} store: failed to unlock at startup: {}", e);
         }
     }
     store
@@ -1442,7 +1448,7 @@ impl App<'_> {
                 })
                 .collect();
 
-            eprintln!("[App] Indicator catalog populated: {} types", indicators.len());
+            info!("[App] Indicator catalog populated: {} types", indicators.len());
             if let Ok(mut cat) = agent_state.indicator_catalog.write() {
                 *cat = IndicatorCatalogSnapshot { indicators };
             }
@@ -1493,7 +1499,7 @@ impl App<'_> {
                 }
             }).collect();
 
-            eprintln!("[App] Primitive catalog populated: {} types", primitives.len());
+            info!("[App] Primitive catalog populated: {} types", primitives.len());
             if let Ok(mut cat) = agent_state.primitive_catalog.write() {
                 *cat = PrimitiveCatalogSnapshot { primitives };
             }
@@ -1567,7 +1573,7 @@ impl App<'_> {
                 _    => mlc_core::Language::En,
             };
             mlc_core::set_language(lang);
-            eprintln!("[App] startup language: {}", profile.ui.language);
+            info!("[App] startup language: {}", profile.ui.language);
         }
 
 
@@ -1835,7 +1841,7 @@ impl App<'_> {
                 Some(winit::window::Theme::Light) => "light",
                 _ => "dark",
             };
-            eprintln!("[App] no saved theme — following the system: {detected}");
+            info!("[App] no saved theme — following the system: {detected}");
             self.app_state.theme_preset = detected.to_string();
         }
 
@@ -1862,7 +1868,7 @@ impl App<'_> {
             self.gpu_name = info.name.clone();
             self.gpu_driver = info.driver_info.clone();
             self.telemetry.set_gpu_name(&self.gpu_name);
-            eprintln!("[App] GPU: {} ({})", self.gpu_name, self.gpu_driver);
+            info!("[App] GPU: {} ({})", self.gpu_name, self.gpu_driver);
 
             // Auto-detect backend based on GPU capabilities (first launch only)
             if self.backend_auto_detect {
@@ -1877,7 +1883,7 @@ impl App<'_> {
                 if self.render_backend != recommended {
                     self.render_backend = recommended;
                 }
-                eprintln!("[App] Auto-detected backend → {:?} (device_type={:?})", recommended, info.device_type);
+                info!("[App] Auto-detected backend → {:?} (device_type={:?})", recommended, info.device_type);
 
                 // Set backend-specific performance defaults.
                 let (fps, msaa) = match recommended {
@@ -2226,7 +2232,7 @@ impl App<'_> {
     /// loads the new profile, and recreates windows from the new profile's saved state.
     /// Called at the end of `about_to_wait` once `pending_profile_switch` is set.
     fn execute_profile_switch(&mut self, target_id: &str, event_loop: &ActiveEventLoop) {
-        eprintln!("[App] hot-reload: switching to profile {}", target_id);
+        info!("[App] hot-reload: switching to profile {}", target_id);
 
         // 1. Save current profile state (windows, presets, watchlist).
         self.save_all(&[]);
@@ -2235,7 +2241,7 @@ impl App<'_> {
         if let Some(mut index) = mlc_core::load_profile_index() {
             index.active_profile_id = target_id.to_string();
             if let Err(e) = mlc_core::save_profile_index(&index) {
-                eprintln!("[App] hot-reload: failed to save index: {}", e);
+                error!("[App] hot-reload: failed to save index: {}", e);
             }
         }
 
@@ -2338,7 +2344,7 @@ impl App<'_> {
             self.profile_manager.set_vault_key(key);
             self.profile_manager.vault_key = Some(key);
             if let Err(e) = self.profile_manager.load_vault_secrets() {
-                eprintln!("[App] hot-reload: failed to load vault secrets after pre-switch: {}", e);
+                warn!("[App] hot-reload: failed to load vault secrets after pre-switch: {}", e);
             }
             self.profile = self.profile_manager.profile.clone();
             self.core.user_mut().set_vault_key(Some(key));
@@ -2357,18 +2363,18 @@ impl App<'_> {
             // original-profile store.
             self.sync_secret_sidecars(&key);
             self.needs_vault_unlock = false;
-            eprintln!("[App] hot-reload: pre-validated vault key injected — skipping unlock screen");
+            info!("[App] hot-reload: pre-validated vault key injected — skipping unlock screen");
         }
 
         self.is_first_run = false;
 
         // 7. Recreate windows from the new profile's saved state.
         if saved_windows.is_empty() {
-            eprintln!("[App] hot-reload: no saved windows — creating default");
+            info!("[App] hot-reload: no saved windows — creating default");
             self.create_window(event_loop, None, None);
         } else {
             for ws in &saved_windows {
-                eprintln!(
+                debug!(
                     "[App] hot-reload: restoring window tabs={} active={}",
                     ws.open_tabs.len(),
                     ws.active_preset_id
@@ -2396,7 +2402,7 @@ impl App<'_> {
         // vault is opened where a secret is used, never in front of the
         // chart.
 
-        eprintln!(
+        info!(
             "[App] hot-reload: profile switch complete — {} window(s) created",
             self.windows.len()
         );
@@ -2414,13 +2420,13 @@ impl App<'_> {
         let proxy = match self.promote_proxy.take() {
             Some(p) => p,
             None => {
-                eprintln!("[App] start_promote_async: no proxy — cannot promote off-thread");
+                warn!("[App] start_promote_async: no proxy — cannot promote off-thread");
                 return;
             }
         };
 
         let _promote_t0 = mlc_backend_data_bridge::elapsed_ms();
-        eprintln!(
+        info!(
             "[App] skeleton → live: spawning worker for {} skeleton window(s) t={}ms (PROMOTE START)",
             self.windows.len(),
             _promote_t0,
@@ -2602,7 +2608,7 @@ impl App<'_> {
                 r.open_tabs = r.chart.panel_app.open_tabs.clone();
             }
 
-            eprintln!(
+            debug!(
                 "[App] promote worker: {} ChartApp(s) built in {}ms",
                 results.len(),
                 worker_t0.elapsed().as_millis(),
@@ -2630,7 +2636,7 @@ impl App<'_> {
         // Block until any in-flight GPU frame finishes before touching chart state.
         self.wait_for_gpu_frame_blocking();
         let t_gpu_wait = mlc_backend_data_bridge::elapsed_ms();
-        eprintln!(
+        debug!(
             "[App] finish_promote: gpu-wait {}ms",
             t_gpu_wait.saturating_sub(swap_t0),
         );
@@ -2666,7 +2672,7 @@ impl App<'_> {
                 std::thread::spawn(move || {
                     let _t = web_time::Instant::now();
                     drop(old_chart);
-                    eprintln!(
+                    debug!(
                         "[App] finish_promote: off-thread drop of skeleton ChartApp took {}us",
                         _t.elapsed().as_micros(),
                     );
@@ -2691,7 +2697,7 @@ impl App<'_> {
                 // — measured 1206ms of the 1422ms post-spinner freeze. The
                 // chart must appear first; the warm-up catches up one frame
                 // later.
-                eprintln!(
+                debug!(
                     "[App] finish_promote: chart-swap (old drop off-thread) {}ms",
                     mlc_backend_data_bridge::elapsed_ms().saturating_sub(t_swap_one),
                 );
@@ -2709,7 +2715,7 @@ impl App<'_> {
         self.promote_pending = false;
         self.promote_end_ms = Some(mlc_backend_data_bridge::elapsed_ms());
 
-        eprintln!(
+        info!(
             "[App] skeleton → live: swap complete, {} window(s) live t={}ms (PROMOTE END — main blocked {}ms)",
             self.windows.len(),
             mlc_backend_data_bridge::elapsed_ms(),
@@ -2746,7 +2752,7 @@ impl App<'_> {
                     // own and the next frame will pick up the done signal.
                 }
                 Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                    eprintln!("[App] GPU render thread channel closed (wait_for_gpu_frame)");
+                    error!("[App] GPU render thread channel closed (wait_for_gpu_frame)");
                     self.close_all_requested = true;
                 }
             }
@@ -2771,7 +2777,7 @@ impl App<'_> {
                     }
                 }
                 Err(_) => {
-                    eprintln!("[App] GPU render thread channel closed (wait_for_gpu_frame_blocking)");
+                    error!("[App] GPU render thread channel closed (wait_for_gpu_frame_blocking)");
                     self.close_all_requested = true;
                 }
             }
@@ -2967,7 +2973,7 @@ impl App<'_> {
     fn sync_secret_sidecars(&mut self, vault_key: &mlc_vault::vault::VaultKey) {
         for store in self.vault_key_sidecars().into_iter().flatten() {
             if let Err(e) = store.unlock_with_key(vault_key) {
-                eprintln!("[App] secret store: failed to unlock alongside vault: {}", e);
+                warn!("[App] secret store: failed to unlock alongside vault: {}", e);
             }
         }
         #[cfg(feature = "cloud")]
@@ -4148,7 +4154,7 @@ impl App<'_> {
             .collect();
 
         for ws in &window_states {
-            eprintln!("[save_all] window_id={} pos=({:?},{:?}) size=({:?},{:?}) tabs={} active={}",
+            debug!("[save_all] window_id={} pos=({:?},{:?}) size=({:?},{:?}) tabs={} active={}",
                 ws.window_id, ws.x, ws.y, ws.width, ws.height,
                 ws.open_tabs.len(), ws.active_preset_id);
         }
@@ -4187,7 +4193,7 @@ impl App<'_> {
         let vault_key = self.core.user().vault_key();
         let vault_key = vault_key.as_ref();
         if let Err(e) = mlc_core::save_profile(&profile, vault_key) {
-            eprintln!("[App] Failed to save profile: {}", e);
+            error!("[App] Failed to save profile: {}", e);
         } else {
             // Keep in-memory profile up to date.
             self.profile = profile;
@@ -4200,7 +4206,7 @@ impl App<'_> {
             // runs (clippy::significant_drop_in_scrutinee).
             let watchlists_snapshot = self.core.watchlists().snapshot();
             if let Err(e) = mlc_core::save_json(&watchlists_path, &watchlists_snapshot, None) {
-                eprintln!("[App] Failed to save watchlists: {}", e);
+                error!("[App] Failed to save watchlists: {}", e);
             }
         }
 
@@ -4211,7 +4217,7 @@ impl App<'_> {
             // runs (clippy::significant_drop_in_scrutinee).
             let save_result = mlc_core::save_json(&path, self.core.user().snapshots(), None);
             if let Err(e) = save_result {
-                eprintln!("[App] Failed to save settings snapshots: {}", e);
+                error!("[App] Failed to save settings snapshots: {}", e);
             }
         }
 
@@ -4220,7 +4226,7 @@ impl App<'_> {
         // (clippy::significant_drop_in_scrutinee).
         let templates_save_result = self.core.templates().save_to_default_dir(vault_key);
         if let Err(e) = templates_save_result {
-            eprintln!("[App] Failed to save templates: {:?}", e);
+            error!("[App] Failed to save templates: {:?}", e);
         }
 
         // 9. Save all presets from the shared core (single canonical source of truth),
@@ -4238,7 +4244,7 @@ impl App<'_> {
                 continue;
             }
             if let Err(e) = mlc_core::preset::storage::save_preset(preset) {
-                eprintln!("[App] failed to save preset {}: {}", preset.id, e);
+                error!("[App] failed to save preset {}: {}", preset.id, e);
             }
         }
 
@@ -4289,12 +4295,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         // falls into the same "create a default window" path every other
         // profile-with-no-saved-geometry takes — and gets a live chart.
         if self.saved_windows.is_empty() {
-            eprintln!("[App] No saved windows — creating default");
+            info!("[App] No saved windows — creating default");
             self.create_window(event_loop, None, None);
         } else {
             let windows_to_restore = self.saved_windows.clone();
             for ws in &windows_to_restore {
-                eprintln!("[App] Restoring window: id={} pos=({:?},{:?}) size=({:?},{:?}) tabs={} active={}",
+                debug!("[App] Restoring window: id={} pos=({:?},{:?}) size=({:?},{:?}) tabs={} active={}",
                     ws.window_id, ws.x, ws.y, ws.width, ws.height,
                     ws.open_tabs.len(), ws.active_preset_id);
                 self.create_window(event_loop, Some(ws), None);
@@ -4371,7 +4377,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // Only shout when the gap is far beyond the expected WaitUntil
                 // sleep (3× budget AND ≥ 120ms absolute), to skip normal pacing.
                 if gap_ms > budget_ms * 3.0 && gap_ms > 120.0 {
-                    eprintln!(
+                    debug!(
                         "[FRAME-GAP] main thread away {:.0}ms between frames (budget={:.1}ms) t={}ms — loop was STARVED (heavy pass / lock / promote), not idle pacing",
                         gap_ms, budget_ms, mlc_backend_data_bridge::elapsed_ms(),
                     );
@@ -4417,7 +4423,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     mlc_app::WatchlistAction::Toggle { symbol, exchange, account_type } => {
                         let address = mlc_core::InstrumentAddress::new(exchange.clone(), symbol.clone(), account_type.parse().unwrap_or_default());
                         let now_in = self.core.watchlists_mut().toggle_symbol(active_list_id, &address);
-                        eprintln!("[App] watchlist toggle: {}:{}:{} -> in_watchlist={}", symbol, exchange, account_type, now_in);
+                        info!("[App] watchlist toggle: {}:{}:{} -> in_watchlist={}", symbol, exchange, account_type, now_in);
                         if now_in {
                             if let Some(eid) = mlc_app::ExchangeId::from_str(&exchange) {
                                 let enabled = self.core.user().is_connector_enabled(eid.as_str());
@@ -4586,7 +4592,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         let mut user = self.core.user_mut();
                         let enabled = !user.is_connector_enabled(&exchange_id);
                         user.set_connector_enabled_one(exchange_id.clone(), enabled);
-                        eprintln!("[App] connector toggle: {} -> enabled={}", exchange_id, enabled);
+                        info!("[App] connector toggle: {} -> enabled={}", exchange_id, enabled);
                     }
                 }
             }
@@ -4604,7 +4610,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     mlc_app::PresetAction::Delete { id } => {
                         self.core.presets_mut().remove(&id);
                         if let Err(e) = mlc_core::preset::storage::delete_preset(&id) {
-                            eprintln!("[App] failed to delete preset file {}: {}", id, e);
+                            warn!("[App] failed to delete preset file {}: {}", id, e);
                         }
                         self.preset_dirty_ids.remove(&id);
                     }
@@ -4663,14 +4669,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         let mut ds = mlc_core::user_profile::DeviceSettings::load();
                         ds.fps_limit = v;
                         ds.save();
-                        eprintln!("[App] FPS limit → {}", v);
+                        info!("[App] FPS limit → {}", v);
                     }
                     mlc_app::PerfAction::SetMsaa(v) => {
                         self.msaa_samples = v;
                         let mut ds = mlc_core::user_profile::DeviceSettings::load();
                         ds.msaa_samples = v;
                         ds.save();
-                        eprintln!("[App] MSAA → {}", v);
+                        info!("[App] MSAA → {}", v);
                     }
                     mlc_app::PerfAction::SetRecalcMode(ref mode) => {
                         let recalc_mode = match mode.as_str() {
@@ -4682,11 +4688,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         let mut ds = mlc_core::user_profile::DeviceSettings::load();
                         ds.recalc_mode = mode.clone();
                         ds.save();
-                        eprintln!("[App] RecalcMode → {:?}", recalc_mode);
+                        info!("[App] RecalcMode → {:?}", recalc_mode);
                     }
                     mlc_app::PerfAction::TogglePerfLog => {
                         self.perf_log_enabled = !self.perf_log_enabled;
-                        eprintln!("[App] Perf logging → {}", self.perf_log_enabled);
+                        info!("[App] Perf logging → {}", self.perf_log_enabled);
                     }
                     mlc_app::PerfAction::SetBackend(ref name) => {
                         use mlc_app_sidebar_content::state::RenderBackend;
@@ -4701,7 +4707,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             reset_instanced_renderer = true;
                         }
                         self.render_backend = new_backend;
-                        eprintln!("[App] Backend → {:?}", self.render_backend);
+                        info!("[App] Backend → {:?}", self.render_backend);
                         // Persist to device_settings.json
                         {
                             let mut ds = mlc_core::user_profile::DeviceSettings::load();
@@ -4737,7 +4743,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             for id in ids {
                 if let Some(preset) = self.core.presets().get(&id) {
                     if let Err(e) = mlc_core::preset::storage::save_preset(preset) {
-                        eprintln!("[App] failed to save preset {}: {}", id, e);
+                        error!("[App] failed to save preset {}: {}", id, e);
                     }
                 }
             }
@@ -4773,7 +4779,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
 
                 let vault_key = self.core.user().vault_key();
                 if let Err(e) = mlc_core::save_profile(&profile, vault_key.as_ref()) {
-                    eprintln!("[App] Failed to save profile: {}", e);
+                    error!("[App] Failed to save profile: {}", e);
                 } else {
                     self.profile = profile;
                 }
@@ -4799,7 +4805,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
 
                 let vault_key = self.core.user().vault_key();
                 if let Err(e) = mlc_core::save_profile(&profile, vault_key.as_ref()) {
-                    eprintln!("[App] Failed to save profile (geometry): {}", e);
+                    error!("[App] Failed to save profile (geometry): {}", e);
                 } else {
                     self.profile = profile;
                     // NOTE: No sync_changed_categories push — geometry is local-only.
@@ -4820,7 +4826,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // runs (clippy::significant_drop_in_scrutinee).
                 let watchlists_snapshot = self.core.watchlists().snapshot();
                 if let Err(e) = mlc_core::save_json(&watchlists_path, &watchlists_snapshot, None) {
-                    eprintln!("[App] Failed to save watchlists: {}", e);
+                    error!("[App] Failed to save watchlists: {}", e);
                 }
                 // Clear dirty flags.
                 for pw in self.windows.values_mut() {
@@ -4857,7 +4863,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // runs (clippy::significant_drop_in_scrutinee).
                 let save_result = mlc_core::save_json(&path, self.core.user().snapshots(), None);
                 if let Err(e) = save_result {
-                    eprintln!("[App] Failed to save settings snapshots: {}", e);
+                    error!("[App] Failed to save settings snapshots: {}", e);
                 } else {
                     self.snapshots_disk_dirty = false;
                 }
@@ -4882,7 +4888,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     // runs (clippy::significant_drop_in_scrutinee).
                     let templates_save_result = self.core.templates().save_to_default_dir(vault_key.as_ref());
                     if let Err(e) = templates_save_result {
-                        eprintln!("[App] Failed to save templates: {:?}", e);
+                        error!("[App] Failed to save templates: {:?}", e);
                     } else {
                         self.templates_disk_dirty = false;
                         self.templates_last_write_at = Some(now);
@@ -4908,7 +4914,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         mlc_app::PresetAction::Delete { id } => {
                             self.core.presets_mut().remove(&id);
                             if let Err(e) = mlc_core::preset::storage::delete_preset(&id) {
-                                eprintln!("[App] failed to delete preset file {}: {}", id, e);
+                                warn!("[App] failed to delete preset file {}: {}", id, e);
                             }
                             self.preset_dirty_ids.remove(&id);
                         }
@@ -4927,7 +4933,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 for id in ids {
                     if let Some(preset) = self.core.presets().get(&id) {
                         if let Err(e) = mlc_core::preset::storage::save_preset(preset) {
-                            eprintln!("[App] failed to save preset {}: {}", id, e);
+                            error!("[App] failed to save preset {}: {}", id, e);
                         }
                     }
                 }
@@ -4970,7 +4976,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             for pw in self.windows.values_mut() {
                 pw.restart_requested = false;
             }
-            eprintln!("[App] restart requested — saving, then handing over to the new binary");
+            info!("[App] restart requested — saving, then handing over to the new binary");
             self.save_all(&[]);
             match mlc_updater::replace::spawn_and_exit(
                 self.windows
@@ -4979,7 +4985,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     .map(|pw| pw.chart.core.user().server_port()),
             ) {
                 Ok(()) => return,
-                Err(e) => eprintln!("[App] restart failed, staying on the running build: {e}"),
+                Err(e) => error!("[App] restart failed, staying on the running build: {e}"),
             }
         }
 
@@ -5095,7 +5101,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 let mut ds = mlc_core::user_profile::DeviceSettings::load();
                 ds.recalc_mode = mode_str.clone();
                 ds.save();
-                eprintln!("[App] recalc_mode changed to: {}", mode_str);
+                info!("[App] recalc_mode changed to: {}", mode_str);
             }
         }
 
@@ -5117,7 +5123,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // Save to active profile
                 self.profile.ui.language = lang_code.clone();
                 self.profile_manager.profile.ui.language = lang_code.clone();
-                eprintln!("[App] language changed to: {}", lang_code);
+                info!("[App] language changed to: {}", lang_code);
             }
         }
 
@@ -5133,7 +5139,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     pw.chart.panel_app.user_settings_state.server_enabled = enabled;
                     pw.chart.panel_app.user_settings_state.server_status = status.to_string();
                 }
-                eprintln!("[App] server_enabled changed to: {}", enabled);
+                info!("[App] server_enabled changed to: {}", enabled);
                 // Actual listener start/stop happens later this same frame,
                 // off `account_signed_in && server_enabled()`
                 // (agent-api-auth-and-secret-store plan, piece 4) — see the
@@ -5196,10 +5202,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             if let Some(text) = clip {
                 if let Ok(mut cb) = arboard::Clipboard::new() {
                     if let Err(e) = cb.set_text(&text) {
-                        eprintln!("[App] clipboard copy failed: {}", e);
+                        warn!("[App] clipboard copy failed: {}", e);
                     }
                 } else {
-                    eprintln!("[App] clipboard unavailable");
+                    warn!("[App] clipboard unavailable");
                 }
             }
         }
@@ -5211,23 +5217,29 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             if let Some(ref url) = url {
                 #[cfg(target_os = "windows")]
                 {
+                    use std::os::windows::process::CommandExt;
+                    // CREATE_NO_WINDOW — this shell runs windowless in
+                    // release; without the flag `cmd /c start` would flash
+                    // its own console box.
+                    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
                     if let Err(e) = std::process::Command::new("cmd")
                         .args(["/c", "start", "", url])
+                        .creation_flags(CREATE_NO_WINDOW)
                         .spawn()
                     {
-                        eprintln!("[App] failed to open URL {}: {}", url, e);
+                        warn!("[App] failed to open URL {}: {}", url, e);
                     }
                 }
                 #[cfg(target_os = "macos")]
                 {
                     if let Err(e) = std::process::Command::new("open").arg(url).spawn() {
-                        eprintln!("[App] failed to open URL {}: {}", url, e);
+                        warn!("[App] failed to open URL {}: {}", url, e);
                     }
                 }
                 #[cfg(target_os = "linux")]
                 {
                     if let Err(e) = std::process::Command::new("xdg-open").arg(url).spawn() {
-                        eprintln!("[App] failed to open URL {}: {}", url, e);
+                        warn!("[App] failed to open URL {}: {}", url, e);
                     }
                 }
             }
@@ -5247,7 +5259,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 .values_mut()
                 .find_map(|pw| pw.chart.panel_app.cloud_login_state.oauth_login_requested.take());
             if let Some(provider) = picked {
-                eprintln!("[Updater] sign-in: starting loopback OAuth with '{provider}'");
+                info!("[Updater] sign-in: starting loopback OAuth with '{provider}'");
                 let _ = self
                     .updater_handle
                     .cmd_tx
@@ -5309,7 +5321,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         true,
                     );
                 }
-                eprintln!("[App] sign out requested from the account overlay");
+                info!("[App] sign out requested from the account overlay");
             }
         }
 
@@ -5449,7 +5461,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             true,
                         );
                     }
-                    eprintln!("[App] logout requested — forwarded to updater");
+                    info!("[App] logout requested — forwarded to updater");
                 } else if cmd_str == "start_device_auth" {
                     cmd_handled = true;
                     // Native does not use the device-code flow at all. It has
@@ -5481,7 +5493,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             pw.window.request_redraw();
                         }
                     }
-                    eprintln!("[Updater] sign-in: offering OAuth providers (loopback flow)");
+                    info!("[Updater] sign-in: offering OAuth providers (loopback flow)");
                 }
 
                 // ── Profile commands: shared dispatcher (mlc-app) ────────────
@@ -5503,7 +5515,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             }
                         }
                         self.sync_profiles_to_windows();
-                        eprintln!("[App] profile renamed: id={} name={}", id, new_name);
+                        info!("[App] profile renamed: id={} name={}", id, new_name);
                     }
                     ProfileCommandOutcome::Handled(ProfileEffect::AvatarSet { avatar, .. }) => {
                         cmd_handled = true;
@@ -5512,11 +5524,11 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         for pw in self.windows.values_mut() {
                             pw.chart.panel_app.user_settings_state.profile_avatar = avatar.clone();
                         }
-                        eprintln!("[App] profile avatar set to: {}", avatar);
+                        info!("[App] profile avatar set to: {}", avatar);
                     }
                     ProfileCommandOutcome::Handled(ProfileEffect::Created { id, display_name }) => {
                         cmd_handled = true;
-                        eprintln!("[App] profile created: {} ({})", display_name, id);
+                        info!("[App] profile created: {} ({})", display_name, id);
                         self.sync_profiles_to_windows();
                         // Show passphrase setup in the current window — no profile switch yet.
                         // The switch happens only after the user successfully creates the vault.
@@ -5536,21 +5548,21 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     }
                     ProfileCommandOutcome::Handled(ProfileEffect::SwitchAlreadyActive) => {
                         cmd_handled = true;
-                        eprintln!("[App] profile_switch: already on this profile, ignoring");
+                        warn!("[App] profile_switch: already on this profile, ignoring");
                     }
                     ProfileCommandOutcome::Handled(ProfileEffect::SwitchRequested { id }) => {
                         cmd_handled = true;
-                        eprintln!("[App] profile_switch: scheduling hot-reload for profile {}", id);
+                        info!("[App] profile_switch: scheduling hot-reload for profile {}", id);
                         self.pending_profile_switch = Some(id);
                     }
                     ProfileCommandOutcome::Handled(ProfileEffect::Deleted { id }) => {
                         cmd_handled = true;
                         self.sync_profiles_to_windows();
-                        eprintln!("[App] profile deleted: {}", id);
+                        info!("[App] profile deleted: {}", id);
                     }
                     ProfileCommandOutcome::Failed(e) => {
                         cmd_handled = true;
-                        eprintln!("[App] profile command failed: {} ({})", e, cmd_str);
+                        warn!("[App] profile command failed: {} ({})", e, cmd_str);
                     }
                     ProfileCommandOutcome::NotForMe => {
                         // Not a profile-family command — fall through to the
@@ -5582,7 +5594,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         self.save_all(&[]);
                         self.is_first_run = false;
                         self.needs_vault_unlock = false;
-                        eprintln!("[App] wizard_complete — first run finished over a live chart");
+                        info!("[App] wizard_complete — first run finished over a live chart");
                     } else if !mlc_core::active_profile_data_dir().join("profile.json").exists() {
                         // Reached only when there is genuinely no profile on
                         // disk. Creating one over an existing profile is
@@ -5596,7 +5608,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         // to the paid tier's explicit "add another profile".
                         match self.profile_manager.create_profile(Some(""), "chart") {
                             Ok(meta) => {
-                                eprintln!(
+                                info!(
                                     "[App] wizard_complete: created profile directory ({})",
                                     meta.id
                                 );
@@ -5616,7 +5628,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 self.core.templates_mut().replace_all(self.profile_manager.template_manager.clone());
                             }
                             Err(e) => {
-                                eprintln!("[App] wizard_complete: failed to create profile: {}", e);
+                                error!("[App] wizard_complete: failed to create profile: {}", e);
                             }
                         }
 
@@ -5625,7 +5637,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         // Rebuild the windows onto the new profile.
                         self.save_all(&[]);
                         self.needs_vault_unlock = false;
-                        eprintln!("[App] wizard_complete — rebuilding windows for the added profile");
+                        info!("[App] wizard_complete — rebuilding windows for the added profile");
                         self.pending_skeleton_promote = true;
                     } else {
                         // A profile already exists on disk. The wizard may not
@@ -5652,7 +5664,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         // not to "the wizard finished".
                         self.save_all(&[]);
                         self.needs_vault_unlock = false;
-                        eprintln!(
+                        warn!(
                             "[App] wizard_complete: REFUSED to create a profile — one already exists at {}. Keeping the active profile and the theme/language the wizard collected.",
                             mlc_core::active_profile_data_dir().display()
                         );
@@ -5679,7 +5691,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 let target_dir = pd.join(&meta.dir_name);
                                 match self.profile_manager.derive_and_set_vault_key_for_dir(passphrase, &target_dir) {
                                     Ok(key) => {
-                                        eprintln!("[App] new profile vault created, switching to {}", new_profile_id);
+                                        info!("[App] new profile vault created, switching to {}", new_profile_id);
 
                                         let recovery_key = self.profile_manager.pending_recovery_key.clone();
                                         if recovery_key.is_some() {
@@ -5738,7 +5750,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                         }
                                     }
                                     Err(e) => {
-                                        eprintln!("[App] new profile: failed to create vault: {}", e);
+                                        error!("[App] new profile: failed to create vault: {}", e);
                                         for pw in self.windows.values_mut() {
                                             pw.chart.panel_app.user_settings_state.vault_unlock_error =
                                                 Some(format!("Failed to create vault: {}", e));
@@ -5775,7 +5787,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                     // Validate passphrase against the target vault
                                     match mlc_vault::vault::validate_passphrase_at::<mlc_core::user_profile::VaultSecrets>(&salt_path, &vault_path, passphrase) {
                                         Ok(key) => {
-                                            eprintln!("[App] pre-switch: passphrase validated for profile {}", target_id);
+                                            info!("[App] pre-switch: passphrase validated for profile {}", target_id);
                                             // Store the pre-validated key so execute_profile_switch
                                             // can inject it directly and skip the unlock screen.
                                             self.pending_switch_vault_key = Some(key);
@@ -5799,7 +5811,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             }
                                         }
                                         Err(e) => {
-                                            eprintln!("[App] pre-switch: wrong passphrase for profile {} ({})", target_id, e);
+                                            warn!("[App] pre-switch: wrong passphrase for profile {} ({})", target_id, e);
                                             for pw in self.windows.values_mut() {
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error =
                                                     Some("Wrong passphrase — please try again".to_string());
@@ -5809,12 +5821,12 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                     }
                                 } else {
                                     // Target profile has no vault — create vault with this passphrase
-                                    eprintln!("[App] pre-switch: creating vault for unencrypted profile {}", target_id);
+                                    info!("[App] pre-switch: creating vault for unencrypted profile {}", target_id);
                                     if let Ok(salt) = mlc_vault::vault::load_or_create_salt(&salt_path) {
                                         let key = mlc_vault::vault::derive_key(passphrase, &salt);
                                         let empty_secrets = mlc_core::user_profile::VaultSecrets::default();
                                         if let Ok(()) = mlc_vault::vault::save_encrypted(&key, &vault_path, &empty_secrets) {
-                                            eprintln!("[App] pre-switch: vault created, switching to profile {}", target_id);
+                                            info!("[App] pre-switch: vault created, switching to profile {}", target_id);
                                             // Store the derived key so execute_profile_switch
                                             // can inject it directly and skip the unlock screen.
                                             self.pending_switch_vault_key = Some(key);
@@ -5834,10 +5846,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                 pw.chart.panel_app.user_settings_state.close();
                                             }
                                         } else {
-                                            eprintln!("[App] pre-switch: failed to create vault.enc");
+                                            error!("[App] pre-switch: failed to create vault.enc");
                                         }
                                     } else {
-                                        eprintln!("[App] pre-switch: failed to create salt");
+                                        error!("[App] pre-switch: failed to create salt");
                                     }
                                 }
                             }
@@ -5860,7 +5872,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         match outcome {
                             Some(mlc_app::VaultSetupOutcome::Ready { recovery_key: Some(rk) }) => {
                                 // First-time vault creation — show the recovery key before promoting.
-                                eprintln!("[App] vault key derived and set — showing recovery key");
+                                info!("[App] vault key derived and set — showing recovery key");
                                 self.needs_vault_unlock = false;
                                 #[cfg(feature = "cloud")]
                                 self.refresh_dm_identity();
@@ -5906,7 +5918,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             Some(mlc_app::VaultSetupOutcome::Ready { recovery_key: None }) => {
                                 // Existing vault, correctly validated (no new
                                 // recovery key to show) — promote immediately.
-                                eprintln!("[App] vault passphrase validated OK — promoting skeleton");
+                                info!("[App] vault passphrase validated OK — promoting skeleton");
                                 self.profile = self.profile_manager.profile.clone();
                                 self.needs_vault_unlock = false;
                                 #[cfg(feature = "cloud")]
@@ -5915,7 +5927,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 self.pending_skeleton_promote = true;
                             }
                             Some(mlc_app::VaultSetupOutcome::WrongPassphrase(e)) => {
-                                eprintln!("[App] vault unlock REJECTED: wrong passphrase ({})", e);
+                                warn!("[App] vault unlock REJECTED: wrong passphrase ({})", e);
                                 for pw in self.windows.values_mut() {
                                     pw.chart.panel_app.user_settings_state.needs_vault_unlock = true;
                                     pw.chart.panel_app.user_settings_state.vault_unlock_error =
@@ -5924,10 +5936,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 }
                             }
                             Some(mlc_app::VaultSetupOutcome::Error(e)) => {
-                                eprintln!("[App] vault salt error: {}", e);
+                                warn!("[App] vault salt error: {}", e);
                             }
                             None => {
-                                eprintln!("[App] e2e_setup: no window to apply vault setup to");
+                                warn!("[App] e2e_setup: no window to apply vault setup to");
                             }
                         }
                     }
@@ -5953,9 +5965,9 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             pw.chart.panel_app.user_settings_state.vault_unlock_error = Some(e.clone());
                             pw.chart.panel_app.user_settings_state.vault_unlock_attempts += 1;
                         }
-                        eprintln!("[App] credentials: unlock failed: {}", e);
+                        warn!("[App] credentials: unlock failed: {}", e);
                     } else {
-                        eprintln!("[App] credentials: vault unlocked mid-session");
+                        info!("[App] credentials: vault unlocked mid-session");
                         #[cfg(feature = "cloud")]
                         self.refresh_dm_identity();
                     }
@@ -6012,7 +6024,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 let recovery_enc_path = profile_dir.join("recovery_key.enc");
 
                                 if !recovery_enc_path.exists() {
-                                    eprintln!("[App] recovery_unlock: no recovery_key.enc found in {:?}", profile_dir);
+                                    warn!("[App] recovery_unlock: no recovery_key.enc found in {:?}", profile_dir);
                                     for pw in self.windows.values_mut() {
                                         pw.chart.panel_app.user_settings_state.vault_unlock_error =
                                             Some("No recovery data found for this profile".to_string());
@@ -6028,7 +6040,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             ) {
                                                 Ok(master_key) => {
                                                     let vault_key = mlc_vault::crypto::derive_vault_key(&master_key, &salt);
-                                                    eprintln!("[App] recovery_unlock: master key recovered — vault key derived");
+                                                    info!("[App] recovery_unlock: master key recovered — vault key derived");
 
                                                     if !unlocking_other_profile {
                                                         // Active profile unlock via recovery — vault is
@@ -6036,13 +6048,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                         // passphrase before we promote the skeleton.
                                                         self.profile_manager.set_vault_key(vault_key);
                                                         if let Err(e) = self.profile_manager.load_vault_secrets() {
-                                                            eprintln!("[App] failed to load vault secrets: {}", e);
+                                                            warn!("[App] failed to load vault secrets: {}", e);
                                                         }
                                                         self.core.user_mut().set_vault_key(Some(vault_key));
                                                         self.core.templates_mut().set_vault_key(Some(vault_key));
                                                         if let Some(ref agent_state) = self.agent_state {
                                                             if let Err(e) = agent_state.agent_key_store().unlock_with_key(&vault_key) {
-                                                                eprintln!("[App] agent key store: failed to unlock after recovery-key unlock: {}", e);
+                                                                warn!("[App] agent key store: failed to unlock after recovery-key unlock: {}", e);
                                                             }
                                                         }
                                                         self.profile_manager.vault_key = Some(vault_key);
@@ -6086,7 +6098,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                                 pw.chart.panel_app.user_settings_state.is_open = true;
                                                             }
                                                         }
-                                                        eprintln!("[App] recovery_unlock: navigating to SetNewPassphrase");
+                                                        info!("[App] recovery_unlock: navigating to SetNewPassphrase");
                                                     } else {
                                                         // Pre-switch recovery for a different profile
                                                         self.pending_switch_vault_key = Some(vault_key);
@@ -6110,7 +6122,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                                     }
                                                 }
                                                 Err(e) => {
-                                                    eprintln!("[App] recovery_unlock: decryption failed: {}", e);
+                                                    error!("[App] recovery_unlock: decryption failed: {}", e);
                                                     for pw in self.windows.values_mut() {
                                                         pw.chart.panel_app.user_settings_state.vault_unlock_error =
                                                             Some("Wrong recovery key — decryption failed".to_string());
@@ -6120,14 +6132,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             }
                                         }
                                         (Err(e), _) => {
-                                            eprintln!("[App] recovery_unlock: failed to read salt: {}", e);
+                                            warn!("[App] recovery_unlock: failed to read salt: {}", e);
                                             for pw in self.windows.values_mut() {
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error =
                                                     Some(format!("Failed to read vault data: {}", e));
                                             }
                                         }
                                         (_, Err(e)) => {
-                                            eprintln!("[App] recovery_unlock: failed to read recovery_key.enc: {}", e);
+                                            warn!("[App] recovery_unlock: failed to read recovery_key.enc: {}", e);
                                             for pw in self.windows.values_mut() {
                                                 pw.chart.panel_app.user_settings_state.vault_unlock_error =
                                                     Some(format!("Failed to read recovery data: {}", e));
@@ -6137,7 +6149,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                 }
                             }
                             Err(e) => {
-                                eprintln!("[App] recovery_unlock: invalid recovery key format: {}", e);
+                                error!("[App] recovery_unlock: invalid recovery key format: {}", e);
                                 for pw in self.windows.values_mut() {
                                     pw.chart.panel_app.user_settings_state.vault_unlock_error =
                                         Some(format!("Invalid recovery key format: {}", e));
@@ -6157,17 +6169,17 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         // Recovery key was shown for a NEW profile — complete the switch immediately.
                         // Sync level is no longer chosen in a wizard step; new profiles default to
                         // device-level OTA control.
-                        eprintln!("[App] recovery key confirmed — completing switch for new profile {}", profile_id);
+                        info!("[App] recovery key confirmed — completing switch for new profile {}", profile_id);
                         self.pending_switch_vault_key = Some(vault_key);
                         self.pending_profile_switch = Some(profile_id);
                     } else if self.pending_promote_after_recovery_key {
                         // Recovery key was shown after a vault re-key (post-recovery passphrase reset).
-                        eprintln!("[App] recovery key confirmed (post re-key) — promoting skeleton to live");
+                        info!("[App] recovery key confirmed (post re-key) — promoting skeleton to live");
                         self.pending_promote_after_recovery_key = false;
                         self.pending_skeleton_promote = true;
                     } else {
                         // Recovery key was shown during wizard / first-run — promote skeleton.
-                        eprintln!("[App] recovery key confirmed — promoting skeleton to live");
+                        info!("[App] recovery key confirmed — promoting skeleton to live");
                         // Don't patch windows — skeleton promote will recreate them.
                         self.pending_skeleton_promote = true;
                     }
@@ -6186,7 +6198,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     match self.pending_recovery_master_key.take() {
                         None => {
                             // This should never happen — guard state is invalid.
-                            eprintln!("[App] set_new_passphrase: no pending_recovery_master_key — ignoring");
+                            warn!("[App] set_new_passphrase: no pending_recovery_master_key — ignoring");
                             for pw in self.windows.values_mut() {
                                 pw.chart.panel_app.user_settings_state.set_passphrase_error =
                                     "Internal error: no recovery context. Please restart.".to_string();
@@ -6205,7 +6217,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             });
                             match outcome {
                                 Some(Ok(new_recovery_key_fmt)) => {
-                                    eprintln!("[App] set_new_passphrase: vault re-keyed successfully");
+                                    info!("[App] set_new_passphrase: vault re-keyed successfully");
 
                                     // A re-key derives a brand-new vault key from the new
                                     // passphrase (`ProfileManager::rekey_vault`'s own step
@@ -6273,14 +6285,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
 
                                 }
                                 Some(Err(e)) => {
-                                    eprintln!("[App] set_new_passphrase: rekey_vault failed: {}", e);
+                                    error!("[App] set_new_passphrase: rekey_vault failed: {}", e);
                                     for pw in self.windows.values_mut() {
                                         pw.chart.panel_app.user_settings_state.set_passphrase_error =
                                             format!("Failed to re-key vault: {}", e);
                                     }
                                 }
                                 None => {
-                                    eprintln!("[App] set_new_passphrase: no window to re-key against");
+                                    warn!("[App] set_new_passphrase: no window to re-key against");
                                 }
                             }
                         }
@@ -6303,7 +6315,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     // own create fails and this profile is what persists.
                     match self.profile_manager.create_profile(Some(""), "chart") {
                         Ok(meta) => {
-                            eprintln!(
+                            info!(
                                 "[App] vault_skip_to_wizard: created new profile ({})",
                                 meta.id
                             );
@@ -6312,7 +6324,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             if let Some(mut index) = mlc_core::load_profile_index() {
                                 index.active_profile_id = meta.id.clone();
                                 if let Err(e) = mlc_core::save_profile_index(&index) {
-                                    eprintln!(
+                                    warn!(
                                         "[App] vault_skip_to_wizard: failed to update index: {}",
                                         e
                                     );
@@ -6334,7 +6346,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             self.preset_dirty_ids.clear();
                         }
                         Err(e) => {
-                            eprintln!(
+                            error!(
                                 "[App] vault_skip_to_wizard: failed to create new profile: {}",
                                 e
                             );
@@ -6365,7 +6377,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     // Treat this as first-run so wizard_complete configures the already-
                     // created profile in-place instead of creating a second duplicate.
                     self.is_first_run = true;
-                    eprintln!("[App] vault_skip_to_wizard: dismissed vault lock, showing wizard on fresh profile");
+                    info!("[App] vault_skip_to_wizard: dismissed vault lock, showing wizard on fresh profile");
                 }
 
                 // A command nobody above recognized used to be taken from
@@ -6373,7 +6385,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 // that silence is exactly what let `logout`/`start_device_auth`
                 // go unnoticed. Never let that happen again.
                 if !cmd_handled {
-                    eprintln!("[App] unhandled updater command: {:?}", cmd_str);
+                    warn!("[App] unhandled updater command: {:?}", cmd_str);
                 }
             } // if let Some(ref cmd_str) = cmd
         } // drain updater command requests
@@ -6415,13 +6427,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             .build()
                             .unwrap_or_default();
                         if chat_ids.is_empty() {
-                            eprintln!("[Telegram] Test skipped: no active subscribers");
+                            warn!("[Telegram] Test skipped: no active subscribers");
                             return;
                         }
                         for chat_id in &chat_ids {
                             match mlc_alert_delivery::telegram::send_test(&client, &token, chat_id).await {
-                                Ok(()) => eprintln!("[Telegram] Test message sent to {}", chat_id),
-                                Err(e) => eprintln!("[Telegram] Test failed for {}: {}", chat_id, e),
+                                Ok(()) => info!("[Telegram] Test message sent to {}", chat_id),
+                                Err(e) => warn!("[Telegram] Test failed for {}: {}", chat_id, e),
                             }
                         }
                     }
@@ -6494,7 +6506,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     self.profile.domain.notification_settings = prefs;
                     let vault_key = self.core.user().vault_key();
                     if let Err(e) = mlc_core::save_profile(&self.profile, vault_key.as_ref()) {
-                        eprintln!("[App] Failed to persist notification settings: {}", e);
+                        warn!("[App] Failed to persist notification settings: {}", e);
                     }
                     // Secrets now live in the `alert_secrets.enc` sidecar
                     // (alerts-account-wide-and-telegram-delivery plan §3),
@@ -6511,10 +6523,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             match mlc_vault::vault::save_encrypted(key, &alert_secrets_path, &secrets) {
                                 Ok(()) => {
                                     if let Err(e) = self.alert_secrets_store.unlock_with_key(key) {
-                                        eprintln!("[App] alert secrets store: failed to refresh after save: {}", e);
+                                        warn!("[App] alert secrets store: failed to refresh after save: {}", e);
                                     }
                                 }
-                                Err(e) => eprintln!("[App] Failed to persist alert secrets: {}", e),
+                                Err(e) => warn!("[App] Failed to persist alert secrets: {}", e),
                             }
                         }
                     }
@@ -7016,7 +7028,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             false,
                         );
                     }
-                    eprintln!("[App] Agent API listener started on 127.0.0.1:{}", port);
+                    info!("[App] Agent API listener started on 127.0.0.1:{}", port);
                 }
             } else if !want_agent_listener && self.listener_handle.is_some() {
                 if let Some(handle) = self.listener_handle.take() {
@@ -7030,7 +7042,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         false,
                     );
                 }
-                eprintln!("[App] Agent API listener stopped");
+                info!("[App] Agent API listener stopped");
             }
             let agent_server_status = if self.listener_handle.is_some() { "running" } else { "stopped" };
 
@@ -7370,10 +7382,10 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         match arboard::Clipboard::new() {
                             Ok(mut cb) => {
                                 if let Err(e) = cb.set_text(&url) {
-                                    eprintln!("[share] clipboard copy failed: {}", e);
+                                    warn!("[share] clipboard copy failed: {}", e);
                                 }
                             }
-                            Err(e) => eprintln!("[share] clipboard unavailable: {}", e),
+                            Err(e) => warn!("[share] clipboard unavailable: {}", e),
                         }
                         let body = format!("Link copied to clipboard: {url}");
                         if let Some(pw) = self.system_event_window_mut() {
@@ -7514,7 +7526,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             }
                         };
                         if let Err(message) = outcome {
-                            eprintln!("[ChartApp] reopen_share '{}' failed to apply: {}", placeholder_id, message);
+                            warn!("[ChartApp] reopen_share '{}' failed to apply: {}", placeholder_id, message);
                             if let Some(pw) = self.windows.values_mut().find(|pw| pw.chart.has_open_tab(&placeholder_id)) {
                                 pw.chart.share_reopen_gone(&placeholder_id);
                             }
@@ -7526,7 +7538,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         }
                     }
                     mlc_updater::ShareReopenState::Transient { placeholder_id, token, message } => {
-                        eprintln!("[ChartApp] reopen_share '{}' transient failure: {}", placeholder_id, message);
+                        warn!("[ChartApp] reopen_share '{}' transient failure: {}", placeholder_id, message);
                         if let Some(pw) = self.windows.values_mut().find(|pw| pw.chart.has_open_tab(&placeholder_id)) {
                             pw.chart.share_reopen_transient(&placeholder_id, &token);
                         }
@@ -7947,7 +7959,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                             if let Some(peer_window) = pw.chart.panel_app.panel_grid.containers_mut().get_mut(&peer_id) {
                                 // Phase X0 / C5c: storage on bubble; window cleared via viewport reset only.
                                 peer_window.begin_fresh_load();
-                                eprintln!(
+                                info!(
                                     "[App] Reset cache propagated to peer {:?} ({}:{}:{})",
                                     peer_id, symbol, exchange, account_type
                                 );
@@ -7962,7 +7974,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                     self.core.request_kline(eid, &symbol, &timeframe, at, None, Some(bar_count), true);
                 }
 
-                eprintln!(
+                info!(
                     "[App] Reset {} for {}:{} {} ({})",
                     if delete_storage { "storage+cache" } else { "cache" },
                     symbol, exchange, timeframe.name, account_type
@@ -8210,13 +8222,13 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             mlc_updater::UpdaterCommand::ShareLive { title, preset_json },
                                         );
                                     }
-                                    Err(e) => eprintln!("[share] stripped preset failed to re-parse: {}", e),
+                                    Err(e) => warn!("[share] stripped preset failed to re-parse: {}", e),
                                 }
                             }
-                            Err(e) => eprintln!("[share] preset serialize failed: {}", e),
+                            Err(e) => warn!("[share] preset serialize failed: {}", e),
                         }
                     }
-                    None => eprintln!("[share] live share requested but no active preset"),
+                    None => warn!("[share] live share requested but no active preset"),
                 }
             }
 
@@ -8430,7 +8442,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         }
                     }
                     Err(_) => {
-                        eprintln!("[App] GPU render thread channel closed unexpectedly");
+                        error!("[App] GPU render thread channel closed unexpectedly");
                         self.close_all_requested = true;
                     }
                 }
@@ -8694,7 +8706,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
         if total_scene_us > 5000 && std::env::var("MLC_PERF_LOG").is_ok() {
             for (i, pw) in self.windows.values().enumerate() {
                 let (c, tb, sb, setup) = pw.chart.render_timing_us;
-                eprintln!(
+                debug!(
                     "[SCENE-SPIKE] total_scene={}us win{}: chart={}us tb={}us side={}us setup={}us (sum of sub-scenes; if <<total, cost is in composite/swap/append)",
                     total_scene_us, i, c, tb, sb, setup,
                 );
@@ -8717,7 +8729,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 .next()
                 .map(|pw| pw.chart.render_timing_us)
                 .unwrap_or((0, 0, 0, 0));
-            eprintln!(
+            debug!(
                 "[App] finish_promote: first live frame done {}ms after swap (t={}ms) — atw={}us tick={}us events={}us scene(chart={}us tb={}us side={}us setup={}us)",
                 mlc_backend_data_bridge::elapsed_ms().saturating_sub(end_ms),
                 mlc_backend_data_bridge::elapsed_ms(),
@@ -8733,7 +8745,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                 .map(|pw| pw.chart.warm_background_tab_targets())
                 .unwrap_or_default();
             if !self.pending_warm_targets.is_empty() {
-                eprintln!(
+                debug!(
                     "[App] deferred background-tab warm: {} target(s), one per frame",
                     self.pending_warm_targets.len(),
                 );
@@ -8743,7 +8755,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             if let Some(pw) = self.windows.values_mut().find(|pw| !pw.skeleton) {
                 pw.chart.warm_one_background_tab(&target);
             }
-            eprintln!(
+            debug!(
                 "[App] warm step {}: {}ms ({} left)",
                 target.0,
                 t_warm.elapsed().as_millis(),
@@ -8777,7 +8789,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                         pw.chart.last_composite_us,
                     ))
                     .unwrap_or((0, 0, 0, 0, 0, 0));
-                eprintln!(
+                debug!(
                     "[PERF] Frame {} total={:.1}ms atw={:.1}ms dt[min={:.1} max={:.1} n={}] ema_fps={:.0} | tick_app={:.1}ms drains={:.1}ms persist={:.1}ms sync={:.1}ms tick={:.1}ms perf_pop={:.1}ms agent={:.1}ms render={:.1}ms (scene={:.1}ms gpu={:.1}ms[rtex={:.1} pres={:.1}] gpu_wait={:.1}ms) | breakdown: chart={:.1}ms tb={:.1}ms side={:.1}ms setup={:.1}ms | tick-detail: obpanel={}us(n={}) trpanel={}us(n={}) barapply={}us composite={}us | LEAK[queue={} ticker={}]",
                     self.frame_count,
                     total as f64 / 1000.0,
@@ -9009,24 +9021,20 @@ fn main() {
         let handle = unsafe { CreateMutexW(std::ptr::null(), 1, name.as_ptr()) };
         let is_ota_restart = std::env::args().any(|a| a == "--wait-pid");
         if !is_ota_restart && handle != 0 && unsafe { GetLastError() } == ERROR_ALREADY_EXISTS {
-            eprintln!("[App] another instance is already running — exiting.");
+            warn!("[App] another instance is already running — exiting.");
             std::process::exit(0);
         }
         if handle == 0 {
-            eprintln!("[App] WARNING: CreateMutexW failed (error {}), continuing without single-instance guard", unsafe { GetLastError() });
+            warn!("[App] WARNING: CreateMutexW failed (error {}), continuing without single-instance guard", unsafe { GetLastError() });
         }
         handle // keep alive for process lifetime
     };
 
-    eprintln!("[App] chart-app-vello v{}", env!("CARGO_PKG_VERSION"));
-    println!("chart-app-vello v{}", env!("CARGO_PKG_VERSION"));
-    println!("===============");
-    println!("Controls:");
-    println!("  Left drag : Pan chart");
-    println!("  Scroll    : Zoom");
-    println!("  Escape    : Cancel / close modal");
-    println!("  Ctrl+S    : Screenshot (copied to clipboard + saved to Downloads)");
-    println!();
+    info!("chart-app-vello v{}", env!("CARGO_PKG_VERSION"));
+    info!(
+        "Controls: Left drag=Pan chart, Scroll=Zoom, Escape=Cancel/close modal, \
+         Ctrl+S=Screenshot (copied to clipboard + saved to Downloads)"
+    );
 
     // Initialize diagnostics (logging, crash reporting, memory watchdog).
     // The guard must live until the end of main() to keep the log file writer alive.
@@ -9121,7 +9129,7 @@ fn main() {
     // them.
 
     if is_first_run {
-        eprintln!("[App] first-run detected — welcome wizard will be shown");
+        info!("[App] first-run detected — welcome wizard will be shown");
     }
 
     // First-run bootstrap, matching the web shell's `bootstrap_first_run`
@@ -9151,11 +9159,11 @@ fn main() {
                     index.active_profile_id = meta.id.clone();
                     let _ = mlc_core::save_profile_index(&index);
                 }
-                eprintln!("[App] first-run bootstrap: created profile {}", meta.id);
+                info!("[App] first-run bootstrap: created profile {}", meta.id);
             }
             Err(e) => {
                 // Not fatal: the wizard's completion path still creates one.
-                eprintln!("[App] first-run bootstrap failed: {} — wizard will create the profile", e);
+                warn!("[App] first-run bootstrap failed: {} — wizard will create the profile", e);
             }
         }
     }
@@ -9173,7 +9181,7 @@ fn main() {
     // vault.enc is NOT written here (no key yet) — credentials are untouched.
     if !is_first_run {
         if let Err(e) = profile_manager.save_profile() {
-            eprintln!("[App] failed to save profile at startup: {}", e);
+            error!("[App] failed to save profile at startup: {}", e);
         }
     }
 

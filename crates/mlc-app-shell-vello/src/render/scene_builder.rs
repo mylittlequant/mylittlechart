@@ -2,6 +2,7 @@
 
 use mlc_app_render_context_vello::VelloGpuRenderContext;
 use mlc_app_sidebar_content::state::RenderBackend;
+use tracing::warn;
 use crate::{
     chrome,
     PerWindowState,
@@ -95,7 +96,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
             tabs.clear();
         } else if tabs.is_empty() {
             // Safety net: should not happen after open_tabs is always populated.
-            eprintln!("[Chrome] WARNING: tabs empty — injecting fallback Untitled");
+            warn!("[Chrome] WARNING: tabs empty — injecting fallback Untitled");
             tabs.push(chrome::Tab {
                 id: "__fallback__".to_string(),
                 name: "Untitled".to_string(),

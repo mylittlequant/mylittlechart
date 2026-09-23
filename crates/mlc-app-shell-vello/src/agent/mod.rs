@@ -8,6 +8,7 @@ use mlc_backend_shell_http::AgentState;
 use mlc_backend_shell_http::state::ScreenshotData;
 use mlc_app_agent_api::{AgentHost, commands, snapshots};
 use mlc_app_agent_api::host::{WindowRef, WindowRefMut};
+use tracing::{info, warn};
 
 use crate::App;
 
@@ -33,10 +34,10 @@ impl AgentHost for App<'_> {
         if let Some(pw) = self.windows.values_mut().find(|pw| pw.window_id == window_id) {
             pw.pending_agent_screenshots.push((chart_id, response_tx));
             pw.window.request_redraw();
-            eprintln!("[AgentCommand] RequestScreenshot queued: window={}, chart={}", window_id, chart_id);
+            info!("[AgentCommand] RequestScreenshot queued: window={}, chart={}", window_id, chart_id);
         } else {
             let _ = response_tx.send(Err(format!("window not found: {}", window_id)));
-            eprintln!("[AgentCommand] RequestScreenshot: window not found: {}", window_id);
+            warn!("[AgentCommand] RequestScreenshot: window not found: {}", window_id);
         }
     }
 }
