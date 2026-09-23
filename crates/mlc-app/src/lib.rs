@@ -5265,6 +5265,20 @@ impl ChartApp {
         self.panel_app.toolbar_state.favorites_bar_visible = profile.ui.favorites_bar_visible;
         self.panel_app.toolbar_state.screenshot_destination = profile.ui.screenshot_destination;
 
+        // Community modal per-tab size (community-modal chrome arc, cloud
+        // builds only) — flat profile field, no per-window mirror, same
+        // class as the favorites bar above. `None` leaves `CommunityState::
+        // default`'s own 760×560/1000×640 fallback in place.
+        #[cfg(feature = "cloud")]
+        {
+            if let Some(size) = profile.ui.community_forum_size {
+                self.panel_app.community_state.forum_size = Some(size);
+            }
+            if let Some(size) = profile.ui.community_messages_size {
+                self.panel_app.community_state.messages_size = Some(size);
+            }
+        }
+
         // System event log (system-event-bus arc, 2026-09-05, owner scope
         // §8) — flat profile field, no per-window mirror (same class as the
         // favorites bar above): restore the persisted ring so events survive

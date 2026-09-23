@@ -4106,6 +4106,13 @@ impl App<'_> {
                 // live toolbar-state value, same preferred-window carry as
                 // the favorites bar above.
                 profile.ui.screenshot_destination = pw.chart.panel_app.toolbar_state.screenshot_destination;
+                // Community modal per-tab size (community-modal chrome arc)
+                // — same preferred-window carry as the favorites bar above.
+                #[cfg(feature = "cloud")]
+                {
+                    profile.ui.community_forum_size = pw.chart.panel_app.community_state.forum_size;
+                    profile.ui.community_messages_size = pw.chart.panel_app.community_state.messages_size;
+                }
                 // System event log (system-event-bus arc, 2026-09-05) —
                 // same preferred-window carry as the screenshot destination
                 // above: `chart.system_events()` is the live value, mutated

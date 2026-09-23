@@ -174,6 +174,13 @@ pub fn save_persistent_state(chart: &mut ChartApp, perf: &mut PerfMeter) {
     // state value, same carry as the favorites bar above; the camera
     // button's destination dropdown is the only writer.
     profile.ui.screenshot_destination = chart.panel_app.toolbar_state.screenshot_destination;
+    // Community modal per-tab size (community-modal chrome arc) — live
+    // CommunityState value, same carry as the favorites bar above.
+    #[cfg(feature = "cloud")]
+    {
+        profile.ui.community_forum_size = chart.panel_app.community_state.forum_size;
+        profile.ui.community_messages_size = chart.panel_app.community_state.messages_size;
+    }
     // System event log (system-event-bus arc, 2026-09-05) — same carry as
     // the screenshot destination above: `chart.system_events()` is the live
     // value, mutated in place by `push_system_event`/

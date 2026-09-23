@@ -176,7 +176,7 @@ pub fn render_community_modal(
         // chrome, so this modal carries no footer at all (unlike the
         // Editor-footer default most settings modals get).
         .with_footer(ModalFooter::None)
-        .resizable(state.size, state.min_size())
+        .resizable(state.size_for(active_tab), state.min_size())
     };
     let mut result = CommunityResult::default();
     let (shell, layer_id) =

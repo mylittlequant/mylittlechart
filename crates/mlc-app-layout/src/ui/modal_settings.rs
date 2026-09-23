@@ -6707,11 +6707,19 @@ pub struct CommunityState {
     pub tab: CommunityTab,
     /// Modal position (for dragging). `None` = centered.
     pub position: Option<(f64, f64)>,
-    /// Size the user dragged this modal to — starts at a sensible default
-    /// (760×560, see [`Self::default`]) rather than `None`/content-driven
-    /// like `ChartSettingsState::size`: a forum-and-messenger layout has no
-    /// single natural content height the way a settings tab does.
-    pub size: Option<(f64, f64)>,
+    /// Size the user dragged the Forum pane's modal to — starts at a
+    /// sensible default (760×560, see [`Self::default`]) rather than
+    /// `None`/content-driven like `ChartSettingsState::size`: a
+    /// forum-and-messenger layout has no single natural content height the
+    /// way a settings tab does. A SEPARATE field from `messages_size`
+    /// (messenger concept v1: the messenger opens the modal at 1000×640,
+    /// the forum keeps its own 760×560 — one field for the whole modal
+    /// used to make switching panes jump to whichever size was last
+    /// dragged for the OTHER pane) — see [`Self::size_for`].
+    pub forum_size: Option<(f64, f64)>,
+    /// Size the user dragged the Messages pane's modal to — see
+    /// `forum_size`'s own doc for why this is a separate field.
+    pub messages_size: Option<(f64, f64)>,
     /// Resize drag in flight, if the user has hold of an edge.
     pub resize_drag: Option<ResizeDrag>,
     pub is_dragging: bool,
@@ -6752,7 +6760,8 @@ impl Default for CommunityState {
             is_open: false,
             tab: CommunityTab::default(),
             position: None,
-            size: Some((760.0, 560.0)),
+            forum_size: Some((760.0, 560.0)),
+            messages_size: Some((1000.0, 640.0)),
             resize_drag: None,
             is_dragging: false,
             drag_offset: None,
@@ -6870,12 +6879,63 @@ impl CommunityState {
     pub fn end_drag(&mut self) {
         self.is_dragging = false;
     }
+
+    /// The dragged size to open `tab`'s own pane at — `forum_size` or
+    /// `messages_size`, whichever `tab` names. `community.rs`'s own
+    /// `.resizable(...)` call reads this (keyed by `active_tab()`, not the
+    /// raw `tab` field, same "fall back to Forum" rule every other
+    /// tab-keyed read in this type follows) instead of a single field, so
+    /// switching panes lands on THAT pane's own last-dragged size instead
+    /// of carrying over whichever size the other pane was left at.
+    pub fn size_for(&self, tab: CommunityTab) -> Option<(f64, f64)> {
+        match tab {
+            CommunityTab::Forum => self.forum_size,
+            CommunityTab::Messages => self.messages_size,
+        }
+    }
 }
 
+/// Hand-written rather than `impl_resizable_modal!` (that macro assumes one
+/// `size` field per modal): the resize-drag commit path
+/// (`ResizableModal::update_resize`/`end_resize`, driven from `mlc-app`'s
+/// `input/mod.rs`) has no notion of "which tab" — routing `dragged_size`/
+/// `set_dragged_size` through [`CommunityState::active_tab`] here is what
+/// lets that generic drag machinery land a resize in the right one of
+/// `forum_size`/`messages_size` without `input/mod.rs` itself needing to
+/// know this modal has two sizes at all.
 #[cfg(feature = "cloud")]
-impl_resizable_modal!(
-    CommunityState => (520.0, 400.0),
-);
+impl ResizableModal for CommunityState {
+    fn dragged_size(&self) -> Option<(f64, f64)> {
+        self.size_for(self.active_tab())
+    }
+
+    fn set_dragged_size(&mut self, size: Option<(f64, f64)>) {
+        match self.active_tab() {
+            CommunityTab::Forum => self.forum_size = size,
+            CommunityTab::Messages => self.messages_size = size,
+        }
+    }
+
+    fn dragged_position(&self) -> Option<(f64, f64)> {
+        self.position
+    }
+
+    fn set_dragged_position(&mut self, pos: Option<(f64, f64)>) {
+        self.position = pos;
+    }
+
+    fn resize_drag(&self) -> Option<ResizeDrag> {
+        self.resize_drag
+    }
+
+    fn set_resize_drag(&mut self, drag: Option<ResizeDrag>) {
+        self.resize_drag = drag;
+    }
+
+    fn min_size(&self) -> (f64, f64) {
+        (520.0, 400.0)
+    }
+}
 
 #[cfg(all(test, feature = "cloud"))]
 mod messenger_available_tests {
