@@ -1943,6 +1943,54 @@ pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 2] = [
     ],
 ];
 
+// =============================================================================
+// ForumKey table  (8 variants x N_LANG)
+// =============================================================================
+//
+// Column headers for the Forum tab's drill-down index tables
+// (community-modal-drill-down arc, 2026-09-23) — every column filled, part of
+// `every_chart_table_is_fully_translated` below. Column order matches
+// `Language::all()` (`lang.rs`): en, ru, es, de, fr, pt, zh, ja, ko, ar, it,
+// tr, pl, uk, hi.
+pub(super) static FORUM_KEY_TABLE: [[&str; N_LANG]; 8] = [
+    /* 0 ColBoard         */ [
+        "Board", "Раздел", "Foro", "Forum", "Forum", "Fórum", "板块", "フォーラム", "게시판",
+        "المنتدى", "Forum", "Forum", "Forum", "Форум", "फोरम",
+    ],
+    /* 1 ColThreads       */ [
+        "Threads", "Темы", "Temas", "Themen", "Sujets", "Tópicos", "主题", "スレッド", "스레드",
+        "المواضيع", "Discussioni", "Konular", "Wątki", "Теми", "थ्रेड",
+    ],
+    /* 2 ColPosts         */ [
+        "Posts", "Сообщения", "Mensajes", "Beiträge", "Messages", "Mensagens", "帖子", "投稿",
+        "게시물", "المشاركات", "Messaggi", "Gönderiler", "Posty", "Дописи", "पोस्ट",
+    ],
+    /* 3 ColLastPost      */ [
+        "Last post", "Последнее сообщение", "Última publicación", "Letzter Beitrag",
+        "Dernier message", "Última mensagem", "最新帖子", "最新の投稿", "최근 게시물",
+        "آخر مشاركة", "Ultimo messaggio", "Son gönderi", "Ostatni post", "Останній допис",
+        "अंतिम पोस्ट",
+    ],
+    /* 4 ColTitle         */ [
+        "Title", "Заголовок", "Título", "Titel", "Titre", "Título", "标题", "タイトル", "제목",
+        "العنوان", "Titolo", "Başlık", "Tytuł", "Заголовок", "शीर्षक",
+    ],
+    /* 5 ColAuthor        */ [
+        "Author", "Автор", "Autor", "Autor", "Auteur", "Autor", "作者", "投稿者", "작성자",
+        "الكاتب", "Autore", "Yazar", "Autor", "Автор", "लेखक",
+    ],
+    /* 6 ColReplies       */ [
+        "Replies", "Ответы", "Respuestas", "Antworten", "Réponses", "Respostas", "回复", "返信",
+        "답글", "الردود", "Risposte", "Yanıtlar", "Odpowiedzi", "Відповіді", "उत्तर",
+    ],
+    /* 7 ColLastActivity  */ [
+        "Last activity", "Последняя активность", "Última actividad", "Letzte Aktivität",
+        "Dernière activité", "Última atividade", "最新动态", "最新の活動", "최근 활동",
+        "آخر نشاط", "Ultima attività", "Son etkinlik", "Ostatnia aktywność",
+        "Остання активність", "हाल की गतिविधि",
+    ],
+];
+
 #[cfg(test)]
 mod completeness {
     use super::*;
@@ -1990,5 +2038,6 @@ mod completeness {
         assert_full("HEAD_SHOULDERS_KEY_TABLE", &HEAD_SHOULDERS_KEY_TABLE);
         assert_full("POSITION_POINT_KEY_TABLE", &POSITION_POINT_KEY_TABLE);
         assert_full("SHARE_VIEWER_KEY_TABLE", &SHARE_VIEWER_KEY_TABLE);
+        assert_full("FORUM_KEY_TABLE", &FORUM_KEY_TABLE);
     }
 }

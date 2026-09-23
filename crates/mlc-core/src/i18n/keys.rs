@@ -30,6 +30,7 @@ use super::tables::{
     SHELL_KEY_TABLE,
     CONCEPT_KEY_TABLE,
     SHARE_VIEWER_KEY_TABLE,
+    FORUM_KEY_TABLE,
 };
 
 // =============================================================================
@@ -3664,6 +3665,58 @@ impl uzor::i18n::Translate for ShareViewerKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&SHARE_VIEWER_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Forum Keys (Community modal, drill-down board/thread index tables)
+// =============================================================================
+
+/// Column headers for the Forum tab's drill-down index tables
+/// (community-modal-drill-down arc, 2026-09-23): the full-width board index
+/// (`Board`/`Threads`/`Posts`/`Last post`) and a board's own thread list
+/// (`Title`/`Author`/`Replies`/`Last activity`). Row content itself (board
+/// names, thread titles, "New thread", "Reply", …) stays unlocalized, same
+/// as every other Forum-v2 string today — these headers are the only text
+/// this pass adds that did not already exist in some form.
+///
+/// Variant order is **frozen** — discriminant == row index in
+/// `FORUM_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum ForumKey {
+    /// Board index: board name column.
+    ColBoard = 0,
+    /// Board index: thread-count column.
+    ColThreads = 1,
+    /// Board index: post-count column.
+    ColPosts = 2,
+    /// Board index: last-post column.
+    ColLastPost = 3,
+    /// Thread list: thread title column.
+    ColTitle = 4,
+    /// Thread list: author column.
+    ColAuthor = 5,
+    /// Thread list: reply-count column.
+    ColReplies = 6,
+    /// Thread list: last-activity column.
+    ColLastActivity = 7,
+}
+
+impl ForumKey {
+    pub const COUNT: usize = 8;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&FORUM_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for ForumKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&FORUM_KEY_TABLE[self as usize], lang_index)
     }
 }
 
