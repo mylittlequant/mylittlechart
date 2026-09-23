@@ -587,6 +587,56 @@ impl ChartApp {
                     // Step 5: Restore TagManager (sync groups)
                     // ----------------------------------------------------------------
                     let _t_bubbles = web_time::Instant::now();
+                    // Arc C3.2 cold-path guard (owner-review-2026-09-23,
+                    // `docs/mlc/research/owner-review-2026-09-23/
+                    // alert-bubbles-on-cold-apply.md`): unlike
+                    // `park_active_preset`'s scoped `extract_ids`, the clear
+                    // below is store-wide — it would destroy every alerted
+                    // bubble in the process, not just ones owned by this
+                    // window, and the tick-loop's `ensure_alert_bubble`
+                    // recreate (`frame_lifecycle/tick.rs`) mints a fresh id
+                    // with no bars and no data subscription. Extract every
+                    // alerted bubble (+ its paired tag, `TagId == BubbleId`
+                    // invariant) out of the WHOLE store first, then merge
+                    // them back in after `restore_from_snapshots` below.
+                    //
+                    // Merging AFTER (not before) matters for the overlap
+                    // case: switching back to the tab that OWNS the alerted
+                    // bubble means `preset.bubbles` carries that exact id.
+                    // `extract_bubbles`/`extract_tags_for_bubbles` already
+                    // removed the id from `self` by the time
+                    // `restore_from_snapshots` runs, so it sees a free slot
+                    // (no `insert_bubble_raw` collision, no debug_assert
+                    // trip) and rebuilds a hollow bubble for that id; the
+                    // merge below then overwrites it with the live one
+                    // (`merge_bubbles`/`merge_tags` are plain inserts) —
+                    // keeping the live bars + subscription instead of the
+                    // hollow reconstruction. Non-data settings the snapshot
+                    // restore would apply (`chart_type`/param/param_mode/
+                    // interval) still land correctly: the window loop
+                    // further below resolves `bid` via
+                    // `bubble_for_chart(chart_id)`, which after the merge
+                    // points at this same (now-live) id. No other
+                    // `DataBubbleSnapshot` field (timeframe, style,
+                    // indicator configs) needs a resync here — this mirrors
+                    // the pre-existing warm path (`unpark_preset`), where an
+                    // alerted bubble parked in another window's cache is
+                    // never extracted at all and so never resynced from a
+                    // snapshot either. The merge also runs BEFORE the
+                    // `panel_syncs` loop below so `set_panel_synced`'s
+                    // `connect()` mutates whichever Tag object ends up live
+                    // at that id, not one `merge_tags` is about to discard.
+                    let alert_ids: Vec<mlc_core::ids::BubbleId> = {
+                        let mut ids = Vec::new();
+                        self.core.bubbles().each_bubble(|bv| {
+                            if bv.has_active_alerts() {
+                                ids.push(bv.id());
+                            }
+                        });
+                        ids
+                    };
+                    let preserved_bubbles = self.core.bubbles_mut().extract_bubbles(&alert_ids);
+                    let preserved_tags = self.core.tags_mut().extract_tags_for_bubbles(&alert_ids);
                     self.core.bubbles_mut().clear();
                     self.core.tags_mut().clear();
                     // `restore_from_snapshots` builds each bubble (including the
@@ -598,6 +648,14 @@ impl ChartApp {
                     // not a store method) stays in app code.
                     let restored_bubble_ids = self.core.bubbles_mut().restore_from_snapshots(&preset.bubbles);
                     let panel_syncs = self.core.tags_mut().restore_from_snapshots(&preset.bubbles);
+                    if !alert_ids.is_empty() {
+                        eprintln!(
+                            "[ChartApp] apply_preset_cold: preserved {} alerted bubble(s) across the clear ({:?})",
+                            alert_ids.len(), alert_ids,
+                        );
+                    }
+                    self.core.bubbles_mut().merge_bubbles(preserved_bubbles);
+                    self.core.tags_mut().merge_tags(preserved_tags);
                     for (member, gid) in panel_syncs {
                         self.set_panel_synced(member, gid);
                     }
@@ -1730,11 +1788,36 @@ impl ChartApp {
                         })
                         .collect();
 
+                    // Arc C3.2: an alerted bubble preserved across the clear above
+                    // (`alert_ids`) still needs its live trade subscription even
+                    // when no window in the NEW preset shows it — this pass is
+                    // keyed only by (exchange, symbol) off the open windows, with
+                    // no bubble/alert awareness of its own, so it would otherwise
+                    // tear down the very subscription the preserved bubble is
+                    // being kept resident for.
+                    let alert_addresses: std::collections::HashSet<(digdigdig3::ExchangeId, String)> = alert_ids
+                        .iter()
+                        .filter_map(|&bid| {
+                            self.with_bubble(bid, |b| {
+                                digdigdig3::ExchangeId::from_str(&b.address.exchange)
+                                    .map(|eid| (eid, b.address.symbol.clone()))
+                            })
+                            .flatten()
+                        })
+                        .collect();
                     for (eid, symbol) in &old_subscriptions {
-                        if !new_subscriptions.contains(&(*eid, symbol.clone())) {
-                            self.core.unsubscribe_trades(*eid, symbol, digdigdig3::AccountType::default());
-                            eprintln!("[ChartApp] unsubscribed trades: {}/{}", eid.as_str(), symbol);
+                        if new_subscriptions.contains(&(*eid, symbol.clone())) {
+                            continue;
                         }
+                        if alert_addresses.contains(&(*eid, symbol.clone())) {
+                            eprintln!(
+                                "[ChartApp] apply_preset_cold: keeping trade subscription {}/{} alive — an active alert still needs it",
+                                eid.as_str(), symbol,
+                            );
+                            continue;
+                        }
+                        self.core.unsubscribe_trades(*eid, symbol, digdigdig3::AccountType::default());
+                        eprintln!("[ChartApp] unsubscribed trades: {}/{}", eid.as_str(), symbol);
                     }
                     let unsubs_us = _t_unsubs.elapsed().as_micros();
 

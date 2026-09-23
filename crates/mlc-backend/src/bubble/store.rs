@@ -1256,6 +1256,129 @@ mod park_unpark_tests {
 }
 
 #[cfg(test)]
+mod apply_preset_cold_alert_guard_tests {
+    //! Store-level coverage for the `apply_preset_cold` alert-guard fix
+    //! (`docs/mlc/research/owner-review-2026-09-23/
+    //! alert-bubbles-on-cold-apply.md` §1, §4):
+    //! `mlc-app::persistence::hydration_impl::apply_preset_cold` runs
+    //! exactly this sequence around its `bubbles_mut().clear()` /
+    //! `tags_mut().clear()` — extract every alerted bubble out of the
+    //! WHOLE store first, clear, `restore_from_snapshots`, merge the
+    //! extracted bubbles back in. These tests exercise the `BubbleStore`
+    //! half of that sequence directly — no `ChartApp`/`TagManager` needed
+    //! for the bubble-survival assertion itself.
+
+    use super::*;
+    use mlc_core::tag::Tag;
+
+    fn snapshot_of(store: &BubbleStore, bid: BubbleId) -> mlc_core::preset::snapshots::DataBubbleSnapshot {
+        let bubble = store.bubble(bid).expect("bubble must exist to snapshot it");
+        let tag = Tag::new_auto(bid, [0.0, 0.0, 0.0, 0.0]);
+        crate::bubble::snapshot::to_snapshot(bubble, &tag, &[])
+    }
+
+    fn one_bar() -> mlc_core::Bar {
+        mlc_core::Bar {
+            timestamp: 1, open: 1.0, high: 1.0, low: 1.0, close: 1.0, volume: 1.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn alerted_bubble_survives_the_extract_clear_restore_merge_sequence() {
+        let mut store = BubbleStore::new();
+
+        let alerted = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+        store.set_bubble_instrument(alerted, "binance".to_string(), "spot".to_string());
+        store.append_bar(alerted, one_bar());
+        let address = store.bubble(alerted).unwrap().address.clone();
+        store.set_has_active_alerts(&address, true);
+
+        // A non-alerted sibling — must be gone after the clear, same as
+        // before this fix (the fix must not turn into "nothing ever gets
+        // cleared").
+        let sibling = store.create_bubble("ETHUSDT".to_string(), Timeframe::h1());
+
+        // The incoming preset's own window, unrelated to the alert — built
+        // by snapshotting a scratch bubble, then discarding the live copy
+        // so only the snapshot (no bars) survives.
+        let incoming = store.create_bubble("SOLUSDT".to_string(), Timeframe::h1());
+        let incoming_snap = snapshot_of(&store, incoming);
+        store.remove_bubble(incoming);
+
+        // Mirror `apply_preset_cold`: extract every alerted bubble (+
+        // paired tag, not exercised at this layer) before the clear.
+        let alert_ids: Vec<BubbleId> = {
+            let mut ids = Vec::new();
+            store.each_bubble(|bv| {
+                if bv.has_active_alerts() {
+                    ids.push(bv.id());
+                }
+            });
+            ids
+        };
+        assert_eq!(alert_ids, vec![alerted]);
+
+        let preserved = store.extract_bubbles(&alert_ids);
+        store.clear();
+        let restored_ids = store.restore_from_snapshots(&[incoming_snap]);
+        store.merge_bubbles(preserved);
+
+        assert!(store.exists(alerted), "the alerted bubble must survive the clear");
+        assert_eq!(store.bars(alerted).len(), 1, "the LIVE bubble (with bars) must be the one that survives, not a hollow reconstruction");
+        assert!(!store.exists(sibling), "a non-alerted sibling absent from the incoming preset must still be wiped");
+        assert!(restored_ids.contains(&incoming), "the incoming preset's own window must restore normally");
+        assert!(store.exists(incoming));
+    }
+
+    #[test]
+    fn alerted_bubble_wins_over_a_same_id_entry_in_the_incoming_preset() {
+        // The overlap case: switching back to the tab that OWNS the
+        // alerted bubble means the incoming preset's own snapshot list
+        // carries that exact same id. `extract_bubbles` must have already
+        // removed it from `self` by the time `restore_from_snapshots`
+        // runs, or `insert_bubble_raw`'s collision guard (commit
+        // f6c55b6b: debug_assert + warn on a live id) would trip.
+        let mut store = BubbleStore::new();
+
+        let alerted = store.create_bubble("BTCUSDT".to_string(), Timeframe::h1());
+        store.set_bubble_instrument(alerted, "binance".to_string(), "spot".to_string());
+        store.append_bar(alerted, one_bar());
+        let address = store.bubble(alerted).unwrap().address.clone();
+        store.set_has_active_alerts(&address, true);
+
+        // The preset file's own (bar-less, on-disk) snapshot of the SAME
+        // bubble id — taken while it still only had the one live bar, but
+        // `DataBubbleSnapshot`/`DataBubble::from_snapshot` never carry
+        // `bars` at all (runtime-only field), so restoring this snapshot
+        // alone would always hollow the bubble out.
+        let incoming_snap = snapshot_of(&store, alerted);
+
+        let alert_ids: Vec<BubbleId> = {
+            let mut ids = Vec::new();
+            store.each_bubble(|bv| {
+                if bv.has_active_alerts() {
+                    ids.push(bv.id());
+                }
+            });
+            ids
+        };
+        let preserved = store.extract_bubbles(&alert_ids);
+        store.clear();
+
+        // Restoring a snapshot with the SAME id as a preserved bubble must
+        // not panic — the id was already removed from `self` above, so
+        // `insert_bubble_raw` sees a free slot.
+        let restored_ids = store.restore_from_snapshots(&[incoming_snap]);
+        assert!(restored_ids.contains(&alerted));
+        assert_eq!(store.bars(alerted).len(), 0, "the snapshot-restored placeholder has no bars yet — pre-merge sanity check");
+
+        store.merge_bubbles(preserved);
+        assert_eq!(store.bars(alerted).len(), 1, "merge must overwrite the hollow restore with the live (bars-holding) bubble, not the other way round");
+    }
+}
+
+#[cfg(test)]
 mod kline_layer_display_rebuild_tests {
     //! Store-level coverage for the P0 kline-display-corruption fix
     //! (2026-07-09): `tick_writers`' kline-family display writers now

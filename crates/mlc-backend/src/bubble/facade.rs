@@ -33,6 +33,13 @@ impl<'a> BubbleView<'a> {
     pub fn id(&self) -> BubbleId {
         self.bubble.id
     }
+    /// Whether an active account-wide alert targets this bubble's
+    /// instrument (`AlertManager::resync_has_alerts` keeps this mirror
+    /// fresh) — the release guard `park_active_preset`/`apply_preset_cold`
+    /// use to keep an alerted bubble resident across a preset switch.
+    pub fn has_active_alerts(&self) -> bool {
+        self.bubble.has_active_alerts
+    }
     pub fn symbol(&self) -> &str {
         &self.bubble.address.symbol
     }
