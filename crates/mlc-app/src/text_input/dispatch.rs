@@ -87,6 +87,10 @@ impl ChartApp {
         };
         let Some(focused_id) = focused_id else { return false };
 
+        if self.blur_if_stale_focus(&focused_id) {
+            return false;
+        }
+
         // Only route early fields; late fields (chart_browser, presets, settings, search)
         // are handled after global undo/redo by dispatch_text_key_late.
         #[allow(unused_mut)]
@@ -176,6 +180,10 @@ impl ChartApp {
             ic.text_fields().focused().cloned()
         };
         let Some(focused_id) = focused_id else { return false };
+
+        if self.blur_if_stale_focus(&focused_id) {
+            return false;
+        }
 
         // OrderEntry/RiskCalculator fields are per-instance dynamic ids
         // (`"{slot_prefix}:oe_field"` / `"{slot_prefix}:rc_field"`, minted by
@@ -360,13 +368,83 @@ impl ChartApp {
         }
     }
 
-    pub(crate) fn profile_manager_blocks_text_input(&self) -> bool {
+    /// Stale-focus guard shared by [`Self::dispatch_text_key_early`] and
+    /// [`Self::dispatch_text_key_late`].
+    ///
+    /// Both callers are about to consume the current key purely because
+    /// `focused_id` is focused in the shared `TextFieldStore` — even a key
+    /// with no mapping for that field (`dispatch_text_key_early` consumes
+    /// it anyway, see its own doc). If some close path along the 15+
+    /// independent modal/inline-editor closes in this crate reset its
+    /// `is_open`/`show_*` flag but forgot the matching
+    /// `text_fields_mut().blur()`, `focused_id` keeps pointing at a field
+    /// whose owner has stopped drawing — and every hotkey in the app dies
+    /// silently for the rest of the session, since both dispatchers run
+    /// before every other hotkey arm in `on_key_press`.
+    ///
+    /// Detected via `TextFieldStore::focused_is_stale` — the field's own
+    /// per-frame geometry stamp (`update_field`, refreshed by its host
+    /// every frame it actually draws) has gone quiet. Self-heals: blurs
+    /// the field, logs the id so a live session can still name the exact
+    /// leaking close path, and returns `true` so the caller lets the key
+    /// fall through to normal hotkey routing instead of swallowing it.
+    fn blur_if_stale_focus(&mut self, focused_id: &WidgetId) -> bool {
+        if !self.input_coordinator.borrow().text_fields().focused_is_stale() {
+            return false;
+        }
+        log::warn!(
+            "[stale-focus] blurring text field '{}': it stopped being drawn while still focused \
+             (a modal/editor close path likely forgot text_fields_mut().blur())",
+            focused_id.as_str()
+        );
+        self.input_coordinator.borrow_mut().text_fields_mut().blur();
+        true
+    }
+
+    /// While the profile-manager modal is shown, every hotkey except its
+    /// own passphrase/recovery/name fields must stay dead — otherwise
+    /// Escape, arrows, etc. would operate on the hidden chart UI behind
+    /// it. But `show_profile_manager` is reset by 15+ independent close
+    /// paths across both shells, and a path that forgets the reset would
+    /// otherwise leave this gate swallowing every hotkey forever.
+    ///
+    /// Self-heals: if the flag is set but keyboard focus sits on a field
+    /// this modal does not own, that is proof the person is interacting
+    /// with something else the profile manager cannot be drawing over —
+    /// so the flag is corrected here instead of trusted. Pages with no
+    /// text field of their own (`ProfileList`, `CreateNew`'s list view)
+    /// leave nothing focused; an empty focus is not evidence the modal is
+    /// gone, so it is not treated as stale.
+    pub(crate) fn profile_manager_blocks_text_input(&mut self) -> bool {
         let uss = &self.panel_app.user_settings_state;
-        uss.show_profile_manager
-            && !uss.new_passphrase_focused
-            && !uss.new_profile_name_focused
-            && !uss.recovery_key_display_focused
-            && !uss.confirm_passphrase_focused
+        if !uss.show_profile_manager {
+            return false;
+        }
+        if uss.new_passphrase_focused
+            || uss.new_profile_name_focused
+            || uss.recovery_key_display_focused
+            || uss.confirm_passphrase_focused
+        {
+            return false;
+        }
+        use crate::text_input::{CONFIRM_PASSPHRASE, NEW_PASSPHRASE, NEW_PROFILE_NAME, RECOVERY_KEY_DISPLAY};
+        let focused_elsewhere = {
+            let ic = self.input_coordinator.borrow();
+            match ic.text_fields().focused().map(|id| id.as_str()) {
+                None => false,
+                Some(NEW_PASSPHRASE | CONFIRM_PASSPHRASE | NEW_PROFILE_NAME | RECOVERY_KEY_DISPLAY) => false,
+                Some(_) => true,
+            }
+        };
+        if focused_elsewhere {
+            log::warn!(
+                "[stale-focus] show_profile_manager was still true with keyboard focus on an \
+                 unrelated field; clearing it (owning close path likely missed the reset)"
+            );
+            self.panel_app.user_settings_state.show_profile_manager = false;
+            return false;
+        }
+        true
     }
 
     // ── Per-field handlers ──────────────────────────────────────────────────

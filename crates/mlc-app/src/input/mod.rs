@@ -8116,12 +8116,10 @@ impl ChartApp {
         // While the profile manager is shown, only allow key events to reach the
         // passphrase, recovery key, or name input fields.  This prevents keyboard
         // shortcuts (Escape, arrow keys, etc.) from operating on the hidden chart UI.
-        if self.panel_app.user_settings_state.show_profile_manager
-            && !self.panel_app.user_settings_state.new_passphrase_focused
-            && !self.panel_app.user_settings_state.new_profile_name_focused
-            && !self.panel_app.user_settings_state.recovery_key_display_focused
-            && !self.panel_app.user_settings_state.confirm_passphrase_focused
-        {
+        // `profile_manager_blocks_text_input` is the single copy of this gate
+        // (it used to be duplicated here) and self-heals a `show_profile_manager`
+        // left stuck true by a close path that forgot to reset it — see its doc.
+        if self.profile_manager_blocks_text_input() {
             return;
         }
 
