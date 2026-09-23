@@ -49,7 +49,6 @@ mod series;
 mod scales;
 mod crosshair;
 mod overlays;
-mod panes;
 mod footprint;
 mod renko;
 mod pnf;
@@ -95,10 +94,6 @@ pub use overlays::{
     draw_watermark, draw_history_depth_badge, draw_legend, draw_tooltip,
     draw_price_lines, draw_markers, draw_last_price_line,
 };
-pub use panes::{
-    draw_pane_separator, draw_pane_background, draw_pane_grid,
-    draw_pane_line, draw_pane_histogram, draw_pane_price_scale,
-};
 
 // Re-export all DATA types from mlc_core::chart::render_data so that
 // intra-layout code can use `crate::chart_render::ChartRect` etc.
@@ -108,7 +103,6 @@ pub use mlc_core::chart::render_data::{
     CrosshairConfig,
     LegendData, TooltipLines,
     RenderPriceLine, RenderMarker, RenderMarkerShape,
-    PaneGeom, PaneTheme, HistogramStyle,
     GridRenderOptions, LineRenderStyle,
 };
 

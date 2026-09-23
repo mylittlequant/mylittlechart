@@ -1260,57 +1260,6 @@ pub struct RenderMarker {
     pub text: Option<String>,
 }
 
-/// Sub-pane geometry and state
-#[derive(Clone, Debug)]
-pub struct PaneGeom {
-    /// Pane rectangle (in screen coordinates)
-    pub rect: ChartRect,
-    /// Minimum value for Y-axis
-    pub value_min: f64,
-    /// Maximum value for Y-axis
-    pub value_max: f64,
-    /// Pane title
-    pub title: String,
-}
-
-/// Histogram rendering style
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub enum HistogramStyle {
-    /// Draw bars from bottom of pane
-    #[default]
-    FromBottom,
-    /// Draw bars from zero line (for MACD-style)
-    Centered,
-}
-
-/// Theme for pane rendering
-#[derive(Clone, Debug)]
-pub struct PaneTheme {
-    pub background: String,
-    pub separator: String,
-    pub grid_line: String,
-    pub text: String,
-    pub scale_bg: String,
-    pub scale_border: String,
-    pub up_color: String,
-    pub down_color: String,
-}
-
-impl Default for PaneTheme {
-    fn default() -> Self {
-        Self {
-            background: "#131722".to_string(),
-            separator: "#2a2e39".to_string(),
-            grid_line: "#2a2e3980".to_string(),
-            text: "#d1d4dc".to_string(),
-            scale_bg: "#1e222d".to_string(),
-            scale_border: "#2a2e39".to_string(),
-            up_color: "#26a69a".to_string(),
-            down_color: "#ef5350".to_string(),
-        }
-    }
-}
-
 /// Options for grid rendering
 #[derive(Clone, Debug)]
 pub struct GridRenderOptions {
