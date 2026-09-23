@@ -6154,6 +6154,18 @@ impl ChartApp {
                                 }
                             }
                         }
+                        // The OP's own "↩ Reply" link (thread-view flat-cards
+                        // arc, 2026-09-23), and the composer chip's own "×" —
+                        // both mean the same thing: reply to the thread
+                        // itself, not to any specific reply. Unlike
+                        // `reply_to:{id}` above this is not a toggle — the OP
+                        // carries no id of its own to toggle against, and the
+                        // chip's × always means "clear", never "re-target".
+                        "reply_to_op" | "clear_reply_to" => {
+                            if let ForumV2View::Thread { reply_to, .. } = &mut st.forum2.view {
+                                *reply_to = None;
+                            }
+                        }
                         rest2 if rest2.starts_with("delete_reply:") => {
                             if let Ok(id) = rest2["delete_reply:".len()..].parse::<i64>() {
                                 st.forum2.last_error = None;

@@ -1952,7 +1952,7 @@ pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 2] = [
 // `every_chart_table_is_fully_translated` below. Column order matches
 // `Language::all()` (`lang.rs`): en, ru, es, de, fr, pt, zh, ja, ko, ar, it,
 // tr, pl, uk, hi.
-pub(super) static FORUM_KEY_TABLE: [[&str; N_LANG]; 8] = [
+pub(super) static FORUM_KEY_TABLE: [[&str; N_LANG]; 11] = [
     /* 0 ColBoard         */ [
         "Board", "Раздел", "Foro", "Forum", "Forum", "Fórum", "板块", "フォーラム", "게시판",
         "المنتدى", "Forum", "Forum", "Forum", "Форум", "फोरम",
@@ -1988,6 +1988,23 @@ pub(super) static FORUM_KEY_TABLE: [[&str; N_LANG]; 8] = [
         "Dernière activité", "Última atividade", "最新动态", "最新の活動", "최근 활동",
         "آخر نشاط", "Ultima attività", "Son etkinlik", "Ostatnia aktywność",
         "Остання активність", "हाल की गतिविधि",
+    ],
+    /* 8 SignInToReply    */ [
+        "Sign in to reply.", "Войдите, чтобы ответить.", "Inicia sesión para responder.",
+        "Melde dich an, um zu antworten.", "Connectez-vous pour répondre.", "Entre para responder.",
+        "登录后即可回复。", "返信するにはサインインしてください。", "답글을 달려면 로그인하세요.",
+        "سجّل الدخول للرد.", "Accedi per rispondere.", "Yanıtlamak için giriş yapın.",
+        "Zaloguj się, aby odpowiedzieć.", "Увійдіть, щоб відповісти.", "जवाब देने के लिए साइन इन करें।",
+    ],
+    /* 9 InReplyTo        */ [
+        "in reply to", "в ответ на", "en respuesta a", "als Antwort auf", "en réponse à",
+        "em resposta a", "回复", "返信先:", "답글 대상:", "ردًا على", "in risposta a",
+        "şu yanıta yanıt", "w odpowiedzi na", "у відповідь на", "के जवाब में",
+    ],
+    /* 10 ReplyingTo      */ [
+        "Replying to", "Ответ на", "Respondiendo a", "Antwort an", "Réponse à", "Respondendo a",
+        "回复", "返信先:", "답글 대상:", "الرد على", "Risposta a", "Şu yanıta yanıt veriliyor",
+        "Odpowiedź na", "Відповідь на", "जवाब दे रहे हैं",
     ],
 ];
 

@@ -3677,8 +3677,14 @@ impl uzor::i18n::Translate for ShareViewerKey {
 /// (`Board`/`Threads`/`Posts`/`Last post`) and a board's own thread list
 /// (`Title`/`Author`/`Replies`/`Last activity`). Row content itself (board
 /// names, thread titles, "New thread", "Reply", …) stays unlocalized, same
-/// as every other Forum-v2 string today — these headers are the only text
-/// this pass adds that did not already exist in some form.
+/// as every other Forum-v2 string today.
+///
+/// `SignInToReply`/`InReplyTo`/`ReplyingTo` (thread-view flat-cards arc,
+/// 2026-09-23, `forum_concept_v1.html` states 3/4) are the same kind of
+/// fixed, short, count-free UI chrome as the column headers above — the
+/// thread-meta line's own "N replies"/"opened by" stays unlocalized like the
+/// rest of Forum-v2's row content, since correct plural forms for a live
+/// count are not something this table's 15 flat cells can express.
 ///
 /// Variant order is **frozen** — discriminant == row index in
 /// `FORUM_KEY_TABLE`.
@@ -3701,10 +3707,18 @@ pub enum ForumKey {
     ColReplies = 6,
     /// Thread list: last-activity column.
     ColLastActivity = 7,
+    /// Thread view, signed out: the quiet line replacing every reply link
+    /// and the composer (`forum_concept_v1.html` state 4).
+    SignInToReply = 8,
+    /// Thread view: the connector in a reply-to-reply's small
+    /// "in reply to @nick #N" line (state 3).
+    InReplyTo = 9,
+    /// Thread view: the composer's own "Replying to #N · nick" chip label.
+    ReplyingTo = 10,
 }
 
 impl ForumKey {
-    pub const COUNT: usize = 8;
+    pub const COUNT: usize = 11;
 
     /// Get translation for this key.
     #[inline]

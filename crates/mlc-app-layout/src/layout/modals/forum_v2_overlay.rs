@@ -17,14 +17,14 @@
 //! DRILL-DOWN: the Boards view is now a classic board INDEX TABLE spanning
 //! the whole pane (`draw_boards_index`), a board opens into its own
 //! full-width THREAD LIST table (`draw_board_threads_index`), and a thread
-//! opens into the existing flat, numbered post view (`draw_right_thread`,
-//! left as-is — a later pass rewrites its own body). A breadcrumb bar under
-//! the tab strip (`draw_crumb_bar`, `Forum › Board › Thread`) replaces both
-//! the old rail's permanent visibility and every per-view "← Forum" row
-//! (`draw_back_row`, deleted) with ONE consistent way back, at every depth;
-//! the compact search toggle and (thread-list only) "New thread" button now
-//! live on that same bar instead of a per-view pane header
-//! (`draw_pane_header`, deleted).
+//! opens into a flat, numbered post-card view (`draw_right_thread`; states
+//! 3/4 of the same concept — see that function's own doc for the rewrite).
+//! A breadcrumb bar under the tab strip (`draw_crumb_bar`, `Forum › Board ›
+//! Thread`) replaces both the old rail's permanent visibility and every
+//! per-view "← Forum" row (`draw_back_row`, deleted) with ONE consistent way
+//! back, at every depth; the compact search toggle and (thread-list only)
+//! "New thread" button now live on that same bar instead of a per-view pane
+//! header (`draw_pane_header`, deleted).
 //!
 //! Every colour in this file comes from `ToolbarTheme` — the hardcoded
 //! `#f4cd63` "gold" this file used to import from `cloud_overlay::GOLD` is
@@ -40,9 +40,13 @@
 //! marker).
 //!
 //! An open thread's reply composer stays DOCKED at the bottom of the pane,
-//! with only the thread body/reply tree above it scrolling — same split
-//! `dm_overlay.rs`'s own conversation view uses for its send box; that part
-//! of `draw_right_thread` is unchanged by this pass.
+//! with only the posts above it scrolling — same split `dm_overlay.rs`'s own
+//! conversation view uses for its send box. The composer itself, and every
+//! per-post "↩ Reply" link, now renders only when
+//! [`thread_composer_visible`] says the caller can actually write here
+//! (owner report 2026-09-23: a signed-out reader used to see both) — a
+//! signed-out caller gets one quiet [`ForumKey::SignInToReply`] line instead,
+//! a signed-in caller without this board's write class gets nothing at all.
 //!
 //! The compact magnifier toggle (owner review 2026-09-09, item d) still
 //! expands the shared `FORUM_SEARCH` field in place — now anchored on the
@@ -66,24 +70,23 @@ use crate::ui::modal_settings::{
 use crate::ui::scroll_state::ScrollState;
 use crate::ui::scroll_widget::ScrollableContainer;
 use crate::ui::toolbar_theme::ToolbarTheme;
-use crate::ui::widgets::{draw_input, draw_input_cursor, InputConfig, SETTINGS_BUTTON_RADIUS};
+use crate::ui::widgets::{
+    draw_avatar_placeholder, draw_input, draw_input_cursor, InputConfig, SETTINGS_BUTTON_RADIUS,
+};
 use crate::ui::widgets::types::{WidgetState, WidgetTheme};
 use crate::ui::Icon;
 
 use super::cloud_overlay::{
-    draw_action_row, draw_expand_row, draw_link_row, draw_status, register_scrollbar_hit_zones,
-    relative_time, scroll_config, wrap_text, CloudOverlayResult, ACTION_BTN_GAP, FIELD_H,
-    FORUM_BODY_FIELD, FORUM_REPLY_FIELD, FORUM_SEARCH_FIELD, FORUM_TITLE_FIELD, ROW_GAP, ROW_H,
+    draw_action_row, draw_expand_row, draw_link_row, draw_status, parse_rfc3339_unix_secs,
+    register_scrollbar_hit_zones, relative_time, scroll_config, wrap_text, CloudOverlayResult,
+    ACTION_BTN_GAP, FIELD_H, FORUM_BODY_FIELD, FORUM_REPLY_FIELD, FORUM_SEARCH_FIELD,
+    FORUM_TITLE_FIELD, ROW_GAP, ROW_H,
 };
 use super::community::CommunityListPaneResult;
+use std::collections::HashMap;
 
 const SEARCH_HIT_ROW_H: f64 = 64.0;
 const LINK_ROW_H: f64 = ROW_H;
-/// Reply-tree indent per `ForumReplyV2Ui::depth`, capped at
-/// [`REPLY_MAX_DEPTH`] so a deeply nested sub-thread cannot squeeze the
-/// content column to nothing.
-const REPLY_INDENT: f64 = 16.0;
-const REPLY_MAX_DEPTH: i64 = 6;
 
 // ── Breadcrumb bar (drill-down arc 2026-09-23) ───────────────────────────
 // Board/thread crumb, the (conditional) "New thread" button, and the
@@ -279,32 +282,10 @@ fn draw_field(
     (rect, input_result.char_x_positions)
 }
 
-/// A destructive action row (own-reply Delete) — neutral surface with the
-/// delete icon and a muted-red label. Mirrors v1's own (deleted)
-/// `draw_delete_row`.
-fn draw_delete_row(
-    ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
-    layer_id: &LayerId,
-    widget_id: &str,
-    rect: WidgetRect,
-    label: &str,
-    tt: &ToolbarTheme,
-) {
-    let hovered = coord.is_hovered(&WidgetId::from(widget_id));
-    ctx.set_fill_color(if hovered { &tt.item_bg_hover } else { &tt.dropdown_bg });
-    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
-    draw_svg_icon(ctx, Icon::Delete.svg(), rect.x + 10.0, rect.y + (rect.height - 16.0) / 2.0, 16.0, 16.0, "#e5484d");
-    ctx.set_font("13px sans-serif");
-    ctx.set_fill_color("#e5484d");
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(label, rect.x + 34.0, rect.center_y());
-    coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
-}
-
 /// A small neutral-surface button with a centred label — used for the
-/// per-reply "Reply" row and the thread moderation row's three toggles.
+/// thread moderation row's three toggles (the per-post "Reply"/"Delete"
+/// controls are plain text links, [`draw_text_link`], not buttons — owner
+/// report 2026-09-23: "not a button on a full-width row").
 fn draw_mini_button(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -323,6 +304,35 @@ fn draw_mini_button(
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(label, rect.center_x(), rect.center_y());
     coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
+}
+
+/// A small text link — no background, no border, just muted text that
+/// brightens on hover — the concept's own `.plink` (`forum_concept_v1.html`
+/// states 3/4): a post card's "↩ Reply"/"Delete" footer, one of these each,
+/// never a full-width button. `hover_color` lets the caller pick the hover
+/// tint (`tt.item_text_hover` for Reply, `tt.danger` for Delete) while idle
+/// always reads `tt.item_text_muted`. Returns the text width consumed, so a
+/// right-aligned footer can lay out its links back to front.
+fn draw_text_link(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    widget_id: &str,
+    x: f64,
+    y: f64,
+    label: &str,
+    hover_color: &str,
+    tt: &ToolbarTheme,
+) -> f64 {
+    let hovered = coord.is_hovered(&WidgetId::from(widget_id));
+    ctx.set_fill_color(if hovered { hover_color } else { &tt.item_text_muted });
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(label, x, y);
+    let text_w = ctx.measure_text(label);
+    let rect = WidgetRect::new(x - 3.0, y - 3.0, text_w + 6.0, 16.0);
+    coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
+    text_w
 }
 
 /// One clipped red error line — the last request's refusal
@@ -422,6 +432,64 @@ fn board_can_write(f: &ForumV2State, slug: &str) -> bool {
 
 fn board_title<'a>(f: &'a ForumV2State, slug: &'a str) -> &'a str {
     f.boards.iter().find(|b| b.slug == slug).map(|b| b.title.as_str()).unwrap_or(slug)
+}
+
+/// The open thread's own board `can_write`, when it can be resolved
+/// client-side at all — `None` when [`ForumV2State::open_thread_board_slug`]
+/// itself is `None` (a thread reached via a search hit, see that field's own
+/// doc), which is NOT the same thing as "cannot write": [`thread_composer_visible`]
+/// treats the two differently.
+fn resolve_board_can_write(f: &ForumV2State) -> Option<bool> {
+    f.open_thread_board_slug.as_deref().map(|slug| board_can_write(f, slug))
+}
+
+/// The caller's OWN ladder rank, as a short badge label — resolved from
+/// `ForumV2State::caller_roles`/`caller_classes` (the same `GET /api/forum/
+/// me` fetch [`ForumV2State::is_moderator_or_admin`] already reads),
+/// highest-first. `None` while signed out or before the `Me` fetch answers.
+///
+/// Forum-v2's wire shapes (`ForumReplyNode`/`ForumThreadV2`, mirrored here
+/// as [`ForumReplyV2Ui`]/[`ForumThreadV2Detail`]) carry no per-author rank
+/// at all — only the CALLER's own is ever resolved, server-side, and only
+/// for the caller. So every OTHER author's post card renders with no rank
+/// badge at all rather than a guessed one (`forum_concept_v1.html`'s own
+/// mockup shows one per author, but that data does not exist on the wire
+/// today); adding it is a separate, server-side, owner-gated arc.
+fn caller_rank_label(f: &ForumV2State) -> Option<&'static str> {
+    if f.caller_roles.iter().any(|r| r == "admin") {
+        return Some("admin");
+    }
+    if f.caller_roles.iter().any(|r| r == "moderator") {
+        return Some("moderator");
+    }
+    if f.caller_classes.iter().any(|c| c == "trusted") {
+        return Some("trusted");
+    }
+    if f.caller_classes.iter().any(|c| c == "paid") {
+        return Some("paid");
+    }
+    if f.caller_classes.iter().any(|c| c == "user") {
+        return Some("user");
+    }
+    None
+}
+
+/// Whether the docked reply composer — and every per-post "↩ Reply" link —
+/// should render at all (owner report 2026-09-23, closed by
+/// `forum_concept_v1.html` states 3/4: a signed-out reader used to see both
+/// a "Reply" link under every post and an empty input field). NOT the
+/// server's final word — `panel_click.rs`'s own `"reply_submit"` arm stays
+/// the authoritative gate; this is only the client-side render gate that
+/// keeps those controls from ever painting for a caller who cannot use them.
+///
+/// `board_can_write` is `None` when the write class of this thread's own
+/// board cannot be resolved client-side at all ([`resolve_board_can_write`]),
+/// in which case a signed-in caller still sees the composer — the same
+/// leniency `panel_click.rs`'s own `reply_submit` gate already applies
+/// (checking only `caller_signed_in`) for exactly that reason, deferring to
+/// the server as the final authority.
+pub(crate) fn thread_composer_visible(caller_signed_in: bool, board_can_write: Option<bool>) -> bool {
+    caller_signed_in && board_can_write.unwrap_or(true)
 }
 
 // =============================================================================
@@ -1002,104 +1070,327 @@ fn draw_board_threads_index(
 }
 
 // =============================================================================
-// Thread view (`ForumV2View::Thread`): mod row, body, replies tree scroll
-// ABOVE a docked composer (error line, reply-to indicator, REPLY field +
-// submit) fixed to the bottom of the pane — same split `dm_overlay.rs`'s own
-// conversation view uses for its send box. Left as-is by the drill-down
-// pass (a later pass rewrites this view's own body) beyond the breadcrumb
-// bar now sitting above it and the GOLD→`tt.accent` colour swap.
+// Thread view (`ForumV2View::Thread`): title/meta header, optional mod row,
+// then flat, numbered post CARDS in chronological order (owner-approved
+// concept `forum_concept_v1.html` states 3/4, 2026-09-23 rewrite) scroll
+// ABOVE a docked composer fixed to the bottom of the pane — same split
+// `dm_overlay.rs`'s own conversation view uses for its send box. The OP is
+// post #1; every reply is flattened out of the server's tree (not
+// indented/nested — `flatten_replies_chronological`) from #2. The composer,
+// and every post's own "↩ Reply" link, render only when
+// `thread_composer_visible` allows it (owner report 2026-09-23: a
+// signed-out reader used to see both).
 // =============================================================================
 
-fn reply_node_h(node: &ForumReplyV2Ui) -> f64 {
-    let mut h = 16.0; // meta line
-    if node.hidden {
-        h += 16.0 + 10.0;
-    } else {
-        h += blocks_h(&node.body);
-        h += ROW_H; // Reply / Delete row
+const CARD_PAD: f64 = 10.0;
+const CARD_GAP: f64 = 10.0;
+const AUTH_COL_W: f64 = 66.0;
+const AVATAR_D: f64 = 34.0;
+const AVATAR_NICK_GAP: f64 = 6.0;
+const NICK_LINE_H: f64 = 14.0;
+const RANK_GAP: f64 = 4.0;
+const RANK_LINE_H: f64 = 12.0;
+const POST_ROW1_H: f64 = 16.0;
+const POST_ROW1_GAP: f64 = 7.0;
+const REPLYTO_H: f64 = 14.0;
+const REPLYTO_GAP: f64 = 7.0;
+const HIDDEN_LINE_H: f64 = 16.0;
+const FOOT_GAP: f64 = 8.0;
+const FOOT_H: f64 = 16.0;
+const CHIP_H: f64 = 26.0;
+const CHIP_GAP: f64 = 8.0;
+const SIGNIN_LINE_H: f64 = 36.0;
+const TITLE_LINE_H: f64 = 22.0;
+const META_LINE_H: f64 = 18.0;
+const HEADER_GAP: f64 = 12.0;
+
+/// One reply, flattened out of the server's reply TREE into chronological
+/// order across the WHOLE thread — not tree pre-order: a reply nested under
+/// an old post can still land ahead of a brand new top-level reply if it was
+/// posted first, same as any other post; only its own [`Self::in_reply_to`]
+/// marks the nesting the tree carried. Numbering starts at `first_number`
+/// (2 in `draw_right_thread` — the OP is always post #1, and is always
+/// chronologically first by construction, so it never competes for a number
+/// here). Pure function, no rendering — unit-tested directly
+/// (`tests::flatten_orders_chronologically_with_in_reply_to`).
+pub(crate) struct FlatReply<'a> {
+    pub number: i64,
+    pub reply: &'a ForumReplyV2Ui,
+    /// `Some((parent_number, parent_author))` when this reply nests under
+    /// ANOTHER reply (`parent_reply_id: Some`) — a plain top-level reply to
+    /// the thread itself carries `None`, same as the concept's own state 3
+    /// (only a reply-to-reply gets an "in reply to" line; a reply to the
+    /// thread does not).
+    pub in_reply_to: Option<(i64, &'a str)>,
+}
+
+pub(crate) fn flatten_replies_chronological(tree: &[ForumReplyV2Ui], first_number: i64) -> Vec<FlatReply<'_>> {
+    fn collect<'a>(nodes: &'a [ForumReplyV2Ui], out: &mut Vec<&'a ForumReplyV2Ui>) {
+        for n in nodes {
+            out.push(n);
+            collect(&n.children, out);
+        }
     }
-    h += 10.0; // gap after this node
-    h + node.children.iter().map(reply_node_h).sum::<f64>()
+    let mut flat: Vec<&ForumReplyV2Ui> = Vec::new();
+    collect(tree, &mut flat);
+    // A reply's own `created_at` is always later than its parent's (the
+    // server refuses a reply targeting a reply that does not exist yet), so
+    // sorting the whole flat set by time alone guarantees every parent is
+    // already numbered by the time its child is reached below.
+    flat.sort_by_key(|n| (parse_rfc3339_unix_secs(&n.created_at).unwrap_or(i64::MAX), n.id));
+
+    let mut numbered: HashMap<i64, (i64, &str)> = HashMap::with_capacity(flat.len());
+    let mut out = Vec::with_capacity(flat.len());
+    for (i, reply) in flat.into_iter().enumerate() {
+        let number = first_number + i as i64;
+        let in_reply_to = reply.parent_reply_id.and_then(|pid| numbered.get(&pid).copied());
+        numbered.insert(reply.id, (number, reply.author.as_str()));
+        out.push(FlatReply { number, reply, in_reply_to });
+    }
+    out
 }
 
-fn reply_tree_h(nodes: &[ForumReplyV2Ui]) -> f64 {
-    nodes.iter().map(reply_node_h).sum()
+/// The post card's own inner content height (excluding the [`CARD_PAD`]
+/// frame and the trailing [`CARD_GAP`] — see [`post_card_h`] for the full
+/// slot). Takes the same booleans [`draw_post_card`] derives from its own
+/// arguments, so the two can never compute a different number for the same
+/// post.
+fn post_card_inner_h(body: &str, hidden: bool, has_in_reply_to: bool, has_footer: bool, has_rank: bool) -> f64 {
+    let auth_h =
+        AVATAR_D + AVATAR_NICK_GAP + NICK_LINE_H + if has_rank { RANK_GAP + RANK_LINE_H } else { 0.0 };
+    let mut body_h = POST_ROW1_H + POST_ROW1_GAP;
+    if has_in_reply_to {
+        body_h += REPLYTO_H + REPLYTO_GAP;
+    }
+    body_h += if hidden { HIDDEN_LINE_H } else { blocks_h(body) };
+    if has_footer {
+        body_h += FOOT_GAP + FOOT_H;
+    }
+    auth_h.max(body_h)
 }
 
+/// Full height of one post card's own slot — frame padding plus content
+/// plus the trailing gap before the next card ([`CARD_GAP`], matching the
+/// concept's own `.posts{gap:10px}`).
+fn post_card_h(body: &str, hidden: bool, has_in_reply_to: bool, has_footer: bool, has_rank: bool) -> f64 {
+    CARD_PAD * 2.0 + post_card_inner_h(body, hidden, has_in_reply_to, has_footer, has_rank) + CARD_GAP
+}
+
+/// "2026-09-20 14:02 · 3d ago" — the concept's own `.ptime` (states 3/4):
+/// absolute date+time (the RFC3339 timestamp's own first 16 bytes, all
+/// ASCII digits/separators, so slicing there never lands off a char
+/// boundary) plus [`relative_time`]. Falls back to the bare timestamp when
+/// it is shorter than that.
+fn post_absolute_and_relative(created_at: &str, now_ms: u64) -> String {
+    match created_at.get(0..16) {
+        Some(head) => format!("{} · {}", head.replace('T', " "), relative_time(created_at, now_ms)),
+        None => created_at.to_string(),
+    }
+}
+
+/// "N replies · opened by AUTHOR · 2026-09-20 14:02" — the concept's own
+/// `.thread-meta` (states 3/4). `reply_count` is the FLATTENED total (every
+/// reply in the tree, not just root-level ones —
+/// `flatten_replies_chronological(...).len()`), unlike the heading this
+/// replaces, which under-counted by reading only `replies_tree.len()`.
+fn thread_meta_line(reply_count: usize, author: &str, created_at: &str) -> String {
+    let replies_word = match reply_count {
+        0 => "No replies".to_string(),
+        1 => "1 reply".to_string(),
+        n => format!("{n} replies"),
+    };
+    let when = created_at.get(0..16).map(|h| h.replace('T', " ")).unwrap_or_else(|| created_at.to_string());
+    format!("{replies_word} · opened by {author} · {when}")
+}
+
+/// A post card's footer — small text links, right-aligned, back to front
+/// (the concept's own `.pfoot{justify-content:flex-end;gap:16px}`): Delete
+/// (own reply only) then "↩ Reply"/"Replying…". Either may be absent; the
+/// caller only invokes this at all when at least one is present
+/// (`draw_post_card`'s own `has_footer`).
 #[allow(clippy::too_many_arguments)]
-fn draw_reply_node(
+fn draw_post_footer(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
     x: f64,
     y: f64,
     w: f64,
-    node: &ForumReplyV2Ui,
-    reply_to: Option<i64>,
+    reply_widget_id: Option<&str>,
+    reply_label: &str,
+    delete_widget_id: Option<&str>,
+    tt: &ToolbarTheme,
+) {
+    ctx.set_font("11px sans-serif");
+    let mut rx = x + w;
+    if let Some(did) = delete_widget_id {
+        let label = "Delete";
+        rx -= ctx.measure_text(label);
+        draw_text_link(ctx, coord, layer_id, did, rx, y, label, &tt.danger, tt);
+        rx -= 16.0;
+    }
+    if let Some(rid) = reply_widget_id {
+        rx -= ctx.measure_text(reply_label);
+        draw_text_link(ctx, coord, layer_id, rid, rx, y, reply_label, &tt.item_text_hover, tt);
+    }
+}
+
+/// One post card (concept states 3/4): avatar/nick/rank author column, a
+/// `#N` + absolute/relative time row, an optional "in reply to @nick #N"
+/// line, the body (hidden posts read "[hidden by moderator]" instead,
+/// regardless of caller — same rule the old per-node view already applied),
+/// and a text-link footer. `rank_label` is `None` for every author but the
+/// caller themselves — see [`caller_rank_label`]'s own doc for why. Returns
+/// the full slot height consumed, [`post_card_h`].
+#[allow(clippy::too_many_arguments)]
+fn draw_post_card(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    number: i64,
+    author: &str,
+    rank_label: Option<&str>,
+    created_at: &str,
+    hidden: bool,
+    body: &str,
+    in_reply_to: Option<(i64, &str)>,
+    reply_widget_id: Option<&str>,
+    reply_label: &str,
+    delete_widget_id: Option<&str>,
     current_time_ms: u64,
     tt: &ToolbarTheme,
 ) -> f64 {
-    let indent = node.depth.clamp(0, REPLY_MAX_DEPTH) as f64 * REPLY_INDENT;
-    let ix = x + indent;
-    let iw = (w - indent).max(40.0);
-    let mut ly = y;
+    let has_footer = reply_widget_id.is_some() || delete_widget_id.is_some();
+    let has_rank = rank_label.is_some();
+    let has_in_reply_to = in_reply_to.is_some();
+    let inner_h = post_card_inner_h(body, hidden, has_in_reply_to, has_footer, has_rank);
+    let box_h = CARD_PAD * 2.0 + inner_h;
 
-    ctx.set_font("10px monospace");
+    ctx.set_fill_color(&tt.dropdown_bg);
+    ctx.fill_rounded_rect(x, y, w, box_h, SETTINGS_BUTTON_RADIUS);
+
+    // Author column — avatar, nick, rank badge (the concept's own `.authcol`).
+    let auth_cx = x + CARD_PAD + AUTH_COL_W / 2.0;
+    let mut acy = y + CARD_PAD;
+    draw_avatar_placeholder(ctx, auth_cx, acy + AVATAR_D / 2.0, AVATAR_D / 2.0, author, &tt.item_bg_active);
+    acy += AVATAR_D + AVATAR_NICK_GAP;
+    ctx.set_font("600 12px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let nick = crate::ui::widgets::fit_text_to_width(ctx, author, AUTH_COL_W);
+    ctx.fill_text(&nick, auth_cx, acy);
+    acy += NICK_LINE_H;
+    if let Some(rank) = rank_label {
+        acy += RANK_GAP;
+        let is_staff = rank == "moderator" || rank == "admin";
+        let label = rank.to_uppercase();
+        ctx.set_font("9px monospace");
+        let pill_w = ctx.measure_text(&label) + 10.0;
+        let pill_x = auth_cx - pill_w / 2.0;
+        ctx.set_fill_color(&tt.dropdown_bg);
+        ctx.fill_rounded_rect(pill_x, acy, pill_w, RANK_LINE_H, 3.0);
+        ctx.set_fill_color(if is_staff { &tt.accent } else { &tt.item_text_muted });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(&label, pill_x + pill_w / 2.0, acy + RANK_LINE_H / 2.0);
+    }
+
+    // Body column — post number + time, optional "in reply to", body,
+    // footer (the concept's own `.pbody`).
+    let body_x = x + CARD_PAD + AUTH_COL_W + CARD_PAD;
+    let body_w = (x + w - CARD_PAD - body_x).max(40.0);
+    let mut ly = y + CARD_PAD;
+
+    ctx.set_font("11px monospace");
     ctx.set_fill_color(&tt.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(&format!("{} · {}", node.author, relative_time(&node.created_at, current_time_ms)), ix, ly);
-    ly += 16.0;
+    ctx.fill_text(&format!("#{number}"), body_x, ly);
+    let time_label = post_absolute_and_relative(created_at, current_time_ms);
+    ctx.set_text_align(TextAlign::Right);
+    ctx.fill_text(&time_label, body_x + body_w, ly);
+    ctx.set_text_align(TextAlign::Left);
+    ly += POST_ROW1_H + POST_ROW1_GAP;
 
-    if node.hidden {
+    if let Some((parent_number, parent_author)) = in_reply_to {
+        let lang = current_language();
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(&tt.item_text_muted);
-        ctx.fill_text("[hidden by moderator]", ix, ly);
-        ly += 16.0 + 10.0;
+        let prefix = format!("\u{21b3} {} ", ForumKey::InReplyTo.get(lang));
+        ctx.fill_text(&prefix, body_x, ly);
+        let prefix_w = ctx.measure_text(&prefix);
+        ctx.set_font("600 11px sans-serif");
+        ctx.set_fill_color(&tt.item_text);
+        ctx.fill_text(&format!("@{parent_author} #{parent_number}"), body_x + prefix_w, ly);
+        ly += REPLYTO_H + REPLYTO_GAP;
+    }
+
+    if hidden {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text("[hidden by moderator]", body_x, ly);
+        ly += HIDDEN_LINE_H;
     } else {
-        ly += draw_blocks(ctx, coord, layer_id, &format!("cloud_overlay:forum2:reply:{}", node.id), ix, ly, iw, &node.body, tt);
-
-        let targeted = reply_to == Some(node.id);
-        let reply_label = if targeted { "Replying…" } else { "Reply" };
-        let reply_w = if node.author_is_me { (iw - ACTION_BTN_GAP) / 2.0 } else { iw };
-        draw_mini_button(
-            ctx, coord, layer_id, &format!("cloud_overlay:forum2:reply_to:{}", node.id),
-            WidgetRect::new(ix, ly, reply_w, ROW_H - ROW_GAP), reply_label, tt,
-        );
-        if node.author_is_me {
-            draw_delete_row(
-                ctx, coord, layer_id, &format!("cloud_overlay:forum2:delete_reply:{}", node.id),
-                WidgetRect::new(ix + reply_w + ACTION_BTN_GAP, ly, reply_w, ROW_H - ROW_GAP), "Delete", tt,
-            );
-        }
-        ly += ROW_H;
+        ly += draw_blocks(ctx, coord, layer_id, &format!("cloud_overlay:forum2:post:{number}"), body_x, ly, body_w, body, tt);
     }
-    ly += 10.0;
 
-    for child in &node.children {
-        ly += draw_reply_node(ctx, coord, layer_id, x, ly, w, child, reply_to, current_time_ms, tt);
+    if has_footer {
+        ly += FOOT_GAP;
+        draw_post_footer(ctx, coord, layer_id, body_x, ly, body_w, reply_widget_id, reply_label, delete_widget_id, tt);
     }
-    ly - y
+
+    box_h + CARD_GAP
 }
 
-#[allow(clippy::too_many_arguments)]
-fn draw_reply_tree(
+/// The composer's own "Replying to #N · nick ×" chip (concept state 3) —
+/// drawn only while a reply is targeted; its × clears back to a top-level
+/// reply (`"cloud_overlay:forum2:clear_reply_to"`, handled in
+/// `panel_click.rs`). `target` is `(post_number, author)`, resolved by the
+/// caller from the same flattened list the post cards themselves number
+/// from — `None` only if the targeted reply is no longer in that list (a
+/// delete raced the click), in which case the chip still offers × with no
+/// numbers rather than stale ones. Returns the height consumed
+/// ([`CHIP_H`] + [`CHIP_GAP`]).
+fn draw_reply_chip(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
     x: f64,
     y: f64,
-    w: f64,
-    nodes: &[ForumReplyV2Ui],
-    reply_to: Option<i64>,
-    current_time_ms: u64,
+    target: Option<(i64, &str)>,
     tt: &ToolbarTheme,
 ) -> f64 {
-    let mut ly = y;
-    for node in nodes {
-        ly += draw_reply_node(ctx, coord, layer_id, x, ly, w, node, reply_to, current_time_ms, tt);
-    }
-    ly - y
+    let lang = current_language();
+    let label = match target {
+        Some((n, author)) => format!("{} #{n} · {author}", ForumKey::ReplyingTo.get(lang)),
+        None => format!("{}…", ForumKey::ReplyingTo.get(lang)),
+    };
+    ctx.set_font("11px monospace");
+    let text_w = ctx.measure_text(&label);
+    let close_w = 16.0;
+    let chip_w = 8.0 + text_w + 8.0 + close_w + 6.0;
+    let rect = WidgetRect::new(x, y, chip_w, CHIP_H);
+    ctx.set_fill_color(&tt.dropdown_bg);
+    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(&label, rect.x + 8.0, rect.center_y());
+
+    let close_rect = WidgetRect::new(rect.x + rect.width - close_w - 4.0, rect.y + (CHIP_H - 16.0) / 2.0, close_w, 16.0);
+    let close_hovered = coord.is_hovered(&WidgetId::from("cloud_overlay:forum2:clear_reply_to"));
+    ctx.set_fill_color(if close_hovered { &tt.item_text_hover } else { &tt.item_text_muted });
+    ctx.set_text_align(TextAlign::Center);
+    ctx.fill_text("\u{d7}", close_rect.center_x(), close_rect.center_y());
+    coord.register_on_layer("cloud_overlay:forum2:clear_reply_to", close_rect, Sense::CLICK | Sense::HOVER, layer_id);
+
+    CHIP_H + CHIP_GAP
 }
 
 /// The moderator/admin-only row: three toggles (Hide/Unhide, Lock/Unlock,
@@ -1134,28 +1425,67 @@ fn draw_mod_row(
 }
 
 /// The scrollable part of the Thread view — everything ABOVE the docked
-/// composer (header meta, title, optional mod row, body, replies heading,
-/// reply tree). Matches exactly what `draw_right_thread`'s own scroll
-/// region draws, same doctrine every `*_h`/`draw_*` pair in this file
-/// follows.
+/// composer: title/meta header, optional mod row, then post CARDS in
+/// chronological order (the OP as post #1, every reply flattened via
+/// [`flatten_replies_chronological`] from #2). Matches exactly what
+/// `draw_right_thread`'s own scroll region draws, same doctrine every
+/// `*_h`/`draw_*` pair in this file follows.
 fn thread_scroll_content_h(t: &ForumThreadV2Detail, replies_tree: &[ForumReplyV2Ui], f: &ForumV2State) -> f64 {
-    let header_h = 16.0 + 26.0;
+    let header_h = TITLE_LINE_H + META_LINE_H + HEADER_GAP;
     let mod_h = if f.is_moderator_or_admin() { ROW_H } else { 0.0 };
-    let body_h = blocks_h(&t.body) + 12.0;
-    let replies_heading_h = 24.0;
-    let replies_h = reply_tree_h(replies_tree);
-    header_h + mod_h + body_h + replies_heading_h + replies_h
+    let composer_visible = thread_composer_visible(f.caller_signed_in, resolve_board_can_write(f));
+    let rank_for = |is_me: bool| is_me && caller_rank_label(f).is_some();
+
+    let op_h = post_card_h(&t.body, t.hidden, false, composer_visible, rank_for(t.author_is_me));
+    let flat = flatten_replies_chronological(replies_tree, 2);
+    let replies_h: f64 = flat
+        .iter()
+        .map(|fr| {
+            post_card_h(
+                &fr.reply.body, fr.reply.hidden, fr.in_reply_to.is_some(),
+                composer_visible || fr.reply.author_is_me, rank_for(fr.reply.author_is_me),
+            )
+        })
+        .sum();
+
+    header_h + mod_h + op_h + replies_h
 }
 
-/// The docked composer's own height — error line, reply-to indicator, the
-/// REPLY label, the field, and the submit button. Fixed to the bottom of
-/// the pane regardless of how tall the scrollable part above it is.
+/// The docked composer's own height — reply-to chip (if any), the field,
+/// and the submit button; `0.0` when [`thread_composer_visible`] is `false`
+/// and the caller is signed in (owner report 2026-09-23: no composer AND no
+/// placeholder row for a caller who simply cannot write here);
+/// [`SIGNIN_LINE_H`] for the one quiet line a signed-out caller gets
+/// instead. Fixed to the bottom of the pane regardless of how tall the
+/// scrollable part above it is.
 fn thread_composer_h(f: &ForumV2State, reply_to: Option<i64>) -> f64 {
-    let err_h = if f.last_error.is_some() { 20.0 } else { 0.0 };
-    let reply_to_h = if reply_to.is_some() { 20.0 } else { 0.0 };
-    err_h + reply_to_h + 4.0 + 16.0 + FIELD_H + 8.0 + ROW_H
+    if thread_composer_visible(f.caller_signed_in, resolve_board_can_write(f)) {
+        let err_h = if f.last_error.is_some() { 20.0 } else { 0.0 };
+        let chip_h = if reply_to.is_some() { CHIP_H + CHIP_GAP } else { 0.0 };
+        err_h + chip_h + FIELD_H + 8.0 + ROW_H
+    } else if !f.caller_signed_in {
+        SIGNIN_LINE_H
+    } else {
+        0.0
+    }
 }
 
+/// The Thread view (`ForumV2View::Thread`) — flat, numbered post CARDS in
+/// chronological order (owner-approved concept `forum_concept_v1.html`
+/// states 3/4, 2026-09-23 rewrite): the OP is post #1, every reply is
+/// flattened out of the server's tree via [`flatten_replies_chronological`]
+/// from #2 — NOT nested/indented; a reply-to-reply instead carries its own
+/// small "in reply to @nick #N" line. Above the docked composer: title +
+/// meta line, then the (unchanged) moderator row, then the cards.
+///
+/// The composer — and every post's own "↩ Reply" link — renders only when
+/// [`thread_composer_visible`] allows it, closing the owner's report that a
+/// signed-out reader saw both a "Reply" link under every post and an empty,
+/// unusable input field: a signed-out caller instead reads one quiet
+/// [`ForumKey::SignInToReply`] line; a signed-in caller without this
+/// board's write class gets nothing extra at all (`thread_composer_h`'s own
+/// three-way split mirrors this exactly, so the scroll region is sized
+/// correctly in all three cases).
 #[allow(clippy::too_many_arguments)]
 fn draw_right_thread(
     ctx: &mut dyn RenderContext,
@@ -1189,97 +1519,110 @@ fn draw_right_thread(
         return;
     };
 
-    let composer_h = thread_composer_h(&state.forum2, reply_to);
+    let f = &state.forum2;
+    let composer_visible = thread_composer_visible(f.caller_signed_in, resolve_board_can_write(f));
+    let flat_replies = flatten_replies_chronological(replies_tree, 2);
+    let rank_for = |is_me: bool| if is_me { caller_rank_label(f) } else { None };
+
+    let composer_h = thread_composer_h(f, reply_to);
     let scroll_h = (viewport_h - composer_h).max(0.0);
-    let content_h = thread_scroll_content_h(t, replies_tree, &state.forum2);
+    let content_h = thread_scroll_content_h(t, replies_tree, f);
 
     draw_right_scrollable(
         ctx, coord, layer_id, x, y, w, scroll_h, &state.scroll, content_h, result,
         |ctx, coord, layer_id, sx, sy, sw, _result| {
             let mut ly = sy;
-            ctx.set_text_baseline(TextBaseline::Top);
-            ctx.set_font("10px monospace");
-            ctx.set_fill_color(&tt.item_text_muted);
-            ctx.set_text_align(TextAlign::Left);
-            ctx.fill_text(&format!("{} · {}", t.author, relative_time(&t.created_at, current_time_ms)), sx, ly);
-            ly += 16.0;
 
             let mut title_x = sx;
             if t.pinned {
-                draw_svg_icon(ctx, Icon::Pin.svg(), title_x, ly + 3.0, 16.0, 16.0, &tt.accent);
+                draw_svg_icon(ctx, Icon::Pin.svg(), title_x, ly + 2.0, 16.0, 16.0, &tt.accent);
                 title_x += 20.0;
             }
             if t.locked {
-                draw_svg_icon(ctx, Icon::Lock.svg(), title_x, ly + 3.0, 16.0, 16.0, &tt.item_text_muted);
+                draw_svg_icon(ctx, Icon::Lock.svg(), title_x, ly + 2.0, 16.0, 16.0, &tt.item_text_muted);
                 title_x += 20.0;
             }
             ctx.set_font("600 14px sans-serif");
             ctx.set_fill_color(&tt.accent);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
             ctx.fill_text(&t.title, title_x, ly);
-            ly += 26.0;
+            ly += TITLE_LINE_H;
 
-            if state.forum2.is_moderator_or_admin() {
+            ctx.set_font("11px monospace");
+            ctx.set_fill_color(&tt.item_text_muted);
+            let meta = thread_meta_line(flat_replies.len(), &t.author, &t.created_at);
+            let meta = crate::ui::widgets::fit_text_to_width(ctx, &meta, sw);
+            ctx.fill_text(&meta, sx, ly);
+            ly += META_LINE_H + HEADER_GAP;
+
+            if f.is_moderator_or_admin() {
                 draw_mod_row(ctx, coord, layer_id, sx, ly, sw, t, tt);
                 ly += ROW_H;
             }
 
-            ly += draw_blocks(ctx, coord, layer_id, "cloud_overlay:forum2:body", sx, ly, sw, &t.body, tt);
-            ly += 12.0;
+            let op_reply_id: Option<&str> = composer_visible.then_some("cloud_overlay:forum2:reply_to_op");
+            ly += draw_post_card(
+                ctx, coord, layer_id, sx, ly, sw,
+                1, &t.author, rank_for(t.author_is_me), &t.created_at, t.hidden, &t.body, None,
+                op_reply_id, "\u{21a9} Reply", None, current_time_ms, tt,
+            );
 
-            ctx.set_font("11px monospace");
-            ctx.set_fill_color(&tt.item_text_muted);
-            ctx.set_text_align(TextAlign::Left);
-            ctx.set_text_baseline(TextBaseline::Top);
-            let replies_label = if replies_tree.is_empty() {
-                "NO REPLIES YET".to_string()
-            } else if replies_tree.len() == 1 {
-                "1 REPLY".to_string()
-            } else {
-                format!("{} REPLIES", replies_tree.len())
-            };
-            ctx.fill_text(&replies_label, sx, ly);
-            ly += 24.0;
-
-            draw_reply_tree(ctx, coord, layer_id, sx, ly, sw, replies_tree, reply_to, current_time_ms, tt);
+            for fr in &flat_replies {
+                let reply_id = format!("cloud_overlay:forum2:reply_to:{}", fr.reply.id);
+                let targeted = reply_to == Some(fr.reply.id);
+                let reply_label = if targeted { "Replying…" } else { "\u{21a9} Reply" };
+                let delete_id = fr
+                    .reply
+                    .author_is_me
+                    .then(|| format!("cloud_overlay:forum2:delete_reply:{}", fr.reply.id));
+                ly += draw_post_card(
+                    ctx, coord, layer_id, sx, ly, sw,
+                    fr.number, &fr.reply.author, rank_for(fr.reply.author_is_me), &fr.reply.created_at,
+                    fr.reply.hidden, &fr.reply.body, fr.in_reply_to,
+                    composer_visible.then_some(reply_id.as_str()), reply_label,
+                    delete_id.as_deref(), current_time_ms, tt,
+                );
+            }
         },
     );
 
-    // Docked composer — fixed to the bottom of the pane, outside the
-    // scrollable clip above.
+    // Docked composer / sign-in prompt — fixed to the bottom of the pane,
+    // outside the scrollable clip above.
     let composer_y = y + (viewport_h - composer_h).max(0.0);
     let mut cy = composer_y;
-    if let Some(err) = &state.forum2.last_error {
-        cy += draw_error_line(ctx, w, x, cy, err);
-    }
-    if let Some(target) = reply_to {
-        ctx.set_font("11px sans-serif");
+    if composer_visible {
+        if let Some(err) = &f.last_error {
+            cy += draw_error_line(ctx, w, x, cy, err);
+        }
+        if reply_to.is_some() {
+            let target = reply_to.and_then(|id| {
+                flat_replies.iter().find(|fr| fr.reply.id == id).map(|fr| (fr.number, fr.reply.author.as_str()))
+            });
+            cy += draw_reply_chip(ctx, coord, layer_id, x, cy, target, tt);
+        }
+
+        let field_rect = WidgetRect::new(x, cy, w, FIELD_H);
+        let (rect, chars) = draw_field(
+            ctx, coord, layer_id, "cloud_overlay:forum2:reply_input", FORUM_REPLY_FIELD, field_rect,
+            "Write a reply…", ft, tt, current_time_ms,
+        );
+        result.forum_reply_rect = Some(rect);
+        result.forum_reply_char_positions = chars;
+        cy += FIELD_H + 8.0;
+
+        draw_action_row(
+            ctx, coord, layer_id, "cloud_overlay:forum2:reply_submit",
+            WidgetRect::new(x, cy, w, ROW_H - ROW_GAP), "Post reply", tt,
+        );
+    } else if !f.caller_signed_in {
+        let lang = current_language();
+        ctx.set_font("12px sans-serif");
         ctx.set_fill_color(&tt.item_text_muted);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(&format!("Replying to reply #{target}"), x, cy);
-        cy += 20.0;
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(ForumKey::SignInToReply.get(lang), x + w / 2.0, cy + SIGNIN_LINE_H / 2.0);
     }
-    cy += 4.0;
-    ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text("REPLY", x, cy);
-    cy += 16.0;
-
-    let field_rect = WidgetRect::new(x, cy, w, FIELD_H);
-    let (rect, chars) = draw_field(
-        ctx, coord, layer_id, "cloud_overlay:forum2:reply_input", FORUM_REPLY_FIELD, field_rect,
-        "Write a reply…", ft, tt, current_time_ms,
-    );
-    result.forum_reply_rect = Some(rect);
-    result.forum_reply_char_positions = chars;
-    cy += FIELD_H + 8.0;
-
-    draw_action_row(
-        ctx, coord, layer_id, "cloud_overlay:forum2:reply_submit",
-        WidgetRect::new(x, cy, w, ROW_H - ROW_GAP), "Reply", tt,
-    );
 }
 
 // =============================================================================
@@ -1475,4 +1818,96 @@ fn draw_compose(
         ctx, coord, layer_id, "cloud_overlay:forum2:compose_cancel",
         WidgetRect::new(x + post_w + ACTION_BTN_GAP, ly, post_w, ROW_H - ROW_GAP), "Cancel", false, tt,
     );
+}
+
+// =============================================================================
+// Unit tests — the two pure functions the thread-view flat-cards rewrite
+// (2026-09-23, `forum_concept_v1.html` states 3/4) introduced:
+// `flatten_replies_chronological` (ordering + "in reply to" resolution) and
+// `thread_composer_visible` (the signed-out/no-write-right/can-write gate).
+// Neither touches rendering, so both are tested directly, no `RenderContext`
+// double needed.
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn reply(id: i64, parent: Option<i64>, depth: i64, author: &str, created_at: &str, children: Vec<ForumReplyV2Ui>) -> ForumReplyV2Ui {
+        ForumReplyV2Ui {
+            id,
+            parent_reply_id: parent,
+            depth,
+            author: author.to_string(),
+            author_is_me: false,
+            body: "body".to_string(),
+            created_at: created_at.to_string(),
+            hidden: false,
+            children,
+        }
+    }
+
+    /// Mirrors `forum_concept_v1.html` state 3's own example thread:
+    /// quiet_deska (top-level) → j_novak (nested reply-to-reply) →
+    /// Nemo Trading (a LATER top-level reply) — numbered #2/#3/#4 in exactly
+    /// that order, with only the nested one carrying an `in_reply_to`.
+    #[test]
+    fn flatten_orders_chronologically_with_in_reply_to() {
+        let tree = vec![
+            reply(10, None, 0, "quiet_deska", "2026-09-20T15:10:00+00:00", vec![
+                reply(11, Some(10), 1, "j_novak", "2026-09-20T15:22:00+00:00", vec![]),
+            ]),
+            reply(12, None, 0, "Nemo Trading", "2026-09-21T09:05:00+00:00", vec![]),
+        ];
+
+        let flat = flatten_replies_chronological(&tree, 2);
+
+        let numbers: Vec<i64> = flat.iter().map(|fr| fr.number).collect();
+        let ids: Vec<i64> = flat.iter().map(|fr| fr.reply.id).collect();
+        assert_eq!(numbers, vec![2, 3, 4]);
+        assert_eq!(ids, vec![10, 11, 12]);
+
+        assert_eq!(flat[0].in_reply_to, None, "a top-level reply carries no in_reply_to");
+        assert_eq!(flat[1].in_reply_to, Some((2, "quiet_deska")), "nested reply resolves its parent's assigned number");
+        assert_eq!(flat[2].in_reply_to, None, "a later top-level reply still carries no in_reply_to");
+    }
+
+    /// Chronological order is across the WHOLE thread, not tree pre-order: a
+    /// nested reply posted before a sibling top-level reply still sorts
+    /// before it, even though the tree nests it two levels down.
+    #[test]
+    fn flatten_orders_by_time_not_tree_position() {
+        let tree = vec![
+            reply(20, None, 0, "a", "2026-09-20T10:00:00+00:00", vec![
+                reply(21, Some(20), 1, "b", "2026-09-20T10:05:00+00:00", vec![]),
+            ]),
+            reply(22, None, 0, "c", "2026-09-20T10:03:00+00:00", vec![]),
+        ];
+
+        let flat = flatten_replies_chronological(&tree, 2);
+        let ids: Vec<i64> = flat.iter().map(|fr| fr.reply.id).collect();
+        assert_eq!(ids, vec![20, 22, 21], "10:00 < 10:03 < 10:05, regardless of nesting");
+    }
+
+    #[test]
+    fn composer_visible_signed_out_is_never_true() {
+        assert!(!thread_composer_visible(false, Some(true)));
+        assert!(!thread_composer_visible(false, Some(false)));
+        assert!(!thread_composer_visible(false, None));
+    }
+
+    #[test]
+    fn composer_visible_signed_in_without_write_right_is_false() {
+        assert!(!thread_composer_visible(true, Some(false)));
+    }
+
+    #[test]
+    fn composer_visible_signed_in_can_write_is_true() {
+        assert!(thread_composer_visible(true, Some(true)));
+        // Board write-class unresolvable client-side (a thread reached via
+        // a search hit — `ForumV2State::open_thread_board_slug` doc) defers
+        // to the server, same leniency `panel_click.rs`'s own
+        // `"reply_submit"` arm already applies.
+        assert!(thread_composer_visible(true, None));
+    }
 }
