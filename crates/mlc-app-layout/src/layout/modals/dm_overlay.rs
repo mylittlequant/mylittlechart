@@ -765,7 +765,7 @@ fn clock_hm(created_at: &str) -> &str {
 /// monospace lock-glyphed block for [`DmMessageBody::Ciphertext`] while the
 /// vault is sealed (`!available`).
 ///
-/// Records one [`super::cloud_overlay::DmMessageLineHit`] per WRAPPED LINE
+/// Records one [`crate::ui::selectable_text::LineHit`] per WRAPPED LINE
 /// into `result.dm_message_line_rects` — HOST-SIDE text selection (the same
 /// mechanism the Agents chat panel uses for its own, owner ruling
 /// 2026-09-10), not a per-line `TextFieldStore` field: that store tracks a
@@ -852,50 +852,45 @@ fn draw_message(
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     let line_x = bx + 10.0;
+    let block = msg_idx as i64;
     for (i, line) in visual.lines.iter().enumerate() {
         let line_y = y + BUBBLE_PAD_V + BUBBLE_NICK_H + i as f64 * BUBBLE_LINE_H;
         ctx.fill_text(line, line_x, line_y);
-        result.dm_message_line_rects.push(super::cloud_overlay::DmMessageLineHit {
-            msg_idx,
-            line_idx: i as u16,
+        result.dm_message_line_rects.push(crate::ui::selectable_text::LineHit {
+            block,
+            line: i as u16,
             y_top: line_y,
             y_bot: line_y + BUBBLE_LINE_H,
             text: line.clone(),
             text_x: line_x,
+            width: ctx.measure_text(line),
             mono,
         });
     }
 
     // Selection highlight — see this function's own doc.
     if let Some(sel) = selection.filter(|s| !s.is_empty()) {
-        let ((lo_msg, lo_line, lo_char), (hi_msg, hi_line, hi_char)) = sel.ordered();
+        let ((lo_block, lo_line, lo_char), (hi_block, hi_line, hi_char)) = sel.ordered();
         ctx.set_font(body_font);
         ctx.set_fill_color(&tt.selection);
         ctx.set_global_alpha(0.35);
         for (i, line) in visual.lines.iter().enumerate() {
             let line_idx = i as u16;
-            let pos = (msg_idx, line_idx);
-            if pos < (lo_msg, lo_line) || pos > (hi_msg, hi_line) {
+            let pos = (block, line_idx);
+            if pos < (lo_block, lo_line) || pos > (hi_block, hi_line) {
                 continue;
             }
             let line_y = y + BUBBLE_PAD_V + BUBBLE_NICK_H + i as f64 * BUBBLE_LINE_H;
-            let is_first = pos == (lo_msg, lo_line);
-            let is_last = pos == (hi_msg, hi_line);
-            let char_prefix = |n: usize| -> String { line.chars().take(n).collect() };
-            let (sel_x, sel_w) = if is_first && is_last {
-                let prefix_w = ctx.measure_text(&char_prefix(lo_char as usize));
-                let end_w = ctx.measure_text(&char_prefix(hi_char as usize));
-                (line_x + prefix_w, (end_w - prefix_w).max(0.0))
-            } else if is_first {
-                let prefix_w = ctx.measure_text(&char_prefix(lo_char as usize));
-                let full_w = ctx.measure_text(line);
-                (line_x + prefix_w, (full_w - prefix_w).max(4.0))
-            } else if is_last {
-                let end_w = ctx.measure_text(&char_prefix(hi_char as usize));
-                (line_x, end_w.max(4.0))
-            } else {
-                (line_x, ctx.measure_text(line).max(4.0))
+            let is_first = pos == (lo_block, lo_line);
+            let is_last = pos == (hi_block, hi_line);
+            let line_width = ctx.measure_text(line);
+            let prefix_width = |n: u16| -> f64 {
+                let prefix: String = line.chars().take(n as usize).collect();
+                ctx.measure_text(&prefix)
             };
+            let (sel_x, sel_w) = crate::ui::selectable_text::highlight_span(
+                line_x, line_width, lo_char, hi_char, is_first, is_last, prefix_width,
+            );
             if sel_w > 0.0 {
                 ctx.fill_rect(sel_x, line_y, sel_w, BUBBLE_LINE_H);
             }

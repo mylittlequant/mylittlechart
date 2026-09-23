@@ -390,7 +390,7 @@ fn blocks_h(text: &str) -> f64 {
 }
 
 /// Draws `text` as wrapped paragraphs (`blocks`), records one
-/// [`super::cloud_overlay::ForumLineHit`] per WRAPPED TEXT line into
+/// [`crate::ui::selectable_text::LineHit`] per WRAPPED TEXT line into
 /// `result.forum_line_rects` for HOST-SIDE text selection (owner ruling
 /// 2026-09-10, extended to Forum post bodies — same mechanism
 /// `dm_overlay.rs`'s own `draw_message` uses for its bubbles, keyed by this
@@ -446,32 +446,25 @@ fn draw_blocks(
     }
 
     if let Some(sel) = selection.filter(|s| !s.is_empty()) {
-        let ((lo_post, lo_line, lo_char), (hi_post, hi_line, hi_char)) = sel.ordered();
+        let ((lo_block, lo_line, lo_char), (hi_block, hi_line, hi_char)) = sel.ordered();
         ctx.set_font("12px sans-serif");
         ctx.set_fill_color(&tt.selection);
         ctx.set_global_alpha(0.35);
         for (li, line_y, line) in &pushed {
             let pos = (post_number, *li);
-            if pos < (lo_post, lo_line) || pos > (hi_post, hi_line) {
+            if pos < (lo_block, lo_line) || pos > (hi_block, hi_line) {
                 continue;
             }
-            let is_first = pos == (lo_post, lo_line);
-            let is_last = pos == (hi_post, hi_line);
-            let char_prefix = |n: usize| -> String { line.chars().take(n).collect() };
-            let (sel_x, sel_w) = if is_first && is_last {
-                let prefix_w = ctx.measure_text(&char_prefix(lo_char as usize));
-                let end_w = ctx.measure_text(&char_prefix(hi_char as usize));
-                (x + prefix_w, (end_w - prefix_w).max(0.0))
-            } else if is_first {
-                let prefix_w = ctx.measure_text(&char_prefix(lo_char as usize));
-                let full_w = ctx.measure_text(line);
-                (x + prefix_w, (full_w - prefix_w).max(4.0))
-            } else if is_last {
-                let end_w = ctx.measure_text(&char_prefix(hi_char as usize));
-                (x, end_w.max(4.0))
-            } else {
-                (x, ctx.measure_text(line).max(4.0))
+            let is_first = pos == (lo_block, lo_line);
+            let is_last = pos == (hi_block, hi_line);
+            let line_width = ctx.measure_text(line);
+            let prefix_width = |n: u16| -> f64 {
+                let prefix: String = line.chars().take(n as usize).collect();
+                ctx.measure_text(&prefix)
             };
+            let (sel_x, sel_w) = crate::ui::selectable_text::highlight_span(
+                x, line_width, lo_char, hi_char, is_first, is_last, prefix_width,
+            );
             if sel_w > 0.0 {
                 ctx.fill_rect(sel_x, *line_y, sel_w, 16.0);
             }
@@ -480,13 +473,16 @@ fn draw_blocks(
     }
 
     for (li, line_y, line) in pushed {
-        result.forum_line_rects.push(super::cloud_overlay::ForumLineHit {
-            post_number,
-            line_idx: li,
+        let width = ctx.measure_text(&line);
+        result.forum_line_rects.push(crate::ui::selectable_text::LineHit {
+            block: post_number,
+            line: li,
             y_top: line_y,
             y_bot: line_y + 16.0,
             text: line,
             text_x: x,
+            width,
+            mono: false,
         });
     }
 

@@ -11,6 +11,7 @@ pub mod overlay_fill;
 pub mod color_picker_state;
 pub mod scroll_state;
 pub mod scroll_widget;
+pub mod selectable_text;
 pub mod modal_settings;
 pub mod modal_state;
 pub mod context_menu;

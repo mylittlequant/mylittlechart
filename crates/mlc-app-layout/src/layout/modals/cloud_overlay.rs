@@ -31,6 +31,7 @@ use crate::ui::modal_settings::{
     NewsTab, UpdateOverlayPhase,
 };
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig, ScrollableResult};
+use crate::ui::selectable_text::LineHit;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::avatar::contrasting_text_color;
 use crate::ui::widgets::{
@@ -162,74 +163,20 @@ pub struct CloudOverlayResult {
     /// WRAPPED LINE of every bubble currently on screen, for HOST-SIDE
     /// line-level text selection (owner ruling 2026-09-10: the DM pane
     /// selects text the same way the Agents chat panel does — across
-    /// wrapped lines and across messages both — see [`DmMessageLineHit`]'s
-    /// own doc). `mlc-app`'s drag pre-dispatch (`input/mod.rs`) hit-tests a
-    /// mouse-down's Y against these to start (and, while dragging, extend)
-    /// a selection, same "every modal field needs its own arm" contract
-    /// `dm_draft_rect` above documents.
-    pub dm_message_line_rects: Vec<DmMessageLineHit>,
+    /// wrapped lines and across messages both — see
+    /// [`crate::ui::selectable_text::LineHit`]'s own doc). `mlc-app`'s drag
+    /// pre-dispatch (`input/mod.rs`) hit-tests a mouse-down's Y/X against
+    /// these (`selectable_text::hit_test`) to start (and, while dragging,
+    /// extend) a selection, same "every modal field needs its own arm"
+    /// contract `dm_draft_rect` above documents. `LineHit::block` is the
+    /// message's index into the open conversation's `messages` slice.
+    pub dm_message_line_rects: Vec<LineHit>,
     /// Forum Thread view's post/reply body text geometry — one entry per
     /// WRAPPED LINE of every post card currently on screen, same host-side
     /// line-level text-selection contract as [`Self::dm_message_line_rects`]
-    /// (owner ruling 2026-09-10, extended to Forum post bodies) — see
-    /// [`ForumLineHit`]'s own doc.
-    pub forum_line_rects: Vec<ForumLineHit>,
-}
-
-/// One visual (wrapped) line of a DM message bubble — collected during
-/// `dm_overlay::draw_message`'s own paint pass. Mirrors the shape of
-/// `mlc_app_sidebar_content::render::render_agents_chat_bubbles`'s own
-/// `line_rects_out` (msg/line coordinates, the line's own Y band, its raw
-/// text and left edge) — the mechanism this struct backs replaces the
-/// pane's former one-`TextFieldStore`-field-per-wrapped-line approach,
-/// which had no row axis at all and so could never select across lines or
-/// across messages.
-#[derive(Clone, Debug)]
-pub struct DmMessageLineHit {
-    /// Index into the open conversation's `messages` slice.
-    pub msg_idx: u16,
-    /// Wrapped-line index within that message's body.
-    pub line_idx: u16,
-    pub y_top: f64,
-    pub y_bot: f64,
-    /// The line's own text, verbatim — re-measured on demand by the
-    /// selection overlay and by copy (no precomputed char-position table,
-    /// same choice the Agents chat's own `line_rects_out` makes).
-    pub text: String,
-    /// Left edge the line's text was drawn from (inside the bubble).
-    pub text_x: f64,
-    /// Monospace ciphertext line vs. an ordinary bubble body — the
-    /// selection overlay and copy both need the SAME font the paint pass
-    /// used before calling `measure_text`, or the highlight rect and
-    /// character boundaries drift from what is on screen.
-    pub mono: bool,
-}
-
-/// One visual (wrapped) line of a Forum post/reply card body — collected
-/// during `forum_v2_overlay::draw_blocks`'s own paint pass, same shape as
-/// [`DmMessageLineHit`] with a post NUMBER (`#N`, the value every card
-/// already shows, unique per thread) standing in for DM's `msg_idx`: posts
-/// are numbered, not indexed, so the key changes shape slightly but not
-/// structure. A parallel type rather than a shared one — forum bodies carry
-/// no ciphertext/monospace distinction, so there is no `mono` field to keep
-/// in sync between the two selection mechanisms.
-#[derive(Clone, Debug)]
-pub struct ForumLineHit {
-    /// The post's own display number (`#N`, `draw_post_card`'s own
-    /// `number`), unique within the open thread.
-    pub post_number: i64,
-    /// Wrapped-line index within that post's body — monotonic across the
-    /// whole body (paragraphs, not just one), so a selection can span
-    /// paragraph breaks the same way DM's own spans wrapped lines.
-    pub line_idx: u16,
-    pub y_top: f64,
-    pub y_bot: f64,
-    /// The line's own text, verbatim — same "re-measured on demand, no
-    /// precomputed char-position table" choice as `DmMessageLineHit::text`.
-    pub text: String,
-    /// Left edge the line's text was drawn from (inside the card's body
-    /// column).
-    pub text_x: f64,
+    /// (owner ruling 2026-09-10, extended to Forum post bodies).
+    /// `LineHit::block` is the post's own display number (`#N`).
+    pub forum_line_rects: Vec<LineHit>,
 }
 
 fn title_for(state: &CloudOverlayState) -> &'static str {

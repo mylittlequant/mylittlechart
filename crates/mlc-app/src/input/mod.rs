@@ -343,35 +343,10 @@ impl ChartApp {
     #[cfg(feature = "cloud")]
     pub fn dm_selection_text(&self) -> Option<String> {
         let sel = self.panel_app.community_state.dm.selection?;
-        if sel.is_empty() { return None; }
-        let ((lo_msg, lo_line, lo_char), (hi_msg, hi_line, hi_char)) = sel.ordered();
         let rects = self.frame_result.as_ref()
             .and_then(|r| r.community.as_ref())
             .map(|cm| &cm.content.dm_message_line_rects)?;
-        let mut text = String::new();
-        for entry in rects.iter() {
-            let pos = (entry.msg_idx, entry.line_idx);
-            if pos < (lo_msg, lo_line) || pos > (hi_msg, hi_line) { continue; }
-            if !text.is_empty() { text.push('\n'); }
-            let is_first = pos == (lo_msg, lo_line);
-            let is_last = pos == (hi_msg, hi_line);
-            if is_first && is_last {
-                let slice: String = entry.text.chars()
-                    .skip(lo_char as usize)
-                    .take((hi_char as usize).saturating_sub(lo_char as usize))
-                    .collect();
-                text.push_str(&slice);
-            } else if is_first {
-                let slice: String = entry.text.chars().skip(lo_char as usize).collect();
-                text.push_str(&slice);
-            } else if is_last {
-                let slice: String = entry.text.chars().take(hi_char as usize).collect();
-                text.push_str(&slice);
-            } else {
-                text.push_str(&entry.text);
-            }
-        }
-        if text.is_empty() { None } else { Some(text) }
+        mlc_app_layout::ui::selectable_text::selection_text(rects, &sel)
     }
 
     /// Extract the currently selected Forum post-body text, in the open
@@ -384,35 +359,10 @@ impl ChartApp {
     #[cfg(feature = "cloud")]
     pub fn forum_selection_text(&self) -> Option<String> {
         let sel = self.panel_app.community_state.forum2.selection?;
-        if sel.is_empty() { return None; }
-        let ((lo_post, lo_line, lo_char), (hi_post, hi_line, hi_char)) = sel.ordered();
         let rects = self.frame_result.as_ref()
             .and_then(|r| r.community.as_ref())
             .map(|cm| &cm.content.forum_line_rects)?;
-        let mut text = String::new();
-        for entry in rects.iter() {
-            let pos = (entry.post_number, entry.line_idx);
-            if pos < (lo_post, lo_line) || pos > (hi_post, hi_line) { continue; }
-            if !text.is_empty() { text.push('\n'); }
-            let is_first = pos == (lo_post, lo_line);
-            let is_last = pos == (hi_post, hi_line);
-            if is_first && is_last {
-                let slice: String = entry.text.chars()
-                    .skip(lo_char as usize)
-                    .take((hi_char as usize).saturating_sub(lo_char as usize))
-                    .collect();
-                text.push_str(&slice);
-            } else if is_first {
-                let slice: String = entry.text.chars().skip(lo_char as usize).collect();
-                text.push_str(&slice);
-            } else if is_last {
-                let slice: String = entry.text.chars().take(hi_char as usize).collect();
-                text.push_str(&slice);
-            } else {
-                text.push_str(&entry.text);
-            }
-        }
-        if text.is_empty() { None } else { Some(text) }
+        mlc_app_layout::ui::selectable_text::selection_text(rects, &sel)
     }
 
     /// Handle a left-click at screen coordinates `(x, y)`.
@@ -2739,7 +2689,7 @@ impl ChartApp {
                 }
             }
             // DM message bubbles — host-side line-level text selection, the
-            // SAME mechanism (msg/line/char coordinates, a mouse-down
+            // SAME mechanism (block/line/char coordinates, a mouse-down
             // hit-tested against a `Vec` of wrapped-line rects handed back
             // from render) the Agents chat panel uses for its own
             // `ChatSelection` (owner ruling 2026-09-10: replaces the old
@@ -2748,17 +2698,19 @@ impl ChartApp {
             // lines or across messages — see `dm_overlay.rs::draw_message`'s
             // own doc). Checked BEFORE the generic community text-field
             // block below so a press landing on a bubble's body claims the
-            // drag here, not there.
+            // drag here, not there. Hit-test (Y band AND X range, R29 fix —
+            // see `selectable_text`'s own doc) lives in the shared
+            // `mlc-app-layout` module so DM/Forum can never drift apart on
+            // it again.
             #[cfg(feature = "cloud")]
             if let Some(ref cm) = result.community {
                 if self.panel_app.community_state.is_open {
-                    let hit = cm.content.dm_message_line_rects.iter()
-                        .find(|l| y >= l.y_top && y < l.y_bot)
-                        .map(|l| (l.msg_idx, l.line_idx, l.text.clone(), l.text_x));
-                    if let Some((msg_idx, line_idx, line_text, text_x)) = hit {
+                    let hit = mlc_app_layout::ui::selectable_text::hit_test(&cm.content.dm_message_line_rects, x, y)
+                        .map(|l| (l.block, l.line, l.text.clone(), l.text_x));
+                    if let Some((block, line, line_text, text_x)) = hit {
                         let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
                         self.panel_app.community_state.dm.selection = Some(
-                            mlc_app_layout::ui::modal_settings::DmMessageSelection::new_at(msg_idx, line_idx, char_idx),
+                            mlc_app_layout::ui::modal_settings::DmMessageSelection::new_at(block, line, char_idx),
                         );
                         self.panel_app.community_state.dm.selection_drag_active = true;
                         return false;
@@ -2766,23 +2718,22 @@ impl ChartApp {
                 }
             }
             // Forum post/reply bodies — same host-side line-level text
-            // selection mechanism as the DM block above, keyed by
-            // `(post_number, line_idx, char_idx)` instead of `(msg_idx,
-            // line_idx, char_idx)` — posts are numbered (`#1`, `#2`, …), not
-            // indexed (owner ruling 2026-09-10, extended to Forum post
-            // bodies — see `forum_v2_overlay.rs::draw_blocks`'s own doc).
-            // Checked BEFORE the generic community text-field block below,
-            // same reasoning as the DM block above.
+            // selection mechanism as the DM block above, keyed by the
+            // post's own display number instead of a message index — posts
+            // are numbered (`#1`, `#2`, …), not indexed (owner ruling
+            // 2026-09-10, extended to Forum post bodies — see
+            // `forum_v2_overlay.rs::draw_blocks`'s own doc). Checked BEFORE
+            // the generic community text-field block below, same reasoning
+            // as the DM block above.
             #[cfg(feature = "cloud")]
             if let Some(ref cm) = result.community {
                 if self.panel_app.community_state.is_open {
-                    let hit = cm.content.forum_line_rects.iter()
-                        .find(|l| y >= l.y_top && y < l.y_bot)
-                        .map(|l| (l.post_number, l.line_idx, l.text.clone(), l.text_x));
-                    if let Some((post_number, line_idx, line_text, text_x)) = hit {
+                    let hit = mlc_app_layout::ui::selectable_text::hit_test(&cm.content.forum_line_rects, x, y)
+                        .map(|l| (l.block, l.line, l.text.clone(), l.text_x));
+                    if let Some((post_number, line, line_text, text_x)) = hit {
                         let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
                         self.panel_app.community_state.forum2.selection = Some(
-                            mlc_app_layout::ui::modal_settings::ForumBodySelection::new_at(post_number, line_idx, char_idx),
+                            mlc_app_layout::ui::modal_settings::ForumBodySelection::new_at(post_number, line, char_idx),
                         );
                         self.panel_app.community_state.forum2.selection_drag_active = true;
                         return false;
@@ -3976,20 +3927,19 @@ impl ChartApp {
         }
 
         // ── DM message host-side selection drag extension ─────────────────
+        // Same shared `selectable_text::hit_test` as the mousedown side
+        // (`on_drag_start`) — see that call site's own comment.
         #[cfg(feature = "cloud")]
         if self.panel_app.community_state.dm.selection_drag_active {
             let hit = self.frame_result.as_ref()
                 .and_then(|r| r.community.as_ref())
-                .and_then(|cm| {
-                    cm.content.dm_message_line_rects.iter()
-                        .find(|l| y >= l.y_top && y < l.y_bot)
-                        .map(|l| (l.msg_idx, l.line_idx, l.text.clone(), l.text_x))
-                });
-            if let Some((msg_idx, line_idx, line_text, text_x)) = hit {
+                .and_then(|cm| mlc_app_layout::ui::selectable_text::hit_test(&cm.content.dm_message_line_rects, x, y))
+                .map(|l| (l.block, l.line, l.text.clone(), l.text_x));
+            if let Some((block, line, line_text, text_x)) = hit {
                 let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
                 if let Some(sel) = self.panel_app.community_state.dm.selection.as_mut() {
-                    sel.end_msg = msg_idx;
-                    sel.end_line = line_idx;
+                    sel.end_block = block;
+                    sel.end_line = line;
                     sel.end_char = char_idx;
                 }
             }
@@ -4001,16 +3951,13 @@ impl ChartApp {
         if self.panel_app.community_state.forum2.selection_drag_active {
             let hit = self.frame_result.as_ref()
                 .and_then(|r| r.community.as_ref())
-                .and_then(|cm| {
-                    cm.content.forum_line_rects.iter()
-                        .find(|l| y >= l.y_top && y < l.y_bot)
-                        .map(|l| (l.post_number, l.line_idx, l.text.clone(), l.text_x))
-                });
-            if let Some((post_number, line_idx, line_text, text_x)) = hit {
+                .and_then(|cm| mlc_app_layout::ui::selectable_text::hit_test(&cm.content.forum_line_rects, x, y))
+                .map(|l| (l.block, l.line, l.text.clone(), l.text_x));
+            if let Some((post_number, line, line_text, text_x)) = hit {
                 let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
                 if let Some(sel) = self.panel_app.community_state.forum2.selection.as_mut() {
-                    sel.end_post = post_number;
-                    sel.end_line = line_idx;
+                    sel.end_block = post_number;
+                    sel.end_line = line;
                     sel.end_char = char_idx;
                 }
             }

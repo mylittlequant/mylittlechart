@@ -7,6 +7,8 @@
 
 use crate::ui::color_picker_state::ColorPickerState;
 use crate::ui::scroll_state::ScrollState;
+#[cfg(feature = "cloud")]
+use crate::ui::selectable_text::Selection;
 use crate::ui::widgets::ResizeEdge;
 use mlc_core::drawing::primitives_v2::config::TimeframeVisibilityConfig;
 use mlc_core::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
@@ -5625,52 +5627,15 @@ pub enum ForumV2Request {
 }
 
 /// A host-side Forum post-body text selection, in character coordinates
-/// (post NUMBER — `#N`, unique within the open thread — wrapped-line index
-/// within that post's body, char index within that line).
-///
-/// Same shape as [`DmMessageSelection`] (that type's own doc explains the
-/// "Agents-chat-style, across wrapped lines and across messages" mechanism
-/// this mirrors for Forum post cards) — a parallel type rather than a
-/// shared one because posts are numbered (`#1`, `#2`, …) rather than
-/// indexed, so the key changes shape slightly but not structure.
+/// (post NUMBER — `#N`, unique within the open thread — as
+/// [`Selection::block`](crate::ui::selectable_text::Selection), wrapped-line
+/// index within that post's body, char index within that line). Folded into
+/// the shared [`crate::ui::selectable_text::Selection`] type (harvest-ready
+/// text-selection pass, community-messenger arc) — this was previously its
+/// own `ForumBodySelection` type, structurally identical to DM's own
+/// (now-removed) `DmMessageSelection`.
 #[cfg(feature = "cloud")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ForumBodySelection {
-    pub start_post: i64,
-    pub start_line: u16,
-    pub start_char: u16,
-    pub end_post: i64,
-    pub end_line: u16,
-    pub end_char: u16,
-}
-
-#[cfg(feature = "cloud")]
-impl ForumBodySelection {
-    /// Anchor a fresh selection at the given post/line/character position
-    /// (start == end until a drag extends it).
-    pub fn new_at(post: i64, line: u16, char_idx: u16) -> Self {
-        Self {
-            start_post: post,
-            start_line: line,
-            start_char: char_idx,
-            end_post: post,
-            end_line: line,
-            end_char: char_idx,
-        }
-    }
-
-    /// Returns `((lo_post, lo_line, lo_char), (hi_post, hi_line, hi_char))`
-    /// in reading order, regardless of which end the drag started from.
-    pub fn ordered(&self) -> ((i64, u16, u16), (i64, u16, u16)) {
-        let s = (self.start_post, self.start_line, self.start_char);
-        let e = (self.end_post, self.end_line, self.end_char);
-        if s <= e { (s, e) } else { (e, s) }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.start_post == self.end_post && self.start_line == self.end_line && self.start_char == self.end_char
-    }
-}
+pub type ForumBodySelection = Selection;
 
 /// State for the Forum-v2 boards/threads/search UI (`CommunityTab::Forum`).
 ///
@@ -6311,56 +6276,22 @@ pub enum DmRequest {
 }
 
 /// A host-side DM message-bubble text selection, in character coordinates
-/// (msg index into the open conversation's `messages` slice, wrapped-line
-/// index within that message's body, char index within that line).
+/// (msg index into the open conversation's `messages` slice, as
+/// [`Selection::block`](crate::ui::selectable_text::Selection), wrapped-line
+/// index within that message's body, char index within that line). Folded
+/// into the shared [`crate::ui::selectable_text::Selection`] type
+/// (harvest-ready text-selection pass, community-messenger arc) — this was
+/// previously its own `DmMessageSelection` type, structurally identical to
+/// Forum's own (now-removed) `ForumBodySelection`.
 ///
 /// Same shape as `mlc_app_sidebar_content::state::ChatSelection` (the
-/// Agents chat panel's own line-level selection) — not shared across the
-/// two crates because they key different domains (a `LeafId`-addressed
-/// multi-panel chat vs. one open DM conversation at a time), same
+/// Agents chat panel's own line-level selection) — not folded into the same
+/// type as THAT one because it keys a different domain (a `LeafId`-
+/// addressed multi-panel chat vs. one open DM conversation at a time), same
 /// precedent `PtySelection`/`ChatSelection` already set for each other in
-/// that crate. Owner ruling 2026-09-10: DM text selection must work "like
-/// the Agents chat" — across wrapped lines and across messages both — see
-/// `dm_overlay.rs::draw_message`'s own doc for the per-line
-/// `TextFieldStore` approach this replaced.
+/// that crate.
 #[cfg(feature = "cloud")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DmMessageSelection {
-    pub start_msg: u16,
-    pub start_line: u16,
-    pub start_char: u16,
-    pub end_msg: u16,
-    pub end_line: u16,
-    pub end_char: u16,
-}
-
-#[cfg(feature = "cloud")]
-impl DmMessageSelection {
-    /// Anchor a fresh selection at the given message/line/character
-    /// position (start == end until a drag extends it).
-    pub fn new_at(msg: u16, line: u16, char_idx: u16) -> Self {
-        Self {
-            start_msg: msg,
-            start_line: line,
-            start_char: char_idx,
-            end_msg: msg,
-            end_line: line,
-            end_char: char_idx,
-        }
-    }
-
-    /// Returns `((lo_msg, lo_line, lo_char), (hi_msg, hi_line, hi_char))`
-    /// in reading order, regardless of which end the drag started from.
-    pub fn ordered(&self) -> ((u16, u16, u16), (u16, u16, u16)) {
-        let s = (self.start_msg, self.start_line, self.start_char);
-        let e = (self.end_msg, self.end_line, self.end_char);
-        if s <= e { (s, e) } else { (e, s) }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.start_msg == self.end_msg && self.start_line == self.end_line && self.start_char == self.end_char
-    }
-}
+pub type DmMessageSelection = Selection;
 
 /// State for the Direct Messages UI (`CommunityTab::Messages`).
 #[cfg(feature = "cloud")]
