@@ -337,10 +337,12 @@ fn draw_text_link(
 
 /// One clipped red error line — the last request's refusal
 /// (`ForumV2State::last_error`). Returns 20.0, matched by every `*_h`
-/// function's own `err_h`.
-fn draw_error_line(ctx: &mut dyn RenderContext, w: f64, x: f64, y: f64, msg: &str) -> f64 {
+/// function's own `err_h`. `tt.danger` — the same token `draw_text_link`'s
+/// own Delete hover already reads in this file (owner ruling: no hardcoded
+/// colours, theme tokens only).
+fn draw_error_line(ctx: &mut dyn RenderContext, tt: &ToolbarTheme, w: f64, x: f64, y: f64, msg: &str) -> f64 {
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("#e5484d");
+    ctx.set_fill_color(&tt.danger);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     let m = crate::ui::widgets::fit_text_to_width(ctx, msg, w);
@@ -891,7 +893,7 @@ fn draw_boards_index(
 ) {
     let mut py = y;
     if let Some(err) = &f.last_error {
-        py += draw_error_line(ctx, w, x, py, err);
+        py += draw_error_line(ctx, tt, w, x, py, err);
     }
     py += draw_totals_header(ctx, x, py, w, f, tt);
     py += 8.0;
@@ -1037,7 +1039,7 @@ fn draw_board_threads_index(
 ) {
     let mut py = y;
     if let Some(err) = &f.last_error {
-        py += draw_error_line(ctx, w, x, py, err);
+        py += draw_error_line(ctx, tt, w, x, py, err);
     }
     if let Some(board) = f.boards.iter().find(|b| b.slug == slug) {
         ctx.set_font("12px sans-serif");
@@ -1593,7 +1595,7 @@ fn draw_right_thread(
     let mut cy = composer_y;
     if composer_visible {
         if let Some(err) = &f.last_error {
-            cy += draw_error_line(ctx, w, x, cy, err);
+            cy += draw_error_line(ctx, tt, w, x, cy, err);
         }
         if reply_to.is_some() {
             let target = reply_to.and_then(|id| {
@@ -1704,7 +1706,7 @@ fn draw_search(
     ctx.fill_text(&format!("Results for \"{q}\""), x, ly);
     ly += 24.0;
     if let Some(err) = &state.forum2.last_error {
-        ly += draw_error_line(ctx, w, x, ly, err);
+        ly += draw_error_line(ctx, tt, w, x, ly, err);
     }
     if hits.is_empty() {
         draw_status(ctx, tt, x, ly, w, "No results.", None);
@@ -1806,7 +1808,7 @@ fn draw_compose(
     ly += FIELD_H + 12.0;
 
     if let Some(err) = &state.forum2.last_error {
-        ly += draw_error_line(ctx, w, x, ly, err);
+        ly += draw_error_line(ctx, tt, w, x, ly, err);
     }
 
     let post_w = (w - ACTION_BTN_GAP) / 2.0;
