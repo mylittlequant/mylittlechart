@@ -76,8 +76,8 @@ strip = "none"
 opt-level = 2
 
 [patch.crates-io]
-# Local uzor path build. Pins are =1.5.1 = the LOCAL uzor tree version
-# (published is 1.4.16) — the exact pin must match the local tree or this
+# Local uzor path build. Pins are =1.5.2 = the LOCAL uzor tree version
+# (published is 1.5.1) — the exact pin must match the local tree or this
 # patch silently deactivates and mlc builds against crates.io (drifted
 # 2026-07-18: pins were =1.4.16 while the tree was 1.4.18 → per-element
 # stroke-width fix invisible). Keep pins == local uzor workspace version;

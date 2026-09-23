@@ -36,9 +36,9 @@ mlc-vault        = { path = "../mlc-vault",        package = "mylittlechart-vaul
 # uzor web bindings — wasm32-only at runtime, but the Cargo.toml deps are
 # unconditional so cargo can resolve the graph on native (the cfg-gate in
 # src/lib.rs keeps the code from compiling native-side).
-uzor                  = "=1.5.1"
-uzor-window-web       = "=1.5.1"
-uzor-render-canvas2d  = "=1.5.1"
+uzor                  = "=1.5.2"
+uzor-window-web       = "=1.5.2"
+uzor-render-canvas2d  = "=1.5.2"
 
 # Alternative render backends — commented out for the spike to keep the wasm
 # output small.  To switch backends, uncomment the dep, add an optional dep

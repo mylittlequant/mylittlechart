@@ -13,8 +13,8 @@ path = "src/lib.rs"
 web-time = "1"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
-uzor = "=1.5.1"
-uzor-text = "=1.5.1"
+uzor = "=1.5.2"
+uzor-text = "=1.5.2"
 
 [lints]
 workspace = true

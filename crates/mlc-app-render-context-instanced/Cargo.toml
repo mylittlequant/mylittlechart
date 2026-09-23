@@ -7,8 +7,8 @@ edition = "2021"
 name = "mlc_app_render_context_instanced"
 
 [dependencies]
-uzor = "=1.5.1"
-uzor-render-wgpu-instanced = "=1.5.1"
+uzor = "=1.5.2"
+uzor-render-wgpu-instanced = "=1.5.2"
 mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 
 [lints]
