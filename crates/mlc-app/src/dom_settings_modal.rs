@@ -194,6 +194,15 @@ pub fn render_dom_settings_modal(
             let pct_wid = uzor::WidgetId::from(
                 format!("{}{}", crate::text_input::DOM_DEPTH_PCT_PREFIX, pid.0),
             );
+            // Stamped via `mark_seen`, not `update_field`: this row is a
+            // plain button (`modal_btn`) with the live text baked into its
+            // label plus a trailing "|" pseudo-cursor — there is no real
+            // per-char caret geometry to hand `update_field` the way every
+            // `draw_input`-based field has, and inventing one would falsely
+            // make `on_drag_start`'s generic hit-test start treating this
+            // button as a click-to-cursor text box (stale-focus audit
+            // 2026-09-23: this field was never stamped at all before).
+            coord.text_fields_mut().mark_seen(&pct_wid);
             let editing = coord.text_fields().is_focused(&pct_wid);
             let pct = dom.multi.config.depth_bounds_pct;
             let pct_label = if editing {

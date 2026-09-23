@@ -2665,6 +2665,21 @@ fn render_profile_section(
 
         let new_name_input_result = draw_input(ctx, &new_name_input_config, WidgetState::Normal, new_name_input_rect, &widget_theme_new);
 
+        // Surface outer rect + char positions to the embedder so it can feed
+        // them to TextFieldStore.update_field every frame (required for
+        // click-to-cursor, drag-select, and staleness detection to see this
+        // field — stale-focus audit 2026-09-23 found this draw site was the
+        // only one of NEW_PROFILE_NAME's two hosts missing the push; see
+        // `profile_rename_input`'s own copy of this comment above).
+        result.content_items.push((
+            "user_settings:new_profile_name_input".to_string(),
+            new_name_input_rect,
+        ));
+        result.input_char_positions.push((
+            "user_settings:new_profile_name_input".to_string(),
+            new_name_input_result.char_x_positions.clone(),
+        ));
+
         // Register click target so mouse clicks focus this input
         input_coordinator.register_on_layer(
             "user_settings:new_profile_name_input",

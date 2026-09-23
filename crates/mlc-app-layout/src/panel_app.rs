@@ -2431,6 +2431,11 @@ fn chart_toolbar_render_dropdown(
         // drag-select work against the SAME metrics just rendered here.
         let mut granularity_edit_input: Option<(WidgetRect, Vec<f64>)> = None;
 
+        // Populated by the "watermark_submenu" block below (§6) the same
+        // way `granularity_edit_input` is populated by §5b, just above —
+        // see that field's own doc.
+        let mut watermark_text_input: Option<(WidgetRect, Vec<f64>)> = None;
+
         // 5b. Widget overlay for the visible inline granularity editor
         // (defect fix 2026-07-16, owner spec (b)) — draws the SAME
         // centralized text-input widget every modal field uses
@@ -2649,6 +2654,13 @@ fn chart_toolbar_render_dropdown(
                                 if tb.watermark_edit_focused && tb.watermark_edit_cursor_visible {
                                     draw_input_cursor(ctx, input_result.cursor_x, input_result.cursor_y, input_result.cursor_height, &theme.item_text);
                                 }
+                                // Surface the rendered rect + char positions —
+                                // see `watermark_text_input`'s own doc for why
+                                // (stale-focus audit 2026-09-23).
+                                watermark_text_input = Some((
+                                    WidgetRect::new(input_rect.x, input_rect.y, input_rect.width, input_rect.height),
+                                    input_result.char_x_positions,
+                                ));
                             }
                         }
 
@@ -2675,6 +2687,7 @@ fn chart_toolbar_render_dropdown(
             open_submenu: hover_open_submenu,
             hovered: hover_hovered,
             granularity_edit_input,
+            watermark_text_input,
         })
     }
 

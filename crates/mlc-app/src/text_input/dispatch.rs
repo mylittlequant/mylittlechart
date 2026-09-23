@@ -383,12 +383,34 @@ impl ChartApp {
     /// before every other hotkey arm in `on_key_press`.
     ///
     /// Detected via `TextFieldStore::focused_is_stale` — the field's own
-    /// per-frame geometry stamp (`update_field`, refreshed by its host
-    /// every frame it actually draws) has gone quiet. Self-heals: blurs
-    /// the field, logs the id so a live session can still name the exact
-    /// leaking close path, and returns `true` so the caller lets the key
-    /// fall through to normal hotkey routing instead of swallowing it.
+    /// per-frame liveness stamp (`update_field` or `mark_seen`, refreshed
+    /// by its host every frame it actually draws) has gone quiet. Self-heals:
+    /// blurs the field, logs the id so a live session can still name the
+    /// exact leaking close path, and returns `true` so the caller lets the
+    /// key fall through to normal hotkey routing instead of swallowing it.
+    ///
+    /// Regression tripwire (debug builds only): every focusable field's
+    /// draw site is expected to call `update_field`/`mark_seen` on every
+    /// frame it draws that field — `focused_is_stale` cannot protect a
+    /// field that never got either call even once (it self-heals only
+    /// after `FOCUS_STALE_FRAME_LAG` frames of silently eaten keystrokes).
+    /// `TextFieldStore::focused_was_never_stamped` catches that shape
+    /// immediately instead of waiting out the lag, so a NEW field added
+    /// later without its stamp wired in is caught here in development, not
+    /// reported by the owner.
     fn blur_if_stale_focus(&mut self, focused_id: &WidgetId) -> bool {
+        #[cfg(debug_assertions)]
+        {
+            let never_stamped = self.input_coordinator.borrow().text_fields().focused_was_never_stamped();
+            debug_assert!(
+                !never_stamped,
+                "[stale-focus] text field '{}' is focused but has NEVER been stamped via \
+                 update_field()/mark_seen() — its draw site is missing the stamp call that \
+                 TextFieldStore::focused_is_stale() needs to self-heal a leaked focus. \
+                 Add the missing stamp at wherever this field is drawn.",
+                focused_id.as_str()
+            );
+        }
         if !self.input_coordinator.borrow().text_fields().focused_is_stale() {
             return false;
         }

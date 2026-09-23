@@ -538,6 +538,15 @@ pub struct DropdownRenderInfo {
     /// `on_drag_move` can hit-test click-to-cursor and drag-select against
     /// the SAME metrics `draw_input` just rendered with.
     pub granularity_edit_input: Option<(WidgetRect, Vec<f64>)>,
+    /// `(text_rect, char_x_positions)` of the settings-gear submenu's custom
+    /// watermark text field, when the `watermark_submenu` dropdown rendered
+    /// it this frame (stale-focus audit 2026-09-23 — this field's geometry
+    /// was computed and then discarded every frame; nothing fed it to
+    /// `TextFieldStore::update_field`, so `WATERMARK_TEXT` could never be
+    /// told apart from a leaked focus). `None` whenever the submenu is
+    /// closed or the dropdown rendered is not `settings_gear`. Same
+    /// threading role as `granularity_edit_input` above — see its doc.
+    pub watermark_text_input: Option<(WidgetRect, Vec<f64>)>,
 }
 
 /// Hit-test information for an inline popup dropdown (style or width picker).

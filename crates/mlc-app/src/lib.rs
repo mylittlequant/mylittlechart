@@ -9529,6 +9529,23 @@ impl ChartApp {
             );
         }
 
+        // Stamp AGENT_PTY as on-screen whenever the focused leaf's terminal
+        // is drawn (stale-focus audit 2026-09-23 — this field was never
+        // stamped at all, unlike AGENT_CHAT right above it). A raw PTY grid
+        // has no char-boundary caret of its own (selection is the leaf's
+        // OWN `agent_pty_selections`, not TextFieldStore's), so this uses
+        // `update_field` with an empty char-position list rather than
+        // inventing fake ones — nothing reads `last_char_positions` for a
+        // Raw-capability field, so this cannot change click behavior.
+        if let Some(rect) = sidebar_result.agent_terminal_rect {
+            let pty_id = WidgetId::from(text_input::AGENT_PTY);
+            self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                &pty_id,
+                (rect.x, rect.y, rect.width, rect.height),
+                Vec::new(),
+            );
+        }
+
         // Register panel overlay zones (color tag + gear) on InputCoordinator
         // so on_click routes through process_click → dispatch_panel_click.
         // Also done in `render_to_scene` (the path every shell, incl. wasm,
@@ -11013,6 +11030,18 @@ impl ChartApp {
                     char_positions,
                 );
             }
+            // AGENT_PTY — see the sibling stamp in `prepare_frame` (above,
+            // where `agent_terminal_rect` is first threaded through) for why
+            // this is an empty char-position `update_field` rather than
+            // `mark_seen`.
+            if let Some(rect) = sidebar_result.agent_terminal_rect {
+                let pty_id = WidgetId::from(text_input::AGENT_PTY);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &pty_id,
+                    (rect.x, rect.y, rect.width, rect.height),
+                    Vec::new(),
+                );
+            }
         }
 
         // Update text-field geometry for Wave 1 drag-select fields.
@@ -11172,6 +11201,92 @@ impl ChartApp {
                     }
                 }
             }
+            // Profile Manager cluster (new profile name, inline rename,
+            // new/confirm passphrase, recovery key entry + reveal, account
+            // nickname) — the SAME gap `VAULT_FIELDS` closed for the
+            // credentials fields above, still open here (stale-focus audit
+            // 2026-09-23): `profile_manager.rs`/`user_settings.rs` already
+            // push every one of these into `content_items`/
+            // `input_char_positions` (see e.g. `user_settings.rs`'s own
+            // "Surface outer rect + char positions to the embedder..."
+            // comment on `profile_rename_input`), but nothing ever consumed
+            // them into `update_field` — so `last_rect` stayed `None`
+            // forever and `focused_is_stale()` could never tell a leaked
+            // focus on one of these apart from a live one. Several ids are
+            // drawn from more than one page/host (mutually exclusive per
+            // frame — only one page is ever open at a time), so each entry
+            // lists every content-item key that can supply it; the first
+            // one present this frame wins.
+            if let Some(ref us) = fr.user_settings {
+                const PROFILE_MGR_FIELDS: &[(&str, &[&str])] = &[
+                    (text_input::NEW_PROFILE_NAME, &["profile_mgr:name_input", "user_settings:new_profile_name_input"]),
+                    (text_input::PROFILE_RENAME, &["user_settings:profile_rename_input"]),
+                    // "e2e_passphrase_input": shared `render_passphrase_input`
+                    // helper (UnlockPassphrase + CreatePassphrase pages).
+                    // "profile_mgr:new_passphrase_input": SetNewPassphrase page.
+                    (text_input::NEW_PASSPHRASE, &["e2e_passphrase_input", "profile_mgr:new_passphrase_input"]),
+                    // "profile_mgr:create_confirm_passphrase_input": CreatePassphrase
+                    // page. "profile_mgr:confirm_passphrase_input": SetNewPassphrase page.
+                    (text_input::CONFIRM_PASSPHRASE, &["profile_mgr:create_confirm_passphrase_input", "profile_mgr:confirm_passphrase_input"]),
+                    // "profile_mgr:recovery_key_input": UseRecoveryKey page.
+                    // "profile_mgr:confirm_recovery_input": ConfirmRecoveryKey page.
+                    (text_input::RECOVERY_KEY, &["profile_mgr:recovery_key_input", "profile_mgr:confirm_recovery_input"]),
+                    (text_input::RECOVERY_KEY_DISPLAY, &["profile_mgr:recovery_key_display"]),
+                    (text_input::ACCOUNT_NICK, &["user_settings:account_nick_input"]),
+                ];
+                for &(store_id, ui_ids) in PROFILE_MGR_FIELDS {
+                    for &ui_id in ui_ids {
+                        if let Some((_, rect)) = us.content_items.iter().find(|(k, _)| k.as_str() == ui_id) {
+                            let char_positions = us.input_char_positions.iter()
+                                .find(|(k, _)| k.as_str() == ui_id)
+                                .map(|(_, v)| v.clone())
+                                .unwrap_or_default();
+                            let wid = WidgetId::from(store_id);
+                            self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                                &wid,
+                                (rect.x, rect.y, rect.width, rect.height),
+                                char_positions,
+                            );
+                            break;
+                        }
+                    }
+                }
+            }
+            // Alert settings notifications tab's Telegram bot token field —
+            // same gap as the Profile Manager cluster above: `alert_settings.rs`
+            // already pushes "alert_set:notif:tg_token" into
+            // `fr.alert_settings.content_items`/`input_char_positions`, but
+            // `fr.alert_settings` was never read anywhere in this geometry
+            // sync (stale-focus audit 2026-09-23).
+            if let Some(ref al) = fr.alert_settings {
+                const TG_TOKEN_UI_ID: &str = "alert_set:notif:tg_token";
+                if let Some((_, rect)) = al.content_items.iter().find(|(k, _)| k.as_str() == TG_TOKEN_UI_ID) {
+                    let char_positions = al.input_char_positions.iter()
+                        .find(|(k, _)| k.as_str() == TG_TOKEN_UI_ID)
+                        .map(|(_, v)| v.clone())
+                        .unwrap_or_default();
+                    let wid = WidgetId::from(text_input::ALERT_TG_TOKEN);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &wid,
+                        (rect.x, rect.y, rect.width, rect.height),
+                        char_positions,
+                    );
+                }
+            }
+            // "Open shared chart…" overlay's link/token field — same gap:
+            // `share_open.rs` returns `input_rect`/`char_x_positions` in its
+            // own `ShareOpenResult`, but nothing fed them to `update_field`,
+            // so a click via the generic `on_drag_start(x, y)` path
+            // (`panel_click.rs`'s `"share_open:input"` arm) could never find
+            // this field's rect either (stale-focus audit 2026-09-23).
+            if let Some(ref so) = fr.share_open {
+                let wid = WidgetId::from(text_input::SHARE_OPEN_INPUT);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &wid,
+                    (so.input_rect.x, so.input_rect.y, so.input_rect.width, so.input_rect.height),
+                    so.char_x_positions.clone(),
+                );
+            }
             // Template name overlay modal (save-as dialog) — one instance per
             // settings modal it can be opened from. Without this, the field's
             // `last_rect` is never populated and `on_drag_start`'s hit-test
@@ -11301,6 +11416,19 @@ impl ChartApp {
                     let field_id = WidgetId::from(field);
                     self.input_coordinator.borrow_mut().text_fields_mut().update_field(
                         &field_id,
+                        (rect.x, rect.y, rect.width, rect.height),
+                        positions.clone(),
+                    );
+                }
+                // Settings-gear submenu's custom watermark text field — same
+                // threading role as `granularity_edit_input` just above (stale-
+                // focus audit 2026-09-23: this field's geometry was computed and
+                // discarded every frame until `watermark_text_input` carried it
+                // out of `chart_toolbar_render_dropdown`).
+                if let Some((rect, ref positions)) = dd.watermark_text_input {
+                    let wid = WidgetId::from(text_input::WATERMARK_TEXT);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &wid,
                         (rect.x, rect.y, rect.width, rect.height),
                         positions.clone(),
                     );
