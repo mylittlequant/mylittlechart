@@ -50,6 +50,12 @@ pub enum VaultState {
     /// verification — a real Matrix E2E state with no equivalent in
     /// today's DM model (that adapter never reports this variant).
     Unverified,
+    /// The web client's own messenger core runs in exactly one browser tab
+    /// at a time (holds a Web Lock); this tab is not it — the UI shows
+    /// "open in another tab" and takes over once the lock frees. No
+    /// equivalent on native (one process, one core) or in today's DM
+    /// adapter.
+    ActiveElsewhere,
     Ready,
 }
 

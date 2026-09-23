@@ -46,7 +46,12 @@ pub struct LastEventPreview {
 
 /// One row of the chat list, and the header of that room once open —
 /// everything the concept's row (`.row`) and chat header (`.ch`) need in
-/// one read, no second fetch.
+/// one read, no second fetch. `notification_count`/`highlight_count`/
+/// `last_event` are FINAL numbers/content the provider hands over — the UI
+/// never re-derives an unread count from the timeline itself, and
+/// `last_event` is already the last DECRYPTABLE message (an undecryptable
+/// or still-sealed last message still shows [`PreviewContent::Encrypted`],
+/// never a raw ciphertext blob in a list row).
 #[derive(Clone, Debug, PartialEq)]
 pub struct RoomSummary {
     pub id: RoomId,

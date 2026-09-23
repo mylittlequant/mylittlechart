@@ -8,22 +8,25 @@ use crate::member::{MemberRole, RankBadge};
 use crate::misc::Timestamp;
 
 /// Why a message could not be decrypted — Matrix's own taxonomy of "why did
-/// the room key never open this", surfaced so a bubble can say something
-/// more useful than a generic "cannot decrypt".
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// the room key never open this" (`m.room_key.withheld`'s own `code`
+/// values, plus the plain "no session at all" case), surfaced so a bubble
+/// can say something more useful than a generic "cannot decrypt".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UtdReason {
     /// No session key for this message has reached this device at all.
-    MissingSessionKey,
-    /// A session key was explicitly withheld (`m.room_key.withheld`) — the
-    /// sender's device refused to share it with this one.
-    Withheld,
-    /// The sending device is unknown/unverified and the account's own
-    /// policy refuses to decrypt from it.
-    UnknownDevice,
-    /// The session key existed once but has since been rotated out and
-    /// this device holds no backup of it.
-    LegacyKeyUnavailable,
-    Other(String),
+    MissingSession,
+    /// The sender's device blacklisted this device explicitly.
+    WithheldBlacklisted,
+    /// The sender's device withheld the key because this device is
+    /// unverified.
+    WithheldUnverified,
+    /// The sender's device withheld the key because this device is not
+    /// authorised (not a room member, or removed since).
+    WithheldUnauthorised,
+    /// The sender's own identity has changed and is not (yet) re-verified
+    /// — decryption is refused until it is, not merely delayed.
+    SenderIdentityNotVerified,
+    Unknown,
 }
 
 /// A membership change rendered inline in the timeline (join/leave/invite/
@@ -63,6 +66,25 @@ pub enum MessageContent {
     /// distinct from a per-message [`UtdReason`]: this is a standalone
     /// system event, not a property of one message.
     KeyChanged,
+    /// A message that predates the Matrix-shaped migration (today's 1:1 DM
+    /// model, `dm_messages`) — carried in the SAME timeline as native
+    /// Matrix events so a migrated DM room reads as one continuous
+    /// history rather than a hard cut. The UI decides on its own "legacy"
+    /// marker/badge from this variant alone; the provider adds no separate
+    /// flag for it.
+    Legacy(LegacyContent),
+}
+
+/// A pre-migration message's own content — decrypted, or still sealed
+/// under the OLD (pre-Matrix) DM key scheme (`mlc-vault`'s `dm::
+/// seal_message`, unrelated to Megolm). Never [`UtdReason`]: a legacy
+/// message's ciphertext is expected to open once ITS OWN key (the old DM
+/// conversation key, not a Matrix room key) is available, which is not a
+/// Matrix decryption failure at all.
+#[derive(Clone, Debug, PartialEq)]
+pub enum LegacyContent {
+    Text(String),
+    Encrypted { ciphertext_b64: String },
 }
 
 #[derive(Clone, Debug, PartialEq)]
