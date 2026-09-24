@@ -641,6 +641,18 @@ impl Primitive for OrderFlowScan {
                     SelectOption::new("all_bars", ConceptKey::ScanCoverageAllBars.get(lang)),
                 ],
             ).with_category(PropertyCategory::AppearanceStats).with_order(5),
+            // The shape a placed survey is bracketed by — see
+            // `smc::smc_scan::SmcScan::style_properties`'s own identical row
+            // for the full rationale.
+            ConfigProperty::pills(
+                "shape",
+                ConceptKey::ScanShapeLabel.get(lang),
+                self.shape.id(),
+                vec![
+                    SelectOption::new(ScanShape::TwoLines.id(), ConceptKey::ScanShapeTwoLines.get(lang)),
+                    SelectOption::new(ScanShape::Rectangle.id(), ConceptKey::ScanShapeRectangle.get(lang)),
+                ],
+            ).with_category(PropertyCategory::AppearanceStats).with_order(7),
             // The structure table is this survey's PRIMARY control, not a
             // label setting. `ConfigProperty::table`'s own default category
             // is `LabelsText`, which files it under the Labels tab: measured
@@ -674,6 +686,12 @@ impl Primitive for OrderFlowScan {
                 return false;
             }
             self.coverage = s.to_string();
+            return true;
+        }
+        if id == "shape" {
+            let Some(s) = value.as_string() else { return false };
+            let Some(shape) = ScanShape::from_id(s) else { return false };
+            self.shape = shape;
             return true;
         }
         if let Some((base, row, col)) = parse_table_cell_id(id) {
@@ -874,6 +892,19 @@ mod tests {
         registry.register_typed::<OrderFlowScan>(metadata());
         let restored = registry.from_json("order_flow_scan", &json).expect("round trip");
         assert_eq!(restored.points(), scan.points());
+    }
+
+    /// Piece 8's own write path: the Coverage tab's Shape row applies
+    /// through this exact generic `apply_style_property("shape", ...)`.
+    #[test]
+    fn shape_property_round_trips() {
+        let mut scan = OrderFlowScan::new(0, 2_000, "#5C6BC0");
+        assert_eq!(scan.shape, ScanShape::TwoLines);
+
+        assert!(scan.apply_style_property("shape", &PropertyValue::String("rectangle".to_string())));
+        assert_eq!(scan.shape, ScanShape::Rectangle);
+
+        assert!(!scan.apply_style_property("shape", &PropertyValue::String("bogus".to_string())));
     }
 
     #[test]

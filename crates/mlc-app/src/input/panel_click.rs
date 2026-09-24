@@ -5517,6 +5517,14 @@ impl ChartApp {
                     self.panel_app.markup_engine_settings_state.close();
                 }
                 "modal_bg" | "header" => {}
+                rest if rest.starts_with("tab:") => {
+                    use mlc_app_layout::ui::modal_settings::SettingsTab;
+                    let key = &rest["tab:".len()..];
+                    match SettingsTab::from_id(key) {
+                        Some(t) => self.panel_app.markup_engine_settings_state.active_tab = t,
+                        None => log::debug!("[ChartApp] markup_engine_settings unknown tab: {}", key),
+                    }
+                }
                 rest if rest.starts_with("markup:family:") => {
                     let key = &rest["markup:family:".len()..];
                     match MarkupSettingsFamily::from_id(key) {
@@ -5524,6 +5532,20 @@ impl ChartApp {
                         None => log::debug!("[ChartApp] markup_engine_settings unknown family: {}", key),
                     }
                 }
+                // ── Coverage tab: PER-DRAWING, not global — see
+                // `MarkupEngineSettingsState::source_drawing`'s own doc.
+                rest if rest.starts_with("markup:coverage:") => {
+                    let value = &rest["markup:coverage:".len()..];
+                    self.apply_markup_scan_edit("coverage", value);
+                }
+                rest if rest.starts_with("markup:shape:") => {
+                    let value = &rest["markup:shape:".len()..];
+                    self.apply_markup_scan_edit("shape", value);
+                }
+                // Thresholds tab: the family's own detector-constant rows
+                // land here in pieces 9 (Smart Money) / 10 (Order Flow) —
+                // no dispatch arm exists yet because `detector_rows` draws
+                // none in A0's own piece 8.
                 "markup:propose" => {
                     // The engine drawing what it found. Creates primitives
                     // and nothing else — the maintaining pass links them,
@@ -9476,6 +9498,31 @@ impl ChartApp {
         self.core.drawings_mut().refresh_all_derived();
         self.autosave_snapshot();
         log::debug!("[ChartApp] markup engine config updated");
+    }
+
+    /// Apply one edit to the Price Action modal's own Coverage tab — PER
+    /// DRAWING, not global (see `MarkupEngineSettingsState::source_drawing`'s
+    /// own doc), through the SAME generic `apply_property` path
+    /// `primitive_settings`'s own Pills rows already use for `"coverage"`/
+    /// `"shape"` on that exact primitive. A no-op (logged, not silent) when
+    /// the modal somehow has no source drawing — every real entrance sets
+    /// one, since the only door in is a specific scan's own "Engine
+    /// Settings" button.
+    fn apply_markup_scan_edit(&mut self, id: &str, value: &str) {
+        let Some((bid, prim_id)) = self.panel_app.markup_engine_settings_state.source_drawing else {
+            log::debug!("[ChartApp] markup_engine_settings Coverage edit with no source drawing: {id}={value}");
+            return;
+        };
+        let new_val = mlc_core::drawing::primitives_v2::config::PropertyValue::String(value.to_string());
+        self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, id, &new_val);
+        match id {
+            "coverage" => self.panel_app.markup_engine_settings_state.scan_coverage = value.to_string(),
+            "shape" => self.panel_app.markup_engine_settings_state.scan_shape = value.to_string(),
+            _ => {}
+        }
+        self.sync_drawing_back_to_group();
+        self.autosave_snapshot();
+        log::debug!("[ChartApp] markup_engine_settings Coverage tab: {id} = {value}");
     }
 
     fn apply_ewa_engine_config_edit(&mut self, edit: impl FnOnce(&mut mlc_core::state::ewa_engine::EwaEngineConfig)) {

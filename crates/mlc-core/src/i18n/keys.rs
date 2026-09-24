@@ -3515,10 +3515,22 @@ pub enum ConceptKey {
     // every key after it. Same Latin-spelling-in-every-column convention.
     HarmonicKindAltBat = 450,
     HarmonicKindDeepCrab = 451,
+
+    // ---- Autodetectors A0, piece 8 (2026-09-24) — the shared scan Shape
+    // row (piece 7's `ScanShape`, surfaced on the Coverage tab) and the
+    // Price Action modal's own 4 tab labels. Same append-only reason as
+    // `HarmonicKindAltBat` above.
+    ScanShapeLabel = 452,
+    ScanShapeTwoLines = 453,
+    ScanShapeRectangle = 454,
+    MarkupTabWhatToDetect = 455,
+    MarkupTabThresholds = 456,
+    MarkupTabStyle = 457,
+    MarkupTabCoverage = 458,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 452;
+    pub const COUNT: usize = 459;
 
     /// Get translation for this key.
     #[inline]

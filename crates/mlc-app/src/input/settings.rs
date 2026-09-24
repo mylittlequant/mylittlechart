@@ -1817,12 +1817,32 @@ impl ChartApp {
 
         // The same button on a markup claim, carrying the family it belongs
         // to so the modal opens on the right engine's rows rather than on
-        // whatever was showing last.
+        // whatever was showing last. Also captures the opening primitive
+        // itself (`bid`, `prim_id`) plus its own current `coverage`/`shape`
+        // — the Coverage tab's own per-drawing rows (`MarkupEngineSettingsState::
+        // source_drawing`'s own doc) read no `&dyn Primitive` of their own,
+        // only these two live copies.
         if let Some(key) = item_id.strip_prefix("open_markup_engine_settings:") {
             use mlc_app_layout::ui::modal_settings::MarkupSettingsFamily;
             match MarkupSettingsFamily::from_id(key) {
                 Some(family) => {
-                    self.panel_app.markup_engine_settings_state.open_on(family);
+                    let bid = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id);
+                    let prim_id = self.panel_app.primitive_settings_state.primitive_id;
+                    let source = bid.zip(prim_id);
+                    let (coverage, shape) = source
+                        .and_then(|(bid, pid)| {
+                            let guard = self.core.drawings();
+                            guard.primitives(bid).iter().find(|p| p.data().id == pid).map(|p| {
+                                let props = p.style_properties();
+                                let coverage = props.iter().find(|pr| pr.id == "coverage")
+                                    .and_then(|pr| pr.value.as_string()).unwrap_or("range").to_string();
+                                let shape = props.iter().find(|pr| pr.id == "shape")
+                                    .and_then(|pr| pr.value.as_string()).unwrap_or("two_lines").to_string();
+                                (coverage, shape)
+                            })
+                        })
+                        .unwrap_or(("range".to_string(), "two_lines".to_string()));
+                    self.panel_app.markup_engine_settings_state.open_on(family, source, coverage, shape);
                     log::debug!("[ChartApp] Opened Price Action engine settings ({key}) from primitive settings modal");
                 }
                 None => log::debug!("[ChartApp] open_markup_engine_settings unknown family: {key}"),

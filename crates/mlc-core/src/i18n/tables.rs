@@ -1384,7 +1384,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 452] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 459] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1851,6 +1851,14 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 452] = [
     // same Latin-spelling convention as 347-351 above.
     /* 450 HarmonicKindAltBat                 */ [ "Alt Bat", "Alt Bat", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 451 HarmonicKindDeepCrab               */ [ "Deep Crab", "Deep Crab", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+
+    /* 452 ScanShapeLabel                     */ [ "Shape", "Форма", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 453 ScanShapeTwoLines                  */ [ "Two Lines", "Две линии", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 454 ScanShapeRectangle                 */ [ "Rectangle", "Прямоугольник", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 455 MarkupTabWhatToDetect              */ [ "What to detect", "Что искать", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 456 MarkupTabThresholds                */ [ "Thresholds", "Пороги", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 457 MarkupTabStyle                     */ [ "Style", "Стиль", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 458 MarkupTabCoverage                  */ [ "Coverage", "Охват", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

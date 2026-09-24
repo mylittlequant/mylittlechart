@@ -4406,11 +4406,58 @@ pub struct MarkupEngineSettingsState {
     /// Which family's rows are showing — set by whichever claim opened the
     /// modal, then switchable by the segment at the top.
     pub family: MarkupSettingsFamily,
+    /// Which of the 4 tabs is showing (A0 autodetectors piece 8).
+    pub active_tab: SettingsTab,
     /// Live copies of the three engine configs; see this section's own doc
     /// for why there is no separate pending copy.
     pub smc: SmcEngineConfig,
     pub orderflow: OrderFlowEngineConfig,
     pub candle: CandlePatternEngineConfig,
+    /// The scan drawing this modal was opened from — `(bubble_id,
+    /// primitive_id)`. The Coverage tab's own coverage/shape rows read and
+    /// write THIS specific primitive's own fields (a placement choice,
+    /// per-drawing — never `SmcEngineConfig`/`OrderFlowEngineConfig`/
+    /// `CandlePatternEngineConfig`, which stay global and family-wide).
+    /// `None` when the modal was opened from a claim that carries no scan
+    /// of its own (e.g. a bare `order_block`) — the Coverage tab then has
+    /// nothing to edit and says so, rather than silently no-opping.
+    pub source_drawing: Option<(mlc_core::BubbleId, u64)>,
+    /// Live copies of `source_drawing`'s own `coverage`/`shape` fields —
+    /// refreshed by `open_on`, written through immediately on every edit via
+    /// the SAME generic `apply_property` path `primitive_settings`'s own
+    /// Pills rows already use for these two ids on that primitive.
+    pub scan_coverage: String,
+    pub scan_shape: String,
+}
+
+/// Which of the 4 tabs the "Price Action Engine" modal is showing (A0
+/// autodetectors piece 8). Reuses the generic `ModalTabs::Horizontal` widget
+/// (`mlc_app_layout::ui::widgets::modal`) — no new tab-strip component.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SettingsTab {
+    #[default]
+    WhatToDetect,
+    Thresholds,
+    Style,
+    Coverage,
+}
+
+impl SettingsTab {
+    pub const ALL: [Self; 4] = [Self::WhatToDetect, Self::Thresholds, Self::Style, Self::Coverage];
+
+    /// The wire token this tab registers its own strip entry under.
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::WhatToDetect => "what_to_detect",
+            Self::Thresholds => "thresholds",
+            Self::Style => "style",
+            Self::Coverage => "coverage",
+        }
+    }
+
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|t| t.id() == id)
+    }
 }
 
 /// Which family's rows the modal is showing. Mirrors
@@ -4461,9 +4508,21 @@ impl MarkupSettingsFamily {
 }
 
 impl MarkupEngineSettingsState {
-    /// Open the modal on `family`'s own rows.
-    pub fn open_on(&mut self, family: MarkupSettingsFamily) {
+    /// Open the modal on `family`'s own rows, landing on the What-to-detect
+    /// tab — the same "always the first tab" entrance every tabbed modal in
+    /// this crate uses. `source` is `(bubble_id, primitive_id)` for the scan
+    /// primitive that opened it (`None` when the opening claim carries no
+    /// scan of its own), with its own current `coverage`/`shape` already
+    /// resolved by the caller (the entrance reads them via
+    /// `Primitive::style_properties()`, the same generic property list the
+    /// Coverage tab writes back through — this state carries no `&dyn
+    /// Primitive` of its own).
+    pub fn open_on(&mut self, family: MarkupSettingsFamily, source: Option<(mlc_core::BubbleId, u64)>, coverage: String, shape: String) {
         self.family = family;
+        self.active_tab = SettingsTab::WhatToDetect;
+        self.source_drawing = source;
+        self.scan_coverage = coverage;
+        self.scan_shape = shape;
         self.is_open = true;
     }
 

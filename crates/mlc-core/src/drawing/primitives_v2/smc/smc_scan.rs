@@ -636,6 +636,20 @@ impl Primitive for SmcScan {
                     SelectOption::new("all_bars", ConceptKey::ScanCoverageAllBars.get(lang)),
                 ],
             ).with_category(PropertyCategory::AppearanceStats).with_order(5),
+            // The shape a placed survey is bracketed by — a placement
+            // choice per drawing, read/written through this SAME generic
+            // property list by the Price Action modal's own Coverage tab
+            // (`mlc-app-layout::layout::modals::markup_engine_settings`),
+            // not a `SmcEngineConfig` field.
+            ConfigProperty::pills(
+                "shape",
+                ConceptKey::ScanShapeLabel.get(lang),
+                self.shape.id(),
+                vec![
+                    SelectOption::new(ScanShape::TwoLines.id(), ConceptKey::ScanShapeTwoLines.get(lang)),
+                    SelectOption::new(ScanShape::Rectangle.id(), ConceptKey::ScanShapeRectangle.get(lang)),
+                ],
+            ).with_category(PropertyCategory::AppearanceStats).with_order(7),
             ConfigProperty::boolean(
                 "hide_filled_gaps",
                 ConceptKey::SmcScanHideFilledGapsLabel.get(lang),
@@ -679,6 +693,12 @@ impl Primitive for SmcScan {
                 return false;
             }
             self.coverage = s.to_string();
+            return true;
+        }
+        if id == "shape" {
+            let Some(s) = value.as_string() else { return false };
+            let Some(shape) = ScanShape::from_id(s) else { return false };
+            self.shape = shape;
             return true;
         }
         if let Some((base, row, col)) = parse_table_cell_id(id) {
@@ -966,6 +986,24 @@ mod tests {
         registry.register_typed::<SmcScan>(metadata());
         let restored = registry.from_json("smc_scan", &json).expect("round trip");
         assert_eq!(restored.points(), scan.points());
+    }
+
+    /// Piece 8's own write path: the Coverage tab's Shape row applies
+    /// through this exact generic `apply_style_property("shape", ...)` —
+    /// the same mechanism `coverage` already round-trips through.
+    #[test]
+    fn shape_property_round_trips() {
+        let mut scan = SmcScan::new(0, 13_000, "#5C6BC0");
+        assert_eq!(scan.shape, ScanShape::TwoLines);
+
+        assert!(scan.apply_style_property("shape", &PropertyValue::String("rectangle".to_string())));
+        assert_eq!(scan.shape, ScanShape::Rectangle);
+
+        assert!(scan.apply_style_property("shape", &PropertyValue::String("two_lines".to_string())));
+        assert_eq!(scan.shape, ScanShape::TwoLines);
+
+        assert!(!scan.apply_style_property("shape", &PropertyValue::String("bogus".to_string())));
+        assert!(!scan.apply_style_property("shape", &PropertyValue::Boolean(true)));
     }
 
     #[test]
