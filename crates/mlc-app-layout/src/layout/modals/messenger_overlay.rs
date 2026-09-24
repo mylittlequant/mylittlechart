@@ -318,37 +318,56 @@ fn draw_room_row(
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(&badge_label, badge_rect.center_x(), badge_rect.center_y());
+    } else if let Some(ev) = &r.last_event {
+        // The unread badge and the last-message time share the row's
+        // top-right corner — an unread count is the more urgent fact, so
+        // the time only draws when there is no badge to show instead.
+        ctx.set_font("10px monospace");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Right);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.fill_text(&row_time_label(ev.ts, current_time_ms), x + w - 8.0, y + 4.0);
     }
 
-    // Preview/time line — only when the provider actually has one
+    // Preview line — only when the provider actually has one
     // (`RoomSummary::last_event`, honestly `None` for today's DM adapter;
     // see this file's own top doc). Nothing fabricated when it is absent.
-    ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    match &r.last_event {
-        Some(ev) => {
-            let (label, locked) = match &ev.content {
-                mlc_messenger_model::PreviewContent::Text(t) => (t.clone(), false),
-                mlc_messenger_model::PreviewContent::Encrypted => ("Encrypted message".to_string(), true),
-                mlc_messenger_model::PreviewContent::Redacted => ("Message deleted".to_string(), false),
-                mlc_messenger_model::PreviewContent::Notice(n) => (n.clone(), false),
-            };
-            let mut px = text_x;
-            if locked {
-                draw_lock_glyph(ctx, px + 4.0, y + 24.0 + 4.0, 8.0, &tt.item_text_muted);
-                px += 12.0;
-            }
-            let fit = crate::ui::widgets::fit_text_to_width(ctx, &label, (x + w - px - 8.0).max(0.0));
-            ctx.fill_text(&fit, px, y + 24.0);
-            let _ = current_time_ms;
+    if let Some(ev) = &r.last_event {
+        ctx.set_font("11px monospace");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        let (label, locked) = match &ev.content {
+            mlc_messenger_model::PreviewContent::Text(t) => (t.clone(), false),
+            mlc_messenger_model::PreviewContent::Encrypted => ("Encrypted message".to_string(), true),
+            mlc_messenger_model::PreviewContent::Redacted => ("Message deleted".to_string(), false),
+            mlc_messenger_model::PreviewContent::Notice(n) => (n.clone(), false),
+        };
+        let mut px = text_x;
+        if locked {
+            draw_lock_glyph(ctx, px + 4.0, y + 24.0 + 4.0, 8.0, &tt.item_text_muted);
+            px += 12.0;
         }
-        None => {}
+        let fit = crate::ui::widgets::fit_text_to_width(ctx, &label, (x + w - px - 8.0).max(0.0));
+        ctx.fill_text(&fit, px, y + 24.0);
     }
 
     coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
     CONV_ROW_H
+}
+
+/// A chat-list row's own last-message time — `HH:MM` for something that
+/// landed today, the same Today/Yesterday/date label [`draw_day_separator`]
+/// uses otherwise (today's DM adapter never actually reaches the "today"
+/// branch here in practice, since that's exactly what `clock_hm` already
+/// covers — kept as one shared rule with the timeline's own day labels
+/// rather than a second, narrower one).
+fn row_time_label(ts: Timestamp, now_ms: u64) -> String {
+    if day_key(ts) == day_key(Timestamp(now_ms as i64)) {
+        clock_hm(ts)
+    } else {
+        day_label(ts, now_ms)
+    }
 }
 
 // =============================================================================
@@ -736,7 +755,6 @@ fn draw_bubble(
     tt: &ToolbarTheme,
     result: &mut CloudOverlayResult,
 ) -> f64 {
-    let _ = caps;
     let visual = content_visual(&item.content, vault_state);
     let line_count = visual.lines.len().max(1);
     let bubble_inner_h = BUBBLE_NICK_H + line_count as f64 * BUBBLE_LINE_H + BUBBLE_TIME_H;
@@ -828,7 +846,11 @@ fn draw_bubble(
 
     // Clock + send-state tick — bottom-right inside the bubble, own
     // messages only (a peer's own message has no send-state to show the
-    // reader).
+    // reader). A double tick for "read" only draws when the provider
+    // actually reports read receipts (`Capabilities::receipts`) AND
+    // `read_by` is non-empty — a provider that never sets `receipts: true`
+    // never gets a double tick even if `read_by` happened to carry
+    // something, honouring the flag rather than the raw data alone.
     ctx.set_font("10px monospace");
     ctx.set_fill_color(&tt.item_text_muted);
     ctx.set_text_align(TextAlign::Right);
@@ -838,8 +860,9 @@ fn draw_bubble(
     let label = if mine {
         let tick = match &item.send_state {
             SendState::LocalEcho | SendState::Sending => "\u{2022}",
-            SendState::Sent => "\u{2713}",
             SendState::Failed { .. } => "!",
+            SendState::Sent if caps.receipts && !item.read_by.is_empty() => "\u{2713}\u{2713}",
+            SendState::Sent => "\u{2713}",
         };
         format!("{clock} {tick}")
     } else {
