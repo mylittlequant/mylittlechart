@@ -34,7 +34,8 @@
 //!   "Detection" group) plus the family's own detector constants
 //!   (`detector_rows`, 6 for Smart Money / piece 9, 2 for Order Flow /
 //!   piece 10, 0 for candles — all global, all through the SAME
-//!   `SmcEngineConfig`/`OrderFlowEngineConfig` this modal already writes).
+//!   `SmcEngineConfig`/`OrderFlowEngineConfig` this modal already writes,
+//!   no new engine-config plumbing needed for either family).
 //! - **Style**: no cosmetic (colour/line) setting exists on any of the
 //!   three engines today — legitimately thin in A0; nothing invented to
 //!   fill it.
@@ -100,6 +101,17 @@ const CHAIN_WINDOW_OPTIONS: [usize; 4] = [0, 10, 30, 60];
 /// single-print levels make a run worth marking.
 const SINGLE_PRINT_RUN_OPTIONS: [usize; 4] = [1, 2, 3, 5];
 
+/// `SmcEngineConfig::swing_n` options (A0 piece 9).
+const SWING_N_OPTIONS: [usize; 4] = [1, 2, 3, 5];
+/// `SmcEngineConfig::atr_period` options (A0 piece 9).
+const ATR_PERIOD_OPTIONS: [usize; 4] = [7, 14, 21, 50];
+/// `SmcEngineConfig::sweep_recovery_bars` options (A0 piece 9).
+const SWEEP_RECOVERY_BARS_OPTIONS: [usize; 4] = [0, 1, 2, 3];
+/// `SmcEngineConfig::displacement_atr_mult` options (A0 piece 9).
+const DISPLACEMENT_ATR_MULT_OPTIONS: [f64; 4] = [1.5, 2.0, 2.5, 3.0];
+/// `SmcEngineConfig::equal_level_atr_tol` options (A0 piece 9).
+const EQUAL_LEVEL_ATR_TOL_OPTIONS: [f64; 4] = [0.05, 0.1, 0.15, 0.2];
+
 const FAMILY_SEGMENTS: [MarkupSettingsFamily; 3] = [
     MarkupSettingsFamily::SmartMoney,
     MarkupSettingsFamily::OrderFlow,
@@ -164,14 +176,15 @@ fn legacy_threshold_rows(family: MarkupSettingsFamily) -> usize {
 }
 
 /// How many DETECTOR-CONSTANT rows the shown family's own Thresholds tab
-/// adds beyond [`legacy_threshold_rows`] — 0 for every family in A0's own
-/// piece 8 (this piece lands the TAB; the rows themselves are pieces 9/10:
-/// 6 for Smart Money, 2 for Order Flow). The height function and the draw
-/// below read this SAME count, so a family whose Thresholds tab later grows
-/// can never overflow a shell sized for the old one.
+/// adds beyond [`legacy_threshold_rows`] — 6 for Smart Money (A0 piece 9),
+/// 0 for Order Flow (piece 10 wires this in) and candles (the arc's own
+/// line: no candle-pattern detector constant is surfaced in A0). The
+/// height function and the draw below read this SAME count, so a family
+/// whose Thresholds tab later grows can never overflow a shell sized for
+/// the old one.
 fn detector_rows(family: MarkupSettingsFamily) -> usize {
     match family {
-        MarkupSettingsFamily::SmartMoney => 0,
+        MarkupSettingsFamily::SmartMoney => 6,
         MarkupSettingsFamily::OrderFlow => 0,
         MarkupSettingsFamily::CandlePattern => 0,
     }
@@ -443,10 +456,79 @@ fn draw_thresholds_tab(
         row_y += ROW_H + ROW_GAP;
     }
 
-    // Piece 9 (Smart Money) / piece 10 (Order Flow) fill this tab's own
-    // detector-constant rows past this point — see [`detector_rows`]'s own
-    // doc. Nothing to draw here yet: every family's own count is 0.
-    let _ = row_y;
+    if detector_rows(family) == 0 {
+        return;
+    }
+    row_y += GROUP_GAP - ROW_GAP;
+
+    match family {
+        MarkupSettingsFamily::SmartMoney => draw_smc_detector_rows(ctx, toolbar_theme, coord, layer_id, result, &state.smc, x0, x1, row_y),
+        // Piece 10 fills Order Flow's own row here.
+        MarkupSettingsFamily::OrderFlow | MarkupSettingsFamily::CandlePattern => {}
+    }
+}
+
+/// Smart Money's own 6 detector-constant rows (A0 piece 9) — every field
+/// already exists on `SmcEngineConfig` and already has its own reader
+/// (`to_smc_config`); this is the first row any of them gets.
+#[allow(clippy::too_many_arguments)]
+fn draw_smc_detector_rows(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    coord: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut MarkupEngineSettingsResult,
+    cfg: &mlc_core::state::smc_engine::SmcEngineConfig,
+    x0: f64,
+    x1: f64,
+    mut row_y: f64,
+) {
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdSwingNLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, SWING_N_OPTIONS.len(), |i| {
+        let n = SWING_N_OPTIONS[i];
+        (format!("markup:swing_n:{n}"), count_label(n), cfg.swing_n == n)
+    });
+    row_y += ROW_H + ROW_GAP;
+
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdAtrPeriodLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, ATR_PERIOD_OPTIONS.len(), |i| {
+        let n = ATR_PERIOD_OPTIONS[i];
+        (format!("markup:atr_period:{n}"), count_label(n), cfg.atr_period == n)
+    });
+    row_y += ROW_H + ROW_GAP;
+
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdSweepRecoveryBarsLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, SWEEP_RECOVERY_BARS_OPTIONS.len(), |i| {
+        let n = SWEEP_RECOVERY_BARS_OPTIONS[i];
+        (format!("markup:sweep_recovery_bars:{n}"), count_label(n), cfg.sweep_recovery_bars == n)
+    });
+    row_y += ROW_H + ROW_GAP;
+
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdOrderBlockZoneLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, 2, |i| {
+        let zone = if i == 0 {
+            mlc_core::state::smc_engine::OrderBlockZoneMode::FullRange
+        } else {
+            mlc_core::state::smc_engine::OrderBlockZoneMode::BodyOnly
+        };
+        let label = if i == 0 { t_concept(ConceptKey::MarkupOrderBlockZoneFullRange) } else { t_concept(ConceptKey::MarkupOrderBlockZoneBodyOnly) };
+        let id = if i == 0 { "markup:order_block_zone:full_range" } else { "markup:order_block_zone:body_only" };
+        (id.to_string(), label, cfg.order_block_zone == zone)
+    });
+    row_y += ROW_H + ROW_GAP;
+
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdDisplacementAtrMultLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, DISPLACEMENT_ATR_MULT_OPTIONS.len(), |i| {
+        let v = DISPLACEMENT_ATR_MULT_OPTIONS[i];
+        (format!("markup:displacement_atr_mult:{v}"), float_label(v), (cfg.displacement_atr_mult - v).abs() < 1e-9)
+    });
+    row_y += ROW_H + ROW_GAP;
+
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdEqualLevelAtrTolLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, EQUAL_LEVEL_ATR_TOL_OPTIONS.len(), |i| {
+        let v = EQUAL_LEVEL_ATR_TOL_OPTIONS[i];
+        (format!("markup:equal_level_atr_tol:{v}"), float_label(v), (cfg.equal_level_atr_tol - v).abs() < 1e-9)
+    });
 }
 
 /// Coverage: the ONE drawing that opened this modal's own `coverage`/
@@ -497,10 +579,41 @@ fn count_label(n: usize) -> &'static str {
         2 => "2",
         3 => "3",
         5 => "5",
+        7 => "7",
         10 => "10",
+        14 => "14",
+        21 => "21",
         30 => "30",
+        50 => "50",
         60 => "60",
         _ => "?",
+    }
+}
+
+/// A ratio/tolerance value as a segment label — the 8 distinct values
+/// `DISPLACEMENT_ATR_MULT_OPTIONS`/`EQUAL_LEVEL_ATR_TOL_OPTIONS` carry
+/// between them, spelled out rather than formatted at draw time so the
+/// catalogue stays the single source of truth for both the value AND its
+/// label (the same posture `count_label` already takes for bar counts).
+fn float_label(v: f64) -> &'static str {
+    if (v - 1.5).abs() < 1e-9 {
+        "1.5"
+    } else if (v - 2.0).abs() < 1e-9 {
+        "2.0"
+    } else if (v - 2.5).abs() < 1e-9 {
+        "2.5"
+    } else if (v - 3.0).abs() < 1e-9 {
+        "3.0"
+    } else if (v - 0.05).abs() < 1e-9 {
+        "0.05"
+    } else if (v - 0.1).abs() < 1e-9 {
+        "0.1"
+    } else if (v - 0.15).abs() < 1e-9 {
+        "0.15"
+    } else if (v - 0.2).abs() < 1e-9 {
+        "0.2"
+    } else {
+        "?"
     }
 }
 
@@ -599,7 +712,7 @@ mod tests {
         assert_eq!(legacy_threshold_rows(MarkupSettingsFamily::SmartMoney), 2);
         assert_eq!(legacy_threshold_rows(MarkupSettingsFamily::OrderFlow), 3);
         assert_eq!(legacy_threshold_rows(MarkupSettingsFamily::CandlePattern), 1);
-        assert_eq!(detector_rows(MarkupSettingsFamily::SmartMoney), 0);
+        assert_eq!(detector_rows(MarkupSettingsFamily::SmartMoney), 6);
         assert_eq!(detector_rows(MarkupSettingsFamily::OrderFlow), 0);
         assert_eq!(detector_rows(MarkupSettingsFamily::CandlePattern), 0);
     }
@@ -615,9 +728,9 @@ mod tests {
             .fold(0.0_f64, f64::max);
         assert_eq!(content_height(), tallest, "the tallest (family, tab) pair sets the shell");
         assert!(
-            family_segment_height() + tab_body_height(MarkupSettingsFamily::OrderFlow, SettingsTab::Thresholds)
+            family_segment_height() + tab_body_height(MarkupSettingsFamily::SmartMoney, SettingsTab::Thresholds)
                 > family_segment_height() + tab_body_height(MarkupSettingsFamily::CandlePattern, SettingsTab::Thresholds),
-            "Order Flow's own extra legacy row (single-print run) must not be absorbed into candles' thinner Thresholds tab",
+            "Smart Money's own 6 detector rows must not be absorbed into candles' thinner Thresholds tab",
         );
         assert!(
             family_segment_height() + tab_body_height(MarkupSettingsFamily::SmartMoney, SettingsTab::Style) < content_height(),
@@ -664,6 +777,16 @@ mod tests {
     fn zero_reads_as_off() {
         assert_eq!(count_label(0), "Off");
         assert_eq!(count_label(30), "30");
+    }
+
+    #[test]
+    fn every_float_option_has_a_label() {
+        for v in DISPLACEMENT_ATR_MULT_OPTIONS {
+            assert_ne!(float_label(v), "?", "{v}");
+        }
+        for v in EQUAL_LEVEL_ATR_TOL_OPTIONS {
+            assert_ne!(float_label(v), "?", "{v}");
+        }
     }
 
     #[test]

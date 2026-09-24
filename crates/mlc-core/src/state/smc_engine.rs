@@ -355,4 +355,35 @@ mod tests {
         // documented starting state (the global is process-wide).
         set_smc_engine_config(SmcEngineConfig::default());
     }
+
+    /// The Price Action modal's own Thresholds tab (A0 autodetectors, piece
+    /// 9) writes to exactly these 6 fields through this SAME global — no
+    /// new engine-config plumbing, per that piece's own doc. Every one of
+    /// them already round-trips through plain `Serialize`/`Deserialize`;
+    /// this asserts it explicitly for the 6 the UI now exposes, together,
+    /// so a future field rename that breaks one of them fails here rather
+    /// than only in a UI click nobody automates.
+    #[test]
+    fn all_six_threshold_fields_round_trip_together() {
+        let _guard = engine_config_test_lock();
+        let cfg = SmcEngineConfig {
+            swing_n: 5,
+            atr_period: 50,
+            sweep_recovery_bars: 3,
+            order_block_zone: OrderBlockZoneMode::BodyOnly,
+            displacement_atr_mult: 3.0,
+            equal_level_atr_tol: 0.2,
+            ..SmcEngineConfig::default()
+        };
+        set_smc_engine_config(cfg.clone());
+        let read_back = smc_engine_config();
+        assert_eq!(read_back.swing_n, 5);
+        assert_eq!(read_back.atr_period, 50);
+        assert_eq!(read_back.sweep_recovery_bars, 3);
+        assert_eq!(read_back.order_block_zone, OrderBlockZoneMode::BodyOnly);
+        assert_eq!(read_back.displacement_atr_mult, 3.0);
+        assert_eq!(read_back.equal_level_atr_tol, 0.2);
+        assert_eq!(read_back, cfg);
+        set_smc_engine_config(SmcEngineConfig::default());
+    }
 }

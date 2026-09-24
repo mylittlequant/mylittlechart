@@ -5542,10 +5542,58 @@ impl ChartApp {
                     let value = &rest["markup:shape:".len()..];
                     self.apply_markup_scan_edit("shape", value);
                 }
-                // Thresholds tab: the family's own detector-constant rows
-                // land here in pieces 9 (Smart Money) / 10 (Order Flow) —
-                // no dispatch arm exists yet because `detector_rows` draws
-                // none in A0's own piece 8.
+                // ── Thresholds tab: Smart Money's own 6 detector rows (A0
+                // piece 9) — global `SmcEngineConfig`, no-op for the other
+                // two families (the row is not drawn for them). Order
+                // Flow's own row lands in piece 10.
+                rest if rest.starts_with("markup:swing_n:") => {
+                    let Ok(n) = rest["markup:swing_n:".len()..].parse::<usize>() else {
+                        log::debug!("[ChartApp] markup_engine_settings bad swing_n: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |c| c.swing_n = n, move |_| {}, move |_| {});
+                }
+                rest if rest.starts_with("markup:atr_period:") => {
+                    let Ok(n) = rest["markup:atr_period:".len()..].parse::<usize>() else {
+                        log::debug!("[ChartApp] markup_engine_settings bad atr_period: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |c| c.atr_period = n, move |_| {}, move |_| {});
+                }
+                rest if rest.starts_with("markup:sweep_recovery_bars:") => {
+                    let Ok(n) = rest["markup:sweep_recovery_bars:".len()..].parse::<usize>() else {
+                        log::debug!("[ChartApp] markup_engine_settings bad sweep_recovery_bars: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |c| c.sweep_recovery_bars = n, move |_| {}, move |_| {});
+                }
+                rest if rest.starts_with("markup:order_block_zone:") => {
+                    use mlc_core::state::smc_engine::OrderBlockZoneMode;
+                    let key = &rest["markup:order_block_zone:".len()..];
+                    let Some(zone) = (match key {
+                        "full_range" => Some(OrderBlockZoneMode::FullRange),
+                        "body_only" => Some(OrderBlockZoneMode::BodyOnly),
+                        _ => None,
+                    }) else {
+                        log::debug!("[ChartApp] markup_engine_settings bad order_block_zone: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |c| c.order_block_zone = zone, move |_| {}, move |_| {});
+                }
+                rest if rest.starts_with("markup:displacement_atr_mult:") => {
+                    let Ok(v) = rest["markup:displacement_atr_mult:".len()..].parse::<f64>() else {
+                        log::debug!("[ChartApp] markup_engine_settings bad displacement_atr_mult: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |c| c.displacement_atr_mult = v, move |_| {}, move |_| {});
+                }
+                rest if rest.starts_with("markup:equal_level_atr_tol:") => {
+                    let Ok(v) = rest["markup:equal_level_atr_tol:".len()..].parse::<f64>() else {
+                        log::debug!("[ChartApp] markup_engine_settings bad equal_level_atr_tol: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |c| c.equal_level_atr_tol = v, move |_| {}, move |_| {});
+                }
                 "markup:propose" => {
                     // The engine drawing what it found. Creates primitives
                     // and nothing else — the maintaining pass links them,

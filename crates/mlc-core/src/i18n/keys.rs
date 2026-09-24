@@ -3527,10 +3527,23 @@ pub enum ConceptKey {
     MarkupTabThresholds = 456,
     MarkupTabStyle = 457,
     MarkupTabCoverage = 458,
+
+    // ---- Autodetectors A0, piece 9 (2026-09-24) — Smart Money's own 6
+    // Thresholds-tab rows (`SmcEngineConfig` fields that had no
+    // settings-modal row until now). Same append-only reason as
+    // `HarmonicKindAltBat` above.
+    MarkupThresholdSwingNLabel = 459,
+    MarkupThresholdAtrPeriodLabel = 460,
+    MarkupThresholdSweepRecoveryBarsLabel = 461,
+    MarkupThresholdOrderBlockZoneLabel = 462,
+    MarkupOrderBlockZoneFullRange = 463,
+    MarkupOrderBlockZoneBodyOnly = 464,
+    MarkupThresholdDisplacementAtrMultLabel = 465,
+    MarkupThresholdEqualLevelAtrTolLabel = 466,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 459;
+    pub const COUNT: usize = 467;
 
     /// Get translation for this key.
     #[inline]
