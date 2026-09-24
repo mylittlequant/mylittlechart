@@ -557,8 +557,18 @@ pub fn begin_modal_shell(
     screen: (f64, f64),
 ) -> (ModalShell, LayerId) {
     let (screen_w, screen_h) = screen;
-    let height = spec.height();
-    let width = spec.frame_width();
+    // A resizable modal never outgrows the window: a remembered or default
+    // size wider/taller than the current window used to push the frame (and
+    // its resize grip) past the edge with no way back (owner, 0.5.615: the
+    // 1000 px Messages tab in a 958 px window).
+    let (width, height) = if spec.resizable {
+        (
+            spec.frame_width().min((screen_w - 16.0).max(1.0)),
+            spec.height().min((screen_h - 16.0).max(1.0)),
+        )
+    } else {
+        (spec.frame_width(), spec.height())
+    };
 
     // Placement, then the clamp. Anchored surfaces keep a small margin so a
     // gear at the very edge still opens something fully visible.
