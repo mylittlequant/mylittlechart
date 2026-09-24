@@ -875,6 +875,11 @@ fn fib_section() -> ToolbarSectionDef {
             DropdownItemDef::action("fib_arcs", PN::FibArcs.get(lang)).with_icon(ToolbarIconId::new("FibArcs")),
             DropdownItemDef::action("fib_wedge", PN::FibWedge.get(lang)).with_icon(ToolbarIconId::new("FibWedge")),
             DropdownItemDef::action("fib_fan", PN::FibFan.get(lang)).with_icon(ToolbarIconId::new("FibFan")),
+            // Fib autodetector (A4.4, 2026-09-24) — last item of the
+            // Fibonacci theme, per the owner's own "autodetector = last item
+            // of its section" ruling (same posture `elliott_scan`/
+            // `harmonic_scan` already take for their own themes).
+            DropdownItemDef::action("fib_scan", PN::FibScan.get(lang)).with_icon(ToolbarIconId::new("fib_scan")),
             // Gann
             DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderGann.get(lang).to_string() },
@@ -1593,6 +1598,39 @@ mod pattern_section_tests {
         );
 
         assert!(!pattern_tools_items().iter().any(|i| matches!(i, DropdownItemDef::Header { label } if *label == cycles_label)), "Cycles header must no longer be in pattern_tools");
+    }
+
+    /// Autodetector A4 (2026-09-24) — the first ordering fence for the
+    /// Fibonacci header's own action-id list (none existed before this
+    /// piece; grepped for one first, see this piece's own commit message).
+    /// `fib_scan` is the theme's own trailing autodetector row, the same
+    /// "autodetector = last item of its section" ruling `elliott_scan`
+    /// (Elliott Waves) and `harmonic_scan` (Harmonics) already take.
+    #[test]
+    fn fibonacci_header_has_fib_scan_as_trailing_action() {
+        let lang = current_language();
+        let items = fib_tools_items();
+        let fib_label = MK::HeaderFibonacci.get(lang).to_string();
+        let gann_label = MK::HeaderGann.get(lang).to_string();
+
+        let headers = header_labels(&items);
+        let fib_pos = headers.iter().position(|h| *h == fib_label).expect("Fibonacci header must be present");
+        assert_eq!(fib_pos, 0, "Fibonacci must be the FIRST group in fib_tools");
+
+        let fib_start = items.iter().position(|i| matches!(i, DropdownItemDef::Header { label } if *label == fib_label)).expect("Fibonacci header index");
+        let gann_start = items.iter().position(|i| matches!(i, DropdownItemDef::Header { label } if *label == gann_label)).expect("Gann header index");
+        assert!(gann_start > fib_start, "Gann header must come after Fibonacci");
+
+        let fib_ids = action_ids(&items[fib_start..gann_start]);
+        assert_eq!(
+            fib_ids,
+            vec![
+                "fib_retracement", "fib_trend_extension", "fib_channel", "fib_time_zones",
+                "fib_speed_resistance", "fib_trend_time", "fib_circles", "fib_spiral",
+                "fib_arcs", "fib_wedge", "fib_fan", "fib_scan",
+            ],
+            "fib_scan must be the LAST action in the Fibonacci group, right after fib_fan",
+        );
     }
 }
 

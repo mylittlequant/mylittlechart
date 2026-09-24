@@ -1504,6 +1504,22 @@ pub const ICON_HARMONIC_SCAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg"
   <path d="M6 17L9 7l2.5 5 2.5-3.5L18 17"/>
 </svg>"##;
 
+/// The bracket scan-motif around a stack of tinted horizontal Fib-level
+/// bands — `icons_v4.json` batch B's own `fib_scan` body (2026-09-23
+/// toolbar icons, drawn ahead of A4, wired here), sharing `ICON_SMC_SCAN`'s/
+/// `ICON_ELLIOTT_SCAN`'s/`ICON_HARMONIC_SCAN`'s own bracket wrapper so every
+/// autodetector reads as one family.
+pub const ICON_FIB_SCAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4.5 4H3v16h1.5"/>
+  <path d="M19.5 4H21v16h-1.5"/>
+  <rect x="6" y="6" width="12" height="3.5" fill="currentColor" opacity="0.18" stroke="none"/>
+  <rect x="6" y="14.5" width="12" height="3.5" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M6 6h12"/>
+  <path d="M6 9.5h12"/>
+  <path d="M6 14.5h12"/>
+  <path d="M6 18h12"/>
+</svg>"##;
+
 /// Two columns of unequal cells facing each other across a bar's centre —
 /// the bid-versus-ask reading a footprint cell carries.
 pub const ICON_IMBALANCE_ZONE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
@@ -3028,6 +3044,9 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         // Autodetector A3, Harmonics (2026-09-24)
         "harmonic_scan" | "harmonicscan" => Some(ICON_HARMONIC_SCAN),
 
+        // Autodetector A4, Fib (2026-09-24)
+        "fib_scan" | "fibscan" => Some(ICON_FIB_SCAN),
+
         // Autodetector rail families (2026-09-23, registered ahead of the rail UI)
         "family_ewa" => Some(ICON_FAMILY_EWA),
         "family_bars" => Some(ICON_FAMILY_BARS),
@@ -3543,6 +3562,7 @@ mod icon_stroke_width_guard {
         ("ICON_ELLIOTT_SCAN", ICON_ELLIOTT_SCAN),
         ("ICON_HARMONIC_FIVE_O", ICON_HARMONIC_FIVE_O),
         ("ICON_HARMONIC_SCAN", ICON_HARMONIC_SCAN),
+        ("ICON_FIB_SCAN", ICON_FIB_SCAN),
         ("ICON_CROSSHAIR", ICON_CROSSHAIR),
         ("ICON_AGENT_TERMINAL", ICON_AGENT_TERMINAL),
         ("ICON_AGENT_CHAT", ICON_AGENT_CHAT),

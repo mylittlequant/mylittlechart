@@ -235,6 +235,8 @@ impl PrimitiveRegistry {
         self.register_typed::<super::fibonacci::arcs::FibArcs>(super::fibonacci::arcs::metadata());
         self.register_typed::<super::fibonacci::wedge::FibWedge>(super::fibonacci::wedge::metadata());
         self.register_typed::<super::fibonacci::fan::FibFan>(super::fibonacci::fan::metadata());
+        // Fib autodetector (A4.4) — last item of the Fibonacci theme.
+        self.register_typed::<super::fibonacci::fib_scan::FibScan>(super::fibonacci::fib_scan::metadata());
 
         // Pitchforks
         self.register_typed::<super::pitchforks::pitchfork::Pitchfork>(super::pitchforks::pitchfork::metadata());

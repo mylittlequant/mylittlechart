@@ -933,7 +933,7 @@ pub(super) static SIDEBAR_KEY_TABLE: [[&str; N_LANG]; 51] = [
 //
 //  Col:  0=En (registry display_name)              1=Ru                                          2..14=""
 
-pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 104] = [
+pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 105] = [
     /* 0  TrendLine           */ [ "Trend Line",                 "Линия тренда",                           "Línea de tendencia",          "Trendlinie",                    "Ligne de tendance",              "Linha de tendência",          "趋势线",        "トレンドライン",    "추세선",          "خط الاتجاه",         "Linea di tendenza",       "Trend Çizgisi",           "Linia trendu",            "Лінія тренду",              "ट्रेंड लाइन"           ],
     /* 1  HorizontalLine      */ [ "Horizontal Line",            "Горизонтальная линия",                   "Línea horizontal",            "Horizontale Linie",             "Ligne horizontale",              "Linha horizontal",            "水平线",        "水平線",            "수평선",          "خط أفقي",            "Linea orizzontale",       "Yatay Çizgi",             "Linia pozioma",           "Горизонтальна лінія",       "क्षैतिज रेखा"          ],
     /* 2  VerticalLine        */ [ "Vertical Line",              "Вертикальная линия",                     "Línea vertical",              "Vertikale Linie",               "Ligne verticale",                "Linha vertical",              "垂直线",        "垂直線",            "수직선",          "خط عمودي",           "Linea verticale",         "Dikey Çizgi",             "Linia pionowa",           "Вертикальна лінія",         "लंबवत रेखा"            ],
@@ -1052,6 +1052,12 @@ pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 104] = [
     // translator-reviewed (see this piece's own commit message), mirroring
     // `ElliottScan`'s own row shape exactly.
     /* 103 HarmonicScan       */ [ "Harmonics autodetector", "Автодетектор гармоник", "Autodetector de armónicos", "Harmonics-Autodetektor", "Autodétecteur harmonique", "Autodetector de harmônicos", "谐波自动检测器", "ハーモニクス自動検出", "하모닉 자동 감지기", "الكاشف التلقائي للتوافقيات", "Autorilevatore armonico", "Harmonik otomatik dedektörü", "Autodetektor harmoniczny", "Автодетектор гармонік", "हार्मोनिक्स ऑटोडिटेक्टर" ],
+    // 104 FibScan: En/Ru owner-approved verbatim (autodetectors A2-A4 brief,
+    // 2026-09-24 — "Fib autodetector" / "Автодетектор Фибоначчи"); the
+    // remaining 13 columns are plain translations, NOT translator-reviewed
+    // (see this piece's own commit message), mirroring `ElliottScan`'s/
+    // `HarmonicScan`'s own row shape exactly.
+    /* 104 FibScan            */ [ "Fib autodetector", "Автодетектор Фибоначчи", "Autodetector de Fibonacci", "Fibonacci-Autodetektor", "Autodétecteur de Fibonacci", "Autodetector de Fibonacci", "斐波那契自动检测器", "フィボナッチ自動検出", "피보나치 자동 감지기", "الكاشف التلقائي لفيبوناتشي", "Autorilevatore di Fibonacci", "Fibonacci otomatik dedektörü", "Autodetektor Fibonacciego", "Автодетектор Фібоначчі", "फिबोनाची ऑटोडिटेक्टर" ],
 ];
 
 // =============================================================================
