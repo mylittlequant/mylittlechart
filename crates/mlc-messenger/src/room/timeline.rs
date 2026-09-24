@@ -13,20 +13,26 @@
 //! is the event's OWN outgoing relation, not something contributed onto a
 //! different target) gets a row.
 //!
-//! # Two documented scope cuts
+//! # A relation or redaction can arrive before its target
 //!
-//! This piece (M4) does not queue anything for later:
-//!
-//! - A relation event whose target this timeline has not loaded (out of
-//!   the currently fetched window) is silently dropped, not retried once a
-//!   later back-page brings the target into view.
-//! - Redacting an event this timeline knows nothing about at all (neither
-//!   a loaded item nor a tracked relation contribution) is a no-op.
-//!
-//! Both match real client behavior at the edges (you cannot react to, or
-//! usefully redact the visible effect of, an event you have never loaded)
-//! and keep this piece's bookkeeping to "what is currently in view," which
-//! is what `sync_engine`/`outgoing_queue` (M12-M13) actually need from it.
+//! A reaction, an edit, or a redaction is structurally NEWER than the
+//! event it targets -- but this timeline does not necessarily hold that
+//! target yet: forward `/sync` can deliver a reaction to a message the
+//! user has not back-paginated to, and a redaction can arrive the same
+//! way. Dropping either would be a real data loss bug (back-paginating to
+//! the target later would render it bare, silently missing a reaction/
+//! edit/redaction this timeline already saw) -- so both are queued
+//! instead ([`Timeline::pending_relations`]/[`Timeline::pending_redactions`],
+//! module-private), keyed by the target's event id, and applied the moment
+//! that target is inserted by either [`Timeline::apply_timeline_batch`] or
+//! [`Timeline::prepend_back_page`]. Each queue is bounded at
+//! [`PENDING_CAPACITY`] entries, oldest evicted first, so a pathological
+//! number of never-resolved relations/redactions (a room with far more
+//! reactions than the client will ever back-paginate to) cannot grow this
+//! timeline's memory without bound; losing the oldest pending contribution
+//! once a room is that active is an acceptable, documented trade-off,
+//! matching every other bounded-cache-with-FIFO-eviction shape in this
+//! codebase.
 
 use crate::ids::{EventId, TxnId, UserId};
 use crate::room::relations::{aggregate_relation, recompute_bundle, RelatingEvent, RelationsBundle};
@@ -34,7 +40,12 @@ use crate::wire::events::{
     LegacyDmContent, Membership, RawEvent, RedactionContent, RelatesTo, RoomEncryptedContent, RoomMessageContent,
     TextLikeMessageContent,
 };
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
+
+/// How many not-yet-applicable relation contributions (or redactions) this
+/// timeline tracks per queue before evicting the oldest -- see the module
+/// doc's "A relation or redaction can arrive before its target" section.
+const PENDING_CAPACITY: usize = 5_000;
 
 const EVENT_ROOM_MESSAGE: &str = "m.room.message";
 const EVENT_ROOM_ENCRYPTED: &str = "m.room.encrypted";
@@ -333,6 +344,30 @@ pub struct Timeline {
     /// keyed by the target -- the "what remains" [`recompute_bundle`]
     /// needs after one contributor above is retracted.
     relating_events_by_target: BTreeMap<EventId, Vec<RelatingEvent>>,
+    /// Relation contributions waiting on a target this timeline has not
+    /// loaded yet, keyed by that target -- module doc's "a relation can
+    /// arrive before its target" section. Applied and drained by
+    /// [`Timeline::resolve_pending_for`] the moment the target is
+    /// inserted.
+    pending_relations: BTreeMap<EventId, Vec<RelatingEvent>>,
+    /// Insertion order of every push into [`Timeline::pending_relations`]
+    /// (one entry per queued [`RelatingEvent`], target id repeated if more
+    /// than one is pending for the same target) -- lets
+    /// [`Timeline::queue_pending_relation`] evict the globally oldest
+    /// pending contribution first once [`PENDING_CAPACITY`] is exceeded.
+    /// May contain a stale entry for a target already resolved and
+    /// removed from `pending_relations`; eviction simply skips it (a
+    /// documented, harmless simplification -- see
+    /// [`Timeline::queue_pending_relation`]).
+    pending_relation_order: VecDeque<EventId>,
+    /// Redactions waiting on a target this timeline has not loaded yet,
+    /// keyed by that target, value is the redaction event's own id.
+    /// Applied and drained by [`Timeline::resolve_pending_for`] the moment
+    /// the target is inserted.
+    pending_redactions: BTreeMap<EventId, EventId>,
+    /// Insertion order of every [`Timeline::pending_redactions`] entry,
+    /// same stale-entry caveat as [`Timeline::pending_relation_order`].
+    pending_redaction_order: VecDeque<EventId>,
     gap: Option<GapMarker>,
     older_token: Option<String>,
 }
@@ -396,7 +431,7 @@ impl Timeline {
     fn apply_one_event(&mut self, event: &RawEvent) {
         if event.event_type == EVENT_ROOM_REDACTION {
             if let Ok(redaction) = serde_json::from_value::<RedactionContent>(event.content.clone()) {
-                self.apply_redaction(&redaction.redacts);
+                self.apply_or_queue_redaction(&event.event_id, &redaction.redacts);
             }
             return;
         }
@@ -434,12 +469,6 @@ impl Timeline {
             RelatesTo::Annotation { event_id, .. } | RelatesTo::Replace { event_id } => event_id.clone(),
             _ => return,
         };
-        let Some(&idx) = self.by_event_id.get(&target) else {
-            // Scope cut (module doc): a relation whose target this
-            // timeline has not loaded is dropped, not queued.
-            return;
-        };
-        let original_sender = self.items[idx].sender.clone();
         let new_content =
             if matches!(relation, RelatesTo::Replace { .. }) { event.content.get("m.new_content").cloned() } else { None };
         let relating = RelatingEvent {
@@ -449,18 +478,102 @@ impl Timeline {
             relation,
             new_content,
         };
+
+        let Some(&idx) = self.by_event_id.get(&target) else {
+            // Target not loaded yet -- queue it (module doc's "a relation
+            // can arrive before its target" section) rather than dropping
+            // it; `Timeline::resolve_pending_for` applies it once the
+            // target does load.
+            self.queue_pending_relation(target, relating);
+            return;
+        };
+        let original_sender = self.items[idx].sender.clone();
         if aggregate_relation(&mut self.items[idx].relations, &original_sender, &relating) {
             self.relation_contributions.insert(relating.event_id.clone(), target.clone());
             self.relating_events_by_target.entry(target).or_default().push(relating);
         }
     }
 
-    /// Applies a redaction to `target`, called both from
-    /// [`Timeline::apply_timeline_batch`] (a live `m.room.redaction`
-    /// event) and available for a caller that separately learns of one
-    /// (e.g. re-processing `unsigned.redacted_because` off an event this
-    /// timeline already holds un-redacted, though [`build_item`] already
-    /// handles that case at insertion time).
+    /// Queues a relation contribution whose target is not loaded yet,
+    /// bounded at [`PENDING_CAPACITY`] total pending contributions (across
+    /// every target), oldest evicted first -- module doc.
+    fn queue_pending_relation(&mut self, target: EventId, relating: RelatingEvent) {
+        self.pending_relations.entry(target.clone()).or_default().push(relating);
+        self.pending_relation_order.push_back(target);
+        while self.pending_relation_order.len() > PENDING_CAPACITY {
+            let Some(oldest_target) = self.pending_relation_order.pop_front() else { break };
+            let mut now_empty = false;
+            if let Some(pending) = self.pending_relations.get_mut(&oldest_target) {
+                if !pending.is_empty() {
+                    pending.remove(0);
+                }
+                now_empty = pending.is_empty();
+            }
+            if now_empty {
+                self.pending_relations.remove(&oldest_target);
+            }
+        }
+    }
+
+    /// Queues a redaction whose target is not loaded yet and is not a
+    /// currently-tracked relation contribution either, bounded at
+    /// [`PENDING_CAPACITY`] entries, oldest evicted first -- module doc. A
+    /// second redaction of a target that already has one pending is
+    /// ignored (the first one wins; redacting an already-redacted target
+    /// is a no-op regardless).
+    fn queue_pending_redaction(&mut self, target: EventId, redaction_event_id: EventId) {
+        if self.pending_redactions.contains_key(&target) {
+            return;
+        }
+        self.pending_redactions.insert(target.clone(), redaction_event_id);
+        self.pending_redaction_order.push_back(target);
+        while self.pending_redaction_order.len() > PENDING_CAPACITY {
+            let Some(oldest) = self.pending_redaction_order.pop_front() else { break };
+            self.pending_redactions.remove(&oldest);
+        }
+    }
+
+    /// Applies (and drains) whatever this timeline was waiting to apply to
+    /// `event_id` -- a pending redaction, then any pending relation
+    /// contributions -- now that it has been inserted at `idx`. Called by
+    /// [`Timeline::insert_new_item`], [`Timeline::reconcile_local_echo`],
+    /// and [`Timeline::prepend_back_page`] for every item they add.
+    fn resolve_pending_for(&mut self, event_id: &EventId, idx: usize) {
+        if self.pending_redactions.remove(event_id).is_some() {
+            let item = &mut self.items[idx];
+            let stripped = content_after_redaction(&item.event_type, item.state_key.as_deref(), &item.raw_content);
+            item.content = stripped;
+            item.redacted = true;
+        }
+
+        if let Some(pending) = self.pending_relations.remove(event_id) {
+            let original_sender = self.items[idx].sender.clone();
+            for relating in pending {
+                if aggregate_relation(&mut self.items[idx].relations, &original_sender, &relating) {
+                    self.relation_contributions.insert(relating.event_id.clone(), event_id.clone());
+                    self.relating_events_by_target.entry(event_id.clone()).or_default().push(relating);
+                }
+            }
+        }
+    }
+
+    /// Applies a redaction to `target`, called for a caller that already
+    /// knows `target` and has no distinct redaction event id worth
+    /// tracking separately (e.g. re-processing `unsigned.redacted_because`
+    /// off an event this timeline already holds un-redacted, though
+    /// [`build_item`] already handles that case at insertion time; or a
+    /// test). A live `m.room.redaction` event goes through
+    /// [`Timeline::apply_or_queue_redaction`] instead, which additionally
+    /// queues the redaction if `target` is not loaded yet -- this method
+    /// uses `target` itself as that queue's key when it has to fall back
+    /// to queuing, since it has no other id to offer.
+    pub fn apply_redaction(&mut self, target: &EventId) {
+        self.apply_or_queue_redaction(target, target);
+    }
+
+    /// The full redaction resolution `apply_redaction` and a live
+    /// `m.room.redaction` event (via [`Timeline::apply_one_event`]/
+    /// [`Timeline::prepend_back_page`]) both drive:
     ///
     /// - If `target` is a normal timeline item: its content is rebuilt
     ///   from [`content_after_redaction`]'s v11 allow-list, and
@@ -469,9 +582,12 @@ impl Timeline {
     ///   accepted edit) this timeline is still tracking: that one
     ///   contribution is dropped from its own target's history and the
     ///   bundle is [`recompute_bundle`]d from what remains.
-    /// - Otherwise (an event this timeline knows nothing about) this is a
-    ///   documented no-op scope cut (module doc).
-    pub fn apply_redaction(&mut self, target: &EventId) {
+    /// - Otherwise (an event this timeline has not loaded at all) the
+    ///   redaction is queued under `redaction_event_id` (module doc's "a
+    ///   relation or redaction can arrive before its target") and applied
+    ///   automatically once `target` is inserted
+    ///   ([`Timeline::resolve_pending_for`]).
+    fn apply_or_queue_redaction(&mut self, redaction_event_id: &EventId, target: &EventId) {
         if let Some(&idx) = self.by_event_id.get(target) {
             let item = &mut self.items[idx];
             let stripped = content_after_redaction(&item.event_type, item.state_key.as_deref(), &item.raw_content);
@@ -480,35 +596,45 @@ impl Timeline {
             return;
         }
 
-        let Some(bundle_target) = self.relation_contributions.remove(target) else {
+        if let Some(bundle_target) = self.relation_contributions.remove(target) {
+            if let Some(contributions) = self.relating_events_by_target.get_mut(&bundle_target) {
+                contributions.retain(|relating| &relating.event_id != target);
+            }
+            if let Some(&target_idx) = self.by_event_id.get(&bundle_target) {
+                let original_sender = self.items[target_idx].sender.clone();
+                let remaining = self.relating_events_by_target.get(&bundle_target).cloned().unwrap_or_default();
+                self.items[target_idx].relations = recompute_bundle(&original_sender, &remaining);
+            }
             return;
-        };
-        if let Some(contributions) = self.relating_events_by_target.get_mut(&bundle_target) {
-            contributions.retain(|relating| &relating.event_id != target);
         }
-        if let Some(&target_idx) = self.by_event_id.get(&bundle_target) {
-            let original_sender = self.items[target_idx].sender.clone();
-            let remaining = self.relating_events_by_target.get(&bundle_target).cloned().unwrap_or_default();
-            self.items[target_idx].relations = recompute_bundle(&original_sender, &remaining);
-        }
+
+        self.queue_pending_redaction(target.clone(), redaction_event_id.clone());
     }
 
     fn insert_new_item(&mut self, item: TimelineItem) {
         let idx = self.items.len();
-        if let Some(event_id) = &item.event_id {
+        let event_id = item.event_id.clone();
+        if let Some(event_id) = &event_id {
             self.by_event_id.insert(event_id.clone(), idx);
         }
         if let Some(txn_id) = &item.txn_id {
             self.by_txn_id.insert(txn_id.clone(), idx);
         }
         self.items.push(item);
+        if let Some(event_id) = event_id {
+            self.resolve_pending_for(&event_id, idx);
+        }
     }
 
     fn reconcile_local_echo(&mut self, idx: usize, confirmed: TimelineItem) {
-        if let Some(event_id) = &confirmed.event_id {
+        let event_id = confirmed.event_id.clone();
+        if let Some(event_id) = &event_id {
             self.by_event_id.insert(event_id.clone(), idx);
         }
         self.items[idx] = confirmed;
+        if let Some(event_id) = event_id {
+            self.resolve_pending_for(&event_id, idx);
+        }
     }
 
     /// Appends a locally-originated item before it has even been handed to
@@ -552,28 +678,47 @@ impl Timeline {
     /// back newest-first, must reverse it before calling this method.
     /// `end_token` is that response's own `end` field: the token to keep
     /// paginating further back from, recorded as [`Timeline::older_token`].
-    /// An event already known (by `event_id`), or a pure relation/
-    /// redaction event, is skipped -- the same scope cut as
-    /// [`Timeline::apply_timeline_batch`] (module doc): this page's own
-    /// relations only attach to targets already loaded before this call.
+    /// An event already known (by `event_id`) is skipped. A pure relation
+    /// or redaction event within this page is resolved the same way a live
+    /// one is ([`Timeline::apply_relation_contribution`]/
+    /// [`Timeline::apply_or_queue_redaction`]) -- if its target is not
+    /// among this page's own new items either, it is queued and applied
+    /// once that target does load (module doc). Every newly inserted item
+    /// also picks up whatever this timeline was already waiting to apply
+    /// to it, from an earlier-seen relation/redaction (the exact scenario
+    /// this queue exists for: back-paginating to a target after already
+    /// having seen a reaction/edit/redaction of it via forward sync).
     pub fn prepend_back_page(&mut self, events: &[RawEvent], end_token: Option<String>) {
         let mut new_items = Vec::with_capacity(events.len());
         for event in events {
-            if event.event_type == EVENT_ROOM_REDACTION || self.by_event_id.contains_key(&event.event_id) {
+            if self.by_event_id.contains_key(&event.event_id) {
+                continue;
+            }
+            if event.event_type == EVENT_ROOM_REDACTION {
+                if let Ok(redaction) = serde_json::from_value::<RedactionContent>(event.content.clone()) {
+                    self.apply_or_queue_redaction(&event.event_id, &redaction.redacts);
+                }
                 continue;
             }
             if event.state_key.is_none() {
                 if let Some(relation) = event.relates_to() {
                     if matches!(relation, RelatesTo::Annotation { .. } | RelatesTo::Replace { .. }) {
+                        self.apply_relation_contribution(event, relation);
                         continue;
                     }
                 }
             }
             new_items.push(build_item(event));
         }
+        let inserted_count = new_items.len();
         self.items.splice(0..0, new_items);
         self.older_token = end_token;
         self.reindex();
+        for idx in 0..inserted_count {
+            if let Some(event_id) = self.items[idx].event_id.clone() {
+                self.resolve_pending_for(&event_id, idx);
+            }
+        }
     }
 
     fn reindex(&mut self) {
@@ -846,5 +991,142 @@ mod tests {
 
         let substring_only = text_item("notalice123 says hi to nobody");
         assert!(!highlight(&alice, Some("Alice"), &substring_only));
+    }
+
+    #[test]
+    fn reaction_seen_before_its_target_applies_when_target_back_paginates() {
+        let mut timeline = Timeline::new();
+        let reaction = raw_event(
+            "$reaction:example.org",
+            "m.reaction",
+            "@bob:example.org",
+            10,
+            serde_json::json!({
+                "m.relates_to": { "rel_type": "m.annotation", "event_id": "$target:example.org", "key": "\u{1F44D}" }
+            }),
+        );
+        // The reaction arrives via forward sync before the user has ever
+        // back-paginated to its (older) target.
+        timeline.apply_timeline_batch(&[reaction], false, None);
+        assert!(timeline.items().is_empty(), "the reaction never gets its own row, pending or not");
+
+        let target = raw_event("$target:example.org", "m.room.message", "@alice:example.org", 1, text_content("hi"));
+        timeline.prepend_back_page(&[target], Some("t1".to_string()));
+
+        let target_id = EventId::parse("$target:example.org").expect("valid event id");
+        let item = timeline.item_by_event_id(&target_id).expect("target now loaded");
+        assert_eq!(
+            item.relations.reactions.get("\u{1F44D}").map(std::collections::BTreeSet::len),
+            Some(1),
+            "the pending reaction applied once its target loaded"
+        );
+    }
+
+    #[test]
+    fn edit_seen_before_its_target_applies_later() {
+        let mut timeline = Timeline::new();
+        let edit = raw_event(
+            "$edit:example.org",
+            "m.room.message",
+            "@alice:example.org",
+            10,
+            serde_json::json!({
+                "msgtype": "m.text",
+                "body": "* edited",
+                "m.new_content": { "msgtype": "m.text", "body": "edited" },
+                "m.relates_to": { "rel_type": "m.replace", "event_id": "$target:example.org" }
+            }),
+        );
+        timeline.apply_timeline_batch(&[edit], false, None);
+        assert!(timeline.items().is_empty(), "an accepted edit never gets its own row, pending or not");
+
+        let target = raw_event("$target:example.org", "m.room.message", "@alice:example.org", 1, text_content("original"));
+        timeline.prepend_back_page(&[target], None);
+
+        let target_id = EventId::parse("$target:example.org").expect("valid event id");
+        let item = timeline.item_by_event_id(&target_id).expect("target now loaded");
+        let latest = item.relations.latest_edit.as_ref().expect("the pending edit applied once its target loaded");
+        assert_eq!(
+            latest.content,
+            RoomMessageContent::Text(TextLikeMessageContent {
+                body: "edited".to_string(),
+                format: None,
+                formatted_body: None
+            })
+        );
+    }
+
+    #[test]
+    fn redaction_seen_before_its_target_applies_later() {
+        let mut timeline = Timeline::new();
+        let redaction = raw_event(
+            "$redaction:example.org",
+            "m.room.redaction",
+            "@mod:example.org",
+            10,
+            serde_json::json!({ "redacts": "$target:example.org" }),
+        );
+        timeline.apply_timeline_batch(&[redaction], false, None);
+        assert!(timeline.items().is_empty(), "a redaction never gets its own row, pending or not");
+
+        let target = raw_event("$target:example.org", "m.room.message", "@alice:example.org", 1, text_content("hi"));
+        timeline.prepend_back_page(&[target], None);
+
+        let target_id = EventId::parse("$target:example.org").expect("valid event id");
+        let item = timeline.item_by_event_id(&target_id).expect("target now loaded");
+        assert!(item.redacted, "the pending redaction applied once its target loaded");
+        assert_eq!(item.content, ItemContent::Redacted);
+    }
+
+    #[test]
+    fn pending_relations_are_bounded() {
+        let mut timeline = Timeline::new();
+
+        // Queue PENDING_CAPACITY + 1 reactions, each targeting its own
+        // never-loaded event id, oldest first.
+        for n in 0..=PENDING_CAPACITY {
+            let target = format!("$target{n}:example.org");
+            let reaction = raw_event(
+                &format!("$reaction{n}:example.org"),
+                "m.reaction",
+                "@alice:example.org",
+                n as i64,
+                serde_json::json!({
+                    "m.relates_to": { "rel_type": "m.annotation", "event_id": target, "key": "\u{1F44D}" }
+                }),
+            );
+            timeline.apply_timeline_batch(std::slice::from_ref(&reaction), false, None);
+        }
+
+        assert_eq!(timeline.pending_relation_order.len(), PENDING_CAPACITY, "bounded at capacity");
+
+        // The very first (oldest) target's pending contribution was
+        // evicted -- loading it now shows no reaction at all.
+        let oldest_target =
+            raw_event("$target0:example.org", "m.room.message", "@alice:example.org", 0, text_content("oldest"));
+        timeline.prepend_back_page(&[oldest_target], None);
+        let oldest_id = EventId::parse("$target0:example.org").expect("valid event id");
+        assert!(
+            timeline.item_by_event_id(&oldest_id).expect("present").relations.reactions.is_empty(),
+            "the oldest pending contribution was evicted, never applied"
+        );
+
+        // The most recently queued target's contribution survived the
+        // bound and still applies.
+        let newest_target_id_str = format!("$target{PENDING_CAPACITY}:example.org");
+        let newest_target = raw_event(&newest_target_id_str, "m.room.message", "@alice:example.org", 0, text_content("newest"));
+        timeline.prepend_back_page(&[newest_target], None);
+        let newest_id = EventId::parse(&newest_target_id_str).expect("valid event id");
+        assert_eq!(
+            timeline
+                .item_by_event_id(&newest_id)
+                .expect("present")
+                .relations
+                .reactions
+                .get("\u{1F44D}")
+                .map(std::collections::BTreeSet::len),
+            Some(1),
+            "the most recently queued pending contribution survived the bound"
+        );
     }
 }
