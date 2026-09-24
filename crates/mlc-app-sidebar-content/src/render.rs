@@ -7380,24 +7380,30 @@ fn render_agents_chat_bubbles(
     if let Some(snap) = snapshot {
         use crate::agent_types::LiveStatus;
         if snap.live_status != LiveStatus::Idle {
-            // Braille spinner frames — all 10 Unicode braille "loading" glyphs.
-            const FRAMES: [char; 10] = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
-            let now_ms = web_time::SystemTime::now()
-                .duration_since(web_time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_millis() as u64;
-            let frame_char = FRAMES[((now_ms / 80) as usize) % FRAMES.len()];
             let status_text = match &snap.live_status {
-                LiveStatus::Thinking => format!("{} Thinking...", frame_char),
-                LiveStatus::RunningTool { name, done } => format!("{} {} · {} done", frame_char, name, done),
+                LiveStatus::Thinking => "Thinking...".to_string(),
+                LiveStatus::RunningTool { name, done } => format!("{name} · {done} done"),
                 LiveStatus::Idle => String::new(),
             };
             if !status_text.is_empty() {
+                // Owner order 2026-09-24: the braille glyph cycle is retired
+                // — a small spinning-hat icon takes its place ahead of the
+                // status text, same live-status line.
+                const ICON_SIZE: f64 = 12.0;
+                let now_ms = web_time::SystemTime::now()
+                    .duration_since(web_time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_millis() as u64;
+                mlc_app_layout::ui::widgets::draw_loading_hat(
+                    ctx,
+                    mlc_core::state::toolbar_geometry::WidgetRect::new(x + 8.0, cursor_y, ICON_SIZE, ICON_SIZE),
+                    now_ms,
+                );
                 ctx.set_font("11px JetBrainsMono");
                 ctx.set_fill_color(&theme.item_text_muted);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Top);
-                ctx.fill_text(&status_text, x + 8.0, cursor_y);
+                ctx.fill_text(&status_text, x + 8.0 + ICON_SIZE + 4.0, cursor_y);
             }
         }
     }

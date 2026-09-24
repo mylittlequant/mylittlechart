@@ -143,46 +143,34 @@ pub fn render_chart_frame(
 /// that silently no-ops when its data source is empty (Wave T1 commit 2,
 /// `docs/mlc/audits/series-types-ui-audit-2026-07-04.md`).
 ///
-/// A blank pane reads as "broken"; this draws centered dim text instead —
-/// same visual language as footprint's zoom-out placeholder
-/// (`footprint::draw_no_data_placeholder`), factored out here so the other
-/// 8 empty-series renderers (cvd, tpo, renko, pnf, kagi, three_line_break,
-/// dom_heatmap, liquidation_heatmap) share ONE implementation instead of
-/// 8 copies.
+/// A blank pane reads as "broken"; this draws the shared spinning-hat
+/// loading indicator instead — same visual language as footprint's
+/// zoom-out placeholder (`footprint::draw_no_data_placeholder`), factored
+/// out here so the other 8 empty-series renderers (cvd, tpo, renko, pnf,
+/// kagi, three_line_break, dom_heatmap, liquidation_heatmap) share ONE
+/// implementation instead of 8 copies.
 pub(crate) fn draw_waiting_placeholder(ctx: &mut dyn RenderContext, state: &ChartRenderState, _msg: &str) {
-    // Owner rule 2026-07-04: no wordy "waiting for data…" text — draw the
-    // SAME loading spinner the shells already use for the top-level
-    // "chart loading" state, so every waiting affordance looks consistent
+    // Owner rule 2026-07-04 (updated 2026-09-24: ring → spinning hat) —
+    // the SAME loading indicator the shells use for the top-level "chart
+    // loading" state, so every waiting affordance looks consistent
     // (`mlc-app-shell-vello::scene_builder::render_loading_spinners`,
-    // `render_spinner`: backdrop full ring + rotating 270° active arc,
-    // one full turn per 1200ms). Phase from wall-clock keeps this
-    // renderer stateless (SWC).
+    // `render_spinner`; `ui::widgets::draw_loading_hat`, 150ms/frame,
+    // 2.4s loop). Phase from wall-clock keeps this renderer stateless
+    // (SWC).
     let rect = &state.chart_rect;
     let cx = rect.x + rect.width * 0.5;
     let cy = rect.y + rect.height * 0.5;
     let pane_min = rect.width.min(rect.height);
     let radius = (pane_min * 0.08).clamp(14.0, 36.0);
-    let stroke_w = (radius * 0.16).clamp(2.0, 4.0);
 
     let now_ms = web_time::SystemTime::now()
         .duration_since(web_time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0);
-    let t = (now_ms % 1200) as f64 / 1200.0;
-    let start_angle = t * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
-    let sweep = std::f64::consts::PI * 3.0 / 2.0;
-
-    let theme = state.theme;
-    ctx.set_stroke_width(stroke_w);
-    ctx.set_line_dash(&[]);
-    // Backdrop full circle (dim).
-    ctx.set_stroke_color(&theme.scale_border);
-    ctx.begin_path();
-    ctx.arc(cx, cy, radius, 0.0, std::f64::consts::TAU);
-    ctx.stroke();
-    // Active 270° arc (primary).
-    ctx.set_stroke_color(&theme.text);
-    ctx.begin_path();
-    ctx.arc(cx, cy, radius, start_angle, start_angle + sweep);
-    ctx.stroke();
+    let size = radius * 2.0;
+    crate::ui::widgets::draw_loading_hat(
+        ctx,
+        mlc_core::state::toolbar_geometry::WidgetRect::new(cx - size / 2.0, cy - size / 2.0, size, size),
+        now_ms,
+    );
 }
