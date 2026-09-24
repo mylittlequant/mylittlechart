@@ -2795,8 +2795,11 @@ impl ChartApp {
             // `ChatSelection` (owner ruling 2026-09-10: replaces the old
             // one-`TextFieldStore`-field-per-wrapped-line approach, which
             // had no row axis at all and so could never select across
-            // lines or across messages — see `dm_overlay.rs::draw_message`'s
-            // own doc). Checked BEFORE the generic community text-field
+            // lines or across messages — see `mlc_app_layout::ui::
+            // selectable_text`'s own doc; bubbles themselves paint in
+            // `messenger_overlay.rs::draw_bubble` since the messenger UI-2a
+            // paint move, not `dm_overlay.rs` any more). Checked BEFORE the
+            // generic community text-field
             // block below so a press landing on a bubble's body claims the
             // drag here, not there. Hit-test (Y band AND X range, R29 fix —
             // see `selectable_text`'s own doc) lives in the shared

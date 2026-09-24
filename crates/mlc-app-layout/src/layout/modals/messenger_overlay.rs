@@ -26,12 +26,18 @@
 //! `pub(crate)` for this file) rather than duplicating them — this file's
 //! own job is the NEW three-column shape (folder rail / chat list / chat
 //! pane) and reading through the provider trait, not re-deriving text-
-//! field or button painting a second time. Widget ids are the exact
+//! field or button painting a second time. Widget ids are mostly the
 //! `cloud_overlay:dm:*` ids `dm_overlay.rs` already used (community-modal
-//! arc W1/W2) plus exactly one new one this piece adds
-//! (`cloud_overlay:dm:jump_latest`, the bottom-anchored feed's own
-//! "jump to latest" button) — `mlc-app`'s `panel_click.rs` needs no other
-//! new arm, so a click anywhere else in this tab keeps working unchanged.
+//! arc W1/W2); this file's own additions, each with a matching `mlc-app`
+//! `panel_click.rs`/`input/mod.rs` arm: `cloud_overlay:dm:jump_latest`
+//! (UI-2a, the bottom-anchored feed's own "jump to latest" button),
+//! `cloud_overlay:dm:chat_filter_input`/`cloud_overlay:dm:
+//! new_conversation_toggle` (UI-2b, [`draw_chat_filter_row`]'s own name
+//! filter + pencil toggle), plus the right-click context menus UI-2b adds
+//! on a message bubble and a chat-list row (`ChartApp::
+//! try_messenger_right_click`, `mlc-app`) — those dispatch through
+//! `panel_app.context_menu_state`, not a `cloud_overlay:dm:*` widget id at
+//! all.
 
 use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::i18n::{current_language, UserSettingsKey};

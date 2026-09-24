@@ -1,6 +1,7 @@
 //! Shared host-side text selection — draw-time line rects, the drag
 //! selection itself, hit-testing, and the pure highlight/copy math. Used by
-//! DM message bubbles (`layout::modals::dm_overlay`) and Forum post/reply
+//! DM message bubbles (`layout::modals::messenger_overlay`, moved off
+//! `dm_overlay` by the messenger UI-2a paint move) and Forum post/reply
 //! bodies (`layout::modals::forum_v2_overlay`); the same shape a future
 //! pass can point the Agents chat panel's own selection at (today still a
 //! parallel implementation — `mlc-app-sidebar-content`'s `ChatSelection`,
