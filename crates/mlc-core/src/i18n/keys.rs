@@ -3597,10 +3597,41 @@ pub enum ConceptKey {
     /// which reuses `MarkupTabWhatToDetect`). Mirrors `SmcScanStructuresLabel`'s
     /// own role for `SmcScan`'s structure table.
     ScanKindsTableLabel = 481,
+
+    // ---- Autodetector A4, Fib (2026-09-24) — `FibScan`'s own Thresholds
+    // row labels (`swing_mode`/`last_swings_n`/`direction` have no sibling
+    // row on `ElliottScan`/`HarmonicScan`, unlike `swing_n`/`min_score`,
+    // which already reuse `MarkupThresholdSwingNLabel`/`ScanMinScore*`
+    // above) and the What-to-detect levels table's own name. `direction`'s
+    // own VALUES (Up/Down) reuse `TrendValueUp`/`TrendValueDown` (381/382)
+    // rather than a fourth near-duplicate pair here — same wording, same
+    // "Up"/"Down" concept a swing's own leg direction already is.
+    /// `swing_mode` pills row label — "Largest swing" vs "Last N swings".
+    FibScanSwingModeLabel = 482,
+    FibScanSwingModeLargest = 483,
+    FibScanSwingModeLastN = 484,
+    /// `last_swings_n` pills row label — only rendered when `swing_mode ==
+    /// "last_n"` (`FibScan::style_properties`'s own conditional push).
+    FibScanLastSwingsNLabel = 485,
+    /// `direction` pills row label, reused verbatim as the Hits table's own
+    /// "Direction" column header (same wording, two contexts — the SAME
+    /// dual-role `MarkupTabWhatToDetect`/`MarkupTabThresholds` already play
+    /// between the A0 modal tab and this crate's `PropertyGroup` headers).
+    FibScanDirectionLabel = 486,
+    FibScanDirectionAuto = 487,
+    /// The What-to-detect levels table's own name (`ConfigProperty::table`'s
+    /// `name` param, search text) — mirrors `ScanKindsTableLabel`'s own role
+    /// for `ElliottScan`/`HarmonicScan`'s kinds table.
+    FibScanLevelsTableLabel = 488,
+    /// The Hits table's own "Range" column header — the swing's own
+    /// `[start_index, end_index]` bar span, the one column this table has
+    /// that `ScanHitPivotsColumnHeader` does not fit (a Fib swing is a pair
+    /// of bar indices, not a pivot count).
+    FibScanHitRangeColumnHeader = 489,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 482;
+    pub const COUNT: usize = 490;
 
     /// Get translation for this key.
     #[inline]

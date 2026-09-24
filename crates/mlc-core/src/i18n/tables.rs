@@ -1401,7 +1401,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 482] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 490] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1899,6 +1899,17 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 482] = [
     /* 479 ScanHitScoreColumnHeader           */ [ "Score", "Оценка", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 480 ScanHitPlaceColumnHeader           */ [ "Place", "Разместить", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 481 ScanKindsTableLabel                */ [ "Wave kinds", "Виды волн", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+
+    // Autodetector A4, Fib (2026-09-24) — En/Ru only, same convention as
+    // every other Scan* row above.
+    /* 482 FibScanSwingModeLabel              */ [ "Swing selection", "Выбор свинга", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 483 FibScanSwingModeLargest            */ [ "Largest swing", "Наибольший свинг", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 484 FibScanSwingModeLastN              */ [ "Last N swings", "Последние N свингов", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 485 FibScanLastSwingsNLabel            */ [ "Swings to show", "Свингов показать", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 486 FibScanDirectionLabel              */ [ "Direction", "Направление", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 487 FibScanDirectionAuto               */ [ "Auto", "Авто", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 488 FibScanLevelsTableLabel            */ [ "Fibonacci levels", "Уровни Фибоначчи", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 489 FibScanHitRangeColumnHeader        */ [ "Range", "Диапазон", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================
