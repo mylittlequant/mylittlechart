@@ -30,6 +30,7 @@ members = [
     "crates/mlc-app-shell-headless",
     "crates/mlc-app-shell-web",
     "crates/mlc-ui-lab",
+    "crates/mlc-messenger-model",
 ]
 resolver = "2"
 

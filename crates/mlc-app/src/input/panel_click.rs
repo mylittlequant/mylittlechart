@@ -6140,6 +6140,8 @@ impl ChartApp {
                                     st.forum2.invalidate_thread();
                                     st.forum2.reply_pending = false;
                                     st.forum2.last_error = None;
+                                    st.forum2.selection = None;
+                                    st.forum2.selection_drag_active = false;
                                     st.forum2.request = Some(ForumV2Request::OpenThread { id });
                                 }
                             }
@@ -6282,6 +6284,8 @@ impl ChartApp {
                                 st.forum2.invalidate_thread();
                                 st.forum2.reply_pending = false;
                                 st.forum2.last_error = None;
+                                st.forum2.selection = None;
+                                st.forum2.selection_drag_active = false;
                                 st.forum2.request = Some(ForumV2Request::OpenThread { id });
                             }
                         }
@@ -6392,6 +6396,8 @@ impl ChartApp {
                                     st.forum2.invalidate_thread();
                                     st.forum2.reply_pending = false;
                                     st.forum2.last_error = None;
+                                    st.forum2.selection = None;
+                                    st.forum2.selection_drag_active = false;
                                     st.forum2.request = Some(ForumV2Request::OpenThread { id });
                                 }
                             }
@@ -6474,6 +6480,45 @@ impl ChartApp {
                                     st.dm.request =
                                         Some(DmRequest::LoadMessages { id, page: DmMessagePage::Before(lowest_id) });
                                 }
+                            }
+                            return;
+                        }
+                        // Bottom-anchored feed's own "jump to latest"
+                        // (messenger UI-2a piece 2, `messenger_overlay.rs`'s
+                        // own floating button) — lands the open
+                        // conversation's scroll at its own bottom.
+                        // `content_height`/`viewport_height` come from LAST
+                        // frame's own paint (this frame has not painted
+                        // yet) — the same cached-geometry idiom the
+                        // scrollbar-drag start above already reads
+                        // (`ScrollableInfo`).
+                        "jump_latest" => {
+                            let (content_h, viewport_h) = self.frame_result.as_ref()
+                                .and_then(|r| r.community.as_ref())
+                                .map(|c| (c.content.total_content_height.unwrap_or(0.0), c.content.viewport_height.unwrap_or(0.0)))
+                                .unwrap_or((0.0, 0.0));
+                            st.scroll.scroll_to(content_h, content_h, viewport_h);
+                            return;
+                        }
+                        // The chat-list header's own pencil button
+                        // (messenger UI-2b, `messenger_overlay.rs`'s
+                        // `draw_chat_filter_row`) — a direct show/hide
+                        // toggle for the "New message" recipient-search
+                        // panel rather than a menu (see `DmState::
+                        // new_conversation_open`'s own doc for why: today's
+                        // DM-only provider has nothing else to offer behind
+                        // it). Opening focuses the peer field immediately —
+                        // clicking the pencil is already "I want to type a
+                        // name", the same one-less-click courtesy
+                        // `"choose_nick"` above gives `ACCOUNT_NICK`.
+                        "new_conversation_toggle" => {
+                            if st.dm.new_conversation_open {
+                                st.dm.close_lookup_dropdown();
+                                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                            } else {
+                                st.dm.new_conversation_open = true;
+                                let wid = uzor::WidgetId::from(crate::text_input::DM_PEER);
+                                self.input_coordinator.borrow_mut().text_fields_mut().focus(wid);
                             }
                             return;
                         }

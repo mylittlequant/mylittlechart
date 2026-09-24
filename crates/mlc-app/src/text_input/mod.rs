@@ -198,6 +198,14 @@ pub const DM_DRAFT: &str = "dm_draft";
 /// Enter opens (or resumes) the conversation.
 pub const DM_PEER: &str = "dm_peer";
 
+/// DM chat-list header's own name filter (`mlc_app_layout::layout::modals::
+/// messenger_overlay`'s `draw_chat_filter_row`, messenger UI-2b). A plain
+/// client-side substring match against each already-loaded conversation's
+/// name — never touches the server, unlike [`DM_PEER`]'s recipient
+/// lookup. Escape clears the field and drops focus (same idiom `DM_PEER`'s
+/// own Escape uses).
+pub const DM_CHAT_FILTER: &str = "dm_chat_filter";
+
 /// Webhook URL input (credentials modal). Replaces the decorative field of
 /// the same name that used to live in the alert-settings Notifications tab
 /// (`alert_set:item:webhook_url`, whose click handler was a literal no-op) —
@@ -310,6 +318,7 @@ pub fn known_field_ids() -> &'static [&'static str] {
         FORUM_SEARCH,
         DM_DRAFT,
         DM_PEER,
+        DM_CHAT_FILTER,
         CRED_WEBHOOK_URL,
         CRED_ADD_EXCHANGE,
         CRED_ADD_LABEL,

@@ -343,35 +343,26 @@ impl ChartApp {
     #[cfg(feature = "cloud")]
     pub fn dm_selection_text(&self) -> Option<String> {
         let sel = self.panel_app.community_state.dm.selection?;
-        if sel.is_empty() { return None; }
-        let ((lo_msg, lo_line, lo_char), (hi_msg, hi_line, hi_char)) = sel.ordered();
         let rects = self.frame_result.as_ref()
             .and_then(|r| r.community.as_ref())
             .map(|cm| &cm.content.dm_message_line_rects)?;
-        let mut text = String::new();
-        for entry in rects.iter() {
-            let pos = (entry.msg_idx, entry.line_idx);
-            if pos < (lo_msg, lo_line) || pos > (hi_msg, hi_line) { continue; }
-            if !text.is_empty() { text.push('\n'); }
-            let is_first = pos == (lo_msg, lo_line);
-            let is_last = pos == (hi_msg, hi_line);
-            if is_first && is_last {
-                let slice: String = entry.text.chars()
-                    .skip(lo_char as usize)
-                    .take((hi_char as usize).saturating_sub(lo_char as usize))
-                    .collect();
-                text.push_str(&slice);
-            } else if is_first {
-                let slice: String = entry.text.chars().skip(lo_char as usize).collect();
-                text.push_str(&slice);
-            } else if is_last {
-                let slice: String = entry.text.chars().take(hi_char as usize).collect();
-                text.push_str(&slice);
-            } else {
-                text.push_str(&entry.text);
-            }
-        }
-        if text.is_empty() { None } else { Some(text) }
+        mlc_app_layout::ui::selectable_text::selection_text(rects, &sel)
+    }
+
+    /// Extract the currently selected Forum post-body text, in the open
+    /// thread. Same shape as [`Self::dm_selection_text`], keyed by post
+    /// NUMBER instead of message index (owner ruling 2026-09-10, extended
+    /// to Forum post bodies).
+    ///
+    /// After returning `Some(text)` the caller is responsible for clearing
+    /// the selection (`community_state.forum2.selection = None`).
+    #[cfg(feature = "cloud")]
+    pub fn forum_selection_text(&self) -> Option<String> {
+        let sel = self.panel_app.community_state.forum2.selection?;
+        let rects = self.frame_result.as_ref()
+            .and_then(|r| r.community.as_ref())
+            .map(|cm| &cm.content.forum_line_rects)?;
+        mlc_app_layout::ui::selectable_text::selection_text(rects, &sel)
     }
 
     /// Handle a left-click at screen coordinates `(x, y)`.
@@ -635,6 +626,23 @@ impl ChartApp {
             || self.tc_modal.is_open
             || self.rc_modal.is_open
             || self.dom_modal.is_open
+            || self.community_modal_open()
+    }
+
+    /// Whether the Community modal (Forum + Messages, cloud builds only) is
+    /// open — folded into [`Self::any_blocking_modal_open`] so a right-click
+    /// or a primitive clipboard hotkey never bleeds through to the chart
+    /// underneath it, the same guard every other modal in that list already
+    /// gets. `false` on a non-cloud build, where `community_state` does not
+    /// exist at all.
+    #[cfg(feature = "cloud")]
+    pub(crate) fn community_modal_open(&self) -> bool {
+        self.panel_app.community_state.is_open
+    }
+
+    #[cfg(not(feature = "cloud"))]
+    pub(crate) fn community_modal_open(&self) -> bool {
+        false
     }
 
     /// Ask the wave-gesture question for `(x, y)`: does it land on an
@@ -849,6 +857,18 @@ impl ChartApp {
     /// Opens a context menu: primitive menu if clicking on a primitive,
     /// chart background menu otherwise.
     pub fn on_right_click(&mut self, x: f64, y: f64) {
+        // The messenger UI-2b right-click menus (a DM message bubble or a
+        // chat-list row) run BEFORE the blocking-modal gate below — the
+        // Community modal is now folded into `any_blocking_modal_open`
+        // (see `community_modal_open`'s own doc), so without this the gate
+        // would refuse the very right-clicks this branch exists to handle.
+        #[cfg(feature = "cloud")]
+        {
+            if self.try_messenger_right_click(x, y) {
+                return;
+            }
+        }
+
         // Suppress context menu when any modal is open — right-clicks inside
         // modals must not bleed through to the chart background.
         if self.any_blocking_modal_open() {
@@ -1034,6 +1054,77 @@ impl ChartApp {
             }
             crate::panel_grid::ChartRightClickHit::Miss => {}
         }
+    }
+
+    /// Messenger UI-2b right-click dispatch (community-messenger arc) — the
+    /// ONE entry point `on_right_click` calls before its own chart hit-test,
+    /// same "ask the more specific surface first, fall through on a miss"
+    /// shape [`Self::try_wave_gesture`] already uses. Returns `true` (and
+    /// has already opened `panel_app.context_menu_state`) when the click
+    /// landed on a DM message bubble or a chat-list row; `false` — meaning
+    /// the caller falls through to `any_blocking_modal_open`'s now-
+    /// unconditional refusal while the Community modal is open (see
+    /// `community_modal_open`'s own doc) — for every other case: the modal
+    /// closed, the Forum tab active, or a click on the modal's own chrome.
+    #[cfg(feature = "cloud")]
+    fn try_messenger_right_click(&mut self, x: f64, y: f64) -> bool {
+        use mlc_app_layout::ui::context_menu::{build_dm_chat_row_context_menu, build_dm_message_context_menu};
+        use mlc_app_layout::ui::dm_messenger_provider::DmMessengerProviderView;
+        use mlc_app_layout::ui::modal_settings::CommunityTab;
+        use mlc_app_layout::ui::selectable_text::hit_test;
+
+        if !self.panel_app.community_state.is_open
+            || self.panel_app.community_state.active_tab() != CommunityTab::Messages
+        {
+            return false;
+        }
+        let Some(cm) = self.frame_result.as_ref().and_then(|r| r.community.as_ref()) else { return false };
+        let w = self.width as f64;
+        let h = self.height as f64;
+
+        // A message bubble line — the SAME raw `LineHit` scan Ctrl+C
+        // already uses (`ChartApp::dm_selection_text`'s own doc, R29):
+        // messages are collected paint-time rects, not `InputCoordinator`
+        // widgets, so there is nothing to hit-test through the coordinator
+        // here.
+        if let Some(hit) = hit_test(&cm.content.dm_message_line_rects, x, y) {
+            let msg_idx = hit.block;
+            let caps = DmMessengerProviderView::new(&self.panel_app.community_state.dm).capabilities();
+            let items = build_dm_message_context_menu(caps);
+            self.panel_app.context_menu_state.open_smart(
+                x, y, ContextMenuTarget::DmMessage(msg_idx), items, w, h,
+            );
+            log::debug!("[ChartApp] Context menu opened for DM message #{msg_idx}");
+            return true;
+        }
+
+        // A chat-list row — a REGISTERED widget
+        // (`cloud_overlay:dm:conversation:{room_id}`,
+        // `messenger_overlay::draw_room_row`), hit-tested through the
+        // `InputCoordinator` like every other right-click-aware widget in
+        // this crate (`process_right_click` is a pure query — no side
+        // effects — so borrowing `input_coordinator` here is safe even
+        // though `self` is otherwise `&mut`).
+        let hit_id = self.input_coordinator.borrow().process_right_click(x, y);
+        let Some(room_id) = hit_id.as_ref().and_then(|id| id.as_str().strip_prefix("cloud_overlay:dm:conversation:"))
+        else {
+            return false;
+        };
+        let caps = DmMessengerProviderView::new(&self.panel_app.community_state.dm).capabilities();
+        let can_mark_read = room_id
+            .parse::<i64>()
+            .ok()
+            .and_then(|id| self.panel_app.community_state.dm.open_conversation_last_message_id(id))
+            .is_some();
+        let items = build_dm_chat_row_context_menu(caps, can_mark_read);
+        if items.is_empty() {
+            return false;
+        }
+        self.panel_app.context_menu_state.open_smart(
+            x, y, ContextMenuTarget::DmChatRow(room_id.to_string()), items, w, h,
+        );
+        log::debug!("[ChartApp] Context menu opened for DM chat row {room_id}");
+        true
     }
 
     /// Handle a double-click at screen coordinates `(x, y)`.
@@ -2698,28 +2789,56 @@ impl ChartApp {
                 }
             }
             // DM message bubbles — host-side line-level text selection, the
-            // SAME mechanism (msg/line/char coordinates, a mouse-down
+            // SAME mechanism (block/line/char coordinates, a mouse-down
             // hit-tested against a `Vec` of wrapped-line rects handed back
             // from render) the Agents chat panel uses for its own
             // `ChatSelection` (owner ruling 2026-09-10: replaces the old
             // one-`TextFieldStore`-field-per-wrapped-line approach, which
             // had no row axis at all and so could never select across
-            // lines or across messages — see `dm_overlay.rs::draw_message`'s
-            // own doc). Checked BEFORE the generic community text-field
+            // lines or across messages — see `mlc_app_layout::ui::
+            // selectable_text`'s own doc; bubbles themselves paint in
+            // `messenger_overlay.rs::draw_bubble` since the messenger UI-2a
+            // paint move, not `dm_overlay.rs` any more). Checked BEFORE the
+            // generic community text-field
             // block below so a press landing on a bubble's body claims the
-            // drag here, not there.
+            // drag here, not there. Hit-test (Y band AND X range, R29 fix —
+            // see `selectable_text`'s own doc) lives in the shared
+            // `mlc-app-layout` module so DM/Forum can never drift apart on
+            // it again.
             #[cfg(feature = "cloud")]
             if let Some(ref cm) = result.community {
                 if self.panel_app.community_state.is_open {
-                    let hit = cm.content.dm_message_line_rects.iter()
-                        .find(|l| y >= l.y_top && y < l.y_bot)
-                        .map(|l| (l.msg_idx, l.line_idx, l.text.clone(), l.text_x));
-                    if let Some((msg_idx, line_idx, line_text, text_x)) = hit {
+                    let hit = mlc_app_layout::ui::selectable_text::hit_test(&cm.content.dm_message_line_rects, x, y)
+                        .map(|l| (l.block, l.line, l.text.clone(), l.text_x));
+                    if let Some((block, line, line_text, text_x)) = hit {
                         let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
                         self.panel_app.community_state.dm.selection = Some(
-                            mlc_app_layout::ui::modal_settings::DmMessageSelection::new_at(msg_idx, line_idx, char_idx),
+                            mlc_app_layout::ui::modal_settings::DmMessageSelection::new_at(block, line, char_idx),
                         );
                         self.panel_app.community_state.dm.selection_drag_active = true;
+                        return false;
+                    }
+                }
+            }
+            // Forum post/reply bodies — same host-side line-level text
+            // selection mechanism as the DM block above, keyed by the
+            // post's own display number instead of a message index — posts
+            // are numbered (`#1`, `#2`, …), not indexed (owner ruling
+            // 2026-09-10, extended to Forum post bodies — see
+            // `forum_v2_overlay.rs::draw_blocks`'s own doc). Checked BEFORE
+            // the generic community text-field block below, same reasoning
+            // as the DM block above.
+            #[cfg(feature = "cloud")]
+            if let Some(ref cm) = result.community {
+                if self.panel_app.community_state.is_open {
+                    let hit = mlc_app_layout::ui::selectable_text::hit_test(&cm.content.forum_line_rects, x, y)
+                        .map(|l| (l.block, l.line, l.text.clone(), l.text_x));
+                    if let Some((post_number, line, line_text, text_x)) = hit {
+                        let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
+                        self.panel_app.community_state.forum2.selection = Some(
+                            mlc_app_layout::ui::modal_settings::ForumBodySelection::new_at(post_number, line, char_idx),
+                        );
+                        self.panel_app.community_state.forum2.selection_drag_active = true;
                         return false;
                     }
                 }
@@ -2748,6 +2867,7 @@ impl ChartApp {
                         ov.forum_search_rect,
                         ov.dm_draft_rect,
                         ov.dm_peer_rect,
+                        ov.dm_chat_filter_rect,
                     ]
                         .into_iter()
                         .flatten()
@@ -3911,20 +4031,37 @@ impl ChartApp {
         }
 
         // ── DM message host-side selection drag extension ─────────────────
+        // Same shared `selectable_text::hit_test` as the mousedown side
+        // (`on_drag_start`) — see that call site's own comment.
         #[cfg(feature = "cloud")]
         if self.panel_app.community_state.dm.selection_drag_active {
             let hit = self.frame_result.as_ref()
                 .and_then(|r| r.community.as_ref())
-                .and_then(|cm| {
-                    cm.content.dm_message_line_rects.iter()
-                        .find(|l| y >= l.y_top && y < l.y_bot)
-                        .map(|l| (l.msg_idx, l.line_idx, l.text.clone(), l.text_x))
-                });
-            if let Some((msg_idx, line_idx, line_text, text_x)) = hit {
+                .and_then(|cm| mlc_app_layout::ui::selectable_text::hit_test(&cm.content.dm_message_line_rects, x, y))
+                .map(|l| (l.block, l.line, l.text.clone(), l.text_x));
+            if let Some((block, line, line_text, text_x)) = hit {
                 let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
                 if let Some(sel) = self.panel_app.community_state.dm.selection.as_mut() {
-                    sel.end_msg = msg_idx;
-                    sel.end_line = line_idx;
+                    sel.end_block = block;
+                    sel.end_line = line;
+                    sel.end_char = char_idx;
+                }
+            }
+            return;
+        }
+
+        // ── Forum post-body host-side selection drag extension ────────────
+        #[cfg(feature = "cloud")]
+        if self.panel_app.community_state.forum2.selection_drag_active {
+            let hit = self.frame_result.as_ref()
+                .and_then(|r| r.community.as_ref())
+                .and_then(|cm| mlc_app_layout::ui::selectable_text::hit_test(&cm.content.forum_line_rects, x, y))
+                .map(|l| (l.block, l.line, l.text.clone(), l.text_x));
+            if let Some((post_number, line, line_text, text_x)) = hit {
+                let char_idx = chat_char_idx_from_x(&line_text, x, text_x);
+                if let Some(sel) = self.panel_app.community_state.forum2.selection.as_mut() {
+                    sel.end_block = post_number;
+                    sel.end_line = line;
                     sel.end_char = char_idx;
                 }
             }
@@ -5204,6 +5341,21 @@ impl ChartApp {
                 .unwrap_or(true);
             if is_empty {
                 self.panel_app.community_state.dm.selection = None;
+            }
+            return;
+        }
+
+        // ── End host-side Forum post-body selection drag ────────────────────
+        #[cfg(feature = "cloud")]
+        if self.panel_app.community_state.forum2.selection_drag_active {
+            self.panel_app.community_state.forum2.selection_drag_active = false;
+            // Same "start==end clears the selection" rule as the DM block
+            // above.
+            let is_empty = self.panel_app.community_state.forum2.selection
+                .map(|s| s.is_empty())
+                .unwrap_or(true);
+            if is_empty {
+                self.panel_app.community_state.forum2.selection = None;
             }
             return;
         }

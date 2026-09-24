@@ -1,6 +1,12 @@
 //! Chart UI rendering - self-contained toolbar and overlay rendering
 pub mod widgets;
 pub mod z_order;
+pub mod avatar_widget;
+pub mod chips_input;
+pub mod count_badge;
+#[cfg(feature = "cloud")]
+pub mod dm_messenger_provider;
+pub mod toggle_widget;
 pub mod toolbar_theme;
 pub mod icons;
 pub mod toolbar_core;
@@ -11,6 +17,7 @@ pub mod overlay_fill;
 pub mod color_picker_state;
 pub mod scroll_state;
 pub mod scroll_widget;
+pub mod selectable_text;
 pub mod modal_settings;
 pub mod modal_state;
 pub mod context_menu;

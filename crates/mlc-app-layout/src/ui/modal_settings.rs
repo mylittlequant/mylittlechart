@@ -7,6 +7,8 @@
 
 use crate::ui::color_picker_state::ColorPickerState;
 use crate::ui::scroll_state::ScrollState;
+#[cfg(feature = "cloud")]
+use crate::ui::selectable_text::Selection;
 use crate::ui::widgets::ResizeEdge;
 use mlc_core::drawing::primitives_v2::config::TimeframeVisibilityConfig;
 use mlc_core::drawing::primitives_v2::{ControlPointShape, ControlPointSize};
@@ -5540,6 +5542,11 @@ pub struct ForumThreadV2Ui {
     pub title: String,
     pub author: String,
     pub author_is_me: bool,
+    /// The thread starter's ladder rank (`"user"|"paid"|"trusted"|
+    /// "moderator"|"admin"`), or `None` for an unresolved/anonymous author —
+    /// see the server's `resolve_author_ranks`/`author_rank_json`
+    /// (`routes::forum_v2.rs`).
+    pub author_rank: Option<String>,
     pub created_at: String,
     pub updated_at: String,
     pub last_reply_at: Option<String>,
@@ -5560,6 +5567,8 @@ pub struct ForumReplyV2Ui {
     pub depth: i64,
     pub author: String,
     pub author_is_me: bool,
+    /// See `ForumThreadV2Ui::author_rank`'s own doc.
+    pub author_rank: Option<String>,
     pub body: String,
     pub created_at: String,
     /// Hidden by a moderator — the server omits a hidden reply's CHILDREN
@@ -5581,6 +5590,8 @@ pub struct ForumThreadV2Detail {
     pub title: String,
     pub author: String,
     pub author_is_me: bool,
+    /// See `ForumThreadV2Ui::author_rank`'s own doc.
+    pub author_rank: Option<String>,
     pub body: String,
     pub created_at: String,
     pub updated_at: String,
@@ -5673,6 +5684,17 @@ pub enum ForumV2Request {
     /// board's slug (`routes::forum_v2::ModerateRequest::board`).
     Moderate { thread_id: i64, action: String, board: Option<String> },
 }
+
+/// A host-side Forum post-body text selection, in character coordinates
+/// (post NUMBER — `#N`, unique within the open thread — as
+/// [`Selection::block`](crate::ui::selectable_text::Selection), wrapped-line
+/// index within that post's body, char index within that line). Folded into
+/// the shared [`crate::ui::selectable_text::Selection`] type (harvest-ready
+/// text-selection pass, community-messenger arc) — this was previously its
+/// own `ForumBodySelection` type, structurally identical to DM's own
+/// (now-removed) `DmMessageSelection`.
+#[cfg(feature = "cloud")]
+pub type ForumBodySelection = Selection;
 
 /// State for the Forum-v2 boards/threads/search UI (`CommunityTab::Forum`).
 ///
@@ -5824,6 +5846,14 @@ pub struct ForumV2State {
     /// navigation, which never sets this flag) — same request/result wire,
     /// two different landings.
     pub quick_search_pending: bool,
+    /// Host-side text selection over the open thread's post/reply card
+    /// bodies — see [`ForumBodySelection`]'s own doc. `None` while nothing
+    /// is selected; cleared on every navigation that already resets `view`
+    /// ([`Self::reset_to_boards`], and every `panel_click.rs` arm that opens
+    /// a thread).
+    pub selection: Option<ForumBodySelection>,
+    /// True while a Forum post-body drag-selection is in progress.
+    pub selection_drag_active: bool,
 }
 
 #[cfg(feature = "cloud")]
@@ -5855,6 +5885,8 @@ impl Default for ForumV2State {
             quick_search_last_seen_text: String::new(),
             quick_search_due_at: None,
             quick_search_pending: false,
+            selection: None,
+            selection_drag_active: false,
         }
     }
 }
@@ -5916,6 +5948,8 @@ impl ForumV2State {
         self.create_thread_pending = false;
         self.reply_pending = false;
         self.open_thread_board_slug = None;
+        self.selection = None;
+        self.selection_drag_active = false;
         self.close_quick_search();
     }
 
@@ -6301,56 +6335,22 @@ pub enum DmRequest {
 }
 
 /// A host-side DM message-bubble text selection, in character coordinates
-/// (msg index into the open conversation's `messages` slice, wrapped-line
-/// index within that message's body, char index within that line).
+/// (msg index into the open conversation's `messages` slice, as
+/// [`Selection::block`](crate::ui::selectable_text::Selection), wrapped-line
+/// index within that message's body, char index within that line). Folded
+/// into the shared [`crate::ui::selectable_text::Selection`] type
+/// (harvest-ready text-selection pass, community-messenger arc) — this was
+/// previously its own `DmMessageSelection` type, structurally identical to
+/// Forum's own (now-removed) `ForumBodySelection`.
 ///
 /// Same shape as `mlc_app_sidebar_content::state::ChatSelection` (the
-/// Agents chat panel's own line-level selection) — not shared across the
-/// two crates because they key different domains (a `LeafId`-addressed
-/// multi-panel chat vs. one open DM conversation at a time), same
+/// Agents chat panel's own line-level selection) — not folded into the same
+/// type as THAT one because it keys a different domain (a `LeafId`-
+/// addressed multi-panel chat vs. one open DM conversation at a time), same
 /// precedent `PtySelection`/`ChatSelection` already set for each other in
-/// that crate. Owner ruling 2026-09-10: DM text selection must work "like
-/// the Agents chat" — across wrapped lines and across messages both — see
-/// `dm_overlay.rs::draw_message`'s own doc for the per-line
-/// `TextFieldStore` approach this replaced.
+/// that crate.
 #[cfg(feature = "cloud")]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct DmMessageSelection {
-    pub start_msg: u16,
-    pub start_line: u16,
-    pub start_char: u16,
-    pub end_msg: u16,
-    pub end_line: u16,
-    pub end_char: u16,
-}
-
-#[cfg(feature = "cloud")]
-impl DmMessageSelection {
-    /// Anchor a fresh selection at the given message/line/character
-    /// position (start == end until a drag extends it).
-    pub fn new_at(msg: u16, line: u16, char_idx: u16) -> Self {
-        Self {
-            start_msg: msg,
-            start_line: line,
-            start_char: char_idx,
-            end_msg: msg,
-            end_line: line,
-            end_char: char_idx,
-        }
-    }
-
-    /// Returns `((lo_msg, lo_line, lo_char), (hi_msg, hi_line, hi_char))`
-    /// in reading order, regardless of which end the drag started from.
-    pub fn ordered(&self) -> ((u16, u16, u16), (u16, u16, u16)) {
-        let s = (self.start_msg, self.start_line, self.start_char);
-        let e = (self.end_msg, self.end_line, self.end_char);
-        if s <= e { (s, e) } else { (e, s) }
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.start_msg == self.end_msg && self.start_line == self.end_line && self.start_char == self.end_char
-    }
-}
+pub type DmMessageSelection = Selection;
 
 /// State for the Direct Messages UI (`CommunityTab::Messages`).
 #[cfg(feature = "cloud")]
@@ -6402,6 +6402,21 @@ pub struct DmState {
     /// [`Self::arm_lookup_debounce`] on every keystroke, read (and
     /// cleared) by the shell driver's per-frame due-check.
     pub lookup_due_at: Option<u64>,
+    /// Whether the "New message" recipient-search panel (this field's own
+    /// row plus its results dropdown) is currently shown — toggled by the
+    /// chat-list header's pencil button (messenger concept v1's own
+    /// `.lhead` row: `[Search][pencil]`, click path "pencil → New
+    /// message"). Today's DM-only provider offers no other item behind the
+    /// pencil (`Capabilities::groups`/`channels` are both false for it —
+    /// see `dm_messenger_provider::reads::capabilities`'s own doc), so the
+    /// button is a direct show/hide toggle rather than a menu with one
+    /// row; a future Matrix-shaped provider that adds groups/channels is
+    /// what would upgrade this into a real menu. Reset to `false` by
+    /// [`Self::close_lookup_dropdown`] (already called by
+    /// `open_conversation`, `reset_to_list`, `CommunityState::close`, and
+    /// the peer field's own Escape) — collapsing the panel and clearing
+    /// its query/dropdown are the same "nevermind, close this" action.
+    pub new_conversation_open: bool,
     /// Whether DM controls (open-peer, conversations, draft/send) can
     /// actually work in this shell right now. Both shells derive this the
     /// same way (owner ruling 2026-09-09: paid web users hold the vault too,
@@ -6478,6 +6493,7 @@ impl Default for DmState {
             lookup_query: None,
             lookup_results: Vec::new(),
             lookup_due_at: None,
+            new_conversation_open: false,
             available: false,
             unavailable_reason: DmUnavailableReason::None,
             selection: None,
@@ -6586,6 +6602,7 @@ impl DmState {
         self.lookup_query = None;
         self.lookup_results = Vec::new();
         self.lookup_due_at = None;
+        self.new_conversation_open = false;
     }
 
     /// The peer row for the conversation currently open in
@@ -6625,6 +6642,22 @@ impl DmState {
     pub fn mark_messages_fetched(&mut self) {
         self.messages_fetched_at = Some(now_ms());
         self.messages_refreshing = false;
+    }
+
+    /// The highest-loaded message id for the currently open conversation,
+    /// if `room_id` matches it and at least one message has landed — the
+    /// only honest source for a chat-list row's own right-click "Mark as
+    /// read" `up_to` (messenger UI-2b): a row for a DIFFERENT, unopened
+    /// conversation has no per-message id available client-side at all
+    /// (`RoomSummary::last_event` is always `None` for today's DM adapter
+    /// — see `DmMessengerProvider::rooms`'s own doc), so the caller
+    /// disables that row's own context-menu item instead of guessing one.
+    pub fn open_conversation_last_message_id(&self, room_id: i64) -> Option<i64> {
+        let DmView::Conversation { id, messages, .. } = &self.view else { return None };
+        if *id != room_id {
+            return None;
+        }
+        messages.last().map(|m| m.id)
     }
 }
 
@@ -6697,11 +6730,19 @@ pub struct CommunityState {
     pub tab: CommunityTab,
     /// Modal position (for dragging). `None` = centered.
     pub position: Option<(f64, f64)>,
-    /// Size the user dragged this modal to — starts at a sensible default
-    /// (760×560, see [`Self::default`]) rather than `None`/content-driven
-    /// like `ChartSettingsState::size`: a forum-and-messenger layout has no
-    /// single natural content height the way a settings tab does.
-    pub size: Option<(f64, f64)>,
+    /// Size the user dragged the Forum pane's modal to — starts at a
+    /// sensible default (760×560, see [`Self::default`]) rather than
+    /// `None`/content-driven like `ChartSettingsState::size`: a
+    /// forum-and-messenger layout has no single natural content height the
+    /// way a settings tab does. A SEPARATE field from `messages_size`
+    /// (messenger concept v1: the messenger opens the modal at 1000×640,
+    /// the forum keeps its own 760×560 — one field for the whole modal
+    /// used to make switching panes jump to whichever size was last
+    /// dragged for the OTHER pane) — see [`Self::size_for`].
+    pub forum_size: Option<(f64, f64)>,
+    /// Size the user dragged the Messages pane's modal to — see
+    /// `forum_size`'s own doc for why this is a separate field.
+    pub messages_size: Option<(f64, f64)>,
     /// Resize drag in flight, if the user has hold of an edge.
     pub resize_drag: Option<ResizeDrag>,
     pub is_dragging: bool,
@@ -6742,7 +6783,8 @@ impl Default for CommunityState {
             is_open: false,
             tab: CommunityTab::default(),
             position: None,
-            size: Some((760.0, 560.0)),
+            forum_size: Some((760.0, 560.0)),
+            messages_size: Some((1000.0, 640.0)),
             resize_drag: None,
             is_dragging: false,
             drag_offset: None,
@@ -6793,6 +6835,7 @@ impl CommunityState {
         self.dm.messages_refreshing = false;
         self.dm.send_pending = false;
         self.dm.request = None;
+        self.dm.close_lookup_dropdown();
     }
 
     pub fn toggle(&mut self) {
@@ -6860,12 +6903,63 @@ impl CommunityState {
     pub fn end_drag(&mut self) {
         self.is_dragging = false;
     }
+
+    /// The dragged size to open `tab`'s own pane at — `forum_size` or
+    /// `messages_size`, whichever `tab` names. `community.rs`'s own
+    /// `.resizable(...)` call reads this (keyed by `active_tab()`, not the
+    /// raw `tab` field, same "fall back to Forum" rule every other
+    /// tab-keyed read in this type follows) instead of a single field, so
+    /// switching panes lands on THAT pane's own last-dragged size instead
+    /// of carrying over whichever size the other pane was left at.
+    pub fn size_for(&self, tab: CommunityTab) -> Option<(f64, f64)> {
+        match tab {
+            CommunityTab::Forum => self.forum_size,
+            CommunityTab::Messages => self.messages_size,
+        }
+    }
 }
 
+/// Hand-written rather than `impl_resizable_modal!` (that macro assumes one
+/// `size` field per modal): the resize-drag commit path
+/// (`ResizableModal::update_resize`/`end_resize`, driven from `mlc-app`'s
+/// `input/mod.rs`) has no notion of "which tab" — routing `dragged_size`/
+/// `set_dragged_size` through [`CommunityState::active_tab`] here is what
+/// lets that generic drag machinery land a resize in the right one of
+/// `forum_size`/`messages_size` without `input/mod.rs` itself needing to
+/// know this modal has two sizes at all.
 #[cfg(feature = "cloud")]
-impl_resizable_modal!(
-    CommunityState => (520.0, 400.0),
-);
+impl ResizableModal for CommunityState {
+    fn dragged_size(&self) -> Option<(f64, f64)> {
+        self.size_for(self.active_tab())
+    }
+
+    fn set_dragged_size(&mut self, size: Option<(f64, f64)>) {
+        match self.active_tab() {
+            CommunityTab::Forum => self.forum_size = size,
+            CommunityTab::Messages => self.messages_size = size,
+        }
+    }
+
+    fn dragged_position(&self) -> Option<(f64, f64)> {
+        self.position
+    }
+
+    fn set_dragged_position(&mut self, pos: Option<(f64, f64)>) {
+        self.position = pos;
+    }
+
+    fn resize_drag(&self) -> Option<ResizeDrag> {
+        self.resize_drag
+    }
+
+    fn set_resize_drag(&mut self, drag: Option<ResizeDrag>) {
+        self.resize_drag = drag;
+    }
+
+    fn min_size(&self) -> (f64, f64) {
+        (520.0, 400.0)
+    }
+}
 
 #[cfg(all(test, feature = "cloud"))]
 mod messenger_available_tests {
