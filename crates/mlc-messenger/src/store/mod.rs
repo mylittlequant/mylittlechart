@@ -47,7 +47,8 @@
 //! | Key | Contents |
 //! |---|---|
 //! | `messenger/{device_id}/account` | pickled Olm account |
-//! | `messenger/{device_id}/olm_session/{curve25519}/{n}` | one pickled Olm session (`n`-th for that peer curve key) |
+//! | `messenger/{device_id}/olm_session/{curve25519}/{session_id}` | one pickled Olm session, keyed by its OWN session id -- a later save for the SAME `(curve25519, session_id)` REPLACES this record, it never appends a sibling (see [`CryptoStore::save_olm_session`]'s own doc for why: an un-replaced older ratchet snapshot is a forward-secrecy leak and a replay vector, not just wasted space) |
+//! | `messenger/{device_id}/olm_session_order/{curve25519}` | JSON array of that peer's session ids, least-recently-used first -- [`Store`]'s own bookkeeping for eviction and "try newest-used first" ordering, never exposed as one of [`CryptoStore`]'s opaque values |
 //! | `messenger/{device_id}/megolm_in/{room_id}/{session_id}` | one pickled inbound Megolm session |
 //! | `messenger/{device_id}/megolm_out/{room_id}` | the room's pickled outbound Megolm session |
 //! | `messenger/{device_id}/devices/{user_id}` | that user's tracked device list |
@@ -196,16 +197,32 @@ pub trait CryptoStore {
     /// Persists the pickled Olm account, replacing any earlier one.
     fn save_account(&mut self, account: Vec<u8>) -> Result<(), StoreError>;
 
-    /// Every pickled Olm session established with `their_curve25519`, in
-    /// the order they were saved. Empty (never an error) if none exist yet.
-    fn olm_sessions_for_device(&self, their_curve25519: &str) -> Result<&[Vec<u8>], StoreError>;
-    /// Appends one more pickled Olm session for `their_curve25519`. This
-    /// store has no way to tell "the same session, ratcheted forward" apart
-    /// from "a brand new session" from an opaque blob alone — it always
-    /// appends; a later piece (crypto's session manager) owns picking which
-    /// of a peer's sessions to use and, if it wants in-place replacement
-    /// rather than accumulation, must track that itself.
-    fn save_olm_session(&mut self, their_curve25519: &str, session: Vec<u8>) -> Result<(), StoreError>;
+    /// Every pickled Olm session this store currently has for
+    /// `their_curve25519`, ordered MOST-recently-used first (see
+    /// [`Store::save_olm_session`]'s own doc for what "used" means here).
+    /// At most [`MAX_OLM_SESSIONS_PER_DEVICE`] entries -- older, less
+    /// recently used sessions are evicted, never accumulated. Empty (never
+    /// an error) if none exist yet.
+    fn olm_sessions_for_device(&self, their_curve25519: &str) -> Result<Vec<Vec<u8>>, StoreError>;
+    /// Persists the pickled Olm session identified by `session_id`,
+    /// REPLACING any earlier record for the same `(their_curve25519,
+    /// session_id)` pair and marking it the most-recently-used session for
+    /// that peer. This is a hard requirement, not an optimization: an Olm
+    /// session's own pickle is its FULL ratchet state, including every
+    /// chain/message key it has ever derived and not yet forgotten. Keeping
+    /// an older snapshot of the SAME session_id around after a newer one
+    /// has been saved would mean an already-consumed message key survives
+    /// on disk somewhere the newer snapshot itself no longer has it --
+    /// exactly the forward-secrecy property Olm's ratchet exists to
+    /// provide, and exactly the kind of stale state a decrypt path must
+    /// never be able to resurrect to replay an already-decrypted message.
+    /// A caller with a genuinely different session for the same peer
+    /// (e.g. two independently-established sessions from a real Olm race)
+    /// passes a different `session_id` and gets a second, independent
+    /// slot -- up to [`MAX_OLM_SESSIONS_PER_DEVICE`] per peer; saving
+    /// beyond that evicts the least-recently-used one (its record is
+    /// deleted, riding in the same flush batch as this save).
+    fn save_olm_session(&mut self, their_curve25519: &str, session_id: &str, session: Vec<u8>) -> Result<(), StoreError>;
 
     /// The pickled inbound Megolm session for `(room_id, session_id)`, if
     /// this device has ever received one.
@@ -295,8 +312,16 @@ pub trait StateStore {
     fn delete_pending_request(&mut self, id: &RequestId) -> Result<(), StoreError>;
 }
 
+/// How many Olm sessions [`Store`] keeps per peer curve25519 key before
+/// evicting the least-recently-used one -- see [`CryptoStore::
+/// save_olm_session`]'s own doc for why eviction (not accumulation) is the
+/// only safe policy for a superseded session id, and why a genuinely
+/// distinct session id still gets its own slot up to this cap.
+const MAX_OLM_SESSIONS_PER_DEVICE: usize = 10;
+
 const KIND_ACCOUNT: &str = "account";
 const KIND_OLM_SESSION: &str = "olm_session";
+const KIND_OLM_SESSION_ORDER: &str = "olm_session_order";
 const KIND_MEGOLM_IN: &str = "megolm_in";
 const KIND_MEGOLM_OUT: &str = "megolm_out";
 const KIND_DEVICES: &str = "devices";
@@ -313,9 +338,18 @@ fn account_record_key(device_id: &DeviceId) -> RecordKey {
     RecordKey::new(format!("messenger/{}/{KIND_ACCOUNT}", device_id.as_str()))
 }
 
-fn olm_session_record_key(device_id: &DeviceId, their_curve25519: &str, index: usize) -> RecordKey {
+fn olm_session_record_key(device_id: &DeviceId, their_curve25519: &str, session_id: &str) -> RecordKey {
     RecordKey::new(format!(
-        "messenger/{}/{KIND_OLM_SESSION}/{}/{index}",
+        "messenger/{}/{KIND_OLM_SESSION}/{}/{}",
+        device_id.as_str(),
+        percent_encode_segment(their_curve25519),
+        percent_encode_segment(session_id),
+    ))
+}
+
+fn olm_session_order_record_key(device_id: &DeviceId, their_curve25519: &str) -> RecordKey {
+    RecordKey::new(format!(
+        "messenger/{}/{KIND_OLM_SESSION_ORDER}/{}",
         device_id.as_str(),
         percent_encode_segment(their_curve25519),
     ))
@@ -403,7 +437,8 @@ fn pending_request_record_key(device_id: &DeviceId, request_id: &RequestId) -> R
 /// kind's decoded dynamic components. Produced by [`parse_record_key`].
 enum RecognizedRecord {
     Account,
-    OlmSession { their_curve25519: String, index: usize },
+    OlmSession { their_curve25519: String, session_id: String },
+    OlmSessionOrder { their_curve25519: String },
     InboundGroupSession { room_id: RoomId, session_id: String },
     OutboundGroupSession { room_id: RoomId },
     Devices { user_id: UserId },
@@ -454,10 +489,14 @@ fn parse_record_key(device_id: &DeviceId, key: &RecordKey) -> Result<Option<Reco
         KIND_CROSS_SIGNING_KEYS if remainder.is_none() => Ok(Some(RecognizedRecord::CrossSigningKeys)),
         KIND_OLM_SESSION => {
             let remainder = remainder.ok_or_else(malformed)?;
-            let (curve_enc, index_str) = remainder.rsplit_once('/').ok_or_else(malformed)?;
-            let index: usize = index_str.parse().map_err(|_| malformed())?;
+            let (curve_enc, session_enc) = remainder.split_once('/').ok_or_else(malformed)?;
             let their_curve25519 = decode_plain_segment(curve_enc, key)?;
-            Ok(Some(RecognizedRecord::OlmSession { their_curve25519, index }))
+            let session_id = decode_plain_segment(session_enc, key)?;
+            Ok(Some(RecognizedRecord::OlmSession { their_curve25519, session_id }))
+        }
+        KIND_OLM_SESSION_ORDER => {
+            let curve_enc = remainder.ok_or_else(malformed)?;
+            Ok(Some(RecognizedRecord::OlmSessionOrder { their_curve25519: decode_plain_segment(curve_enc, key)? }))
         }
         KIND_MEGOLM_IN => {
             let remainder = remainder.ok_or_else(malformed)?;
@@ -525,7 +564,15 @@ pub struct Store<C: RecordCodec> {
     codec: C,
     gate: FlushGate,
     account: Option<Vec<u8>>,
-    olm_sessions: BTreeMap<String, Vec<Vec<u8>>>,
+    /// Peer curve25519 -> that peer's sessions, keyed by their own session
+    /// id. `olm_session_order` (below) is the recency ordering over this
+    /// map's keys; the two are always updated together (see
+    /// [`Store::save_olm_session`]).
+    olm_sessions: BTreeMap<String, BTreeMap<String, Vec<u8>>>,
+    /// Peer curve25519 -> that peer's session ids, least-recently-used
+    /// first. Purely this store's own eviction/ordering bookkeeping --
+    /// never one of [`CryptoStore`]'s opaque values.
+    olm_session_order: BTreeMap<String, Vec<String>>,
     inbound_group_sessions: BTreeMap<RoomId, BTreeMap<String, Vec<u8>>>,
     outbound_group_sessions: BTreeMap<RoomId, Vec<u8>>,
     devices: BTreeMap<UserId, Vec<u8>>,
@@ -556,6 +603,7 @@ impl<C: RecordCodec> Store<C> {
             gate: FlushGate::new(),
             account: None,
             olm_sessions: BTreeMap::new(),
+            olm_session_order: BTreeMap::new(),
             inbound_group_sessions: BTreeMap::new(),
             outbound_group_sessions: BTreeMap::new(),
             devices: BTreeMap::new(),
@@ -606,12 +654,13 @@ impl<C: RecordCodec> Store<C> {
     ) -> Result<(), StoreError> {
         match recognized {
             RecognizedRecord::Account => self.account = Some(plaintext),
-            RecognizedRecord::OlmSession { their_curve25519, index } => {
-                let sessions = self.olm_sessions.entry(their_curve25519).or_default();
-                if sessions.len() <= index {
-                    sessions.resize(index + 1, Vec::new());
-                }
-                sessions[index] = plaintext;
+            RecognizedRecord::OlmSession { their_curve25519, session_id } => {
+                self.olm_sessions.entry(their_curve25519).or_default().insert(session_id, plaintext);
+            }
+            RecognizedRecord::OlmSessionOrder { their_curve25519 } => {
+                let order: Vec<String> = serde_json::from_slice(&plaintext)
+                    .map_err(|source| StoreError::decode(key, format!("session order is not valid JSON: {source}")))?;
+                self.olm_session_order.insert(their_curve25519, order);
             }
             RecognizedRecord::InboundGroupSession { room_id, session_id } => {
                 self.inbound_group_sessions.entry(room_id).or_default().insert(session_id, plaintext);
@@ -695,15 +744,49 @@ impl<C: RecordCodec> CryptoStore for Store<C> {
         Ok(())
     }
 
-    fn olm_sessions_for_device(&self, their_curve25519: &str) -> Result<&[Vec<u8>], StoreError> {
-        Ok(self.olm_sessions.get(their_curve25519).map(Vec::as_slice).unwrap_or(&[]))
+    fn olm_sessions_for_device(&self, their_curve25519: &str) -> Result<Vec<Vec<u8>>, StoreError> {
+        let Some(sessions) = self.olm_sessions.get(their_curve25519) else { return Ok(Vec::new()) };
+        let Some(order) = self.olm_session_order.get(their_curve25519) else {
+            return Ok(sessions.values().cloned().collect());
+        };
+        // `order` is least-recently-used first; the trait contract is
+        // most-recently-used first (see this method's own doc), hence the
+        // reverse.
+        Ok(order.iter().rev().filter_map(|session_id| sessions.get(session_id).cloned()).collect())
     }
 
-    fn save_olm_session(&mut self, their_curve25519: &str, session: Vec<u8>) -> Result<(), StoreError> {
-        let index = self.olm_sessions.get(their_curve25519).map_or(0, Vec::len);
-        let key = olm_session_record_key(&self.device_id, their_curve25519, index);
+    fn save_olm_session(&mut self, their_curve25519: &str, session_id: &str, session: Vec<u8>) -> Result<(), StoreError> {
+        // 1. Replace this session id's own record -- never a new sibling
+        // key (see the trait method's own doc for why accumulation here
+        // would be a forward-secrecy leak and a replay vector).
+        let key = olm_session_record_key(&self.device_id, their_curve25519, session_id);
         self.mark_dirty(key, session.clone());
-        self.olm_sessions.entry(their_curve25519.to_string()).or_default().push(session);
+        self.olm_sessions.entry(their_curve25519.to_string()).or_default().insert(session_id.to_string(), session);
+
+        // 2. Move this session id to the most-recently-used end of the
+        // order, persisting the updated order record; note (but don't yet
+        // apply) an eviction if the cap is now exceeded.
+        let mut order = self.olm_session_order.remove(their_curve25519).unwrap_or_default();
+        order.retain(|id| id != session_id);
+        order.push(session_id.to_string());
+        let evicted = (order.len() > MAX_OLM_SESSIONS_PER_DEVICE).then(|| order.remove(0));
+
+        let order_key = olm_session_order_record_key(&self.device_id, their_curve25519);
+        let order_bytes = serde_json::to_vec(&order).map_err(|source| {
+            StoreError::decode(&order_key, format!("failed to serialize session order: {source}"))
+        })?;
+        self.mark_dirty(order_key, order_bytes);
+        self.olm_session_order.insert(their_curve25519.to_string(), order);
+
+        // 3. Apply the eviction, if any -- deletes the least-recently-used
+        // session's own record, riding in the same flush batch as the
+        // writes above.
+        if let Some(evicted_id) = evicted {
+            if let Some(sessions) = self.olm_sessions.get_mut(their_curve25519) {
+                sessions.remove(&evicted_id);
+            }
+            self.mark_deleted(olm_session_record_key(&self.device_id, their_curve25519, &evicted_id));
+        }
         Ok(())
     }
 
@@ -905,7 +988,9 @@ mod tests {
         let mut store = Store::new(device.clone(), InsecurePlainCodecForTests);
 
         store.save_account(b"account-bytes".to_vec()).expect("save account");
-        store.save_olm_session("curve25519-peer", b"olm-session-bytes".to_vec()).expect("save olm session");
+        store
+            .save_olm_session("curve25519-peer", "session-1", b"olm-session-bytes".to_vec())
+            .expect("save olm session");
         store
             .save_inbound_group_session(&room, "session-1", b"megolm-in-bytes".to_vec())
             .expect("save inbound group session");
@@ -932,7 +1017,7 @@ mod tests {
         assert_eq!(loaded.account().expect("no error"), Some(b"account-bytes".as_slice()));
         assert_eq!(
             loaded.olm_sessions_for_device("curve25519-peer").expect("no error"),
-            &[b"olm-session-bytes".to_vec()]
+            vec![b"olm-session-bytes".to_vec()]
         );
         assert_eq!(
             loaded.inbound_group_session(&room, "session-1").expect("no error"),
@@ -1041,5 +1126,53 @@ mod tests {
 
         store.ack_flush(batch.id);
         assert!(store.can_release_requests(), "flushed and acked: safe to release");
+    }
+
+    #[test]
+    fn saving_a_ratcheted_session_leaves_no_older_snapshot_in_the_flush_batches_or_store() {
+        let mut store = Store::new(device_id(), InsecurePlainCodecForTests);
+
+        store.save_olm_session("curve-peer", "session-1", b"pickle-v1".to_vec()).expect("save v1");
+        let batch1 = store.take_flush_batch().expect("v1 is pending");
+        store.ack_flush(batch1.id);
+
+        store.save_olm_session("curve-peer", "session-1", b"pickle-v2".to_vec()).expect("save v2, ratcheted forward");
+        let batch2 = store.take_flush_batch().expect("v2 is pending");
+        store.ack_flush(batch2.id);
+
+        fn session_keys_in(batch: &FlushBatch) -> Vec<&RecordKey> {
+            batch.records.iter().filter(|r| r.key.as_str().contains("/olm_session/")).map(|r| &r.key).collect()
+        }
+        let batch1_keys = session_keys_in(&batch1);
+        let batch2_keys = session_keys_in(&batch2);
+        assert_eq!(batch1_keys.len(), 1, "v1's own flush carries exactly one session record");
+        assert_eq!(batch2_keys.len(), 1, "v2's own flush carries exactly one session record");
+        assert_eq!(batch1_keys[0], batch2_keys[0], "the second save replaced the SAME record key, not a new one");
+        assert!(batch2.deletes.is_empty(), "no eviction yet -- only one distinct session id has ever been saved");
+
+        // The store itself holds only the latest bytes -- no older
+        // snapshot survives anywhere, on disk or in memory.
+        assert_eq!(store.olm_sessions_for_device("curve-peer").expect("no error"), vec![b"pickle-v2".to_vec()]);
+    }
+
+    #[test]
+    fn olm_sessions_per_device_are_capped() {
+        let mut store = Store::new(device_id(), InsecurePlainCodecForTests);
+        for i in 0..=MAX_OLM_SESSIONS_PER_DEVICE {
+            store
+                .save_olm_session("curve-peer", &format!("session-{i}"), format!("pickle-{i}").into_bytes())
+                .expect("save");
+        }
+
+        let sessions = store.olm_sessions_for_device("curve-peer").expect("no error");
+        assert_eq!(sessions.len(), MAX_OLM_SESSIONS_PER_DEVICE, "capped, not accumulated without bound");
+
+        let evicted = b"pickle-0".to_vec();
+        assert!(!sessions.contains(&evicted), "the least-recently-used session (the first ever saved) was evicted");
+        let newest = format!("pickle-{MAX_OLM_SESSIONS_PER_DEVICE}").into_bytes();
+        assert_eq!(sessions.first(), Some(&newest), "most-recently-used first");
+
+        let batch = store.take_flush_batch().expect("everything above is still pending");
+        assert_eq!(batch.deletes.len(), 1, "exactly one eviction happened, producing exactly one delete");
     }
 }

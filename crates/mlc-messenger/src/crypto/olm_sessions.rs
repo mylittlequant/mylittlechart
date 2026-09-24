@@ -4,40 +4,41 @@
 //! `crypto/olm_sessions.rs`; research doc §3.3's security note, §4.5's
 //! "Olm session desync/corruption" pitfall).
 //!
-//! # Session storage is append-only -- this module owns "which one"
+//! # Session storage: one record per session id, capped and evicted
 //!
-//! [`crate::store::CryptoStore::olm_sessions_for_device`]/`save_olm_session`
-//! (a prior piece) never replace a peer's session in place -- every call to
-//! `save_olm_session` appends one more full pickle, even when it is just a
-//! ratchet-advanced snapshot of a session this module already knew about.
-//! Two different things end up interleaved in that one append-only list:
-//! successive snapshots of the SAME logical session (identified by
-//! [`mlc_vodozemac::olm::Session::session_id`]), and, more rarely, a
-//! genuinely distinct session that arose from a real Olm race (both sides
-//! independently starting a session with each other "at once"). This
-//! module never conflates the two:
+//! [`crate::store::CryptoStore::save_olm_session`] (a prior piece) takes a
+//! `session_id` and REPLACES that session's own record -- it never keeps a
+//! superseded ratchet snapshot around. This is a hard security property,
+//! not a space optimization: an Olm session pickle IS its full ratchet
+//! state, including every chain/message key it has derived and not yet
+//! forgotten, so an un-replaced older snapshot of the SAME session id would
+//! be a live forward-secrecy leak (an already-consumed message key
+//! surviving somewhere the session's own current state has forgotten it)
+//! and a replay vector (that stale snapshot could decrypt a message its
+//! later self has already consumed and would now correctly refuse). The
+//! store also caps how many DISTINCT session ids it keeps per peer curve
+//! key, evicting the least-recently-used one -- see
+//! [`crate::store::CryptoStore::save_olm_session`]'s own doc.
+//!
+//! With that guarantee in place, this module's own job on both sides is
+//! simple, no bookkeeping of its own required:
 //!
 //! - **Encrypting** ("the most recently used session for that device", plan
-//!   §3) always means the list's LAST entry -- append order is
-//!   chronological order, and every operation that touches a session
-//!   re-appends its new snapshot immediately, so the last entry is always
-//!   whichever session this module most recently used, no matter how many
-//!   older entries (of the same or a different session id) precede it.
-//! - **Decrypting** ("try each known session, newest first", plan §3) first
-//!   collapses the list down to one candidate PER DISTINCT session id --
-//!   its own latest snapshot -- before trying any of them. Skipping this
-//!   collapse would be a real vulnerability, not just an inefficiency: an
-//!   older snapshot of an ALREADY-superseded session id can still hold a
-//!   skipped message key that its own later snapshot has since consumed,
-//!   so trying it would let an attacker (or a bug) replay an
-//!   already-decrypted message successfully by resurrecting stale ratchet
-//!   state instead of hitting a decryption failure. Collapsing by session
-//!   id first is what makes the "a pre-key message for an EXISTING session
-//!   replays through that session, never a second inbound session" rule
-//!   true safely: [`mlc_vodozemac::olm::Session::decrypt`] does not care
-//!   whether a message is tagged pre-key or normal, it only needs a
-//!   session whose receiving chains still cover that message's ratchet
-//!   position -- and after the collapse, that session's chains reflect
+//!   §3) is the store's own first-returned entry --
+//!   [`crate::store::CryptoStore::olm_sessions_for_device`] already orders
+//!   its result most-recently-used first.
+//! - **Decrypting** ("try each known session, newest first", plan §3) is a
+//!   plain walk of that same list, in that same order -- at most one
+//!   candidate per distinct session id, each one already the ONLY
+//!   snapshot the store keeps for it, so there is no older, not-yet-
+//!   consumed copy of an already-superseded state left anywhere to
+//!   accidentally resurrect. This is what makes the "a pre-key message for
+//!   an EXISTING session replays through that session, never a second
+//!   inbound session" rule true safely: [`mlc_vodozemac::olm::Session::
+//!   decrypt`] does not care whether a message is tagged pre-key or
+//!   normal, it only needs a session whose receiving chains still cover
+//!   that message's ratchet position -- and since only one, current
+//!   snapshot of that session ever exists, its chains always reflect
 //!   everything this module has ever actually consumed from it.
 //!
 //! # Every mutation is persisted before this module returns
@@ -67,19 +68,20 @@
 //! actually arrives (`mlc_vodozemac`'s own `receiver_chain` module). Once a
 //! message key has been used -- whether it was consumed in order or pulled
 //! from the skipped stash -- it is deleted from that session's CURRENT
-//! state; decrypting the SAME ciphertext bytes again always fails, first
-//! against the latest snapshot of every already-established session for
-//! that sender (the per-session-id collapse above is what guarantees an
-//! older, not-yet-consumed snapshot is never tried instead -- a
-//! `DecryptionError` here is simply "try the next distinct session"), and
-//! then -- since a replayed message is still tagged pre-key if the
-//! original was -- against [`OlmAccountState::create_inbound_session`],
-//! which fails too, because the one-time key that pre-key message names
-//! was already consumed the first time a message from that same session
-//! established it. Either way -- rejected by the collapsed latest-snapshot
-//! lookup, or rejected at re-establishment -- the net, externally
-//! observable result [`OlmSessionManager::decrypt_to_device`] gives a
-//! caller is an `Err`, never a second copy of the plaintext.
+//! state, and the store's replace-not-append contract (above) means that
+//! state IS the only copy left anywhere; decrypting the SAME ciphertext
+//! bytes again always fails, first against every already-established
+//! session for that sender (a `DecryptionError` here is simply "try the
+//! next distinct session"), and then -- since a replayed message is still
+//! tagged pre-key if the original was -- against [`OlmAccountState::
+//! create_inbound_session`], which fails too, because the one-time key
+//! that pre-key message names was already consumed the first time a
+//! message from that same session established it. Either way, the net,
+//! externally observable result [`OlmSessionManager::decrypt_to_device`]
+//! gives a caller is an `Err`, never a second copy of the plaintext -- and
+//! this holds even after a full unload/reload of the store from its
+//! persisted records, since there is never a stale snapshot in those
+//! records to reload in the first place.
 //!
 //! # Payload binding
 //!
@@ -350,7 +352,8 @@ impl OlmSessionManager {
             match Self::verify_and_claim(account, device, key_id, raw) {
                 Ok(session) => {
                     let curve_b64 = device.curve25519.to_base64();
-                    store.save_olm_session(&curve_b64, pickle_session(&session)?)?;
+                    let session_id = session.session_id();
+                    store.save_olm_session(&curve_b64, &session_id, pickle_session(&session)?)?;
                     outcome.established.push((device.user_id.clone(), device.device_id.clone()));
                 }
                 Err(reason) => outcome.refused.push(KeysClaimRefusal {
@@ -403,8 +406,11 @@ impl OlmSessionManager {
         content: serde_json::Value,
     ) -> Result<OlmEncryptedContent, MessengerError> {
         let their_curve_b64 = target.curve25519.to_base64();
-        let pickles = store.olm_sessions_for_device(&their_curve_b64)?;
-        let latest = pickles.last().cloned().ok_or_else(|| {
+        let sessions = store.olm_sessions_for_device(&their_curve_b64)?;
+        // The store already orders these most-recently-used first (see the
+        // module doc) -- the first entry IS "the most recently used
+        // session for that device".
+        let latest = sessions.into_iter().next().ok_or_else(|| {
             MessengerError::Crypto(format!(
                 "no Olm session established with device {} of {} yet",
                 target.device_id.as_str(),
@@ -431,7 +437,8 @@ impl OlmSessionManager {
         // Flush-before-send: the ratchet-advanced session lands on disk in
         // this same synchronous call, before the ciphertext below is ever
         // handed to a caller that might enqueue it for sending.
-        store.save_olm_session(&their_curve_b64, pickle_session(&session)?)?;
+        let session_id = session.session_id();
+        store.save_olm_session(&their_curve_b64, &session_id, pickle_session(&session)?)?;
 
         let mut ciphertext = BTreeMap::new();
         ciphertext.insert(their_curve_b64, Self::encode_olm_message(&olm_message));
@@ -455,31 +462,15 @@ impl OlmSessionManager {
             .map_err(|source| OlmDecryptError::MalformedCiphertext(source.to_string()))?;
 
         let sender_curve_b64 = content.sender_key.clone();
-        let known_sessions: Vec<Vec<u8>> = store.olm_sessions_for_device(&sender_curve_b64)?.to_vec();
-
-        // Collapse to one candidate per distinct session id -- its own
-        // latest (highest-index) snapshot -- before trying anything. See
-        // the module doc's "Session storage is append-only" section for
-        // why retrying an older snapshot of an already-superseded session
-        // id would let a replay succeed.
-        let mut latest_by_session_id: BTreeMap<String, (usize, Session)> = BTreeMap::new();
-        for (index, pickle_bytes) in known_sessions.iter().enumerate() {
-            let session = unpickle_session(pickle_bytes)
-                .map_err(|source| OlmDecryptError::SessionEstablishment(format!("corrupt stored session: {source}")))?;
-            let session_id = session.session_id();
-            let replace = match latest_by_session_id.get(&session_id) {
-                Some((existing_index, _)) => index > *existing_index,
-                None => true,
-            };
-            if replace {
-                latest_by_session_id.insert(session_id, (index, session));
-            }
-        }
-        let mut candidates: Vec<(usize, Session)> = latest_by_session_id.into_values().collect();
-        candidates.sort_by_key(|(index, _)| std::cmp::Reverse(*index));
+        // Already at most one snapshot per distinct session id, ordered
+        // most-recently-used first (see the module doc) -- a plain walk in
+        // that order is "try each known session, newest first" as-is.
+        let known_sessions: Vec<Vec<u8>> = store.olm_sessions_for_device(&sender_curve_b64)?;
 
         let mut established: Option<(Session, Vec<u8>)> = None;
-        for (_, mut session) in candidates {
+        for pickle_bytes in &known_sessions {
+            let mut session = unpickle_session(pickle_bytes)
+                .map_err(|source| OlmDecryptError::SessionEstablishment(format!("corrupt stored session: {source}")))?;
             if let Ok(plaintext) = session.decrypt(&olm_message) {
                 established = Some((session, plaintext));
                 break;
@@ -488,7 +479,8 @@ impl OlmSessionManager {
 
         let plaintext = match established {
             Some((session, plaintext)) => {
-                store.save_olm_session(&sender_curve_b64, pickle_session(&session)?)?;
+                let session_id = session.session_id();
+                store.save_olm_session(&sender_curve_b64, &session_id, pickle_session(&session)?)?;
                 plaintext
             }
             None => match &olm_message {
@@ -499,7 +491,8 @@ impl OlmSessionManager {
                     let result = account
                         .create_inbound_session(store, SessionConfig::version_1(), sender_curve, pre_key_message)
                         .map_err(|source| OlmDecryptError::SessionEstablishment(source.to_string()))?;
-                    store.save_olm_session(&sender_curve_b64, pickle_session(&result.session)?)?;
+                    let session_id = result.session.session_id();
+                    store.save_olm_session(&sender_curve_b64, &session_id, pickle_session(&result.session)?)?;
                     result.plaintext
                 }
                 OlmMessage::Normal(_) => return Err(OlmDecryptError::NoMatchingSession(sender_curve_b64)),
@@ -711,6 +704,77 @@ mod tests {
         // of what a replay looks like at the vodozemac layer).
         let replay = OlmSessionManager::decrypt_to_device(&mut bob_store, &mut bob_account, &bob_user, &alice_user, &message_0);
         assert!(replay.is_err(), "replaying an already-decrypted message must be rejected");
+        assert!(
+            matches!(replay, Err(OlmDecryptError::SessionEstablishment(_))),
+            "got {replay:?}"
+        );
+    }
+
+    #[test]
+    fn replay_is_rejected_after_reload_from_records() {
+        let mut alice_store = new_store("ALICEDEV");
+        let alice_account = OlmAccountState::load_or_create(&mut alice_store).expect("create alice's account");
+        let alice_user = user("alice");
+        let alice_device_id = device("ALICEDEV");
+
+        let bob_user = user("bob");
+        let bob_device_id = device("BOBDEV");
+        let mut bob_store = new_store("BOBDEV");
+        let mut bob_account = OlmAccountState::load_or_create(&mut bob_store).expect("create bob's account");
+        bob_account.on_sync_counts(&mut bob_store, 0, &fallback_present()).expect("top up bob's OTKs");
+
+        let upload = bob_account
+            .keys_upload_request(RequestId::next(0), &bob_user, &bob_device_id)
+            .expect("builds a request")
+            .expect("something to upload");
+        let claim_body =
+            claim_response_body_from_upload(&upload.body.expect("upload has a body"), &bob_user, &bob_device_id);
+        let bob_device = stored_device(&bob_user, &bob_device_id, &bob_account);
+        OlmSessionManager::on_keys_claim_response(&mut alice_store, &alice_account, &[&bob_device], &claim_body)
+            .expect("alice establishes a session with bob");
+
+        let alice_device_keys =
+            alice_account.device_keys_json(&alice_user, &alice_device_id).expect("sign alice's device_keys");
+        let query_body = serde_json::to_vec(&serde_json::json!({
+            "device_keys": { alice_user.as_str(): { alice_device_id.as_str(): alice_device_keys } }
+        }))
+        .expect("valid JSON");
+        DeviceTracker::on_keys_query_response(&mut bob_store, &query_body).expect("bob learns alice's device");
+
+        let message_0 = OlmSessionManager::encrypt_to_device(
+            &mut alice_store,
+            &alice_account,
+            &alice_user,
+            &alice_device_id,
+            &bob_device,
+            "m.test",
+            serde_json::json!({ "i": 0 }),
+        )
+        .expect("encrypt message 0");
+
+        OlmSessionManager::decrypt_to_device(&mut bob_store, &mut bob_account, &bob_user, &alice_user, &message_0)
+            .expect("message 0 decrypts and establishes bob's session");
+
+        // Flush everything bob has dirtied so far (account, alice's
+        // device, the Olm session) into one set of durable records, then
+        // rebuild a completely fresh `Store`/`OlmAccountState` from just
+        // those records -- simulating a process restart between the first
+        // decrypt and the replay attempt below.
+        let batch = bob_store.take_flush_batch().expect("decrypting dirtied the store");
+        bob_store.ack_flush(batch.id);
+        let mut reloaded_store =
+            Store::load(batch.records, InsecurePlainCodecForTests, bob_device_id.clone()).expect("reload succeeds");
+        let mut reloaded_account =
+            OlmAccountState::load_or_create(&mut reloaded_store).expect("reload reuses the persisted account");
+
+        let replay = OlmSessionManager::decrypt_to_device(
+            &mut reloaded_store,
+            &mut reloaded_account,
+            &bob_user,
+            &alice_user,
+            &message_0,
+        );
+        assert!(replay.is_err(), "a replay must still be rejected after a full store reload");
         assert!(
             matches!(replay, Err(OlmDecryptError::SessionEstablishment(_))),
             "got {replay:?}"

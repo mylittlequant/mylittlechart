@@ -422,3 +422,46 @@ fn e2e_payload_with_wrong_recipient_keys_is_rejected() {
         OlmSessionManager::decrypt_to_device(&mut bob.store, &mut bob.account, &bob.user_id, &alice_user, &forged_content);
     assert!(matches!(result, Err(OlmDecryptError::PayloadMismatch(_))), "got {result:?}");
 }
+
+#[test]
+fn to_device_redelivered_when_sync_response_is_lost() {
+    let mut server = FakeServer::new();
+    let mut alice = TestClient::new("alice", "ALICEDEV");
+    let mut bob = TestClient::new("bob", "BOBDEV");
+
+    alice.bootstrap(&mut server);
+    bob.bootstrap(&mut server);
+    let bob_user = bob.user_id.clone();
+    let alice_user = alice.user_id.clone();
+    alice.query_devices(&mut server, &bob_user);
+    bob.query_devices(&mut server, &alice_user);
+    let bob_device = alice.devices_of(&bob_user).into_iter().next().expect("bob known");
+    alice.claim(&mut server, &[&bob_device]);
+    alice.send_to_device(&mut server, &bob_device, "m.test", serde_json::json!({ "i": 0 }));
+
+    // First sync (since=None): the message is delivered, but bob's
+    // response never makes it back to him (dropped connection, crash,
+    // ...) -- he never durably advances his own since token.
+    let request_id_1 = bob.next_request_id();
+    let sync1 = OutgoingRequest::sync(request_id_1, None, None);
+    let response1 = server.dispatch(&bob.user_id, &bob.device_id, &sync1);
+    let parsed1 = mlc_messenger::wire::parse_sync_response(&response1.body).expect("valid sync response");
+    assert_eq!(parsed1.to_device.events.len(), 1, "message delivered on the first attempt");
+
+    // Bob retries with the SAME (still-initial) since -- the lost
+    // response's message must be redelivered, not gone.
+    let request_id_2 = bob.next_request_id();
+    let sync2 = OutgoingRequest::sync(request_id_2, None, None);
+    let response2 = server.dispatch(&bob.user_id, &bob.device_id, &sync2);
+    let parsed2 = mlc_messenger::wire::parse_sync_response(&response2.body).expect("valid sync response");
+    assert_eq!(parsed2.to_device.events.len(), 1, "the lost response's message is redelivered, not lost");
+    assert_eq!(parsed2.next_batch, parsed1.next_batch, "same since in, same next_batch out, deterministically");
+
+    // Only once bob actually advances his since past what he was given
+    // does the message stop being redelivered.
+    let request_id_3 = bob.next_request_id();
+    let sync3 = OutgoingRequest::sync(request_id_3, Some(parsed2.next_batch.as_str()), None);
+    let response3 = server.dispatch(&bob.user_id, &bob.device_id, &sync3);
+    let parsed3 = mlc_messenger::wire::parse_sync_response(&response3.body).expect("valid sync response");
+    assert!(parsed3.to_device.events.is_empty(), "an acknowledged message is not redelivered");
+}

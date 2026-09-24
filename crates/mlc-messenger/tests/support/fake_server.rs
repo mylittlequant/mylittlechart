@@ -14,7 +14,7 @@
 use mlc_messenger::wire::{HttpResponseDescriptor, OutgoingRequest, OutgoingRequestKind};
 use mlc_messenger::{DeviceId, UserId};
 use serde_json::{Map, Value};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::BTreeMap;
 
 /// One device's server-side state: its published `device_keys`, its pool
 /// of unclaimed regular one-time keys, and its current fallback key.
@@ -35,13 +35,34 @@ struct DeviceState {
     fallback_used: bool,
 }
 
+/// One device's `/sync` to-device mailbox: real Matrix since-token
+/// semantics (spec, and this project's own server's P2 piece), not a
+/// drain-on-read queue -- a `/sync` response is only ever safe to forget
+/// once a LATER request names a `since` at or past it, because the
+/// response naming that later `since` is the client's own proof it
+/// durably received everything before it. Until then, the exact same
+/// events must be redelivered verbatim on a retried `since` (a lost
+/// response, a crashed client, ...).
+///
+/// `base_index` is the global position of `events[0]`; `events` holds
+/// every event from `base_index` onward that has not yet been pruned.
+/// `/sync`'s own `next_batch` token is always `"s{base_index + events.len()}"`.
+#[derive(Default)]
+struct SyncMailbox {
+    base_index: usize,
+    events: Vec<Value>,
+}
+
+fn parse_sync_token(token: &str) -> Option<usize> {
+    token.strip_prefix('s').and_then(|rest| rest.parse().ok())
+}
+
 /// An in-process fake homeserver. See the module doc.
 #[derive(Default)]
 pub struct FakeServer {
     devices: BTreeMap<(UserId, DeviceId), DeviceState>,
-    to_device_queues: BTreeMap<(UserId, DeviceId), VecDeque<Value>>,
+    to_device_mailboxes: BTreeMap<(UserId, DeviceId), SyncMailbox>,
     pending_device_list_changes: BTreeMap<(UserId, DeviceId), Vec<UserId>>,
-    next_batch: u64,
 }
 
 fn json_response(status: u16, value: &Value) -> HttpResponseDescriptor {
@@ -78,7 +99,7 @@ impl FakeServer {
             OutgoingRequestKind::KeysQuery => self.handle_keys_query(request),
             OutgoingRequestKind::KeysClaim => self.handle_keys_claim(request),
             OutgoingRequestKind::SendToDevice => self.handle_send_to_device(as_user, request),
-            OutgoingRequestKind::Sync => self.handle_sync(as_user, as_device),
+            OutgoingRequestKind::Sync => self.handle_sync(as_user, as_device, request),
             _ => json_response(
                 501,
                 &serde_json::json!({ "errcode": "M_UNRECOGNIZED", "error": "fake server: unsupported request kind" }),
@@ -199,18 +220,34 @@ impl FakeServer {
             for (device_str, content) in by_device {
                 let Ok(device_id) = DeviceId::parse(device_str.clone()) else { continue };
                 let event = serde_json::json!({ "sender": as_user.as_str(), "type": event_type, "content": content });
-                self.to_device_queues.entry((user_id.clone(), device_id)).or_default().push_back(event);
+                self.to_device_mailboxes.entry((user_id.clone(), device_id)).or_default().events.push(event);
             }
         }
 
         json_response(200, &serde_json::json!({}))
     }
 
-    fn handle_sync(&mut self, as_user: &UserId, as_device: &DeviceId) -> HttpResponseDescriptor {
-        self.next_batch += 1;
+    fn handle_sync(&mut self, as_user: &UserId, as_device: &DeviceId, request: &OutgoingRequest) -> HttpResponseDescriptor {
         let key = (as_user.clone(), as_device.clone());
+        let since_index =
+            request.query.iter().find(|(name, _)| name == "since").and_then(|(_, value)| parse_sync_token(value));
 
-        let events: Vec<Value> = self.to_device_queues.get_mut(&key).map(|queue| queue.drain(..).collect()).unwrap_or_default();
+        let mailbox = self.to_device_mailboxes.entry(key.clone()).or_default();
+        // The client naming `since_index` is its own proof it already
+        // durably has everything before that position -- only now is it
+        // safe to forget those events. A request that never advances
+        // `since` (a lost response, a retry) re-prunes nothing new and so
+        // redelivers the exact same remaining events, verbatim.
+        if let Some(since_index) = since_index {
+            if since_index > mailbox.base_index {
+                let drop_count = (since_index - mailbox.base_index).min(mailbox.events.len());
+                mailbox.events.drain(0..drop_count);
+                mailbox.base_index += drop_count;
+            }
+        }
+        let events = mailbox.events.clone();
+        let next_batch_index = mailbox.base_index + mailbox.events.len();
+
         let changed: Vec<Value> = self
             .pending_device_list_changes
             .remove(&key)
@@ -228,7 +265,7 @@ impl FakeServer {
         json_response(
             200,
             &serde_json::json!({
-                "next_batch": format!("s{}", self.next_batch),
+                "next_batch": format!("s{next_batch_index}"),
                 "to_device": { "events": events },
                 "device_lists": { "changed": changed, "left": [] },
                 "device_one_time_keys_count": { "signed_curve25519": otk_count },
