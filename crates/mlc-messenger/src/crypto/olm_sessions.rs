@@ -48,8 +48,8 @@
 //! session -- calls [`crate::store::CryptoStore::save_olm_session`] (and,
 //! for a new inbound session, [`OlmAccountState::create_inbound_session`]
 //! persists the OTK-consuming account mutation too) before returning the
-//! plaintext or ciphertext to the caller. [`crate::persist::FlushGate::
-//! can_release_requests`] (a prior piece) is what actually enforces the
+//! plaintext or ciphertext to the caller. [`crate::persist::FlushEpoch`]
+//! (a later piece, `outgoing_queue`, M12) is what actually enforces the
 //! barrier -- this module's job is only to make sure it always has
 //! something to enforce: the mutation is marked dirty here, in the same
 //! synchronous call, before any ciphertext that depended on it could leave

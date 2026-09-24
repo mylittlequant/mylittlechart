@@ -10,42 +10,73 @@
 //! mutation that request could depend on has already been written and
 //! acknowledged.
 //!
-//! # Ordering guarantee — read this before calling [`FlushGate::can_release_requests`]
+//! # Per-request flush epoch — read this before calling [`FlushEpoch::seal_for_request`]
 //!
-//! [`FlushGate`] enforces a **global**, not a per-record, barrier: it does
-//! not track which outgoing request depends on which dirty record, because
-//! it never sees requests at all (that coupling belongs to a later piece,
-//! `outgoing_queue`/`sync_engine`, M12/M13). Instead it makes one flat
-//! guarantee, and callers must respect the protocol below for that
-//! guarantee to mean anything:
+//! An earlier version of this gate enforced one GLOBAL barrier: no request
+//! could be released while ANY batch, anywhere, was unacknowledged. That
+//! over-blocks a long-poll `/sync` or a typing indicator behind a
+//! completely unrelated room's Megolm ratchet advance. [`FlushEpoch`]
+//! (implemented by [`FlushGate`] itself, and by `store::Store` on top of
+//! its own gate) replaces the global barrier with a **per-request** epoch:
+//! each request records the [`RequiredSeq`] of the batch that could
+//! contain every mutation made before it was enqueued, and is releasable
+//! once every batch up to and including that one is acked — batches
+//! produced AFTER a request recorded its `RequiredSeq` never block it.
+//!
+//! [`FlushEpoch::seal_for_request`] is how a caller (`outgoing_queue`, M12)
+//! obtains that `RequiredSeq`: it forces whatever is currently pending
+//! into a fresh batch (so that mutation's own bytes start their trip to
+//! durable storage right away, rather than waiting for the next unrelated
+//! flush tick), or, if nothing is pending, simply returns the sequence id
+//! of the last batch already produced ([`RequiredSeq::NONE`] if none ever
+//! was) — see the worked example below.
+//!
+//! ## Worked example
+//!
+//! 1. `t0`: nothing has happened yet. The next batch produced will be `0`.
+//! 2. `t1`: a Megolm ratchet advances (`mark_dirty` on the outbound group
+//!    session record). Nothing is batched yet.
+//! 3. `t2`: the core is about to mint the `m.room.encrypted` send that
+//!    used that ratchet advance. It calls `seal_for_request()` — pending
+//!    is non-empty, so this call forces [`FlushGate::take_batch`],
+//!    producing batch `0` (unacked) and returning `RequiredSeq(Some(0))`.
+//! 4. `t3`: a *different*, unrelated request — a bare `GET /sync` with
+//!    `since` already known, nothing dirty — is minted. `seal_for_request()`
+//!    finds nothing pending, and the last batch produced is `0`, so it
+//!    also returns `RequiredSeq(Some(0))` (it conservatively still waits
+//!    on batch `0`, the most recent batch that could contain a prior
+//!    mutation — there is no cheaper, still-correct answer without
+//!    per-record dependency tracking, which this gate deliberately does
+//!    not do; see the crate doc's sans-I/O scope).
+//! 5. `t4`: ANOTHER Megolm ratchet advance happens (e.g. a *different*
+//!    room's outbound session rotates). This dirties a new record but
+//!    does **not** retroactively extend batch `0` — it opens its own,
+//!    independent cycle.
+//! 6. `t5`: a third request (a typing indicator) is minted. Its
+//!    `seal_for_request()` call now finds `t4`'s mutation pending and
+//!    forces it into batch `1`, returning `RequiredSeq(Some(1))`.
+//! 7. `t6`: the shell acks batch `0`. Both the `t2` send AND the `t3` sync
+//!    are now released (`is_released` is `true` for `RequiredSeq(Some(0))`)
+//!    — **even though batch `1` is still unacked** — because neither of
+//!    them ever depended on batch `1`'s contents. The `t5` typing PUT stays
+//!    blocked until batch `1` is also acked.
+//!
+//! This is the precise sense in which "a `/sync` enqueued with nothing
+//! dirty before it is never held back by later mutations": step 4's sync
+//! depends only on what predates it (batch `0`), and step 5/6's later
+//! mutation opens a cycle of its own that only requests minted *after* it
+//! (step 6's typing PUT) can ever be made to wait on.
+//!
+//! # Batching mechanics (unchanged from the global-barrier design)
 //!
 //! - [`FlushGate::take_batch`] atomically drains **every** record marked
-//!   dirty/deleted since the previous [`FlushGate::take_batch`] call into
-//!   one [`FlushBatch`], and marks that batch's `id` unacknowledged.
-//! - [`FlushGate::can_release_requests`] is `true` **only** when there is
-//!   (a) no unacknowledged batch outstanding, **and** (b) nothing currently
-//!   dirty that has not yet even been drained into a batch. Point (b)
-//!   matters: a mutation that has been marked dirty but not yet batched has
-//!   not even started its trip to durable storage, so nothing may depend on
-//!   it being safe yet, regardless of how old any *other*, already-acked
-//!   batch is.
-//! - **Required calling protocol**: a caller must call [`take_batch`] (and
-//!   hand the result to a shell to persist) for everything dirtied so far
-//!   *before* it produces any outgoing request that might depend on that
-//!   state, in the same synchronous step (this crate has no concurrency —
-//!   see the crate doc — so "before" is a plain, total call-sequence
-//!   order). A request produced immediately after such a `take_batch` call
-//!   is therefore never blocked by dirty records marked *afterwards*: those
-//!   records postdate the request and cannot be a dependency of it. This is
-//!   the precise sense of "requests produced after a flush are not blocked
-//!   by later dirty records" that this module's tests exercise — not that
-//!   later dirty data is ignored, but that it opens its own, independent
-//!   flush cycle rather than resurrecting or extending the previous one.
+//!   dirty/deleted since the previous [`FlushGate::take_batch`] call (or
+//!   [`FlushEpoch::seal_for_request`] call — both drain the same pending
+//!   set) into one [`FlushBatch`], and marks that batch's `id` unacked.
 //! - [`FlushGate::ack`] on a batch id that was never produced by
-//!   [`take_batch`] (already acked, or never issued) is a no-op — it never
-//!   panics and never affects any other batch's state.
-//!
-//! [`take_batch`]: FlushGate::take_batch
+//!   [`take_batch`](FlushGate::take_batch) (already acked, or never
+//!   issued) is a no-op — it never panics and never affects any other
+//!   batch's state.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -88,8 +119,8 @@ pub struct SealedRecord {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FlushBatch {
     /// This batch's sequence id, assigned in the order
-    /// [`FlushGate::take_batch`] produced it. [`FlushGate::ack`] is keyed
-    /// by this id.
+    /// [`FlushGate::take_batch`] produced it. [`FlushGate::ack`] and
+    /// [`RequiredSeq`] are both keyed by this id.
     pub id: u64,
     /// Sealed records to write.
     pub records: Vec<SealedRecord>,
@@ -107,10 +138,47 @@ enum PendingOp {
     Delete,
 }
 
+/// The flush-epoch a request depends on: the sequence id of the most
+/// recent [`FlushBatch`] that could contain a mutation made before the
+/// request was enqueued. `None` ([`RequiredSeq::NONE`]) means no batch has
+/// ever been produced and nothing was pending at enqueue time — the
+/// request depends on nothing and is releasable immediately. Produced by
+/// [`FlushEpoch::seal_for_request`], consumed by [`FlushEpoch::is_released`]
+/// — see the module doc's worked example for how the two calls interact.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
+pub struct RequiredSeq(Option<u64>);
+
+impl RequiredSeq {
+    /// No dependency at all — always released. The value a request that
+    /// predates every mutation this process has ever made carries.
+    pub const NONE: RequiredSeq = RequiredSeq(None);
+}
+
+/// The capability [`crate::outgoing_queue::OutgoingQueue`] needs from
+/// whatever owns a working set's [`FlushGate`] — implemented by
+/// [`FlushGate`] itself and by `crate::store::Store` (which delegates to
+/// its own, private gate). Kept as a trait, rather than requiring callers
+/// to hold a bare [`FlushGate`] directly, because the real owner of the
+/// gate is the working-set store (`store::Store`), not a caller that only
+/// ever wants the epoch-sealing behavior.
+pub trait FlushEpoch {
+    /// Seals whatever is currently pending (dirtied but not yet batched)
+    /// into a fresh [`FlushBatch`], returning the [`RequiredSeq`] a
+    /// request minted right now must wait on, plus that batch if one was
+    /// produced (`None` if nothing was pending). See the module doc's
+    /// worked example for the exact rule this implements.
+    fn seal_for_request(&mut self) -> (RequiredSeq, Option<FlushBatch>);
+
+    /// `true` iff every batch at or before `required`'s sequence id has
+    /// been acknowledged — i.e. it is safe to release a request that
+    /// recorded `required` as its [`RequiredSeq`].
+    fn is_released(&self, required: RequiredSeq) -> bool;
+}
+
 /// The flush-before-send barrier's state machine. See the module doc for
-/// the exact ordering guarantee [`can_release_requests`] makes.
-///
-/// [`can_release_requests`]: FlushGate::can_release_requests
+/// the per-request epoch rule [`FlushEpoch::seal_for_request`]/
+/// [`FlushEpoch::is_released`] implement.
 #[derive(Debug, Default)]
 pub struct FlushGate {
     next_batch_id: u64,
@@ -167,12 +235,24 @@ impl FlushGate {
     pub fn ack(&mut self, id: u64) {
         self.unacked_batches.remove(&id);
     }
+}
 
-    /// `true` iff every batch ever taken has been acknowledged and nothing
-    /// is currently pending (dirtied but not yet batched) — see the module
-    /// doc for why both conditions are required.
-    pub fn can_release_requests(&self) -> bool {
-        self.unacked_batches.is_empty() && self.pending.is_empty()
+impl FlushEpoch for FlushGate {
+    fn seal_for_request(&mut self) -> (RequiredSeq, Option<FlushBatch>) {
+        if self.pending.is_empty() {
+            return (RequiredSeq(self.next_batch_id.checked_sub(1)), None);
+        }
+        let batch = self
+            .take_batch()
+            .expect("pending is non-empty (checked above), so take_batch always returns Some here");
+        (RequiredSeq(Some(batch.id)), Some(batch))
+    }
+
+    fn is_released(&self, required: RequiredSeq) -> bool {
+        match required.0 {
+            None => true,
+            Some(seq) => self.unacked_batches.range(..=seq).next().is_none(),
+        }
     }
 }
 
@@ -181,58 +261,82 @@ mod tests {
     use super::*;
 
     #[test]
-    fn requests_blocked_until_prior_flush_acked() {
+    fn seal_for_request_blocks_release_until_the_sealed_batch_is_acked() {
         let mut gate = FlushGate::new();
         gate.mark_dirty(RecordKey::new("messenger/dev/account"), b"v1".to_vec());
-        assert!(!gate.can_release_requests(), "dirty and not yet batched");
 
-        let batch = gate.take_batch().expect("something was pending");
-        assert!(!gate.can_release_requests(), "batched but not yet acked");
+        let (required, batch) = gate.seal_for_request();
+        let batch = batch.expect("the pending write was sealed into a batch");
+        assert!(!gate.is_released(required), "sealed but not yet acked");
 
         gate.ack(batch.id);
-        assert!(gate.can_release_requests(), "flushed and acked: safe to release");
+        assert!(gate.is_released(required), "sealed and acked: safe to release");
+    }
+
+    #[test]
+    fn a_request_minted_with_nothing_pending_depends_on_the_last_batch_already_taken() {
+        let mut gate = FlushGate::new();
+        gate.mark_dirty(RecordKey::new("messenger/dev/a"), b"1".to_vec());
+        let (first_required, first_batch) = gate.seal_for_request();
+        let first_batch = first_batch.expect("first mutation was sealed");
+
+        // Nothing new dirtied -- this request still conservatively depends
+        // on the most recent batch, since it could contain a mutation that
+        // predates this request.
+        let (second_required, second_batch) = gate.seal_for_request();
+        assert!(second_batch.is_none(), "nothing was pending, so no new batch was forced");
+        assert_eq!(second_required, first_required, "both wait on the same, already-produced batch");
+
+        gate.ack(first_batch.id);
+        assert!(gate.is_released(first_required));
+        assert!(gate.is_released(second_required));
+    }
+
+    #[test]
+    fn a_request_minted_before_any_mutation_has_no_dependency() {
+        let gate = FlushGate::new();
+        assert!(gate.is_released(RequiredSeq::NONE));
     }
 
     #[test]
     fn requests_produced_after_a_flush_are_not_blocked_by_later_dirty_records() {
         let mut gate = FlushGate::new();
         gate.mark_dirty(RecordKey::new("messenger/dev/a"), b"1".to_vec());
-        let batch1 = gate.take_batch().expect("first batch");
+        let (required1, batch1) = gate.seal_for_request();
+        let batch1 = batch1.expect("first batch");
         gate.ack(batch1.id);
-        assert!(
-            gate.can_release_requests(),
-            "fully flushed and acked: safe to release requests produced right now"
-        );
+        assert!(gate.is_released(required1), "fully flushed and acked: safe to release");
 
         // A later, independent mutation (e.g. the NEXT Olm ratchet advance)
-        // opens its own flush cycle. It correctly blocks release again
-        // (its own bytes are not on disk yet) -- but it does so on its own
-        // terms, not by resurrecting or extending batch1's bookkeeping.
+        // opens its own flush cycle. A request minted *before* this
+        // mutation happened (required1) stays released; the mutation does
+        // not retroactively extend batch1's bookkeeping.
         gate.mark_dirty(RecordKey::new("messenger/dev/b"), b"2".to_vec());
-        assert!(!gate.can_release_requests(), "new dirty data is not yet on disk");
+        assert!(gate.is_released(required1), "still released: batch1 already acked");
 
-        let batch2 = gate.take_batch().expect("second batch");
+        let (required2, batch2) = gate.seal_for_request();
+        let batch2 = batch2.expect("second batch");
         assert_ne!(batch1.id, batch2.id, "each flush cycle gets a fresh id");
+        assert!(!gate.is_released(required2), "a request minted just now waits on the fresh batch");
+
         gate.ack(batch2.id);
-        assert!(
-            gate.can_release_requests(),
-            "second cycle flushed independently of the first"
-        );
+        assert!(gate.is_released(required2), "second cycle flushed independently of the first");
     }
 
     #[test]
     fn ack_of_unknown_batch_is_ignored() {
         let mut gate = FlushGate::new();
         gate.ack(999); // never issued -- must not panic
-        assert!(gate.can_release_requests());
+        assert!(gate.is_released(RequiredSeq::NONE));
 
         gate.mark_dirty(RecordKey::new("messenger/dev/a"), b"1".to_vec());
-        let batch = gate.take_batch().expect("pending");
+        let (required, batch) = gate.seal_for_request();
+        let batch = batch.expect("pending");
         gate.ack(batch.id + 1); // wrong id -- ignored, real batch stays unacked
-        assert!(!gate.can_release_requests());
+        assert!(!gate.is_released(required));
 
         gate.ack(batch.id);
-        assert!(gate.can_release_requests());
+        assert!(gate.is_released(required));
     }
 
     #[test]

@@ -21,11 +21,14 @@
 //!
 //! # Flush-before-send barrier
 //!
-//! [`persist::FlushGate::can_release_requests`] is the barrier the plan's
-//! manager decision #3 requires: a state mutation (an Olm/Megolm ratchet
-//! advance, most critically) must be durably flushed and acknowledged
-//! *before* the ciphertext that used it is allowed to leave the process.
-//! See `persist`'s module doc for the exact ordering guarantee this makes.
+//! [`persist::FlushEpoch`] is the barrier the plan's manager decision #3
+//! requires: a state mutation (an Olm/Megolm ratchet advance, most
+//! critically) must be durably flushed and acknowledged *before* the
+//! ciphertext that used it is allowed to leave the process — scoped
+//! per-request (M12's [`persist::RequiredSeq`] epoch) rather than as one
+//! global barrier, so an unrelated `/sync` or typing indicator is never
+//! held behind it. See `persist`'s module doc for the exact ordering
+//! guarantee this makes, with a worked example.
 //!
 //! # Synchronous by construction
 //!
@@ -82,7 +85,16 @@
 //! Olm to-device, and inbound decrypt with bound-sender authentication and
 //! message-index replay protection.
 //!
-//! The sync engine tying everything together (plan §5, M8-M15) is a later
+//! **M12** — the outgoing request queue ([`outgoing_queue`]):
+//! [`outgoing_queue::OutgoingQueue`] tracks pending requests per
+//! [`outgoing_queue::Lane`] (`Sync`/`ToDevice`/`Room`/`Other`), replaying
+//! them idempotently with capped exponential backoff
+//! ([`outgoing_queue::ResponseOutcome`]) and surviving a crash via
+//! [`store::StateStore::pending_requests`]. [`persist::FlushGate`] gained a
+//! per-request flush epoch ([`persist::FlushEpoch`], [`persist::RequiredSeq`])
+//! replacing its earlier global barrier — see `persist`'s module doc.
+//!
+//! The sync engine tying everything together (plan §5, M13-M15) is a later
 //! piece and is not present in this crate yet.
 
 #![forbid(unsafe_code)]
@@ -92,6 +104,7 @@ pub mod canonical_json;
 pub mod crypto;
 pub mod error;
 pub mod ids;
+pub mod outgoing_queue;
 pub mod persist;
 pub mod room;
 pub mod store;
@@ -109,7 +122,8 @@ pub use crypto::olm_sessions::{
 };
 pub use error::MessengerError;
 pub use ids::{DeviceId, EventId, RequestId, RoomId, TxnId, UserId};
-pub use persist::{FlushBatch, FlushGate, RecordKey, SealedRecord};
+pub use outgoing_queue::{Jitter, Lane, OutgoingQueue, PendingRequest, ResponseOutcome};
+pub use persist::{FlushBatch, FlushEpoch, FlushGate, RecordKey, RequiredSeq, SealedRecord};
 pub use room::{
     aggregate_relation, highlight, last_preview, recompute_bundle, EditRecord, GapMarker, ItemContent, MemberRole,
     MemberState, RelatingEvent, RelationsBundle, RoomKind, RoomState, SendState, StateChangeSummary, Timeline,

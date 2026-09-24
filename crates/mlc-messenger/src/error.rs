@@ -51,12 +51,12 @@ pub enum MessengerError {
     #[error("store: {0}")]
     Store(#[from] crate::store::StoreError),
 
-    /// Raised when a caller (a later piece's `outgoing_queue`/
-    /// `sync_engine`) attempts to release an outgoing request while
-    /// [`crate::persist::FlushGate::can_release_requests`] reports it is
-    /// not yet safe to do so — a state mutation the request depends on is
-    /// not yet durably flushed and acknowledged. See the `persist` module
-    /// doc for the exact ordering guarantee this enforces.
+    /// Raised when a caller (`crate::outgoing_queue`/a later `sync_engine`
+    /// piece) attempts to release an outgoing request while
+    /// [`crate::persist::FlushEpoch::is_released`] reports it is not yet
+    /// safe to do so — a state mutation the request depends on is not yet
+    /// durably flushed and acknowledged. See the `persist` module doc for
+    /// the exact per-request ordering guarantee this enforces.
     #[error(
         "outgoing requests are blocked: a state mutation they depend on is not yet flushed and acknowledged"
     )]

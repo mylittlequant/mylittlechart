@@ -59,7 +59,7 @@
 //! | `messenger/{device_id}/legacy_dm_peer_key/{user_id}` | that peer's 32-byte legacy DM X25519 public key |
 //! | `messenger/{device_id}/sync_token` | the `/sync` `next_batch` token, UTF-8 |
 //! | `messenger/{device_id}/room_state/{room_id}` | that room's serialized state blob |
-//! | `messenger/{device_id}/pending/{request_id}` | one not-yet-acked [`OutgoingRequest`], JSON |
+//! | `messenger/{device_id}/pending/{request_id}` | one not-yet-acked [`crate::outgoing_queue::PendingRequest`] (the request itself, its lane, and its flush epoch), JSON |
 //!
 //! Every dynamic path component (`{curve25519}`, `{room_id}`, `{user_id}`,
 //! `{session_id}`, `{request_id}`) is percent-encoded with the exact scheme
@@ -88,8 +88,9 @@
 //! enough to know what to do about it.
 
 use crate::ids::{DeviceId, RequestId, RoomId, UserId};
-use crate::persist::{FlushBatch, FlushGate, RecordKey, SealedRecord};
-use crate::wire::{percent_decode_segment, percent_encode_segment, OutgoingRequest};
+use crate::outgoing_queue::PendingRequest;
+use crate::persist::{FlushBatch, FlushEpoch, FlushGate, RecordKey, RequiredSeq, SealedRecord};
+use crate::wire::{percent_decode_segment, percent_encode_segment};
 use std::collections::BTreeMap;
 
 /// Every error [`Store::load`] or a mutation can return. All three variants
@@ -285,9 +286,11 @@ pub trait CryptoStore {
 
 /// The sync/room half of the working set — every method the plan's §3.2
 /// `StateStore` names, kept as this trait's method set. `pending_requests`
-/// carries the already-concrete [`OutgoingRequest`] type this crate defines
-/// (plan §5's `outgoing_queue::PendingRequest` is a later piece, M12; there
-/// is nothing that type would add over the request itself at this layer).
+/// carries [`PendingRequest`] (plan §5's `outgoing_queue::PendingRequest`,
+/// M12): the wire request itself, plus the [`crate::outgoing_queue::Lane`]
+/// it belongs to and the [`RequiredSeq`] it must wait on, so a crash
+/// restart can rebuild `outgoing_queue::OutgoingQueue` without losing
+/// either.
 pub trait StateStore {
     /// The `/sync` `next_batch` token from the most recent successful sync,
     /// if any.
@@ -303,10 +306,10 @@ pub trait StateStore {
     fn room_ids(&self) -> Result<Vec<RoomId>, StoreError>;
 
     /// Every outgoing request still waiting to be sent or acked.
-    fn pending_requests(&self) -> Result<Vec<OutgoingRequest>, StoreError>;
+    fn pending_requests(&self) -> Result<Vec<PendingRequest>, StoreError>;
     /// Records an outgoing request as pending (survives a crash/restart
     /// until [`StateStore::delete_pending_request`] removes it).
-    fn save_pending_request(&mut self, req: OutgoingRequest) -> Result<(), StoreError>;
+    fn save_pending_request(&mut self, req: PendingRequest) -> Result<(), StoreError>;
     /// Removes a pending request, e.g. once its response has arrived. A
     /// no-op if `id` is not currently pending.
     fn delete_pending_request(&mut self, id: &RequestId) -> Result<(), StoreError>;
@@ -583,7 +586,7 @@ pub struct Store<C: RecordCodec> {
     legacy_dm_peer_keys: BTreeMap<UserId, [u8; 32]>,
     sync_token: Option<String>,
     room_state: BTreeMap<RoomId, Vec<u8>>,
-    pending_requests: BTreeMap<RequestId, OutgoingRequest>,
+    pending_requests: BTreeMap<RequestId, PendingRequest>,
     /// Sealed bytes for keys no kind in this version recognizes, kept
     /// verbatim across a load — see the module doc's "Forward
     /// compatibility" section.
@@ -693,7 +696,7 @@ impl<C: RecordCodec> Store<C> {
                 self.room_state.insert(room_id, plaintext);
             }
             RecognizedRecord::PendingRequest { request_id } => {
-                let req: OutgoingRequest = serde_json::from_slice(&plaintext).map_err(|source| {
+                let req: PendingRequest = serde_json::from_slice(&plaintext).map_err(|source| {
                     StoreError::decode(key, format!("pending request is not valid JSON: {source}"))
                 })?;
                 self.pending_requests.insert(request_id, req);
@@ -723,12 +726,15 @@ impl<C: RecordCodec> Store<C> {
     pub fn ack_flush(&mut self, id: u64) {
         self.gate.ack(id);
     }
+}
 
-    /// `true` iff it is safe to release outgoing requests right now — see
-    /// [`FlushGate::can_release_requests`] for the exact guarantee this
-    /// makes.
-    pub fn can_release_requests(&self) -> bool {
-        self.gate.can_release_requests()
+impl<C: RecordCodec> FlushEpoch for Store<C> {
+    fn seal_for_request(&mut self) -> (RequiredSeq, Option<FlushBatch>) {
+        self.gate.seal_for_request()
+    }
+
+    fn is_released(&self, required: RequiredSeq) -> bool {
+        self.gate.is_released(required)
     }
 }
 
@@ -922,16 +928,17 @@ impl<C: RecordCodec> StateStore for Store<C> {
         Ok(self.room_state.keys().cloned().collect())
     }
 
-    fn pending_requests(&self) -> Result<Vec<OutgoingRequest>, StoreError> {
+    fn pending_requests(&self) -> Result<Vec<PendingRequest>, StoreError> {
         Ok(self.pending_requests.values().cloned().collect())
     }
 
-    fn save_pending_request(&mut self, req: OutgoingRequest) -> Result<(), StoreError> {
-        let key = pending_request_record_key(&self.device_id, &req.id);
+    fn save_pending_request(&mut self, req: PendingRequest) -> Result<(), StoreError> {
+        let id = req.request.id.clone();
+        let key = pending_request_record_key(&self.device_id, &id);
         let plaintext = serde_json::to_vec(&req)
             .map_err(|source| StoreError::decode(&key, format!("failed to serialize pending request: {source}")))?;
         self.mark_dirty(key, plaintext);
-        self.pending_requests.insert(req.id.clone(), req);
+        self.pending_requests.insert(id, req);
         Ok(())
     }
 
@@ -948,6 +955,8 @@ impl<C: RecordCodec> StateStore for Store<C> {
 mod tests {
     use super::*;
     use crate::ids::{DeviceId, RequestId, RoomId, UserId};
+    use crate::outgoing_queue::Lane;
+    use crate::wire::OutgoingRequest;
 
     fn device_id() -> DeviceId {
         DeviceId::parse("DEV1").expect("valid device id")
@@ -959,6 +968,18 @@ mod tests {
 
     fn user_id() -> UserId {
         UserId::parse("@alice:example.org").expect("valid user id")
+    }
+
+    /// A pending-request fixture for tests that only care about round-trip
+    /// persistence, not lane/epoch semantics (those are `outgoing_queue`'s
+    /// own tests) -- `Lane::Other`/[`RequiredSeq::NONE`] are arbitrary but
+    /// fixed choices.
+    fn pending_request(room: &RoomId) -> PendingRequest {
+        PendingRequest {
+            request: OutgoingRequest::room_members(RequestId::next(0), room),
+            lane: Lane::Other,
+            required_seq: RequiredSeq::NONE,
+        }
     }
 
     #[test]
@@ -975,7 +996,7 @@ mod tests {
         let mut store = Store::new(device_id(), InsecurePlainCodecForTests);
         assert!(store.pending_requests().expect("no error").is_empty());
 
-        let req = OutgoingRequest::room_members(RequestId::next(0), &room_id());
+        let req = pending_request(&room_id());
         store.save_pending_request(req.clone()).expect("save succeeds");
         assert_eq!(store.pending_requests().expect("no error"), vec![req]);
     }
@@ -1005,7 +1026,7 @@ mod tests {
         store.save_legacy_dm_peer_key(&user, [7u8; 32]).expect("save legacy dm peer key");
         store.save_sync_token("s123".to_string()).expect("save sync token");
         store.save_room_state(&room, b"room-state-bytes".to_vec()).expect("save room state");
-        let req = OutgoingRequest::room_members(RequestId::next(0), &room);
+        let req = pending_request(&room);
         store.save_pending_request(req.clone()).expect("save pending request");
 
         let batch = store.take_flush_batch().expect("everything above dirtied something");
@@ -1047,14 +1068,14 @@ mod tests {
         let room = room_id();
         let mut store = Store::new(device.clone(), InsecurePlainCodecForTests);
 
-        let req = OutgoingRequest::room_members(RequestId::next(0), &room);
+        let req = pending_request(&room);
         store.save_pending_request(req.clone()).expect("save pending request");
         let write_batch = store.take_flush_batch().expect("pending request save is pending");
         store.ack_flush(write_batch.id);
 
-        store.delete_pending_request(&req.id).expect("delete succeeds");
+        store.delete_pending_request(&req.request.id).expect("delete succeeds");
         let delete_batch = store.take_flush_batch().expect("deletion is pending");
-        assert_eq!(delete_batch.deletes, vec![pending_request_record_key(&device, &req.id)]);
+        assert_eq!(delete_batch.deletes, vec![pending_request_record_key(&device, &req.request.id)]);
         store.ack_flush(delete_batch.id);
 
         // Simulate a shell applying the delta to its own durable key-value
@@ -1086,7 +1107,9 @@ mod tests {
         assert_eq!(batch.records[0].bytes, unknown_bytes, "re-emitted byte-for-byte, not re-sealed");
 
         store.ack_flush(batch.id);
-        assert!(store.can_release_requests());
+        let (required, extra_batch) = store.seal_for_request();
+        assert!(extra_batch.is_none(), "nothing new became pending after the ack");
+        assert!(store.is_released(required), "the only batch produced so far is acked");
     }
 
     #[test]
@@ -1114,18 +1137,17 @@ mod tests {
     }
 
     #[test]
-    fn mutations_block_request_release_until_acked() {
+    fn seal_for_request_blocks_release_until_the_sealed_batch_is_acked() {
         let mut store = Store::new(device_id(), InsecurePlainCodecForTests);
-        assert!(store.can_release_requests(), "nothing dirtied yet");
+        assert!(store.is_released(RequiredSeq::NONE), "nothing dirtied yet");
 
         store.save_account(b"account-bytes".to_vec()).expect("save succeeds");
-        assert!(!store.can_release_requests(), "dirty and not yet flushed");
-
-        let batch = store.take_flush_batch().expect("account save is pending");
-        assert!(!store.can_release_requests(), "flushed but not yet acked");
+        let (required, batch) = store.seal_for_request();
+        let batch = batch.expect("the pending account mutation was sealed into a batch");
+        assert!(!store.is_released(required), "sealed but not yet acked");
 
         store.ack_flush(batch.id);
-        assert!(store.can_release_requests(), "flushed and acked: safe to release");
+        assert!(store.is_released(required), "sealed and acked: safe to release");
     }
 
     #[test]
