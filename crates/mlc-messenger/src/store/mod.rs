@@ -30,7 +30,10 @@
 //! `mlc_vault::crypto`-backed codec — a later piece, M14, binding the record
 //! key as AAD). [`InsecurePlainCodecForTests`] is the only codec this piece
 //! ships: an identity function, good for nothing but letting this crate's
-//! own tests build and round-trip a [`Store`] without a real vault key.
+//! own tests build and round-trip a [`Store`] without a real vault key. It
+//! is gated behind the `test-support` Cargo feature (off by default, turned
+//! on for this crate's own test builds only — see its own doc comment) so no
+//! shell can compile against it by accident.
 //!
 //! # Key layout
 //!
@@ -161,9 +164,17 @@ pub trait RecordCodec {
 /// only so this crate's own tests (and, later, its `tests/e2e_*.rs`
 /// integration tests) can build and round-trip a [`Store`] without a real
 /// vault key. Never wire this into anything a shell actually persists.
+///
+/// Gated behind the `test-support` Cargo feature (off by default) so no
+/// shell, or any other crate depending on this one normally, can link
+/// against a codec that provides zero confidentiality by accident. This
+/// crate's own test builds turn the feature on via the self-referential
+/// `[dev-dependencies]` entry in `Cargo.toml`.
+#[cfg(feature = "test-support")]
 #[derive(Debug, Default, Clone, Copy)]
 pub struct InsecurePlainCodecForTests;
 
+#[cfg(feature = "test-support")]
 impl RecordCodec for InsecurePlainCodecForTests {
     fn seal(&self, _key: &RecordKey, plaintext: &[u8]) -> Vec<u8> {
         plaintext.to_vec()

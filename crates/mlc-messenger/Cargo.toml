@@ -15,13 +15,24 @@ mylittlechart-vodozemac = { path = "../mlc-vodozemac" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"
-# Not yet called from this piece's own code (M1: ids/error/wire/persist).
-# Reserved for M3 (`wire::events`), where Matrix to-device/timeline event
-# content -- Olm/Megolm ciphertext, Megolm session-key exports -- is
-# base64-encoded JSON per the client-server API's own wire format; adding
-# the dependency here now (per the plan's M1 scope) keeps every later
-# piece's Cargo.toml diff to source files only.
+# Still not called from this piece's own code. `wire::events` (M3) keeps
+# Olm/Megolm ciphertext, Megolm session-key exports, and OTK/backup blobs as
+# opaque base64 *strings* at the wire-parsing layer -- decoding them to bytes
+# is the crypto machine's job (M6+: `crypto::account`, `crypto::olm_sessions`,
+# `crypto::group_sessions`), so this dependency stays reserved until then.
 base64.workspace = true
+
+[features]
+# Enables `store::InsecurePlainCodecForTests`. Off by default so no shell
+# (or any other crate) can compile against a codec that provides zero
+# confidentiality by linking against this crate normally -- only this
+# crate's own test builds turn it on, via the self-referential dev-dependency
+# below (Cargo unifies a dev-dependency's requested features into the same
+# build the corresponding lib/test targets use).
+test-support = []
+
+[dev-dependencies]
+mylittlechart-messenger = { path = ".", features = ["test-support"] }
 
 [lints]
 workspace = true

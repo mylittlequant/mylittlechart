@@ -46,11 +46,19 @@
 //! in-memory `CryptoStore`/`StateStore` implementation later pieces
 //! (crypto, room, sync engine) code against, sealed for export through
 //! [`persist::FlushGate`] by a [`store::RecordCodec`] (this piece ships only
-//! [`store::InsecurePlainCodecForTests`]; the real AES-256-GCM codec is a
-//! later piece, M14).
+//! `store::InsecurePlainCodecForTests`, gated behind the `test-support`
+//! Cargo feature; the real AES-256-GCM codec is a later piece, M14).
+//!
+//! **M3** — the `/sync` and event wire types ([`wire::events`],
+//! [`wire::sync`]): [`wire::sync::SyncResponse`] and
+//! [`wire::sync::parse_sync_response`], the Matrix event envelope
+//! ([`wire::events::RawEvent`], [`wire::events::StrippedStateEvent`],
+//! [`wire::events::ToDeviceEvent`]), relation aggregation
+//! ([`wire::events::RelatesTo`]), and typed content for the state/timeline/
+//! to-device/account-data/ephemeral event types this crate reads.
 //!
 //! The sync engine and room/crypto state land in later pieces (plan §5,
-//! M3-M15) and are not present in this crate yet.
+//! M4-M15) and are not present in this crate yet.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
