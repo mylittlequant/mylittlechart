@@ -183,9 +183,17 @@ pub struct RuntimeSeriesColors {
     pub ma_slow: String,
     pub ma_third: String,
 
-    // Volume
-    pub volume_up: String,
-    pub volume_down: String,
+    // Volume — hue is derived from `candle_up_body`/`candle_down_body` at
+    // read time (owner ruling 2026-09-24, R21), never stored independently.
+    // Only the alpha varies per skin/preset. See
+    // `mlc_core::utils::color::apply_opacity`. `#[serde(default)]`: a theme
+    // JSON saved before this field existed (or the old independent
+    // `volume_up`/`volume_down` colour keys, now unknown fields serde just
+    // ignores) still deserializes.
+    #[serde(default = "default_volume_alpha")]
+    pub volume_up_alpha: f64,
+    #[serde(default = "default_volume_alpha")]
+    pub volume_down_alpha: f64,
 
     // DOM-heat gradient endpoints. The overlay leans a level's colour from
     // base toward "hot" with its depth, the same way the DOM ladder's
@@ -241,6 +249,10 @@ fn default_footprint_buy() -> String {
 
 fn default_footprint_sell() -> String {
     "#ef5350".to_string()
+}
+
+fn default_volume_alpha() -> f64 {
+    0.5
 }
 
 /// Font settings
@@ -557,8 +569,8 @@ impl From<&UITheme> for RuntimeTheme {
                 ma_fast: theme.series.ma_fast.to_string(),
                 ma_slow: theme.series.ma_slow.to_string(),
                 ma_third: theme.series.ma_third.to_string(),
-                volume_up: theme.series.volume_up.to_string(),
-                volume_down: theme.series.volume_down.to_string(),
+                volume_up_alpha: theme.series.volume_up_alpha,
+                volume_down_alpha: theme.series.volume_down_alpha,
                 heat_bid: theme.series.candle_up_body.to_string(),
                 heat_bid_hot: theme.series.candle_up_body.to_string(),
                 heat_ask: theme.series.candle_down_body.to_string(),

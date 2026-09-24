@@ -925,6 +925,95 @@ pub const ICON_THREE_DRIVES: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" 
 </svg>"##;
 
 // =============================================================================
+// Harmonic preset icons (autodetectors A0, 2026-09-24)
+// =============================================================================
+//
+// One glyph per named XABCD preset (`xabcd_pattern.rs`'s `metadata_*`
+// factories, `docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`
+// piece 2/3) — bodies copied verbatim from `mlc-ui-lab/designs/
+// 2026-09-23-toolbar-icons/icons_v4.json` batch B, wrapped the same way
+// `ICON_SMC_SCAN` already is (viewBox 24x24, root stroke-width 1.25,
+// currentColor, tints via opacity — house standard, not the design file's
+// own 1.5 note).
+
+pub const ICON_HARMONIC_GARTLEY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 19L8 5L12 13.5z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M12 13.5L15.5 8L21 16z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M3 19L8 5L12 13.5L15.5 8L21 16"/>
+  <path d="M3 19L12 13.5" stroke-dasharray="1.5 1.5"/>
+  <path d="M12 13.5L21 16" stroke-dasharray="1.5 1.5"/>
+</svg>"##;
+
+pub const ICON_HARMONIC_BAT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 19L8 5L12 14.5z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M12 14.5L15.5 9L21 18z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M3 19L8 5L12 14.5L15.5 9L21 18"/>
+  <path d="M3 19L12 14.5" stroke-dasharray="1.5 1.5"/>
+  <path d="M12 14.5L21 18" stroke-dasharray="1.5 1.5"/>
+</svg>"##;
+
+pub const ICON_HARMONIC_ALT_BAT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 18L8 5L12 15z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M12 15L15 10L21 20.5z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M3 18L8 5L12 15L15 10L21 20.5"/>
+  <path d="M3 18L12 15" stroke-dasharray="1.5 1.5"/>
+  <path d="M12 15L21 20.5" stroke-dasharray="1.5 1.5"/>
+</svg>"##;
+
+pub const ICON_HARMONIC_BUTTERFLY: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 16L8 5L12 14.5z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M12 14.5L15.5 8L21 20.5z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M3 16L8 5L12 14.5L15.5 8L21 20.5"/>
+  <path d="M3 16L12 14.5" stroke-dasharray="1.5 1.5"/>
+  <path d="M12 14.5L21 20.5" stroke-dasharray="1.5 1.5"/>
+</svg>"##;
+
+pub const ICON_HARMONIC_CRAB: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 15L7.5 5L11 11z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M11 11L14.5 7L21 21z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M3 15L7.5 5L11 11L14.5 7L21 21"/>
+  <path d="M3 15L11 11" stroke-dasharray="1.5 1.5"/>
+  <path d="M11 11L21 21" stroke-dasharray="1.5 1.5"/>
+</svg>"##;
+
+pub const ICON_HARMONIC_DEEP_CRAB: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 15L7.5 5L11 14z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M11 14L14.5 8L21 21z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M3 15L7.5 5L11 14L14.5 8L21 21"/>
+  <path d="M3 15L11 14" stroke-dasharray="1.5 1.5"/>
+  <path d="M11 14L21 21" stroke-dasharray="1.5 1.5"/>
+</svg>"##;
+
+pub const ICON_HARMONIC_SHARK: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 18L7 9L11 14z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M11 14L15 4L21 17z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M3 18L7 9L11 14L15 4L21 17"/>
+  <path d="M3 18L11 14" stroke-dasharray="1.5 1.5"/>
+  <path d="M11 14L21 17" stroke-dasharray="1.5 1.5"/>
+</svg>"##;
+
+/// Bars scan icon swap (A0, piece 3): the range-bracket-motif replacement
+/// for `candle_pattern_scan`'s previous icon, matching the "scan tools
+/// share a bracket motif" design note (`ICON_SMC_SCAN`'s own doc) that
+/// `ICON_CANDLE_PATTERN_SCAN` predates. Wired to the `candle_pattern_scan`
+/// toolbar row in `toolbar.rs`'s `pattern_section()` (piece 5) — the icon
+/// constant name follows the new `bars_scan` id, not the old primitive name.
+pub const ICON_BARS_SCAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4.5 4H3v16h1.5"/>
+  <path d="M19.5 4H21v16h-1.5"/>
+  <rect x="9.75" y="5" width="4.5" height="14" rx="0.5" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M8 8v1.5"/>
+  <path d="M8 15v1.5"/>
+  <rect x="6.75" y="9.5" width="2.5" height="5.5"/>
+  <path d="M12 6v2"/>
+  <path d="M12 16v2"/>
+  <rect x="10.75" y="8" width="2.5" height="8" fill="currentColor"/>
+  <path d="M16 9v2"/>
+  <path d="M16 15v1.5"/>
+  <rect x="14.75" y="11" width="2.5" height="4"/>
+</svg>"##;
+
+// =============================================================================
 // Elliott Wave Icons
 // =============================================================================
 
@@ -2868,6 +2957,16 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         // Markup engines (candle patterns, smart money, AMD, order flow)
         "candle_pattern" | "candlepattern" => Some(ICON_CANDLE_PATTERN),
         "candle_pattern_scan" | "candlepatternscan" => Some(ICON_CANDLE_PATTERN_SCAN),
+        "bars_scan" | "barsscan" => Some(ICON_BARS_SCAN),
+
+        // Named harmonic toolbar presets (autodetectors A0, 2026-09-24)
+        "harmonic_gartley" | "harmonicgartley" => Some(ICON_HARMONIC_GARTLEY),
+        "harmonic_bat" | "harmonicbat" => Some(ICON_HARMONIC_BAT),
+        "harmonic_alt_bat" | "harmonicaltbat" => Some(ICON_HARMONIC_ALT_BAT),
+        "harmonic_butterfly" | "harmonicbutterfly" => Some(ICON_HARMONIC_BUTTERFLY),
+        "harmonic_crab" | "harmoniccrab" => Some(ICON_HARMONIC_CRAB),
+        "harmonic_deep_crab" | "harmonicdeepcrab" => Some(ICON_HARMONIC_DEEP_CRAB),
+        "harmonic_shark" | "harmonicshark" => Some(ICON_HARMONIC_SHARK),
         "order_block" | "orderblock" => Some(ICON_ORDER_BLOCK),
         "fair_value_gap" | "fairvaluegap" => Some(ICON_FAIR_VALUE_GAP),
         "liquidity_sweep" | "liquiditysweep" => Some(ICON_LIQUIDITY_SWEEP),
@@ -3373,6 +3472,14 @@ mod icon_stroke_width_guard {
         ("ICON_PROJECTION", ICON_PROJECTION),
         ("ICON_CANDLE_PATTERN", ICON_CANDLE_PATTERN),
         ("ICON_CANDLE_PATTERN_SCAN", ICON_CANDLE_PATTERN_SCAN),
+        ("ICON_BARS_SCAN", ICON_BARS_SCAN),
+        ("ICON_HARMONIC_GARTLEY", ICON_HARMONIC_GARTLEY),
+        ("ICON_HARMONIC_BAT", ICON_HARMONIC_BAT),
+        ("ICON_HARMONIC_ALT_BAT", ICON_HARMONIC_ALT_BAT),
+        ("ICON_HARMONIC_BUTTERFLY", ICON_HARMONIC_BUTTERFLY),
+        ("ICON_HARMONIC_CRAB", ICON_HARMONIC_CRAB),
+        ("ICON_HARMONIC_DEEP_CRAB", ICON_HARMONIC_DEEP_CRAB),
+        ("ICON_HARMONIC_SHARK", ICON_HARMONIC_SHARK),
         ("ICON_ORDER_BLOCK", ICON_ORDER_BLOCK),
         ("ICON_FAIR_VALUE_GAP", ICON_FAIR_VALUE_GAP),
         ("ICON_LIQUIDITY_SWEEP", ICON_LIQUIDITY_SWEEP),

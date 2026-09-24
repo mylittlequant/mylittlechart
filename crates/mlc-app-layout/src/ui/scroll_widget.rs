@@ -7,6 +7,11 @@
 //! Core re-exports `ScrollableContainer`, `ScrollableConfig`, `ScrollableResult`,
 //! `ScrollbarConfig`, `draw_scrollbar`, `ScrollbarState`, and `ScrollbarResult`
 //! via `pub use mlc_core::ui::scroll_widget::*`.
+//!
+//! Harvest: uzor scroll-bottom-anchor (the bottom-anchored free functions
+//! below `ScrollableContainer::end` only — the pre-existing top-anchored
+//! container/scrollbar above are this crate's own pre-2026-09-24 code, not
+//! part of the messenger harvest-ready pass).
 
 use mlc_core::engine::render::RenderContext;
 use crate::ui::widgets::types::{WidgetTheme};
@@ -311,5 +316,103 @@ impl ScrollableContainer {
         result.track_rect = Some(scrollbar_result.track_rect);
 
         result
+    }
+}
+
+// =============================================================================
+// Bottom-anchored mode — the messenger feed's own scroll behaviour (newest
+// message at the bottom, like every chat client): land at the bottom on
+// open, and keep the view pinned to the bottom as new content arrives ONLY
+// while the caller was already there — a message landing underneath a
+// caller who scrolled up to read history must never yank them back down.
+// `ScrollableContainer` itself stays top-anchored (`content_y = viewport.y
+// - offset`, unchanged above) — bottom-anchoring is entirely a matter of
+// which `ScrollState::offset`/`target` value the CALLER feeds it each
+// frame, so these are free functions over `&mut ScrollState` rather than a
+// second container type.
+// =============================================================================
+
+/// Slack (px) within which the viewport counts as "at the bottom" — tolerant
+/// of [`ScrollState::animated_offset`]'s own settle epsilon so an ease that
+/// has not quite finished converging still reads as bottomed out.
+const AT_BOTTOM_SLACK_PX: f64 = 4.0;
+
+/// Whether the viewport is currently at (or within [`AT_BOTTOM_SLACK_PX`]
+/// of) the bottom of `content_height` — the messenger feed's own "should a
+/// growth re-pin the view" test, and the jump-to-latest button's own
+/// visibility test ([`jump_button_visible`]).
+pub fn is_at_bottom(scroll: &ScrollState, content_height: f64, viewport_height: f64) -> bool {
+    let max_scroll = (content_height - viewport_height).max(0.0);
+    max_scroll - scroll.animated_offset() <= AT_BOTTOM_SLACK_PX
+}
+
+/// Land a freshly opened bottom-anchored view (a conversation just opened,
+/// no prior scroll state for it) at its own bottom — immediate, no ease,
+/// same "must land this frame" contract every other `ScrollState` jump
+/// (`scroll_to`/`ensure_visible`/drag) already follows.
+pub fn open_at_bottom(scroll: &mut ScrollState, content_height: f64, viewport_height: f64) {
+    let max_scroll = (content_height - viewport_height).max(0.0);
+    scroll.scroll_to(max_scroll, content_height, viewport_height);
+}
+
+/// Content grew (a new message/day-separator landed) to `new_content_height`
+/// — call AFTER the caller's own content height has already been updated to
+/// its new value. `was_at_bottom` is [`is_at_bottom`]'s own answer captured
+/// against the OLD content height, BEFORE the growth landed: pass `true` to
+/// keep the view pinned to the new bottom, `false` to leave the numeric
+/// offset exactly where the caller left it (just clamped, in case the
+/// content actually shrank).
+pub fn keep_bottom_anchored(
+    scroll: &mut ScrollState,
+    was_at_bottom: bool,
+    new_content_height: f64,
+    viewport_height: f64,
+) {
+    if was_at_bottom {
+        open_at_bottom(scroll, new_content_height, viewport_height);
+    } else {
+        scroll.clamp(new_content_height, viewport_height);
+    }
+}
+
+/// Whether the concept's floating "jump to latest" button (`.jump`) should
+/// draw at all — visible exactly when there is unseen content below the
+/// current view, i.e. whenever the view is NOT at the bottom.
+pub fn jump_button_visible(scroll: &ScrollState, content_height: f64, viewport_height: f64) -> bool {
+    !is_at_bottom(scroll, content_height, viewport_height)
+}
+
+#[cfg(test)]
+mod bottom_anchor_tests {
+    use super::*;
+
+    #[test]
+    fn open_at_bottom_lands_exactly_on_the_bottom() {
+        let mut s = ScrollState::new();
+        open_at_bottom(&mut s, 1000.0, 400.0);
+        assert!((s.animated_offset() - 600.0).abs() < 0.001);
+        assert!(is_at_bottom(&s, 1000.0, 400.0));
+        assert!(!jump_button_visible(&s, 1000.0, 400.0));
+    }
+
+    #[test]
+    fn scrolled_up_away_from_the_bottom_is_not_at_bottom() {
+        let mut s = ScrollState::new();
+        s.scroll_to(0.0, 1000.0, 400.0);
+        assert!(!is_at_bottom(&s, 1000.0, 400.0));
+        assert!(jump_button_visible(&s, 1000.0, 400.0));
+    }
+
+    #[test]
+    fn keep_bottom_anchored_repins_only_when_the_caller_was_already_there() {
+        let mut at_bottom = ScrollState::new();
+        open_at_bottom(&mut at_bottom, 1000.0, 400.0);
+        keep_bottom_anchored(&mut at_bottom, true, 1100.0, 400.0);
+        assert!((at_bottom.animated_offset() - 700.0).abs() < 0.001);
+
+        let mut scrolled_up = ScrollState::new();
+        scrolled_up.scroll_to(200.0, 1000.0, 400.0);
+        keep_bottom_anchored(&mut scrolled_up, false, 1100.0, 400.0);
+        assert!((scrolled_up.animated_offset() - 200.0).abs() < 0.001);
     }
 }

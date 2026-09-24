@@ -58,7 +58,6 @@ pub use render_data::{
     CrosshairConfig,
     LegendData, TooltipLines,
     RenderPriceLine, RenderMarker, RenderMarkerShape,
-    PaneGeom, PaneTheme, HistogramStyle,
     GridRenderOptions, LineRenderStyle,
     FootprintDisplayOptions, FootprintHeatIntensity, FootprintCellMode,
     TpoDisplayOptions,

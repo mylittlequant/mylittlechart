@@ -986,6 +986,7 @@ fn map_forum2_thread_summary_native(
         title: s.title,
         author: s.author,
         author_is_me: s.author_is_me,
+        author_rank: s.author_rank,
         created_at: s.created_at,
         updated_at: s.updated_at,
         last_reply_at: s.last_reply_at,
@@ -1005,6 +1006,7 @@ fn map_forum2_reply_node_native(
         depth: r.depth,
         author: r.author,
         author_is_me: r.author_is_me,
+        author_rank: r.author_rank,
         body: r.body,
         created_at: r.created_at,
         hidden: r.hidden,
@@ -1027,6 +1029,7 @@ fn map_forum2_thread_detail_native(
         title: t.title.clone(),
         author: t.author.clone(),
         author_is_me: t.author_is_me,
+        author_rank: t.author_rank.clone(),
         body: t.body.clone(),
         created_at: t.created_at.clone(),
         updated_at: t.updated_at.clone(),
@@ -4103,6 +4106,13 @@ impl App<'_> {
                 // live toolbar-state value, same preferred-window carry as
                 // the favorites bar above.
                 profile.ui.screenshot_destination = pw.chart.panel_app.toolbar_state.screenshot_destination;
+                // Community modal per-tab size (community-modal chrome arc)
+                // — same preferred-window carry as the favorites bar above.
+                #[cfg(feature = "cloud")]
+                {
+                    profile.ui.community_forum_size = pw.chart.panel_app.community_state.forum_size;
+                    profile.ui.community_messages_size = pw.chart.panel_app.community_state.messages_size;
+                }
                 // System event log (system-event-bus arc, 2026-09-05) —
                 // same preferred-window carry as the screenshot destination
                 // above: `chart.system_events()` is the live value, mutated

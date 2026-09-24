@@ -31,7 +31,9 @@ use crate::ui::modal_settings::{
     NewsTab, UpdateOverlayPhase,
 };
 use crate::ui::scroll_widget::{ScrollableContainer, ScrollableConfig, ScrollableResult};
+use crate::ui::selectable_text::LineHit;
 use crate::ui::toolbar_theme::ToolbarTheme;
+use crate::ui::widgets::avatar::contrasting_text_color;
 use crate::ui::widgets::{
     register_dimmer_zones, render_modal_shell, ModalPlacement, ModalShell, ModalShellSpec,
     ModalTab, ModalTabs, ModalTheme, TabFit, SETTINGS_BUTTON_RADIUS,
@@ -39,10 +41,6 @@ use crate::ui::widgets::{
 use crate::ui::widgets::types::WidgetTheme;
 use crate::ui::z_order::ZLayer;
 use crate::ui::Icon;
-
-/// Accent colour shared by every overlay in this file family — also read by
-/// `forum_v2_overlay`/`dm_overlay` (siblings under `layout::modals`).
-pub(crate) const GOLD: &str = "#f4cd63";
 
 const MODAL_W: f64 = 420.0;
 pub(crate) const ROW_H: f64 = 40.0;
@@ -73,6 +71,12 @@ pub(crate) const FORUM_SEARCH_FIELD: &str = "forum_search";
 /// point for `DmRequest::Open` at all (see `dm_overlay.rs`'s own
 /// `draw_open_peer_row`).
 pub(crate) const DM_PEER_FIELD: &str = "dm_peer";
+/// DM chat-list header's own name filter — mirrors `mlc_app::text_input::
+/// DM_CHAT_FILTER` (messenger UI-2b). Filters the already-loaded
+/// conversation list client-side as the user types; distinct from
+/// `DM_PEER_FIELD`, which searches the SERVER for someone to start a NEW
+/// conversation with (see `messenger_overlay.rs`'s own `draw_chat_filter_row`).
+pub(crate) const DM_CHAT_FILTER_FIELD: &str = "dm_chat_filter";
 
 /// Left-column width in the Community modal's two-pane layout (boards for
 /// Forum, conversations for Messages) — W2 of the community-modal-and-
@@ -161,45 +165,30 @@ pub struct CloudOverlayResult {
     /// DM_PEER` (new this pass, see `dm_overlay.rs`'s `draw_open_peer_row`).
     pub dm_peer_rect: Option<WidgetRect>,
     pub dm_peer_char_positions: Vec<f64>,
+    /// DM chat-list header's own name filter field geometry — same contract
+    /// as `forum_search_rect` above. Backs `mlc_app::text_input::
+    /// DM_CHAT_FILTER` (messenger UI-2b, see `messenger_overlay.rs`'s own
+    /// `draw_chat_filter_row`).
+    pub dm_chat_filter_rect: Option<WidgetRect>,
+    pub dm_chat_filter_char_positions: Vec<f64>,
     /// DM Conversation view's message-bubble text geometry — one entry per
     /// WRAPPED LINE of every bubble currently on screen, for HOST-SIDE
     /// line-level text selection (owner ruling 2026-09-10: the DM pane
     /// selects text the same way the Agents chat panel does — across
-    /// wrapped lines and across messages both — see [`DmMessageLineHit`]'s
-    /// own doc). `mlc-app`'s drag pre-dispatch (`input/mod.rs`) hit-tests a
-    /// mouse-down's Y against these to start (and, while dragging, extend)
-    /// a selection, same "every modal field needs its own arm" contract
-    /// `dm_draft_rect` above documents.
-    pub dm_message_line_rects: Vec<DmMessageLineHit>,
-}
-
-/// One visual (wrapped) line of a DM message bubble — collected during
-/// `dm_overlay::draw_message`'s own paint pass. Mirrors the shape of
-/// `mlc_app_sidebar_content::render::render_agents_chat_bubbles`'s own
-/// `line_rects_out` (msg/line coordinates, the line's own Y band, its raw
-/// text and left edge) — the mechanism this struct backs replaces the
-/// pane's former one-`TextFieldStore`-field-per-wrapped-line approach,
-/// which had no row axis at all and so could never select across lines or
-/// across messages.
-#[derive(Clone, Debug)]
-pub struct DmMessageLineHit {
-    /// Index into the open conversation's `messages` slice.
-    pub msg_idx: u16,
-    /// Wrapped-line index within that message's body.
-    pub line_idx: u16,
-    pub y_top: f64,
-    pub y_bot: f64,
-    /// The line's own text, verbatim — re-measured on demand by the
-    /// selection overlay and by copy (no precomputed char-position table,
-    /// same choice the Agents chat's own `line_rects_out` makes).
-    pub text: String,
-    /// Left edge the line's text was drawn from (inside the bubble).
-    pub text_x: f64,
-    /// Monospace ciphertext line vs. an ordinary bubble body — the
-    /// selection overlay and copy both need the SAME font the paint pass
-    /// used before calling `measure_text`, or the highlight rect and
-    /// character boundaries drift from what is on screen.
-    pub mono: bool,
+    /// wrapped lines and across messages both — see
+    /// [`crate::ui::selectable_text::LineHit`]'s own doc). `mlc-app`'s drag
+    /// pre-dispatch (`input/mod.rs`) hit-tests a mouse-down's Y/X against
+    /// these (`selectable_text::hit_test`) to start (and, while dragging,
+    /// extend) a selection, same "every modal field needs its own arm"
+    /// contract `dm_draft_rect` above documents. `LineHit::block` is the
+    /// message's index into the open conversation's `messages` slice.
+    pub dm_message_line_rects: Vec<LineHit>,
+    /// Forum Thread view's post/reply body text geometry — one entry per
+    /// WRAPPED LINE of every post card currently on screen, same host-side
+    /// line-level text-selection contract as [`Self::dm_message_line_rects`]
+    /// (owner ruling 2026-09-10, extended to Forum post bodies).
+    /// `LineHit::block` is the post's own display number (`#N`).
+    pub forum_line_rects: Vec<LineHit>,
 }
 
 fn title_for(state: &CloudOverlayState) -> &'static str {
@@ -753,7 +742,7 @@ fn draw_news_post(
     ctx.fill_text(&post.date, x + 8.0, y + 6.0);
 
     ctx.set_font("600 13px sans-serif");
-    ctx.set_fill_color(if hovered { GOLD } else { &tt.item_text });
+    ctx.set_fill_color(if hovered { &tt.accent } else { &tt.item_text });
     ctx.fill_text(display_title(post), x + 8.0, y + 22.0);
 
     ctx.set_font("12px sans-serif");
@@ -843,7 +832,7 @@ fn draw_news_detail(
     ly += 16.0;
 
     ctx.set_font("600 14px sans-serif");
-    ctx.set_fill_color(GOLD);
+    ctx.set_fill_color(&tt.accent);
     ctx.fill_text(&post.title, x, ly);
     ly += 26.0;
 
@@ -1002,7 +991,7 @@ fn draw_update_phase(
             let track_y = y + 26.0;
             ctx.set_fill_color(&tt.dropdown_bg);
             ctx.fill_rounded_rect(x, track_y, row_w, 6.0, 3.0);
-            ctx.set_fill_color(GOLD);
+            ctx.set_fill_color(&tt.accent);
             ctx.fill_rounded_rect(x, track_y, row_w * (*percent as f64 / 100.0), 6.0, 3.0);
         }
 
@@ -1047,9 +1036,15 @@ fn draw_update_phase(
 }
 
 /// A row that DOES something in this window, as opposed to [`draw_link_row`],
-/// which leaves for a URL. Gold surface, centred label, no external glyph —
-/// the glyph is the whole difference the user reads. Also used by
+/// which leaves for a URL. Accent-filled surface, centred label, no external
+/// glyph — the glyph is the whole difference the user reads. Also used by
 /// `forum_v2_overlay`/`dm_overlay`.
+///
+/// Colours are theme tokens only (owner ruling 09-10: no hardcoded colours):
+/// the fill is `tt.accent`, and the label colour is picked for contrast
+/// against that same fill via [`contrasting_text_color`] — the identical
+/// derivation `dm_overlay.rs`'s own "mine" bubble uses for its text colour,
+/// just against the plain accent instead of an accent-tinted mix.
 pub(crate) fn draw_action_row(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -1060,7 +1055,7 @@ pub(crate) fn draw_action_row(
     tt: &ToolbarTheme,
 ) {
     let hovered = coord.is_hovered(&WidgetId::from(widget_id));
-    ctx.set_fill_color(GOLD);
+    ctx.set_fill_color(&tt.accent);
     ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
     if hovered {
         // The accent is already the brightest thing in the dialog, so hover
@@ -1069,7 +1064,7 @@ pub(crate) fn draw_action_row(
         ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
     }
     ctx.set_font("600 13px sans-serif");
-    ctx.set_fill_color("#101014");
+    ctx.set_fill_color(contrasting_text_color(&tt.accent));
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(label, rect.center_x(), rect.center_y());

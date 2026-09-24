@@ -36,7 +36,7 @@ use mli::events::divergence::DivergenceKind;
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
-    RenderContext, crisp, render_primitive_text, TextAlign,
+    RenderContext, render_primitive_text, TextAlign,
     config::{ConfigProperty, SelectOption, PropertyCategory, PropertyValue, StatRow, TableCell, parse_table_cell_id},
     elliott::guard::Violation,
 };
@@ -44,6 +44,7 @@ use super::orderflow_judge::{
     AbsorptionSnapshot, ImbalanceRun, LevelHit,
     footprint_judge_window, footprint_window_indices, resolve_absorption, resolve_imbalance_run, resolve_level_flags,
 };
+use super::super::scan_shape::{ScanShape, render_scan_bracket, price_band_filter};
 
 /// The scanner family's shared collapse spacing — see
 /// [`super::super::SCAN_MARKER_MIN_GAP_PX`]. Read, not re-declared — see
@@ -207,6 +208,17 @@ pub struct OrderFlowScan {
     pub data: PrimitiveData,
     #[serde(default)] pub ts1: i64,
     #[serde(default)] pub ts2: i64,
+    /// Two full-height vertical brackets (default) or a bounded rectangle
+    /// over `[ts1, ts2] x [p1, p2]` — see
+    /// [`crate::drawing::primitives_v2::scan_shape::ScanShape`]'s own doc.
+    /// `#[serde(default)]` so a scan saved before this field existed loads
+    /// as `TwoLines`, byte-for-byte the shape it always drew.
+    #[serde(default)]
+    pub shape: ScanShape,
+    /// The price half of this survey's own two control points — see
+    /// `smc::smc_scan::SmcScan::p1`'s own doc for the identical contract.
+    #[serde(default)] pub p1: f64,
+    #[serde(default)] pub p2: f64,
     /// Whether this survey covers the range its own two points bracket, or
     /// every loaded bar. `"range"` (default) or `"all_bars"`.
     ///
@@ -257,6 +269,9 @@ impl OrderFlowScan {
             },
             ts1,
             ts2,
+            shape: ScanShape::default(),
+            p1: 0.0,
+            p2: 0.0,
             coverage: default_coverage(),
             enabled_structures: default_structure_ids(),
             cached_window: None,
@@ -318,6 +333,20 @@ impl OrderFlowScan {
                 })
                 .collect();
         }
+
+        // `Rectangle` mode only (see `price_band_filter`'s own doc) — one
+        // representative price per hit, the SAME field `render` already
+        // reads to place each marker's own Y (`run.high`/`run.low`'s
+        // midpoint, `snap.mid_price`, `lvl.price`, the divergence
+        // endpoints' own midpoint). `TwoLines` is a no-op passthrough on
+        // every one of the five, so this changes nothing for a scan that
+        // never opted into a price band.
+        hits.stacked_imbalance.retain(|r| price_band_filter(self.shape, self.p1, self.p2, (r.low + r.high) / 2.0));
+        hits.absorption.retain(|a| price_band_filter(self.shape, self.p1, self.p2, a.mid_price));
+        hits.single_print.retain(|l| price_band_filter(self.shape, self.p1, self.p2, l.price));
+        hits.unfinished_business.retain(|l| price_band_filter(self.shape, self.p1, self.p2, l.price));
+        hits.delta_divergence.retain(|d| price_band_filter(self.shape, self.p1, self.p2, (d.price_from + d.price_to) / 2.0));
+
         (Some((start, end)), hits)
     }
 
@@ -410,16 +439,7 @@ impl Primitive for OrderFlowScan {
             self.data.color.stroke.as_str()
         };
 
-        ctx.set_stroke_color(boundary);
-        ctx.set_stroke_width(self.data.width);
-        ctx.set_line_dash(&[4.0 * dpr, 4.0 * dpr]);
-        for x in [min_x, max_x] {
-            ctx.begin_path();
-            ctx.move_to(crisp(x, dpr), 0.0);
-            ctx.line_to(crisp(x, dpr), chart_height);
-            ctx.stroke();
-        }
-        ctx.set_line_dash(&[]);
+        render_scan_bracket(ctx, self.shape, x1, x2, self.p1, self.p2, boundary, self.data.width);
 
         if missing {
             // The rule's own message, once, between the boundaries. Nothing
@@ -621,6 +641,18 @@ impl Primitive for OrderFlowScan {
                     SelectOption::new("all_bars", ConceptKey::ScanCoverageAllBars.get(lang)),
                 ],
             ).with_category(PropertyCategory::AppearanceStats).with_order(5),
+            // The shape a placed survey is bracketed by — see
+            // `smc::smc_scan::SmcScan::style_properties`'s own identical row
+            // for the full rationale.
+            ConfigProperty::pills(
+                "shape",
+                ConceptKey::ScanShapeLabel.get(lang),
+                self.shape.id(),
+                vec![
+                    SelectOption::new(ScanShape::TwoLines.id(), ConceptKey::ScanShapeTwoLines.get(lang)),
+                    SelectOption::new(ScanShape::Rectangle.id(), ConceptKey::ScanShapeRectangle.get(lang)),
+                ],
+            ).with_category(PropertyCategory::AppearanceStats).with_order(7),
             // The structure table is this survey's PRIMARY control, not a
             // label setting. `ConfigProperty::table`'s own default category
             // is `LabelsText`, which files it under the Labels tab: measured
@@ -654,6 +686,12 @@ impl Primitive for OrderFlowScan {
                 return false;
             }
             self.coverage = s.to_string();
+            return true;
+        }
+        if id == "shape" {
+            let Some(s) = value.as_string() else { return false };
+            let Some(shape) = ScanShape::from_id(s) else { return false };
+            self.shape = shape;
             return true;
         }
         if let Some((base, row, col)) = parse_table_cell_id(id) {
@@ -780,6 +818,52 @@ mod tests {
         assert_eq!(violations[0].rule_id, "order_flow_data_missing");
     }
 
+    /// Piece 7: `TwoLines` keeps the stacked-imbalance hit whatever `p1`/
+    /// `p2` hold (captured but unused); flipping to `Rectangle` with a band
+    /// that excludes the run's own midpoint (levels 100.0/101.0, midpoint
+    /// 100.5) drops it, and a band that includes it keeps it.
+    #[test]
+    fn rectangle_shape_keeps_only_hits_inside_the_price_band() {
+        let _guard = reset_engine_config();
+        let footprint = vec![footprint_with_run(0), footprint_with_run(1_000), footprint_with_run(2_000)];
+
+        let mut scan = OrderFlowScan::new(0, 2_000, "#5C6BC0");
+        scan.p1 = 1.0;
+        scan.p2 = 2.0;
+        let (_, two_lines_hits) = scan.resolved_scan(&footprint);
+        assert!(!two_lines_hits.stacked_imbalance.is_empty());
+
+        scan.shape = ScanShape::Rectangle;
+        let (_, out_of_band) = scan.resolved_scan(&footprint);
+        assert!(out_of_band.stacked_imbalance.is_empty(), "Rectangle drops a hit outside [p1, p2]");
+
+        scan.p1 = 99.0;
+        scan.p2 = 102.0;
+        let (_, in_band) = scan.resolved_scan(&footprint);
+        assert!(!in_band.stacked_imbalance.is_empty(), "Rectangle keeps a hit inside [p1, p2]");
+    }
+
+    /// A scan saved before piece 7 carries no `shape`/`p1`/`p2` fields at
+    /// all — its JSON must still load, landing on `TwoLines` (the shape it
+    /// always drew). Mirrors `smc_scan`'s own identical test.
+    #[test]
+    fn a_pre_piece_7_saved_scan_loads_as_two_lines() {
+        let data = PrimitiveData {
+            type_id: "order_flow_scan".to_string(),
+            display_name: "Order Flow Scan".to_string(),
+            color: PrimitiveColor::new("#5C6BC0"),
+            width: 1.0,
+            ..Default::default()
+        };
+        let old_json = serde_json::json!({ "data": data, "ts1": 0, "ts2": 2_000 }).to_string();
+        assert!(!old_json.contains("shape") && !old_json.contains("\"p1\"") && !old_json.contains("\"p2\""));
+
+        let restored: OrderFlowScan = serde_json::from_str(&old_json).expect("old scan JSON still loads");
+        assert_eq!(restored.shape, ScanShape::TwoLines);
+        assert_eq!(restored.p1, 0.0);
+        assert_eq!(restored.p2, 0.0);
+    }
+
     #[test]
     fn unchecking_a_structure_removes_its_hits() {
         let _guard = reset_engine_config();
@@ -808,6 +892,19 @@ mod tests {
         registry.register_typed::<OrderFlowScan>(metadata());
         let restored = registry.from_json("order_flow_scan", &json).expect("round trip");
         assert_eq!(restored.points(), scan.points());
+    }
+
+    /// Piece 8's own write path: the Coverage tab's Shape row applies
+    /// through this exact generic `apply_style_property("shape", ...)`.
+    #[test]
+    fn shape_property_round_trips() {
+        let mut scan = OrderFlowScan::new(0, 2_000, "#5C6BC0");
+        assert_eq!(scan.shape, ScanShape::TwoLines);
+
+        assert!(scan.apply_style_property("shape", &PropertyValue::String("rectangle".to_string())));
+        assert_eq!(scan.shape, ScanShape::Rectangle);
+
+        assert!(!scan.apply_style_property("shape", &PropertyValue::String("bogus".to_string())));
     }
 
     #[test]

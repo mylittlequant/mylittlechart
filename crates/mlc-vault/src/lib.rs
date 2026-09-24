@@ -1,6 +1,6 @@
 //! mylittlechart-vault — zero-trust blob primitives.
 //!
-//! Five modules:
+//! Seven modules:
 //! - `crypto`  — AES-GCM, HKDF, PBKDF2 key derivation, salt management.
 //! - `vault`   — sealed-blob encrypt/decrypt helpers + passphrase validation.
 //! - `storage` — platform-agnostic byte-blob [`Storage`] trait + global handle.
@@ -8,13 +8,19 @@
 //!   top of the other three.
 //! - `dm`      — end-to-end DM primitives: X25519 identity keypairs,
 //!   per-conversation key derivation, AES-256-GCM sealed messages.
+//! - `group`   — group E2E: a symmetric key per epoch, wrapped per member
+//!   via ECDH + HKDF + AES-256-GCM against `dm`'s identity keys.
+//! - `channel` — channel post signing: a per-channel Ed25519 identity
+//!   derived deterministically from the vault key.
 //!
 //! This crate is a pure leaf: depends only on `aes-gcm`, `pbkdf2`, `hkdf`,
 //! `rand`, `sha2`, `hex`, `serde`, `zeroize`, `web-time`, `subtle`,
-//! `curve25519-dalek`. No workspace deps.
+//! `curve25519-dalek`, `ed25519-dalek`. No workspace deps.
 
+pub mod channel;
 pub mod crypto;
 pub mod dm;
+pub mod group;
 pub mod storage;
 pub mod store;
 pub mod vault;

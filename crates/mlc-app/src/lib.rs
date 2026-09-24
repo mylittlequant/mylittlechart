@@ -215,6 +215,9 @@ fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
     tf.register(text_input::FORUM_SEARCH, TextFieldConfig::text().with_max_len(200));
     tf.register(text_input::DM_DRAFT, TextFieldConfig::text().with_max_len(4000));
     tf.register(text_input::DM_PEER, TextFieldConfig::text().with_max_len(128));
+    // Chat-list name filter (messenger UI-2b) — same registration gap
+    // `FORUM_SEARCH`/`DM_DRAFT`/`DM_PEER`'s own comment above documents.
+    tf.register(text_input::DM_CHAT_FILTER, TextFieldConfig::text().with_max_len(64));
 }
 
 use std::cell::RefCell;
@@ -741,6 +744,14 @@ pub struct ChartApp {
     /// (via `ChartOutEvent::ShareLiveChart`), drained by the shell, which
     /// owns the cloud session/token. Mirror of `pending_screenshot`.
     pending_share_live: bool,
+
+    /// Pending clipboard write — set by a context-menu "Copy" action
+    /// (`ChartApp` itself has no clipboard access; only the shell's own
+    /// `Platform::clipboard_write` does), drained by the shared input
+    /// dispatch (`mlc-app-input-shell`) right after the click that set it.
+    /// Mirror of `pending_screenshot`/`pending_share_live` — same "core
+    /// sets a flag, shell performs the actual platform call" split.
+    pending_clipboard_text: Option<String>,
 
     /// When set, the frame loop should clear in-memory bars and re-fetch.
     pub pending_reset_cache: bool,
@@ -3469,6 +3480,7 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            pending_clipboard_text: None,
             pending_reset_cache: false,
             pending_reset_storage: false,
             drag_start_points: None,
@@ -3863,6 +3875,7 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            pending_clipboard_text: None,
             pending_reset_cache: false,
             pending_reset_storage: false,
             drag_start_points: None,
@@ -4473,6 +4486,7 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            pending_clipboard_text: None,
             pending_reset_cache: false,
             pending_reset_storage: false,
             drag_start_points: None,
@@ -5288,6 +5302,20 @@ impl ChartApp {
         self.panel_app.toolbar_state.favorites_bar_visible = profile.ui.favorites_bar_visible;
         self.panel_app.toolbar_state.screenshot_destination = profile.ui.screenshot_destination;
 
+        // Community modal per-tab size (community-modal chrome arc, cloud
+        // builds only) — flat profile field, no per-window mirror, same
+        // class as the favorites bar above. `None` leaves `CommunityState::
+        // default`'s own 760×560/1000×640 fallback in place.
+        #[cfg(feature = "cloud")]
+        {
+            if let Some(size) = profile.ui.community_forum_size {
+                self.panel_app.community_state.forum_size = Some(size);
+            }
+            if let Some(size) = profile.ui.community_messages_size {
+                self.panel_app.community_state.messages_size = Some(size);
+            }
+        }
+
         // System event log (system-event-bus arc, 2026-09-05, owner scope
         // §8) — flat profile field, no per-window mirror (same class as the
         // favorites bar above): restore the persisted ring so events survive
@@ -5795,6 +5823,15 @@ impl ChartApp {
         let pending = self.pending_share_live;
         self.pending_share_live = false;
         pending
+    }
+
+    /// Drain the pending clipboard-write text, if a context-menu "Copy"
+    /// action set one this frame. Called by the shared input dispatch
+    /// (`mlc-app-input-shell`) right after `on_click` returns, the same
+    /// place the Ctrl+C key handler already calls `Platform::
+    /// clipboard_write` — mirror of `drain_pending_screenshot`.
+    pub fn drain_pending_clipboard_text(&mut self) -> Option<String> {
+        self.pending_clipboard_text.take()
     }
 
     /// Return the chart content rect (toolbar-excluded area) from the last render.
@@ -11153,6 +11190,16 @@ impl ChartApp {
                         &id,
                         (r.x, r.y, r.width, r.height),
                         ov.dm_peer_char_positions.clone(),
+                    );
+                }
+                // Chat-list name filter (messenger UI-2b) — same contract
+                // as `dm_peer_rect` above.
+                if let Some(r) = ov.dm_chat_filter_rect {
+                    let id = WidgetId::from(text_input::DM_CHAT_FILTER);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id,
+                        (r.x, r.y, r.width, r.height),
+                        ov.dm_chat_filter_char_positions.clone(),
                     );
                 }
             }

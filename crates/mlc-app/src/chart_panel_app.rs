@@ -289,6 +289,16 @@ impl ChartPanelApp {
     /// Used by `render_chart_content` and other internal rendering paths.
     pub fn chart_theme_for_render(&self) -> ChartTheme {
         let rt = self.theme_manager.current();
+        // Volume hue ALWAYS derives from the candle body colours — never an
+        // independently-stored value — so a user-customised candle colour
+        // (or any skin/preset) can never let volume drift to a different
+        // hue (owner ruling 2026-09-24, R21).
+        let (volume_up, volume_down) = ChartTheme::derive_volume_colors(
+            &rt.series.candle_up_body,
+            &rt.series.candle_down_body,
+            rt.series.volume_up_alpha,
+            rt.series.volume_down_alpha,
+        );
         ChartTheme {
             background: rt.chart.background.clone(),
             grid_line: rt.chart.grid_line.clone(),
@@ -335,8 +345,8 @@ impl ChartPanelApp {
             heat_bid_hot: rt.series.heat_bid_hot.clone(),
             heat_ask: rt.series.heat_ask.clone(),
             heat_ask_hot: rt.series.heat_ask_hot.clone(),
-            volume_up: rt.series.volume_up.clone(),
-            volume_down: rt.series.volume_down.clone(),
+            volume_up,
+            volume_down,
         }
     }
 

@@ -169,6 +169,10 @@ pub struct IndicatorRenderInstance {
     /// Optional timeframe visibility configuration — when set, the instance is
     /// only rendered on timeframes that pass `is_visible_on_label`.
     pub timeframe_visibility: Option<TimeframeVisibilityConfig>,
+    /// Declared Y-axis bounds (e.g. `Some((0.0, 100.0))` for RSI/Stoch).
+    /// `None` for unbounded indicators (MACD, CVD, ...). Drives sub-pane
+    /// axis scaling — see `chart::types::pane_scale::sub_pane_value_range`.
+    pub bounds: Option<(f64, f64)>,
 }
 
 /// Alert status for rendering

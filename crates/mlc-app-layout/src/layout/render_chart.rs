@@ -41,6 +41,7 @@ use crate::chart_render::{
 };
 use mlc_core::chart::Tooltip;
 use mlc_core::chart::types::compare::CompareOverlay;
+use mlc_core::chart::types::pane_scale::{cull_axis_labels, sub_pane_ticks, sub_pane_value_range, AxisLabel};
 use mlc_core::drawing::{DrawingRenderView, draw_control_points};
 use mlc_core::apply_opacity;
 use mlc_core::scale_settings::ScaleSettings;
@@ -1361,32 +1362,21 @@ pub fn render_sub_pane(
     let (visible_start, visible_end_raw) = state.viewport.visible_range();
     let visible_end = visible_end_raw.min(state.bars.len());
 
-    let (mut pane_min, mut pane_max) = if !sub_pane_auto_scale {
+    let (pane_min, pane_max) = if !sub_pane_auto_scale {
         (sub_pane_price_min, sub_pane_price_max)
     } else {
-        indicator_source
+        let (raw_min, raw_max) = indicator_source
             .calculate_pane_range(instance.id, visible_start, visible_end)
-            .unwrap_or((0.0, 100.0))
+            .unwrap_or((0.0, 100.0));
+        // Bounded oscillators (RSI, Stoch, ...) scale EXACTLY to their
+        // declared bounds — no value-space padding stretches 0..100 into
+        // -5..105 (owner ruling 2026-09-24, R24). Unbounded panes
+        // symmetrize around zero when the data crosses it (so the
+        // zero-line always sits at the vertical midpoint) and get a small
+        // value-space padding so a line/histogram never touches the pane
+        // edge. See `sub_pane_value_range`.
+        sub_pane_value_range(instance.bounds, raw_min, raw_max)
     };
-
-    // For centered histograms in auto-scale mode, symmetrize around zero so that
-    // the zero-line always sits at the vertical midpoint of the pane.
-    if sub_pane_auto_scale && instance.histogram_style == mlc_core::indicator_source::HistogramStyle::Centered {
-        let max_abs = pane_min.abs().max(pane_max.abs());
-        if max_abs > 0.0 {
-            pane_min = -max_abs;
-            pane_max = max_abs;
-        }
-    }
-
-    // Add 5% padding so bars never touch the pane edges.
-    // Only in auto-scale: manual mode's stored price_min/max already have
-    // padding baked in from the last auto-scale writeback.
-    if sub_pane_auto_scale {
-        let padding = (pane_max - pane_min) * 0.05;
-        pane_min -= padding;
-        pane_max += padding;
-    }
 
     // 4. Draw grid lines
     draw_sub_pane_grid(ctx, content.x, content.y, content.width, content.height, &state.theme.grid_line);
@@ -1573,12 +1563,28 @@ pub fn render_sub_pane(
 // Sub-Pane Drawing
 // =============================================================================
 
+/// Pixel clearance a sub-pane axis label keeps from its own pane's top/
+/// bottom edge, beyond half its own text height. This is the "pixel
+/// padding" ruling 1 (2026-09-24, R24) asks for on bounded oscillators —
+/// the VALUE range stays exactly `[bounds.0, bounds.1]` (0/100 for RSI),
+/// but the LABEL for 0/100 is inset a few pixels so its own glyph is never
+/// sliced by the pane's clip rect, and — since every pane reserves this
+/// same margin independently — two adjacent panes' labels can never reach
+/// far enough to collide across their shared boundary.
+const SUB_PANE_LABEL_EDGE_MARGIN: f64 = 3.0;
+
 /// Draw price scale (Y-axis labels) for a sub-pane
 ///
 /// Uses same styling as main chart price scale:
 /// - Centered text horizontally
 /// - Same font size (11px)
 /// - Same background and border colors
+///
+/// Tick values are "nice" round numbers (`sub_pane_ticks`), not a raw
+/// linear interpolation of `price_min..price_max` — and any candidate
+/// whose label would cross the pane's own edge, or collide with another
+/// kept label, is dropped (`cull_axis_labels`) rather than clipped or
+/// clamped into place (owner ruling 2026-09-24, R24).
 pub fn draw_sub_pane_price_scale(
     ctx: &mut dyn RenderContext,
     x: f64,
@@ -1602,11 +1608,30 @@ pub fn draw_sub_pane_price_scale(
     // Center text horizontally in price scale (same as main chart)
     let text_x = (x + width / 2.0).round();
 
-    // Generate price labels (fewer for small pane)
-    let num_labels = if height > 80.0 { 3 } else { 2 };
     let price_range = price_max - price_min;
+    if price_range <= 0.0 {
+        return;
+    }
 
-    // Clip tick labels to the sub-pane price scale so they slide off smoothly.
+    // Fewer target ticks for a small pane.
+    let target_ticks = if height > 80.0 { 4 } else { 3 };
+    let ticks = sub_pane_ticks(price_min, price_max, target_ticks);
+
+    let candidates: Vec<AxisLabel> = ticks
+        .iter()
+        .map(|&price| {
+            let ratio = (price - price_min) / price_range;
+            let label_y = (y + height - (ratio * height)).round();
+            AxisLabel { value: price, y: label_y }
+        })
+        .collect();
+
+    let half_label_height = config.font_size / 2.0 + SUB_PANE_LABEL_EDGE_MARGIN;
+    let kept = cull_axis_labels(&candidates, y, y + height, &[], half_label_height);
+
+    // Clip tick labels to the sub-pane price scale as a defense-in-depth
+    // backstop — `cull_axis_labels` above already keeps every surviving
+    // label's own footprint fully inside [y, y+height].
     ctx.save();
     ctx.begin_path();
     ctx.rect(x, y, width, height);
@@ -1617,29 +1642,18 @@ pub fn draw_sub_pane_price_scale(
     ctx.set_text_align(mlc_core::render::TextAlign::Center);
     ctx.set_text_baseline(mlc_core::render::TextBaseline::Middle);
 
-    for i in 0..=num_labels {
-        let ratio = i as f64 / num_labels as f64;
-        let label_y = (y + height - (ratio * height)).round();
-        let price = price_min + ratio * price_range;
-
-        let label = if price_range < 1.0 {
-            format!("{:.4}", price)
+    for label in &kept {
+        let text = if price_range < 1.0 {
+            format!("{:.4}", label.value)
         } else if price_range < 10.0 {
-            format!("{:.2}", price)
+            format!("{:.2}", label.value)
         } else if price_range < 100.0 {
-            format!("{:.1}", price)
+            format!("{:.1}", label.value)
         } else {
-            format!("{:.0}", price)
+            format!("{:.0}", label.value)
         };
 
-        ctx.fill_text(&label, text_x, label_y);
-    }
-
-    // Draw a "0" label when zero is within the visible range.
-    if price_min < 0.0 && price_max > 0.0 && price_range > 0.0 {
-        let zero_ratio = (0.0_f64 - price_min) / price_range;
-        let zero_y = (y + height - (zero_ratio * height)).round();
-        ctx.fill_text("0", text_x, zero_y);
+        ctx.fill_text(&text, text_x, label.y);
     }
 
     ctx.restore();

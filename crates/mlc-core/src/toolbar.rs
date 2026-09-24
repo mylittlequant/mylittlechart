@@ -11,6 +11,7 @@ use crate::i18n::{
     ToolbarTooltipKey as TK, t_toolbar,
     ToolbarMenuKey as MK, t_toolbar_menu,
     PrimitiveNameKey as PN,
+    ConceptKey,
     current_language, Language,
 };
 use crate::theme::RuntimeTheme;
@@ -881,11 +882,23 @@ fn fib_section() -> ToolbarSectionDef {
     ])
 }
 
-// Report 2026-08-14 (owner screenshot): the flyout listed Patterns first,
-// which buried the Elliott group the owner reaches for most. Reordered to
-// Elliott Waves -> Patterns (harmonic) -> Cycles, each group still intact
-// with its own header/separator. The quick_select's own button icon now
-// leads with `ElliottImpulse` to match the group that now heads the list.
+// Restructured 2026-09-24 (autodetectors A0, piece 5 —
+// `docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`): 5 theme
+// blocks, owner ruling "theme = header, autodetector = last item of its
+// theme where one exists" — Elliott Waves (no trailing scan row yet,
+// `ElliottScan` is A2), Harmonics (7 named XABCD kind-preset actions in
+// family order, then the 3 pre-existing own-primitive harmonic tools moved
+// in from the old flat "Patterns" header; no trailing `harmonic_scan` row
+// yet, that's A3), Classic figures (moved in from the old "Patterns"
+// header), Bars (unchanged content, existing 2-item scan-last shape, icon
+// swapped to the bracket-motif `bars_scan`), Cycles (unchanged). The old
+// flat "Patterns" header and its bare `xabcd_pattern` action row are gone —
+// superseded by the 7 named presets; the generic Unclassified tool stops
+// being toolbar-reachable (the `"xabcd_pattern"` registry entry itself
+// stays, for old-drawing reload and for the Style tab's own `pattern_kind`
+// dropdown after placing any preset). The quick_select's own button icon
+// still leads with `ElliottImpulse` (Elliott Waves is still the first
+// theme).
 fn pattern_section() -> ToolbarSectionDef {
     let lang = current_language();
     ToolbarSectionDef::new(vec![
@@ -897,21 +910,36 @@ fn pattern_section() -> ToolbarSectionDef {
             DropdownItemDef::action("elliott_triangle", PN::ElliottTriangle.get(lang)).with_icon(ToolbarIconId::new("ElliottTriangle")),
             DropdownItemDef::action("elliott_double_combo", PN::ElliottDoubleCombo.get(lang)).with_icon(ToolbarIconId::new("ElliottDoubleCombo")),
             DropdownItemDef::action("elliott_triple_combo", PN::ElliottTripleCombo.get(lang)).with_icon(ToolbarIconId::new("ElliottTripleCombo")),
-            // Patterns
+            // Harmonics — 7 named XABCD kind presets (A0, piece 2/3), family
+            // order, labels reuse the Style tab's own `ConceptKey::HarmonicKind*`
+            // (no duplicate `PrimitiveNameKey` for the same proper noun), then
+            // the 3 pre-existing own-primitive harmonic tools moved in from
+            // the old "Patterns" header.
             DropdownItemDef::Separator,
-            DropdownItemDef::Header { label: MK::HeaderPatterns.get(lang).to_string() },
-            DropdownItemDef::action("xabcd_pattern", PN::XabcdPattern.get(lang)).with_icon(ToolbarIconId::new("XabcdPattern")),
+            DropdownItemDef::Header { label: MK::HeaderHarmonics.get(lang).to_string() },
+            DropdownItemDef::action("harmonic_gartley", ConceptKey::HarmonicKindGartley.get(lang)).with_icon(ToolbarIconId::new("harmonic_gartley")),
+            DropdownItemDef::action("harmonic_bat", ConceptKey::HarmonicKindBat.get(lang)).with_icon(ToolbarIconId::new("harmonic_bat")),
+            DropdownItemDef::action("harmonic_alt_bat", ConceptKey::HarmonicKindAltBat.get(lang)).with_icon(ToolbarIconId::new("harmonic_alt_bat")),
+            DropdownItemDef::action("harmonic_butterfly", ConceptKey::HarmonicKindButterfly.get(lang)).with_icon(ToolbarIconId::new("harmonic_butterfly")),
+            DropdownItemDef::action("harmonic_crab", ConceptKey::HarmonicKindCrab.get(lang)).with_icon(ToolbarIconId::new("harmonic_crab")),
+            DropdownItemDef::action("harmonic_deep_crab", ConceptKey::HarmonicKindDeepCrab.get(lang)).with_icon(ToolbarIconId::new("harmonic_deep_crab")),
+            DropdownItemDef::action("harmonic_shark", ConceptKey::HarmonicKindShark.get(lang)).with_icon(ToolbarIconId::new("harmonic_shark")),
             DropdownItemDef::action("cypher_pattern", PN::CypherPattern.get(lang)).with_icon(ToolbarIconId::new("CypherPattern")),
-            DropdownItemDef::action("head_shoulders", PN::HeadShoulders.get(lang)).with_icon(ToolbarIconId::new("HeadShoulders")),
             DropdownItemDef::action("abcd_pattern", PN::AbcdPattern.get(lang)).with_icon(ToolbarIconId::new("AbcdPattern")),
-            DropdownItemDef::action("triangle_pattern", PN::TrianglePattern.get(lang)).with_icon(ToolbarIconId::new("TrianglePattern")),
             DropdownItemDef::action("three_drives", PN::ThreeDrives.get(lang)).with_icon(ToolbarIconId::new("ThreeDrives")),
-            // Candles — markup engines: candle-pattern claim + survey
-            // (`docs/mlc/plans/markup-engines-2026-08-25.md`).
+            // Classic figures — moved in from the old "Patterns" header,
+            // unchanged action ids/icons.
             DropdownItemDef::Separator,
-            DropdownItemDef::Header { label: MK::HeaderCandles.get(lang).to_string() },
+            DropdownItemDef::Header { label: MK::HeaderClassicFigures.get(lang).to_string() },
+            DropdownItemDef::action("head_shoulders", PN::HeadShoulders.get(lang)).with_icon(ToolbarIconId::new("HeadShoulders")),
+            DropdownItemDef::action("triangle_pattern", PN::TrianglePattern.get(lang)).with_icon(ToolbarIconId::new("TrianglePattern")),
+            // Bars — markup engines: candle-pattern claim + survey
+            // (`docs/mlc/plans/markup-engines-2026-08-25.md`). Content
+            // unchanged; header text and scan icon per A0 piece 4/3.
+            DropdownItemDef::Separator,
+            DropdownItemDef::Header { label: MK::HeaderBars.get(lang).to_string() },
             DropdownItemDef::action("candle_pattern", PN::CandlePattern.get(lang)).with_icon(ToolbarIconId::new("CandlePattern")),
-            DropdownItemDef::action("candle_pattern_scan", PN::CandlePatternScan.get(lang)).with_icon(ToolbarIconId::new("CandlePatternScan")),
+            DropdownItemDef::action("candle_pattern_scan", PN::CandlePatternScan.get(lang)).with_icon(ToolbarIconId::new("bars_scan")),
             // Cycles
             DropdownItemDef::Separator,
             DropdownItemDef::Header { label: MK::HeaderCycles.get(lang).to_string() },
@@ -1336,6 +1364,105 @@ pub fn find_toolbar_tooltip(button_id: &str) -> Option<&'static str> {
         }
     }
     None
+}
+
+#[cfg(test)]
+mod pattern_section_tests {
+    //! Regression fence for the autodetectors A0 restructure (piece 5,
+    //! `docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`):
+    //! 5 theme headers in order, and the Harmonics header's own 10 action
+    //! ids — a future reorder silently dropping the "scan last" rule once
+    //! `harmonic_scan` lands in A3 will trip this.
+    use super::*;
+
+    /// The single `pattern_tools` quick-select item's own dropdown rows.
+    fn pattern_tools_items() -> Vec<DropdownItemDef> {
+        let section = pattern_section();
+        for item in section.items {
+            if let ToolbarItemDef::Dropdown { id: "pattern_tools", items, .. } = item {
+                return items;
+            }
+        }
+        panic!("pattern_section() must contain a \"pattern_tools\" quick_select dropdown");
+    }
+
+    fn header_labels(items: &[DropdownItemDef]) -> Vec<String> {
+        items.iter().filter_map(|item| match item {
+            DropdownItemDef::Header { label } => Some(label.clone()),
+            _ => None,
+        }).collect()
+    }
+
+    fn action_ids(items: &[DropdownItemDef]) -> Vec<String> {
+        items.iter().filter_map(|item| match item {
+            DropdownItemDef::Action { id, .. } => Some(id.clone()),
+            _ => None,
+        }).collect()
+    }
+
+    #[test]
+    fn pattern_tools_has_five_headers_in_order() {
+        let lang = current_language();
+        let items = pattern_tools_items();
+        let expected = vec![
+            MK::HeaderElliottWaves.get(lang).to_string(),
+            MK::HeaderHarmonics.get(lang).to_string(),
+            MK::HeaderClassicFigures.get(lang).to_string(),
+            MK::HeaderBars.get(lang).to_string(),
+            MK::HeaderCycles.get(lang).to_string(),
+        ];
+        assert_eq!(header_labels(&items), expected);
+    }
+
+    /// The Harmonics header's own 10 action ids: the 7 `harmonic_*` presets
+    /// in family order, then `cypher_pattern`/`abcd_pattern`/`three_drives`
+    /// moved in from the old flat "Patterns" header.
+    #[test]
+    fn harmonics_header_has_ten_actions_in_order() {
+        let lang = current_language();
+        let items = pattern_tools_items();
+        let harmonics_label = MK::HeaderHarmonics.get(lang).to_string();
+        let classic_label = MK::HeaderClassicFigures.get(lang).to_string();
+
+        let start = items.iter().position(|i| matches!(i, DropdownItemDef::Header { label } if *label == harmonics_label))
+            .expect("Harmonics header must be present");
+        let end = items.iter().position(|i| matches!(i, DropdownItemDef::Header { label } if *label == classic_label))
+            .expect("Classic figures header must be present");
+        assert!(end > start, "Classic figures header must come after Harmonics");
+
+        let harmonics_ids = action_ids(&items[start..end]);
+        assert_eq!(
+            harmonics_ids,
+            vec![
+                "harmonic_gartley", "harmonic_bat", "harmonic_alt_bat",
+                "harmonic_butterfly", "harmonic_crab", "harmonic_deep_crab", "harmonic_shark",
+                "cypher_pattern", "abcd_pattern", "three_drives",
+            ],
+        );
+    }
+
+    /// The old flat "Patterns" header and its bare `xabcd_pattern` action
+    /// row are gone — the generic Unclassified tool is no longer
+    /// toolbar-reachable (superseded by the 7 named presets).
+    #[test]
+    fn bare_xabcd_pattern_action_is_gone() {
+        let items = pattern_tools_items();
+        assert!(
+            !action_ids(&items).iter().any(|id| id == "xabcd_pattern"),
+            "the bare xabcd_pattern action row must not be reachable from the toolbar anymore",
+        );
+    }
+
+    /// Bars' scan row carries the new bracket-motif icon id (A0 piece 3),
+    /// not the old `CandlePatternScan` id.
+    #[test]
+    fn bars_scan_row_uses_the_bracket_motif_icon() {
+        let items = pattern_tools_items();
+        let scan = items.iter().find(|i| matches!(i, DropdownItemDef::Action { id, .. } if id == "candle_pattern_scan"))
+            .expect("candle_pattern_scan action must be present");
+        let DropdownItemDef::Action { icon, .. } = scan else { unreachable!() };
+        assert_eq!(icon.as_ref().map(|i| i.name()), Some("bars_scan"));
+    }
 }
 
 

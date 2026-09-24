@@ -29,12 +29,13 @@ use mli::smc as mli_smc;
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
-    RenderContext, crisp, render_primitive_text, TextAlign,
+    RenderContext, render_primitive_text, TextAlign,
     config::{ConfigProperty, SelectOption, PropertyCategory, PropertyValue, StatRow, TableCell, parse_table_cell_id},
 };
 use super::smc_judge::judge_window;
 use super::render_shapes::{draw_zone, draw_level, draw_leg};
 use super::amd_cycle::{offset_sweep, offset_leg, leg_endpoints};
+use super::super::scan_shape::{ScanShape, render_scan_bracket, price_band_filter};
 
 /// The scanner family's shared collapse spacing — see
 /// [`super::super::SCAN_MARKER_MIN_GAP_PX`]. Read, not re-declared: two
@@ -181,6 +182,21 @@ pub struct SmcScan {
     pub data: PrimitiveData,
     #[serde(default)] pub ts1: i64,
     #[serde(default)] pub ts2: i64,
+    /// Two full-height vertical brackets (default) or a bounded rectangle
+    /// over `[ts1, ts2] x [p1, p2]` — see
+    /// [`crate::drawing::primitives_v2::scan_shape::ScanShape`]'s own doc.
+    /// `#[serde(default)]` so a scan saved before this field existed loads
+    /// as `TwoLines`, byte-for-byte the shape it always drew.
+    #[serde(default)]
+    pub shape: ScanShape,
+    /// The price half of this survey's own two control points — captured
+    /// unconditionally at construction (the same two clicks already carry a
+    /// price component, see `metadata()`'s own factory), so flipping
+    /// `shape` to `Rectangle` after placement needs no re-placement.
+    /// `Rectangle` mode's own price band; unused (but always present) in
+    /// `TwoLines` mode. `#[serde(default)]` covers a pre-piece-7 saved scan.
+    #[serde(default)] pub p1: f64,
+    #[serde(default)] pub p2: f64,
     /// Whether this survey covers the range its own two points bracket, or
     /// every loaded bar. `"range"` (default) or `"all_bars"`.
     ///
@@ -238,6 +254,9 @@ impl SmcScan {
             },
             ts1,
             ts2,
+            shape: ScanShape::default(),
+            p1: 0.0,
+            p2: 0.0,
             coverage: default_coverage(),
             hide_filled_gaps: default_true(),
             enabled_structures: default_all_structure_ids(),
@@ -289,6 +308,7 @@ impl SmcScan {
                     broke_structure_at: b.broke_structure_at + offset,
                     breaker_at: b.breaker_at.map(|i| i + offset),
                 })
+                .filter(|b| price_band_filter(self.shape, self.p1, self.p2, (b.low + b.high) / 2.0))
                 .collect();
         }
         if self.enabled(SurveyStructure::FairValueGap) {
@@ -305,6 +325,7 @@ impl SmcScan {
                     mitigated_at: g.mitigated_at.map(|i| i + offset),
                     filled_at: g.filled_at.map(|i| i + offset),
                 })
+                .filter(|g| price_band_filter(self.shape, self.p1, self.p2, (g.low + g.high) / 2.0))
                 .collect();
         }
         if self.enabled(SurveyStructure::LiquiditySweep) {
@@ -312,6 +333,7 @@ impl SmcScan {
                 .into_iter()
                 .filter(|s| in_range(s.index + offset))
                 .map(|s| offset_sweep(&s, offset))
+                .filter(|s| price_band_filter(self.shape, self.p1, self.p2, s.level))
                 .collect();
         }
         if self.enabled(SurveyStructure::StructureBreak) {
@@ -325,6 +347,7 @@ impl SmcScan {
                     broken_swing_index: e.broken_swing_index + offset,
                     level: e.level,
                 })
+                .filter(|e| price_band_filter(self.shape, self.p1, self.p2, e.level))
                 .collect();
         }
         if self.enabled(SurveyStructure::EqualLevels) {
@@ -336,6 +359,7 @@ impl SmcScan {
                     level: e.level,
                     kind: e.kind,
                 })
+                .filter(|e| price_band_filter(self.shape, self.p1, self.p2, e.level))
                 .collect();
         }
         if self.enabled(SurveyStructure::DisplacementLeg) {
@@ -343,6 +367,7 @@ impl SmcScan {
                 .into_iter()
                 .filter(|l| in_range(l.start_index + offset))
                 .map(|l| offset_leg(&l, offset))
+                .filter(|l| price_band_filter(self.shape, self.p1, self.p2, leg_anchor_price(bars, l).unwrap_or(f64::NAN)))
                 .collect();
         }
         if self.enabled(SurveyStructure::AmdCycle) {
@@ -354,6 +379,7 @@ impl SmcScan {
                     manipulation: offset_sweep(&c.manipulation, offset),
                     distribution: offset_leg(&c.distribution, offset),
                 })
+                .filter(|c| price_band_filter(self.shape, self.p1, self.p2, c.manipulation.level))
                 .collect();
         }
         hits
@@ -433,7 +459,6 @@ impl Primitive for SmcScan {
     /// [`Self::resolved_scan`] — never reads [`Self::cached_hits`] —
     /// matching [`Primitive::refresh_bar_derived_cache`]'s own contract.
     fn render(&self, ctx: &mut dyn RenderContext, _is_selected: bool) {
-        let dpr = ctx.dpr();
         // In automatic coverage the two markers sit on the series' own
         // ends rather than where the range was dragged — they still mark
         // exactly what is being surveyed.
@@ -444,16 +469,7 @@ impl Primitive for SmcScan {
         let (min_x, max_x) = (x1.min(x2), x1.max(x2));
         let chart_height = ctx.chart_height();
 
-        ctx.set_stroke_color(&self.data.color.stroke);
-        ctx.set_stroke_width(self.data.width);
-        ctx.set_line_dash(&[4.0 * dpr, 4.0 * dpr]);
-        for x in [min_x, max_x] {
-            ctx.begin_path();
-            ctx.move_to(crisp(x, dpr), 0.0);
-            ctx.line_to(crisp(x, dpr), chart_height);
-            ctx.stroke();
-        }
-        ctx.set_line_dash(&[]);
+        render_scan_bracket(ctx, self.shape, x1, x2, self.p1, self.p2, &self.data.color.stroke, self.data.width);
 
         let hits = self.resolved_scan(ctx.bars());
         let window_end = self.resolved_window(ctx.bars()).map(|(_, e)| e);
@@ -620,6 +636,20 @@ impl Primitive for SmcScan {
                     SelectOption::new("all_bars", ConceptKey::ScanCoverageAllBars.get(lang)),
                 ],
             ).with_category(PropertyCategory::AppearanceStats).with_order(5),
+            // The shape a placed survey is bracketed by — a placement
+            // choice per drawing, read/written through this SAME generic
+            // property list by the Price Action modal's own Coverage tab
+            // (`mlc-app-layout::layout::modals::markup_engine_settings`),
+            // not a `SmcEngineConfig` field.
+            ConfigProperty::pills(
+                "shape",
+                ConceptKey::ScanShapeLabel.get(lang),
+                self.shape.id(),
+                vec![
+                    SelectOption::new(ScanShape::TwoLines.id(), ConceptKey::ScanShapeTwoLines.get(lang)),
+                    SelectOption::new(ScanShape::Rectangle.id(), ConceptKey::ScanShapeRectangle.get(lang)),
+                ],
+            ).with_category(PropertyCategory::AppearanceStats).with_order(7),
             ConfigProperty::boolean(
                 "hide_filled_gaps",
                 ConceptKey::SmcScanHideFilledGapsLabel.get(lang),
@@ -665,6 +695,12 @@ impl Primitive for SmcScan {
             self.coverage = s.to_string();
             return true;
         }
+        if id == "shape" {
+            let Some(s) = value.as_string() else { return false };
+            let Some(shape) = ScanShape::from_id(s) else { return false };
+            self.shape = shape;
+            return true;
+        }
         if let Some((base, row, col)) = parse_table_cell_id(id) {
             if base != SMC_SCAN_TABLE_ID || col != 0 {
                 return false;
@@ -686,6 +722,24 @@ impl Primitive for SmcScan {
         }
         false
     }
+}
+
+/// A displacement leg's own representative price, for
+/// [`SmcScan::resolved_scan`]'s own `Rectangle`-mode price-band filter —
+/// mirrors `amd_cycle::leg_endpoints`'s own start/end-extreme pair (start
+/// low, end high for an up leg; the mirror for a down leg) but reads `bars`
+/// directly rather than `ctx.bars()`, since `resolved_scan` has no
+/// `RenderContext` of its own. `None` when either endpoint's own bar index
+/// has since fallen outside `bars` (a defensive case `leg_endpoints` shares;
+/// never hit by a leg this same call resolved against the same `bars`).
+fn leg_anchor_price(bars: &[Bar], leg: &mli_smc::DisplacementLeg) -> Option<f64> {
+    let start_bar = bars.get(leg.start_index)?;
+    let end_bar = bars.get(leg.end_index)?;
+    let (p1, p2) = match leg.direction {
+        mli_smc::Direction::Up => (start_bar.low, end_bar.high),
+        mli_smc::Direction::Down => (start_bar.high, end_bar.low),
+    };
+    Some((p1 + p2) / 2.0)
 }
 
 /// Draw a small `"×{count}"` badge above a marker — the count-badge half of
@@ -841,6 +895,41 @@ mod tests {
         assert!(hits.order_blocks.iter().any(|b| b.index == 9));
     }
 
+    /// Piece 7: a `TwoLines` scan keeps every hit in the time range,
+    /// whatever `p1`/`p2` happen to hold (they are captured but unused);
+    /// flipping the SAME scan to `Rectangle` with a price band that excludes
+    /// the order block's own midpoint (bar 9: low 19.0, high 22.0, midpoint
+    /// 20.5) drops exactly that hit and nothing else — regression fence
+    /// against `Rectangle` silently degrading into `TwoLines`' own "every
+    /// hit in range counts" behaviour.
+    #[test]
+    fn rectangle_shape_keeps_only_hits_inside_the_price_band() {
+        let _guard = reset_engine_config();
+        set_fixture_config();
+        let bars = order_block_fixture_bars();
+
+        let mut scan = SmcScan::new(0, 13_000, "#5C6BC0");
+        scan.p1 = 100.0;
+        scan.p2 = 200.0;
+        let two_lines_hits = scan.resolved_scan(&bars);
+        assert!(two_lines_hits.order_blocks.iter().any(|b| b.index == 9), "TwoLines ignores p1/p2 entirely");
+
+        scan.shape = ScanShape::Rectangle;
+        let out_of_band = scan.resolved_scan(&bars);
+        assert!(
+            !out_of_band.order_blocks.iter().any(|b| b.index == 9),
+            "Rectangle drops a hit whose own price falls outside [p1, p2]"
+        );
+
+        scan.p1 = 18.0;
+        scan.p2 = 23.0;
+        let in_band = scan.resolved_scan(&bars);
+        assert!(
+            in_band.order_blocks.iter().any(|b| b.index == 9),
+            "Rectangle keeps a hit whose own price falls inside [p1, p2]"
+        );
+    }
+
     #[test]
     fn unchecking_a_structure_removes_its_hits() {
         let _guard = reset_engine_config();
@@ -853,6 +942,32 @@ mod tests {
         scan.enabled_structures.retain(|id| id != "order_block");
         scan.refresh_bar_derived_cache(&bars);
         assert!(scan.cached_hits.order_blocks.is_empty());
+    }
+
+    /// A scan saved before piece 7 carries no `shape`/`p1`/`p2` fields at
+    /// all — its JSON must still load, landing on `TwoLines` (the shape it
+    /// always drew) rather than refusing or defaulting to `Rectangle`.
+    /// `PrimitiveData` itself has no field defaults of its own, so `data`
+    /// is built via `..Default::default()` and serialized for real rather
+    /// than hand-typed, and only the top-level `shape`/`p1`/`p2` keys (all
+    /// `#[serde(default)]` on `SmcScan`) are the ones missing — the exact
+    /// shape a pre-piece-7 save actually has.
+    #[test]
+    fn a_pre_piece_7_saved_scan_loads_as_two_lines() {
+        let data = PrimitiveData {
+            type_id: "smc_scan".to_string(),
+            display_name: "Smart Money Scan".to_string(),
+            color: PrimitiveColor::new("#5C6BC0"),
+            width: 1.0,
+            ..Default::default()
+        };
+        let old_json = serde_json::json!({ "data": data, "ts1": 0, "ts2": 13_000 }).to_string();
+        assert!(!old_json.contains("shape") && !old_json.contains("\"p1\"") && !old_json.contains("\"p2\""));
+
+        let restored: SmcScan = serde_json::from_str(&old_json).expect("old scan JSON still loads");
+        assert_eq!(restored.shape, ScanShape::TwoLines);
+        assert_eq!(restored.p1, 0.0);
+        assert_eq!(restored.p2, 0.0);
     }
 
     #[test]
@@ -871,6 +986,24 @@ mod tests {
         registry.register_typed::<SmcScan>(metadata());
         let restored = registry.from_json("smc_scan", &json).expect("round trip");
         assert_eq!(restored.points(), scan.points());
+    }
+
+    /// Piece 8's own write path: the Coverage tab's Shape row applies
+    /// through this exact generic `apply_style_property("shape", ...)` —
+    /// the same mechanism `coverage` already round-trips through.
+    #[test]
+    fn shape_property_round_trips() {
+        let mut scan = SmcScan::new(0, 13_000, "#5C6BC0");
+        assert_eq!(scan.shape, ScanShape::TwoLines);
+
+        assert!(scan.apply_style_property("shape", &PropertyValue::String("rectangle".to_string())));
+        assert_eq!(scan.shape, ScanShape::Rectangle);
+
+        assert!(scan.apply_style_property("shape", &PropertyValue::String("two_lines".to_string())));
+        assert_eq!(scan.shape, ScanShape::TwoLines);
+
+        assert!(!scan.apply_style_property("shape", &PropertyValue::String("bogus".to_string())));
+        assert!(!scan.apply_style_property("shape", &PropertyValue::Boolean(true)));
     }
 
     #[test]

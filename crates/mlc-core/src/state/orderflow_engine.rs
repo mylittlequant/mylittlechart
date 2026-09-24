@@ -256,4 +256,26 @@ mod tests {
         let cfg = OrderFlowEngineConfig { delta_divergence_swing_n: 7, ..OrderFlowEngineConfig::default() };
         assert_eq!(cfg.to_delta_divergence_config().swing_n, 7);
     }
+
+    /// The Price Action modal's own Thresholds tab (A0 autodetectors, piece
+    /// 10) writes to exactly these 2 fields through this SAME global —
+    /// `min_single_print_run` already had a row (now filed under
+    /// Thresholds, see that piece's own doc); `delta_divergence_swing_n`
+    /// already had a reader (`to_delta_divergence_config`) but no row until
+    /// now. Neither needed new engine-config plumbing.
+    #[test]
+    fn both_threshold_fields_round_trip_together() {
+        let _guard = engine_config_test_lock();
+        let cfg = OrderFlowEngineConfig {
+            delta_divergence_swing_n: 4,
+            min_single_print_run: 5,
+            ..OrderFlowEngineConfig::default()
+        };
+        set_orderflow_engine_config(cfg.clone());
+        let read_back = orderflow_engine_config();
+        assert_eq!(read_back.delta_divergence_swing_n, 4);
+        assert_eq!(read_back.min_single_print_run, 5);
+        assert_eq!(read_back, cfg);
+        set_orderflow_engine_config(OrderFlowEngineConfig::default());
+    }
 }

@@ -278,6 +278,54 @@ impl ChartApp {
         false
     }
 
+    /// True while a toolbar-owned dropdown is open on either toolbar
+    /// instance in play: the main topbar (`panel_app.toolbar_state`) or the
+    /// trading-container embedded header (`trading_header_tb`, `tch:`
+    /// widget ids). Chrome's own dropdowns (e.g. the "+" new-tab menu) live
+    /// on the main topbar instance too — `mlc-app-input-shell` sets them on
+    /// the very same `panel_app.toolbar_state.open_dropdown_id` field — so
+    /// this one check already covers that surface.
+    ///
+    /// Used by the R23 choke point (`dispatch_panel_click`,
+    /// `process_chart_out_event`) to detect "this click/event just opened a
+    /// dropdown" by state TRANSITION instead of a per-button allow-list.
+    pub(super) fn any_toolbar_dropdown_open(&self) -> bool {
+        self.panel_app.toolbar_state.open_dropdown_id.is_some()
+            || self.trading_header_tb.open_dropdown_id.is_some()
+    }
+
+    /// R23 (owner ruling 2026-09-23): a toolbar dropdown popping up while a
+    /// floating settings/search modal — e.g. the indicator-settings modal
+    /// for RSI — is still open paints on top of it. Unlike the
+    /// `dim_backdrop` family [`Self::dismiss_dimmed_modal`] already guards,
+    /// these modals draw no backdrop veil of their own to catch the click
+    /// first, so nothing closed them before this arc.
+    ///
+    /// Every toolbar-dropdown open path — `mlc-core`'s `ToolbarState`
+    /// internal `open_dropdown_id` writes, this file's own direct writes
+    /// (favorites-add, trading-header symbol/timeframe/chart-type/agent
+    /// pickers), and `mlc-app-input-shell`'s chrome-level new-tab menu —
+    /// reaches this ONE function: `dispatch_panel_click` and
+    /// `process_chart_out_event` call it on a state transition (see
+    /// [`Self::any_toolbar_dropdown_open`]), and the chrome dispatch calls
+    /// it directly at its own open site. A new dropdown added anywhere in
+    /// that surface is covered automatically — there is no per-button list
+    /// to remember to extend.
+    ///
+    /// Reuses each modal's own dedicated close path (never flips a flag
+    /// directly) so focus release matches the × button exactly — the R13
+    /// focus lifecycle `dismiss_profile_manager`'s doc comment explains.
+    pub fn close_modals_for_toolbar_dropdown(&mut self) {
+        self.dismiss_dimmed_modal();
+        self.close_open_modals();
+        if self.panel_app.alert_settings_state.is_open() {
+            self.panel_app.alert_settings_state.close();
+        }
+        if self.panel_app.compare_settings_state.is_open() {
+            self.panel_app.compare_settings_state.close();
+        }
+    }
+
     /// Hide the Welcome Wizard and reset it to page 0. Shared by the ×
     /// button, the dimmer click and Esc — always allowed, the wizard is a
     /// first-run courtesy, not a gate.
@@ -350,7 +398,27 @@ impl ChartApp {
     /// with an id an agent made up.  `x`/`y` are the real click position for
     /// genuine mouse input; agent dispatch passes `(0.0, 0.0)`, the same
     /// no-real-position sentinel `clock_popup_state.toggle` already uses.
+    ///
+    /// R23 choke point (owner ruling 2026-09-23): wraps
+    /// [`Self::dispatch_panel_click_impl`] with a before/after check of
+    /// [`Self::any_toolbar_dropdown_open`] — any click that just opened a
+    /// toolbar dropdown (main topbar or trading-container header, whichever
+    /// widget id it came in on) runs [`Self::close_modals_for_toolbar_
+    /// dropdown`] right after. Detecting the state TRANSITION here, rather
+    /// than calling the close step from each of the many `open_dropdown_id
+    /// = Some(...)` sites scattered across this file and `mlc-core`'s
+    /// `ToolbarState` (which cannot see modal state at all — layering), is
+    /// what makes this "one helper a new dropdown cannot forget": nothing
+    /// short of adding a whole new dropdown STORAGE field bypasses it.
     pub fn dispatch_panel_click(&mut self, widget_id: &str, x: f64, y: f64) {
+        let dropdown_open_before = self.any_toolbar_dropdown_open();
+        self.dispatch_panel_click_impl(widget_id, x, y);
+        if !dropdown_open_before && self.any_toolbar_dropdown_open() {
+            self.close_modals_for_toolbar_dropdown();
+        }
+    }
+
+    fn dispatch_panel_click_impl(&mut self, widget_id: &str, x: f64, y: f64) {
         // Toast ✕ (owner ask 2026-09-09 restyle-and-anchor pass) — dismisses
         // ONLY that one toast. Checked first: a toast floats above every
         // other layer (`ZLayer::Toast`), so a click here must never also
@@ -5449,12 +5517,92 @@ impl ChartApp {
                     self.panel_app.markup_engine_settings_state.close();
                 }
                 "modal_bg" | "header" => {}
+                rest if rest.starts_with("tab:") => {
+                    use mlc_app_layout::ui::modal_settings::SettingsTab;
+                    let key = &rest["tab:".len()..];
+                    match SettingsTab::from_id(key) {
+                        Some(t) => self.panel_app.markup_engine_settings_state.active_tab = t,
+                        None => log::debug!("[ChartApp] markup_engine_settings unknown tab: {}", key),
+                    }
+                }
                 rest if rest.starts_with("markup:family:") => {
                     let key = &rest["markup:family:".len()..];
                     match MarkupSettingsFamily::from_id(key) {
                         Some(f) => self.panel_app.markup_engine_settings_state.family = f,
                         None => log::debug!("[ChartApp] markup_engine_settings unknown family: {}", key),
                     }
+                }
+                // ── Coverage tab: PER-DRAWING, not global — see
+                // `MarkupEngineSettingsState::source_drawing`'s own doc.
+                rest if rest.starts_with("markup:coverage:") => {
+                    let value = &rest["markup:coverage:".len()..];
+                    self.apply_markup_scan_edit("coverage", value);
+                }
+                rest if rest.starts_with("markup:shape:") => {
+                    let value = &rest["markup:shape:".len()..];
+                    self.apply_markup_scan_edit("shape", value);
+                }
+                // ── Thresholds tab: Smart Money's own 6 detector rows (A0
+                // piece 9) — global `SmcEngineConfig`, no-op for the other
+                // two families (the row is not drawn for them). Order
+                // Flow's own row lands in piece 10.
+                rest if rest.starts_with("markup:swing_n:") => {
+                    let Ok(n) = rest["markup:swing_n:".len()..].parse::<usize>() else {
+                        log::debug!("[ChartApp] markup_engine_settings bad swing_n: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |c| c.swing_n = n, move |_| {}, move |_| {});
+                }
+                rest if rest.starts_with("markup:atr_period:") => {
+                    let Ok(n) = rest["markup:atr_period:".len()..].parse::<usize>() else {
+                        log::debug!("[ChartApp] markup_engine_settings bad atr_period: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |c| c.atr_period = n, move |_| {}, move |_| {});
+                }
+                rest if rest.starts_with("markup:sweep_recovery_bars:") => {
+                    let Ok(n) = rest["markup:sweep_recovery_bars:".len()..].parse::<usize>() else {
+                        log::debug!("[ChartApp] markup_engine_settings bad sweep_recovery_bars: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |c| c.sweep_recovery_bars = n, move |_| {}, move |_| {});
+                }
+                rest if rest.starts_with("markup:order_block_zone:") => {
+                    use mlc_core::state::smc_engine::OrderBlockZoneMode;
+                    let key = &rest["markup:order_block_zone:".len()..];
+                    let Some(zone) = (match key {
+                        "full_range" => Some(OrderBlockZoneMode::FullRange),
+                        "body_only" => Some(OrderBlockZoneMode::BodyOnly),
+                        _ => None,
+                    }) else {
+                        log::debug!("[ChartApp] markup_engine_settings bad order_block_zone: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |c| c.order_block_zone = zone, move |_| {}, move |_| {});
+                }
+                rest if rest.starts_with("markup:displacement_atr_mult:") => {
+                    let Ok(v) = rest["markup:displacement_atr_mult:".len()..].parse::<f64>() else {
+                        log::debug!("[ChartApp] markup_engine_settings bad displacement_atr_mult: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |c| c.displacement_atr_mult = v, move |_| {}, move |_| {});
+                }
+                rest if rest.starts_with("markup:equal_level_atr_tol:") => {
+                    let Ok(v) = rest["markup:equal_level_atr_tol:".len()..].parse::<f64>() else {
+                        log::debug!("[ChartApp] markup_engine_settings bad equal_level_atr_tol: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |c| c.equal_level_atr_tol = v, move |_| {}, move |_| {});
+                }
+                // ── Thresholds tab: Order Flow's own new row (A0 piece 10)
+                // — `min_single_print_run` reuses the pre-existing
+                // `markup:single_print_run:` id above, unmoved.
+                rest if rest.starts_with("markup:delta_divergence_swing_n:") => {
+                    let Ok(n) = rest["markup:delta_divergence_swing_n:".len()..].parse::<usize>() else {
+                        log::debug!("[ChartApp] markup_engine_settings bad delta_divergence_swing_n: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |_| {}, move |c| c.delta_divergence_swing_n = n, move |_| {});
                 }
                 "markup:propose" => {
                     // The engine drawing what it found. Creates primitives
@@ -5992,6 +6140,8 @@ impl ChartApp {
                                     st.forum2.invalidate_thread();
                                     st.forum2.reply_pending = false;
                                     st.forum2.last_error = None;
+                                    st.forum2.selection = None;
+                                    st.forum2.selection_drag_active = false;
                                     st.forum2.request = Some(ForumV2Request::OpenThread { id });
                                 }
                             }
@@ -6134,6 +6284,8 @@ impl ChartApp {
                                 st.forum2.invalidate_thread();
                                 st.forum2.reply_pending = false;
                                 st.forum2.last_error = None;
+                                st.forum2.selection = None;
+                                st.forum2.selection_drag_active = false;
                                 st.forum2.request = Some(ForumV2Request::OpenThread { id });
                             }
                         }
@@ -6244,6 +6396,8 @@ impl ChartApp {
                                     st.forum2.invalidate_thread();
                                     st.forum2.reply_pending = false;
                                     st.forum2.last_error = None;
+                                    st.forum2.selection = None;
+                                    st.forum2.selection_drag_active = false;
                                     st.forum2.request = Some(ForumV2Request::OpenThread { id });
                                 }
                             }
@@ -6326,6 +6480,45 @@ impl ChartApp {
                                     st.dm.request =
                                         Some(DmRequest::LoadMessages { id, page: DmMessagePage::Before(lowest_id) });
                                 }
+                            }
+                            return;
+                        }
+                        // Bottom-anchored feed's own "jump to latest"
+                        // (messenger UI-2a piece 2, `messenger_overlay.rs`'s
+                        // own floating button) — lands the open
+                        // conversation's scroll at its own bottom.
+                        // `content_height`/`viewport_height` come from LAST
+                        // frame's own paint (this frame has not painted
+                        // yet) — the same cached-geometry idiom the
+                        // scrollbar-drag start above already reads
+                        // (`ScrollableInfo`).
+                        "jump_latest" => {
+                            let (content_h, viewport_h) = self.frame_result.as_ref()
+                                .and_then(|r| r.community.as_ref())
+                                .map(|c| (c.content.total_content_height.unwrap_or(0.0), c.content.viewport_height.unwrap_or(0.0)))
+                                .unwrap_or((0.0, 0.0));
+                            st.scroll.scroll_to(content_h, content_h, viewport_h);
+                            return;
+                        }
+                        // The chat-list header's own pencil button
+                        // (messenger UI-2b, `messenger_overlay.rs`'s
+                        // `draw_chat_filter_row`) — a direct show/hide
+                        // toggle for the "New message" recipient-search
+                        // panel rather than a menu (see `DmState::
+                        // new_conversation_open`'s own doc for why: today's
+                        // DM-only provider has nothing else to offer behind
+                        // it). Opening focuses the peer field immediately —
+                        // clicking the pencil is already "I want to type a
+                        // name", the same one-less-click courtesy
+                        // `"choose_nick"` above gives `ACCOUNT_NICK`.
+                        "new_conversation_toggle" => {
+                            if st.dm.new_conversation_open {
+                                st.dm.close_lookup_dropdown();
+                                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                            } else {
+                                st.dm.new_conversation_open = true;
+                                let wid = uzor::WidgetId::from(crate::text_input::DM_PEER);
+                                self.input_coordinator.borrow_mut().text_fields_mut().focus(wid);
                             }
                             return;
                         }
@@ -9408,6 +9601,31 @@ impl ChartApp {
         self.core.drawings_mut().refresh_all_derived();
         self.autosave_snapshot();
         log::debug!("[ChartApp] markup engine config updated");
+    }
+
+    /// Apply one edit to the Price Action modal's own Coverage tab — PER
+    /// DRAWING, not global (see `MarkupEngineSettingsState::source_drawing`'s
+    /// own doc), through the SAME generic `apply_property` path
+    /// `primitive_settings`'s own Pills rows already use for `"coverage"`/
+    /// `"shape"` on that exact primitive. A no-op (logged, not silent) when
+    /// the modal somehow has no source drawing — every real entrance sets
+    /// one, since the only door in is a specific scan's own "Engine
+    /// Settings" button.
+    fn apply_markup_scan_edit(&mut self, id: &str, value: &str) {
+        let Some((bid, prim_id)) = self.panel_app.markup_engine_settings_state.source_drawing else {
+            log::debug!("[ChartApp] markup_engine_settings Coverage edit with no source drawing: {id}={value}");
+            return;
+        };
+        let new_val = mlc_core::drawing::primitives_v2::config::PropertyValue::String(value.to_string());
+        self.core.drawings_mut().apply_property(bid, prim_id, mlc_core::drawing::primitives_v2::PropertyKind::Style, id, &new_val);
+        match id {
+            "coverage" => self.panel_app.markup_engine_settings_state.scan_coverage = value.to_string(),
+            "shape" => self.panel_app.markup_engine_settings_state.scan_shape = value.to_string(),
+            _ => {}
+        }
+        self.sync_drawing_back_to_group();
+        self.autosave_snapshot();
+        log::debug!("[ChartApp] markup_engine_settings Coverage tab: {id} = {value}");
     }
 
     fn apply_ewa_engine_config_edit(&mut self, edit: impl FnOnce(&mut mlc_core::state::ewa_engine::EwaEngineConfig)) {

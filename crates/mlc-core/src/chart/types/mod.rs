@@ -24,6 +24,7 @@
 // Coordinate system and scales
 pub mod viewport;
 pub mod price_scale;
+pub mod pane_scale;
 pub mod time_scale;
 pub mod kinetic;
 
@@ -43,6 +44,9 @@ pub use price_scale::{
     format_price, format_price_with_precision, nice_number, nice_price_step, price_precision,
     PriceScale, PriceScaleMode, ScaleMode, NICE_MULTIPLIERS,
 };
+
+// Re-export pane scale (sub-pane Y-axis range + label placement)
+pub use pane_scale::{cull_axis_labels, sub_pane_ticks, sub_pane_value_range, AxisLabel};
 
 // Re-export time scale
 pub use time_scale::{

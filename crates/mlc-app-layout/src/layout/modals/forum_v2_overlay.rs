@@ -64,8 +64,8 @@ use uzor::WidgetId;
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::modal_settings::{
-    BoardUi, CommunityState, ForumReplyV2Ui, ForumSearchHitUi, ForumThreadV2Detail,
-    ForumThreadV2Ui, ForumV2State, ForumV2View,
+    BoardUi, CommunityState, ForumBodySelection, ForumReplyV2Ui, ForumSearchHitUi,
+    ForumThreadV2Detail, ForumThreadV2Ui, ForumV2State, ForumV2View,
 };
 use crate::ui::scroll_state::ScrollState;
 use crate::ui::scroll_widget::ScrollableContainer;
@@ -337,10 +337,12 @@ fn draw_text_link(
 
 /// One clipped red error line — the last request's refusal
 /// (`ForumV2State::last_error`). Returns 20.0, matched by every `*_h`
-/// function's own `err_h`.
-fn draw_error_line(ctx: &mut dyn RenderContext, w: f64, x: f64, y: f64, msg: &str) -> f64 {
+/// function's own `err_h`. `tt.danger` — the same token `draw_text_link`'s
+/// own Delete hover already reads in this file (owner ruling: no hardcoded
+/// colours, theme tokens only).
+fn draw_error_line(ctx: &mut dyn RenderContext, tt: &ToolbarTheme, w: f64, x: f64, y: f64, msg: &str) -> f64 {
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color("#e5484d");
+    ctx.set_fill_color(&tt.danger);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     let m = crate::ui::widgets::fit_text_to_width(ctx, msg, w);
@@ -387,6 +389,18 @@ fn blocks_h(text: &str) -> f64 {
         .sum()
 }
 
+/// Draws `text` as wrapped paragraphs (`blocks`), records one
+/// [`crate::ui::selectable_text::LineHit`] per WRAPPED TEXT line into
+/// `result.forum_line_rects` for HOST-SIDE text selection (owner ruling
+/// 2026-09-10, extended to Forum post bodies — same mechanism
+/// `dm_overlay.rs`'s own `draw_message` uses for its bubbles, keyed by this
+/// post's own `post_number` instead of a message index), and paints
+/// `selection`'s highlight over whichever of THIS post's own lines the
+/// ordered range covers — same paint-order idiom `draw_message`'s own
+/// selection overlay uses (translucent `tt.selection`, drawn after every
+/// line has painted). A lone-URL paragraph renders as a link row instead
+/// and is not selectable, same as before this pass.
+#[allow(clippy::too_many_arguments)]
 fn draw_blocks(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -395,10 +409,19 @@ fn draw_blocks(
     x: f64,
     y: f64,
     w: f64,
+    post_number: i64,
     text: &str,
+    selection: Option<ForumBodySelection>,
     tt: &ToolbarTheme,
+    result: &mut CloudOverlayResult,
 ) -> f64 {
     let mut ly = y;
+    let mut line_idx: u16 = 0;
+    // (line_idx, y_top, text) for this post's own text lines — collected
+    // first so the selection-highlight pass below and the final push into
+    // `result.forum_line_rects` can both walk it without re-measuring text
+    // that has already scrolled past.
+    let mut pushed: Vec<(u16, f64, String)> = Vec::new();
     for block in blocks(text) {
         match block {
             Block::Text(lines) => {
@@ -408,6 +431,8 @@ fn draw_blocks(
                 ctx.set_text_baseline(TextBaseline::Top);
                 for line in &lines {
                     ctx.fill_text(line, x, ly);
+                    pushed.push((line_idx, ly, line.clone()));
+                    line_idx += 1;
                     ly += 16.0;
                 }
                 ly += 10.0;
@@ -419,6 +444,48 @@ fn draw_blocks(
             }
         }
     }
+
+    if let Some(sel) = selection.filter(|s| !s.is_empty()) {
+        let ((lo_block, lo_line, lo_char), (hi_block, hi_line, hi_char)) = sel.ordered();
+        ctx.set_font("12px sans-serif");
+        ctx.set_fill_color(&tt.selection);
+        ctx.set_global_alpha(0.35);
+        for (li, line_y, line) in &pushed {
+            let pos = (post_number, *li);
+            if pos < (lo_block, lo_line) || pos > (hi_block, hi_line) {
+                continue;
+            }
+            let is_first = pos == (lo_block, lo_line);
+            let is_last = pos == (hi_block, hi_line);
+            let line_width = ctx.measure_text(line);
+            let prefix_width = |n: u16| -> f64 {
+                let prefix: String = line.chars().take(n as usize).collect();
+                ctx.measure_text(&prefix)
+            };
+            let (sel_x, sel_w) = crate::ui::selectable_text::highlight_span(
+                x, line_width, lo_char, hi_char, is_first, is_last, prefix_width,
+            );
+            if sel_w > 0.0 {
+                ctx.fill_rect(sel_x, *line_y, sel_w, 16.0);
+            }
+        }
+        ctx.set_global_alpha(1.0);
+    }
+
+    for (li, line_y, line) in pushed {
+        let width = ctx.measure_text(&line);
+        result.forum_line_rects.push(crate::ui::selectable_text::LineHit {
+            block: post_number,
+            line: li,
+            y_top: line_y,
+            y_bot: line_y + 16.0,
+            text: line,
+            text_x: x,
+            width,
+            mono: false,
+        });
+    }
+
     ly - y
 }
 
@@ -441,37 +508,6 @@ fn board_title<'a>(f: &'a ForumV2State, slug: &'a str) -> &'a str {
 /// treats the two differently.
 fn resolve_board_can_write(f: &ForumV2State) -> Option<bool> {
     f.open_thread_board_slug.as_deref().map(|slug| board_can_write(f, slug))
-}
-
-/// The caller's OWN ladder rank, as a short badge label — resolved from
-/// `ForumV2State::caller_roles`/`caller_classes` (the same `GET /api/forum/
-/// me` fetch [`ForumV2State::is_moderator_or_admin`] already reads),
-/// highest-first. `None` while signed out or before the `Me` fetch answers.
-///
-/// Forum-v2's wire shapes (`ForumReplyNode`/`ForumThreadV2`, mirrored here
-/// as [`ForumReplyV2Ui`]/[`ForumThreadV2Detail`]) carry no per-author rank
-/// at all — only the CALLER's own is ever resolved, server-side, and only
-/// for the caller. So every OTHER author's post card renders with no rank
-/// badge at all rather than a guessed one (`forum_concept_v1.html`'s own
-/// mockup shows one per author, but that data does not exist on the wire
-/// today); adding it is a separate, server-side, owner-gated arc.
-fn caller_rank_label(f: &ForumV2State) -> Option<&'static str> {
-    if f.caller_roles.iter().any(|r| r == "admin") {
-        return Some("admin");
-    }
-    if f.caller_roles.iter().any(|r| r == "moderator") {
-        return Some("moderator");
-    }
-    if f.caller_classes.iter().any(|c| c == "trusted") {
-        return Some("trusted");
-    }
-    if f.caller_classes.iter().any(|c| c == "paid") {
-        return Some("paid");
-    }
-    if f.caller_classes.iter().any(|c| c == "user") {
-        return Some("user");
-    }
-    None
 }
 
 /// Whether the docked reply composer — and every per-post "↩ Reply" link —
@@ -655,6 +691,88 @@ fn draw_crumb_bar(
     h
 }
 
+/// Draws `text` left-aligned at `(x, y)` (font/align/baseline already set by
+/// the caller — this only ever touches fill colour), highlighting every
+/// case-insensitive occurrence of `query` in `tt.accent` — the concept's own
+/// `<mark>` (`forum_concept_v1.html:174,176` — gold in the mockup, but this
+/// crate's own drill-down rewrite already moved every other permanent
+/// emphasis mark, pin glyph and current-breadcrumb-segment off gold onto
+/// `tt.accent`, the one token this file reserves for "the noteworthy one" —
+/// see this file's own top-of-file doc). Char-indexed rather than byte-
+/// indexed so a lowercase expansion (e.g. a German "ß") can never land a
+/// split off a UTF-8 boundary. `query` empty, or matching nothing, draws
+/// `text` plain in `base_color`, same single `fill_text` call as before this
+/// pass.
+fn draw_highlighted_text(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    text: &str,
+    query: &str,
+    base_color: &str,
+    highlight_color: &str,
+) {
+    let chars: Vec<char> = text.chars().collect();
+    let query_chars: Vec<char> = query.chars().collect();
+    let n = chars.len();
+    let m = query_chars.len();
+    if m == 0 || m > n {
+        ctx.set_fill_color(base_color);
+        ctx.fill_text(text, x, y);
+        return;
+    }
+    let matches_at = |i: usize| (0..m).all(|k| chars[i + k].to_lowercase().eq(query_chars[k].to_lowercase()));
+
+    let mut cx = x;
+    let mut i = 0usize;
+    let mut run_start = 0usize;
+    while i < n {
+        if i + m <= n && matches_at(i) {
+            if run_start < i {
+                let plain: String = chars[run_start..i].iter().collect();
+                ctx.set_fill_color(base_color);
+                ctx.fill_text(&plain, cx, y);
+                cx += ctx.measure_text(&plain);
+            }
+            let hi: String = chars[i..i + m].iter().collect();
+            ctx.set_fill_color(highlight_color);
+            ctx.fill_text(&hi, cx, y);
+            cx += ctx.measure_text(&hi);
+            i += m;
+            run_start = i;
+        } else {
+            i += 1;
+        }
+    }
+    if run_start < n {
+        let plain: String = chars[run_start..n].iter().collect();
+        ctx.set_fill_color(base_color);
+        ctx.fill_text(&plain, cx, y);
+    }
+}
+
+/// The search-hit "kind" tag (concept's own `.kind`, `forum_concept_v1.
+/// html:171` — a small bordered pill reading `THREAD`/`REPLY`, drawn before
+/// the heading). Returns the width consumed (pill + trailing gap) so the
+/// caller can offset the heading text past it.
+fn draw_kind_pill(ctx: &mut dyn RenderContext, x: f64, y: f64, kind: &str, tt: &ToolbarTheme) -> f64 {
+    const PILL_H: f64 = 13.0;
+    const PILL_PAD: f64 = 4.0;
+    ctx.set_font("9px monospace");
+    let label = kind.to_uppercase();
+    let w = ctx.measure_text(&label) + PILL_PAD * 2.0;
+    ctx.set_stroke_color(&tt.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rect(x, y, w, PILL_H);
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(&label, x + w / 2.0, y + PILL_H / 2.0);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    w + 6.0
+}
+
 /// Drawn LAST over whatever view is showing — anchored under `field_rect`
 /// (the breadcrumb bar's own field, `None` when the box is closed, in which
 /// case this is a no-op). Unclipped: the breadcrumb bar sits above every
@@ -669,7 +787,8 @@ fn draw_quick_search_dropdown(
     tt: &ToolbarTheme,
 ) {
     let Some(anchor) = field_rect else { return };
-    if !f.quick_search_open || f.quick_search_query.is_none() {
+    let Some(query) = f.quick_search_query.as_deref() else { return };
+    if !f.quick_search_open {
         return;
     }
     let n = f.quick_search_results.len().min(QUICK_DROPDOWN_MAX_ROWS);
@@ -695,18 +814,20 @@ fn draw_quick_search_dropdown(
                 ctx.set_fill_color(&tt.item_bg_hover);
                 ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
             }
+            let pill_w = draw_kind_pill(ctx, rect.x + 6.0, rect.y + 2.0, &hit.kind, tt);
             let heading = hit.title.clone().unwrap_or_else(|| format!("Reply in thread #{}", hit.thread_id));
             ctx.set_font("600 12px sans-serif");
-            ctx.set_fill_color(if hovered { &tt.item_text_hover } else { &tt.item_text });
             ctx.set_text_align(TextAlign::Left);
             ctx.set_text_baseline(TextBaseline::Top);
-            let heading = crate::ui::widgets::fit_text_to_width(ctx, &heading, rect.width - 12.0);
-            ctx.fill_text(&heading, rect.x + 6.0, rect.y + 2.0);
+            let heading_color = if hovered { &tt.item_text_hover } else { &tt.item_text };
+            let heading = crate::ui::widgets::fit_text_to_width(ctx, &heading, rect.width - 12.0 - pill_w);
+            draw_highlighted_text(ctx, rect.x + 6.0 + pill_w, rect.y + 2.0, &heading, query, heading_color, &tt.accent);
 
             ctx.set_font("11px sans-serif");
-            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
             let snippet = crate::ui::widgets::fit_text_to_width(ctx, &hit.snippet, rect.width - 12.0);
-            ctx.fill_text(&snippet, rect.x + 6.0, rect.y + 18.0);
+            draw_highlighted_text(ctx, rect.x + 6.0, rect.y + 18.0, &snippet, query, &tt.item_text_muted, &tt.accent);
 
             coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
             ry += QUICK_RESULT_ROW_H;
@@ -891,7 +1012,7 @@ fn draw_boards_index(
 ) {
     let mut py = y;
     if let Some(err) = &f.last_error {
-        py += draw_error_line(ctx, w, x, py, err);
+        py += draw_error_line(ctx, tt, w, x, py, err);
     }
     py += draw_totals_header(ctx, x, py, w, f, tt);
     py += 8.0;
@@ -1037,7 +1158,7 @@ fn draw_board_threads_index(
 ) {
     let mut py = y;
     if let Some(err) = &f.last_error {
-        py += draw_error_line(ctx, w, x, py, err);
+        py += draw_error_line(ctx, tt, w, x, py, err);
     }
     if let Some(board) = f.boards.iter().find(|b| b.slug == slug) {
         ctx.set_font("12px sans-serif");
@@ -1239,9 +1360,11 @@ fn draw_post_footer(
 /// `#N` + absolute/relative time row, an optional "in reply to @nick #N"
 /// line, the body (hidden posts read "[hidden by moderator]" instead,
 /// regardless of caller — same rule the old per-node view already applied),
-/// and a text-link footer. `rank_label` is `None` for every author but the
-/// caller themselves — see [`caller_rank_label`]'s own doc for why. Returns
-/// the full slot height consumed, [`post_card_h`].
+/// and a text-link footer. `rank_label` is this POST's own author's rank
+/// (`ForumReplyV2Ui::author_rank`/`ForumThreadV2Detail::author_rank`, off
+/// the server's `resolve_author_ranks`) — `None` when the server has not
+/// resolved one for this author. Returns the full slot height consumed,
+/// [`post_card_h`].
 #[allow(clippy::too_many_arguments)]
 fn draw_post_card(
     ctx: &mut dyn RenderContext,
@@ -1261,7 +1384,9 @@ fn draw_post_card(
     reply_label: &str,
     delete_widget_id: Option<&str>,
     current_time_ms: u64,
+    selection: Option<ForumBodySelection>,
     tt: &ToolbarTheme,
+    result: &mut CloudOverlayResult,
 ) -> f64 {
     let has_footer = reply_widget_id.is_some() || delete_widget_id.is_some();
     let has_rank = rank_label.is_some();
@@ -1337,7 +1462,10 @@ fn draw_post_card(
         ctx.fill_text("[hidden by moderator]", body_x, ly);
         ly += HIDDEN_LINE_H;
     } else {
-        ly += draw_blocks(ctx, coord, layer_id, &format!("cloud_overlay:forum2:post:{number}"), body_x, ly, body_w, body, tt);
+        ly += draw_blocks(
+            ctx, coord, layer_id, &format!("cloud_overlay:forum2:post:{number}"), body_x, ly, body_w,
+            number, body, selection, tt, result,
+        );
     }
 
     if has_footer {
@@ -1434,16 +1562,15 @@ fn thread_scroll_content_h(t: &ForumThreadV2Detail, replies_tree: &[ForumReplyV2
     let header_h = TITLE_LINE_H + META_LINE_H + HEADER_GAP;
     let mod_h = if f.is_moderator_or_admin() { ROW_H } else { 0.0 };
     let composer_visible = thread_composer_visible(f.caller_signed_in, resolve_board_can_write(f));
-    let rank_for = |is_me: bool| is_me && caller_rank_label(f).is_some();
 
-    let op_h = post_card_h(&t.body, t.hidden, false, composer_visible, rank_for(t.author_is_me));
+    let op_h = post_card_h(&t.body, t.hidden, false, composer_visible, t.author_rank.is_some());
     let flat = flatten_replies_chronological(replies_tree, 2);
     let replies_h: f64 = flat
         .iter()
         .map(|fr| {
             post_card_h(
                 &fr.reply.body, fr.reply.hidden, fr.in_reply_to.is_some(),
-                composer_visible || fr.reply.author_is_me, rank_for(fr.reply.author_is_me),
+                composer_visible || fr.reply.author_is_me, fr.reply.author_rank.is_some(),
             )
         })
         .sum();
@@ -1522,7 +1649,6 @@ fn draw_right_thread(
     let f = &state.forum2;
     let composer_visible = thread_composer_visible(f.caller_signed_in, resolve_board_can_write(f));
     let flat_replies = flatten_replies_chronological(replies_tree, 2);
-    let rank_for = |is_me: bool| if is_me { caller_rank_label(f) } else { None };
 
     let composer_h = thread_composer_h(f, reply_to);
     let scroll_h = (viewport_h - composer_h).max(0.0);
@@ -1530,7 +1656,7 @@ fn draw_right_thread(
 
     draw_right_scrollable(
         ctx, coord, layer_id, x, y, w, scroll_h, &state.scroll, content_h, result,
-        |ctx, coord, layer_id, sx, sy, sw, _result| {
+        |ctx, coord, layer_id, sx, sy, sw, result| {
             let mut ly = sy;
 
             let mut title_x = sx;
@@ -1564,24 +1690,22 @@ fn draw_right_thread(
             let op_reply_id: Option<&str> = composer_visible.then_some("cloud_overlay:forum2:reply_to_op");
             ly += draw_post_card(
                 ctx, coord, layer_id, sx, ly, sw,
-                1, &t.author, rank_for(t.author_is_me), &t.created_at, t.hidden, &t.body, None,
-                op_reply_id, "\u{21a9} Reply", None, current_time_ms, tt,
+                1, &t.author, t.author_rank.as_deref(), &t.created_at, t.hidden, &t.body, None,
+                op_reply_id, "\u{21a9} Reply", None, current_time_ms, f.selection, tt, result,
             );
 
             for fr in &flat_replies {
                 let reply_id = format!("cloud_overlay:forum2:reply_to:{}", fr.reply.id);
                 let targeted = reply_to == Some(fr.reply.id);
                 let reply_label = if targeted { "Replying…" } else { "\u{21a9} Reply" };
-                let delete_id = fr
-                    .reply
-                    .author_is_me
+                let delete_id = (fr.reply.author_is_me || f.is_moderator_or_admin())
                     .then(|| format!("cloud_overlay:forum2:delete_reply:{}", fr.reply.id));
                 ly += draw_post_card(
                     ctx, coord, layer_id, sx, ly, sw,
-                    fr.number, &fr.reply.author, rank_for(fr.reply.author_is_me), &fr.reply.created_at,
+                    fr.number, &fr.reply.author, fr.reply.author_rank.as_deref(), &fr.reply.created_at,
                     fr.reply.hidden, &fr.reply.body, fr.in_reply_to,
                     composer_visible.then_some(reply_id.as_str()), reply_label,
-                    delete_id.as_deref(), current_time_ms, tt,
+                    delete_id.as_deref(), current_time_ms, f.selection, tt, result,
                 );
             }
         },
@@ -1593,7 +1717,7 @@ fn draw_right_thread(
     let mut cy = composer_y;
     if composer_visible {
         if let Some(err) = &f.last_error {
-            cy += draw_error_line(ctx, w, x, cy, err);
+            cy += draw_error_line(ctx, tt, w, x, cy, err);
         }
         if reply_to.is_some() {
             let target = reply_to.and_then(|id| {
@@ -1704,7 +1828,7 @@ fn draw_search(
     ctx.fill_text(&format!("Results for \"{q}\""), x, ly);
     ly += 24.0;
     if let Some(err) = &state.forum2.last_error {
-        ly += draw_error_line(ctx, w, x, ly, err);
+        ly += draw_error_line(ctx, tt, w, x, ly, err);
     }
     if hits.is_empty() {
         draw_status(ctx, tt, x, ly, w, "No results.", None);
@@ -1806,7 +1930,7 @@ fn draw_compose(
     ly += FIELD_H + 12.0;
 
     if let Some(err) = &state.forum2.last_error {
-        ly += draw_error_line(ctx, w, x, ly, err);
+        ly += draw_error_line(ctx, tt, w, x, ly, err);
     }
 
     let post_w = (w - ACTION_BTN_GAP) / 2.0;
@@ -1840,6 +1964,7 @@ mod tests {
             depth,
             author: author.to_string(),
             author_is_me: false,
+            author_rank: None,
             body: "body".to_string(),
             created_at: created_at.to_string(),
             hidden: false,

@@ -648,12 +648,20 @@ pub fn process_event(
                     ChromeHit::NewTabButton => {
                         let skeleton_active = chart.panel_app.user_settings_state.profile_manager_mandatory;
                         if !skeleton_active {
-                            let ts = &mut chart.panel_app.toolbar_state;
-                            if ts.open_dropdown_id.as_deref() == Some("new_tab_menu") {
+                            let already_open = chart.panel_app.toolbar_state
+                                .open_dropdown_id.as_deref() == Some("new_tab_menu");
+                            if already_open {
+                                let ts = &mut chart.panel_app.toolbar_state;
                                 ts.open_dropdown_id = None;
                                 ts.open_dropdown_position = None;
                             } else {
                                 let btn_x = chrome::new_tab_button_x(chrome_st, chart.width as f64);
+                                // R23 (owner ruling 2026-09-23): the "+" menu
+                                // must not paint on top of a still-open
+                                // floating settings modal — same choke point
+                                // `mlc-app`'s own dropdown-open paths use.
+                                chart.close_modals_for_toolbar_dropdown();
+                                let ts = &mut chart.panel_app.toolbar_state;
                                 ts.open_dropdown_id = Some("new_tab_menu".to_string());
                                 ts.open_dropdown_position = Some((btn_x, 0.0));
                             }
@@ -866,6 +874,17 @@ pub fn process_event(
                                 } else {
                                     state.last_click = Some((now, x, y));
                                     chart.on_click(x, chart_y);
+                                    // A context-menu "Copy" click (the
+                                    // messenger UI-2b DM message menu) has
+                                    // no clipboard access of its own inside
+                                    // `ChartApp` — it stages the text here,
+                                    // the same "core sets a flag, shell
+                                    // performs the platform call" split
+                                    // `drain_pending_screenshot` already
+                                    // uses.
+                                    if let Some(text) = chart.drain_pending_clipboard_text() {
+                                        platform.clipboard_write(&text);
+                                    }
                                 }
                             }
                         }
@@ -966,6 +985,15 @@ pub fn process_event(
                             if let Some(text) = dm_text {
                                 platform.clipboard_write(&text);
                                 chart.panel_app.community_state.dm.selection = None;
+                                return;
+                            }
+                        }
+                        #[cfg(feature = "cloud")]
+                        {
+                            let forum_text = chart.forum_selection_text();
+                            if let Some(text) = forum_text {
+                                platform.clipboard_write(&text);
+                                chart.panel_app.community_state.forum2.selection = None;
                                 return;
                             }
                         }

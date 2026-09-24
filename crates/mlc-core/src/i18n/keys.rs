@@ -2378,10 +2378,27 @@ pub enum ToolbarMenuKey {
     // Order-flow group header (markup-engines wave, 2026-08-25) — same
     // append-only reason as `HeaderSmartMoney` above.
     HeaderOrderFlow    = 77,
+    // Harmonics / Classic figures group headers (autodetectors A0,
+    // 2026-09-24, `docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`
+    // piece 4) — `pattern_section()`'s flat "Patterns" header splits into
+    // these two plus the existing `HeaderElliottWaves`/`HeaderCandles`/
+    // `HeaderCycles` (piece 5). Same append-only reason as `HeaderCandles`
+    // above. Label text fixed by the arc doc verbatim — no sign-off needed.
+    HeaderHarmonics      = 78,
+    HeaderClassicFigures = 79,
+    // Coordinator decision (2026-09-24, `docs/mlc/plans/autodetectors-a0-
+    // implementation-2026-09-24.md`, "Coordinator decision" section): the
+    // Bars section header reads "Bars", not "Candles" — the owner's own
+    // word for the family. A NEW key, not a `HeaderCandles` (75) rename:
+    // append-only discriminants never renumber, and `HeaderCandles` had
+    // exactly one call site (`toolbar.rs::pattern_section`), which this
+    // arc's piece 5 repoints at `HeaderBars` instead — `HeaderCandles`
+    // itself stays defined (public API, no dead-code risk) but unused.
+    HeaderBars           = 80,
 }
 
 impl ToolbarMenuKey {
-    pub const COUNT: usize = 78;
+    pub const COUNT: usize = 81;
 
     /// Get translation for this key.
     #[inline]
@@ -3488,10 +3505,51 @@ pub enum ConceptKey {
     /// The Price Action modal's own ACTION row — the engine assembling the
     /// setups it found and drawing them (`markup::propose`).
     MarkupProposeSetupsLabel = 449,
+
+    // ---- Harmonic pattern kind names, part 2 (autodetectors A0,
+    // 2026-09-24) — `XabcdHarmonicKind::AltBat`/`::DeepCrab`
+    // (`xabcd_pattern.rs`), the 2 XABCD-shaped Carney kinds `HarmonicKind*`
+    // (347-351) above did not yet carry. Same append-only reason as
+    // `HeaderCandles` above: these join the family's own vocabulary but
+    // cannot sit next to `HarmonicKindShark` (347-351) without renumbering
+    // every key after it. Same Latin-spelling-in-every-column convention.
+    HarmonicKindAltBat = 450,
+    HarmonicKindDeepCrab = 451,
+
+    // ---- Autodetectors A0, piece 8 (2026-09-24) — the shared scan Shape
+    // row (piece 7's `ScanShape`, surfaced on the Coverage tab) and the
+    // Price Action modal's own 4 tab labels. Same append-only reason as
+    // `HarmonicKindAltBat` above.
+    ScanShapeLabel = 452,
+    ScanShapeTwoLines = 453,
+    ScanShapeRectangle = 454,
+    MarkupTabWhatToDetect = 455,
+    MarkupTabThresholds = 456,
+    MarkupTabStyle = 457,
+    MarkupTabCoverage = 458,
+
+    // ---- Autodetectors A0, piece 9 (2026-09-24) — Smart Money's own 6
+    // Thresholds-tab rows (`SmcEngineConfig` fields that had no
+    // settings-modal row until now). Same append-only reason as
+    // `HarmonicKindAltBat` above.
+    MarkupThresholdSwingNLabel = 459,
+    MarkupThresholdAtrPeriodLabel = 460,
+    MarkupThresholdSweepRecoveryBarsLabel = 461,
+    MarkupThresholdOrderBlockZoneLabel = 462,
+    MarkupOrderBlockZoneFullRange = 463,
+    MarkupOrderBlockZoneBodyOnly = 464,
+    MarkupThresholdDisplacementAtrMultLabel = 465,
+    MarkupThresholdEqualLevelAtrTolLabel = 466,
+
+    // ---- Autodetectors A0, piece 10 (2026-09-24) — Order Flow's own new
+    // Thresholds-tab row (`OrderFlowEngineConfig::delta_divergence_swing_n`
+    // already had a reader, `to_delta_divergence_config`, but no row until
+    // now). Same append-only reason as `HarmonicKindAltBat` above.
+    MarkupThresholdDeltaDivergenceSwingNLabel = 467,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 450;
+    pub const COUNT: usize = 468;
 
     /// Get translation for this key.
     #[inline]
@@ -3508,11 +3566,12 @@ impl uzor::i18n::Translate for ConceptKey {
 }
 
 // =============================================================================
-// Candle Pattern Keys  (the 34-pattern catalogue's own display names)
+// Candle Pattern Keys  (the 39-pattern catalogue's own display names)
 // =============================================================================
 
 /// Localized display names for `mli::events::candle_pattern::
-/// CandlePatternKind`'s 34 patterns.
+/// CandlePatternKind`'s 39 patterns (34 candlestick shapes + 5 gap kinds:
+/// common/breakaway/runaway/exhaustion/island).
 ///
 /// The catalogue itself — which patterns exist, what identifies one on the
 /// wire, how many bars it needs, which way it leans — belongs to `mli` and
@@ -3565,10 +3624,15 @@ pub enum CandlePatternKey {
     FallingThreeMethods     = 31,
     UpsideGapTwoCrows       = 32,
     DownsideGapThreeMethods = 33,
+    CommonGap               = 34,
+    BreakawayGap            = 35,
+    RunawayGap              = 36,
+    ExhaustionGap           = 37,
+    IslandGap               = 38,
 }
 
 impl CandlePatternKey {
-    pub const COUNT: usize = 34;
+    pub const COUNT: usize = 39;
 
     /// Get translation for this key.
     #[inline]
@@ -3618,6 +3682,11 @@ impl CandlePatternKey {
             "falling_three_methods"   => Some(Self::FallingThreeMethods),
             "upside_gap_two_crows"    => Some(Self::UpsideGapTwoCrows),
             "downside_gap_three_methods" => Some(Self::DownsideGapThreeMethods),
+            "common_gap"              => Some(Self::CommonGap),
+            "breakaway_gap"           => Some(Self::BreakawayGap),
+            "runaway_gap"             => Some(Self::RunawayGap),
+            "exhaustion_gap"          => Some(Self::ExhaustionGap),
+            "island_gap"              => Some(Self::IslandGap),
             _ => None,
         }
     }
@@ -3774,5 +3843,63 @@ mod tests {
         assert_eq!(PositionPointKey::Entry.get(Language::Ru), "Вход");
         assert_eq!(PositionPointKey::Target.get(Language::En), "Target");
         assert_eq!(PositionPointKey::Target.get(Language::Ru), "Цель");
+    }
+
+    /// A0 piece 6 (`docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`):
+    /// the 5 gap kinds must resolve through `CandlePatternKey::from_id`, the
+    /// exact "falls back unlocalized" gap the research doc named.
+    #[test]
+    fn test_gap_kind_ids_resolve() {
+        assert_eq!(CandlePatternKey::from_id("common_gap"), Some(CandlePatternKey::CommonGap));
+        assert_eq!(CandlePatternKey::from_id("breakaway_gap"), Some(CandlePatternKey::BreakawayGap));
+        assert_eq!(CandlePatternKey::from_id("runaway_gap"), Some(CandlePatternKey::RunawayGap));
+        assert_eq!(CandlePatternKey::from_id("exhaustion_gap"), Some(CandlePatternKey::ExhaustionGap));
+        assert_eq!(CandlePatternKey::from_id("island_gap"), Some(CandlePatternKey::IslandGap));
+    }
+
+    /// English source text mirrors `CandlePatternKind::label()`'s own
+    /// fallback strings verbatim (`candle_pattern.rs:334-338`).
+    #[test]
+    fn test_gap_kind_english_text_matches_mli_fallback_labels() {
+        assert_eq!(CandlePatternKey::CommonGap.get(Language::En), "Common Gap");
+        assert_eq!(CandlePatternKey::BreakawayGap.get(Language::En), "Breakaway Gap");
+        assert_eq!(CandlePatternKey::RunawayGap.get(Language::En), "Runaway Gap");
+        assert_eq!(CandlePatternKey::ExhaustionGap.get(Language::En), "Exhaustion Gap");
+        assert_eq!(CandlePatternKey::IslandGap.get(Language::En), "Island Gap");
+    }
+
+    /// Round-trip over every `mli::events::candle_pattern::CandlePatternKind`
+    /// — every gap variant's own `id()` must now resolve through
+    /// `CandlePatternKey::from_id`, closing the gap the research doc named.
+    #[test]
+    fn test_every_gap_kind_resolves_through_candle_pattern_kind_all() {
+        use mli::events::candle_pattern::CandlePatternKind;
+        let gap_ids = ["common_gap", "breakaway_gap", "runaway_gap", "exhaustion_gap", "island_gap"];
+        for kind in CandlePatternKind::all() {
+            if gap_ids.contains(&kind.id()) {
+                assert!(
+                    CandlePatternKey::from_id(kind.id()).is_some(),
+                    "gap kind id={} must resolve through CandlePatternKey::from_id", kind.id(),
+                );
+            }
+        }
+    }
+
+    /// The 5 gap rows carry every language column (unlike the other 34 rows
+    /// in this table) — none should silently fall back to English.
+    #[test]
+    fn test_gap_kind_labels_are_localized_in_every_language() {
+        let gap_keys = [
+            CandlePatternKey::CommonGap, CandlePatternKey::BreakawayGap, CandlePatternKey::RunawayGap,
+            CandlePatternKey::ExhaustionGap, CandlePatternKey::IslandGap,
+        ];
+        for key in gap_keys {
+            for &lang in Language::all() {
+                assert_ne!(
+                    key.get(lang), "",
+                    "{key:?} must have a non-empty translation for {lang:?}",
+                );
+            }
+        }
     }
 }

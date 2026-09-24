@@ -1176,7 +1176,7 @@ pub(super) static TRADING_KEY_TABLE: [[&str; N_LANG]; 29] = [
 //
 //  Col:  0=En                          1=Ru                               2..14=""
 
-pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 78] = [
+pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 81] = [
     /* 0  Candles            */ [ "Candles",              "Свечи",                    "Velas",               "Kerzen",               "Chandeliers",           "Velas",               "蜡烛图",        "ローソク足",     "캔들",           "شموع",            "Candele",               "Mum Grafiği",           "Świece",              "Свічки",                  "कैंडल"              ],
     /* 1  HollowCandles      */ [ "Hollow Candles",       "Полые свечи",              "Velas huecas",        "Hohle Kerzen",         "Chandeliers creux",     "Velas vazias",        "空心蜡烛",      "中空ローソク足",  "속빈 캔들",      "شموع مجوفة",      "Candele vuote",         "İçi Boş Mum",           "Świece puste",        "Порожні свічки",          "खोखले कैंडल"        ],
     /* 2  HeikinAshi         */ [ "Heikin Ashi",          "Хейкин Аши",              "Heikin Ashi",         "Heikin Ashi",          "Heikin Ashi",           "Heikin Ashi",         "平均K线",       "平均足",         "헤이킨 아시",    "هيكن آشي",        "Heikin Ashi",           "Heikin Ashi",           "Heikin Ashi",         "Хейкін Асі",              "हेइकिन आशी"        ],
@@ -1255,6 +1255,9 @@ pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 78] = [
     /* 75 HeaderCandles      */ [ "Candles",              "Свечи",                    "Velas",               "Kerzen",               "Bougies",               "Velas",               "K线",           "ローソク足",     "캔들",           "الشموع",          "Candele",               "Mumlar",                "Świece",              "Свічки",                  "कैंडल्स"            ],
     /* 76 HeaderSmartMoney   */ [ "Smart Money",          "Smart money",              "Smart money",         "Smart Money",          "Smart money",           "Smart money",         "聪明钱",        "スマートマネー", "스마트 머니",    "الأموال الذكية",  "Smart money",           "Smart Money",           "Smart money",         "Smart money",             "स्मार्ट मनी"        ],
     /* 77 HeaderOrderFlow    */ [ "Order Flow",           "Поток ордеров",            "Flujo de órdenes",    "Order-Flow",           "Flux d'ordres",         "Fluxo de ordens",     "订单流",        "オーダーフロー", "오더 플로우",    "تدفق الأوامر",    "Order flow",            "Emir Akışı",            "Przepływ zleceń",    "Потік ордерів",           "ऑर्डर फ्लो"         ],
+    /* 78 HeaderHarmonics    */ [ "Harmonics",            "Гармоники",                "Armónicos",           "Harmonics",            "Harmoniques",           "Harmônicos",          "谐波",          "ハーモニクス",   "하모닉",         "التوافقيات",      "Armonici",              "Harmonikler",           "Harmoniczne",         "Гармоніки",               "हार्मोनिक्स"        ],
+    /* 79 HeaderClassicFigures */ [ "Classic figures",    "Классические фигуры",     "Figuras clásicas",    "Klassische Figuren",   "Figures classiques",    "Figuras clássicas",   "经典形态",      "クラシックパターン","클래식 패턴",   "الأشكال الكلاسيكية","Figure classiche",     "Klasik Formasyonlar",  "Klasyczne formacje",  "Класичні фігури",         "क्लासिक फिगर"       ],
+    /* 80 HeaderBars         */ [ "Bars",                 "Бары",                     "Barras",              "Balken",               "Barres",                "Barras",              "K线",           "バー",           "바",             "أعمدة",           "Barre",                 "Çubuklar",              "Słupki",              "Бари",                    "बार"                ],
 ];
 
 // =============================================================================
@@ -1381,7 +1384,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 450] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 468] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1843,6 +1846,28 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 450] = [
     /* 447 MarkupGuardNeighbourLabel          */ [ "Neighbour rules", "Правила соседей", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 448 MarkupGuardChainLabel              */ [ "Chain rules", "Правила цепочки", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 449 MarkupProposeSetupsLabel            */ [ "Propose setups from the bars", "Предложить сетапы по барам", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+
+    // Harmonic pattern kind names, part 2 (autodetectors A0, 2026-09-24) —
+    // same Latin-spelling convention as 347-351 above.
+    /* 450 HarmonicKindAltBat                 */ [ "Alt Bat", "Alt Bat", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 451 HarmonicKindDeepCrab               */ [ "Deep Crab", "Deep Crab", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+
+    /* 452 ScanShapeLabel                     */ [ "Shape", "Форма", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 453 ScanShapeTwoLines                  */ [ "Two Lines", "Две линии", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 454 ScanShapeRectangle                 */ [ "Rectangle", "Прямоугольник", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 455 MarkupTabWhatToDetect              */ [ "What to detect", "Что искать", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 456 MarkupTabThresholds                */ [ "Thresholds", "Пороги", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 457 MarkupTabStyle                     */ [ "Style", "Стиль", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 458 MarkupTabCoverage                  */ [ "Coverage", "Охват", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 459 MarkupThresholdSwingNLabel         */ [ "Swing N", "Свинг N", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 460 MarkupThresholdAtrPeriodLabel      */ [ "ATR period", "Период ATR", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 461 MarkupThresholdSweepRecoveryBarsLabel */ [ "Sweep recovery bars", "Бары восстановления свипа", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 462 MarkupThresholdOrderBlockZoneLabel */ [ "Order block zone", "Зона ордер-блока", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 463 MarkupOrderBlockZoneFullRange      */ [ "Full range", "Весь диапазон", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 464 MarkupOrderBlockZoneBodyOnly       */ [ "Body only", "Только тело", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 465 MarkupThresholdDisplacementAtrMultLabel */ [ "Displacement ATR mult", "Множитель ATR смещения", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 466 MarkupThresholdEqualLevelAtrTolLabel */ [ "Equal level ATR tolerance", "Допуск ATR равных уровней", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 467 MarkupThresholdDeltaDivergenceSwingNLabel */ [ "Delta divergence swing N", "Свинг N дельта-дивергенции", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================
@@ -1854,13 +1879,16 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 450] = [
 // This test fails the build if a key is added without filling all N_LANG
 // columns — so language coverage cannot regress unnoticed.
 // =============================================================================
-// CandlePatternKey table  (34 variants x N_LANG)
+// CandlePatternKey table  (39 variants x N_LANG)
 // =============================================================================
 //
 // En/Ru filled only (col 0 = En, col 1 = Ru); cols 2..14 fall back to En at
 // runtime. See `CandlePatternKey`'s own doc for why this table is excluded
-// from `every_chart_table_is_fully_translated` below.
-pub(super) static CANDLE_PATTERN_KEY_TABLE: [[&str; N_LANG]; 34] = [
+// from `every_chart_table_is_fully_translated` below. EXCEPTION: the 5 gap
+// kind rows (34-38, A0 piece 6, 2026-09-24) carry every column — closing
+// the "falls back unlocalized" gap the research doc named for exactly
+// those 5, without re-scoping the other 34 rows' own En/Ru-only convention.
+pub(super) static CANDLE_PATTERN_KEY_TABLE: [[&str; N_LANG]; 39] = [
     /*  0 Doji                    */ [ "Doji",                        "Дожи",                            "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /*  1 GravestoneDoji          */ [ "Gravestone Doji",             "Дожи «надгробие»",                "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /*  2 DragonflyDoji           */ [ "Dragonfly Doji",              "Дожи «стрекоза»",                 "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1895,6 +1923,16 @@ pub(super) static CANDLE_PATTERN_KEY_TABLE: [[&str; N_LANG]; 34] = [
     /* 31 FallingThreeMethods     */ [ "Falling Three Methods",       "Метод трёх нисходящих",           "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 32 UpsideGapTwoCrows       */ [ "Upside Gap Two Crows",        "Две вороны с гэпом вверх",        "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 33 DownsideGapThreeMethods */ [ "Downside Gap Three Methods",  "Метод трёх с гэпом вниз",         "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    // Gap kinds (A0 piece 6, 2026-09-24) — the ONLY 5 rows in this table
+    // with every column filled (all 5 columns are new, added in the same
+    // commit; not a partial-column-fill deviation from the table's own
+    // En/Ru-only convention above — see the doc comment on this table's
+    // own declaration for why the other 34 rows stay En/Ru + fallback).
+    /* 34 CommonGap                */ [ "Common Gap",       "Обычный гэп",       "Gap Común",              "Gewöhnliche Kurslücke", "Gap commun",           "Gap Comum",            "普通缺口", "コモンギャップ",   "보통 갭",   "فجوة عادية",      "Gap Comune",        "Sıradan Boşluk",    "Luka zwykła",      "Звичайний геп",   "सामान्य गैप"   ],
+    /* 35 BreakawayGap             */ [ "Breakaway Gap",    "Гэп прорыва",       "Gap de Ruptura",         "Ausbruchslücke",        "Gap de rupture",       "Gap de Ruptura",       "突破缺口", "ブレイクアウトギャップ","돌파 갭",   "فجوة اختراق",      "Gap di Rottura",    "Kopma Boşluğu",     "Luka wybicia",     "Геп прориву",      "ब्रेकअवे गैप"   ],
+    /* 36 RunawayGap               */ [ "Runaway Gap",      "Гэп разгона",       "Gap de Continuación",    "Fluchtlücke",           "Gap de continuation",  "Gap de Continuação",   "持续缺口", "継続ギャップ",     "지속 갭",   "فجوة الاستمرار",   "Gap di Continuazione","Kaçış Boşluğu",    "Luka kontynuacji", "Геп продовження",  "रनअवे गैप"      ],
+    /* 37 ExhaustionGap            */ [ "Exhaustion Gap",   "Гэп истощения",     "Gap de Agotamiento",     "Erschöpfungslücke",     "Gap d'épuisement",     "Gap de Exaustão",      "衰竭缺口", "消耗ギャップ",     "소진 갭",   "فجوة الاستنفاد",   "Gap di Esaurimento", "Tükenme Boşluğu",   "Luka wyczerpania", "Геп виснаження",   "थकावट गैप"      ],
+    /* 38 IslandGap                */ [ "Island Gap",       "Островной гэп",     "Gap de Isla",            "Insellücke",            "Gap d'île",            "Gap de Ilha",          "岛形缺口", "アイランドギャップ","아일랜드 갭","فجوة الجزيرة",     "Gap a Isola",        "Ada Boşluğu",       "Luka wyspowa",     "Острівний геп",    "द्वीप गैप"      ],
 ];
 
 // =============================================================================

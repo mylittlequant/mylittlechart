@@ -18,33 +18,63 @@
 //! entrance sets the family from the subject that opened it, so opening
 //! from an order block lands on Smart Money.
 //!
+//! # Four tabs (A0 autodetectors, piece 8, `docs/mlc/plans/
+//! autodetectors-a0-implementation-2026-09-24.md`)
+//!
+//! **What to detect** / **Thresholds** / **Style** / **Coverage** — reusing
+//! the generic `ModalTabs::Horizontal` widget
+//! (`crate::ui::widgets::modal`), not a new tab-strip component.
+//!
+//! - **What to detect**: whether an engine judges claims at all
+//!   (`judge_claims`) and which cross-primitive rule classes it reports
+//!   (`guard_families`) — global, per family, unchanged content from the
+//!   modal's pre-tab body, just filed under this tab now.
+//! - **Thresholds**: every numeric detector knob — the snap/chain-window
+//!   pair every family already carried (moved here from the old
+//!   "Detection" group) plus the family's own detector constants
+//!   (`detector_rows`, 6 for Smart Money / piece 9, 2 for Order Flow /
+//!   piece 10, 0 for candles — all global, all through the SAME
+//!   `SmcEngineConfig`/`OrderFlowEngineConfig` this modal already writes,
+//!   no new engine-config plumbing needed for either family).
+//! - **Style**: no cosmetic (colour/line) setting exists on any of the
+//!   three engines today — legitimately thin in A0; nothing invented to
+//!   fill it.
+//! - **Coverage**: PER-DRAWING, not global — the scan primitive that
+//!   opened this modal (`state.source_drawing`) has its own `coverage`
+//!   ("range"/"all_bars") and `shape` ("two_lines"/"rectangle") fields, a
+//!   placement choice rather than a detector constant. Edits here apply
+//!   through the SAME generic `apply_property` path
+//!   `primitive_settings`'s own Pills rows already use for these two ids
+//!   on that primitive — see `mlc_core::drawing::primitives_v2::scan_shape`
+//!   and each scan's own `style_properties()` for the row these mirror.
+//!
 //! # What it edits
 //!
-//! Every edit applies immediately — writes through to the live global and
-//! the profile, the same no-diff shape the EWA modal uses and for the same
-//! reason (these configs have no per-drawing counterpart, so there is
-//! nothing to accept or discard). The footer's ✕/OK both simply close.
+//! Every edit applies immediately — writes through to the live global (or,
+//! on the Coverage tab, the live drawing) and the profile, the same no-diff
+//! shape the EWA modal uses and for the same reason (these configs have no
+//! separate pending copy, so there is nothing to accept or discard). The
+//! footer's ✕/OK both simply close.
 //!
 //! # Row selection
 //!
-//! Deliberately not every field. `default_enabled_kinds` (34 candle ids) is
-//! a picker, not a row, and it already has a home on each scan's own
-//! settings modal; the raw detector constants (swing_n, ATR period,
-//! displacement multiplier) are `mli` tuning that changes what the whole
-//! vocabulary means and belongs behind a deliberate surface of its own, not
-//! beside a checkbox. What is here is what an analyst changes while marking
-//! up: whether claims are judged at all, how far a claim may snap, how far
-//! a chain may reach, and which classes of rule report.
+//! Deliberately not every field. `default_enabled_kinds`/`enabled_structures`
+//! (the per-kind toggle tables) are per-drawing pickers that already have a
+//! home on each scan's own settings surface; what is here is the family-wide
+//! knobs an analyst changes while marking up.
 
 use mlc_core::i18n::{current_language, ConceptKey, t_concept};
 use mlc_core::render::{RenderContext, TextAlign, TextBaseline};
+use mlc_core::drawing::primitives_v2::ScanShape;
 use uzor::types::Rect as WidgetRect;
 
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_frame::MarkupEngineSettingsResult;
-use crate::ui::modal_settings::{MarkupEngineSettingsState, MarkupSettingsFamily};
+use crate::ui::modal_settings::{MarkupEngineSettingsState, MarkupSettingsFamily, SettingsTab};
 use crate::ui::toolbar_theme::ToolbarTheme;
-use crate::ui::widgets::{render_modal_shell, ModalFooter, ModalShellSpec, ModalTheme};
+use crate::ui::widgets::{
+    render_modal_shell, ModalFooter, ModalShellSpec, ModalTab, ModalTabs, ModalTheme, TabFit,
+};
 
 use super::primitive_settings_vid::{draw_group_header, draw_label, draw_toggle_segment, ROW_H};
 
@@ -71,6 +101,22 @@ const CHAIN_WINDOW_OPTIONS: [usize; 4] = [0, 10, 30, 60];
 /// single-print levels make a run worth marking.
 const SINGLE_PRINT_RUN_OPTIONS: [usize; 4] = [1, 2, 3, 5];
 
+/// `SmcEngineConfig::swing_n` options (A0 piece 9).
+const SWING_N_OPTIONS: [usize; 4] = [1, 2, 3, 5];
+/// `SmcEngineConfig::atr_period` options (A0 piece 9).
+const ATR_PERIOD_OPTIONS: [usize; 4] = [7, 14, 21, 50];
+/// `SmcEngineConfig::sweep_recovery_bars` options (A0 piece 9).
+const SWEEP_RECOVERY_BARS_OPTIONS: [usize; 4] = [0, 1, 2, 3];
+/// `SmcEngineConfig::displacement_atr_mult` options (A0 piece 9).
+const DISPLACEMENT_ATR_MULT_OPTIONS: [f64; 4] = [1.5, 2.0, 2.5, 3.0];
+/// `SmcEngineConfig::equal_level_atr_tol` options (A0 piece 9).
+const EQUAL_LEVEL_ATR_TOL_OPTIONS: [f64; 4] = [0.05, 0.1, 0.15, 0.2];
+/// `OrderFlowEngineConfig::delta_divergence_swing_n` options (A0 piece 10) —
+/// same catalogue as `SWING_N_OPTIONS`, kept as its own named constant so a
+/// future divergence-only change to the range does not silently also move
+/// the SMC row.
+const DELTA_DIVERGENCE_SWING_N_OPTIONS: [usize; 4] = [1, 2, 3, 5];
+
 const FAMILY_SEGMENTS: [MarkupSettingsFamily; 3] = [
     MarkupSettingsFamily::SmartMoney,
     MarkupSettingsFamily::OrderFlow,
@@ -85,17 +131,12 @@ fn family_label(family: MarkupSettingsFamily) -> &'static str {
     }
 }
 
-/// How many DETECTION rows the shown family has — the one thing that
-/// differs between the three bodies, so the height and the draw can never
-/// drift apart.
-fn detection_rows(family: MarkupSettingsFamily) -> usize {
-    match family {
-        // judge / snap / chain window
-        MarkupSettingsFamily::SmartMoney => 3,
-        // judge / snap / chain window / single-print run
-        MarkupSettingsFamily::OrderFlow => 4,
-        // judge / snap — a pattern has no succession, so no window
-        MarkupSettingsFamily::CandlePattern => 2,
+fn tab_label(tab: SettingsTab) -> &'static str {
+    match tab {
+        SettingsTab::WhatToDetect => t_concept(ConceptKey::MarkupTabWhatToDetect),
+        SettingsTab::Thresholds => t_concept(ConceptKey::MarkupTabThresholds),
+        SettingsTab::Style => t_concept(ConceptKey::MarkupTabStyle),
+        SettingsTab::Coverage => t_concept(ConceptKey::MarkupTabCoverage),
     }
 }
 
@@ -124,34 +165,106 @@ fn action_rows(family: MarkupSettingsFamily) -> usize {
     }
 }
 
-fn family_body_height(family: MarkupSettingsFamily) -> f64 {
+/// How many of the pre-existing bar-count threshold rows (snap window,
+/// chain window, order flow's single-print run) the shown family carries —
+/// unchanged content from the old "Detection" group, filed under the
+/// Thresholds tab now (A0 piece 8) rather than renamed or dropped.
+fn legacy_threshold_rows(family: MarkupSettingsFamily) -> usize {
+    match family {
+        // snap, chain window
+        MarkupSettingsFamily::SmartMoney => 2,
+        // snap, chain window, single-print run
+        MarkupSettingsFamily::OrderFlow => 3,
+        // snap only — a pattern has no succession, so no chain window
+        MarkupSettingsFamily::CandlePattern => 1,
+    }
+}
+
+/// How many DETECTOR-CONSTANT rows the shown family's own Thresholds tab
+/// adds beyond [`legacy_threshold_rows`] — 6 for Smart Money (A0 piece 9),
+/// 2 for Order Flow (A0 piece 10), 0 for candles (the arc's own line: no
+/// candle-pattern detector constant is surfaced in A0). The height
+/// function and the draw below read this SAME count, so a family whose
+/// Thresholds tab grows can never overflow a shell sized for the old one.
+fn detector_rows(family: MarkupSettingsFamily) -> usize {
+    match family {
+        MarkupSettingsFamily::SmartMoney => 6,
+        MarkupSettingsFamily::OrderFlow => 2,
+        MarkupSettingsFamily::CandlePattern => 0,
+    }
+}
+
+/// The family segment's own row height, shared by every tab (it sits above
+/// the tab strip's content, drawn once regardless of which tab is active).
+fn family_segment_height() -> f64 {
+    ROW_H + GROUP_GAP
+}
+
+fn what_to_detect_height(family: MarkupSettingsFamily) -> f64 {
     let mut h = 0.0;
-    h += ROW_H + GROUP_GAP; // family segment
-    let d = detection_rows(family) as f64;
-    h += GROUP_HEADER_H + ROW_H * d + ROW_GAP * (d - 1.0) + GROUP_GAP;
+    // Detection group: judge_claims alone now (snap/chain/single-print
+    // moved to Thresholds, see `legacy_threshold_rows`'s own doc).
+    h += GROUP_HEADER_H + ROW_H + GROUP_GAP;
+    // Rule guard group.
     let g = guard_rows(family) as f64;
-    h += GROUP_HEADER_H + ROW_H * g + ROW_GAP * (g - 1.0);
+    h += GROUP_HEADER_H + ROW_H * g + ROW_GAP * (g - 1.0).max(0.0);
     if action_rows(family) > 0 {
         h += GROUP_GAP + ROW_H;
     }
     h
 }
 
-/// The body height the modal always uses — the TALLEST family's, whichever
-/// family is showing.
+fn thresholds_height(family: MarkupSettingsFamily) -> f64 {
+    let mut h = 0.0;
+    let legacy = legacy_threshold_rows(family) as f64;
+    h += GROUP_HEADER_H + ROW_H * legacy + ROW_GAP * (legacy - 1.0).max(0.0);
+    let new = detector_rows(family) as f64;
+    if new > 0.0 {
+        h += GROUP_GAP + ROW_H * new + ROW_GAP * (new - 1.0).max(0.0);
+    }
+    h
+}
+
+/// No cosmetic setting exists on any of the three engines today — see the
+/// module's own doc for why this stays literally empty in A0 rather than
+/// inventing content to fill it.
+fn style_height() -> f64 {
+    0.0
+}
+
+/// Coverage pills row + Shape segmented row — fixed, independent of
+/// `family` (the tab edits ONE specific drawing, not a family-wide config).
+fn coverage_height() -> f64 {
+    ROW_H * 2.0 + ROW_GAP
+}
+
+fn tab_body_height(family: MarkupSettingsFamily, tab: SettingsTab) -> f64 {
+    match tab {
+        SettingsTab::WhatToDetect => what_to_detect_height(family),
+        SettingsTab::Thresholds => thresholds_height(family),
+        SettingsTab::Style => style_height(),
+        SettingsTab::Coverage => coverage_height(),
+    }
+}
+
+/// The body height the modal always uses — the TALLEST (family, tab) pair's,
+/// whichever family/tab is actually showing.
 ///
-/// Not each family's own height, which was the first attempt and was wrong
-/// on the stand: an un-dragged modal centres itself on its own height, so
-/// switching to a taller family moved the whole modal upward and the
-/// segment row slid out from under the cursor that had just clicked it. A
-/// picker that moves when you use it is broken however correct its rows
-/// are. Order flow is the tallest (it alone has a single-print row), so the
-/// shorter families end with a little empty space, which costs nothing and
-/// holds every control still.
+/// Not each combination's own height, which was the pre-tabs modal's first
+/// attempt and was wrong on the stand: an un-dragged modal centres itself on
+/// its own height, so switching to a taller combination moved the whole
+/// modal upward and the control that had just been clicked slid out from
+/// under the cursor. A picker that moves when you use it is broken however
+/// correct its rows are — see `SettingsTab`'s own doc, "switching tabs never
+/// changes the OUTER modal frame size mid-session".
 fn content_height() -> f64 {
-    family_body_height(MarkupSettingsFamily::SmartMoney)
-        .max(family_body_height(MarkupSettingsFamily::OrderFlow))
-        .max(family_body_height(MarkupSettingsFamily::CandlePattern))
+    let mut max = 0.0_f64;
+    for family in FAMILY_SEGMENTS {
+        for tab in SettingsTab::ALL {
+            max = max.max(family_segment_height() + tab_body_height(family, tab));
+        }
+    }
+    max
 }
 
 /// Render the Price Action Engine Settings modal.
@@ -168,6 +281,12 @@ pub fn render_markup_engine_settings_modal(
     let _lang = current_language();
     let family = state.family;
     let body_h = content_height();
+
+    let tab_items: Vec<ModalTab<'_>> = SettingsTab::ALL
+        .iter()
+        .map(|&tab| ModalTab::new(tab.id(), tab_label(tab)))
+        .collect();
+    let active_tab_idx = SettingsTab::ALL.iter().position(|&t| t == state.active_tab).unwrap_or(0);
 
     let modal_theme = ModalTheme::from_toolbar(&frame_theme.modal_bg, &toolbar_theme.separator, toolbar_theme);
     let spec = ModalShellSpec {
@@ -198,6 +317,7 @@ pub fn render_markup_engine_settings_modal(
             MODAL_W,
             body_h,
         )
+        .with_tabs(ModalTabs::Horizontal { items: &tab_items, active: active_tab_idx, fit: TabFit::Equal })
         .with_footer(ModalFooter::Editor { template: None })
     };
 
@@ -206,98 +326,22 @@ pub fn render_markup_engine_settings_modal(
         let x1 = shell.content.x + shell.content.width;
         let mut row_y = shell.content.y;
 
-        // ── Which family's engine ───────────────────────────────────────
+        // ── Which family's engine (every tab reads/writes this family's
+        // own global config, EXCEPT Coverage, which always edits the one
+        // drawing that opened the modal regardless of this segment) ──────
         draw_segmented_row(ctx, toolbar_theme, coord, layer_id, &mut result, x0, x1, row_y, FAMILY_SEGMENTS.len(), |i| {
             let f = FAMILY_SEGMENTS[i];
             (format!("markup:family:{}", f.id()), family_label(f), f == family)
         });
         row_y += ROW_H + GROUP_GAP;
 
-        // ── Detection ───────────────────────────────────────────────────
-        draw_group_header(ctx, toolbar_theme, x0, x1, row_y, t_concept(ConceptKey::MarkupDetectionGroupTitle), None);
-        row_y += GROUP_HEADER_H;
-
-        let (judge, snap, chain_window, single_print) = match family {
-            MarkupSettingsFamily::SmartMoney => (
-                state.smc.judge_claims,
-                state.smc.claim_snap_bars,
-                Some(state.smc.chain_window_bars),
-                None,
-            ),
-            MarkupSettingsFamily::OrderFlow => (
-                state.orderflow.judge_claims,
-                state.orderflow.claim_snap_bars,
-                Some(state.orderflow.chain_window_bars),
-                Some(state.orderflow.min_single_print_run),
-            ),
-            MarkupSettingsFamily::CandlePattern => {
-                (state.candle.judge_claims, state.candle.claim_snap_bars, None, None)
+        match state.active_tab {
+            SettingsTab::WhatToDetect => draw_what_to_detect_tab(ctx, toolbar_theme, coord, layer_id, &mut result, state, family, x0, x1, row_y),
+            SettingsTab::Thresholds => draw_thresholds_tab(ctx, toolbar_theme, coord, layer_id, &mut result, state, family, x0, x1, row_y),
+            SettingsTab::Style => {
+                // Deliberately empty — see the module's own doc.
             }
-        };
-
-        draw_checkbox_row(ctx, toolbar_theme, coord, layer_id, &mut result, x0, x1, row_y, t_concept(ConceptKey::MarkupJudgeClaimsLabel), judge, "markup:judge_claims");
-        row_y += ROW_H + ROW_GAP;
-
-        draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupSnapBarsLabel));
-        draw_segmented_row(ctx, toolbar_theme, coord, layer_id, &mut result, x0 + LABEL_COL, x1, row_y, SNAP_BAR_OPTIONS.len(), |i| {
-            let n = SNAP_BAR_OPTIONS[i];
-            (format!("markup:snap_bars:{n}"), count_label(n), snap == n)
-        });
-        row_y += ROW_H + ROW_GAP;
-
-        if let Some(window) = chain_window {
-            draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupChainWindowLabel));
-            draw_segmented_row(ctx, toolbar_theme, coord, layer_id, &mut result, x0 + LABEL_COL, x1, row_y, CHAIN_WINDOW_OPTIONS.len(), |i| {
-                let n = CHAIN_WINDOW_OPTIONS[i];
-                (format!("markup:chain_window:{n}"), count_label(n), window == n)
-            });
-            row_y += ROW_H + ROW_GAP;
-        }
-
-        if let Some(run) = single_print {
-            draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupMinSinglePrintRunLabel));
-            draw_segmented_row(ctx, toolbar_theme, coord, layer_id, &mut result, x0 + LABEL_COL, x1, row_y, SINGLE_PRINT_RUN_OPTIONS.len(), |i| {
-                let n = SINGLE_PRINT_RUN_OPTIONS[i];
-                (format!("markup:single_print_run:{n}"), count_label(n), run == n)
-            });
-            row_y += ROW_H + ROW_GAP;
-        }
-        row_y += GROUP_GAP - ROW_GAP;
-
-        // ── Rule guard ──────────────────────────────────────────────────
-        draw_group_header(ctx, toolbar_theme, x0, x1, row_y, t_concept(ConceptKey::MarkupGuardFamiliesGroupTitle), None);
-        row_y += GROUP_HEADER_H;
-
-        let families = match family {
-            MarkupSettingsFamily::SmartMoney => state.smc.guard_families,
-            MarkupSettingsFamily::OrderFlow => state.orderflow.guard_families,
-            MarkupSettingsFamily::CandlePattern => state.candle.guard_families,
-        };
-        draw_checkbox_row(ctx, toolbar_theme, coord, layer_id, &mut result, x0, x1, row_y, t_concept(ConceptKey::MarkupGuardNeighbourLabel), families.neighbour, "markup:guard_neighbour");
-        row_y += ROW_H + ROW_GAP;
-        if guard_rows(family) > 1 {
-            draw_checkbox_row(ctx, toolbar_theme, coord, layer_id, &mut result, x0, x1, row_y, t_concept(ConceptKey::MarkupGuardChainLabel), families.chain, "markup:guard_chain");
-            row_y += ROW_H;
-        }
-
-        // ── The engine acting, rather than being configured ─────────────
-        //
-        // An action lives here rather than on a tool of its own because it
-        // IS this engine speaking: it reads this family's own detectors
-        // through this family's own chain window, and every setting above
-        // changes what it proposes. A separate button somewhere else would
-        // be the same code with the settings that govern it out of sight.
-        if action_rows(family) > 0 {
-            row_y += GROUP_GAP;
-            let rect = WidgetRect::new(x0, row_y + 1.0, (x1 - x0).max(20.0), ROW_H - 2.0);
-            draw_toggle_segment(ctx, toolbar_theme, rect, t_concept(ConceptKey::MarkupProposeSetupsLabel), false);
-            result.content_items.push(("markup:propose".to_string(), rect));
-            coord.register_on_layer(
-                "markup_engine_settings:markup:propose",
-                rect,
-                uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
-                layer_id,
-            );
+            SettingsTab::Coverage => draw_coverage_tab(ctx, toolbar_theme, coord, layer_id, &mut result, state, x0, x1, row_y),
         }
     });
 
@@ -305,6 +349,252 @@ pub fn render_markup_engine_settings_modal(
     result.header_rect = shell.header;
     result.close_btn_rect = shell.close_btn.unwrap_or_default();
     result
+}
+
+/// What to detect: whether this family's own claims are judged at all, plus
+/// which cross-primitive rule classes it reports — and, for Smart Money
+/// alone, the action that assembles what it found.
+#[allow(clippy::too_many_arguments)]
+fn draw_what_to_detect_tab(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    coord: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut MarkupEngineSettingsResult,
+    state: &MarkupEngineSettingsState,
+    family: MarkupSettingsFamily,
+    x0: f64,
+    x1: f64,
+    mut row_y: f64,
+) {
+    draw_group_header(ctx, toolbar_theme, x0, x1, row_y, t_concept(ConceptKey::MarkupDetectionGroupTitle), None);
+    row_y += GROUP_HEADER_H;
+
+    let judge = match family {
+        MarkupSettingsFamily::SmartMoney => state.smc.judge_claims,
+        MarkupSettingsFamily::OrderFlow => state.orderflow.judge_claims,
+        MarkupSettingsFamily::CandlePattern => state.candle.judge_claims,
+    };
+    draw_checkbox_row(ctx, toolbar_theme, coord, layer_id, result, x0, x1, row_y, t_concept(ConceptKey::MarkupJudgeClaimsLabel), judge, "markup:judge_claims");
+    row_y += ROW_H + GROUP_GAP;
+
+    draw_group_header(ctx, toolbar_theme, x0, x1, row_y, t_concept(ConceptKey::MarkupGuardFamiliesGroupTitle), None);
+    row_y += GROUP_HEADER_H;
+
+    let families = match family {
+        MarkupSettingsFamily::SmartMoney => state.smc.guard_families,
+        MarkupSettingsFamily::OrderFlow => state.orderflow.guard_families,
+        MarkupSettingsFamily::CandlePattern => state.candle.guard_families,
+    };
+    draw_checkbox_row(ctx, toolbar_theme, coord, layer_id, result, x0, x1, row_y, t_concept(ConceptKey::MarkupGuardNeighbourLabel), families.neighbour, "markup:guard_neighbour");
+    row_y += ROW_H + ROW_GAP;
+    if guard_rows(family) > 1 {
+        draw_checkbox_row(ctx, toolbar_theme, coord, layer_id, result, x0, x1, row_y, t_concept(ConceptKey::MarkupGuardChainLabel), families.chain, "markup:guard_chain");
+        row_y += ROW_H;
+    }
+
+    // The engine acting, rather than being configured — see this function's
+    // own doc for why only Smart Money offers it.
+    if action_rows(family) > 0 {
+        row_y += GROUP_GAP;
+        let rect = WidgetRect::new(x0, row_y + 1.0, (x1 - x0).max(20.0), ROW_H - 2.0);
+        draw_toggle_segment(ctx, toolbar_theme, rect, t_concept(ConceptKey::MarkupProposeSetupsLabel), false);
+        result.content_items.push(("markup:propose".to_string(), rect));
+        coord.register_on_layer(
+            "markup_engine_settings:markup:propose",
+            rect,
+            uzor::input::Sense::CLICK | uzor::input::Sense::HOVER,
+            layer_id,
+        );
+    }
+}
+
+/// Thresholds: the pre-existing bar-count rows (moved here unchanged from
+/// the old "Detection" group) plus each family's own detector constants.
+#[allow(clippy::too_many_arguments)]
+fn draw_thresholds_tab(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    coord: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut MarkupEngineSettingsResult,
+    state: &MarkupEngineSettingsState,
+    family: MarkupSettingsFamily,
+    x0: f64,
+    x1: f64,
+    mut row_y: f64,
+) {
+    draw_group_header(ctx, toolbar_theme, x0, x1, row_y, t_concept(ConceptKey::MarkupDetectionGroupTitle), None);
+    row_y += GROUP_HEADER_H;
+
+    let (snap, chain_window, single_print) = match family {
+        MarkupSettingsFamily::SmartMoney => (state.smc.claim_snap_bars, Some(state.smc.chain_window_bars), None),
+        MarkupSettingsFamily::OrderFlow => {
+            (state.orderflow.claim_snap_bars, Some(state.orderflow.chain_window_bars), Some(state.orderflow.min_single_print_run))
+        }
+        MarkupSettingsFamily::CandlePattern => (state.candle.claim_snap_bars, None, None),
+    };
+
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupSnapBarsLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, SNAP_BAR_OPTIONS.len(), |i| {
+        let n = SNAP_BAR_OPTIONS[i];
+        (format!("markup:snap_bars:{n}"), count_label(n), snap == n)
+    });
+    row_y += ROW_H + ROW_GAP;
+
+    if let Some(window) = chain_window {
+        draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupChainWindowLabel));
+        draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, CHAIN_WINDOW_OPTIONS.len(), |i| {
+            let n = CHAIN_WINDOW_OPTIONS[i];
+            (format!("markup:chain_window:{n}"), count_label(n), window == n)
+        });
+        row_y += ROW_H + ROW_GAP;
+    }
+
+    if let Some(run) = single_print {
+        draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupMinSinglePrintRunLabel));
+        draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, SINGLE_PRINT_RUN_OPTIONS.len(), |i| {
+            let n = SINGLE_PRINT_RUN_OPTIONS[i];
+            (format!("markup:single_print_run:{n}"), count_label(n), run == n)
+        });
+        row_y += ROW_H + ROW_GAP;
+    }
+
+    if detector_rows(family) == 0 {
+        return;
+    }
+    row_y += GROUP_GAP - ROW_GAP;
+
+    match family {
+        MarkupSettingsFamily::SmartMoney => draw_smc_detector_rows(ctx, toolbar_theme, coord, layer_id, result, &state.smc, x0, x1, row_y),
+        MarkupSettingsFamily::OrderFlow => draw_orderflow_detector_rows(ctx, toolbar_theme, coord, layer_id, result, &state.orderflow, x0, x1, row_y),
+        MarkupSettingsFamily::CandlePattern => {}
+    }
+}
+
+/// Smart Money's own 6 detector-constant rows (A0 piece 9) — every field
+/// already exists on `SmcEngineConfig` and already has its own reader
+/// (`to_smc_config`); this is the first row any of them gets.
+#[allow(clippy::too_many_arguments)]
+fn draw_smc_detector_rows(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    coord: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut MarkupEngineSettingsResult,
+    cfg: &mlc_core::state::smc_engine::SmcEngineConfig,
+    x0: f64,
+    x1: f64,
+    mut row_y: f64,
+) {
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdSwingNLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, SWING_N_OPTIONS.len(), |i| {
+        let n = SWING_N_OPTIONS[i];
+        (format!("markup:swing_n:{n}"), count_label(n), cfg.swing_n == n)
+    });
+    row_y += ROW_H + ROW_GAP;
+
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdAtrPeriodLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, ATR_PERIOD_OPTIONS.len(), |i| {
+        let n = ATR_PERIOD_OPTIONS[i];
+        (format!("markup:atr_period:{n}"), count_label(n), cfg.atr_period == n)
+    });
+    row_y += ROW_H + ROW_GAP;
+
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdSweepRecoveryBarsLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, SWEEP_RECOVERY_BARS_OPTIONS.len(), |i| {
+        let n = SWEEP_RECOVERY_BARS_OPTIONS[i];
+        (format!("markup:sweep_recovery_bars:{n}"), count_label(n), cfg.sweep_recovery_bars == n)
+    });
+    row_y += ROW_H + ROW_GAP;
+
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdOrderBlockZoneLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, 2, |i| {
+        let zone = if i == 0 {
+            mlc_core::state::smc_engine::OrderBlockZoneMode::FullRange
+        } else {
+            mlc_core::state::smc_engine::OrderBlockZoneMode::BodyOnly
+        };
+        let label = if i == 0 { t_concept(ConceptKey::MarkupOrderBlockZoneFullRange) } else { t_concept(ConceptKey::MarkupOrderBlockZoneBodyOnly) };
+        let id = if i == 0 { "markup:order_block_zone:full_range" } else { "markup:order_block_zone:body_only" };
+        (id.to_string(), label, cfg.order_block_zone == zone)
+    });
+    row_y += ROW_H + ROW_GAP;
+
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdDisplacementAtrMultLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, DISPLACEMENT_ATR_MULT_OPTIONS.len(), |i| {
+        let v = DISPLACEMENT_ATR_MULT_OPTIONS[i];
+        (format!("markup:displacement_atr_mult:{v}"), float_label(v), (cfg.displacement_atr_mult - v).abs() < 1e-9)
+    });
+    row_y += ROW_H + ROW_GAP;
+
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdEqualLevelAtrTolLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, EQUAL_LEVEL_ATR_TOL_OPTIONS.len(), |i| {
+        let v = EQUAL_LEVEL_ATR_TOL_OPTIONS[i];
+        (format!("markup:equal_level_atr_tol:{v}"), float_label(v), (cfg.equal_level_atr_tol - v).abs() < 1e-9)
+    });
+}
+
+/// Order Flow's own 2 detector-constant rows (A0 piece 10) —
+/// `delta_divergence_swing_n` (a new row for an existing field) and
+/// `min_single_print_run` stays in the legacy block above (it already had a
+/// row before this tab existed) — see [`legacy_threshold_rows`]'s own doc.
+/// This function's own row is `delta_divergence_swing_n` alone.
+#[allow(clippy::too_many_arguments)]
+fn draw_orderflow_detector_rows(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    coord: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut MarkupEngineSettingsResult,
+    cfg: &mlc_core::state::orderflow_engine::OrderFlowEngineConfig,
+    x0: f64,
+    x1: f64,
+    row_y: f64,
+) {
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdDeltaDivergenceSwingNLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, DELTA_DIVERGENCE_SWING_N_OPTIONS.len(), |i| {
+        let n = DELTA_DIVERGENCE_SWING_N_OPTIONS[i];
+        (format!("markup:delta_divergence_swing_n:{n}"), count_label(n), cfg.delta_divergence_swing_n == n)
+    });
+}
+
+/// Coverage: the ONE drawing that opened this modal's own `coverage`/
+/// `shape` — a placement choice, never a family-wide config (see the
+/// module's own doc). `detector_rows(family)` plays no part here: this tab
+/// does not vary by family at all.
+#[allow(clippy::too_many_arguments)]
+fn draw_coverage_tab(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    coord: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut MarkupEngineSettingsResult,
+    state: &MarkupEngineSettingsState,
+    x0: f64,
+    x1: f64,
+    mut row_y: f64,
+) {
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::ScanCoverageLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, 2, |i| {
+        let (id, label) = if i == 0 {
+            ("range", t_concept(ConceptKey::ScanCoverageRange))
+        } else {
+            ("all_bars", t_concept(ConceptKey::ScanCoverageAllBars))
+        };
+        (format!("markup:coverage:{id}"), label, state.scan_coverage == id)
+    });
+    row_y += ROW_H + ROW_GAP;
+
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::ScanShapeLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, 2, |i| {
+        let (shape, label) = if i == 0 {
+            (ScanShape::TwoLines, t_concept(ConceptKey::ScanShapeTwoLines))
+        } else {
+            (ScanShape::Rectangle, t_concept(ConceptKey::ScanShapeRectangle))
+        };
+        (format!("markup:shape:{}", shape.id()), label, state.scan_shape == shape.id())
+    });
 }
 
 /// A bar count as a segment label. `0` prints as `Off` because that is what
@@ -317,10 +607,41 @@ fn count_label(n: usize) -> &'static str {
         2 => "2",
         3 => "3",
         5 => "5",
+        7 => "7",
         10 => "10",
+        14 => "14",
+        21 => "21",
         30 => "30",
+        50 => "50",
         60 => "60",
         _ => "?",
+    }
+}
+
+/// A ratio/tolerance value as a segment label — the 8 distinct values
+/// `DISPLACEMENT_ATR_MULT_OPTIONS`/`EQUAL_LEVEL_ATR_TOL_OPTIONS` carry
+/// between them, spelled out rather than formatted at draw time so the
+/// catalogue stays the single source of truth for both the value AND its
+/// label (the same posture `count_label` already takes for bar counts).
+fn float_label(v: f64) -> &'static str {
+    if (v - 1.5).abs() < 1e-9 {
+        "1.5"
+    } else if (v - 2.0).abs() < 1e-9 {
+        "2.0"
+    } else if (v - 2.5).abs() < 1e-9 {
+        "2.5"
+    } else if (v - 3.0).abs() < 1e-9 {
+        "3.0"
+    } else if (v - 0.05).abs() < 1e-9 {
+        "0.05"
+    } else if (v - 0.1).abs() < 1e-9 {
+        "0.1"
+    } else if (v - 0.15).abs() < 1e-9 {
+        "0.15"
+    } else if (v - 0.2).abs() < 1e-9 {
+        "0.2"
+    } else {
+        "?"
     }
 }
 
@@ -409,41 +730,68 @@ fn draw_segmented_row(
 mod tests {
     use super::*;
 
-    /// The height function and the draw read the same two row counts, so a
-    /// family whose body grows can never overflow a shell sized for the old
-    /// one. This asserts the two counts are what the draw actually emits.
+    /// The height function and the draw read the same row counts, so a
+    /// family/tab combination whose body grows can never overflow a shell
+    /// sized for the old one.
     #[test]
     fn each_family_declares_the_rows_it_draws() {
-        assert_eq!(detection_rows(MarkupSettingsFamily::SmartMoney), 3);
-        assert_eq!(detection_rows(MarkupSettingsFamily::OrderFlow), 4);
-        assert_eq!(detection_rows(MarkupSettingsFamily::CandlePattern), 2);
         assert_eq!(guard_rows(MarkupSettingsFamily::CandlePattern), 1, "candles have no succession");
         assert_eq!(guard_rows(MarkupSettingsFamily::SmartMoney), 2);
+        assert_eq!(legacy_threshold_rows(MarkupSettingsFamily::SmartMoney), 2);
+        assert_eq!(legacy_threshold_rows(MarkupSettingsFamily::OrderFlow), 3);
+        assert_eq!(legacy_threshold_rows(MarkupSettingsFamily::CandlePattern), 1);
+        assert_eq!(detector_rows(MarkupSettingsFamily::SmartMoney), 6);
+        assert_eq!(detector_rows(MarkupSettingsFamily::OrderFlow), 2);
+        assert_eq!(detector_rows(MarkupSettingsFamily::CandlePattern), 0);
     }
 
-    /// The shell must not resize when the family changes — see
-    /// [`content_height`]'s own doc for what that cost on the stand.
-    /// The shell must not resize when the family changes — see
+    /// The shell must not resize when the family OR the tab changes — see
     /// [`content_height`]'s own doc for what that cost on the stand.
     #[test]
-    fn the_shell_is_the_same_height_for_every_family() {
-        let tallest = [
-            MarkupSettingsFamily::SmartMoney,
-            MarkupSettingsFamily::OrderFlow,
-            MarkupSettingsFamily::CandlePattern,
-        ]
-        .into_iter()
-        .map(family_body_height)
-        .fold(0.0_f64, f64::max);
-        assert_eq!(content_height(), tallest, "the tallest family sets the shell");
+    fn the_shell_is_the_same_height_for_every_family_and_tab() {
+        let tallest = FAMILY_SEGMENTS
+            .into_iter()
+            .flat_map(|f| SettingsTab::ALL.into_iter().map(move |t| (f, t)))
+            .map(|(f, t)| family_segment_height() + tab_body_height(f, t))
+            .fold(0.0_f64, f64::max);
+        assert_eq!(content_height(), tallest, "the tallest (family, tab) pair sets the shell");
         assert!(
-            family_body_height(MarkupSettingsFamily::CandlePattern)
-                < family_body_height(MarkupSettingsFamily::SmartMoney),
-            "candles are the thinnest family and must not set the shell",
+            family_segment_height() + tab_body_height(MarkupSettingsFamily::SmartMoney, SettingsTab::Thresholds)
+                > family_segment_height() + tab_body_height(MarkupSettingsFamily::CandlePattern, SettingsTab::Thresholds),
+            "Smart Money's own 6 detector rows must not be absorbed into candles' thinner Thresholds tab",
+        );
+        assert!(
+            family_segment_height() + tab_body_height(MarkupSettingsFamily::SmartMoney, SettingsTab::Style) < content_height(),
+            "the empty Style tab must not set the shell",
         );
     }
 
-    /// Only the family with a narrative to assemble offers to draw one.
+    /// Repeated opens (same family, same tab) must report the identical
+    /// height — a pure function of `family`/`tab`, nothing else.
+    #[test]
+    fn height_is_stable_across_repeated_opens() {
+        for family in FAMILY_SEGMENTS {
+            for tab in SettingsTab::ALL {
+                let first = tab_body_height(family, tab);
+                let second = tab_body_height(family, tab);
+                assert_eq!(first, second);
+            }
+        }
+    }
+
+    /// Switching tabs never changes the outer modal frame size mid-session
+    /// — every tab reports a height at or below the shell's own
+    /// `content_height`, computed once, independent of which tab is active.
+    #[test]
+    fn switching_tabs_never_exceeds_the_shells_own_height() {
+        let shell_h = content_height();
+        for family in FAMILY_SEGMENTS {
+            for tab in SettingsTab::ALL {
+                assert!(family_segment_height() + tab_body_height(family, tab) <= shell_h);
+            }
+        }
+    }
+
     #[test]
     fn only_smart_money_offers_an_action() {
         assert_eq!(action_rows(MarkupSettingsFamily::SmartMoney), 1);
@@ -460,11 +808,29 @@ mod tests {
     }
 
     #[test]
+    fn every_float_option_has_a_label() {
+        for v in DISPLACEMENT_ATR_MULT_OPTIONS {
+            assert_ne!(float_label(v), "?", "{v}");
+        }
+        for v in EQUAL_LEVEL_ATR_TOL_OPTIONS {
+            assert_ne!(float_label(v), "?", "{v}");
+        }
+    }
+
+    #[test]
     fn family_tokens_round_trip() {
         for f in FAMILY_SEGMENTS {
             assert_eq!(MarkupSettingsFamily::from_id(f.id()), Some(f));
         }
         assert_eq!(MarkupSettingsFamily::from_id("elliott"), None);
+    }
+
+    #[test]
+    fn tab_tokens_round_trip() {
+        for t in SettingsTab::ALL {
+            assert_eq!(SettingsTab::from_id(t.id()), Some(t));
+        }
+        assert_eq!(SettingsTab::from_id("bogus"), None);
     }
 
     #[test]

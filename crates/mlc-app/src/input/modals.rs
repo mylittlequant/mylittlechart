@@ -14,6 +14,10 @@ use mlc_core::{
 };
 use mlc_app_layout::layout::ExtendedLayoutHitTester;
 use mlc_app_layout::ui::context_menu::ContextMenuTarget;
+#[cfg(feature = "cloud")]
+use mlc_app_layout::ui::modal_settings::DmRequest;
+#[cfg(feature = "cloud")]
+use mlc_app_layout::ui::selectable_text::{block_text, select_all, selection_text};
 use mlc_core::state::modal_state::{OpenModal, IndicatorCategoryFilter};
 use uzor::WidgetId;
 
@@ -2809,6 +2813,89 @@ impl ChartApp {
                     }
                     _ => {
                         log::warn!("[ChartApp] Unhandled color tag context action: {}", action);
+                    }
+                }
+            }
+            #[cfg(feature = "cloud")]
+            ContextMenuTarget::DmMessage(msg_idx) => {
+                match action {
+                    "dm_msg:copy" => {
+                        // The current selection wins when there is one (same
+                        // "Copy copies the selection" rule Ctrl+C already
+                        // follows, `dispatch.rs`'s own Ctrl+C handler); with
+                        // none, the right-clicked message's own text —
+                        // `block_text` filters `dm_message_line_rects` down
+                        // to this one message's lines, same rects Ctrl+C
+                        // already reads (see `ChartApp::dm_selection_text`'s
+                        // own doc).
+                        let sel = self.panel_app.community_state.dm.selection.filter(|s| !s.is_empty());
+                        let text = self.frame_result.as_ref()
+                            .and_then(|r| r.community.as_ref())
+                            .and_then(|cm| {
+                                let rects = &cm.content.dm_message_line_rects;
+                                match sel {
+                                    Some(sel) => selection_text(rects, &sel),
+                                    None => block_text(rects, msg_idx),
+                                }
+                            });
+                        if text.is_some() {
+                            self.panel_app.community_state.dm.selection = None;
+                            self.pending_clipboard_text = text;
+                        }
+                    }
+                    "dm_msg:select_all" => {
+                        // The concept's own spec: "Ctrl+A — весь загруженный
+                        // чат" — selects every loaded message, not just the
+                        // one right-clicked.
+                        let sel = self.frame_result.as_ref()
+                            .and_then(|r| r.community.as_ref())
+                            .and_then(|cm| select_all(&cm.content.dm_message_line_rects));
+                        self.panel_app.community_state.dm.selection = sel;
+                    }
+                    "dm_msg:reply" => {
+                        // Unreachable with today's DM provider
+                        // (`capabilities().replies == false` —
+                        // `dm_messenger_provider::reads::capabilities`'s own
+                        // doc), so this row never renders for it; kept
+                        // wired for whichever future Matrix-shaped provider
+                        // sets the flag, at which point arming a reply
+                        // preview needs its own composer-side UI state this
+                        // piece does not add.
+                        log::debug!("[ChartApp] DM message reply requested for msg #{}, no reply-composer UI yet", msg_idx);
+                    }
+                    _ => {
+                        log::warn!("[ChartApp] Unhandled DM message context action: {}", action);
+                    }
+                }
+            }
+            #[cfg(feature = "cloud")]
+            ContextMenuTarget::DmChatRow(room_id) => {
+                match action {
+                    "dm_chat_row:mark_read" => {
+                        let Ok(id) = room_id.parse::<i64>() else {
+                            log::warn!("[ChartApp] DM chat-row context action on a non-numeric room id: {}", room_id);
+                            return;
+                        };
+                        // Re-derived rather than trusted from the (already
+                        // stale-by-one-frame) menu build — the only honest
+                        // source is still whatever the currently open
+                        // conversation has loaded (see
+                        // `DmState::open_conversation_last_message_id`'s
+                        // own doc); a disabled row is already refused
+                        // before dispatch reaches here
+                        // (`panel_click.rs`'s own `context_menu:item:`
+                        // arm), this is only a second, cheap safety net.
+                        match self.panel_app.community_state.dm.open_conversation_last_message_id(id) {
+                            Some(up_to) => {
+                                self.panel_app.community_state.dm.request = Some(DmRequest::MarkRead { id, up_to });
+                            }
+                            None => {
+                                log::debug!("[ChartApp] DM mark-as-read skipped for room #{}, no loaded message id", id);
+                            }
+                        }
+                    }
+                    _ => {
+                        log::warn!("[ChartApp] Unhandled DM chat-row context action: {}", action);
                     }
                 }
             }

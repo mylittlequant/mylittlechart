@@ -883,6 +883,20 @@ pub struct ProfileUiSettings {
     /// for every profile saved before this field existed.
     #[serde(default)]
     pub header_account_display: HeaderAccountDisplay,
+
+    /// Size the Community modal's Forum pane was last dragged to (cloud
+    /// builds only — `CommunityState::forum_size`, community-modal chrome
+    /// arc) — `None` uses the modal's own 760×560 default.
+    /// `#[serde(default)]`: this field is new, and older profiles simply
+    /// never carried a dragged Community-modal size at all (the modal never
+    /// persisted its size before this pass).
+    #[serde(default)]
+    pub community_forum_size: Option<(f64, f64)>,
+    /// Size the Community modal's Messages pane was last dragged to — same
+    /// contract as `community_forum_size` above; `None` uses the modal's
+    /// own 1000×640 default.
+    #[serde(default)]
+    pub community_messages_size: Option<(f64, f64)>,
 }
 
 fn default_true() -> bool {
@@ -942,6 +956,8 @@ impl ProfileUiSettings {
             toast_anchor: ToastAnchor::default(),
             toasts_enabled: true,
             header_account_display: HeaderAccountDisplay::default(),
+            community_forum_size: None,
+            community_messages_size: None,
         }
     }
 }

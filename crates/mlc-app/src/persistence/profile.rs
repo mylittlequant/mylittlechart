@@ -29,6 +29,19 @@ impl ChartApp {
             mlc_core::InlineDockEdge::Top => "Top",
             mlc_core::InlineDockEdge::Free => "Free",
         };
+        // Community modal per-tab size (community-modal chrome arc, cloud
+        // builds only — `CommunityState` does not exist outside `cloud`).
+        // Non-cloud builds carry forward whatever the loaded profile already
+        // held, same "nothing fresher to pull" reasoning `notification_
+        // settings` above documents.
+        #[cfg(feature = "cloud")]
+        let (community_forum_size, community_messages_size) = (
+            self.panel_app.community_state.forum_size,
+            self.panel_app.community_state.messages_size,
+        );
+        #[cfg(not(feature = "cloud"))]
+        let (community_forum_size, community_messages_size) =
+            (existing.ui.community_forum_size, existing.ui.community_messages_size);
         mlc_core::UserProfile {
             domain: mlc_core::user_profile::profile::ProfileDomainSettings {
                 version: mlc_core::user_profile::profile::PROFILE_VERSION,
@@ -205,6 +218,8 @@ impl ChartApp {
                 // this snapshot builder, same preserve-live-value pattern as
                 // `favorite_primitives` above.
                 system_events: self.system_events.clone(),
+                community_forum_size,
+                community_messages_size,
             },
         }
     }
@@ -700,6 +715,18 @@ impl ChartApp {
                 }
                 self.panel_app.toolbar_state.favorites_bar_visible = profile.ui.favorites_bar_visible;
                 self.panel_app.toolbar_state.screenshot_destination = profile.ui.screenshot_destination;
+                // Community modal per-tab size (community-modal chrome arc,
+                // cloud builds only) — `None` leaves `CommunityState::
+                // default`'s own 760×560/1000×640 fallback in place.
+                #[cfg(feature = "cloud")]
+                {
+                    if let Some(size) = profile.ui.community_forum_size {
+                        self.panel_app.community_state.forum_size = Some(size);
+                    }
+                    if let Some(size) = profile.ui.community_messages_size {
+                        self.panel_app.community_state.messages_size = Some(size);
+                    }
+                }
                 // System event log (system-event-bus arc, 2026-09-05):
                 // restore the persisted ring into live app state so events
                 // survive a restart; new pushes append onto this.

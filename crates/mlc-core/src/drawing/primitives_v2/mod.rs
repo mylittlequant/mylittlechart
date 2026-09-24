@@ -103,6 +103,7 @@ const SCAN_MARKER_MIN_GAP_PX: f64 = 6.0;
 pub mod registry;
 pub mod config;
 pub mod fill_defaults;
+pub mod scan_shape;
 
 /// Format a price value with smart precision for display in drawing primitives.
 /// Handles everything from BTC ($70000) to PEPE ($0.000000003).
@@ -702,6 +703,7 @@ pub use fill_defaults::{
     default_area_fill_opacity, default_band_fill_opacity, default_plate_fill_opacity,
     default_box_annotation_fill_opacity,
 };
+pub use scan_shape::{ScanShape, render_scan_bracket, price_band_filter};
 
 // Re-export all primitives
 pub use lines::*;
