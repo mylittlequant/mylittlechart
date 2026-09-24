@@ -3813,4 +3813,62 @@ mod tests {
         assert_eq!(PositionPointKey::Target.get(Language::En), "Target");
         assert_eq!(PositionPointKey::Target.get(Language::Ru), "Цель");
     }
+
+    /// A0 piece 6 (`docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`):
+    /// the 5 gap kinds must resolve through `CandlePatternKey::from_id`, the
+    /// exact "falls back unlocalized" gap the research doc named.
+    #[test]
+    fn test_gap_kind_ids_resolve() {
+        assert_eq!(CandlePatternKey::from_id("common_gap"), Some(CandlePatternKey::CommonGap));
+        assert_eq!(CandlePatternKey::from_id("breakaway_gap"), Some(CandlePatternKey::BreakawayGap));
+        assert_eq!(CandlePatternKey::from_id("runaway_gap"), Some(CandlePatternKey::RunawayGap));
+        assert_eq!(CandlePatternKey::from_id("exhaustion_gap"), Some(CandlePatternKey::ExhaustionGap));
+        assert_eq!(CandlePatternKey::from_id("island_gap"), Some(CandlePatternKey::IslandGap));
+    }
+
+    /// English source text mirrors `CandlePatternKind::label()`'s own
+    /// fallback strings verbatim (`candle_pattern.rs:334-338`).
+    #[test]
+    fn test_gap_kind_english_text_matches_mli_fallback_labels() {
+        assert_eq!(CandlePatternKey::CommonGap.get(Language::En), "Common Gap");
+        assert_eq!(CandlePatternKey::BreakawayGap.get(Language::En), "Breakaway Gap");
+        assert_eq!(CandlePatternKey::RunawayGap.get(Language::En), "Runaway Gap");
+        assert_eq!(CandlePatternKey::ExhaustionGap.get(Language::En), "Exhaustion Gap");
+        assert_eq!(CandlePatternKey::IslandGap.get(Language::En), "Island Gap");
+    }
+
+    /// Round-trip over every `mli::events::candle_pattern::CandlePatternKind`
+    /// — every gap variant's own `id()` must now resolve through
+    /// `CandlePatternKey::from_id`, closing the gap the research doc named.
+    #[test]
+    fn test_every_gap_kind_resolves_through_candle_pattern_kind_all() {
+        use mli::events::candle_pattern::CandlePatternKind;
+        let gap_ids = ["common_gap", "breakaway_gap", "runaway_gap", "exhaustion_gap", "island_gap"];
+        for kind in CandlePatternKind::all() {
+            if gap_ids.contains(&kind.id()) {
+                assert!(
+                    CandlePatternKey::from_id(kind.id()).is_some(),
+                    "gap kind id={} must resolve through CandlePatternKey::from_id", kind.id(),
+                );
+            }
+        }
+    }
+
+    /// The 5 gap rows carry every language column (unlike the other 34 rows
+    /// in this table) — none should silently fall back to English.
+    #[test]
+    fn test_gap_kind_labels_are_localized_in_every_language() {
+        let gap_keys = [
+            CandlePatternKey::CommonGap, CandlePatternKey::BreakawayGap, CandlePatternKey::RunawayGap,
+            CandlePatternKey::ExhaustionGap, CandlePatternKey::IslandGap,
+        ];
+        for key in gap_keys {
+            for &lang in Language::all() {
+                assert_ne!(
+                    key.get(lang), "",
+                    "{key:?} must have a non-empty translation for {lang:?}",
+                );
+            }
+        }
+    }
 }

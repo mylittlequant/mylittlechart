@@ -1867,7 +1867,10 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 452] = [
 //
 // En/Ru filled only (col 0 = En, col 1 = Ru); cols 2..14 fall back to En at
 // runtime. See `CandlePatternKey`'s own doc for why this table is excluded
-// from `every_chart_table_is_fully_translated` below.
+// from `every_chart_table_is_fully_translated` below. EXCEPTION: the 5 gap
+// kind rows (34-38, A0 piece 6, 2026-09-24) carry every column — closing
+// the "falls back unlocalized" gap the research doc named for exactly
+// those 5, without re-scoping the other 34 rows' own En/Ru-only convention.
 pub(super) static CANDLE_PATTERN_KEY_TABLE: [[&str; N_LANG]; 39] = [
     /*  0 Doji                    */ [ "Doji",                        "Дожи",                            "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /*  1 GravestoneDoji          */ [ "Gravestone Doji",             "Дожи «надгробие»",                "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1903,11 +1906,16 @@ pub(super) static CANDLE_PATTERN_KEY_TABLE: [[&str; N_LANG]; 39] = [
     /* 31 FallingThreeMethods     */ [ "Falling Three Methods",       "Метод трёх нисходящих",           "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 32 UpsideGapTwoCrows       */ [ "Upside Gap Two Crows",        "Две вороны с гэпом вверх",        "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 33 DownsideGapThreeMethods */ [ "Downside Gap Three Methods",  "Метод трёх с гэпом вниз",         "", "", "", "", "", "", "", "", "", "", "", "", "" ],
-    /* 34 CommonGap                */ [ "Common Gap",                  "Обычный гэп",                     "", "", "", "", "", "", "", "", "", "", "", "", "" ],
-    /* 35 BreakawayGap             */ [ "Breakaway Gap",               "Гэп прорыва",                     "", "", "", "", "", "", "", "", "", "", "", "", "" ],
-    /* 36 RunawayGap               */ [ "Runaway Gap",                 "Гэп разгона",                     "", "", "", "", "", "", "", "", "", "", "", "", "" ],
-    /* 37 ExhaustionGap            */ [ "Exhaustion Gap",              "Гэп истощения",                   "", "", "", "", "", "", "", "", "", "", "", "", "" ],
-    /* 38 IslandGap                */ [ "Island Gap",                  "Островной гэп",                   "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    // Gap kinds (A0 piece 6, 2026-09-24) — the ONLY 5 rows in this table
+    // with every column filled (all 5 columns are new, added in the same
+    // commit; not a partial-column-fill deviation from the table's own
+    // En/Ru-only convention above — see the doc comment on this table's
+    // own declaration for why the other 34 rows stay En/Ru + fallback).
+    /* 34 CommonGap                */ [ "Common Gap",       "Обычный гэп",       "Gap Común",              "Gewöhnliche Kurslücke", "Gap commun",           "Gap Comum",            "普通缺口", "コモンギャップ",   "보통 갭",   "فجوة عادية",      "Gap Comune",        "Sıradan Boşluk",    "Luka zwykła",      "Звичайний геп",   "सामान्य गैप"   ],
+    /* 35 BreakawayGap             */ [ "Breakaway Gap",    "Гэп прорыва",       "Gap de Ruptura",         "Ausbruchslücke",        "Gap de rupture",       "Gap de Ruptura",       "突破缺口", "ブレイクアウトギャップ","돌파 갭",   "فجوة اختراق",      "Gap di Rottura",    "Kopma Boşluğu",     "Luka wybicia",     "Геп прориву",      "ब्रेकअवे गैप"   ],
+    /* 36 RunawayGap               */ [ "Runaway Gap",      "Гэп разгона",       "Gap de Continuación",    "Fluchtlücke",           "Gap de continuation",  "Gap de Continuação",   "持续缺口", "継続ギャップ",     "지속 갭",   "فجوة الاستمرار",   "Gap di Continuazione","Kaçış Boşluğu",    "Luka kontynuacji", "Геп продовження",  "रनअवे गैप"      ],
+    /* 37 ExhaustionGap            */ [ "Exhaustion Gap",   "Гэп истощения",     "Gap de Agotamiento",     "Erschöpfungslücke",     "Gap d'épuisement",     "Gap de Exaustão",      "衰竭缺口", "消耗ギャップ",     "소진 갭",   "فجوة الاستنفاد",   "Gap di Esaurimento", "Tükenme Boşluğu",   "Luka wyczerpania", "Геп виснаження",   "थकावट गैप"      ],
+    /* 38 IslandGap                */ [ "Island Gap",       "Островной гэп",     "Gap de Isla",            "Insellücke",            "Gap d'île",            "Gap de Ilha",          "岛形缺口", "アイランドギャップ","아일랜드 갭","فجوة الجزيرة",     "Gap a Isola",        "Ada Boşluğu",       "Luka wyspowa",     "Острівний геп",    "द्वीप गैप"      ],
 ];
 
 // =============================================================================
