@@ -86,6 +86,14 @@
        loading indicator, so it goes away when the boot fails. */
     #boot .logo { width: 112px; height: 84px; }
     #boot.err .logo { display: none; }
+    /* Caption: ASCII glitch-decode, same glyph alphabet as the toolbar
+       clock hover effect (mlc-app-layout/src/ui/clock_glitch.rs). Each
+       character is a fixed-width cell so a katakana glyph swapped in mid
+       animation never shifts the layout. Logic is the `bootCaptionGlitch`
+       inline script below — this block only owns the static shell. */
+    #boot .caption { font-family: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace; }
+    #boot .caption .cell { display: inline-block; width: 1ch; text-align: center; }
+    #boot.err .caption { display: none; }
     #boot .msg { color: #f23645; max-width: 480px; text-align: center; white-space: pre-wrap; }
   </style>
 </head>
@@ -99,7 +107,7 @@
   <canvas id="chart" tabindex="0"></canvas>
   <div id="boot">
     <img class="logo" src="/boot-hat.svg" alt="" />
-    <div>loading the chart engine…</div>
+    <div class="caption" id="boot-caption">loading chart engine</div>
     <div class="msg" id="boot-err"></div>
   </div>
   <script>
@@ -144,6 +152,96 @@
       if (_logo.complete && _logo.naturalWidth === 0) _logo.style.display = 'none';
       _logo.addEventListener('error', function() { _logo.style.display = 'none'; });
     }
+
+    // Boot caption — ASCII glitch-decode using the same glyph alphabet as
+    // the toolbar clock hover effect (`mlc-app-layout/src/ui/
+    // clock_glitch.rs` GLITCH_CHARS: digits, half-width katakana
+    // U+FF71..U+FF8E, terminal-glitch symbols). Decodes in left to right on
+    // show, then idles with occasional cell flicker until the splash is
+    // dismissed or errors out. SOURCE OF TRUTH — mirror changes to
+    // `mylittlechart-landing/web/app/app-boot.js`'s matching function.
+    (function bootCaptionGlitch() {
+      var TEXT = 'loading chart engine';
+      var FLICKER_MS = 60;
+      var GLYPHS = '0123456789'.split('');
+      for (var gc = 0xFF71; gc <= 0xFF8E; gc++) GLYPHS.push(String.fromCharCode(gc));
+      GLYPHS = GLYPHS.concat('#@%&$*/|=<>?+'.split(''));
+      function glyph() { return GLYPHS[(Math.random() * GLYPHS.length) | 0]; }
+
+      var root = document.getElementById('boot-caption');
+      if (!root) return;
+
+      if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        return; // markup already shows the plain text
+      }
+
+      var cells = []; // animated (non-space) cells only: { el, real, settleAt }
+      root.textContent = '';
+      for (var i = 0; i < TEXT.length; i++) {
+        var real = TEXT[i];
+        var span = document.createElement('span');
+        span.className = 'cell';
+        if (real === ' ') {
+          span.textContent = ' ';
+        } else {
+          span.textContent = glyph();
+          cells.push({ el: span, real: real });
+        }
+        root.appendChild(span);
+      }
+
+      var timers = [];
+      function stop() {
+        timers.forEach(function(id) { clearTimeout(id); clearInterval(id); });
+        timers.length = 0;
+      }
+      window.__MLC_BOOT_CAPTION_STOP__ = stop;
+
+      // Phase 1 — decode in: every live cell rerolls each tick, settling
+      // left to right across a 600-800ms window.
+      var decodeMs = 600 + Math.random() * 200;
+      cells.forEach(function(cell, i) {
+        cell.settleAt = (i / Math.max(1, cells.length - 1)) * decodeMs;
+      });
+      var decodeStart = Date.now();
+      var live = cells.slice();
+      var decodeTimer = setInterval(function() {
+        var elapsed = Date.now() - decodeStart;
+        live = live.filter(function(cell) {
+          if (elapsed >= cell.settleAt) {
+            cell.el.textContent = cell.real;
+            return false;
+          }
+          cell.el.textContent = glyph();
+          return true;
+        });
+        if (live.length === 0) {
+          clearInterval(decodeTimer);
+          idleTick();
+        }
+      }, FLICKER_MS);
+      timers.push(decodeTimer);
+
+      // Phase 2 — idle glitch: every ~1-1.5s a few random cells flicker
+      // through glyphs for ~120-180ms, then settle back.
+      function idleTick() {
+        var count = Math.min(cells.length, 2 + ((Math.random() * 3) | 0));
+        var chosen = [];
+        for (var k = 0; k < count; k++) {
+          chosen.push(cells[(Math.random() * cells.length) | 0]);
+        }
+        var flicker = setInterval(function() {
+          chosen.forEach(function(cell) { cell.el.textContent = glyph(); });
+        }, FLICKER_MS);
+        timers.push(flicker);
+        var settle = setTimeout(function() {
+          clearInterval(flicker);
+          chosen.forEach(function(cell) { cell.el.textContent = cell.real; });
+          timers.push(setTimeout(idleTick, 1000 + Math.random() * 500));
+        }, 120 + Math.random() * 60);
+        timers.push(settle);
+      }
+    })();
   </script>
 
   <!--
@@ -186,6 +284,8 @@
       var errBox = document.getElementById('boot-err');
       if (boot) boot.classList.add('err');
       if (errBox) errBox.textContent = String(msg || '<unknown error>');
+      // `#boot.err .caption` hides via CSS; stop its timers too.
+      if (window.__MLC_BOOT_CAPTION_STOP__) window.__MLC_BOOT_CAPTION_STOP__();
     }
     window.addEventListener('error', function(e) {
       captureError('error', e.message, e.filename, e.lineno, e.colno, e.error);
@@ -261,6 +361,7 @@
         var live = window.MLC_DEBUG && window.MLC_DEBUG.bars > 0;
         if (!live && waited < 20000) return;
         clearInterval(timer);
+        if (window.__MLC_BOOT_CAPTION_STOP__) window.__MLC_BOOT_CAPTION_STOP__();
         // Two rAFs: let the frame with the freshly arrived bars actually hit
         // the canvas before we start the fade.
         requestAnimationFrame(function() {
