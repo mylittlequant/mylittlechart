@@ -171,6 +171,47 @@ pub struct EwaEngineConfig {
     /// retro-applied to a primitive that already exists.
     #[serde(default)]
     pub ratio_rib_defaults: RatioRibDefaults,
+
+    // -------------------------------------------------------------------
+    // Autodetector A2 (2026-09-24) — `ElliottScan`'s own SEED-ONLY
+    // defaults. `docs/mlc/plans/autodetectors-a2-a4-implementation-2026-09-24.md`,
+    // "Architecture decision": these three fields exist so a freshly
+    // constructed `ElliottScan` has somewhere to read its own starting
+    // `swing_n`/`min_score`/`enabled_kinds` from ONCE, at construction
+    // (`ElliottScan::new`, mirroring `CandlePatternEngineConfig::
+    // default_enabled_kinds` → `CandlePatternScan::new()` exactly) — never
+    // retro-applied to a scan that already exists, and never a settings-
+    // modal row in A2 scope (same as `CandlePatternEngineConfig`'s own
+    // precedent). `swing_n`/`min_score` stay genuinely PER-DRAWING fields
+    // on `ElliottScan` after construction (arc §2's own explicit ruling);
+    // this struct only seeds their starting value.
+    // -------------------------------------------------------------------
+    /// A freshly placed `ElliottScan`'s own starting pivot sensitivity —
+    /// see `ElliottScan::swing_n`'s own doc. Default `2`, matching
+    /// `SmcEngineConfig::swing_n`'s own default (Appendix A) — the same
+    /// pivot-sensitivity reading this workspace already treats as a
+    /// sensible starting point for a swing-based detector.
+    #[serde(default = "default_scan_swing_n")]
+    pub scan_default_swing_n: usize,
+    /// A freshly placed `ElliottScan`'s own starting `min_score` post-
+    /// filter. Default `0.0` ("Any" — no filtering), so an untouched
+    /// engine config changes nothing about what a freshly drawn scan
+    /// shows.
+    #[serde(default)]
+    pub scan_default_min_score: f64,
+    /// A freshly placed `ElliottScan`'s own starting `enabled_kinds` — see
+    /// `crate::drawing::primitives_v2::elliott::default_all_kind_ids`'s own
+    /// doc. Default: all 8 catalogue ids.
+    #[serde(default = "default_scan_enabled_kinds")]
+    pub scan_default_enabled_kinds: Vec<String>,
+}
+
+fn default_scan_swing_n() -> usize {
+    2
+}
+
+fn default_scan_enabled_kinds() -> Vec<String> {
+    crate::drawing::primitives_v2::elliott::default_all_kind_ids()
 }
 
 impl Default for EwaEngineConfig {
@@ -181,6 +222,9 @@ impl Default for EwaEngineConfig {
             show_projections: false,
             guard_families: GuardFamilies::default(),
             ratio_rib_defaults: RatioRibDefaults::default(),
+            scan_default_swing_n: default_scan_swing_n(),
+            scan_default_min_score: 0.0,
+            scan_default_enabled_kinds: default_scan_enabled_kinds(),
         }
     }
 }
@@ -228,6 +272,12 @@ mod tests {
         assert_eq!(cfg.ratio_rib_defaults.color, None);
         assert_eq!(cfg.ratio_rib_defaults.width, None);
         assert_eq!(cfg.ratio_rib_defaults.style, LineStyle::Dotted);
+        assert_eq!(cfg.scan_default_swing_n, 2);
+        assert_eq!(cfg.scan_default_min_score, 0.0);
+        assert_eq!(
+            cfg.scan_default_enabled_kinds,
+            crate::drawing::primitives_v2::elliott::default_all_kind_ids(),
+        );
     }
 
     #[test]
@@ -242,6 +292,9 @@ mod tests {
         let mut cfg = EwaEngineConfig::default();
         cfg.detect_higher_degree = true;
         cfg.guard_families.chain = false;
+        cfg.scan_default_swing_n = 5;
+        cfg.scan_default_min_score = 0.7;
+        cfg.scan_default_enabled_kinds = vec!["impulse".to_string(), "zigzag".to_string()];
         set_ewa_engine_config(cfg.clone());
         assert_eq!(ewa_engine_config(), cfg);
         // Restore the default so other tests in this process observe the

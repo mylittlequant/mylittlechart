@@ -26,19 +26,41 @@
 //! this — see this crate's own `refresh_bar_derived_caches` below.
 
 use super::data_bubble::DataBubble;
+use mlc_core::drawing::alloc_primitive_id;
 
 /// Call [`Primitive::refresh_bar_derived_cache`] on every primitive in `b`
-/// with `b`'s own current `bars`.
+/// with `b`'s own current `bars`, then drain each primitive's own
+/// [`Primitive::take_scan_placements`] queue — the "place as primitive"
+/// mechanism (`docs/mlc/plans/autodetectors-a2-a4-implementation-2026-09-24.md`,
+/// "New mechanism") — into real, independent primitives pushed onto this
+/// SAME bubble's collection, immediately after the cache refresh a
+/// placement's own geometry depends on.
 ///
 /// Cheap to call unconditionally: the trait default is a no-op, and a type
 /// that DOES override it (`RegressionTrend` today) is contractually
 /// required to stay cheap when nothing changed (see the trait method's own
 /// doc) — this function itself does no additional filtering or
 /// short-circuiting, exactly like [`super::wave_guards::refresh_wave_guards`]
-/// does not either.
+/// does not either. `take_scan_placements` is default-empty, so a primitive
+/// that does not override it (the overwhelming majority) pays one empty-Vec
+/// call and nothing more.
 pub(crate) fn refresh_bar_derived_caches(b: &mut DataBubble) {
+    let mut placements: Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> = Vec::new();
     for p in b.primitives.iter_mut() {
         p.refresh_bar_derived_cache(&b.bars);
+        placements.extend(p.take_scan_placements(&b.bars));
+    }
+    if placements.is_empty() {
+        return;
+    }
+    let symbol = b.address.symbol.clone();
+    for mut placed in placements {
+        // Mirrors `DrawingManager::create_proposed_chains`'s own insertion
+        // — stamp a fresh id + this bubble's symbol, push, nothing else (no
+        // auto-select, no auto-delete of the scan that produced it).
+        placed.data_mut().id = alloc_primitive_id();
+        placed.data_mut().symbol = symbol.clone();
+        b.primitives.push(placed);
     }
 }
 
@@ -76,5 +98,108 @@ pub(crate) fn refresh_footprint_derived_caches(b: &mut DataBubble) {
     let Some(footprint) = b.footprint_bars.as_deref() else { return };
     for p in b.primitives.iter_mut() {
         p.refresh_footprint_derived_cache(footprint);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mlc_core::drawing::primitives_v2::{
+        ClickBehavior, ControlPoint, ControlPointType, Primitive, PrimitiveData, PrimitiveKind,
+        PrimitiveRegistry,
+    };
+    use mlc_core::{Bar, PriceScale, Viewport};
+
+    /// A primitive whose `take_scan_placements` override fires exactly
+    /// once — proof the sweep both drains a real override (S1) and leaves
+    /// every default-empty primitive (every OTHER primitive in the crate,
+    /// verified by the second test below with a real registry type) alone.
+    #[derive(Clone)]
+    struct OneShotPlacer {
+        data: PrimitiveData,
+        armed: bool,
+    }
+
+    impl Primitive for OneShotPlacer {
+        fn type_id(&self) -> &'static str {
+            "test_one_shot_placer"
+        }
+        fn display_name(&self) -> &str {
+            "One-Shot Placer (test)"
+        }
+        fn kind(&self) -> PrimitiveKind {
+            PrimitiveKind::Line
+        }
+        fn click_behavior(&self) -> ClickBehavior {
+            ClickBehavior::TwoPoint
+        }
+        fn data(&self) -> &PrimitiveData {
+            &self.data
+        }
+        fn data_mut(&mut self) -> &mut PrimitiveData {
+            &mut self.data
+        }
+        fn points(&self) -> Vec<(i64, f64)> {
+            Vec::new()
+        }
+        fn set_points(&mut self, _points: &[(i64, f64)]) {}
+        fn translate(&mut self, _ts_delta_ms: i64, _price_delta: f64) {}
+        fn move_control_point(&mut self, _point_type: ControlPointType, _ts_ms: i64, _price: f64) {}
+        fn control_points(
+            &self,
+            _bars: &[Bar],
+            _viewport: &Viewport,
+            _price_scale: &PriceScale,
+        ) -> Vec<ControlPoint> {
+            Vec::new()
+        }
+        fn to_json(&self) -> String {
+            "{}".to_string()
+        }
+        fn clone_box(&self) -> Box<dyn Primitive> {
+            Box::new(self.clone())
+        }
+        fn take_scan_placements(&mut self, _bars: &[Bar]) -> Vec<Box<dyn Primitive>> {
+            if !self.armed {
+                return Vec::new();
+            }
+            self.armed = false;
+            vec![Box::new(OneShotPlacer { data: PrimitiveData::default(), armed: false })]
+        }
+    }
+
+    fn bubble_with(prims: Vec<Box<dyn Primitive>>) -> DataBubble {
+        let mut store = crate::bubble::BubbleStore::new();
+        let bid = store.create_bubble("BTCUSDT".to_string(), mlc_core::Timeframe::m1());
+        let mut b = store.bubble(bid).cloned().expect("just-created bubble");
+        b.primitives = prims;
+        b
+    }
+
+    #[test]
+    fn take_scan_placements_grows_the_bubble_by_exactly_one() {
+        let armed: Box<dyn Primitive> =
+            Box::new(OneShotPlacer { data: PrimitiveData::default(), armed: true });
+        let mut b = bubble_with(vec![armed]);
+        refresh_bar_derived_caches(&mut b);
+        assert_eq!(b.primitives.len(), 2, "one placed primitive inserted alongside the scan");
+
+        // Draining again finds nothing left to place — the queue does not
+        // refill itself.
+        refresh_bar_derived_caches(&mut b);
+        assert_eq!(b.primitives.len(), 2, "one-shot queue stays drained");
+    }
+
+    #[test]
+    fn a_primitive_not_overriding_take_scan_placements_never_adds_anything() {
+        let prim = {
+            let registry = PrimitiveRegistry::global().read().unwrap();
+            registry
+                .create("horizontal_line", &[(0, 1.0)], Some("#3ba3ff"))
+                .expect("registry has horizontal_line")
+        };
+        let mut b = bubble_with(vec![prim]);
+        refresh_bar_derived_caches(&mut b);
+        assert_eq!(b.primitives.len(), 1, "default take_scan_placements adds nothing");
     }
 }
