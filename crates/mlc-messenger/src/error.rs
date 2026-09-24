@@ -46,13 +46,10 @@ pub enum MessengerError {
     #[error("crypto: {0}")]
     Crypto(String),
 
-    /// A `CryptoStore`/`StateStore` operation failed. The store traits
-    /// themselves land in a later piece (`store/mod.rs`); this variant
-    /// exists from M1 on so [`crate::error`] stays the single place this
-    /// crate's whole error surface is defined, rather than each later
-    /// piece growing its own separate error type.
+    /// A [`crate::store::CryptoStore`]/[`crate::store::StateStore`]
+    /// operation failed.
     #[error("store: {0}")]
-    Store(String),
+    Store(#[from] crate::store::StoreError),
 
     /// Raised when a caller (a later piece's `outgoing_queue`/
     /// `sync_engine`) attempts to release an outgoing request while

@@ -6,3 +6,6 @@
 mod requests;
 
 pub use requests::{HttpMethod, HttpResponseDescriptor, OutgoingRequest, OutgoingRequestKind};
+// Crate-internal only: `store`'s record-key builder/parser reuses this
+// module's own escaping scheme rather than inventing a second one.
+pub(crate) use requests::{percent_decode_segment, percent_encode_segment};

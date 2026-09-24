@@ -18,7 +18,7 @@ use std::fmt;
 /// ambiguity between "path delimiter" and "literal sigil character" for a
 /// router that naively splits on `/`, `:`, or `!`, exactly the ids this
 /// crate mints into paths.
-fn percent_encode_segment(segment: &str) -> String {
+pub(crate) fn percent_encode_segment(segment: &str) -> String {
     let mut out = String::with_capacity(segment.len());
     for byte in segment.bytes() {
         match byte {
@@ -32,6 +32,34 @@ fn percent_encode_segment(segment: &str) -> String {
         }
     }
     out
+}
+
+/// Reverses [`percent_encode_segment`]: decodes `%XX` escapes back to their
+/// original byte values and interprets the result as UTF-8. Returns `None`
+/// for a malformed escape (an incomplete or non-hex `%` sequence) or a
+/// decoded byte sequence that is not valid UTF-8. Used by
+/// [`crate::store`]'s record-key parser to recover the dynamic components
+/// (room/user/session/request ids) this module's builders percent-encode
+/// into a storage key.
+pub(crate) fn percent_decode_segment(segment: &str) -> Option<String> {
+    let bytes = segment.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        match bytes[i] {
+            b'%' => {
+                let hex = segment.get(i + 1..i + 3)?;
+                let byte = u8::from_str_radix(hex, 16).ok()?;
+                out.push(byte);
+                i += 3;
+            }
+            b => {
+                out.push(b);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8(out).ok()
 }
 
 /// Substitutes every `{placeholder}` token in `template` with the
@@ -707,6 +735,20 @@ mod tests {
     fn percent_encode_segment_escapes_matrix_sigils() {
         assert_eq!(percent_encode_segment("!abc:example.org"), "%21abc%3Aexample.org");
         assert_eq!(percent_encode_segment("safe-._~123"), "safe-._~123");
+    }
+
+    #[test]
+    fn percent_decode_segment_reverses_percent_encode_segment() {
+        for raw in ["!abc:example.org", "safe-._~123", "curve/25519+key=", ""] {
+            let encoded = percent_encode_segment(raw);
+            assert_eq!(percent_decode_segment(&encoded).as_deref(), Some(raw));
+        }
+    }
+
+    #[test]
+    fn percent_decode_segment_rejects_a_malformed_escape() {
+        assert_eq!(percent_decode_segment("%2"), None);
+        assert_eq!(percent_decode_segment("%zz"), None);
     }
 
     #[test]

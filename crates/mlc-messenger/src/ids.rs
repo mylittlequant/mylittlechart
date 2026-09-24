@@ -251,6 +251,16 @@ impl fmt::Display for RequestId {
     }
 }
 
+impl From<String> for RequestId {
+    /// Wraps a request id read back out of a persisted record's storage key
+    /// (`store`'s `pending/{request_id}` layout, a later piece) without
+    /// re-validating it -- the value being decoded is one this process
+    /// itself minted via [`RequestId::next`] on an earlier run.
+    fn from(value: String) -> Self {
+        Self(value)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -330,6 +340,13 @@ mod tests {
         let r1 = RequestId::next(1);
         assert_ne!(r0, r1);
         assert_ne!(TxnId::new(0).as_str(), RequestId::next(0).as_str());
+    }
+
+    #[test]
+    fn request_id_from_string_round_trips_a_previously_minted_value() {
+        let minted = RequestId::next(7);
+        let recovered = RequestId::from(minted.as_str().to_string());
+        assert_eq!(minted, recovered);
     }
 
     #[test]
