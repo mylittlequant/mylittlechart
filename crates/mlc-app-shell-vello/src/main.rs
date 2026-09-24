@@ -3191,6 +3191,9 @@ impl App<'_> {
                             peer_fingerprint: c.peer.fingerprint,
                             last_message_at: c.last_message_at,
                             unread_count: c.unread,
+                            peer_rank: None,
+                            last_message_preview: None,
+                            last_message_mine: false,
                         });
                     }
                     ov.dm.conversations = mapped;
@@ -3368,6 +3371,9 @@ impl App<'_> {
                 peer_fingerprint: conversation.peer.fingerprint,
                 last_message_at: conversation.last_message_at,
                 unread_count: conversation.unread,
+                peer_rank: None,
+                last_message_preview: None,
+                last_message_mine: false,
             };
             if let Some(existing) = ov.dm.conversations.iter_mut().find(|c| c.id == row.id) {
                 *existing = row;

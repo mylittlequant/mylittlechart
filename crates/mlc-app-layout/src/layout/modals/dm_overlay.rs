@@ -177,6 +177,7 @@ pub(crate) fn draw_lock_glyph(ctx: &mut dyn RenderContext, cx: f64, cy: f64, siz
     ctx.fill_rounded_rect(body_x, body_y, body_w, body_h, size * 0.16);
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw_field(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -188,6 +189,31 @@ pub(crate) fn draw_field(
     ft: &FrameTheme,
     tt: &ToolbarTheme,
     current_time_ms: u64,
+) -> (WidgetRect, Vec<f64>) {
+    draw_field_shaped(ctx, coord, layer_id, widget_id, field_id, rect, placeholder, ft, tt, current_time_ms, 4.0, 8.0)
+}
+
+/// [`draw_field`], with the corner radius and horizontal text padding as
+/// explicit parameters instead of `InputConfig::default()`'s own plain-box
+/// values (4px radius, 8px padding) — the messenger's own pill-shaped
+/// fields (chat-list filter, draft composer; messenger concept v1: fully
+/// rounded, 14px horizontal padding) need a rounder, roomier box than every
+/// OTHER `draw_field` caller in this crate, which all keep the plain-box
+/// look `draw_field` still hands them by construction.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn draw_field_shaped(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    widget_id: &str,
+    field_id: &str,
+    rect: WidgetRect,
+    placeholder: &str,
+    ft: &FrameTheme,
+    tt: &ToolbarTheme,
+    current_time_ms: u64,
+    radius: f64,
+    h_padding: f64,
 ) -> (WidgetRect, Vec<f64>) {
     let wid = WidgetId::from(field_id);
     let text = coord.text_fields().text(&wid).to_string();
@@ -201,7 +227,9 @@ pub(crate) fn draw_field(
     let cfg = InputConfig::new(&text)
         .with_focused(engaged)
         .with_cursor(cursor)
-        .with_selection(sel_start, sel_end);
+        .with_selection(sel_start, sel_end)
+        .with_radius(radius)
+        .with_padding(h_padding);
     let cfg = if engaged || !text.is_empty() { cfg } else { cfg.with_placeholder(placeholder) };
     let input_result = draw_input(ctx, &cfg, WidgetState::Normal, rect, &widget_theme);
     if engaged && coord.text_fields().cursor_visible(current_time_ms) {

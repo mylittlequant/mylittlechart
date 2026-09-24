@@ -6077,6 +6077,30 @@ pub struct DmConversationUi {
     pub peer_fingerprint: Option<String>,
     pub last_message_at: Option<String>,
     pub unread_count: i64,
+    /// The peer's ladder rank chip (`"paid"|"trusted"|"moderator"|"admin"`),
+    /// same wire vocabulary as `ForumThreadV2Ui::author_rank` — `None` for
+    /// an unresolved rank or the base `"user"` tier (no chip shown). No
+    /// production `routes::dm::list_conversations` caller populates this
+    /// field yet (the chat header's own rank chip, messenger concept v1
+    /// `.ch .n .rank`, stays hidden until one does); the field exists now
+    /// so a caller that DOES resolve it — or a lab/test fixture proving the
+    /// header's own layout — needs no further plumbing.
+    pub peer_rank: Option<String>,
+    /// The conversation's last message, already resolved to whatever the
+    /// caller could show (plaintext, once the vault was unlocked) — the
+    /// chat-list row's own preview line (messenger concept v1 `.row .rp`).
+    /// `None` — today's `routes::dm::list_conversations` sends no such
+    /// field (see `DmMessengerProviderView`'s own top doc) — falls back to
+    /// showing no preview at all, same as before this field existed. A
+    /// VAULT-LOCKED room never needs this to show a preview line: its
+    /// last-event content reads as [`mlc_messenger_model::PreviewContent::
+    /// Encrypted`] straight off `last_message_at` alone (honestly "sealed",
+    /// regardless of whether the caller happens to already know the
+    /// plaintext).
+    pub last_message_preview: Option<String>,
+    /// Whether `last_message_preview` was authored by this account —
+    /// consulted only when `last_message_preview` is `Some`.
+    pub last_message_mine: bool,
 }
 
 /// One row of the recipient-search dropdown under the "start a
