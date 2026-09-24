@@ -3540,10 +3540,16 @@ pub enum ConceptKey {
     MarkupOrderBlockZoneBodyOnly = 464,
     MarkupThresholdDisplacementAtrMultLabel = 465,
     MarkupThresholdEqualLevelAtrTolLabel = 466,
+
+    // ---- Autodetectors A0, piece 10 (2026-09-24) — Order Flow's own new
+    // Thresholds-tab row (`OrderFlowEngineConfig::delta_divergence_swing_n`
+    // already had a reader, `to_delta_divergence_config`, but no row until
+    // now). Same append-only reason as `HarmonicKindAltBat` above.
+    MarkupThresholdDeltaDivergenceSwingNLabel = 467,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 467;
+    pub const COUNT: usize = 468;
 
     /// Get translation for this key.
     #[inline]

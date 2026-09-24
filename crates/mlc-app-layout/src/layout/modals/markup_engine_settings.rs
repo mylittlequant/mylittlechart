@@ -111,6 +111,11 @@ const SWEEP_RECOVERY_BARS_OPTIONS: [usize; 4] = [0, 1, 2, 3];
 const DISPLACEMENT_ATR_MULT_OPTIONS: [f64; 4] = [1.5, 2.0, 2.5, 3.0];
 /// `SmcEngineConfig::equal_level_atr_tol` options (A0 piece 9).
 const EQUAL_LEVEL_ATR_TOL_OPTIONS: [f64; 4] = [0.05, 0.1, 0.15, 0.2];
+/// `OrderFlowEngineConfig::delta_divergence_swing_n` options (A0 piece 10) —
+/// same catalogue as `SWING_N_OPTIONS`, kept as its own named constant so a
+/// future divergence-only change to the range does not silently also move
+/// the SMC row.
+const DELTA_DIVERGENCE_SWING_N_OPTIONS: [usize; 4] = [1, 2, 3, 5];
 
 const FAMILY_SEGMENTS: [MarkupSettingsFamily; 3] = [
     MarkupSettingsFamily::SmartMoney,
@@ -177,15 +182,14 @@ fn legacy_threshold_rows(family: MarkupSettingsFamily) -> usize {
 
 /// How many DETECTOR-CONSTANT rows the shown family's own Thresholds tab
 /// adds beyond [`legacy_threshold_rows`] — 6 for Smart Money (A0 piece 9),
-/// 0 for Order Flow (piece 10 wires this in) and candles (the arc's own
-/// line: no candle-pattern detector constant is surfaced in A0). The
-/// height function and the draw below read this SAME count, so a family
-/// whose Thresholds tab later grows can never overflow a shell sized for
-/// the old one.
+/// 2 for Order Flow (A0 piece 10), 0 for candles (the arc's own line: no
+/// candle-pattern detector constant is surfaced in A0). The height
+/// function and the draw below read this SAME count, so a family whose
+/// Thresholds tab grows can never overflow a shell sized for the old one.
 fn detector_rows(family: MarkupSettingsFamily) -> usize {
     match family {
         MarkupSettingsFamily::SmartMoney => 6,
-        MarkupSettingsFamily::OrderFlow => 0,
+        MarkupSettingsFamily::OrderFlow => 2,
         MarkupSettingsFamily::CandlePattern => 0,
     }
 }
@@ -463,8 +467,8 @@ fn draw_thresholds_tab(
 
     match family {
         MarkupSettingsFamily::SmartMoney => draw_smc_detector_rows(ctx, toolbar_theme, coord, layer_id, result, &state.smc, x0, x1, row_y),
-        // Piece 10 fills Order Flow's own row here.
-        MarkupSettingsFamily::OrderFlow | MarkupSettingsFamily::CandlePattern => {}
+        MarkupSettingsFamily::OrderFlow => draw_orderflow_detector_rows(ctx, toolbar_theme, coord, layer_id, result, &state.orderflow, x0, x1, row_y),
+        MarkupSettingsFamily::CandlePattern => {}
     }
 }
 
@@ -528,6 +532,30 @@ fn draw_smc_detector_rows(
     draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, EQUAL_LEVEL_ATR_TOL_OPTIONS.len(), |i| {
         let v = EQUAL_LEVEL_ATR_TOL_OPTIONS[i];
         (format!("markup:equal_level_atr_tol:{v}"), float_label(v), (cfg.equal_level_atr_tol - v).abs() < 1e-9)
+    });
+}
+
+/// Order Flow's own 2 detector-constant rows (A0 piece 10) —
+/// `delta_divergence_swing_n` (a new row for an existing field) and
+/// `min_single_print_run` stays in the legacy block above (it already had a
+/// row before this tab existed) — see [`legacy_threshold_rows`]'s own doc.
+/// This function's own row is `delta_divergence_swing_n` alone.
+#[allow(clippy::too_many_arguments)]
+fn draw_orderflow_detector_rows(
+    ctx: &mut dyn RenderContext,
+    toolbar_theme: &ToolbarTheme,
+    coord: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut MarkupEngineSettingsResult,
+    cfg: &mlc_core::state::orderflow_engine::OrderFlowEngineConfig,
+    x0: f64,
+    x1: f64,
+    row_y: f64,
+) {
+    draw_label(ctx, toolbar_theme, x0, LABEL_COL, row_y, t_concept(ConceptKey::MarkupThresholdDeltaDivergenceSwingNLabel));
+    draw_segmented_row(ctx, toolbar_theme, coord, layer_id, result, x0 + LABEL_COL, x1, row_y, DELTA_DIVERGENCE_SWING_N_OPTIONS.len(), |i| {
+        let n = DELTA_DIVERGENCE_SWING_N_OPTIONS[i];
+        (format!("markup:delta_divergence_swing_n:{n}"), count_label(n), cfg.delta_divergence_swing_n == n)
     });
 }
 
@@ -713,7 +741,7 @@ mod tests {
         assert_eq!(legacy_threshold_rows(MarkupSettingsFamily::OrderFlow), 3);
         assert_eq!(legacy_threshold_rows(MarkupSettingsFamily::CandlePattern), 1);
         assert_eq!(detector_rows(MarkupSettingsFamily::SmartMoney), 6);
-        assert_eq!(detector_rows(MarkupSettingsFamily::OrderFlow), 0);
+        assert_eq!(detector_rows(MarkupSettingsFamily::OrderFlow), 2);
         assert_eq!(detector_rows(MarkupSettingsFamily::CandlePattern), 0);
     }
 

@@ -1384,7 +1384,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 467] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 468] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1867,6 +1867,7 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 467] = [
     /* 464 MarkupOrderBlockZoneBodyOnly       */ [ "Body only", "Только тело", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 465 MarkupThresholdDisplacementAtrMultLabel */ [ "Displacement ATR mult", "Множитель ATR смещения", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 466 MarkupThresholdEqualLevelAtrTolLabel */ [ "Equal level ATR tolerance", "Допуск ATR равных уровней", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 467 MarkupThresholdDeltaDivergenceSwingNLabel */ [ "Delta divergence swing N", "Свинг N дельта-дивергенции", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

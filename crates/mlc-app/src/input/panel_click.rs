@@ -5594,6 +5594,16 @@ impl ChartApp {
                     };
                     self.apply_markup_engine_edit(move |c| c.equal_level_atr_tol = v, move |_| {}, move |_| {});
                 }
+                // ── Thresholds tab: Order Flow's own new row (A0 piece 10)
+                // — `min_single_print_run` reuses the pre-existing
+                // `markup:single_print_run:` id above, unmoved.
+                rest if rest.starts_with("markup:delta_divergence_swing_n:") => {
+                    let Ok(n) = rest["markup:delta_divergence_swing_n:".len()..].parse::<usize>() else {
+                        log::debug!("[ChartApp] markup_engine_settings bad delta_divergence_swing_n: {}", rest);
+                        return;
+                    };
+                    self.apply_markup_engine_edit(move |_| {}, move |c| c.delta_divergence_swing_n = n, move |_| {});
+                }
                 "markup:propose" => {
                     // The engine drawing what it found. Creates primitives
                     // and nothing else — the maintaining pass links them,
