@@ -38,11 +38,6 @@ use mlc_cloud::{
     StoredToken, VersionManifest,
 };
 
-/// Notice shown in place of the Messages tab's controls while the vault is
-/// sealed (owner ruling 2026-09-09: paid web users hold the vault too, so
-/// "desktop app only" is gone — DMs work here exactly like the native shell,
-/// E2E riding through the server, which never decrypts).
-const DM_LOCKED_MESSAGE: &str = "Unlock your vault to use messages";
 /// Notice shown once the vault is unlocked but the account is not paid.
 const DM_UNPAID_MESSAGE: &str = "Messages need a paid account";
 
@@ -197,7 +192,13 @@ struct Inner {
     next_poll_ms: f64,
     /// Previous frame's overlay open flag (edge detection).
     was_open: bool,
-    result: Option<FlowResult>,
+    /// Finished async results, oldest first. A QUEUE, not a single slot: two
+    /// flows finishing inside one frame (e.g. the v1 forum list and the v2
+    /// boards fetch, both fired the moment the Community modal opens) used
+    /// to overwrite each other, and the lost result's in-flight flag was
+    /// never cleared — the forum stayed empty and the Messages tab never
+    /// appeared until a reload (0.5.615 prod repro, 2026-09-24).
+    results: std::collections::VecDeque<FlowResult>,
     /// Set by any authed call's `spawn_local` body the instant it sees a
     /// 401 (token invalid/expired/revoked) — `auth_me()`, the entitlements
     /// fetch, share create, forum requests, nick, and redeem all write this
@@ -364,7 +365,7 @@ impl CloudSession {
                 in_flight: false,
                 next_poll_ms: 0.0,
                 was_open: false,
-                result: None,
+                results: std::collections::VecDeque::new(),
                 unauthorized: false,
                 me_in_flight: false,
                 me_result: None,
@@ -901,8 +902,8 @@ impl CloudSession {
         }
 
         // ── Apply finished async results ─────────────────────────────────
-        let result = self.inner.borrow_mut().result.take();
-        if let Some(result) = result {
+        let results: Vec<FlowResult> = self.inner.borrow_mut().results.drain(..).collect();
+        for result in results {
             self.inner.borrow_mut().in_flight = false;
             let st = &mut chart.panel_app.cloud_login_state;
             match result {
@@ -1818,7 +1819,7 @@ impl CloudSession {
                         let r = raw
                             .map(|resp| resp.effective_label)
                             .map_err(|e| mlc_cloud::nick_error_message(&e));
-                        inner.borrow_mut().result = Some(FlowResult::Nick(r));
+                        inner.borrow_mut().results.push_back(FlowResult::Nick(r));
                     });
                 }
             }
@@ -1865,7 +1866,7 @@ impl CloudSession {
                         let r = raw
                             .map(|resp| resp.paid_until)
                             .map_err(|e| redeem_error_message(&e));
-                        inner.borrow_mut().result = Some(FlowResult::Redeem(r));
+                        inner.borrow_mut().results.push_back(FlowResult::Redeem(r));
                     });
                 }
             }
@@ -1910,7 +1911,7 @@ impl CloudSession {
                                     .blog_posts()
                                     .await
                                     .map_err(|e| e.to_string());
-                                inner.borrow_mut().result = Some(FlowResult::News(r));
+                                inner.borrow_mut().results.push_back(FlowResult::News(r));
                             }
                             _ => {
                                 let platform = detect_platform().await;
@@ -1926,7 +1927,7 @@ impl CloudSession {
                                     (Ok(m), Ok(releases)) => Ok((platform, m, releases)),
                                     (Err(e), _) | (_, Err(e)) => Err(e),
                                 };
-                                inner.borrow_mut().result = Some(FlowResult::Updates(r));
+                                inner.borrow_mut().results.push_back(FlowResult::Updates(r));
                             }
                         }
                     });
@@ -1969,7 +1970,7 @@ impl CloudSession {
                     let r = raw
                         .map(|resp| (resp.threads, resp.next_before))
                         .map_err(|e| forum_error_message(&e));
-                    inner.borrow_mut().result = Some(FlowResult::ForumThreads { append: false, result: r });
+                    inner.borrow_mut().results.push_back(FlowResult::ForumThreads { append: false, result: r });
                 });
             }
 
@@ -1998,7 +1999,7 @@ impl CloudSession {
                                 mark_unauthorized(&inner, e);
                             }
                             let r = raw.map_err(|e| forum_error_message(&e));
-                            inner.borrow_mut().result = Some(FlowResult::ForumThreadOpened(r));
+                            inner.borrow_mut().results.push_back(FlowResult::ForumThreadOpened(r));
                         });
                     }
                 }
@@ -2024,7 +2025,7 @@ impl CloudSession {
                                 let r = raw
                                     .map(|resp| (resp.threads, resp.next_before))
                                     .map_err(|e| forum_error_message(&e));
-                                inner.borrow_mut().result = Some(FlowResult::ForumThreads { append: true, result: r });
+                                inner.borrow_mut().results.push_back(FlowResult::ForumThreads { append: true, result: r });
                             }
                             ForumRequest::LoadThread { id } => {
                                 let raw = transport.forum_thread(id).await;
@@ -2032,7 +2033,7 @@ impl CloudSession {
                                     mark_unauthorized(&inner, e);
                                 }
                                 let r = raw.map_err(|e| forum_error_message(&e));
-                                inner.borrow_mut().result = Some(FlowResult::ForumThreadOpened(r));
+                                inner.borrow_mut().results.push_back(FlowResult::ForumThreadOpened(r));
                             }
                             ForumRequest::CreateThread { title, body } => {
                                 let r = match transport.forum_create_thread(&title, &body).await {
@@ -2048,7 +2049,7 @@ impl CloudSession {
                                         Err(forum_error_message(&e))
                                     }
                                 };
-                                inner.borrow_mut().result = Some(FlowResult::ForumThreadCreated(r));
+                                inner.borrow_mut().results.push_back(FlowResult::ForumThreadCreated(r));
                             }
                             ForumRequest::Reply { thread_id, body } => {
                                 let r = match transport.forum_reply(thread_id, &body).await {
@@ -2064,7 +2065,7 @@ impl CloudSession {
                                         Err(forum_error_message(&e))
                                     }
                                 };
-                                inner.borrow_mut().result = Some(FlowResult::ForumThreadRefreshed(r));
+                                inner.borrow_mut().results.push_back(FlowResult::ForumThreadRefreshed(r));
                             }
                             ForumRequest::DeleteThread { id } => {
                                 let r = match transport.forum_delete_thread(id).await {
@@ -2081,7 +2082,7 @@ impl CloudSession {
                                         Err(forum_error_message(&e))
                                     }
                                 };
-                                inner.borrow_mut().result = Some(FlowResult::ForumThreadDeleted(r));
+                                inner.borrow_mut().results.push_back(FlowResult::ForumThreadDeleted(r));
                             }
                             ForumRequest::DeleteReply { id, thread_id } => {
                                 let r = match transport.forum_delete_reply(id).await {
@@ -2097,7 +2098,7 @@ impl CloudSession {
                                         Err(forum_error_message(&e))
                                     }
                                 };
-                                inner.borrow_mut().result = Some(FlowResult::ForumThreadRefreshed(r));
+                                inner.borrow_mut().results.push_back(FlowResult::ForumThreadRefreshed(r));
                             }
                         }
                     });
@@ -2134,7 +2135,7 @@ impl CloudSession {
                         mark_unauthorized(&inner, e);
                     }
                     let r = raw.map_err(|e| forum_v2_error_message(&e));
-                    inner.borrow_mut().result = Some(FlowResult::Forum2Boards(r));
+                    inner.borrow_mut().results.push_back(FlowResult::Forum2Boards(r));
                 });
             }
 
@@ -2170,7 +2171,7 @@ impl CloudSession {
                         mark_unauthorized(&inner, e);
                     }
                     let r = raw.map_err(|e| forum_v2_error_message(&e));
-                    inner.borrow_mut().result = Some(FlowResult::Forum2Me(r));
+                    inner.borrow_mut().results.push_back(FlowResult::Forum2Me(r));
                 });
             }
 
@@ -2203,7 +2204,7 @@ impl CloudSession {
                         let r = raw
                             .map(|resp| (resp.threads, resp.next_before))
                             .map_err(|e| forum_v2_error_message(&e));
-                        inner.borrow_mut().result = Some(FlowResult::Forum2BoardThreads { append: false, result: r });
+                        inner.borrow_mut().results.push_back(FlowResult::Forum2BoardThreads { append: false, result: r });
                     });
                 }
             }
@@ -2226,7 +2227,7 @@ impl CloudSession {
                                 mark_unauthorized(&inner, e);
                             }
                             let r = raw.map_err(|e| forum_v2_error_message(&e));
-                            inner.borrow_mut().result = Some(FlowResult::Forum2Thread(r));
+                            inner.borrow_mut().results.push_back(FlowResult::Forum2Thread(r));
                         });
                     }
                 }
@@ -2280,7 +2281,7 @@ impl CloudSession {
                                     mark_unauthorized(&inner, e);
                                 }
                                 let r = raw.map_err(|e| forum_v2_error_message(&e));
-                                inner.borrow_mut().result = Some(FlowResult::Forum2Boards(r));
+                                inner.borrow_mut().results.push_back(FlowResult::Forum2Boards(r));
                             }
                             ForumV2Request::LoadBoard { slug, before } => {
                                 let raw = transport.forum_board_threads(&slug, before.as_deref()).await;
@@ -2290,8 +2291,8 @@ impl CloudSession {
                                 let r = raw
                                     .map(|resp| (resp.threads, resp.next_before))
                                     .map_err(|e| forum_v2_error_message(&e));
-                                inner.borrow_mut().result =
-                                    Some(FlowResult::Forum2BoardThreads { append: before.is_some(), result: r });
+                                inner.borrow_mut().results.push_back(
+                                    FlowResult::Forum2BoardThreads { append: before.is_some(), result: r });
                             }
                             ForumV2Request::OpenThread { id } => {
                                 let raw = transport.forum_thread_v2(id).await;
@@ -2299,7 +2300,7 @@ impl CloudSession {
                                     mark_unauthorized(&inner, e);
                                 }
                                 let r = raw.map_err(|e| forum_v2_error_message(&e));
-                                inner.borrow_mut().result = Some(FlowResult::Forum2Thread(r));
+                                inner.borrow_mut().results.push_back(FlowResult::Forum2Thread(r));
                             }
                             ForumV2Request::CreateThread { slug, title, body } => {
                                 let r = match transport.forum_create_thread_v2(&slug, &title, &body).await {
@@ -2315,7 +2316,7 @@ impl CloudSession {
                                         Err(forum_v2_error_message(&e))
                                     }
                                 };
-                                inner.borrow_mut().result = Some(FlowResult::Forum2ThreadAfterWrite(r));
+                                inner.borrow_mut().results.push_back(FlowResult::Forum2ThreadAfterWrite(r));
                             }
                             ForumV2Request::Reply { thread_id, body, parent_reply_id } => {
                                 let r = match transport.forum_reply_v2(thread_id, &body, parent_reply_id).await {
@@ -2331,11 +2332,11 @@ impl CloudSession {
                                         Err(forum_v2_error_message(&e))
                                     }
                                 };
-                                inner.borrow_mut().result = Some(FlowResult::Forum2ThreadAfterWrite(r));
+                                inner.borrow_mut().results.push_back(FlowResult::Forum2ThreadAfterWrite(r));
                             }
                             ForumV2Request::DeleteReply { id } => {
                                 let Some(thread_id) = delete_reply_thread_id else {
-                                    inner.borrow_mut().result = Some(FlowResult::Forum2ThreadAfterWrite(Err(
+                                    inner.borrow_mut().results.push_back(FlowResult::Forum2ThreadAfterWrite(Err(
                                         "No thread is open to delete this reply from".to_string(),
                                     )));
                                     return;
@@ -2353,7 +2354,7 @@ impl CloudSession {
                                         Err(forum_v2_error_message(&e))
                                     }
                                 };
-                                inner.borrow_mut().result = Some(FlowResult::Forum2ThreadAfterWrite(r));
+                                inner.borrow_mut().results.push_back(FlowResult::Forum2ThreadAfterWrite(r));
                             }
                             ForumV2Request::Search { q, board } => {
                                 let raw = transport.forum_search(&q, board.as_deref()).await;
@@ -2361,7 +2362,7 @@ impl CloudSession {
                                     mark_unauthorized(&inner, e);
                                 }
                                 let r = raw.map_err(|e| forum_v2_error_message(&e));
-                                inner.borrow_mut().result = Some(FlowResult::Forum2Search { q, result: r });
+                                inner.borrow_mut().results.push_back(FlowResult::Forum2Search { q, result: r });
                             }
                             ForumV2Request::Moderate { thread_id, action, board } => {
                                 let r = match transport.forum_moderate(thread_id, &action, board.as_deref()).await {
@@ -2377,7 +2378,7 @@ impl CloudSession {
                                         Err(forum_v2_error_message(&e))
                                     }
                                 };
-                                inner.borrow_mut().result = Some(FlowResult::Forum2ThreadAfterWrite(r));
+                                inner.borrow_mut().results.push_back(FlowResult::Forum2ThreadAfterWrite(r));
                             }
                         }
                     });
@@ -2421,7 +2422,7 @@ impl CloudSession {
                             mark_unauthorized(&inner, e);
                         }
                         let r = raw.map_err(|e| forum_v2_error_message(&e));
-                        inner.borrow_mut().result = Some(FlowResult::Forum2Search { q, result: r });
+                        inner.borrow_mut().results.push_back(FlowResult::Forum2Search { q, result: r });
                     });
                 }
             }
@@ -2473,7 +2474,7 @@ impl CloudSession {
                             mark_unauthorized(&inner, e);
                         }
                         let r = raw.map_err(|e| dm_error_message(&e));
-                        inner.borrow_mut().result = Some(FlowResult::DmLookup { q, result: r });
+                        inner.borrow_mut().results.push_back(FlowResult::DmLookup { q, result: r });
                     });
                 }
             }
@@ -2497,9 +2498,9 @@ impl CloudSession {
                     chart.panel_app.community_state.dm.available = false;
                     chart.panel_app.community_state.dm.unavailable_reason =
                         if messenger_ok { DmUnavailableReason::VaultLocked } else { DmUnavailableReason::NotPaid };
-                    if messages_active {
-                        chart.panel_app.community_state.dm.last_error = Some(DM_LOCKED_MESSAGE.to_string());
-                    }
+                    // No `last_error` for a locked vault: the messenger's dock
+                    // already says it once, with the Unlock button (owner
+                    // 0.5.615: three notices for one fact).
                     let mut inner = self.inner.borrow_mut();
                     inner.dm_identity = None;
                     inner.dm_identity_key = None;
@@ -2570,7 +2571,7 @@ impl CloudSession {
                         mark_unauthorized(&inner, e);
                     }
                     let r = raw.map_err(|e| dm_error_message(&e));
-                    inner.borrow_mut().result = Some(FlowResult::DmConversations(r));
+                    inner.borrow_mut().results.push_back(FlowResult::DmConversations(r));
                 });
             }
 
@@ -2613,7 +2614,7 @@ impl CloudSession {
                                 mark_unauthorized(&inner, e);
                             }
                             let r = raw.map_err(|e| dm_error_message(&e));
-                            inner.borrow_mut().result = Some(FlowResult::DmIdentityPublished(r));
+                            inner.borrow_mut().results.push_back(FlowResult::DmIdentityPublished(r));
                         });
                     }
                 }
@@ -2648,8 +2649,8 @@ impl CloudSession {
                                     mark_unauthorized(&inner, e);
                                 }
                                 let r = raw.map_err(|e| dm_error_message(&e));
-                                inner.borrow_mut().result =
-                                    Some(FlowResult::DmMessages { conversation_id: id, page, result: r });
+                                inner.borrow_mut().results.push_back(
+                                    FlowResult::DmMessages { conversation_id: id, page, result: r });
                             });
                         }
                     }
@@ -2672,7 +2673,7 @@ impl CloudSession {
                                         mark_unauthorized(&inner, e);
                                     }
                                     let r = raw.map_err(|e| dm_error_message(&e));
-                                    inner.borrow_mut().result = Some(FlowResult::DmConversations(r));
+                                    inner.borrow_mut().results.push_back(FlowResult::DmConversations(r));
                                 });
                             }
                             UiDmRequest::Open { with_label } => {
@@ -2698,7 +2699,7 @@ impl CloudSession {
                                             }
                                         },
                                     };
-                                    inner.borrow_mut().result = Some(FlowResult::DmConversationOpened(result));
+                                    inner.borrow_mut().results.push_back(FlowResult::DmConversationOpened(result));
                                 });
                             }
                             UiDmRequest::LoadMessages { id, page } => {
@@ -2717,8 +2718,8 @@ impl CloudSession {
                                         mark_unauthorized(&inner, e);
                                     }
                                     let r = raw.map_err(|e| dm_error_message(&e));
-                                    inner.borrow_mut().result =
-                                        Some(FlowResult::DmMessages { conversation_id: id, page, result: r });
+                                    inner.borrow_mut().results.push_back(
+                                        FlowResult::DmMessages { conversation_id: id, page, result: r });
                                 });
                             }
                             UiDmRequest::Send { id, plaintext } => {
@@ -2756,7 +2757,7 @@ impl CloudSession {
                                             let r = raw
                                                 .map(|resp| (resp.id, resp.created_at))
                                                 .map_err(|e| dm_error_message(&e));
-                                            inner.borrow_mut().result = Some(FlowResult::DmSent { plaintext, result: r });
+                                            inner.borrow_mut().results.push_back(FlowResult::DmSent { plaintext, result: r });
                                         });
                                     }
                                 }
@@ -2771,7 +2772,7 @@ impl CloudSession {
                                         mark_unauthorized(&inner, e);
                                     }
                                     let r = raw.map_err(|e| dm_error_message(&e));
-                                    inner.borrow_mut().result = Some(FlowResult::DmRead { conversation_id: id, result: r });
+                                    inner.borrow_mut().results.push_back(FlowResult::DmRead { conversation_id: id, result: r });
                                 });
                             }
                         }
@@ -2795,8 +2796,8 @@ impl CloudSession {
                                     mark_unauthorized(&inner, e);
                                 }
                                 let r = raw.map_err(|e| dm_error_message(&e));
-                                inner.borrow_mut().result =
-                                    Some(FlowResult::DmBackfillPeerKey { conversation_id, result: r });
+                                inner.borrow_mut().results.push_back(
+                                    FlowResult::DmBackfillPeerKey { conversation_id, result: r });
                             });
                         }
                     }
@@ -2844,7 +2845,7 @@ impl CloudSession {
                     // The server answer is deliberately ignored — local
                     // sign-out happens regardless.
                     let _ = transport.auth_logout().await;
-                    inner.borrow_mut().result = Some(FlowResult::Logout);
+                    inner.borrow_mut().results.push_back(FlowResult::Logout);
                 });
             } else {
                 // No token — nothing to revoke, just reset the view.
@@ -2870,7 +2871,7 @@ impl CloudSession {
                         .await
                         .map(|resp| resp.code)
                         .map_err(|e| e.to_string());
-                    inner.borrow_mut().result = Some(FlowResult::Code(r));
+                    inner.borrow_mut().results.push_back(FlowResult::Code(r));
                 });
             }
             CloudLoginPhase::AwaitingConfirm { code } if now_ms >= self.inner.borrow().next_poll_ms => {
@@ -2883,7 +2884,7 @@ impl CloudSession {
                         .device_code_poll(&code)
                         .await
                         .map_err(|e| e.to_string());
-                    inner.borrow_mut().result = Some(FlowResult::Poll(r));
+                    inner.borrow_mut().results.push_back(FlowResult::Poll(r));
                 });
             }
             _ => {}
