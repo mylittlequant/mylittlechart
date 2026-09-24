@@ -204,7 +204,15 @@ pub struct TimelineItem {
     raw_content: serde_json::Value,
 }
 
-fn interpret_content(event_type: &str, state_key: Option<&str>, content: &serde_json::Value) -> ItemContent {
+/// Interprets a plain `(event_type, content)` pair into an [`ItemContent`].
+/// `pub(crate)` (rather than a `timeline`-private helper) because
+/// [`crate::core::MessengerCore`] (M13a) needs the exact same mapping for a
+/// Megolm plaintext's own `{type, content}` once
+/// [`crate::crypto::group_sessions::GroupSessionManager::decrypt_event`] has
+/// recovered it — reusing this function is what keeps a decrypted message
+/// rendering identically to a plaintext one, rather than re-deriving the
+/// mapping a second time at the crate's sync-engine layer.
+pub(crate) fn interpret_content(event_type: &str, state_key: Option<&str>, content: &serde_json::Value) -> ItemContent {
     if let Some(state_key) = state_key {
         return interpret_state_change(event_type, state_key, content);
     }

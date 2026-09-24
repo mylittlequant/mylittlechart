@@ -205,6 +205,16 @@ impl TxnId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Recovers the monotonic seed this id was minted from via
+    /// [`TxnId::new`], or `None` if `self` was not built by this crate's
+    /// own minter (e.g. an opaque value read off the wire via
+    /// [`TxnId::from`]). Used by [`crate::core::MessengerCore::open`] to
+    /// restore its counter past every id already in flight — see that
+    /// module's doc for why a restart must never reissue an id.
+    pub fn as_seed(&self) -> Option<u64> {
+        self.0.strip_prefix("m.txn.").and_then(|hex| u64::from_str_radix(hex, 16).ok())
+    }
 }
 
 impl fmt::Display for TxnId {
@@ -242,6 +252,14 @@ impl RequestId {
     /// The id's own string form.
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Recovers the monotonic seed this id was minted from via
+    /// [`RequestId::next`], or `None` if `self` was not built by this
+    /// crate's own minter. See [`TxnId::as_seed`]'s doc — same purpose, the
+    /// other counter.
+    pub fn as_seed(&self) -> Option<u64> {
+        self.0.strip_prefix("req.").and_then(|hex| u64::from_str_radix(hex, 16).ok())
     }
 }
 
@@ -347,6 +365,14 @@ mod tests {
         let minted = RequestId::next(7);
         let recovered = RequestId::from(minted.as_str().to_string());
         assert_eq!(minted, recovered);
+    }
+
+    #[test]
+    fn as_seed_recovers_the_minting_seed() {
+        assert_eq!(TxnId::new(42).as_seed(), Some(42));
+        assert_eq!(RequestId::next(42).as_seed(), Some(42));
+        assert_eq!(TxnId::from("opaque-server-value".to_string()).as_seed(), None);
+        assert_eq!(RequestId::from("opaque-value".to_string()).as_seed(), None);
     }
 
     #[test]

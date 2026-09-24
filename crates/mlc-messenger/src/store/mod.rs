@@ -60,6 +60,7 @@
 //! | `messenger/{device_id}/sync_token` | the `/sync` `next_batch` token, UTF-8 |
 //! | `messenger/{device_id}/room_state/{room_id}` | that room's serialized state blob |
 //! | `messenger/{device_id}/pending/{request_id}` | one not-yet-acked [`crate::outgoing_queue::PendingRequest`] (the request itself, its lane, and its flush epoch), JSON |
+//! | `messenger/{device_id}/counters` | [`crate::core::Counters`] (M13a): the next [`crate::ids::RequestId`]/[`crate::ids::TxnId`] seed this device has never handed out, JSON |
 //!
 //! Every dynamic path component (`{curve25519}`, `{room_id}`, `{user_id}`,
 //! `{session_id}`, `{request_id}`) is percent-encoded with the exact scheme
@@ -87,6 +88,7 @@
 //! that point this store knows enough to know something is wrong, not
 //! enough to know what to do about it.
 
+use crate::core::Counters;
 use crate::ids::{DeviceId, RequestId, RoomId, UserId};
 use crate::outgoing_queue::PendingRequest;
 use crate::persist::{FlushBatch, FlushEpoch, FlushGate, RecordKey, RequiredSeq, SealedRecord};
@@ -313,6 +315,17 @@ pub trait StateStore {
     /// Removes a pending request, e.g. once its response has arrived. A
     /// no-op if `id` is not currently pending.
     fn delete_pending_request(&mut self, id: &RequestId) -> Result<(), StoreError>;
+
+    /// The most recently persisted [`Counters`], if this device has ever
+    /// minted a [`crate::ids::RequestId`]/[`crate::ids::TxnId`] before.
+    /// `None` only for a brand-new device — [`crate::core::MessengerCore::open`]
+    /// treats that the same as `Counters::default()`.
+    fn counters(&self) -> Result<Option<Counters>, StoreError>;
+    /// Persists `counters`, replacing any earlier value. Called every time
+    /// either sequence advances — see [`crate::core`]'s module doc for why
+    /// this write must land in the same flush batch as (or an earlier one
+    /// than) any request carrying the id it just minted.
+    fn save_counters(&mut self, counters: Counters) -> Result<(), StoreError>;
 }
 
 /// How many Olm sessions [`Store`] keeps per peer curve25519 key before
@@ -336,6 +349,7 @@ const KIND_LEGACY_DM_PEER_KEY: &str = "legacy_dm_peer_key";
 const KIND_SYNC_TOKEN: &str = "sync_token";
 const KIND_ROOM_STATE: &str = "room_state";
 const KIND_PENDING: &str = "pending";
+const KIND_COUNTERS: &str = "counters";
 
 fn account_record_key(device_id: &DeviceId) -> RecordKey {
     RecordKey::new(format!("messenger/{}/{KIND_ACCOUNT}", device_id.as_str()))
@@ -436,6 +450,10 @@ fn pending_request_record_key(device_id: &DeviceId, request_id: &RequestId) -> R
     ))
 }
 
+fn counters_record_key(device_id: &DeviceId) -> RecordKey {
+    RecordKey::new(format!("messenger/{}/{KIND_COUNTERS}", device_id.as_str()))
+}
+
 /// A sealed record's key, parsed into the record kind it names plus that
 /// kind's decoded dynamic components. Produced by [`parse_record_key`].
 enum RecognizedRecord {
@@ -453,6 +471,7 @@ enum RecognizedRecord {
     SyncToken,
     RoomState { room_id: RoomId },
     PendingRequest { request_id: RequestId },
+    Counters,
 }
 
 fn decode_room_id(encoded: &str, key: &RecordKey) -> Result<RoomId, StoreError> {
@@ -490,6 +509,7 @@ fn parse_record_key(device_id: &DeviceId, key: &RecordKey) -> Result<Option<Reco
         KIND_SYNC_TOKEN if remainder.is_none() => Ok(Some(RecognizedRecord::SyncToken)),
         KIND_BACKUP_KEY if remainder.is_none() => Ok(Some(RecognizedRecord::BackupKey)),
         KIND_CROSS_SIGNING_KEYS if remainder.is_none() => Ok(Some(RecognizedRecord::CrossSigningKeys)),
+        KIND_COUNTERS if remainder.is_none() => Ok(Some(RecognizedRecord::Counters)),
         KIND_OLM_SESSION => {
             let remainder = remainder.ok_or_else(malformed)?;
             let (curve_enc, session_enc) = remainder.split_once('/').ok_or_else(malformed)?;
@@ -587,6 +607,7 @@ pub struct Store<C: RecordCodec> {
     sync_token: Option<String>,
     room_state: BTreeMap<RoomId, Vec<u8>>,
     pending_requests: BTreeMap<RequestId, PendingRequest>,
+    counters: Option<Counters>,
     /// Sealed bytes for keys no kind in this version recognizes, kept
     /// verbatim across a load — see the module doc's "Forward
     /// compatibility" section.
@@ -618,6 +639,7 @@ impl<C: RecordCodec> Store<C> {
             sync_token: None,
             room_state: BTreeMap::new(),
             pending_requests: BTreeMap::new(),
+            counters: None,
             unknown: BTreeMap::new(),
         }
     }
@@ -700,6 +722,11 @@ impl<C: RecordCodec> Store<C> {
                     StoreError::decode(key, format!("pending request is not valid JSON: {source}"))
                 })?;
                 self.pending_requests.insert(request_id, req);
+            }
+            RecognizedRecord::Counters => {
+                let counters: Counters = serde_json::from_slice(&plaintext)
+                    .map_err(|source| StoreError::decode(key, format!("counters record is not valid JSON: {source}")))?;
+                self.counters = Some(counters);
             }
         }
         Ok(())
@@ -949,6 +976,19 @@ impl<C: RecordCodec> StateStore for Store<C> {
         }
         Ok(())
     }
+
+    fn counters(&self) -> Result<Option<Counters>, StoreError> {
+        Ok(self.counters)
+    }
+
+    fn save_counters(&mut self, counters: Counters) -> Result<(), StoreError> {
+        let key = counters_record_key(&self.device_id);
+        let plaintext = serde_json::to_vec(&counters)
+            .map_err(|source| StoreError::decode(&key, format!("failed to serialize counters: {source}")))?;
+        self.mark_dirty(key, plaintext);
+        self.counters = Some(counters);
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -1028,6 +1068,7 @@ mod tests {
         store.save_room_state(&room, b"room-state-bytes".to_vec()).expect("save room state");
         let req = pending_request(&room);
         store.save_pending_request(req.clone()).expect("save pending request");
+        store.save_counters(Counters { next_request_id: 3, next_txn_id: 9 }).expect("save counters");
 
         let batch = store.take_flush_batch().expect("everything above dirtied something");
         assert!(batch.deletes.is_empty());
@@ -1060,6 +1101,7 @@ mod tests {
         assert_eq!(loaded.sync_token().expect("no error"), Some("s123"));
         assert_eq!(loaded.room_state(&room).expect("no error"), Some(b"room-state-bytes".as_slice()));
         assert_eq!(loaded.pending_requests().expect("no error"), vec![req]);
+        assert_eq!(loaded.counters().expect("no error"), Some(Counters { next_request_id: 3, next_txn_id: 9 }));
     }
 
     #[test]

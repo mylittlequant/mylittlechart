@@ -94,13 +94,23 @@
 //! per-request flush epoch ([`persist::FlushEpoch`], [`persist::RequiredSeq`])
 //! replacing its earlier global barrier — see `persist`'s module doc.
 //!
-//! The sync engine tying everything together (plan §5, M13-M15) is a later
-//! piece and is not present in this crate yet.
+//! **M13a** — the single-writer kernel and the RECEIVE path
+//! ([`core::MessengerCore`]): `open`/restart restore (including the
+//! [`core::Counters`] sequence that backs every future
+//! [`ids::RequestId`]/[`ids::TxnId`]), the single-flight `/sync` loop, full
+//! ingestion order (to-device decrypt and `m.room_key` routing,
+//! device-list/OTK/`keys/query` bookkeeping, room state/timeline/Megolm
+//! decrypt, ephemeral/account-data folding), and the receive-side
+//! [`core::MessengerCommand`] variants (`MarkRead`, `SetTyping`,
+//! `RetryDecryption`, `LoadOlder`). The send pipeline (`SendMessage`,
+//! `CreateRoom`, and everything else `sync_engine`/`lib.rs` still owes per
+//! the plan, M13b) is a later piece and is not present in this crate yet.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
 pub mod canonical_json;
+pub mod core;
 pub mod crypto;
 pub mod error;
 pub mod ids;
@@ -111,6 +121,7 @@ pub mod store;
 pub mod wire;
 
 pub use canonical_json::{sign_json, verify_json_signature, CanonicalJsonError};
+pub use core::{CoreConfig, Counters, MessengerCommand, MessengerCore, MessengerEvent};
 pub use crypto::account::OlmAccountState;
 pub use crypto::device_tracker::{DeviceKeyChanged, DeviceTracker, DroppedDevice, KeysQueryOutcome, StoredDevice};
 pub use crypto::group_sessions::{

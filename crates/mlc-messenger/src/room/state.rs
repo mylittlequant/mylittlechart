@@ -19,6 +19,7 @@ use crate::wire::events::{
     RoomPinnedEventsContent, RoomPowerLevelsContent, RoomPowerLevelsNotifications, RoomTopicContent,
 };
 use crate::wire::sync::{RoomSummary as SyncRoomSummary, UnreadNotifications};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
 const EVENT_ROOM_CREATE: &str = "m.room.create";
@@ -86,7 +87,7 @@ pub enum RoomKind {
 /// One user's membership-derived state within a room (`m.room.member`'s
 /// content, research doc §1.2), keyed by that user's id in
 /// [`RoomState::members`].
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemberState {
     /// The subject's current membership.
     pub membership: Membership,
@@ -99,8 +100,13 @@ pub struct MemberState {
 }
 
 /// One room's current state, folded from every state event
-/// [`RoomState::apply_state_event`] has been given so far.
-#[derive(Clone, Debug, PartialEq)]
+/// [`RoomState::apply_state_event`] has been given so far. `Serialize`/
+/// `Deserialize` back this type's own persisted record
+/// (`crate::store`'s `room_state/{room_id}` key, restored by
+/// [`crate::core::MessengerCore::open`]) — unlike [`crate::room::timeline::Timeline`],
+/// which is never persisted and is always re-fetched instead (that type's
+/// own module doc).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RoomState {
     /// `m.room.create`'s content, once seen. Immutable once set: a room's
     /// creation event is never legitimately resent with different content,

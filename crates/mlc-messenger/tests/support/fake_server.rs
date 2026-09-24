@@ -116,6 +116,15 @@ pub struct FakeServer {
     to_device_mailboxes: BTreeMap<(UserId, DeviceId), SyncMailbox>,
     pending_device_list_changes: BTreeMap<(UserId, DeviceId), Vec<UserId>>,
     room_timelines: BTreeMap<RoomId, RoomTimeline>,
+    /// Room state events queued for a specific `(user, device)`'s next
+    /// `/sync` response, drain-on-read (unlike `to_device_mailboxes`'s own
+    /// since-token-aware redelivery -- no test in this crate's own e2e
+    /// suite needs a lost/retried `/sync` to re-observe a room state/
+    /// timeline event that already landed in an earlier response, so this
+    /// stays the simpler of the two shapes on purpose).
+    pending_room_state: BTreeMap<(UserId, DeviceId), BTreeMap<RoomId, Vec<Value>>>,
+    /// Timeline events queued the same way as `pending_room_state`.
+    pending_room_timeline: BTreeMap<(UserId, DeviceId), BTreeMap<RoomId, Vec<Value>>>,
 }
 
 /// Extracts the `{event_type}` path component from
@@ -176,6 +185,33 @@ impl FakeServer {
         let Some(state) = self.devices.get_mut(&(user_id.clone(), device_id.clone())) else { return };
         let Some((_, value)) = state.one_time_keys.iter_mut().next() else { return };
         corrupt_first_signature(value, user_id);
+    }
+
+    /// Queues one `m.room.*` state event for `room_id` into
+    /// `(for_user, for_device)`'s next `/sync` response's
+    /// `rooms.join.{room_id}.state.events` -- `event` is the full
+    /// `{event_id, type, sender, state_key, origin_server_ts, content}`
+    /// shape a real state event carries.
+    pub fn queue_room_state(&mut self, for_user: &UserId, for_device: &DeviceId, room_id: &RoomId, event: Value) {
+        self.pending_room_state
+            .entry((for_user.clone(), for_device.clone()))
+            .or_default()
+            .entry(room_id.clone())
+            .or_default()
+            .push(event);
+    }
+
+    /// Queues one timeline event for `room_id` into
+    /// `(for_user, for_device)`'s next `/sync` response's
+    /// `rooms.join.{room_id}.timeline.events` -- same event shape as
+    /// [`FakeServer::queue_room_state`], minus `state_key`.
+    pub fn queue_room_timeline(&mut self, for_user: &UserId, for_device: &DeviceId, room_id: &RoomId, event: Value) {
+        self.pending_room_timeline
+            .entry((for_user.clone(), for_device.clone()))
+            .or_default()
+            .entry(room_id.clone())
+            .or_default()
+            .push(event);
     }
 
     fn handle_keys_upload(&mut self, as_user: &UserId, as_device: &DeviceId, request: &OutgoingRequest) -> HttpResponseDescriptor {
@@ -350,10 +386,31 @@ impl FakeServer {
         };
         let fallback_types: Vec<&str> = if fallback_unused { vec!["signed_curve25519"] } else { Vec::new() };
 
+        let mut rooms_state = self.pending_room_state.remove(&key).unwrap_or_default();
+        let mut rooms_timeline = self.pending_room_timeline.remove(&key).unwrap_or_default();
+        let mut room_ids: BTreeMap<String, ()> = BTreeMap::new();
+        for room_id in rooms_state.keys().chain(rooms_timeline.keys()) {
+            room_ids.insert(room_id.as_str().to_string(), ());
+        }
+        let mut join = Map::new();
+        for room_id_str in room_ids.into_keys() {
+            let room_id = RoomId::parse(room_id_str).expect("a room id queued by this fake server is well-formed");
+            let state_events = rooms_state.remove(&room_id).unwrap_or_default();
+            let timeline_events = rooms_timeline.remove(&room_id).unwrap_or_default();
+            join.insert(
+                room_id.as_str().to_string(),
+                serde_json::json!({
+                    "state": { "events": state_events },
+                    "timeline": { "events": timeline_events },
+                }),
+            );
+        }
+
         json_response(
             200,
             &serde_json::json!({
                 "next_batch": format!("s{next_batch_index}"),
+                "rooms": { "join": Value::Object(join) },
                 "to_device": { "events": events },
                 "device_lists": { "changed": changed, "left": [] },
                 "device_one_time_keys_count": { "signed_curve25519": otk_count },
