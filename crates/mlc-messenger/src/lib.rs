@@ -77,9 +77,13 @@
 //! decryption with full payload binding, and the security checks that keep
 //! a key change or an unverified device from being silently trusted.
 //!
-//! Megolm group sessions and the sync engine tying everything together
-//! (plan §5, M7-M15) are later pieces and are not present in this crate
-//! yet.
+//! **M7** — Megolm group sessions ([`crypto::group_sessions`]): lazy
+//! outbound-session creation and rotation, room-key sharing batched over
+//! Olm to-device, and inbound decrypt with bound-sender authentication and
+//! message-index replay protection.
+//!
+//! The sync engine tying everything together (plan §5, M8-M15) is a later
+//! piece and is not present in this crate yet.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -96,6 +100,10 @@ pub mod wire;
 pub use canonical_json::{sign_json, verify_json_signature, CanonicalJsonError};
 pub use crypto::account::OlmAccountState;
 pub use crypto::device_tracker::{DeviceKeyChanged, DeviceTracker, DroppedDevice, KeysQueryOutcome, StoredDevice};
+pub use crypto::group_sessions::{
+    GroupDecryptError, GroupSessionManager, OutboundSessionUpdate, RoomEventPlaintext, UtdReason,
+    MAX_DEVICES_PER_SEND_TO_DEVICE_REQUEST,
+};
 pub use crypto::olm_sessions::{
     DecryptedToDevice, KeysClaimOutcome, KeysClaimRefusal, OlmDecryptError, OlmSessionManager,
 };

@@ -16,12 +16,19 @@
 //! double ratchet gives for free when this module's own append-and-persist
 //! discipline is followed.
 //!
-//! Megolm group sessions, withheld/key-request bookkeeping, SAS
-//! verification, key backup, and cross-signing (plan's `group_sessions.rs`,
-//! `withheld.rs`, `verification.rs`, `backup.rs`, `cross_signing.rs`, and
-//! the `CryptoMachine` type tying everything together) are later pieces
-//! and are not present in this crate yet.
+//! **M7** — Megolm group sessions
+//! ([`group_sessions::GroupSessionManager`]): lazy outbound-session
+//! creation, rotation (message-count, time, membership-leave, and
+//! device-disappearance triggers), room-key sharing batched over Olm
+//! to-device, and inbound-session decrypt with bound-sender
+//! authentication and message-index replay protection.
+//!
+//! Withheld/key-request bookkeeping, SAS verification, key backup, and
+//! cross-signing (plan's `withheld.rs`, `verification.rs`, `backup.rs`,
+//! `cross_signing.rs`, and the `CryptoMachine` type tying everything
+//! together) are later pieces and are not present in this crate yet.
 
 pub mod account;
 pub mod device_tracker;
+pub mod group_sessions;
 pub mod olm_sessions;

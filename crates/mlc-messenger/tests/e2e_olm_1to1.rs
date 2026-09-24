@@ -5,14 +5,24 @@
 //! test's whole point is to forge or corrupt something a real peer never
 //! would.
 
+// `tests/support` is shared across every `tests/*.rs` integration-test
+// binary in this crate (`e2e_olm_1to1.rs`, `e2e_megolm_group.rs`, and
+// future ones), but each such file is compiled as its OWN independent
+// crate -- an item `support::fake_server` exports for a SIBLING file's
+// own tests (e.g. `room_timeline`, used only by `e2e_megolm_group.rs`) is
+// genuinely unreachable from THIS binary's own compilation, even though
+// it is exercised by a real, passing test elsewhere in this crate. This
+// is `dead_code`'s well-known false positive for a shared, per-binary-
+// compiled integration-test helper module, not actually unused code.
+#[allow(dead_code)]
 mod support;
 
 use mlc_messenger::store::InsecurePlainCodecForTests;
 use mlc_messenger::wire::RoomEncryptedContent;
 use mlc_messenger::{
     CryptoStore, DecryptedToDevice, DeviceId, DeviceKeyChanged, DeviceTracker, KeysClaimOutcome, KeysQueryOutcome,
-    OlmAccountState, OlmDecryptError, OlmSessionManager, OutgoingRequest, RequestId, Store, StoredDevice, TxnId,
-    UserId,
+    OlmAccountState, OlmDecryptError, OlmSessionManager, OutgoingRequest, RequestId, RoomId, Store, StoredDevice,
+    TxnId, UserId,
 };
 use serde_json::Value;
 use support::fake_server::FakeServer;
@@ -421,6 +431,31 @@ fn e2e_payload_with_wrong_recipient_keys_is_rejected() {
     let result =
         OlmSessionManager::decrypt_to_device(&mut bob.store, &mut bob.account, &bob.user_id, &alice_user, &forged_content);
     assert!(matches!(result, Err(OlmDecryptError::PayloadMismatch(_))), "got {result:?}");
+}
+
+#[test]
+fn to_device_traffic_never_appears_in_a_room_timeline() {
+    let mut server = FakeServer::new();
+    let mut alice = TestClient::new("alice", "ALICEDEV");
+    let mut bob = TestClient::new("bob", "BOBDEV");
+    alice.bootstrap(&mut server);
+    bob.bootstrap(&mut server);
+    let bob_user = bob.user_id.clone();
+    let alice_user = alice.user_id.clone();
+    alice.query_devices(&mut server, &bob_user);
+    bob.query_devices(&mut server, &alice_user);
+    let bob_device = alice.devices_of(&bob_user).into_iter().next().expect("bob known");
+    alice.claim(&mut server, &[&bob_device]);
+    alice.send_to_device(&mut server, &bob_device, "m.test", serde_json::json!({ "hello": "bob" }));
+    bob.sync_and_decrypt(&mut server);
+
+    // `FakeServer::room_timeline` (a room-events getter the Megolm group
+    // tests, `e2e_megolm_group.rs`, use to read back `/send`-stored
+    // events) must stay empty here -- to-device delivery is a wholly
+    // separate channel from any room's timeline, never the other way
+    // around.
+    let room_id = RoomId::parse("!unused-room:example.org").expect("valid room id");
+    assert!(server.room_timeline(&room_id).is_empty(), "to-device traffic must never populate a room's timeline");
 }
 
 #[test]

@@ -5,14 +5,16 @@
 //! so this is a contract test harness every later piece (Megolm group
 //! sessions, key backup, ...) can extend rather than a throwaway mock.
 //!
-//! Deliberately out of scope, and left for a later piece to add: room
-//! endpoints (`/createRoom`, `/rooms/*`), cross-signing, key backup. A
+//! Deliberately out of scope, and left for a later piece to add:
+//! `/createRoom`, `/invite`, cross-signing, key backup -- room MEMBERSHIP
+//! for the Megolm group tests (`e2e_megolm_group.rs`) is supplied directly
+//! by the test as plain data, never fetched from this fake server. A
 //! request of any [`OutgoingRequestKind`] this fake does not implement gets
 //! a clean `501` rather than a panic, so extending this file never requires
 //! touching every call site that already works.
 
 use mlc_messenger::wire::{HttpResponseDescriptor, OutgoingRequest, OutgoingRequestKind};
-use mlc_messenger::{DeviceId, UserId};
+use mlc_messenger::{DeviceId, RoomId, UserId};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
@@ -57,16 +59,63 @@ fn parse_sync_token(token: &str) -> Option<usize> {
     token.strip_prefix('s').and_then(|rest| rest.parse().ok())
 }
 
+/// One room's server-stored timeline (`PUT /rooms/{roomId}/send/...`) --
+/// the "bare minimum" the Megolm group tests need: append-only, each event
+/// gets a server-assigned id, nothing else (no pagination, no state
+/// events, no `/sync` room section -- a test reads it back directly via
+/// [`FakeServer::room_timeline`]).
+#[derive(Default)]
+struct RoomTimeline {
+    events: Vec<Value>,
+    next_event_seq: u64,
+}
+
+fn json_response(status: u16, value: &Value) -> HttpResponseDescriptor {
+    HttpResponseDescriptor { status, body: serde_json::to_vec(value).expect("a serde_json::Value always serializes") }
+}
+
+/// A small, local, test-only percent-decoder for path segments this fake
+/// server needs to recover from a request path (currently just a room id
+/// out of a `/rooms/{room_id}/send/...` path). `mlc_messenger::wire`'s own
+/// implementation is crate-private, and this fake server compiles as a
+/// separate integration-test crate, so it cannot reuse it.
+fn percent_decode_minimal(segment: &str) -> String {
+    let bytes = segment.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            if let Ok(byte) = u8::from_str_radix(&segment[i + 1..i + 3], 16) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_default()
+}
+
+/// Extracts `(room_id, event_type)` from
+/// `/_matrix/client/v3/rooms/{room_id}/send/{event_type}/{txn_id}`.
+fn parse_room_send_path(path: &str) -> Option<(RoomId, String)> {
+    let segments: Vec<&str> = path.split('/').collect();
+    let rooms_idx = segments.iter().position(|segment| *segment == "rooms")?;
+    let send_idx = segments.iter().position(|segment| *segment == "send")?;
+    let room_id_raw = segments.get(rooms_idx + 1)?;
+    let event_type = (*segments.get(send_idx + 1)?).to_string();
+    let room_id = RoomId::parse(percent_decode_minimal(room_id_raw)).ok()?;
+    Some((room_id, event_type))
+}
+
 /// An in-process fake homeserver. See the module doc.
 #[derive(Default)]
 pub struct FakeServer {
     devices: BTreeMap<(UserId, DeviceId), DeviceState>,
     to_device_mailboxes: BTreeMap<(UserId, DeviceId), SyncMailbox>,
     pending_device_list_changes: BTreeMap<(UserId, DeviceId), Vec<UserId>>,
-}
-
-fn json_response(status: u16, value: &Value) -> HttpResponseDescriptor {
-    HttpResponseDescriptor { status, body: serde_json::to_vec(value).expect("a serde_json::Value always serializes") }
+    room_timelines: BTreeMap<RoomId, RoomTimeline>,
 }
 
 /// Extracts the `{event_type}` path component from
@@ -100,6 +149,7 @@ impl FakeServer {
             OutgoingRequestKind::KeysClaim => self.handle_keys_claim(request),
             OutgoingRequestKind::SendToDevice => self.handle_send_to_device(as_user, request),
             OutgoingRequestKind::Sync => self.handle_sync(as_user, as_device, request),
+            OutgoingRequestKind::RoomSend => self.handle_room_send(as_user, request),
             _ => json_response(
                 501,
                 &serde_json::json!({ "errcode": "M_UNRECOGNIZED", "error": "fake server: unsupported request kind" }),
@@ -225,6 +275,44 @@ impl FakeServer {
         }
 
         json_response(200, &serde_json::json!({}))
+    }
+
+    /// `PUT /rooms/{roomId}/send/{eventType}/{txnId}` -- appends `body` to
+    /// `room_id`'s server-side timeline under a fresh, server-assigned
+    /// event id (module doc's "bare minimum" for the Megolm group tests).
+    /// No idempotency-by-`txnId` handling here (unlike the real spec):
+    /// none of this crate's own tests retries a room send, so a second
+    /// call with the same `txnId` simply appends a second event, matching
+    /// this fake's overall "spec-shaped, not spec-complete" scope.
+    fn handle_room_send(&mut self, as_user: &UserId, request: &OutgoingRequest) -> HttpResponseDescriptor {
+        let Some((room_id, event_type)) = parse_room_send_path(&request.path) else {
+            return json_response(
+                400,
+                &serde_json::json!({ "errcode": "M_UNKNOWN", "error": "fake server: malformed room send path" }),
+            );
+        };
+        let body = request.body.clone().unwrap_or_else(|| Value::Object(Map::new()));
+        let timeline = self.room_timelines.entry(room_id).or_default();
+        timeline.next_event_seq += 1;
+        let event_id = format!("$evt{}:example.org", timeline.next_event_seq);
+        let event = serde_json::json!({
+            "event_id": event_id,
+            "type": event_type,
+            "sender": as_user.as_str(),
+            "origin_server_ts": timeline.next_event_seq as i64,
+            "content": body,
+        });
+        timeline.events.push(event);
+
+        json_response(200, &serde_json::json!({ "event_id": event_id }))
+    }
+
+    /// Every event currently stored in `room_id`'s server-side timeline,
+    /// oldest first, in the full `{event_id, type, sender,
+    /// origin_server_ts, content}` shape [`FakeServer::handle_room_send`]
+    /// stored it under.
+    pub fn room_timeline(&self, room_id: &RoomId) -> Vec<Value> {
+        self.room_timelines.get(room_id).map(|timeline| timeline.events.clone()).unwrap_or_default()
     }
 
     fn handle_sync(&mut self, as_user: &UserId, as_device: &DeviceId, request: &OutgoingRequest) -> HttpResponseDescriptor {

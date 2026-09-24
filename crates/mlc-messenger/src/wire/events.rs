@@ -647,8 +647,11 @@ impl<'de> Deserialize<'de> for RoomMessageContent {
 /// `m.room.encrypted`'s Megolm shape (`algorithm:
 /// "m.megolm.v1.aes-sha2"`) — the only algorithm ever used for a *timeline*
 /// `m.room.encrypted` event (research doc §3.1). `sender_key`/`device_id`
-/// are spec-deprecated but still sent for back-compat.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// are spec-deprecated but still sent for back-compat. `Eq` is not derived
+/// here (unlike this struct's siblings): `relates_to`'s `RelatesTo` type
+/// only implements `PartialEq` (its `Unknown` variant carries a
+/// `serde_json::Value`), so this struct follows suit.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MegolmEncryptedContent {
     /// The Megolm ciphertext, base64-encoded.
     pub ciphertext: String,
@@ -661,6 +664,14 @@ pub struct MegolmEncryptedContent {
     /// The sender device's id (deprecated, still sent).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub device_id: Option<DeviceId>,
+    /// Copied verbatim from the cleartext plaintext's own `m.relates_to`
+    /// (Megolm-encrypted rooms binding rule): the server indexes
+    /// relations (reactions, edits, threads) without ever decrypting, so
+    /// the relation pointer rides alongside the ciphertext at the outer,
+    /// unencrypted envelope level too, not only inside the plaintext this
+    /// crate's `crypto::group_sessions` encrypts.
+    #[serde(rename = "m.relates_to", default, skip_serializing_if = "Option::is_none")]
+    pub relates_to: Option<RelatesTo>,
 }
 
 /// One recipient device's ciphertext inside an Olm `m.room.encrypted`
