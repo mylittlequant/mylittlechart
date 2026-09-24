@@ -621,6 +621,107 @@ pub fn metadata() -> PrimitiveMetadata {
     }
 }
 
+/// Shared factory body for the 7 named harmonic toolbar presets (A0,
+/// `docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`,
+/// "Primitive-identity mechanism"). Builds a plain `XabcdPattern` — the
+/// SAME struct `"xabcd_pattern"` itself builds — and only sets `pattern_kind`
+/// up front, so the drawing starts pre-classified instead of the analyst
+/// having to pick it from the Style tab afterward. `type_id()` on the built
+/// instance stays hardcoded `"xabcd_pattern"` (this primitive's own trait
+/// impl), which is exactly why these presets register through
+/// [`super::super::super::registry::PrimitiveRegistry::register`] (creation-time
+/// only, no deserializer) rather than `register_typed` — see the mechanism
+/// doc above for why a second deserializer entry would be redundant, not
+/// wrong.
+///
+/// Called only from the 7 literal, non-capturing closures below:
+/// `PrimitiveFactory` is a bare `fn` pointer, not `Box<dyn Fn>`, so a closure
+/// that captured `kind` by `move` would not compile.
+fn create_harmonic_preset(kind: XabcdHarmonicKind, points: &[(i64, f64)], color: &str) -> Box<dyn Primitive> {
+    let mut arr = [(0i64, 0.0); 5];
+    for (i, &p) in points.iter().take(5).enumerate() { arr[i] = p; }
+    let mut prim = XabcdPattern::new(arr, color);
+    prim.pattern_kind = kind;
+    Box::new(prim)
+}
+
+pub fn metadata_gartley() -> PrimitiveMetadata {
+    PrimitiveMetadata {
+        type_id: "harmonic_gartley", display_name: "Gartley", kind: PrimitiveKind::Pattern,
+        click_behavior: ClickBehavior::MultiPointFixed(5),
+        tooltip: "5-point harmonic pattern — Gartley preset",
+        icon: "harmonic_gartley", default_color: "#9C27B0",
+        factory: |points, color| create_harmonic_preset(XabcdHarmonicKind::Gartley, points, color),
+        supports_text: true, has_levels: false,
+    }
+}
+
+pub fn metadata_bat() -> PrimitiveMetadata {
+    PrimitiveMetadata {
+        type_id: "harmonic_bat", display_name: "Bat", kind: PrimitiveKind::Pattern,
+        click_behavior: ClickBehavior::MultiPointFixed(5),
+        tooltip: "5-point harmonic pattern — Bat preset",
+        icon: "harmonic_bat", default_color: "#9C27B0",
+        factory: |points, color| create_harmonic_preset(XabcdHarmonicKind::Bat, points, color),
+        supports_text: true, has_levels: false,
+    }
+}
+
+pub fn metadata_alt_bat() -> PrimitiveMetadata {
+    PrimitiveMetadata {
+        type_id: "harmonic_alt_bat", display_name: "Alt Bat", kind: PrimitiveKind::Pattern,
+        click_behavior: ClickBehavior::MultiPointFixed(5),
+        tooltip: "5-point harmonic pattern — Alt Bat preset",
+        icon: "harmonic_alt_bat", default_color: "#9C27B0",
+        factory: |points, color| create_harmonic_preset(XabcdHarmonicKind::AltBat, points, color),
+        supports_text: true, has_levels: false,
+    }
+}
+
+pub fn metadata_butterfly() -> PrimitiveMetadata {
+    PrimitiveMetadata {
+        type_id: "harmonic_butterfly", display_name: "Butterfly", kind: PrimitiveKind::Pattern,
+        click_behavior: ClickBehavior::MultiPointFixed(5),
+        tooltip: "5-point harmonic pattern — Butterfly preset",
+        icon: "harmonic_butterfly", default_color: "#9C27B0",
+        factory: |points, color| create_harmonic_preset(XabcdHarmonicKind::Butterfly, points, color),
+        supports_text: true, has_levels: false,
+    }
+}
+
+pub fn metadata_crab() -> PrimitiveMetadata {
+    PrimitiveMetadata {
+        type_id: "harmonic_crab", display_name: "Crab", kind: PrimitiveKind::Pattern,
+        click_behavior: ClickBehavior::MultiPointFixed(5),
+        tooltip: "5-point harmonic pattern — Crab preset",
+        icon: "harmonic_crab", default_color: "#9C27B0",
+        factory: |points, color| create_harmonic_preset(XabcdHarmonicKind::Crab, points, color),
+        supports_text: true, has_levels: false,
+    }
+}
+
+pub fn metadata_deep_crab() -> PrimitiveMetadata {
+    PrimitiveMetadata {
+        type_id: "harmonic_deep_crab", display_name: "Deep Crab", kind: PrimitiveKind::Pattern,
+        click_behavior: ClickBehavior::MultiPointFixed(5),
+        tooltip: "5-point harmonic pattern — Deep Crab preset",
+        icon: "harmonic_deep_crab", default_color: "#9C27B0",
+        factory: |points, color| create_harmonic_preset(XabcdHarmonicKind::DeepCrab, points, color),
+        supports_text: true, has_levels: false,
+    }
+}
+
+pub fn metadata_shark() -> PrimitiveMetadata {
+    PrimitiveMetadata {
+        type_id: "harmonic_shark", display_name: "Shark", kind: PrimitiveKind::Pattern,
+        click_behavior: ClickBehavior::MultiPointFixed(5),
+        tooltip: "5-point harmonic pattern — Shark preset",
+        icon: "harmonic_shark", default_color: "#9C27B0",
+        factory: |points, color| create_harmonic_preset(XabcdHarmonicKind::Shark, points, color),
+        supports_text: true, has_levels: false,
+    }
+}
+
 #[cfg(test)]
 mod harmonic_tests {
     use super::*;

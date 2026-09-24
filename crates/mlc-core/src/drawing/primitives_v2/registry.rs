@@ -268,6 +268,19 @@ impl PrimitiveRegistry {
 
         // Patterns
         self.register_typed::<super::patterns::xabcd_pattern::XabcdPattern>(super::patterns::xabcd_pattern::metadata());
+        // 7 named harmonic toolbar presets (A0) — creation-time factory
+        // entries only, `self.register` not `self.register_typed`: a saved
+        // drawing always round-trips tagged `"xabcd_pattern"` (its own
+        // hardcoded `type_id()`), never one of these preset ids. See
+        // `docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`,
+        // "Primitive-identity mechanism".
+        self.register(super::patterns::xabcd_pattern::metadata_gartley());
+        self.register(super::patterns::xabcd_pattern::metadata_bat());
+        self.register(super::patterns::xabcd_pattern::metadata_alt_bat());
+        self.register(super::patterns::xabcd_pattern::metadata_butterfly());
+        self.register(super::patterns::xabcd_pattern::metadata_crab());
+        self.register(super::patterns::xabcd_pattern::metadata_deep_crab());
+        self.register(super::patterns::xabcd_pattern::metadata_shark());
         self.register_typed::<super::patterns::cypher_pattern::CypherPattern>(super::patterns::cypher_pattern::metadata());
         self.register_typed::<super::patterns::head_shoulders::HeadShoulders>(super::patterns::head_shoulders::metadata());
         self.register_typed::<super::patterns::abcd_pattern::AbcdPattern>(super::patterns::abcd_pattern::metadata());
@@ -370,6 +383,60 @@ macro_rules! define_primitive {
             }
         }
     };
+}
+
+#[cfg(test)]
+mod harmonic_presets {
+    //! Piece 2 of the autodetectors A0 arc
+    //! (`docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`): the
+    //! 7 named harmonic toolbar presets are creation-time-only factory
+    //! entries over the SAME `XabcdPattern` struct — no `Any` downcast is
+    //! available on `dyn Primitive`, so these tests read the constructed
+    //! instance's own `pattern_kind` back through `to_json()`, the same
+    //! serialized shape a real save/reload round trip goes through.
+    use super::*;
+
+    const PTS: [(i64, f64); 5] = [
+        (0, 0.0), (1_000, 100.0), (2_000, 61.8), (3_000, 92.36), (4_000, -13.0),
+    ];
+
+    fn pattern_kind_of(json: &str) -> String {
+        let value: serde_json::Value = serde_json::from_str(json).expect("preset JSON must parse");
+        value["pattern_kind"].as_str().expect("pattern_kind must be a string field").to_string()
+    }
+
+    #[test]
+    fn every_named_preset_constructs_pre_classified() {
+        let cases: &[(&str, &str)] = &[
+            ("harmonic_gartley", "Gartley"),
+            ("harmonic_bat", "Bat"),
+            ("harmonic_alt_bat", "AltBat"),
+            ("harmonic_butterfly", "Butterfly"),
+            ("harmonic_crab", "Crab"),
+            ("harmonic_deep_crab", "DeepCrab"),
+            ("harmonic_shark", "Shark"),
+        ];
+        let reg = PrimitiveRegistry::global().read().unwrap();
+        for &(type_id, expected_kind) in cases {
+            let prim = reg.create(type_id, &PTS, None).unwrap_or_else(|| panic!("{type_id} must have a registered factory"));
+            assert_eq!(prim.type_id(), "xabcd_pattern", "{type_id}'s own instance must report the hardcoded xabcd_pattern type_id");
+            assert_eq!(pattern_kind_of(&prim.to_json()), expected_kind, "{type_id} must construct with pattern_kind = {expected_kind}");
+        }
+    }
+
+    /// A saved drawing never round-trips tagged with a preset id — only
+    /// ever `"xabcd_pattern"` (the mechanism doc's own point) — but
+    /// `pattern_kind` itself must still survive that reload.
+    #[test]
+    fn preset_survives_a_save_reload_round_trip_under_the_base_type_id() {
+        let reg = PrimitiveRegistry::global().read().unwrap();
+        let placed = reg.create("harmonic_alt_bat", &PTS, None).expect("harmonic_alt_bat must have a registered factory");
+        assert_eq!(pattern_kind_of(&placed.to_json()), "AltBat");
+
+        let json = placed.to_json();
+        let reloaded = reg.from_json("xabcd_pattern", &json).expect("xabcd_pattern must always deserialize its own JSON");
+        assert_eq!(pattern_kind_of(&reloaded.to_json()), "AltBat", "pattern_kind must survive the reload even though the reload id is the base type, not the preset id");
+    }
 }
 
 #[cfg(test)]
