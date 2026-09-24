@@ -853,6 +853,11 @@ fn line_section() -> ToolbarSectionDef {
     ])
 }
 
+/// Cycles (`cycle_lines`/`time_cycles`/`sine_wave`) moved in here from
+/// `pattern_section` 2026-09-24 (owner ruling, after A2 landed), as its own
+/// trailing section — cycles are a time-projection tool family, the same
+/// bucket Fibonacci's own time-based tools (`fib_time_zones`/`fib_trend_time`)
+/// already live in, not an Elliott-wave concept.
 fn fib_section() -> ToolbarSectionDef {
     let lang = current_language();
     ToolbarSectionDef::new(vec![
@@ -877,21 +882,34 @@ fn fib_section() -> ToolbarSectionDef {
             DropdownItemDef::action("gann_square_fixed", PN::GannSquareFixed.get(lang)).with_icon(ToolbarIconId::new("GannSquareFixed")),
             DropdownItemDef::action("gann_square", PN::GannSquare.get(lang)).with_icon(ToolbarIconId::new("GannSquare")),
             DropdownItemDef::action("gann_fan", PN::GannFan.get(lang)).with_icon(ToolbarIconId::new("GannFan")),
+            // Cycles — moved in from `pattern_section` 2026-09-24 (owner
+            // ruling). Content unchanged.
+            DropdownItemDef::Separator,
+            DropdownItemDef::Header { label: MK::HeaderCycles.get(lang).to_string() },
+            DropdownItemDef::action("cycle_lines", PN::CycleLines.get(lang)).with_icon(ToolbarIconId::new("CycleLines")),
+            DropdownItemDef::action("time_cycles", PN::TimeCycles.get(lang)).with_icon(ToolbarIconId::new("TimeCycles")),
+            DropdownItemDef::action("sine_wave", PN::SineWave.get(lang)).with_icon(ToolbarIconId::new("SineWave")),
         ]).with_icon(ToolbarIconId::new("FibRetracement"))
           .with_tooltip(t_toolbar(TK::FibTool)),
     ])
 }
 
 // Restructured 2026-09-24 (autodetectors A0, piece 5 —
-// `docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`): 5 theme
-// blocks, owner ruling "theme = header, autodetector = last item of its
-// theme where one exists" — Elliott Waves (no trailing scan row yet,
-// `ElliottScan` is A2), Harmonics (7 named XABCD kind-preset actions in
-// family order, then the 3 pre-existing own-primitive harmonic tools moved
-// in from the old flat "Patterns" header; no trailing `harmonic_scan` row
-// yet, that's A3), Classic figures (moved in from the old "Patterns"
-// header), Bars (unchanged content, existing 2-item scan-last shape, icon
-// swapped to the bracket-motif `bars_scan`), Cycles (unchanged). The old
+// `docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`; further
+// restructured the same day, owner ruling after A2 landed): 3 theme blocks,
+// owner ruling "theme = header, autodetector = last item of its theme where
+// one exists" — Elliott Waves (`elliott_scan` trailing, A2), Harmonics (7
+// named XABCD kind-preset actions in family order, then the 3 pre-existing
+// own-primitive harmonic tools moved in from the old flat "Patterns"
+// header; no trailing `harmonic_scan` row yet, that's A3), Classic figures
+// (moved in from the old "Patterns" header). Bars (candle-pattern claim +
+// survey) moved OUT to `price_action_section`'s own flyout, right after
+// Order Flow — it reads structure out of the data, the same family
+// `price_action_tools` already groups Smart Money/Order Flow under, not a
+// shape the analyst drew. Cycles (cycle_lines/time_cycles/sine_wave) moved
+// OUT to `fib_section`'s own flyout, as its own trailing section — cycles
+// are a time-projection tool family, the same bucket Fibonacci's own
+// time-based tools already live in, not an Elliott-wave concept. The old
 // flat "Patterns" header and its bare `xabcd_pattern` action row are gone —
 // superseded by the 7 named presets; the generic Unclassified tool stops
 // being toolbar-reachable (the `"xabcd_pattern"` registry entry itself
@@ -937,19 +955,6 @@ fn pattern_section() -> ToolbarSectionDef {
             DropdownItemDef::Header { label: MK::HeaderClassicFigures.get(lang).to_string() },
             DropdownItemDef::action("head_shoulders", PN::HeadShoulders.get(lang)).with_icon(ToolbarIconId::new("HeadShoulders")),
             DropdownItemDef::action("triangle_pattern", PN::TrianglePattern.get(lang)).with_icon(ToolbarIconId::new("TrianglePattern")),
-            // Bars — markup engines: candle-pattern claim + survey
-            // (`docs/mlc/plans/markup-engines-2026-08-25.md`). Content
-            // unchanged; header text and scan icon per A0 piece 4/3.
-            DropdownItemDef::Separator,
-            DropdownItemDef::Header { label: MK::HeaderBars.get(lang).to_string() },
-            DropdownItemDef::action("candle_pattern", PN::CandlePattern.get(lang)).with_icon(ToolbarIconId::new("CandlePattern")),
-            DropdownItemDef::action("candle_pattern_scan", PN::CandlePatternScan.get(lang)).with_icon(ToolbarIconId::new("bars_scan")),
-            // Cycles
-            DropdownItemDef::Separator,
-            DropdownItemDef::Header { label: MK::HeaderCycles.get(lang).to_string() },
-            DropdownItemDef::action("cycle_lines", PN::CycleLines.get(lang)).with_icon(ToolbarIconId::new("CycleLines")),
-            DropdownItemDef::action("time_cycles", PN::TimeCycles.get(lang)).with_icon(ToolbarIconId::new("TimeCycles")),
-            DropdownItemDef::action("sine_wave", PN::SineWave.get(lang)).with_icon(ToolbarIconId::new("SineWave")),
         ]).with_icon(ToolbarIconId::new("ElliottImpulse"))
           .with_tooltip(t_toolbar(TK::PatternTool)),
     ])
@@ -965,7 +970,7 @@ fn pattern_section() -> ToolbarSectionDef {
 ///
 /// Smart money and order flow started as two rail buttons and that was
 /// wrong (owner, 2026-08-25): they are subsections of one family, not two
-/// families. Elliott + harmonic patterns + candle models + cycles stay in
+/// families. Elliott + harmonic patterns + candle models stay in
 /// `pattern_section` above; everything that reads structure or flow out of
 /// the data rather than out of a shape the analyst drew lives here, each
 /// system under its own header. A new system adds a header to this flyout,
@@ -975,6 +980,12 @@ fn pattern_section() -> ToolbarSectionDef {
 /// bucket. The name is the group's, not any one tool's — no primitive here
 /// is called that, and none should be (see the plan's own closing section
 /// on why price action is not an engine of its own).
+///
+/// Bars (candle-pattern claim + survey) moved in here from `pattern_section`
+/// 2026-09-24 (owner ruling, after A2 landed) — it reads structure out of
+/// the bars the same way Smart Money/Order Flow do, so it belongs in this
+/// flyout, as its own trailing group after Order Flow, not in the
+/// hand-drawn-shape flyout above.
 fn price_action_section() -> ToolbarSectionDef {
     let lang = current_language();
     ToolbarSectionDef::new(vec![
@@ -995,6 +1006,12 @@ fn price_action_section() -> ToolbarSectionDef {
             DropdownItemDef::action("absorption_mark", PN::AbsorptionMark.get(lang)).with_icon(ToolbarIconId::new("AbsorptionMark")),
             DropdownItemDef::action("delta_divergence", PN::DeltaDivergence.get(lang)).with_icon(ToolbarIconId::new("DeltaDivergence")),
             DropdownItemDef::action("order_flow_scan", PN::OrderFlowScan.get(lang)).with_icon(ToolbarIconId::new("OrderFlowScan")),
+            // Bars — moved in from `pattern_section` 2026-09-24 (owner
+            // ruling). Content unchanged (existing 2-item scan-last shape).
+            DropdownItemDef::Separator,
+            DropdownItemDef::Header { label: MK::HeaderBars.get(lang).to_string() },
+            DropdownItemDef::action("candle_pattern", PN::CandlePattern.get(lang)).with_icon(ToolbarIconId::new("CandlePattern")),
+            DropdownItemDef::action("candle_pattern_scan", PN::CandlePatternScan.get(lang)).with_icon(ToolbarIconId::new("bars_scan")),
         ]).with_icon(ToolbarIconId::new("OrderBlock"))
           .with_tooltip(t_toolbar(TK::PriceActionTool)),
     ])
@@ -1373,10 +1390,12 @@ pub fn find_toolbar_tooltip(button_id: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod pattern_section_tests {
     //! Regression fence for the autodetectors A0 restructure (piece 5,
-    //! `docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`):
-    //! 5 theme headers in order, and the Harmonics header's own 10 action
-    //! ids — a future reorder silently dropping the "scan last" rule once
-    //! `harmonic_scan` lands in A3 will trip this.
+    //! `docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`) and
+    //! the 2026-09-24 owner-ruled follow-up that moved Bars into
+    //! `price_action_tools` and Cycles into `fib_tools`: `pattern_tools`
+    //! keeps exactly 3 theme headers in order, and the Harmonics header's
+    //! own 10 action ids — a future reorder silently dropping the "scan
+    //! last" rule once `harmonic_scan` lands in A3 will trip this.
     use super::*;
 
     /// The single `pattern_tools` quick-select item's own dropdown rows.
@@ -1388,6 +1407,29 @@ mod pattern_section_tests {
             }
         }
         panic!("pattern_section() must contain a \"pattern_tools\" quick_select dropdown");
+    }
+
+    /// The single `price_action_tools` quick-select item's own dropdown
+    /// rows.
+    fn price_action_tools_items() -> Vec<DropdownItemDef> {
+        let section = price_action_section();
+        for item in section.items {
+            if let ToolbarItemDef::Dropdown { id: "price_action_tools", items, .. } = item {
+                return items;
+            }
+        }
+        panic!("price_action_section() must contain a \"price_action_tools\" quick_select dropdown");
+    }
+
+    /// The single `fib_tools` quick-select item's own dropdown rows.
+    fn fib_tools_items() -> Vec<DropdownItemDef> {
+        let section = fib_section();
+        for item in section.items {
+            if let ToolbarItemDef::Dropdown { id: "fib_tools", items, .. } = item {
+                return items;
+            }
+        }
+        panic!("fib_section() must contain a \"fib_tools\" quick_select dropdown");
     }
 
     fn header_labels(items: &[DropdownItemDef]) -> Vec<String> {
@@ -1405,15 +1447,13 @@ mod pattern_section_tests {
     }
 
     #[test]
-    fn pattern_tools_has_five_headers_in_order() {
+    fn pattern_tools_has_three_headers_in_order() {
         let lang = current_language();
         let items = pattern_tools_items();
         let expected = vec![
             MK::HeaderElliottWaves.get(lang).to_string(),
             MK::HeaderHarmonics.get(lang).to_string(),
             MK::HeaderClassicFigures.get(lang).to_string(),
-            MK::HeaderBars.get(lang).to_string(),
-            MK::HeaderCycles.get(lang).to_string(),
         ];
         assert_eq!(header_labels(&items), expected);
     }
@@ -1484,14 +1524,65 @@ mod pattern_section_tests {
     }
 
     /// Bars' scan row carries the new bracket-motif icon id (A0 piece 3),
-    /// not the old `CandlePatternScan` id.
+    /// not the old `CandlePatternScan` id. Bars itself lives in
+    /// `price_action_tools` since the 2026-09-24 owner ruling — not
+    /// `pattern_tools` anymore.
     #[test]
     fn bars_scan_row_uses_the_bracket_motif_icon() {
-        let items = pattern_tools_items();
+        let items = price_action_tools_items();
         let scan = items.iter().find(|i| matches!(i, DropdownItemDef::Action { id, .. } if id == "candle_pattern_scan"))
             .expect("candle_pattern_scan action must be present");
         let DropdownItemDef::Action { icon, .. } = scan else { unreachable!() };
         assert_eq!(icon.as_ref().map(|i| i.name()), Some("bars_scan"));
+    }
+
+    /// 2026-09-24 owner ruling: Bars moved out of `pattern_tools` into
+    /// `price_action_tools`, as its own trailing group right after Order
+    /// Flow.
+    #[test]
+    fn bars_header_moved_into_price_action_tools_after_order_flow() {
+        let lang = current_language();
+        let items = price_action_tools_items();
+        let order_flow_label = MK::HeaderOrderFlow.get(lang).to_string();
+        let bars_label = MK::HeaderBars.get(lang).to_string();
+
+        let headers = header_labels(&items);
+        let order_flow_pos = headers.iter().position(|h| *h == order_flow_label).expect("Order Flow header must be present");
+        let bars_pos = headers.iter().position(|h| *h == bars_label).expect("Bars header must be present");
+        assert_eq!(bars_pos, order_flow_pos + 1, "Bars must be the trailing group, right after Order Flow");
+        assert_eq!(bars_pos, headers.len() - 1, "Bars must be the LAST group in price_action_tools");
+
+        let bars_start = items.iter().position(|i| matches!(i, DropdownItemDef::Header { label } if *label == bars_label)).expect("Bars header index");
+        assert_eq!(
+            action_ids(&items[bars_start..]),
+            vec!["candle_pattern", "candle_pattern_scan"],
+        );
+
+        assert!(!pattern_tools_items().iter().any(|i| matches!(i, DropdownItemDef::Header { label } if *label == bars_label)), "Bars header must no longer be in pattern_tools");
+    }
+
+    /// 2026-09-24 owner ruling: Cycles moved out of `pattern_tools` into
+    /// `fib_tools`, as its own trailing group after Gann.
+    #[test]
+    fn cycles_header_moved_into_fib_tools_as_trailing_group() {
+        let lang = current_language();
+        let items = fib_tools_items();
+        let gann_label = MK::HeaderGann.get(lang).to_string();
+        let cycles_label = MK::HeaderCycles.get(lang).to_string();
+
+        let headers = header_labels(&items);
+        let gann_pos = headers.iter().position(|h| *h == gann_label).expect("Gann header must be present");
+        let cycles_pos = headers.iter().position(|h| *h == cycles_label).expect("Cycles header must be present");
+        assert_eq!(cycles_pos, gann_pos + 1, "Cycles must be the trailing group, right after Gann");
+        assert_eq!(cycles_pos, headers.len() - 1, "Cycles must be the LAST group in fib_tools");
+
+        let cycles_start = items.iter().position(|i| matches!(i, DropdownItemDef::Header { label } if *label == cycles_label)).expect("Cycles header index");
+        assert_eq!(
+            action_ids(&items[cycles_start..]),
+            vec!["cycle_lines", "time_cycles", "sine_wave"],
+        );
+
+        assert!(!pattern_tools_items().iter().any(|i| matches!(i, DropdownItemDef::Header { label } if *label == cycles_label)), "Cycles header must no longer be in pattern_tools");
     }
 }
 
