@@ -6352,6 +6352,28 @@ impl ChartApp {
                             st.scroll.scroll_to(content_h, content_h, viewport_h);
                             return;
                         }
+                        // The chat-list header's own pencil button
+                        // (messenger UI-2b, `messenger_overlay.rs`'s
+                        // `draw_chat_filter_row`) — a direct show/hide
+                        // toggle for the "New message" recipient-search
+                        // panel rather than a menu (see `DmState::
+                        // new_conversation_open`'s own doc for why: today's
+                        // DM-only provider has nothing else to offer behind
+                        // it). Opening focuses the peer field immediately —
+                        // clicking the pencil is already "I want to type a
+                        // name", the same one-less-click courtesy
+                        // `"choose_nick"` above gives `ACCOUNT_NICK`.
+                        "new_conversation_toggle" => {
+                            if st.dm.new_conversation_open {
+                                st.dm.close_lookup_dropdown();
+                                self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                            } else {
+                                st.dm.new_conversation_open = true;
+                                let wid = uzor::WidgetId::from(crate::text_input::DM_PEER);
+                                self.input_coordinator.borrow_mut().text_fields_mut().focus(wid);
+                            }
+                            return;
+                        }
                         _ => {}
                     }
                     if !st.dm.available {

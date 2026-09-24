@@ -71,6 +71,12 @@ pub(crate) const FORUM_SEARCH_FIELD: &str = "forum_search";
 /// point for `DmRequest::Open` at all (see `dm_overlay.rs`'s own
 /// `draw_open_peer_row`).
 pub(crate) const DM_PEER_FIELD: &str = "dm_peer";
+/// DM chat-list header's own name filter — mirrors `mlc_app::text_input::
+/// DM_CHAT_FILTER` (messenger UI-2b). Filters the already-loaded
+/// conversation list client-side as the user types; distinct from
+/// `DM_PEER_FIELD`, which searches the SERVER for someone to start a NEW
+/// conversation with (see `messenger_overlay.rs`'s own `draw_chat_filter_row`).
+pub(crate) const DM_CHAT_FILTER_FIELD: &str = "dm_chat_filter";
 
 /// Left-column width in the Community modal's two-pane layout (boards for
 /// Forum, conversations for Messages) — W2 of the community-modal-and-
@@ -159,6 +165,12 @@ pub struct CloudOverlayResult {
     /// DM_PEER` (new this pass, see `dm_overlay.rs`'s `draw_open_peer_row`).
     pub dm_peer_rect: Option<WidgetRect>,
     pub dm_peer_char_positions: Vec<f64>,
+    /// DM chat-list header's own name filter field geometry — same contract
+    /// as `forum_search_rect` above. Backs `mlc_app::text_input::
+    /// DM_CHAT_FILTER` (messenger UI-2b, see `messenger_overlay.rs`'s own
+    /// `draw_chat_filter_row`).
+    pub dm_chat_filter_rect: Option<WidgetRect>,
+    pub dm_chat_filter_char_positions: Vec<f64>,
     /// DM Conversation view's message-bubble text geometry — one entry per
     /// WRAPPED LINE of every bubble currently on screen, for HOST-SIDE
     /// line-level text selection (owner ruling 2026-09-10: the DM pane

@@ -215,6 +215,9 @@ fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
     tf.register(text_input::FORUM_SEARCH, TextFieldConfig::text().with_max_len(200));
     tf.register(text_input::DM_DRAFT, TextFieldConfig::text().with_max_len(4000));
     tf.register(text_input::DM_PEER, TextFieldConfig::text().with_max_len(128));
+    // Chat-list name filter (messenger UI-2b) — same registration gap
+    // `FORUM_SEARCH`/`DM_DRAFT`/`DM_PEER`'s own comment above documents.
+    tf.register(text_input::DM_CHAT_FILTER, TextFieldConfig::text().with_max_len(64));
 }
 
 use std::cell::RefCell;
@@ -11169,6 +11172,16 @@ impl ChartApp {
                         &id,
                         (r.x, r.y, r.width, r.height),
                         ov.dm_peer_char_positions.clone(),
+                    );
+                }
+                // Chat-list name filter (messenger UI-2b) — same contract
+                // as `dm_peer_rect` above.
+                if let Some(r) = ov.dm_chat_filter_rect {
+                    let id = WidgetId::from(text_input::DM_CHAT_FILTER);
+                    self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                        &id,
+                        (r.x, r.y, r.width, r.height),
+                        ov.dm_chat_filter_char_positions.clone(),
                     );
                 }
             }

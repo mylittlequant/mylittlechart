@@ -54,7 +54,8 @@ use crate::ui::widgets::{draw_avatar_placeholder, SETTINGS_BUTTON_RADIUS};
 
 use super::cloud_overlay::{
     draw_action_row, draw_column_divider, draw_expand_row, draw_status, register_scrollbar_hit_zones,
-    scroll_config, wrap_text, CloudOverlayResult, COL_GAP, FIELD_H, LIST_COL_W, ROW_GAP, ROW_H,
+    scroll_config, wrap_text, CloudOverlayResult, COL_GAP, DM_CHAT_FILTER_FIELD, FIELD_H, LIST_COL_W,
+    ROW_GAP, ROW_H,
 };
 use super::community::CommunityListPaneResult;
 use super::dm_overlay::{
@@ -86,6 +87,14 @@ const SYSTEM_NOTICE_H: f64 = 20.0;
 const CIPHERTEXT_MAX_LINES: usize = 3;
 const CONV_ROW_H: f64 = 52.0;
 const RAIL_ROW_H: f64 = 40.0;
+/// The chat-list header row: the name-filter field plus its own pencil
+/// button (concept v1's `.lhead`: `[Search][pencil]`) — one fixed row,
+/// always drawn, above the (now conditional) "New message" recipient
+/// search and the room rows themselves.
+const CHAT_FILTER_ROW_H: f64 = FIELD_H + 12.0;
+/// The pencil button's own square footprint, to the filter field's right.
+const CHAT_FILTER_PENCIL_W: f64 = 32.0;
+const CHAT_FILTER_GAP: f64 = 8.0;
 /// The docked send box's own height — draft field + gap + Send button, the
 /// SAME footprint every dock state uses (locked/peer-without-key/nick-
 /// required all fit inside it too — see [`draw_composer`]'s own doc) so
@@ -188,11 +197,65 @@ fn draw_folder_rail(
 }
 
 // =============================================================================
-// Chat list column — the search/new-message row ([`draw_open_peer_row`],
-// unchanged ids: this piece adds no client-side room-name filter, since a
-// real one needs its own `mlc-app` text-field registration — see this
-// file's own top doc) plus one row per [`RoomSummary`].
+// Chat list column — the header's own name-filter row
+// ([`draw_chat_filter_row`], UI-2b piece 2), the "New message" recipient
+// search ([`draw_open_peer_row`], unchanged ids — now drawn only while
+// [`mlc_app_layout::ui::modal_settings::DmState::new_conversation_open`],
+// toggled behind the header's own pencil button), and one row per
+// (filtered) [`RoomSummary`].
 // =============================================================================
+
+/// The header's own filter field: a plain, always-visible client-side
+/// substring match against each already-loaded [`RoomSummary::name`] —
+/// unlike [`draw_open_peer_row`]'s recipient search, this never touches
+/// the server (concept v1's own `.lhead` distinguishes the two: `Search`
+/// filters what's already on screen, the pencil is what starts something
+/// new). Registers `cloud_overlay:dm:chat_filter_input` (a real
+/// `TextFieldStore` field, `mlc_app::text_input::DM_CHAT_FILTER` — see
+/// `cloud_overlay::DM_CHAT_FILTER_FIELD`'s own doc for why the literal is
+/// spelled twice) and `cloud_overlay:dm:new_conversation_toggle` (the
+/// pencil button; `mlc-app`'s `panel_click.rs` flips `new_conversation_
+/// open`). Returns the row's own height.
+#[allow(clippy::too_many_arguments)]
+fn draw_chat_filter_row(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    ft: &FrameTheme,
+    tt: &ToolbarTheme,
+    current_time_ms: u64,
+    new_conversation_open: bool,
+    result: &mut CloudOverlayResult,
+) -> f64 {
+    let pencil_w = CHAT_FILTER_PENCIL_W;
+    let field_w = (w - pencil_w - CHAT_FILTER_GAP).max(60.0);
+    let field_rect = WidgetRect::new(x, y, field_w, FIELD_H);
+    let (rect, chars) = draw_field(
+        ctx, coord, layer_id, "cloud_overlay:dm:chat_filter_input", DM_CHAT_FILTER_FIELD, field_rect,
+        "Search", ft, tt, current_time_ms,
+    );
+    result.dm_chat_filter_rect = Some(rect);
+    result.dm_chat_filter_char_positions = chars;
+
+    let pencil_rect = WidgetRect::new(x + field_w + CHAT_FILTER_GAP, y, pencil_w, FIELD_H);
+    let pencil_id = WidgetId::from("cloud_overlay:dm:new_conversation_toggle");
+    let hovered = coord.is_hovered(&pencil_id);
+    if hovered || new_conversation_open {
+        ctx.set_fill_color(&tt.item_bg_hover);
+        ctx.fill_rounded_rect(pencil_rect.x, pencil_rect.y, pencil_rect.width, pencil_rect.height, SETTINGS_BUTTON_RADIUS);
+    }
+    ctx.set_font("13px sans-serif");
+    ctx.set_fill_color(if new_conversation_open { &tt.accent } else { &tt.item_text_muted });
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("\u{270E}", pencil_rect.center_x(), pencil_rect.center_y());
+    coord.register_on_layer(pencil_id.as_str(), pencil_rect, Sense::CLICK | Sense::HOVER, layer_id);
+
+    CHAT_FILTER_ROW_H
+}
 
 #[allow(clippy::too_many_arguments)]
 fn draw_chat_list(
@@ -211,7 +274,12 @@ fn draw_chat_list(
     result: &mut CloudOverlayResult,
     list_result: &mut CommunityListPaneResult,
 ) {
-    let rooms = provider.rooms();
+    let mut rooms = provider.rooms();
+    let had_any_room = !rooms.is_empty();
+    let filter_query = coord.text_fields().text(&WidgetId::from(DM_CHAT_FILTER_FIELD)).trim().to_lowercase();
+    if !filter_query.is_empty() {
+        rooms.retain(|r| r.name.to_lowercase().contains(&filter_query));
+    }
     let list_drawn_h = list_content_h(state, &rooms);
     let viewport_rect = WidgetRect::new(x, y, w, viewport_h);
     coord.register_on_layer("cloud_overlay:scroll_viewport", viewport_rect, Sense::SCROLL, layer_id);
@@ -221,30 +289,25 @@ fn draw_chat_list(
     let mut ly = scrollable.content_y();
     let lw = scrollable.content_width();
 
-    ly += draw_open_peer_row(
-        ctx, coord, layer_id, lx, ly, lw, ft, tt, current_time_ms, state.forum2.nick_required(), result,
+    ly += draw_chat_filter_row(
+        ctx, coord, layer_id, lx, ly, lw, ft, tt, current_time_ms, state.dm.new_conversation_open, result,
     );
-    // The pencil affordance the concept draws next to the search field —
-    // this row already IS "New message" (a nick/public-id search that
-    // opens a conversation), so the glyph is decorative, painted inside
-    // the field's own already-registered click rect rather than a second
-    // widget id.
-    if let Some(rect) = result.dm_peer_rect {
-        ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(&tt.item_text_muted);
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text("\u{270E}", rect.right() - 14.0, rect.center_y());
+
+    if state.dm.new_conversation_open {
+        ly += draw_open_peer_row(
+            ctx, coord, layer_id, lx, ly, lw, ft, tt, current_time_ms, state.forum2.nick_required(), result,
+        );
+        draw_lookup_dropdown(ctx, coord, layer_id, result.dm_peer_rect, &state.dm, tt);
     }
 
     if rooms.is_empty() {
-        draw_status(ctx, tt, lx, ly, lw, "No conversations yet.", None);
+        let msg = if had_any_room { "No matches." } else { "No conversations yet." };
+        draw_status(ctx, tt, lx, ly, lw, msg, None);
     } else {
         for r in &rooms {
             ly += draw_room_row(ctx, coord, layer_id, lx, ly, lw, r, state, current_time_ms, tt);
         }
     }
-    draw_lookup_dropdown(ctx, coord, layer_id, result.dm_peer_rect, &state.dm, tt);
 
     let widget_theme = crate::ui::widgets::types::WidgetTheme::default();
     let scroll_result = scrollable.end(ctx, list_drawn_h, &widget_theme);
@@ -264,10 +327,14 @@ fn open_peer_row_h(nick_required: bool) -> f64 {
     }
 }
 
+/// `rooms` is the caller's own ALREADY-FILTERED slice (see
+/// `draw_chat_list`'s own filter step) — sizing off the filtered count is
+/// correct here: the scroll container only ever needs room for what this
+/// frame actually draws below the header.
 fn list_content_h(state: &CommunityState, rooms: &[mlc_messenger_model::RoomSummary]) -> f64 {
-    let open_h = open_peer_row_h(state.forum2.nick_required());
+    let open_h = if state.dm.new_conversation_open { open_peer_row_h(state.forum2.nick_required()) } else { 0.0 };
     let rows_h = if rooms.is_empty() { 24.0 } else { rooms.len() as f64 * CONV_ROW_H };
-    open_h + rows_h
+    CHAT_FILTER_ROW_H + open_h + rows_h
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -2864,6 +2864,7 @@ impl ChartApp {
                         ov.forum_search_rect,
                         ov.dm_draft_rect,
                         ov.dm_peer_rect,
+                        ov.dm_chat_filter_rect,
                     ]
                         .into_iter()
                         .flatten()

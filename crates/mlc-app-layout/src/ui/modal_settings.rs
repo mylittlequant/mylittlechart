@@ -6343,6 +6343,21 @@ pub struct DmState {
     /// [`Self::arm_lookup_debounce`] on every keystroke, read (and
     /// cleared) by the shell driver's per-frame due-check.
     pub lookup_due_at: Option<u64>,
+    /// Whether the "New message" recipient-search panel (this field's own
+    /// row plus its results dropdown) is currently shown — toggled by the
+    /// chat-list header's pencil button (messenger concept v1's own
+    /// `.lhead` row: `[Search][pencil]`, click path "pencil → New
+    /// message"). Today's DM-only provider offers no other item behind the
+    /// pencil (`Capabilities::groups`/`channels` are both false for it —
+    /// see `dm_messenger_provider::reads::capabilities`'s own doc), so the
+    /// button is a direct show/hide toggle rather than a menu with one
+    /// row; a future Matrix-shaped provider that adds groups/channels is
+    /// what would upgrade this into a real menu. Reset to `false` by
+    /// [`Self::close_lookup_dropdown`] (already called by
+    /// `open_conversation`, `reset_to_list`, `CommunityState::close`, and
+    /// the peer field's own Escape) — collapsing the panel and clearing
+    /// its query/dropdown are the same "nevermind, close this" action.
+    pub new_conversation_open: bool,
     /// Whether DM controls (open-peer, conversations, draft/send) can
     /// actually work in this shell right now. Both shells derive this the
     /// same way (owner ruling 2026-09-09: paid web users hold the vault too,
@@ -6419,6 +6434,7 @@ impl Default for DmState {
             lookup_query: None,
             lookup_results: Vec::new(),
             lookup_due_at: None,
+            new_conversation_open: false,
             available: false,
             unavailable_reason: DmUnavailableReason::None,
             selection: None,
@@ -6527,6 +6543,7 @@ impl DmState {
         self.lookup_query = None;
         self.lookup_results = Vec::new();
         self.lookup_due_at = None;
+        self.new_conversation_open = false;
     }
 
     /// The peer row for the conversation currently open in
@@ -6759,6 +6776,7 @@ impl CommunityState {
         self.dm.messages_refreshing = false;
         self.dm.send_pending = false;
         self.dm.request = None;
+        self.dm.close_lookup_dropdown();
     }
 
     pub fn toggle(&mut self) {

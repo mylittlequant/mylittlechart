@@ -290,6 +290,8 @@ impl ChartApp {
             DM_DRAFT                          => self.text_action_dm_draft(ch, action),
             #[cfg(feature = "cloud")]
             DM_PEER                           => self.text_action_dm_peer(ch, action),
+            #[cfg(feature = "cloud")]
+            DM_CHAT_FILTER                    => self.text_action_dm_chat_filter(ch, action),
             ALERT_TG_TOKEN                   => self.text_action_alert_token(ch, action),
             CRED_WEBHOOK_URL                 => self.text_action_cred_webhook_url(ch, action),
             CRED_ADD_EXCHANGE                => self.text_action_cred_add_field(crate::input::credentials::CredAddField::Exchange, ch, action),
@@ -1384,6 +1386,30 @@ impl ChartApp {
             _ => {
                 self.panel_app.community_state.dm.arm_lookup_debounce();
             }
+        }
+    }
+
+    /// The chat-list header's own name filter (messenger UI-2b,
+    /// `messenger_overlay.rs`'s `draw_chat_filter_row`). No debounce, no
+    /// server round trip, no `Commit`/`Cancel` submit action — filtering is
+    /// a client-side substring match `draw_chat_list` re-reads straight off
+    /// the field's own live text every frame, so every keystroke here is
+    /// already "applied" the moment `TextFieldStore::on_char` updates the
+    /// buffer; the only thing THIS function still owns is Escape (clear +
+    /// blur, same idiom every other search-like field in this crate uses).
+    #[cfg(feature = "cloud")]
+    fn text_action_dm_chat_filter(&mut self, ch: char, action: TextAction) {
+        let cancel = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::DM_CHAT_FILTER);
+            chart.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+            chart.input_coordinator.borrow_mut().text_fields_mut().blur();
+        };
+        if ch == '\x1b' {
+            cancel(self);
+            return;
+        }
+        if let TextAction::Cancel = action {
+            cancel(self);
         }
     }
 
