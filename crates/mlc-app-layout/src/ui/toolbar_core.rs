@@ -4,6 +4,7 @@
 //! work without core dependencies. Uses `uzor::render::RenderContext` directly and
 //! resolves icons via the chart's own `icons::icon_svg()` registry.
 
+use std::borrow::Cow;
 use uzor::render::{RenderContext, TextAlign, TextBaseline, draw_svg_icon, draw_svg_multicolor};
 use mlc_core::state::toolbar_state::{MascotAnim, MascotAnimKind};
 
@@ -904,8 +905,61 @@ fn render_icon(
         return;
     }
     if let Some(svg) = super::icons::icon_svg(icon_id.name()) {
-        draw_svg_icon(ctx, svg, rect.x, rect.y, rect.width, rect.height, color);
+        let svg = stroke_compensated_icon(svg, rect.width);
+        draw_svg_icon(ctx, &svg, rect.x, rect.y, rect.width, rect.height, color);
     }
+}
+
+/// Reference draw size (px) for icon stroke weight — the left/right side
+/// rail's own `icon_size` (`panel_app.rs`'s `drawing_config`/`right_config`,
+/// both 30.0). `draw_svg_icon` scales an icon's root `stroke-width` by
+/// `draw_size / viewbox_width` (`uzor::render::svg`, viewBox always 24x24
+/// here), so the SAME glyph drawn smaller — the top/bottom control strips,
+/// `icon_size: 24.0` — renders a visibly thinner on-screen line than the
+/// identical icon on a side rail (owner defect 2026-09-24: "top toolbar
+/// icons look too thin"). [`stroke_compensated_icon`] is the fix, applied
+/// once here since every toolbar (top/bottom/left/right) funnels through
+/// this one `render_icon` — the chrome row (tab strip + globe/cloud/avatar,
+/// `mlc-app-input-shell::chrome::render`) calls `draw_svg_icon` directly
+/// and never passes through here, so it is untouched by construction, not
+/// by a special case.
+const REFERENCE_ICON_STROKE_SIZE: f64 = 30.0;
+
+/// Rewrite ONLY the root `<svg ...>` tag's own `stroke-width` attribute so
+/// that drawing this icon at `draw_size` px renders the SAME on-screen
+/// stroke thickness as drawing the unmodified icon at
+/// [`REFERENCE_ICON_STROKE_SIZE`] px: `draw_svg_icon`'s own
+/// `stroke = root_stroke_width * (draw_size / 24)`, so scaling
+/// `root_stroke_width` by `REFERENCE_ICON_STROKE_SIZE / draw_size` cancels
+/// `draw_size` out of that product entirely — the compensated stroke is
+/// `base_stroke * REFERENCE_ICON_STROKE_SIZE / 24`, independent of
+/// `draw_size`, for any `draw_size` below the reference.
+///
+/// A no-op (returns the input `svg` reference, unmodified) at
+/// `draw_size >= REFERENCE_ICON_STROKE_SIZE` — this is what keeps the
+/// left/right rails themselves (already drawn at exactly the reference
+/// size) byte-identical to before this fix, and is also why this can
+/// never "thicken" an icon shared with the side rails there: at the
+/// reference size the compensation factor is exactly 1.0, a no-op.
+fn stroke_compensated_icon(svg: &'static str, draw_size: f64) -> Cow<'static, str> {
+    if draw_size <= 0.0 || draw_size >= REFERENCE_ICON_STROKE_SIZE {
+        return Cow::Borrowed(svg);
+    }
+    let Some(tag_start) = svg.find("<svg") else { return Cow::Borrowed(svg) };
+    let Some(tag_end_rel) = svg[tag_start..].find('>') else { return Cow::Borrowed(svg) };
+    let root_tag = &svg[tag_start..tag_start + tag_end_rel + 1];
+    let Some(sw_rel) = root_tag.find("stroke-width=\"") else { return Cow::Borrowed(svg) };
+    let value_start = tag_start + sw_rel + "stroke-width=\"".len();
+    let Some(value_len) = svg[value_start..].find('"') else { return Cow::Borrowed(svg) };
+    let value_end = value_start + value_len;
+    let Ok(base_stroke) = svg[value_start..value_end].trim().parse::<f64>() else { return Cow::Borrowed(svg) };
+
+    let compensated = base_stroke * REFERENCE_ICON_STROKE_SIZE / draw_size;
+    let mut out = String::with_capacity(svg.len() + 8);
+    out.push_str(&svg[..value_start]);
+    out.push_str(&format!("{compensated}"));
+    out.push_str(&svg[value_end..]);
+    Cow::Owned(out)
 }
 
 /// Width of a clock item: exact `measure_text` of the string in the same
@@ -1975,5 +2029,66 @@ mod tests {
 
         assert_eq!(section.items.len(), 3);
         assert!(section.show_separator);
+    }
+
+    /// A canonical house-standard icon: root `stroke-width="1.25"`, 24x24
+    /// viewBox, matching every constant in `mlc-core::state::icons`.
+    const SAMPLE_ICON: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M3 3h18v18H3z"/>
+</svg>"##;
+
+    /// At the reference size (left/right rail's own `icon_size`, 30.0) this
+    /// must be a byte-for-byte no-op — the side rails must never change.
+    #[test]
+    fn stroke_compensation_is_a_no_op_at_the_reference_size() {
+        let out = stroke_compensated_icon(SAMPLE_ICON, REFERENCE_ICON_STROKE_SIZE);
+        assert!(matches!(out, Cow::Borrowed(_)), "must borrow, not allocate, at the reference size");
+        assert_eq!(out.as_ref(), SAMPLE_ICON);
+    }
+
+    /// Above the reference size, also a no-op (an icon drawn bigger than
+    /// the rail's own reference keeps scaling its stroke up naturally).
+    #[test]
+    fn stroke_compensation_is_a_no_op_above_the_reference_size() {
+        let out = stroke_compensated_icon(SAMPLE_ICON, 42.0);
+        assert!(matches!(out, Cow::Borrowed(_)));
+    }
+
+    /// The exact defect this fixes: the top/bottom control strips draw
+    /// icons at 24.0 px (`panel_app.rs`'s `control_config`/`bottom_config`).
+    /// Compensated root stroke-width must equal `1.25 * 30.0 / 24.0`, and —
+    /// the actual on-screen assertion — `draw_svg_icon`'s own product
+    /// `root_stroke_width * (draw_size / 24)` must come out IDENTICAL to
+    /// the unmodified icon's product at the reference size, so the two
+    /// toolbars render pixel-identical stroke weight before quantization.
+    #[test]
+    fn stroke_compensation_equalizes_rendered_stroke_at_24px() {
+        let compensated = stroke_compensated_icon(SAMPLE_ICON, 24.0);
+        assert!(matches!(compensated, Cow::Owned(_)), "must allocate a rewritten string below the reference size");
+        assert!(compensated.contains("stroke-width=\"1.5625\""), "compensated svg: {compensated}");
+
+        let side_rail_product = 1.25_f64 * (REFERENCE_ICON_STROKE_SIZE / 24.0); // unmodified icon at 30px
+        let top_toolbar_product = 1.5625_f64 * (24.0 / 24.0); // compensated icon at 24px
+        assert!((side_rail_product - top_toolbar_product).abs() < 1e-9);
+    }
+
+    /// The compensation factor cancels `draw_size` out algebraically, so
+    /// ANY draw size below the reference lands on the exact same
+    /// compensated product — not just the one 24px case above (covers the
+    /// `icon_size + 4`-style quick-select variant some draw arms use).
+    #[test]
+    fn stroke_compensation_is_draw_size_independent_below_the_reference() {
+        let reference_product = 1.25_f64 * (REFERENCE_ICON_STROKE_SIZE / 24.0);
+        for draw_size in [16.0, 20.0, 24.0, 28.0, 29.9] {
+            let svg = stroke_compensated_icon(SAMPLE_ICON, draw_size);
+            let sw_start = svg.find("stroke-width=\"").unwrap() + "stroke-width=\"".len();
+            let sw_end = svg[sw_start..].find('"').unwrap() + sw_start;
+            let compensated_stroke: f64 = svg[sw_start..sw_end].parse().unwrap();
+            let product = compensated_stroke * (draw_size / 24.0);
+            assert!(
+                (product - reference_product).abs() < 1e-9,
+                "draw_size={draw_size}: product {product} must equal the reference product {reference_product}",
+            );
+        }
     }
 }
