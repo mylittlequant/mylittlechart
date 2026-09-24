@@ -18,10 +18,11 @@ use mli::events::candle_pattern::{CandlePatternKind, CandlePatternHit, scan};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
     PrimitiveMetadata, ControlPoint, ControlPointType, PrimitiveColor, HIT_TOLERANCE,
-    RenderContext, crisp, render_primitive_text, TextAlign,
+    RenderContext, render_primitive_text, TextAlign,
     config::{ConfigProperty, SelectOption, PropertyCategory, PropertyValue, StatRow, TableCell, parse_table_cell_id},
 };
 use super::candle_pattern::{sorted_kinds, pattern_display_name};
+use super::super::scan_shape::{ScanShape, render_scan_bracket, price_band_filter};
 
 /// Default up/down marker colours, matching the chart's own default theme
 /// preset (`#26a69a` / `#ef5350`) — the same literal pair
@@ -63,6 +64,17 @@ pub struct CandlePatternScan {
     pub data: PrimitiveData,
     #[serde(default)] pub ts1: i64,
     #[serde(default)] pub ts2: i64,
+    /// Two full-height vertical brackets (default) or a bounded rectangle
+    /// over `[ts1, ts2] x [p1, p2]` — see
+    /// [`crate::drawing::primitives_v2::scan_shape::ScanShape`]'s own doc.
+    /// `#[serde(default)]` so a scan saved before this field existed loads
+    /// as `TwoLines`, byte-for-byte the shape it always drew.
+    #[serde(default)]
+    pub shape: ScanShape,
+    /// The price half of this survey's own two control points — see
+    /// `smc::smc_scan::SmcScan::p1`'s own doc for the identical contract.
+    #[serde(default)] pub p1: f64,
+    #[serde(default)] pub p2: f64,
     /// Whether this survey covers the range its own two points bracket, or
     /// every loaded bar. `"range"` (default) or `"all_bars"`.
     ///
@@ -128,6 +140,9 @@ impl CandlePatternScan {
             },
             ts1,
             ts2,
+            shape: ScanShape::default(),
+            p1: 0.0,
+            p2: 0.0,
             coverage: default_coverage(),
             // Read ONCE at construction — see `CandlePatternEngineConfig::
             // default_enabled_kinds`'s own doc; never retro-applied to a
@@ -170,6 +185,17 @@ impl CandlePatternScan {
         }
         let ohlc: Vec<(f64, f64, f64, f64)> = bars.iter().map(|b| (b.open, b.high, b.low, b.close)).collect();
         scan(&kinds, &ohlc, start..end + 1)
+            .into_iter()
+            // `Rectangle` mode only (see `price_band_filter`'s own doc) —
+            // the completion bar's own midpoint is this survey's ONE
+            // representative price per hit; `TwoLines` is a no-op
+            // passthrough, so this changes nothing for a scan that never
+            // opted into a price band.
+            .filter(|h| {
+                let mid = bars.get(h.end).map(|b| (b.high + b.low) / 2.0).unwrap_or(f64::NAN);
+                price_band_filter(self.shape, self.p1, self.p2, mid)
+            })
+            .collect()
     }
 
     /// The `candle_pattern_scan_kinds` table's own rows — one per catalogue
@@ -263,18 +289,7 @@ impl Primitive for CandlePatternScan {
         let (min_x, max_x) = (x1.min(x2), x1.max(x2));
         let chart_height = ctx.chart_height();
 
-        ctx.set_stroke_color(&self.data.color.stroke);
-        ctx.set_stroke_width(self.data.width);
-        ctx.set_line_dash(&[4.0 * dpr, 4.0 * dpr]);
-        ctx.begin_path();
-        ctx.move_to(crisp(min_x, dpr), 0.0);
-        ctx.line_to(crisp(min_x, dpr), chart_height);
-        ctx.stroke();
-        ctx.begin_path();
-        ctx.move_to(crisp(max_x, dpr), 0.0);
-        ctx.line_to(crisp(max_x, dpr), chart_height);
-        ctx.stroke();
-        ctx.set_line_dash(&[]);
+        render_scan_bracket(ctx, self.shape, x1, x2, self.p1, self.p2, &self.data.color.stroke, self.data.width);
 
         // Collect every cluster's own (x, y, tint, count) FIRST, while
         // `ctx.bars()`'s own borrow is still live (every call here is
@@ -532,6 +547,52 @@ mod tests {
 
         assert_eq!(hits, direct);
         assert!(hits.iter().any(|h| h.kind == CandlePatternKind::BullishEngulfing && h.end == 5));
+    }
+
+    /// Piece 7: `TwoLines` keeps the engulfing hit whatever `p1`/`p2` hold
+    /// (captured but unused); flipping to `Rectangle` with a band that
+    /// excludes bar 5's own midpoint (high 110.0, low 98.0, midpoint 104.0)
+    /// drops it, and a band that includes it keeps it.
+    #[test]
+    fn rectangle_shape_keeps_only_hits_inside_the_price_band() {
+        let _guard = reset_engine_config();
+        let bars = bars_with_engulfing();
+
+        let mut scan_prim = CandlePatternScan::new(0, 5_000, "#8BC34A");
+        scan_prim.p1 = 1.0;
+        scan_prim.p2 = 2.0;
+        let two_lines_hits = scan_prim.resolved_scan(&bars);
+        assert!(two_lines_hits.iter().any(|h| h.kind == CandlePatternKind::BullishEngulfing && h.end == 5));
+
+        scan_prim.shape = ScanShape::Rectangle;
+        let out_of_band = scan_prim.resolved_scan(&bars);
+        assert!(!out_of_band.iter().any(|h| h.end == 5), "Rectangle drops a hit outside [p1, p2]");
+
+        scan_prim.p1 = 100.0;
+        scan_prim.p2 = 108.0;
+        let in_band = scan_prim.resolved_scan(&bars);
+        assert!(in_band.iter().any(|h| h.kind == CandlePatternKind::BullishEngulfing && h.end == 5), "Rectangle keeps a hit inside [p1, p2]");
+    }
+
+    /// A scan saved before piece 7 carries no `shape`/`p1`/`p2` fields at
+    /// all — its JSON must still load, landing on `TwoLines` (the shape it
+    /// always drew). Mirrors `smc_scan`'s own identical test.
+    #[test]
+    fn a_pre_piece_7_saved_scan_loads_as_two_lines() {
+        let data = PrimitiveData {
+            type_id: "candle_pattern_scan".to_string(),
+            display_name: "Candle Pattern Scan".to_string(),
+            color: PrimitiveColor::new("#8BC34A"),
+            width: 1.0,
+            ..Default::default()
+        };
+        let old_json = serde_json::json!({ "data": data, "ts1": 0, "ts2": 5_000 }).to_string();
+        assert!(!old_json.contains("shape") && !old_json.contains("\"p1\"") && !old_json.contains("\"p2\""));
+
+        let restored: CandlePatternScan = serde_json::from_str(&old_json).expect("old scan JSON still loads");
+        assert_eq!(restored.shape, ScanShape::TwoLines);
+        assert_eq!(restored.p1, 0.0);
+        assert_eq!(restored.p2, 0.0);
     }
 
     /// #5: unchecking a kind removes its hits.
