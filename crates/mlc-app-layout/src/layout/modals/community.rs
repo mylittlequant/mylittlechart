@@ -49,7 +49,7 @@ use crate::ui::widgets::{
 use crate::ui::z_order::ZLayer;
 
 use super::cloud_overlay::CloudOverlayResult;
-use super::{dm_overlay, forum_v2_overlay};
+use super::{dm_overlay, forum_v2_overlay, messenger_overlay};
 
 const MODAL_W: f64 = 760.0;
 
@@ -203,7 +203,7 @@ pub fn render_community_modal(
             ctx, input_coordinator, &layer_id, x, y, w, viewport_h, state, frame_theme, toolbar_theme,
             current_time_ms, &mut result.content, &mut result.list,
         ),
-        CommunityTab::Messages => dm_overlay::draw(
+        CommunityTab::Messages => messenger_overlay::draw(
             ctx, input_coordinator, &layer_id, x, y, w, viewport_h, state, frame_theme, toolbar_theme,
             current_time_ms, &mut result.content, &mut result.list,
         ),

@@ -6335,6 +6335,23 @@ impl ChartApp {
                             }
                             return;
                         }
+                        // Bottom-anchored feed's own "jump to latest"
+                        // (messenger UI-2a piece 2, `messenger_overlay.rs`'s
+                        // own floating button) — lands the open
+                        // conversation's scroll at its own bottom.
+                        // `content_height`/`viewport_height` come from LAST
+                        // frame's own paint (this frame has not painted
+                        // yet) — the same cached-geometry idiom the
+                        // scrollbar-drag start above already reads
+                        // (`ScrollableInfo`).
+                        "jump_latest" => {
+                            let (content_h, viewport_h) = self.frame_result.as_ref()
+                                .and_then(|r| r.community.as_ref())
+                                .map(|c| (c.content.total_content_height.unwrap_or(0.0), c.content.viewport_height.unwrap_or(0.0)))
+                                .unwrap_or((0.0, 0.0));
+                            st.scroll.scroll_to(content_h, content_h, viewport_h);
+                            return;
+                        }
                         _ => {}
                     }
                     if !st.dm.available {
