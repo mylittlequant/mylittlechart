@@ -20,7 +20,13 @@ crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 mlc-core        = { path = "../mlc-core",        package = "mylittlechart-core" }
-mlc-app-layout  = { path = "../mlc-app-layout",  package = "mylittlechart-app-layout" }
+# `cloud` unconditional (not a lab-local feature): `crate::community` hosts
+# the REAL Community modal (`layout::modals::community`, `cloud`-gated in
+# mlc-app-layout itself) — see that module's own doc. Cheap to always carry:
+# mlc-app-layout's own `cloud` feature turns on only `mlc-core/cloud`, none
+# of the heavier optional deps (`mlc-cloud`/`mlc-vault`) that gate
+# mlc-app-shell-web's own same-named feature.
+mlc-app-layout  = { path = "../mlc-app-layout",  package = "mylittlechart-app-layout", features = ["cloud"] }
 
 # uzor web bindings — wasm32-only at runtime, unconditional in Cargo.toml so
 # cargo can resolve the graph on native (the cfg-gate in src/lib.rs keeps the
@@ -38,6 +44,9 @@ web-sys      = { version = "0.3", features = [
     "HtmlCanvasElement",
     "CanvasRenderingContext2d",
     "Performance",
+    "Location",
+    "Url",
+    "UrlSearchParams",
     "console",
 ] }
 console_error_panic_hook = "0.1"

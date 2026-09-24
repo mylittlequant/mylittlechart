@@ -146,6 +146,43 @@ pane instead of the window. Object Tree rows are therefore pixel-identical
 whether a modal is open or not — not because anything is cut, but because
 nothing a modal draws ever lands under the sidebar to begin with.
 
+## Community page (`?page=community`)
+
+A second, separate page in this SAME crate (`crate::community`, own render
+loop, no `LabState`) that hosts the REAL `render_community_modal`
+(`mlc-app-layout`'s `layout::modals::community` — Forum + Messages) against
+hand-built `CommunityState` fixtures, so the Community modal can be judged
+against the approved concept mockups (`designs/2026-09-23-forum/
+forum_concept_v1.html`, `designs/2026-09-24-messenger/
+messenger_concept_v1.html`) without signing in anywhere. Renders full-window
+at a fixed 1280×800 (`#chart` gets that CSS size regardless of the hosting
+browser window — see `index.html`'s own `body.community` rule), Dark theme
+by default.
+
+```
+http://localhost:17498/?page=community&state=forum-index
+http://localhost:17498/?page=community&state=forum-thread
+http://localhost:17498/?page=community&state=messages-locked
+http://localhost:17498/?page=community&state=messages-chat
+```
+
+`state` defaults to `forum-index` for an unrecognised or missing value.
+`&theme=<preset>` switches the `ThemeManager` preset (`ThemeManager::
+presets()` — `dark`/`light`/`high_contrast`/`high_contrast_mono`/`mascot`).
+This crate's own `cloud` feature requirement lives on the `mlc-app-layout`
+dependency in `Cargo.toml` (unconditional, not a lab-local feature — see
+that line's own comment) since `layout::modals::community` only exists
+behind `mlc-app-layout`'s `cloud` feature.
+
+One finding for whoever compares a screenshot against the concept mockups:
+`DmConversationUi::last_message_preview`/`last_message_mine` are real public
+fields the fixture populates, but the chat-list row's own preview line never
+reads them today — `dm_messenger_provider.rs`'s `reads::rooms` hardcodes
+`RoomSummary::last_event: None` regardless (that type's own doc already
+names the gap). `DmConversationUi::peer_rank`/`peer_fingerprint` are NOT
+affected — the open conversation's own header reads those two straight off
+`state.dm.conversations`, not through the provider.
+
 ## Agent control plane (`window.__LAB`)
 
 Mirrors `sim/sim.js`'s own `window.__SIM` (see that file's own doc):

@@ -18,6 +18,8 @@ mod app_modals;
 #[cfg(target_arch = "wasm32")]
 mod approved_design;
 #[cfg(target_arch = "wasm32")]
+pub mod community;
+#[cfg(target_arch = "wasm32")]
 pub mod concept;
 #[cfg(target_arch = "wasm32")]
 mod dispatch;
@@ -590,6 +592,14 @@ pub fn start() -> Result<(), JsValue> {
     web_sys::console::log_1(&"[mlc-ui-lab] booting".into());
 
     apply_browser_language();
+
+    // `?page=community` boots the standalone Community-modal page
+    // (`crate::community`, its own module doc) instead of the primitive-
+    // settings lab below — a completely separate render loop, so this
+    // branch never constructs `LabState` at all.
+    if community::wants_community_page() {
+        return community::start();
+    }
 
     let lab = LabState::new()?;
     run_render_loop(lab)
@@ -2185,6 +2195,16 @@ fn property_type_label(pt: &mlc_core::drawing::primitives_v2::config::PropertyTy
             let opts: Vec<String> = options.iter().map(|o| format!("{}:{}", o.value, o.label)).collect();
             format!("select({})", opts.join("|"))
         }
+        PropertyType::Pills { options } => {
+            let opts: Vec<String> = options.iter().map(|o| format!("{}:{}", o.value, o.label)).collect();
+            format!("pills({})", opts.join("|"))
+        }
+        PropertyType::Picker { options } => {
+            let opts: Vec<String> = options.iter().map(|o| format!("{}:{}", o.id, o.label)).collect();
+            format!("picker({})", opts.join("|"))
+        }
+        PropertyType::Stat { rows } => format!("stat({} rows)", rows.len()),
+        PropertyType::Table { head, rows } => format!("table(cols={},rows={})", head.len(), rows.len()),
         PropertyType::LineStyle => "line_style".to_string(),
         PropertyType::Text { multiline, max_length } => {
             format!("text(multiline={},max_length={})", multiline, opt(*max_length))
@@ -2208,6 +2228,8 @@ fn property_value_label(v: &mlc_core::drawing::primitives_v2::config::PropertyVa
         PropertyValue::FibLevels(levels) => format!("{} levels", levels.len()),
         PropertyValue::Coordinate { bar, price } => format!("bar={bar},price={price}"),
         PropertyValue::TimeframeVisibility(cfg) => format!("{cfg:?}"),
+        PropertyValue::Stat(rows) => format!("{} rows", rows.len()),
+        PropertyValue::Table(rows) => format!("{} rows", rows.len()),
     }
 }
 

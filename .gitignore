@@ -3,6 +3,9 @@ footprint-diag*.log
 # Build artifacts
 /target
 Cargo.lock
+
+# Scratch / working output (screenshots, proof renders, ...) — never publish
+/.tmp/
 *.exe
 *.pdb
 *.stackdump
