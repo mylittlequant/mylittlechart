@@ -290,6 +290,8 @@ impl PrimitiveRegistry {
         // real `register_typed` deserializer (not a preset, see this
         // primitive's own module doc).
         self.register_typed::<super::patterns::five_zero_pattern::FiveZeroPattern>(super::patterns::five_zero_pattern::metadata());
+        // Harmonics autodetector (A3.5) — last item of the Harmonics theme.
+        self.register_typed::<super::patterns::harmonic_scan::HarmonicScan>(super::patterns::harmonic_scan::metadata());
         self.register_typed::<super::patterns::candle_pattern::CandlePattern>(super::patterns::candle_pattern::metadata());
         self.register_typed::<super::patterns::candle_pattern_scan::CandlePatternScan>(super::patterns::candle_pattern_scan::metadata());
 

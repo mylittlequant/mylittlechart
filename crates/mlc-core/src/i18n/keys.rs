@@ -1845,10 +1845,13 @@ pub enum PrimitiveNameKey {
     // Autodetector A3, 5-0 manual primitive (2026-09-24) — same
     // frozen-discriminant reason (102).
     FiveZeroPattern     = 102,
+    // Autodetector A3, Harmonics autodetector (2026-09-24) — same
+    // frozen-discriminant reason (103).
+    HarmonicScan        = 103,
 }
 
 impl PrimitiveNameKey {
-    pub const COUNT: usize = 103;
+    pub const COUNT: usize = 104;
 
     /// Get translation for this key.
     #[inline]
@@ -1963,6 +1966,7 @@ impl PrimitiveNameKey {
             "order_flow_scan"          => Some(Self::OrderFlowScan),
             "elliott_scan"             => Some(Self::ElliottScan),
             "five_zero_pattern"        => Some(Self::FiveZeroPattern),
+            "harmonic_scan"            => Some(Self::HarmonicScan),
             _                          => None,
         }
     }

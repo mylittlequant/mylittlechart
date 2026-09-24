@@ -952,6 +952,11 @@ fn pattern_section() -> ToolbarSectionDef {
             // 5-0 (Duddella, A3.1, 2026-09-24) — own 6-point struct, not a
             // preset; name "5-0" is owner-pre-approved (arc text).
             DropdownItemDef::action("five_zero_pattern", PN::FiveZeroPattern.get(lang)).with_icon(ToolbarIconId::new("harmonic_five_o")),
+            // Harmonics autodetector (A3.5, 2026-09-24) — last item of the
+            // Harmonics theme, per the owner's own "autodetector = last item
+            // of its section" ruling (same posture `elliott_scan` already
+            // takes for the Elliott Waves theme).
+            DropdownItemDef::action("harmonic_scan", PN::HarmonicScan.get(lang)).with_icon(ToolbarIconId::new("harmonic_scan")),
             // Classic figures — moved in from the old "Patterns" header,
             // unchanged action ids/icons.
             DropdownItemDef::Separator,
@@ -1464,10 +1469,10 @@ mod pattern_section_tests {
     /// The Harmonics header's own action ids: the 7 `harmonic_*` presets in
     /// family order, then `cypher_pattern`/`abcd_pattern`/`three_drives`
     /// moved in from the old flat "Patterns" header, then `five_zero_pattern`
-    /// (A3.1, 2026-09-24) — 11 items. `harmonic_scan` (A3.5) extends this
-    /// same assertion to 12 rather than adding a second, parallel test.
+    /// (A3.1, 2026-09-24), then `harmonic_scan` (A3.5) as the theme's own
+    /// trailing autodetector row — 12 items.
     #[test]
-    fn harmonics_header_has_eleven_actions_in_order() {
+    fn harmonics_header_has_twelve_actions_in_order() {
         let lang = current_language();
         let items = pattern_tools_items();
         let harmonics_label = MK::HeaderHarmonics.get(lang).to_string();
@@ -1485,7 +1490,7 @@ mod pattern_section_tests {
             vec![
                 "harmonic_gartley", "harmonic_bat", "harmonic_alt_bat",
                 "harmonic_butterfly", "harmonic_crab", "harmonic_deep_crab", "harmonic_shark",
-                "cypher_pattern", "abcd_pattern", "three_drives", "five_zero_pattern",
+                "cypher_pattern", "abcd_pattern", "three_drives", "five_zero_pattern", "harmonic_scan",
             ],
         );
     }
