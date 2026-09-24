@@ -50,6 +50,8 @@ use uzor::types::Rect as WidgetRect;
 use uzor::WidgetId;
 
 use crate::layout::render_chart::FrameTheme;
+use crate::ui::avatar_widget::{draw_avatar, AvatarColors, AvatarShape, CornerMarker};
+use crate::ui::count_badge::{badge_width, draw_count_badge, BadgeColors, BadgeContent};
 use crate::ui::dm_messenger_provider::DmMessengerProviderView;
 use crate::ui::modal_settings::CommunityState;
 use crate::ui::scroll_widget::{jump_button_visible, ScrollableContainer};
@@ -65,11 +67,26 @@ use super::cloud_overlay::{
 };
 use super::community::CommunityListPaneResult;
 use super::dm_overlay::{
-    draw_error_line, draw_field, draw_key_changed_notice, draw_lock_glyph, draw_lookup_dropdown,
-    draw_open_peer_row,
+    draw_error_line, draw_field, draw_field_shaped, draw_key_changed_notice, draw_lock_glyph,
+    draw_lookup_dropdown, draw_open_peer_row,
 };
 
-const RAIL_W: f64 = 68.0;
+/// The folder rail's own width — messenger concept v1 `.rail{width:70px}`.
+const RAIL_W: f64 = 70.0;
+/// One rail item's own footprint — concept `.fold{width:62px}`, centred
+/// inside [`RAIL_W`] (4px either side, same margin the active indicator's
+/// own `left:-4px` walks back out to reach the rail's own left edge).
+const RAIL_ITEM_W: f64 = 62.0;
+const RAIL_ITEM_ICON_D: f64 = 22.0;
+const RAIL_ITEM_PAD_TOP: f64 = 7.0;
+const RAIL_ITEM_ICON_LABEL_GAP: f64 = 3.0;
+const RAIL_ITEM_LABEL_H: f64 = 13.0;
+const RAIL_ITEM_PAD_BOTTOM: f64 = 6.0;
+const RAIL_ITEM_H: f64 =
+    RAIL_ITEM_PAD_TOP + RAIL_ITEM_ICON_D + RAIL_ITEM_ICON_LABEL_GAP + RAIL_ITEM_LABEL_H + RAIL_ITEM_PAD_BOTTOM;
+const RAIL_ITEM_RADIUS: f64 = 6.0;
+/// The active indicator bar's own width — concept `.fold.on::before{width:3px}`.
+const RAIL_ACTIVE_BAR_W: f64 = 3.0;
 
 // Bubble geometry — mirrors `dm_overlay.rs`'s own constants (same numeric
 // values) so a conversation opened through either path reads identically;
@@ -81,8 +98,9 @@ const BUBBLE_WIDTH_FRAC: f64 = 0.72;
 const BUBBLE_MIN_W: f64 = 120.0;
 const BUBBLE_AVATAR_D: f64 = 28.0;
 const BUBBLE_AVATAR_GAP: f64 = 8.0;
-const LIST_AVATAR_D: f64 = 32.0;
-const LIST_AVATAR_GAP: f64 = 8.0;
+/// Chat-list row avatar — concept `.av{width:42px;height:42px}`.
+const LIST_AVATAR_D: f64 = 42.0;
+const LIST_AVATAR_GAP: f64 = 10.0;
 const BUBBLE_LINE_H: f64 = 16.0;
 const BUBBLE_NICK_H: f64 = 14.0;
 const BUBBLE_TIME_H: f64 = 14.0;
@@ -91,15 +109,34 @@ const BUBBLE_GAP: f64 = 10.0;
 const DAY_SEP_H: f64 = 24.0;
 const SYSTEM_NOTICE_H: f64 = 20.0;
 const CIPHERTEXT_MAX_LINES: usize = 3;
-const CONV_ROW_H: f64 = 52.0;
-const RAIL_ROW_H: f64 = 40.0;
+/// A chat-list row's own corner radius — concept `.row{border-radius:6px}`.
+const LIST_ROW_RADIUS: f64 = 6.0;
+/// A row's own vertical/horizontal padding — concept `.row{padding:7px 8px}`.
+const LIST_ROW_PAD_V: f64 = 7.0;
+const LIST_ROW_PAD_H: f64 = 8.0;
+/// The row's own painted rect height — the avatar (the tallest child) plus
+/// top/bottom padding; [`CONV_ROW_H`] adds [`ROW_GAP`] on top so rows keep
+/// the same "painted rect, then a blank strip" idiom every other list in
+/// this crate uses (see `draw_room_row`'s own doc for why the rect itself
+/// stays `CONV_ROW_H - ROW_GAP` tall).
+const CONV_ROW_RECT_H: f64 = LIST_AVATAR_D + LIST_ROW_PAD_V * 2.0;
+const CONV_ROW_H: f64 = CONV_ROW_RECT_H + ROW_GAP;
 /// The chat-list header row: the name-filter field plus its own pencil
 /// button (concept v1's `.lhead`: `[Search][pencil]`) — one fixed row,
 /// always drawn, above the (now conditional) "New message" recipient
 /// search and the room rows themselves.
-const CHAT_FILTER_ROW_H: f64 = FIELD_H + 12.0;
-/// The pencil button's own square footprint, to the filter field's right.
-const CHAT_FILTER_PENCIL_W: f64 = 32.0;
+const CHAT_FILTER_ROW_H: f64 = SEARCH_FIELD_H + 12.0;
+/// The filter field's own height/radius — concept `.search{height:30px;
+/// border-radius:15px}` (fully rounded, radius = height / 2). A local,
+/// messenger-only height rather than the shared [`FIELD_H`] every other
+/// `cloud_overlay` text field uses, so this pane's own pill fields never
+/// drag the forum's/DM's plain boxes along with them.
+const SEARCH_FIELD_H: f64 = 30.0;
+const SEARCH_FIELD_RADIUS: f64 = SEARCH_FIELD_H / 2.0;
+const SEARCH_FIELD_H_PADDING: f64 = 14.0;
+/// The pencil button's own square footprint, to the filter field's right —
+/// concept `.ib{width:30px;height:30px}`.
+const CHAT_FILTER_PENCIL_W: f64 = 30.0;
 const CHAT_FILTER_GAP: f64 = 8.0;
 /// The docked send box's own height — draft field + gap + Send button, the
 /// SAME footprint every dock state uses (locked/peer-without-key/nick-
@@ -164,6 +201,13 @@ pub(crate) fn draw(
 // `jump_latest` — see top doc); "All chats" always reads as the active one.
 // =============================================================================
 
+/// The rail's own single "All chats" item — the provider carries no folder
+/// concept at all (today's DM adapter's `Capabilities::folders == false`,
+/// this file's own top doc), so drawing the concept's Personal/Groups/
+/// Channels/Trading-desk/Archive/Folders rows here would be inventing rooms
+/// this crate cannot actually switch to. "All chats" is the one row every
+/// conversation genuinely belongs to — always active (there is nothing else
+/// to select), badged with the total unread count across every room.
 fn draw_folder_rail(
     ctx: &mut dyn RenderContext,
     x: f64,
@@ -176,30 +220,60 @@ fn draw_folder_rail(
     ctx.set_fill_color(&tt.dropdown_bg);
     ctx.fill_rect(x, y, w, h);
 
-    let rooms = provider.rooms();
-    let personal_count: i64 = rooms.iter().map(|r| r.notification_count as i64).sum();
-    let rows: [(&str, i64, bool); 2] = [("All chats", personal_count, true), ("Personal", personal_count, false)];
+    let unread: i64 = provider.rooms().iter().map(|r| r.notification_count as i64).sum();
+    let rect = WidgetRect::new(x + (w - RAIL_ITEM_W) / 2.0, y + 6.0, RAIL_ITEM_W, RAIL_ITEM_H);
 
-    let mut ry = y + 6.0;
-    for (label, count, active) in rows {
-        let rect = WidgetRect::new(x, ry, w, RAIL_ROW_H);
-        if active {
-            ctx.set_fill_color(&tt.accent);
-            ctx.fill_rect(rect.x, rect.y + 4.0, 3.0, rect.height - 8.0);
-        }
-        ctx.set_font(if active { "600 11px sans-serif" } else { "11px sans-serif" });
-        ctx.set_fill_color(if active { &tt.item_text } else { &tt.item_text_muted });
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Top);
-        let fit = crate::ui::widgets::fit_text_to_width(ctx, label, w - 8.0);
-        ctx.fill_text(&fit, rect.center_x(), rect.y + 6.0);
-        if count > 0 {
-            ctx.set_font("9px sans-serif");
-            ctx.set_fill_color(&tt.item_text_muted);
-            ctx.fill_text(&count.to_string(), rect.center_x(), rect.y + 22.0);
-        }
-        ry += RAIL_ROW_H;
+    // Active indicator — a bar flush with the RAIL's own left edge (concept
+    // `.fold.on::before{left:-4px}` relative to the item, which sits inset
+    // from the rail by that same 4px margin).
+    ctx.set_fill_color(&tt.accent);
+    ctx.fill_rect(x, rect.y + 9.0, RAIL_ACTIVE_BAR_W, (rect.height - 18.0).max(0.0));
+
+    ctx.set_fill_color(&tt.button_bg);
+    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, RAIL_ITEM_RADIUS);
+
+    let icon_cy = rect.y + RAIL_ITEM_PAD_TOP + RAIL_ITEM_ICON_D / 2.0;
+    draw_all_chats_glyph(ctx, rect.center_x(), icon_cy, RAIL_ITEM_ICON_D / 2.0, &tt.item_text);
+
+    ctx.set_font("600 10.5px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let label_y = rect.y + RAIL_ITEM_PAD_TOP + RAIL_ITEM_ICON_D + RAIL_ITEM_ICON_LABEL_GAP;
+    let fit = crate::ui::widgets::fit_text_to_width(ctx, "All chats", rect.width - 4.0);
+    ctx.fill_text(&fit, rect.center_x(), label_y);
+
+    if unread > 0 {
+        let label = if unread > 99 { "99+".to_string() } else { unread.to_string() };
+        let badge_h = 16.0;
+        let bw = badge_width(ctx, &BadgeContent::Count(&label), badge_h);
+        let bx = rect.x + rect.width - 9.0 - bw;
+        let by = rect.y + 2.0;
+        draw_count_badge(
+            ctx, bx, by, bw, badge_h, &BadgeContent::Count(&label),
+            &BadgeColors { background: &tt.accent, text: contrasting_text_color(&tt.accent) },
+        );
     }
+}
+
+/// A small filled speech-bubble: a rounded-rect body with a triangular tail
+/// at its bottom-left corner — the rail's own "All chats" glyph (concept
+/// `#i-all`). Plain vector shapes, same idiom `dm_overlay.rs`'s own
+/// `draw_lock_glyph` uses, for the same reason: this crate sits below the
+/// `IconId` SVG registry's own home (see that function's own doc).
+fn draw_all_chats_glyph(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    let w = r * 1.8;
+    let h = r * 1.3;
+    let x = cx - w / 2.0;
+    let y = cy - h / 2.0;
+    ctx.set_fill_color(color);
+    ctx.fill_rounded_rect(x, y, w, h, r * 0.35);
+    ctx.begin_path();
+    ctx.move_to(x + w * 0.22, y + h);
+    ctx.line_to(x + w * 0.10, y + h + r * 0.4);
+    ctx.line_to(x + w * 0.42, y + h);
+    ctx.close_path();
+    ctx.fill();
 }
 
 // =============================================================================
@@ -238,15 +312,15 @@ fn draw_chat_filter_row(
 ) -> f64 {
     let pencil_w = CHAT_FILTER_PENCIL_W;
     let field_w = (w - pencil_w - CHAT_FILTER_GAP).max(60.0);
-    let field_rect = WidgetRect::new(x, y, field_w, FIELD_H);
-    let (rect, chars) = draw_field(
+    let field_rect = WidgetRect::new(x, y, field_w, SEARCH_FIELD_H);
+    let (rect, chars) = draw_field_shaped(
         ctx, coord, layer_id, "cloud_overlay:dm:chat_filter_input", DM_CHAT_FILTER_FIELD, field_rect,
-        "Search", ft, tt, current_time_ms,
+        "Search", ft, tt, current_time_ms, SEARCH_FIELD_RADIUS, SEARCH_FIELD_H_PADDING,
     );
     result.dm_chat_filter_rect = Some(rect);
     result.dm_chat_filter_char_positions = chars;
 
-    let pencil_rect = WidgetRect::new(x + field_w + CHAT_FILTER_GAP, y, pencil_w, FIELD_H);
+    let pencil_rect = WidgetRect::new(x + field_w + CHAT_FILTER_GAP, y, pencil_w, SEARCH_FIELD_H);
     let pencil_id = WidgetId::from("cloud_overlay:dm:new_conversation_toggle");
     let hovered = coord.is_hovered(&pencil_id);
     if hovered || new_conversation_open {
@@ -343,6 +417,15 @@ fn list_content_h(state: &CommunityState, rooms: &[mlc_messenger_model::RoomSumm
     CHAT_FILTER_ROW_H + open_h + rows_h
 }
 
+/// Up to two initials (first letter of the first two words), uppercased —
+/// [`draw_avatar`]'s own harvest-ready widget takes the initials string
+/// pre-computed rather than deriving them itself.
+fn initials(name: &str) -> String {
+    name.split_whitespace().filter_map(|w| w.chars().next()).take(2).flat_map(|c| c.to_uppercase()).collect()
+}
+
+/// One chat-list row — concept v1 `.row`: a 42px avatar, then two text
+/// lines (name + time; preview + unread pill). Padding 7×8, radius 6.
 #[allow(clippy::too_many_arguments)]
 fn draw_room_row(
     ctx: &mut dyn RenderContext,
@@ -357,72 +440,80 @@ fn draw_room_row(
     tt: &ToolbarTheme,
 ) -> f64 {
     let widget_id = format!("cloud_overlay:dm:conversation:{}", r.id.as_str());
-    let rect = WidgetRect::new(x, y, w, CONV_ROW_H - ROW_GAP);
+    let rect = WidgetRect::new(x, y, w, CONV_ROW_RECT_H);
     let hovered = coord.is_hovered(&WidgetId::from(widget_id.as_str()));
     let open = matches!(&state.dm.view, crate::ui::modal_settings::DmView::Conversation { id, .. } if id.to_string() == r.id.as_str());
     if open {
-        ctx.set_fill_color(&tt.item_bg_active);
-        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+        ctx.set_fill_color(&tt.button_bg);
+        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, LIST_ROW_RADIUS);
     } else if hovered {
         ctx.set_fill_color(&tt.item_bg_hover);
-        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, LIST_ROW_RADIUS);
     }
 
-    let avatar_cx = x + 8.0 + LIST_AVATAR_D / 2.0;
+    let avatar_cx = x + LIST_ROW_PAD_H + LIST_AVATAR_D / 2.0;
     let avatar_cy = rect.y + rect.height / 2.0;
-    draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, LIST_AVATAR_D / 2.0, &r.name, &tt.item_bg_active);
-    let text_x = x + 8.0 + LIST_AVATAR_D + LIST_AVATAR_GAP;
+    draw_avatar(
+        ctx, avatar_cx, avatar_cy, LIST_AVATAR_D / 2.0, AvatarShape::Circle, &initials(&r.name),
+        &AvatarColors { background: &tt.item_bg_hover, text: contrasting_text_color(&tt.item_bg_hover), ring: &tt.background },
+        CornerMarker::None,
+    );
+    let text_x = x + LIST_ROW_PAD_H + LIST_AVATAR_D + LIST_AVATAR_GAP;
+    let text_right = x + w - LIST_ROW_PAD_H;
 
+    // Line 1 — name (left) + time (mono, right-aligned, same line).
+    let time_label = r.last_event.as_ref().map(|ev| row_time_label(ev.ts, current_time_ms));
+    let time_w = time_label.as_ref().map(|t| {
+        ctx.set_font("11px monospace");
+        ctx.measure_text(t)
+    });
+    let line1_y = rect.y + (rect.height - 29.0) / 2.0;
+    let name_right = time_w.map(|tw| text_right - tw - 6.0).unwrap_or(text_right);
     ctx.set_font("600 13px sans-serif");
     ctx.set_fill_color(if hovered || open { &tt.item_text_hover } else { &tt.item_text });
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    let label = crate::ui::widgets::fit_text_to_width(ctx, &r.name, (x + w - text_x - 52.0).max(0.0));
-    ctx.fill_text(&label, text_x, y + 4.0);
-
-    if r.notification_count > 0 {
-        let badge_label = if r.notification_count > 99 { "99+".to_string() } else { r.notification_count.to_string() };
-        let badge_w = 16.0 + badge_label.len() as f64 * 6.0;
-        let badge_rect = WidgetRect::new(x + w - badge_w - 8.0, y + 4.0, badge_w, 18.0);
-        ctx.set_fill_color(&tt.accent);
-        ctx.fill_rounded_rect(badge_rect.x, badge_rect.y, badge_rect.width, badge_rect.height, 9.0);
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(contrasting_text_color(&tt.accent));
-        ctx.set_text_align(TextAlign::Center);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        ctx.fill_text(&badge_label, badge_rect.center_x(), badge_rect.center_y());
-    } else if let Some(ev) = &r.last_event {
-        // The unread badge and the last-message time share the row's
-        // top-right corner — an unread count is the more urgent fact, so
-        // the time only draws when there is no badge to show instead.
-        ctx.set_font("10px monospace");
+    let label = crate::ui::widgets::fit_text_to_width(ctx, &r.name, (name_right - text_x).max(0.0));
+    ctx.fill_text(&label, text_x, line1_y);
+    if let Some(t) = &time_label {
+        ctx.set_font("11px monospace");
         ctx.set_fill_color(&tt.item_text_muted);
         ctx.set_text_align(TextAlign::Right);
         ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(&row_time_label(ev.ts, current_time_ms), x + w - 8.0, y + 4.0);
+        ctx.fill_text(t, text_right, line1_y);
     }
 
+    // Line 2 — preview (left, ellipsised) + unread pill (right-aligned).
+    let line2_y = line1_y + 15.0;
+    let badge_h = 16.0;
+    let mut preview_right = text_right;
+    if r.notification_count > 0 {
+        let badge_label = if r.notification_count > 99 { "99+".to_string() } else { r.notification_count.to_string() };
+        let bw = badge_width(ctx, &BadgeContent::Count(&badge_label), badge_h);
+        let bx = text_right - bw;
+        let by = line2_y - 1.0;
+        draw_count_badge(
+            ctx, bx, by, bw, badge_h, &BadgeContent::Count(&badge_label),
+            &BadgeColors { background: &tt.accent, text: contrasting_text_color(&tt.accent) },
+        );
+        preview_right = bx - 6.0;
+    }
     // Preview line — only when the provider actually has one
     // (`RoomSummary::last_event`, honestly `None` for today's DM adapter;
     // see this file's own top doc). Nothing fabricated when it is absent.
     if let Some(ev) = &r.last_event {
-        ctx.set_font("11px monospace");
-        ctx.set_fill_color(&tt.item_text_muted);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
-        let (label, locked) = match &ev.content {
+        let (label, encrypted) = match &ev.content {
             mlc_messenger_model::PreviewContent::Text(t) => (t.clone(), false),
             mlc_messenger_model::PreviewContent::Encrypted => ("Encrypted message".to_string(), true),
             mlc_messenger_model::PreviewContent::Redacted => ("Message deleted".to_string(), false),
             mlc_messenger_model::PreviewContent::Notice(n) => (n.clone(), false),
         };
-        let mut px = text_x;
-        if locked {
-            draw_lock_glyph(ctx, px + 4.0, y + 24.0 + 4.0, 8.0, &tt.item_text_muted);
-            px += 12.0;
-        }
-        let fit = crate::ui::widgets::fit_text_to_width(ctx, &label, (x + w - px - 8.0).max(0.0));
-        ctx.fill_text(&fit, px, y + 24.0);
+        ctx.set_font(if encrypted { "italic 12.5px sans-serif" } else { "12.5px sans-serif" });
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        let fit = crate::ui::widgets::fit_text_to_width(ctx, &label, (preview_right - text_x).max(0.0));
+        ctx.fill_text(&fit, text_x, line2_y);
     }
 
     // `RIGHT_CLICK` alongside `CLICK` — the messenger UI-2b chat-row context
@@ -1027,5 +1118,49 @@ mod tests {
     fn clock_hm_formats_hours_and_minutes_zero_padded() {
         // 2024-01-01T03:05:00Z.
         assert_eq!(clock_hm(Timestamp(1_704_078_300_000)), "03:05");
+    }
+
+    #[test]
+    fn rail_item_is_centred_inside_the_rail_with_a_4px_margin_either_side() {
+        let margin = (RAIL_W - RAIL_ITEM_W) / 2.0;
+        assert_eq!(margin, 4.0);
+    }
+
+    #[test]
+    fn rail_active_bar_sits_flush_with_the_rails_own_left_edge() {
+        // The item itself starts 4px in from the rail's left edge; the
+        // active bar is drawn at the RAIL's own x (see `draw_folder_rail`),
+        // i.e. exactly `margin` to the left of the item — same offset the
+        // concept's own `left:-4px` (relative to the item) describes.
+        let margin = (RAIL_W - RAIL_ITEM_W) / 2.0;
+        let rail_x = 0.0;
+        let item_x = rail_x + margin;
+        let bar_x = rail_x;
+        assert_eq!(item_x - bar_x, margin);
+    }
+
+    #[test]
+    fn conv_row_rect_height_fits_the_42px_avatar_plus_7px_padding_top_and_bottom() {
+        assert_eq!(CONV_ROW_RECT_H, LIST_AVATAR_D + 14.0);
+        assert_eq!(CONV_ROW_RECT_H, 56.0);
+    }
+
+    #[test]
+    fn conv_row_h_reserves_the_shared_row_gap_after_the_painted_rect() {
+        assert_eq!(CONV_ROW_H - CONV_ROW_RECT_H, ROW_GAP);
+    }
+
+    #[test]
+    fn search_field_is_fully_rounded() {
+        // A fully-rounded pill's own radius is exactly half its height.
+        assert_eq!(SEARCH_FIELD_RADIUS, SEARCH_FIELD_H / 2.0);
+    }
+
+    #[test]
+    fn initials_takes_up_to_two_words_uppercased() {
+        assert_eq!(initials("zeng3ld"), "Z");
+        assert_eq!(initials("Trading desk"), "TD");
+        assert_eq!(initials("kvant_42 extra words"), "KE");
+        assert_eq!(initials(""), "");
     }
 }

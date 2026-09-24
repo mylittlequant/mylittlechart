@@ -78,12 +78,14 @@ pub(crate) const DM_PEER_FIELD: &str = "dm_peer";
 /// conversation with (see `messenger_overlay.rs`'s own `draw_chat_filter_row`).
 pub(crate) const DM_CHAT_FILTER_FIELD: &str = "dm_chat_filter";
 
-/// Left-column width in the Community modal's two-pane layout (boards for
-/// Forum, conversations for Messages) — W2 of the community-modal-and-
-/// forum-ladder arc (`docs/mlc/plans/community-modal-and-forum-ladder-
-/// 2026-09-09.md`). Shared by `forum_v2_overlay.rs`/`dm_overlay.rs` so both
-/// panes' dividers line up regardless of which tab is active.
-pub(crate) const LIST_COL_W: f64 = 220.0;
+/// Left-column width in the Community modal's Messages tab
+/// (`messenger_overlay.rs`'s own chat-list column) — W2 of the community-
+/// modal-and-forum-ladder arc (`docs/mlc/plans/community-modal-and-forum-
+/// ladder-2026-09-09.md`), widened for the messenger concept
+/// (`messenger_concept_v1.html`'s `.list{width:290px}`). Forum keeps its
+/// own board-list width, not this constant — the two tabs' left columns
+/// never needed to match.
+pub(crate) const LIST_COL_W: f64 = 290.0;
 /// Gap between the two columns, split evenly by the hairline
 /// [`draw_column_divider`] draws at its midpoint.
 pub(crate) const COL_GAP: f64 = 16.0;
