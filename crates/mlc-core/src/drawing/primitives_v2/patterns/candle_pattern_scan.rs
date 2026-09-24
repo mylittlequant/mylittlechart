@@ -67,17 +67,17 @@ fn tint_color<'a>(tint: MarkerTint, stroke: &'a str) -> &'a str {
     }
 }
 
-/// Which side of the highlighted bar range a hit's own label sits on —
-/// bullish hits read as "the top" (`Above`), bearish/neutral hits read as
-/// "the bottom" (`Below`), matching the owner's own 0.5.615 spec
-/// ("placed above (bullish-top) or below the bars").
+/// Which side of the highlighted bar range a hit's own label sits on — the
+/// charting convention: a bullish pattern forms at a low, so its label sits
+/// BELOW the bars; bearish and neutral ones sit ABOVE (coordinator
+/// correction of the 0.5.615 brief, which had it inverted).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum LabelSide { Above, Below }
 
 fn label_side_for(tint: MarkerTint) -> LabelSide {
     match tint {
-        MarkerTint::Up => LabelSide::Above,
-        MarkerTint::Down | MarkerTint::Neutral => LabelSide::Below,
+        MarkerTint::Up => LabelSide::Below,
+        MarkerTint::Down | MarkerTint::Neutral => LabelSide::Above,
     }
 }
 
@@ -568,8 +568,8 @@ impl Primitive for CandlePatternScan {
     /// reads [`Self::cached_hits`] — matching
     /// [`Primitive::refresh_bar_derived_cache`]'s own contract.
     ///
-    /// Layout: bullish hits label ABOVE their own bars, bearish/neutral
-    /// hits BELOW ([`label_side_for`]); dense neighbours collapse first by
+    /// Layout: bullish hits label BELOW their own bars, bearish/neutral
+    /// hits ABOVE ([`label_side_for`]); dense neighbours collapse first by
     /// dot proximity ([`build_clusters`], any zoom) and then, additionally,
     /// by measured label width ([`merge_overlapping_label_boxes`]) — a
     /// collapsed cluster shows a generic "N patterns" count rather than one
@@ -1126,9 +1126,9 @@ mod tests {
 
     #[test]
     fn label_side_for_routes_bullish_up_and_everything_else_down() {
-        assert_eq!(label_side_for(MarkerTint::Up), LabelSide::Above);
-        assert_eq!(label_side_for(MarkerTint::Down), LabelSide::Below);
-        assert_eq!(label_side_for(MarkerTint::Neutral), LabelSide::Below);
+        assert_eq!(label_side_for(MarkerTint::Up), LabelSide::Below);
+        assert_eq!(label_side_for(MarkerTint::Down), LabelSide::Above);
+        assert_eq!(label_side_for(MarkerTint::Neutral), LabelSide::Above);
     }
 
     #[test]
