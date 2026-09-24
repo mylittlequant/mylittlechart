@@ -67,8 +67,8 @@ use super::cloud_overlay::{
 };
 use super::community::CommunityListPaneResult;
 use super::dm_overlay::{
-    draw_error_line, draw_field, draw_field_shaped, draw_key_changed_notice, draw_lock_glyph,
-    draw_lookup_dropdown, draw_open_peer_row,
+    draw_error_line, draw_field_shaped, draw_key_changed_notice, draw_lock_glyph, draw_lookup_dropdown,
+    draw_open_peer_row,
 };
 
 /// The folder rail's own width — messenger concept v1 `.rail{width:70px}`.
@@ -144,11 +144,46 @@ const SEARCH_FIELD_H_PADDING: f64 = 14.0;
 /// concept `.ib{width:30px;height:30px}`.
 const CHAT_FILTER_PENCIL_W: f64 = 30.0;
 const CHAT_FILTER_GAP: f64 = 8.0;
-/// The docked send box's own height — draft field + gap + Send button, the
-/// SAME footprint every dock state uses (locked/peer-without-key/nick-
-/// required all fit inside it too — see [`draw_composer`]'s own doc) so
-/// the pane's scroll math never has to change per dock state.
-const COMPOSER_H: f64 = 8.0 + FIELD_H + 8.0 + ROW_H;
+/// The docked composer's own ONE-row footprint (concept `.comp`/`.cin`:
+/// a 36px draft field + round send button side by side, `padding:8px 10px
+/// 9px`) — every non-nick-gated dock state (locked, peer-without-key,
+/// normal) fits inside this same footprint, so the pane's scroll math never
+/// has to change between them. The nick-required gate is the one exception
+/// ([`NICK_REQUIRED_DOCK_H`], [`dock_h`]) — a ladder-mandate hint+button
+/// pair unrelated to messaging itself, unchanged from before this pass.
+const COMPOSER_PAD_TOP: f64 = 8.0;
+const COMPOSER_PAD_BOTTOM: f64 = 9.0;
+/// The draft field's own height — concept `.field{min-height:36px;
+/// border-radius:18px}` (fully rounded).
+const COMPOSER_FIELD_H: f64 = 36.0;
+const COMPOSER_FIELD_RADIUS: f64 = COMPOSER_FIELD_H / 2.0;
+const COMPOSER_GAP: f64 = 8.0;
+/// The round accent send button's own diameter — concept `.send{width:36px;
+/// height:36px;border-radius:50%}`.
+const COMPOSER_SEND_D: f64 = 36.0;
+const COMPOSER_H: f64 = COMPOSER_PAD_TOP + COMPOSER_FIELD_H + COMPOSER_PAD_BOTTOM;
+/// A dock notice row's own compact button — concept `.btn{padding:8px
+/// 16px;border-radius:4px}`, sized to its own text rather than the pane's
+/// full width (the old dock stretched "Unlock vault" across the whole
+/// composer; the concept never does).
+const DOCK_BTN_PAD_V: f64 = 8.0;
+const DOCK_BTN_PAD_H: f64 = 16.0;
+const DOCK_BTN_TEXT_H: f64 = 13.0;
+const DOCK_BTN_H: f64 = DOCK_BTN_TEXT_H + DOCK_BTN_PAD_V * 2.0;
+/// The nick-required gate's own footprint — a hint line then a full-width
+/// button, the SAME two-row shape this dock always used for it (a ladder
+/// mandate, not a messaging-specific notice — see [`COMPOSER_H`]'s own doc
+/// for why every other dock state got a new, single-row footprint this pass
+/// and this one did not).
+const NICK_REQUIRED_DOCK_H: f64 = 8.0 + FIELD_H + 8.0 + ROW_H;
+
+/// The docked composer's own footprint for the CURRENT dock state — see
+/// [`COMPOSER_H`]'s own doc. Read by both `draw_chat_pane` (to size the
+/// feed above the dock) and `draw_composer` (to anchor the dock's own top),
+/// so the two can never disagree about where the dock starts.
+fn dock_h(state: &CommunityState) -> f64 {
+    if state.forum2.nick_required() { NICK_REQUIRED_DOCK_H } else { COMPOSER_H }
+}
 /// The chat pane's own fixed header — concept `.ch{height:52px}`, drawn
 /// once above the scrollable feed rather than scrolling away with it (the
 /// concept's `.chat` is a column of THREE fixed-size siblings — rail-style
@@ -717,7 +752,7 @@ fn draw_chat_pane(
     draw_chat_header(ctx, x, body_y, w, &peer_label, peer_rank, fingerprint, has_key, key_changed, tt);
 
     let feed_y = body_y + CHAT_HEADER_H;
-    let feed_h = (body_viewport_h - CHAT_HEADER_H - COMPOSER_H).max(0.0);
+    let feed_h = (body_viewport_h - CHAT_HEADER_H - dock_h(state)).max(0.0);
     let viewport_rect = WidgetRect::new(x, feed_y, w, feed_h);
     coord.register_on_layer("cloud_overlay:scroll_viewport", viewport_rect, Sense::SCROLL, layer_id);
     let scrollable = ScrollableContainer::new(viewport_rect, &state.scroll, Some(scroll_config()));
@@ -849,7 +884,7 @@ fn draw_composer(
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
 ) {
-    let composer_y = y + (viewport_h - COMPOSER_H).max(0.0);
+    let composer_y = y + (viewport_h - dock_h(state)).max(0.0);
     if state.forum2.nick_required() {
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(&tt.item_text_muted);
@@ -864,23 +899,32 @@ fn draw_composer(
         );
         return;
     }
-    // Vault locked (owner spec, UI-2a piece 3): ONE line + ONE accent
-    // button, replacing the old pane-top header notice AND the old
-    // button-less composer hint together.
+    let row_y = composer_y + COMPOSER_PAD_TOP;
+    let row_cy = row_y + COMPOSER_FIELD_H / 2.0;
+    // Vault locked (owner spec, UI-2a piece 3): ONE row — a lock glyph, the
+    // notice, and a COMPACT accent button hugging its own text, right-
+    // aligned (not the pane's full width — see [`DOCK_BTN_H`]'s own doc).
     if locked {
+        let label = "Unlock vault";
+        ctx.set_font("600 13px sans-serif");
+        let btn_w = ctx.measure_text(label) + DOCK_BTN_PAD_H * 2.0;
+        let btn_rect = WidgetRect::new(x + w - btn_w, row_cy - DOCK_BTN_H / 2.0, btn_w, DOCK_BTN_H);
+
+        let icon_cx = x + 9.0;
+        draw_lock_glyph(ctx, icon_cx, row_cy, 14.0, &tt.item_text_muted);
+
+        let text_x = x + 22.0;
+        let text_right = (btn_rect.x - 10.0).max(text_x);
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(&tt.item_text_muted);
         ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.set_text_baseline(TextBaseline::Middle);
         let hint = crate::ui::widgets::fit_text_to_width(
-            ctx, "Vault locked. Messages stay encrypted until you unlock it.", w,
+            ctx, "Vault locked. Messages stay encrypted until you unlock it.", (text_right - text_x).max(0.0),
         );
-        ctx.fill_text(&hint, x, composer_y + 8.0);
-        let btn_y = composer_y + 8.0 + FIELD_H + 8.0;
-        draw_action_row(
-            ctx, coord, layer_id, "cloud_overlay:dm:unlock_vault",
-            WidgetRect::new(x, btn_y, w, ROW_H - ROW_GAP), "Unlock vault", tt,
-        );
+        ctx.fill_text(&hint, text_x, row_cy);
+
+        draw_action_row(ctx, coord, layer_id, "cloud_overlay:dm:unlock_vault", btn_rect, label, tt);
         return;
     }
     // Peer has no messaging key published yet — a calm, no-button line
@@ -890,23 +934,58 @@ fn draw_composer(
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(&tt.item_text_muted);
         ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.set_text_baseline(TextBaseline::Middle);
         let hint = crate::ui::widgets::fit_text_to_width(
             ctx, "This person hasn't set up messaging yet.", w,
         );
-        ctx.fill_text(&hint, x, composer_y + 8.0);
+        ctx.fill_text(&hint, x, row_cy);
         return;
     }
+    // Normal — one row: a fully-rounded draft field plus a round accent
+    // send button (concept `.cin`: `.field` + `.send`, `gap:4px`).
     let crate::ui::modal_settings::DmView::Conversation { draft_field_id, .. } = &state.dm.view else { return };
-    let field_rect = WidgetRect::new(x, composer_y + 8.0, w, FIELD_H);
-    let (rect, chars) = draw_field(
+    let field_w = (w - COMPOSER_SEND_D - COMPOSER_GAP).max(60.0);
+    let field_rect = WidgetRect::new(x, row_y, field_w, COMPOSER_FIELD_H);
+    let (rect, chars) = draw_field_shaped(
         ctx, coord, layer_id, "cloud_overlay:dm:draft_input", draft_field_id, field_rect,
-        "Write a message…", ft, tt, current_time_ms,
+        "Write a message…", ft, tt, current_time_ms, COMPOSER_FIELD_RADIUS, 14.0,
     );
     result.dm_draft_rect = Some(rect);
     result.dm_draft_char_positions = chars;
-    let btn_y = composer_y + 8.0 + FIELD_H + 8.0;
-    draw_action_row(ctx, coord, layer_id, "cloud_overlay:dm:send", WidgetRect::new(x, btn_y, w, ROW_H - ROW_GAP), "Send", tt);
+
+    let send_rect = WidgetRect::new(x + field_w + COMPOSER_GAP, row_y, COMPOSER_SEND_D, COMPOSER_SEND_D);
+    draw_send_button(ctx, coord, layer_id, send_rect, tt);
+}
+
+/// The round accent send button (concept `.send`) — a filled circle with a
+/// plain glyph, same "font-glyph icon" idiom [`draw_chat_filter_row`]'s own
+/// pencil button already uses rather than a vector path (this crate sits
+/// below the `IconId` SVG registry's own home — see `draw_lock_glyph`'s own
+/// doc).
+fn draw_send_button(ctx: &mut dyn RenderContext, coord: &mut InputCoordinator, layer_id: &LayerId, rect: WidgetRect, tt: &ToolbarTheme) {
+    let widget_id = "cloud_overlay:dm:send";
+    let hovered = coord.is_hovered(&WidgetId::from(widget_id));
+    let cx = rect.center_x();
+    let cy = rect.center_y();
+    let r = rect.width.min(rect.height) / 2.0;
+    ctx.set_fill_color(&tt.accent);
+    ctx.begin_path();
+    ctx.arc(cx, cy, r, 0.0, std::f64::consts::TAU);
+    ctx.fill();
+    if hovered {
+        ctx.set_fill_color(&tt.item_bg_hover);
+        ctx.set_global_alpha(0.3);
+        ctx.begin_path();
+        ctx.arc(cx, cy, r, 0.0, std::f64::consts::TAU);
+        ctx.fill();
+        ctx.set_global_alpha(1.0);
+    }
+    ctx.set_fill_color(contrasting_text_color(&tt.accent));
+    ctx.set_font("600 15px sans-serif");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("\u{27A4}", cx, cy + 0.5);
+    coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
 }
 
 // =============================================================================
@@ -1339,5 +1418,34 @@ mod tests {
     #[test]
     fn chat_header_height_matches_the_concept() {
         assert_eq!(CHAT_HEADER_H, 52.0);
+    }
+
+    #[test]
+    fn composer_h_is_padding_plus_one_36px_row() {
+        assert_eq!(COMPOSER_H, COMPOSER_PAD_TOP + COMPOSER_FIELD_H + COMPOSER_PAD_BOTTOM);
+        assert_eq!(COMPOSER_H, 53.0);
+    }
+
+    #[test]
+    fn composer_field_and_send_button_share_the_same_row_height() {
+        assert_eq!(COMPOSER_FIELD_H, COMPOSER_SEND_D);
+    }
+
+    #[test]
+    fn composer_field_is_fully_rounded() {
+        assert_eq!(COMPOSER_FIELD_RADIUS, COMPOSER_FIELD_H / 2.0);
+    }
+
+    #[test]
+    fn dock_h_uses_the_compact_row_footprint_when_no_nick_gate_applies() {
+        let state = CommunityState::default();
+        assert_eq!(dock_h(&state), COMPOSER_H);
+    }
+
+    #[test]
+    fn dock_btn_is_compact_not_a_full_row() {
+        // The old dock stretched every button to ROW_H (40px) across the
+        // whole composer; the concept's own compact button is shorter.
+        assert!(DOCK_BTN_H < ROW_H);
     }
 }
