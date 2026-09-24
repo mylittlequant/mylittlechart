@@ -949,6 +949,9 @@ fn pattern_section() -> ToolbarSectionDef {
             DropdownItemDef::action("cypher_pattern", PN::CypherPattern.get(lang)).with_icon(ToolbarIconId::new("CypherPattern")),
             DropdownItemDef::action("abcd_pattern", PN::AbcdPattern.get(lang)).with_icon(ToolbarIconId::new("AbcdPattern")),
             DropdownItemDef::action("three_drives", PN::ThreeDrives.get(lang)).with_icon(ToolbarIconId::new("ThreeDrives")),
+            // 5-0 (Duddella, A3.1, 2026-09-24) — own 6-point struct, not a
+            // preset; name "5-0" is owner-pre-approved (arc text).
+            DropdownItemDef::action("five_zero_pattern", PN::FiveZeroPattern.get(lang)).with_icon(ToolbarIconId::new("harmonic_five_o")),
             // Classic figures — moved in from the old "Patterns" header,
             // unchanged action ids/icons.
             DropdownItemDef::Separator,
@@ -1458,11 +1461,13 @@ mod pattern_section_tests {
         assert_eq!(header_labels(&items), expected);
     }
 
-    /// The Harmonics header's own 10 action ids: the 7 `harmonic_*` presets
-    /// in family order, then `cypher_pattern`/`abcd_pattern`/`three_drives`
-    /// moved in from the old flat "Patterns" header.
+    /// The Harmonics header's own action ids: the 7 `harmonic_*` presets in
+    /// family order, then `cypher_pattern`/`abcd_pattern`/`three_drives`
+    /// moved in from the old flat "Patterns" header, then `five_zero_pattern`
+    /// (A3.1, 2026-09-24) — 11 items. `harmonic_scan` (A3.5) extends this
+    /// same assertion to 12 rather than adding a second, parallel test.
     #[test]
-    fn harmonics_header_has_ten_actions_in_order() {
+    fn harmonics_header_has_eleven_actions_in_order() {
         let lang = current_language();
         let items = pattern_tools_items();
         let harmonics_label = MK::HeaderHarmonics.get(lang).to_string();
@@ -1480,7 +1485,7 @@ mod pattern_section_tests {
             vec![
                 "harmonic_gartley", "harmonic_bat", "harmonic_alt_bat",
                 "harmonic_butterfly", "harmonic_crab", "harmonic_deep_crab", "harmonic_shark",
-                "cypher_pattern", "abcd_pattern", "three_drives",
+                "cypher_pattern", "abcd_pattern", "three_drives", "five_zero_pattern",
             ],
         );
     }

@@ -1478,6 +1478,21 @@ pub const ICON_ELLIOTT_SCAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" 
   <circle cx="18" cy="7.5" r="1.2" fill="currentColor"/>
 </svg>"##;
 
+/// The 6-point `0-X-A-B-C-D` zigzag Duddella's own "5-0" names, with the
+/// pattern's own completion triangle tinted — `icons_v4.json` batch B's own
+/// `harmonic_five_o` body (2026-09-23 toolbar icons, drawn ahead of A3,
+/// wired here), the manual counterpart to `ICON_HARMONIC_SCAN` (A3.5).
+pub const ICON_HARMONIC_FIVE_O: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2.5 6L6 17l4-6 4 8 4-13 3.5 7"/>
+  <path d="M10 11L18 6L21.5 13z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <circle cx="2.5" cy="6" r="1.2" fill="currentColor"/>
+  <circle cx="6" cy="17" r="1.2" fill="currentColor"/>
+  <circle cx="10" cy="11" r="1.2" fill="currentColor"/>
+  <circle cx="14" cy="19" r="1.2" fill="currentColor"/>
+  <circle cx="18" cy="6" r="1.2" fill="currentColor"/>
+  <circle cx="21.5" cy="13" r="1.2" fill="currentColor"/>
+</svg>"##;
+
 /// Two columns of unequal cells facing each other across a bar's centre —
 /// the bid-versus-ask reading a footprint cell carries.
 pub const ICON_IMBALANCE_ZONE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
@@ -2907,6 +2922,7 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "abcd_pattern" | "abcdpattern" => Some(ICON_ABCD_PATTERN),
         "triangle_pattern" | "trianglepattern" => Some(ICON_TRIANGLE_PATTERN),
         "three_drives" | "threedrives" => Some(ICON_THREE_DRIVES),
+        "harmonic_five_o" | "harmonicfiveo" => Some(ICON_HARMONIC_FIVE_O),
 
         // Elliott waves
         "elliott_impulse" | "elliottimpulse" => Some(ICON_ELLIOTT_IMPULSE),
@@ -3511,6 +3527,7 @@ mod icon_stroke_width_guard {
         ("ICON_DELTA_DIVERGENCE", ICON_DELTA_DIVERGENCE),
         ("ICON_ORDER_FLOW_SCAN", ICON_ORDER_FLOW_SCAN),
         ("ICON_ELLIOTT_SCAN", ICON_ELLIOTT_SCAN),
+        ("ICON_HARMONIC_FIVE_O", ICON_HARMONIC_FIVE_O),
         ("ICON_CROSSHAIR", ICON_CROSSHAIR),
         ("ICON_AGENT_TERMINAL", ICON_AGENT_TERMINAL),
         ("ICON_AGENT_CHAT", ICON_AGENT_CHAT),

@@ -286,6 +286,10 @@ impl PrimitiveRegistry {
         self.register_typed::<super::patterns::abcd_pattern::AbcdPattern>(super::patterns::abcd_pattern::metadata());
         self.register_typed::<super::patterns::triangle_pattern::TrianglePattern>(super::patterns::triangle_pattern::metadata());
         self.register_typed::<super::patterns::three_drives::ThreeDrives>(super::patterns::three_drives::metadata());
+        // 5-0 (Duddella) — A3.1: genuinely 6 points, its own struct/type_id,
+        // real `register_typed` deserializer (not a preset, see this
+        // primitive's own module doc).
+        self.register_typed::<super::patterns::five_zero_pattern::FiveZeroPattern>(super::patterns::five_zero_pattern::metadata());
         self.register_typed::<super::patterns::candle_pattern::CandlePattern>(super::patterns::candle_pattern::metadata());
         self.register_typed::<super::patterns::candle_pattern_scan::CandlePatternScan>(super::patterns::candle_pattern_scan::metadata());
 

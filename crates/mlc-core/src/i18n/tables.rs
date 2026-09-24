@@ -933,7 +933,7 @@ pub(super) static SIDEBAR_KEY_TABLE: [[&str; N_LANG]; 51] = [
 //
 //  Col:  0=En (registry display_name)              1=Ru                                          2..14=""
 
-pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 102] = [
+pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 103] = [
     /* 0  TrendLine           */ [ "Trend Line",                 "Линия тренда",                           "Línea de tendencia",          "Trendlinie",                    "Ligne de tendance",              "Linha de tendência",          "趋势线",        "トレンドライン",    "추세선",          "خط الاتجاه",         "Linea di tendenza",       "Trend Çizgisi",           "Linia trendu",            "Лінія тренду",              "ट्रेंड लाइन"           ],
     /* 1  HorizontalLine      */ [ "Horizontal Line",            "Горизонтальная линия",                   "Línea horizontal",            "Horizontale Linie",             "Ligne horizontale",              "Linha horizontal",            "水平线",        "水平線",            "수평선",          "خط أفقي",            "Linea orizzontale",       "Yatay Çizgi",             "Linia pozioma",           "Горизонтальна лінія",       "क्षैतिज रेखा"          ],
     /* 2  VerticalLine        */ [ "Vertical Line",              "Вертикальная линия",                     "Línea vertical",              "Vertikale Linie",               "Ligne verticale",                "Linha vertical",              "垂直线",        "垂直線",            "수직선",          "خط عمودي",           "Linea verticale",         "Dikey Çizgi",             "Linia pionowa",           "Вертикальна лінія",         "लंबवत रेखा"            ],
@@ -1040,6 +1040,12 @@ pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 102] = [
     // Эллиотта"); the remaining 13 columns are plain translations, NOT
     // translator-reviewed (see this piece's own commit message).
     /* 101 ElliottScan        */ [ "Elliott autodetector", "Автодетектор Эллиотта", "Autodetector de Elliott", "Elliott-Autodetektor", "Autodétecteur d'Elliott", "Autodetector de Elliott", "艾略特自动检测器", "エリオット自動検出", "엘리엇 자동 감지기", "الكاشف التلقائي لإليوت", "Autorilevatore di Elliott", "Elliott otomatik dedektörü", "Autodetektor Elliotta", "Автодетектор Елліотта", "इलियट ऑटोडिटेक्टर" ],
+    // 102 FiveZeroPattern: "5-0" is a numeral pattern name (Duddella), owner
+    // pre-approved verbatim (autodetectors A3 brief, 2026-09-24) — kept in
+    // the SAME Latin/numeral spelling in every language column, matching
+    // `HarmonicKindGartley`'s own proper-noun convention (`xabcd_pattern.rs`'s
+    // own doc: harmonic pattern names are proper nouns, never translated).
+    /* 102 FiveZeroPattern    */ [ "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0" ],
 ];
 
 // =============================================================================

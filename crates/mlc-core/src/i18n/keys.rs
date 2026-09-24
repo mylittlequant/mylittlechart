@@ -1842,10 +1842,13 @@ pub enum PrimitiveNameKey {
     // frozen-discriminant reason the VWAP pair and the markup-engine block
     // above it were (101).
     ElliottScan         = 101,
+    // Autodetector A3, 5-0 manual primitive (2026-09-24) — same
+    // frozen-discriminant reason (102).
+    FiveZeroPattern     = 102,
 }
 
 impl PrimitiveNameKey {
-    pub const COUNT: usize = 102;
+    pub const COUNT: usize = 103;
 
     /// Get translation for this key.
     #[inline]
@@ -1959,6 +1962,7 @@ impl PrimitiveNameKey {
             "delta_divergence"         => Some(Self::DeltaDivergence),
             "order_flow_scan"          => Some(Self::OrderFlowScan),
             "elliott_scan"             => Some(Self::ElliottScan),
+            "five_zero_pattern"        => Some(Self::FiveZeroPattern),
             _                          => None,
         }
     }

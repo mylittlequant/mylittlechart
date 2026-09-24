@@ -10,7 +10,7 @@
 use super::config::WaveDegree;
 use super::elliott::{CorrectionType, ElliottCorrection, ElliottImpulse, ElliottTriangle, ImpulseKind};
 use super::patterns::xabcd_pattern::XabcdHarmonicKind;
-use super::patterns::{AbcdPattern, CypherPattern, ThreeDrives, XabcdPattern};
+use super::patterns::{AbcdPattern, CypherPattern, FiveZeroPattern, ThreeDrives, XabcdPattern};
 use super::Primitive;
 
 fn arr6(p: &[(i64, f64)]) -> [(i64, f64); 6] {
@@ -94,12 +94,7 @@ fn three_drives_from_pivots(points: &[(i64, f64)], color: &str) -> Option<Box<dy
 /// `RunningZigzag`/`RunningFlat` variants `scan_waves` does not produce —
 /// unreachable for a hit `scan_waves` actually returned, listed only so a
 /// future kind addition fails loudly here instead of silently rendering
-/// nothing) — and, for now, `FiveZero` too: `FiveZeroPattern` is A3.1's own
-/// piece, landing after this Shared module; until then a `FiveZero` hit
-/// stays visible in `HarmonicScan`'s own Hits table but cannot yet be
-/// rendered or placed through this constructor (a documented, temporary
-/// narrowing, not a silent one — this function's own Expanding-diagonal
-/// arms below set the same precedent for a permanent one).
+/// nothing).
 pub fn build_wave_primitive(
     kind: mli::ewa::types::EwaPatternKind,
     points: &[(i64, f64)],
@@ -168,7 +163,13 @@ pub fn build_wave_primitive(
         K::Cypher => Some(Box::new(CypherPattern::new(arr5(points), color))),
         K::Abcd => Some(Box::new(AbcdPattern::new(arr4(points), color))),
         K::ThreeDrives => three_drives_from_pivots(points, color),
-        K::FiveZero => None,
+        K::FiveZero => {
+            let mut a = [(0i64, 0.0); 6];
+            for (i, &v) in points.iter().take(6).enumerate() {
+                a[i] = v;
+            }
+            Some(Box::new(FiveZeroPattern::new(a, color)))
+        }
         _ => None,
     }
 }
@@ -186,8 +187,7 @@ mod tests {
 
     /// The 19 kinds this arc actually scans (8 Elliott + 11 harmonic — see
     /// this brief's own "Grounding correction"), each paired with the
-    /// `type_id()` its own match arm must produce. `FiveZero` is excluded
-    /// here (see [`build_wave_primitive`]'s own doc — A3.1 wires it).
+    /// `type_id()` its own match arm must produce.
     const SCANNED_KINDS: &[(mli::ewa::types::EwaPatternKind, &str)] = {
         use mli::ewa::types::EwaPatternKind as K;
         &[
@@ -209,6 +209,7 @@ mod tests {
             (K::Cypher, "cypher_pattern"),
             (K::Abcd, "abcd_pattern"),
             (K::ThreeDrives, "three_drives"),
+            (K::FiveZero, "five_zero_pattern"),
         ]
     };
 
@@ -240,18 +241,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn five_zero_stays_none_until_a3_1_lands_five_zero_pattern() {
-        let points = synthetic_points();
-        assert!(build_wave_primitive(
-            mli::ewa::types::EwaPatternKind::FiveZero,
-            &points,
-            "#9C27B0",
-            WaveDegree::Intermediate,
-        )
-        .is_none());
     }
 
     #[test]
