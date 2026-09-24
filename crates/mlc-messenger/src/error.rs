@@ -61,6 +61,19 @@ pub enum MessengerError {
         "outgoing requests are blocked: a state mutation they depend on is not yet flushed and acknowledged"
     )]
     FlushPending,
+
+    /// [`crate::MessengerCommand::SendMessage`] named an `edit_of` target
+    /// this account did not itself send (or that this core has never seen
+    /// at all) — rejected outright by [`crate::MessengerCore::dispatch`]
+    /// rather than silently sent as a replacement every other member's own
+    /// `m.replace` aggregation would ignore anyway
+    /// (`crate::room::relations`'s own module doc: "must come from the
+    /// original sender").
+    #[error("cannot edit {event_id}: not sent by this account, or unknown")]
+    EditNotOwned {
+        /// The event the caller tried to edit.
+        event_id: crate::ids::EventId,
+    },
 }
 
 impl From<crate::canonical_json::CanonicalJsonError> for MessengerError {

@@ -102,9 +102,19 @@
 //! device-list/OTK/`keys/query` bookkeeping, room state/timeline/Megolm
 //! decrypt, ephemeral/account-data folding), and the receive-side
 //! [`core::MessengerCommand`] variants (`MarkRead`, `SetTyping`,
-//! `RetryDecryption`, `LoadOlder`). The send pipeline (`SendMessage`,
-//! `CreateRoom`, and everything else `sync_engine`/`lib.rs` still owes per
-//! the plan, M13b) is a later piece and is not present in this crate yet.
+//! `RetryDecryption`, `LoadOlder`).
+//!
+//! **M13b** — the SEND path, in the same module ([`core::MessengerCore`]):
+//! a per-room ordered send pipeline for [`core::MessengerCommand::SendMessage`]/
+//! `React`/`Redact`/`RetrySend` (key-query → key-claim → key-share → the
+//! room event itself, for an encrypted room; straight to the wire
+//! otherwise — key sharing is always awaited before the room event that
+//! needs it), plus every room-membership/tag/typing command
+//! (`CreateRoom`, `JoinRoom`, `LeaveRoom`, `Invite`, `Kick`, `SetTag`,
+//! `RemoveTag`, `SetTyping`'s own debounce). Plan §3's separate
+//! `sync_engine.rs` never materialized as its own module — everything it
+//! described lives directly in [`core`] instead, alongside the kernel it
+//! would otherwise have had to be threaded through anyway.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -121,7 +131,7 @@ pub mod store;
 pub mod wire;
 
 pub use canonical_json::{sign_json, verify_json_signature, CanonicalJsonError};
-pub use core::{CoreConfig, Counters, MessengerCommand, MessengerCore, MessengerEvent};
+pub use core::{CoreConfig, Counters, CreateRoomKind, MessageKind, MessengerCommand, MessengerCore, MessengerEvent, OutgoingMessage};
 pub use crypto::account::OlmAccountState;
 pub use crypto::device_tracker::{DeviceKeyChanged, DeviceTracker, DroppedDevice, KeysQueryOutcome, StoredDevice};
 pub use crypto::group_sessions::{

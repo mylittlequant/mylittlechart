@@ -7,9 +7,11 @@
 //! [`e2e_core_receives_and_decrypts_a_megolm_message_sent_by_a_manager_level_peer`]
 //! is the one exception the task brief itself calls out: it still drives
 //! the managers directly (`crypto::olm_sessions`/`crypto::group_sessions`),
-//! exactly like `e2e_megolm_group.rs`'s own `TestClient` already does,
-//! because the send pipeline (`MessengerCommand::SendMessage`, M13b) does
-//! not exist in this crate yet.
+//! exactly like `e2e_megolm_group.rs`'s own `TestClient` already does --
+//! this file predates the send pipeline (`MessengerCommand::SendMessage`,
+//! M13b) and is kept as-is rather than retrofitted; `e2e_send_pipeline.rs`
+//! covers the same scenario, and every other M13b one, with a real
+//! [`MessengerCore`] send pipeline on BOTH sides instead.
 
 // See `e2e_olm_1to1.rs`'s own `mod support;` for why this allow is here --
 // `tests/support` is shared across every integration-test binary in this

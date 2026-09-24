@@ -751,6 +751,22 @@ impl Timeline {
             self.items[idx].content = content;
         }
     }
+
+    /// Attaches the server-confirmed event id to a not-yet-reconciled local
+    /// echo and marks it [`SendState::Sent`] -- the send pipeline's own
+    /// immediate reaction to a successful `PUT .../send/...` response
+    /// (`crate::core`'s module doc: "200 -> store `event_id` on the echo"),
+    /// without waiting for the next `/sync` to reconcile it via
+    /// `unsigned.transaction_id` ([`Timeline::apply_timeline_batch`] still
+    /// does that too, redundantly and harmlessly, the moment the confirmed
+    /// event itself arrives -- same `idx`, same final content). A no-op if
+    /// `txn_id` names no current item.
+    pub fn set_echo_event_id(&mut self, txn_id: &TxnId, event_id: EventId) {
+        let Some(&idx) = self.by_txn_id.get(txn_id) else { return };
+        self.items[idx].event_id = Some(event_id.clone());
+        self.items[idx].send_state = SendState::Sent;
+        self.by_event_id.insert(event_id, idx);
+    }
 }
 
 /// `true` when `item`'s already-decrypted text mentions `user_id` or

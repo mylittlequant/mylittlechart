@@ -1,10 +1,9 @@
 //! [`MessengerCore`] — the single-writer kernel tying every earlier piece
-//! together (plan §3's `lib.rs`/`sync_engine.rs`, work piece M13a): the
-//! `/sync` loop, to-device/device-list/room ingestion, Megolm decrypt, and
-//! the receive-side [`MessengerCommand`] variants. The send pipeline
-//! (`SendMessage`, `CreateRoom`, room-key sharing triggered by a local
-//! send, ...) is M13b, a later piece — see each item below for exactly
-//! what is and is not in scope here.
+//! together (plan §3's `lib.rs`/`sync_engine.rs`, work pieces M13a+M13b):
+//! the `/sync` loop, to-device/device-list/room ingestion, Megolm decrypt,
+//! the receive-side [`MessengerCommand`] variants (M13a), and the per-room
+//! ordered send pipeline plus every room-membership/tag/typing command
+//! (M13b, this module's own "M13b send pipeline" section below).
 //!
 //! # Kernel API shape
 //!
@@ -55,12 +54,10 @@
 //! ([`crate::store::StateStore::pending_requests`] — every pending request
 //! carries its own id); [`crate::ids::TxnId`] does not (a `TxnId` is baked
 //! into a request's `path`/`body`, never a distinct field), so its restore
-//! relies solely on the persisted value. This piece never itself mints a
-//! `TxnId` (nothing in the receive path needs one — sending is M13b's job);
-//! the mechanism is proven now via [`Counters`]'s own persistence and
-//! [`restore_counter`]'s pure logic so M13b's `SendMessage` needs to add
-//! nothing but a `next_txn_id` counterpart to
-//! [`MessengerCore::next_request_id`].
+//! relies solely on the persisted value. [`MessengerCore::next_txn_id`] is
+//! the send pipeline's own counterpart to
+//! [`MessengerCore::next_request_id`] — symmetric restore, symmetric
+//! write-before-mint discipline.
 //!
 //! # Sync ingestion order
 //!
@@ -112,25 +109,26 @@
 //! (M11), not wired in here.
 
 use crate::crypto::account::OlmAccountState;
-use crate::crypto::device_tracker::DeviceTracker;
+use crate::crypto::device_tracker::{DeviceTracker, StoredDevice};
 use crate::crypto::group_sessions::GroupSessionManager;
 use crate::crypto::olm_sessions::{OlmDecryptError, OlmSessionManager};
 use crate::error::MessengerError;
-use crate::ids::{DeviceId, EventId, RequestId, RoomId, UserId};
+use crate::ids::{DeviceId, EventId, RequestId, RoomId, TxnId, UserId};
 use crate::outgoing_queue::{Jitter, Lane, OutgoingQueue, ResponseOutcome};
 use crate::persist::{FlushBatch, SealedRecord};
 use crate::room::state::RoomState;
-use crate::room::timeline::{interpret_content, ItemContent, Timeline};
+use crate::room::timeline::{interpret_content, ItemContent, SendState, Timeline};
 use crate::room::RoomKind;
 use crate::store::{CryptoStore, RecordCodec, StateStore, Store};
 use crate::wire::events::{
-    DirectContent, MegolmEncryptedContent, RawEvent, ReceiptContent, RoomEncryptedContent, RoomKeyContent,
-    StrippedStateEvent, ToDeviceEvent, TypingContent, Unsigned,
+    DirectContent, InReplyTo, MegolmEncryptedContent, Membership, RawEvent, ReceiptContent, RelatesTo,
+    RoomEncryptedContent, RoomKeyContent, StrippedStateEvent, TagContent, TagInfo, TextLikeMessageContent,
+    ToDeviceEvent, TypingContent, Unsigned,
 };
 use crate::wire::sync::{parse_sync_response, InvitedRoom, JoinedRoom, LeftRoom};
 use crate::wire::{HttpResponseDescriptor, OutgoingRequest, OutgoingRequestKind};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 /// `/sync`'s own long-poll timeout (research doc §1.4's convention).
 const SYNC_TIMEOUT_MS: u64 = 30_000;
@@ -145,6 +143,18 @@ const TYPING_TIMEOUT_MS: u64 = 30_000;
 /// evicted first — same bounded-FIFO doctrine as
 /// [`crate::room::timeline`]'s own pending-relation queue.
 const UNKNOWN_SENDER_RETRY_CAPACITY: usize = 256;
+/// How often [`MessengerCommand::SetTyping`] actually sends a `typing:
+/// true` PUT while the caller keeps re-asserting it — a `false` (stop) is
+/// never debounced (M13b's own send-pipeline doc).
+const TYPING_DEBOUNCE_MS: i64 = 4_000;
+/// [`GroupSessionManager::chunk_recipients_for_send_to_device`]'s own cap
+/// already bounds one `sendToDevice` request's device count; this is the
+/// wire event type every such request carries when it is sharing a Megolm
+/// room key -- the OUTER to-device type is always `m.room.encrypted` (the
+/// body is already Olm ciphertext; the inner, only-visible-after-decrypt
+/// type is `m.room_key`), matching every other Olm-wrapped to-device send
+/// this crate builds (`crypto::olm_sessions`'s own module doc).
+const ROOM_KEY_SHARE_EVENT_TYPE: &str = "m.room.encrypted";
 
 /// This device's own [`crate::ids::RequestId`]/[`crate::ids::TxnId`]
 /// minting sequences — see this module's own doc, "Counters that must
@@ -187,20 +197,201 @@ pub struct CoreConfig {
     pub user_id: UserId,
     /// This device's own, server-assigned device id.
     pub device_id: DeviceId,
-    /// The homeserver's own server name — not consumed by this piece's own
-    /// logic yet (every id this core builds is either read whole off the
-    /// wire or supplied by a caller who already has one), kept on
-    /// [`CoreConfig`] because a shell already has to know it to reach the
-    /// homeserver at all, and a later piece (room creation, M13b) will need
-    /// it to mint a bare local part into a full room alias.
+    /// The homeserver's own server name — not consumed by this crate's own
+    /// logic yet (every id this core builds, including
+    /// [`MessengerCommand::CreateRoom`]'s, is either read whole off the wire
+    /// or supplied by a caller who already has one; `CreateRoomKind` has no
+    /// alias field), kept on [`CoreConfig`] because a shell already has to
+    /// know it to reach the homeserver at all, and a still-later piece
+    /// (minting a room alias's local part into a full alias) will need it.
     pub server_name: String,
 }
 
-/// A receive-side command a shell/adapter dispatches into the core.
-/// Send-side variants (`SendMessage`, `CreateRoom`, ...) are M13b — see
-/// this crate's module doc.
+/// Which `m.room.message` shape [`OutgoingMessage`] renders as (M13b send
+/// pipeline).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MessageKind {
+    /// `msgtype: "m.text"`.
+    Text,
+    /// `msgtype: "m.notice"`.
+    Notice,
+    /// `msgtype: "m.emote"`.
+    Emote,
+}
+
+impl MessageKind {
+    fn msgtype(self) -> &'static str {
+        match self {
+            MessageKind::Text => "m.text",
+            MessageKind::Notice => "m.notice",
+            MessageKind::Emote => "m.emote",
+        }
+    }
+}
+
+/// One message a caller wants sent via [`MessengerCommand::SendMessage`] —
+/// M13b's binding content shape: text/notice/emote, an optional reply
+/// pointer, and an optional edit target (which must name one of the
+/// caller's own already-sent events — [`MessengerCore::dispatch`] rejects
+/// an edit of someone else's event rather than silently sending a
+/// replacement the room's other members will refuse to accept, per
+/// `m.replace`'s own "must come from the original sender" rule,
+/// `crate::room::relations`'s own module doc). `reply_to` and `edit_of`
+/// are mutually exclusive at the wire level — if both are set, `edit_of`
+/// wins (an edit's own `m.relates_to` is `m.replace`, not a reply).
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OutgoingMessage {
+    /// Which `msgtype` this renders as.
+    pub kind: MessageKind,
+    /// The message's own plain-text body (the edited/new body, if this is
+    /// an edit).
+    pub body: String,
+    /// A rich-reply pointer (`m.in_reply_to`), if any.
+    pub reply_to: Option<EventId>,
+    /// The event this message replaces, if this is an edit — must be one
+    /// of the caller's own already-sent events (this module's own doc).
+    pub edit_of: Option<EventId>,
+}
+
+/// Which shape [`MessengerCommand::CreateRoom`] builds, mapped onto the
+/// server's own `POST /createRoom` field set (`visibility`/`is_direct`/
+/// `invite`/`name`/`topic` — the server derives `kind` itself from
+/// `visibility`+`is_direct`, per the server plan's §5; a client never
+/// sends a `preset`/`kind` field directly).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CreateRoomKind {
+    /// A 1:1 conversation: `is_direct: true`, exactly one invitee. Also
+    /// merges the new room into this account's own `m.direct` account data
+    /// once the room is created (this module's own doc).
+    Dm {
+        /// The other party.
+        peer: UserId,
+    },
+    /// A private multi-person room.
+    Group {
+        /// The room's display name.
+        name: String,
+        /// Users to invite at creation time.
+        invite: Vec<UserId>,
+        /// `true` gives every member the `invite` power level (`0`);
+        /// `false` restricts inviting to a moderator/owner (`50`) — the
+        /// server plan's §5 `group` column.
+        members_can_invite: bool,
+    },
+    /// A public, announcement-style room (never encrypted — server plan
+    /// §5: "never — server refuses to set it on a public room").
+    Channel {
+        /// The room's display name.
+        name: String,
+        /// The room's topic, if any.
+        topic: Option<String>,
+    },
+}
+
+/// One command a shell/adapter dispatches into the core — both the M13a
+/// receive-side variants (`MarkRead`, `SetTyping`, `RetryDecryption`,
+/// `LoadOlder`) and the M13b send/room-membership ones. Only `PartialEq`
+/// (not `Eq`): [`MessengerCommand::SetTag`]'s `order: Option<f64>` cannot
+/// implement `Eq`.
+#[derive(Clone, Debug, PartialEq)]
 pub enum MessengerCommand {
+    /// Sends one message into a room's per-room ordered send pipeline
+    /// (this module's own doc) — encrypts first if the room is encrypted,
+    /// sharing the room key to any not-yet-shared device before the
+    /// message itself is sent. A [`crate::room::timeline::TimelineItem`]
+    /// local echo appears immediately, in [`crate::room::timeline::SendState::Sending`].
+    SendMessage {
+        /// The room to send into.
+        room_id: RoomId,
+        /// The message content.
+        message: OutgoingMessage,
+        /// A caller-supplied transaction id (deterministic tests); `None`
+        /// mints a fresh one from this device's own counter.
+        txn_id: Option<TxnId>,
+    },
+    /// Sends a plaintext `m.reaction` — never Megolm-encrypted, even in an
+    /// encrypted room (allowed there as metadata, per the server's own
+    /// rule this crate mirrors).
+    React {
+        /// The room the reaction is sent in.
+        room_id: RoomId,
+        /// The event being reacted to.
+        target: EventId,
+        /// The reaction's own key (typically an emoji).
+        key: String,
+    },
+    /// Redacts an event (`PUT /rooms/{roomId}/redact/{eventId}/{txnId}`).
+    Redact {
+        /// The room the target event lives in.
+        room_id: RoomId,
+        /// The event being redacted.
+        target: EventId,
+        /// Why, if given.
+        reason: Option<String>,
+    },
+    /// Re-queues a [`crate::room::timeline::SendState::Failed`] send at the
+    /// back of its room's own send queue, WITHOUT re-encrypting it if it
+    /// had already been encrypted (the exact same ciphertext, the exact
+    /// same `txn_id` — this module's own doc). A no-op if `txn_id` names
+    /// no currently-failed send in `room_id`.
+    RetrySend {
+        /// The room the failed send belongs to.
+        room_id: RoomId,
+        /// The failed send's own transaction id.
+        txn_id: TxnId,
+    },
+    /// Creates a room (`POST /createRoom`).
+    CreateRoom {
+        /// Which shape to create.
+        kind: CreateRoomKind,
+    },
+    /// Joins a room this account has been invited to (or a public
+    /// channel).
+    JoinRoom {
+        /// The room to join.
+        room_id: RoomId,
+    },
+    /// Leaves a room.
+    LeaveRoom {
+        /// The room to leave.
+        room_id: RoomId,
+    },
+    /// Invites a user to a room.
+    Invite {
+        /// The room to invite into.
+        room_id: RoomId,
+        /// The user being invited.
+        user_id: UserId,
+    },
+    /// Removes a member from a room (`POST /rooms/{roomId}/kick`) — the
+    /// next encrypted send in this room rotates its Megolm session
+    /// automatically, excluding them (`crypto::group_sessions`'s own
+    /// rotation-trigger doc).
+    Kick {
+        /// The room to remove them from.
+        room_id: RoomId,
+        /// The member being removed.
+        user_id: UserId,
+        /// Why, if given.
+        reason: Option<String>,
+    },
+    /// Adds (or updates) a "chat folder" tag on a room (`m.tag` room
+    /// account data).
+    SetTag {
+        /// The room being tagged.
+        room_id: RoomId,
+        /// The tag's own name.
+        tag: String,
+        /// The tag's sort order among sibling tags, if any.
+        order: Option<f64>,
+    },
+    /// Removes a tag from a room.
+    RemoveTag {
+        /// The room the tag is removed from.
+        room_id: RoomId,
+        /// The tag's own name.
+        tag: String,
+    },
     /// Sets this room's read-up-to marker to `event_id` (`POST
     /// /rooms/{roomId}/read_markers`).
     MarkRead {
@@ -303,6 +494,129 @@ struct RoomMessagesResponseBody {
     end: Option<String>,
 }
 
+/// `PUT .../send/...`'s own response shape — the parts this module reads.
+#[derive(Deserialize)]
+struct SendResponseBody {
+    event_id: EventId,
+}
+
+/// `POST /createRoom`'s own response shape — the parts this module reads.
+#[derive(Deserialize)]
+struct CreateRoomResponseBody {
+    room_id: RoomId,
+}
+
+/// One room-scoped send's own content, before it is turned into wire bytes
+/// (M13b send pipeline). A reaction/redaction never enters the key-sharing
+/// half of the pipeline at all — only [`SendPayload::Message`] can be
+/// Megolm-encrypted.
+#[derive(Clone)]
+enum SendPayload {
+    /// A composed message — the only variant that goes through the
+    /// key-query/claim/share phases when its room is encrypted.
+    Message(OutgoingMessage),
+    /// A plaintext `m.reaction` — sent as-is, in any room.
+    Reaction {
+        /// The event being reacted to.
+        target: EventId,
+        /// The reaction's own key.
+        key: String,
+    },
+    /// A redaction (`PUT .../redact/...`) — sent as-is, in any room.
+    Redaction {
+        /// The event being redacted.
+        target: EventId,
+        /// Why, if given.
+        reason: Option<String>,
+    },
+}
+
+/// The exact wire request a [`PendingSend`] will make once it reaches
+/// [`SendPhase::AwaitingSend`] — computed once (either directly, for a
+/// plaintext send, or after Megolm-encrypting a [`SendPayload::Message`])
+/// and cached from then on, so a later [`MessengerCommand::RetrySend`]
+/// never re-derives it (never re-encrypts — this module's own doc).
+#[derive(Clone)]
+enum WireSend {
+    /// `PUT /rooms/{roomId}/send/{eventType}/{txnId}`.
+    Event {
+        /// The wire event type (`m.room.message`, `m.room.encrypted`, or
+        /// `m.reaction`).
+        event_type: String,
+        /// The event's own content.
+        content: serde_json::Value,
+    },
+    /// `PUT /rooms/{roomId}/redact/{eventId}/{txnId}`.
+    Redact {
+        /// The event being redacted.
+        target: EventId,
+        /// Why, if given.
+        reason: Option<String>,
+    },
+}
+
+/// Where one room-scoped send currently sits in its own pipeline (M13b's
+/// module doc: key-query -> key-claim -> key-share -> the room event
+/// itself, in that order, for an encrypted [`SendPayload::Message`];
+/// straight to [`SendPhase::AwaitingSend`] for everything else).
+#[derive(Clone)]
+enum SendPhase {
+    /// Waiting for an earlier send in the same room to finish first —
+    /// [`MessengerCore::start_send_pipeline`] has not run for this send
+    /// yet.
+    Queued,
+    /// Waiting on one `/keys/query` this pipeline itself minted, for a
+    /// member whose device list is outdated or was never tracked at all —
+    /// [`MessengerCore::send_request_owner`] is what routes the eventual
+    /// response back to this send, so this phase itself carries no request
+    /// id of its own.
+    AwaitingKeysQuery,
+    /// Waiting on one `/keys/claim`, for recipient devices this account
+    /// has no Olm session with yet.
+    AwaitingKeysClaim {
+        /// Exactly the devices that request claimed a key for — needed to
+        /// apply the response ([`OlmSessionManager::on_keys_claim_response`]
+        /// takes the original request list, not just the response body).
+        devices: Vec<StoredDevice>,
+    },
+    /// Waiting on every `sendToDevice` request sharing the room key with
+    /// its not-yet-shared recipients — the room event itself is withheld
+    /// until every one of these succeeds (this module's own doc: "WAIT for
+    /// those requests to succeed before sending the room event").
+    AwaitingKeyShare {
+        /// Every still-outstanding share request's own id.
+        pending: BTreeSet<RequestId>,
+    },
+    /// Waiting on the room event/redaction itself.
+    AwaitingSend,
+    /// Terminal: the send (or one of its pipeline steps) failed outright.
+    /// Kept (rather than removed) so [`MessengerCommand::RetrySend`] can
+    /// find it again, and so [`MessengerCore::send_failure_reason`] can
+    /// surface why.
+    Failed {
+        /// The Matrix `errcode` the failing response carried.
+        errcode: String,
+    },
+}
+
+/// One room-scoped send this core is tracking end to end — from
+/// [`MessengerCommand::SendMessage`]/`React`/`Redact` through to a
+/// terminal [`SendPhase::AwaitingSend`] response. See this module's own
+/// doc for the pipeline every [`SendPayload::Message`] in an encrypted
+/// room walks through.
+#[derive(Clone)]
+struct PendingSend {
+    /// The room this send belongs to — also this send's own place in
+    /// [`MessengerCore::pending_sends`]'s per-room FIFO.
+    room_id: RoomId,
+    /// What is being sent.
+    payload: SendPayload,
+    /// Where this send currently sits in its own pipeline.
+    phase: SendPhase,
+    /// The exact wire request, once computed — see [`WireSend`]'s own doc.
+    wire: Option<WireSend>,
+}
+
 /// The single-writer kernel — see this module's own doc.
 pub struct MessengerCore<C: RecordCodec> {
     config: CoreConfig,
@@ -322,6 +636,31 @@ pub struct MessengerCore<C: RecordCodec> {
 
     pending_decrypt: BTreeMap<RoomId, BTreeMap<EventId, PendingDecryptItem>>,
     unknown_sender_retry: VecDeque<ToDeviceEvent>,
+
+    /// The last `now_ms` a [`MessengerCommand::SetTyping { typing: true,
+    /// .. }`] actually sent a PUT at, per room — the debounce window
+    /// [`TYPING_DEBOUNCE_MS`] is measured from (this module's own doc). No
+    /// entry means either never sent, or explicitly stopped.
+    typing_debounce: BTreeMap<RoomId, i64>,
+    /// Every room-scoped send's own transaction id, in FIFO send order —
+    /// only the front of each room's queue is active (this module's own
+    /// "one message's pipeline completes before the next ... is
+    /// encrypted" doc); [`MessengerCore::finish_active_send`] pops it and
+    /// starts the next one.
+    pending_sends: BTreeMap<RoomId, VecDeque<TxnId>>,
+    /// Every [`PendingSend`] this core is tracking, keyed by its own
+    /// `txn_id` — kept even after it leaves `pending_sends` (a terminal
+    /// [`SendPhase::Failed`] stays here so [`MessengerCommand::RetrySend`]
+    /// can find it again).
+    send_state: BTreeMap<TxnId, PendingSend>,
+    /// Which [`PendingSend`] a still-pending request (a key-query,
+    /// key-claim, key-share, or the send/redact itself) this pipeline
+    /// minted belongs to — same reasoning as `pending_kinds`.
+    send_request_owner: BTreeMap<RequestId, TxnId>,
+    /// Which [`CreateRoomKind`] a still-pending `POST /createRoom` request
+    /// was building, so its response can merge `m.direct` for a
+    /// [`CreateRoomKind::Dm`] (this module's own doc).
+    pending_create_room: BTreeMap<RequestId, CreateRoomKind>,
 
     /// Every [`OutgoingRequestKind`] this core itself minted and is still
     /// waiting on, keyed by the [`RequestId`] it enqueued it under —
@@ -412,6 +751,11 @@ impl<C: RecordCodec> MessengerCore<C> {
             receipts: BTreeMap::new(),
             pending_decrypt: BTreeMap::new(),
             unknown_sender_retry: VecDeque::new(),
+            typing_debounce: BTreeMap::new(),
+            pending_sends: BTreeMap::new(),
+            send_state: BTreeMap::new(),
+            send_request_owner: BTreeMap::new(),
+            pending_create_room: BTreeMap::new(),
             pending_kinds: BTreeMap::new(),
             pending_room_messages: BTreeMap::new(),
             sync_request_id: None,
@@ -429,6 +773,17 @@ impl<C: RecordCodec> MessengerCore<C> {
         self.counters.next_request_id = seed.saturating_add(1);
         self.store.save_counters(self.counters)?;
         Ok(RequestId::next(seed))
+    }
+
+    /// Mints the next [`TxnId`], persisting the advanced [`Counters`] in
+    /// the same call — symmetric with [`MessengerCore::next_request_id`]
+    /// (this module's own doc's "Counters that must never repeat across a
+    /// restart" section).
+    fn next_txn_id(&mut self) -> Result<TxnId, MessengerError> {
+        let seed = self.counters.next_txn_id;
+        self.counters.next_txn_id = seed.saturating_add(1);
+        self.store.save_counters(self.counters)?;
+        Ok(TxnId::new(seed))
     }
 
     /// Enqueues `request` on `lane`, remembering its kind so a later
@@ -462,6 +817,464 @@ impl<C: RecordCodec> MessengerCore<C> {
 
     fn drain_events(&mut self) -> Vec<MessengerEvent> {
         std::mem::take(&mut self.events)
+    }
+
+    // ---------------------------------------------------------------
+    // M13b send pipeline
+    // ---------------------------------------------------------------
+
+    /// Starts (or queues) one room-scoped send — the shared entry point
+    /// for [`MessengerCommand::SendMessage`]/`React`/`Redact`. Only a
+    /// [`SendPayload::Message`] gets an immediate timeline local echo (this
+    /// module's own doc): appended as [`SendState::LocalEcho`] then
+    /// immediately moved to [`SendState::Sending`], matching the plan's
+    /// own wording ("local echo in the timeline with `SendState::Sending`
+    /// -> `MessengerEvent::TimelineChanged`") — both happen inside this one
+    /// call, so a caller never observes the intermediate `LocalEcho` value.
+    /// Sending a message also stops this device's own typing indicator in
+    /// the room, unconditionally (module doc: "false on send").
+    fn start_new_send(
+        &mut self,
+        room_id: RoomId,
+        payload: SendPayload,
+        caller_txn_id: Option<TxnId>,
+        now_ms: i64,
+    ) -> Result<(), MessengerError> {
+        let txn_id = match caller_txn_id {
+            Some(txn_id) => txn_id,
+            None => self.next_txn_id()?,
+        };
+
+        if let SendPayload::Message(message) = &payload {
+            if self.typing_debounce.remove(&room_id).is_some() {
+                if let Ok(request_id) = self.next_request_id() {
+                    let request = OutgoingRequest::typing(request_id, &room_id, &self.config.user_id, false, None);
+                    let _ = self.enqueue_request(request, Lane::Other);
+                }
+            }
+            let content = message_local_echo_content(message);
+            let timeline = self.timelines.entry(room_id.clone()).or_default();
+            timeline.push_local_echo(txn_id.clone(), self.config.user_id.clone(), now_ms, content);
+            timeline.mark_send_state(&txn_id, SendState::Sending);
+            self.emit(MessengerEvent::TimelineChanged { room_id: room_id.clone() });
+        }
+
+        self.send_state.insert(txn_id.clone(), PendingSend { room_id: room_id.clone(), payload, phase: SendPhase::Queued, wire: None });
+        let queue = self.pending_sends.entry(room_id).or_default();
+        let was_empty = queue.is_empty();
+        queue.push_back(txn_id.clone());
+        if was_empty {
+            self.start_send_pipeline(&txn_id, now_ms)?;
+        }
+        Ok(())
+    }
+
+    /// Re-queues a [`SendPhase::Failed`] send at the back of its room's own
+    /// FIFO, reusing its already-computed [`WireSend`] (never re-encrypting
+    /// — [`MessengerCommand::RetrySend`]'s own doc). A no-op if `txn_id`
+    /// names no currently-failed send in `room_id`.
+    fn retry_send(&mut self, room_id: &RoomId, txn_id: &TxnId, now_ms: i64) -> Result<(), MessengerError> {
+        let Some(pending) = self.send_state.get(txn_id) else { return Ok(()) };
+        if pending.room_id != *room_id || !matches!(pending.phase, SendPhase::Failed { .. }) {
+            return Ok(());
+        }
+        self.set_send_phase(txn_id, SendPhase::Queued);
+        let queue = self.pending_sends.entry(room_id.clone()).or_default();
+        let was_empty = queue.is_empty();
+        queue.push_back(txn_id.clone());
+        if was_empty {
+            self.start_send_pipeline(txn_id, now_ms)?;
+        }
+        Ok(())
+    }
+
+    fn set_send_phase(&mut self, txn_id: &TxnId, phase: SendPhase) {
+        if let Some(entry) = self.send_state.get_mut(txn_id) {
+            entry.phase = phase;
+        }
+    }
+
+    /// Advances `txn_id` (which must currently be the front of its room's
+    /// own FIFO) to its next pipeline step. If [`PendingSend::wire`] is
+    /// already computed (a retry, or any send re-entering this function
+    /// after an earlier step completed), it goes straight to
+    /// [`MessengerCore::begin_awaiting_send`] — never re-derived. Otherwise:
+    /// a [`SendPayload::Message`] in a currently-encrypted room enters the
+    /// key pipeline; everything else builds its plaintext wire body
+    /// directly.
+    fn start_send_pipeline(&mut self, txn_id: &TxnId, now_ms: i64) -> Result<(), MessengerError> {
+        let Some(pending) = self.send_state.get(txn_id) else { return Ok(()) };
+        let room_id = pending.room_id.clone();
+
+        if pending.wire.is_some() {
+            return self.begin_awaiting_send(txn_id, &room_id);
+        }
+
+        let is_message = matches!(pending.payload, SendPayload::Message(_));
+        let encrypted_room = self.rooms.get(&room_id).is_some_and(|room| room.encryption.is_some());
+
+        if is_message && encrypted_room {
+            self.begin_key_pipeline(txn_id, &room_id, now_ms)
+        } else {
+            self.build_plaintext_wire_body(txn_id);
+            self.begin_awaiting_send(txn_id, &room_id)
+        }
+    }
+
+    /// Every user this account must consider a Megolm recipient for
+    /// `room_id`: every currently join-or-invite member, plus this
+    /// account's own user id (its OTHER devices also need the room key —
+    /// `crypto::group_sessions`'s own module doc).
+    fn encrypted_room_member_ids(&self, room_id: &RoomId) -> BTreeSet<UserId> {
+        let mut ids: BTreeSet<UserId> = self
+            .rooms
+            .get(room_id)
+            .map(|state| {
+                state
+                    .members
+                    .iter()
+                    .filter(|(_, member)| matches!(member.membership, Membership::Join | Membership::Invite))
+                    .map(|(user_id, _)| user_id.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        ids.insert(self.config.user_id.clone());
+        ids
+    }
+
+    /// Marks any of `member_ids` this account has never tracked at all as
+    /// newly tracked-and-outdated ([`DeviceTracker::on_device_lists`]),
+    /// then returns every one of `member_ids` that is currently outdated
+    /// (whether it already was, or just became so) — the send pipeline's
+    /// own "any member's device list is outdated or unknown" check.
+    fn mark_outdated_or_untracked(&mut self, member_ids: &BTreeSet<UserId>) -> Result<Vec<UserId>, MessengerError> {
+        let tracked: BTreeMap<UserId, bool> = self.store.tracked_users()?.into_iter().collect();
+        let mut outdated = Vec::new();
+        let mut newly_tracked = Vec::new();
+        for user_id in member_ids {
+            match tracked.get(user_id) {
+                Some(true) => outdated.push(user_id.clone()),
+                Some(false) => {}
+                None => newly_tracked.push(user_id.clone()),
+            }
+        }
+        if !newly_tracked.is_empty() {
+            DeviceTracker::on_device_lists(&mut self.store, &newly_tracked, &[])?;
+            outdated.extend(newly_tracked);
+        }
+        Ok(outdated)
+    }
+
+    /// Every device this store currently has on file for any of
+    /// `member_ids`.
+    fn known_devices_for(&self, member_ids: &BTreeSet<UserId>) -> Result<Vec<StoredDevice>, MessengerError> {
+        let mut all = Vec::new();
+        for user_id in member_ids {
+            all.extend(DeviceTracker::devices_for_user(&self.store, user_id)?);
+        }
+        Ok(all)
+    }
+
+    /// `known_devices`, filtered down to the devices this pipeline must
+    /// actually reach: a current member's, not blocked, not this device's
+    /// own.
+    fn candidate_recipient_devices(&self, member_ids: &BTreeSet<UserId>, known_devices: &[StoredDevice]) -> Vec<StoredDevice> {
+        known_devices
+            .iter()
+            .filter(|device| member_ids.contains(&device.user_id) && !device.blocked)
+            .filter(|device| !(device.user_id == self.config.user_id && device.device_id == self.config.device_id))
+            .cloned()
+            .collect()
+    }
+
+    /// Step 1 of the encrypted-message pipeline (this module's own doc):
+    /// if any recipient's device list is outdated or was never tracked at
+    /// all, mint one `/keys/query` and wait for it; otherwise fall through
+    /// to step 2.
+    fn begin_key_pipeline(&mut self, txn_id: &TxnId, room_id: &RoomId, now_ms: i64) -> Result<(), MessengerError> {
+        let members = self.encrypted_room_member_ids(room_id);
+        let outdated = self.mark_outdated_or_untracked(&members)?;
+        if !outdated.is_empty() {
+            let request_id = self.next_request_id()?;
+            if let Some(request) = DeviceTracker::keys_query_request(&self.store, request_id.clone())? {
+                self.send_request_owner.insert(request_id.clone(), txn_id.clone());
+                self.enqueue_request(request, Lane::Other)?;
+                self.set_send_phase(txn_id, SendPhase::AwaitingKeysQuery);
+                return Ok(());
+            }
+        }
+        self.begin_keys_claim_or_share(txn_id, room_id, now_ms)
+    }
+
+    /// Step 2: if any recipient candidate has no established Olm session
+    /// yet, mint one `/keys/claim` and wait for it; otherwise fall through
+    /// to step 3.
+    fn begin_keys_claim_or_share(&mut self, txn_id: &TxnId, room_id: &RoomId, now_ms: i64) -> Result<(), MessengerError> {
+        let members = self.encrypted_room_member_ids(room_id);
+        let known_devices = self.known_devices_for(&members)?;
+        let candidates = self.candidate_recipient_devices(&members, &known_devices);
+        let missing: Vec<StoredDevice> =
+            OlmSessionManager::sessions_missing_for(&self.store, &candidates)?.into_iter().cloned().collect();
+        if !missing.is_empty() {
+            let request_id = self.next_request_id()?;
+            let refs: Vec<&StoredDevice> = missing.iter().collect();
+            if let Some(request) = OlmSessionManager::keys_claim_request(request_id.clone(), &refs) {
+                self.send_request_owner.insert(request_id.clone(), txn_id.clone());
+                self.enqueue_request(request, Lane::Other)?;
+                self.set_send_phase(txn_id, SendPhase::AwaitingKeysClaim { devices: missing });
+                return Ok(());
+            }
+        }
+        self.begin_share_or_encrypt(txn_id, room_id, now_ms)
+    }
+
+    /// Step 3: ensures a current outbound Megolm session, fans out the
+    /// room key (Olm to-device) to every not-yet-shared, currently-reachable
+    /// device, and waits for every one of those `sendToDevice` calls to
+    /// succeed before the room event itself is ever encrypted or sent
+    /// (module doc: a share failure fails the whole message, not just the
+    /// unreachable device). A device this account still has no Olm session
+    /// with after step 2 (a refused/unanswered `/keys/claim`) is left out
+    /// of the fan-out rather than failing the send outright — the same
+    /// "can't reach everyone, degrade rather than block" doctrine this
+    /// crate already applies to an unresolved UTD. If nothing needs
+    /// sharing at all (already fully shared, or nobody reachable), falls
+    /// straight through to encrypting and sending.
+    fn begin_share_or_encrypt(&mut self, txn_id: &TxnId, room_id: &RoomId, now_ms: i64) -> Result<(), MessengerError> {
+        let Some(encryption) = self.rooms.get(room_id).and_then(|room| room.encryption.clone()) else {
+            self.build_plaintext_wire_body(txn_id);
+            return self.begin_awaiting_send(txn_id, room_id);
+        };
+        let members = self.encrypted_room_member_ids(room_id);
+        let known_devices = self.known_devices_for(&members)?;
+        let update = GroupSessionManager::ensure_outbound_session(
+            &mut self.store,
+            room_id,
+            &self.config.user_id,
+            &self.config.device_id,
+            &encryption,
+            &members,
+            &known_devices,
+            now_ms,
+        )?;
+
+        if let Some(room_key_content) = update.room_key_content.clone() {
+            let missing_ids: BTreeSet<(UserId, DeviceId)> = OlmSessionManager::sessions_missing_for(&self.store, &update.new_recipients)?
+                .into_iter()
+                .map(|device| (device.user_id.clone(), device.device_id.clone()))
+                .collect();
+            let sessioned: Vec<StoredDevice> = update
+                .new_recipients
+                .into_iter()
+                .filter(|device| !missing_ids.contains(&(device.user_id.clone(), device.device_id.clone())))
+                .collect();
+
+            let mut pending_ids = BTreeSet::new();
+            for chunk in GroupSessionManager::chunk_recipients_for_send_to_device(&sessioned) {
+                let body = GroupSessionManager::build_room_key_send_to_device_body(
+                    &mut self.store,
+                    &self.account,
+                    &self.config.user_id,
+                    &self.config.device_id,
+                    chunk,
+                    &room_key_content,
+                )?;
+                let request_id = self.next_request_id()?;
+                let share_txn = self.next_txn_id()?;
+                let request = OutgoingRequest::send_to_device(request_id.clone(), ROOM_KEY_SHARE_EVENT_TYPE, &share_txn, body);
+                self.send_request_owner.insert(request_id.clone(), txn_id.clone());
+                self.enqueue_request(request, Lane::ToDevice)?;
+                pending_ids.insert(request_id);
+            }
+            if !pending_ids.is_empty() {
+                self.set_send_phase(txn_id, SendPhase::AwaitingKeyShare { pending: pending_ids });
+                return Ok(());
+            }
+        }
+
+        self.finish_encrypt_and_send(txn_id, room_id)?;
+        self.begin_awaiting_send(txn_id, room_id)
+    }
+
+    /// Step 4: Megolm-encrypts a [`SendPayload::Message`] under `room_id`'s
+    /// (now current) outbound session and caches the resulting
+    /// [`WireSend::Event`] — a no-op for any other payload kind (never
+    /// reached for one, since only a `Message` in an encrypted room enters
+    /// the key pipeline at all).
+    fn finish_encrypt_and_send(&mut self, txn_id: &TxnId, room_id: &RoomId) -> Result<(), MessengerError> {
+        let Some(pending) = self.send_state.get(txn_id) else { return Ok(()) };
+        let SendPayload::Message(message) = pending.payload.clone() else { return Ok(()) };
+        let content = message_wire_content(&message);
+        let relates_to = message_relates_to(&message);
+        let sender_curve = self.account.identity_keys().curve25519.to_base64();
+        let encrypted = GroupSessionManager::encrypt_event(
+            &mut self.store,
+            room_id,
+            &sender_curve,
+            &self.config.device_id,
+            "m.room.message",
+            content,
+            relates_to,
+        )?;
+        let wire_content = serde_json::to_value(RoomEncryptedContent::Megolm(encrypted))?;
+        if let Some(entry) = self.send_state.get_mut(txn_id) {
+            entry.wire = Some(WireSend::Event { event_type: "m.room.encrypted".to_string(), content: wire_content });
+        }
+        Ok(())
+    }
+
+    /// Builds the plaintext [`WireSend`] for a [`SendPayload::Message`] in
+    /// an unencrypted room, a [`SendPayload::Reaction`] (any room), or a
+    /// [`SendPayload::Redaction`] (any room) — the three cases that never
+    /// touch the key pipeline at all.
+    fn build_plaintext_wire_body(&mut self, txn_id: &TxnId) {
+        let Some(pending) = self.send_state.get(txn_id) else { return };
+        let wire = match &pending.payload {
+            SendPayload::Message(message) => {
+                WireSend::Event { event_type: "m.room.message".to_string(), content: message_wire_content(message) }
+            }
+            SendPayload::Reaction { target, key } => WireSend::Event {
+                event_type: "m.reaction".to_string(),
+                content: serde_json::json!({
+                    "m.relates_to": { "rel_type": "m.annotation", "event_id": target.as_str(), "key": key }
+                }),
+            },
+            SendPayload::Redaction { target, reason } => WireSend::Redact { target: target.clone(), reason: reason.clone() },
+        };
+        if let Some(entry) = self.send_state.get_mut(txn_id) {
+            entry.wire = Some(wire);
+        }
+    }
+
+    /// Mints (or re-mints, for a retry) the actual `PUT .../send/...` or
+    /// `PUT .../redact/...` request from [`PendingSend::wire`], on this
+    /// room's own [`Lane::Room`] (preserves the room's own send order —
+    /// this crate's `outgoing_queue`'s own doc).
+    fn begin_awaiting_send(&mut self, txn_id: &TxnId, room_id: &RoomId) -> Result<(), MessengerError> {
+        let Some(wire) = self.send_state.get(txn_id).and_then(|pending| pending.wire.clone()) else { return Ok(()) };
+        let request_id = self.next_request_id()?;
+        let request = match &wire {
+            WireSend::Event { event_type, content } => {
+                OutgoingRequest::room_send(request_id.clone(), room_id, event_type, txn_id, content.clone())
+            }
+            WireSend::Redact { target, reason } => {
+                let body = match reason {
+                    Some(reason) => serde_json::json!({ "reason": reason }),
+                    None => serde_json::json!({}),
+                };
+                OutgoingRequest::room_redact(request_id.clone(), room_id, target, txn_id, body)
+            }
+        };
+        self.send_request_owner.insert(request_id, txn_id.clone());
+        self.enqueue_request(request, Lane::Room(room_id.clone()))?;
+        self.set_send_phase(txn_id, SendPhase::AwaitingSend);
+        Ok(())
+    }
+
+    /// Routes one successful response for a request this send pipeline
+    /// itself minted onward to whatever step comes next. A no-op for any
+    /// `kind` this pipeline never mints on its own behalf (defensive —
+    /// every `send_request_owner` entry is inserted alongside a specific
+    /// kind, this match is exhaustive over that set).
+    fn advance_send_on_success(
+        &mut self,
+        txn_id: &TxnId,
+        request_id: &RequestId,
+        kind: Option<OutgoingRequestKind>,
+        response: &HttpResponseDescriptor,
+        now_ms: i64,
+    ) {
+        match kind {
+            Some(OutgoingRequestKind::KeysQuery) => {
+                let Some(room_id) = self.send_state.get(txn_id).map(|pending| pending.room_id.clone()) else { return };
+                let _ = self.begin_keys_claim_or_share(txn_id, &room_id, now_ms);
+            }
+            Some(OutgoingRequestKind::KeysClaim) => {
+                let Some(pending) = self.send_state.get(txn_id) else { return };
+                let room_id = pending.room_id.clone();
+                if let SendPhase::AwaitingKeysClaim { devices, .. } = &pending.phase {
+                    let devices = devices.clone();
+                    let refs: Vec<&StoredDevice> = devices.iter().collect();
+                    let _ = OlmSessionManager::on_keys_claim_response(&mut self.store, &self.account, &refs, &response.body);
+                }
+                let _ = self.begin_share_or_encrypt(txn_id, &room_id, now_ms);
+            }
+            Some(OutgoingRequestKind::SendToDevice) => {
+                let mut remaining = None;
+                if let Some(entry) = self.send_state.get_mut(txn_id) {
+                    if let SendPhase::AwaitingKeyShare { pending } = &mut entry.phase {
+                        pending.remove(request_id);
+                        remaining = Some(pending.len());
+                    }
+                }
+                if remaining == Some(0) {
+                    let Some(room_id) = self.send_state.get(txn_id).map(|pending| pending.room_id.clone()) else { return };
+                    let _ = self.finish_encrypt_and_send(txn_id, &room_id);
+                    let _ = self.begin_awaiting_send(txn_id, &room_id);
+                }
+            }
+            Some(OutgoingRequestKind::RoomSend) | Some(OutgoingRequestKind::RoomRedact) => {
+                self.complete_send_success(txn_id, response, now_ms);
+            }
+            _ => {}
+        }
+    }
+
+    /// The room event/redaction itself succeeded: for a
+    /// [`SendPayload::Message`], attaches the server-confirmed event id to
+    /// its echo (module doc: "200 -> store `event_id` on the echo
+    /// (`SendState::Sent`)"); either way, removes this send's own
+    /// bookkeeping and starts the room's next queued send, if any.
+    fn complete_send_success(&mut self, txn_id: &TxnId, response: &HttpResponseDescriptor, now_ms: i64) {
+        let Some(pending) = self.send_state.get(txn_id) else { return };
+        let room_id = pending.room_id.clone();
+        if matches!(pending.payload, SendPayload::Message(_)) {
+            if let Ok(body) = serde_json::from_slice::<SendResponseBody>(&response.body) {
+                if let Some(timeline) = self.timelines.get_mut(&room_id) {
+                    timeline.set_echo_event_id(txn_id, body.event_id);
+                }
+                self.emit(MessengerEvent::TimelineChanged { room_id: room_id.clone() });
+            }
+        }
+        self.send_state.remove(txn_id);
+        self.finish_active_send(&room_id, txn_id, now_ms);
+    }
+
+    /// A step in `txn_id`'s own pipeline failed outright (a non-retryable
+    /// 4xx anywhere along it): marks a [`SendPayload::Message`]'s echo
+    /// [`SendState::Failed`], moves this send to the terminal
+    /// [`SendPhase::Failed`] (kept, not removed — [`MessengerCommand::RetrySend`]
+    /// needs it), and starts the room's next queued send, if any.
+    fn fail_send(&mut self, txn_id: &TxnId, errcode: String, now_ms: i64) {
+        let Some(pending) = self.send_state.get(txn_id) else { return };
+        let room_id = pending.room_id.clone();
+        if matches!(pending.payload, SendPayload::Message(_)) {
+            if let Some(timeline) = self.timelines.get_mut(&room_id) {
+                timeline.mark_send_state(txn_id, SendState::Failed { reason: errcode.clone() });
+            }
+            self.emit(MessengerEvent::TimelineChanged { room_id: room_id.clone() });
+        }
+        self.set_send_phase(txn_id, SendPhase::Failed { errcode });
+        self.finish_active_send(&room_id, txn_id, now_ms);
+    }
+
+    /// Pops `txn_id` off the front of `room_id`'s own send FIFO (if that is
+    /// where it still is) and starts the next queued send's pipeline, if
+    /// any — the "one message's pipeline completes before the next ... is
+    /// encrypted" ordering rule, enforced structurally by never starting
+    /// entry N+1 before entry N reaches a terminal state.
+    fn finish_active_send(&mut self, room_id: &RoomId, txn_id: &TxnId, now_ms: i64) {
+        if let Some(queue) = self.pending_sends.get_mut(room_id) {
+            if queue.front() == Some(txn_id) {
+                queue.pop_front();
+            } else {
+                queue.retain(|id| id != txn_id);
+            }
+        }
+        let next = self.pending_sends.get(room_id).and_then(|queue| queue.front().cloned());
+        if let Some(next_txn) = next {
+            let _ = self.start_send_pipeline(&next_txn, now_ms);
+        }
     }
 
     /// A shell calls this once per tick, executes each, and feeds the
@@ -508,12 +1321,14 @@ impl<C: RecordCodec> MessengerCore<C> {
     pub fn on_response(&mut self, request_id: RequestId, resp: HttpResponseDescriptor, now_ms: i64) -> Vec<MessengerEvent> {
         let kind = self.pending_kinds.get(&request_id).copied();
         let room_messages_room = self.pending_room_messages.get(&request_id).cloned();
+        let create_room_kind = self.pending_create_room.get(&request_id).cloned();
+        let send_owner = self.send_request_owner.get(&request_id).cloned();
 
         let outcome = self.outgoing.on_response(&mut self.store, &request_id, resp, now_ms, self.jitter.as_mut());
-        let (is_terminal, terminal_response) = match outcome {
-            Ok(Some(ResponseOutcome::Done(response))) => (true, Some(response)),
-            Ok(Some(ResponseOutcome::Failed { .. })) => (true, None),
-            _ => (false, None),
+        let (is_terminal, terminal_response, failed_errcode) = match outcome {
+            Ok(Some(ResponseOutcome::Done(response))) => (true, Some(response), None),
+            Ok(Some(ResponseOutcome::Failed { errcode, .. })) => (true, None, Some(errcode)),
+            _ => (false, None, None),
         };
 
         if is_terminal {
@@ -524,16 +1339,26 @@ impl<C: RecordCodec> MessengerCore<C> {
             if room_messages_room.is_some() {
                 self.pending_room_messages.remove(&request_id);
             }
+            self.pending_create_room.remove(&request_id);
+            self.send_request_owner.remove(&request_id);
         }
 
-        if let Some(response) = terminal_response {
+        if let Some(response) = &terminal_response {
             // A parse/logic failure against an otherwise-successful HTTP
             // response is dropped rather than surfaced: this crate has no
             // logging dependency, and the one invariant that matters --
             // never advancing past a partially-applied `/sync` -- already
             // holds structurally, since `ingest_sync` only persists the
             // new sync token as its very last step.
-            let _ = self.handle_terminal_success(kind, room_messages_room, &response);
+            let _ = self.handle_terminal_success(kind, room_messages_room, create_room_kind, response);
+        }
+
+        if let Some(txn_id) = send_owner {
+            if let Some(response) = &terminal_response {
+                self.advance_send_on_success(&txn_id, &request_id, kind, response, now_ms);
+            } else if let Some(errcode) = failed_errcode {
+                self.fail_send(&txn_id, errcode, now_ms);
+            }
         }
 
         self.drain_events()
@@ -551,6 +1376,7 @@ impl<C: RecordCodec> MessengerCore<C> {
         &mut self,
         kind: Option<OutgoingRequestKind>,
         room_messages_room: Option<RoomId>,
+        create_room_kind: Option<CreateRoomKind>,
         response: &HttpResponseDescriptor,
     ) -> Result<(), MessengerError> {
         match kind {
@@ -573,8 +1399,36 @@ impl<C: RecordCodec> MessengerCore<C> {
                     self.ingest_room_messages_response(&room_id, &response.body)?;
                 }
             }
+            Some(OutgoingRequestKind::CreateRoom) => {
+                if let Some(kind) = create_room_kind {
+                    self.on_create_room_response(kind, response)?;
+                }
+            }
             _ => {}
         }
+        Ok(())
+    }
+
+    /// A `POST /createRoom` succeeded. For [`CreateRoomKind::Dm`], also
+    /// merges the new room into this account's own `m.direct` account data
+    /// (M13b send-pipeline doc: "DM also merges `m.direct` account data")
+    /// — every other kind needs nothing further here (room state/timeline
+    /// populate off the next `/sync`, same as any other room).
+    fn on_create_room_response(&mut self, kind: CreateRoomKind, response: &HttpResponseDescriptor) -> Result<(), MessengerError> {
+        let CreateRoomKind::Dm { peer } = kind else { return Ok(()) };
+        let body: CreateRoomResponseBody = serde_json::from_slice(&response.body)?;
+
+        let mut direct = self.direct_account_data.clone().unwrap_or_default();
+        let rooms_for_peer = direct.0.entry(peer).or_default();
+        if !rooms_for_peer.contains(&body.room_id) {
+            rooms_for_peer.push(body.room_id);
+        }
+        self.direct_account_data = Some(direct.clone());
+
+        let request_id = self.next_request_id()?;
+        let value = serde_json::to_value(&direct)?;
+        let request = OutgoingRequest::account_data(request_id, &self.config.user_id, "m.direct", value);
+        self.enqueue_request(request, Lane::Other)?;
         Ok(())
     }
 
@@ -646,11 +1500,80 @@ impl<C: RecordCodec> MessengerCore<C> {
         self.room_account_data.get(room_id).and_then(|by_type| by_type.get(event_type))
     }
 
+    /// The Matrix `errcode` a failed send (`txn_id`) ended with, if
+    /// `txn_id` currently names a [`crate::room::timeline::SendState::Failed`]
+    /// send this core is still tracking — `None` for a send that never
+    /// failed, already succeeded, or that this core has never seen.
+    pub fn send_failure_reason(&self, txn_id: &TxnId) -> Option<&str> {
+        match self.send_state.get(txn_id).map(|pending| &pending.phase) {
+            Some(SendPhase::Failed { errcode }) => Some(errcode.as_str()),
+            _ => None,
+        }
+    }
+
     /// The "in" edge — mailbox command (single-writer-core doctrine's Law
-    /// 3). See [`MessengerCommand`]'s own doc for the receive-side variants
-    /// this piece implements.
-    pub fn dispatch(&mut self, cmd: MessengerCommand) -> Result<(), MessengerError> {
+    /// 3). See [`MessengerCommand`]'s own doc for every variant this piece
+    /// implements. `now_ms` is this call's own clock reading (this crate's
+    /// "no clock inside" rule) — used for a fresh send's local-echo
+    /// timestamp, [`MessengerCommand::SetTyping`]'s debounce window, and
+    /// Megolm rotation timing.
+    pub fn dispatch(&mut self, cmd: MessengerCommand, now_ms: i64) -> Result<(), MessengerError> {
         match cmd {
+            MessengerCommand::SendMessage { room_id, message, txn_id } => {
+                if let Some(edit_of) = &message.edit_of {
+                    let owned = self
+                        .timelines
+                        .get(&room_id)
+                        .and_then(|timeline| timeline.item_by_event_id(edit_of))
+                        .is_some_and(|item| item.sender == self.config.user_id);
+                    if !owned {
+                        return Err(MessengerError::EditNotOwned { event_id: edit_of.clone() });
+                    }
+                }
+                self.start_new_send(room_id, SendPayload::Message(message), txn_id, now_ms)?;
+            }
+            MessengerCommand::React { room_id, target, key } => {
+                self.start_new_send(room_id, SendPayload::Reaction { target, key }, None, now_ms)?;
+            }
+            MessengerCommand::Redact { room_id, target, reason } => {
+                self.start_new_send(room_id, SendPayload::Redaction { target, reason }, None, now_ms)?;
+            }
+            MessengerCommand::RetrySend { room_id, txn_id } => {
+                self.retry_send(&room_id, &txn_id, now_ms)?;
+            }
+            MessengerCommand::CreateRoom { kind } => {
+                self.dispatch_create_room(kind)?;
+            }
+            MessengerCommand::JoinRoom { room_id } => {
+                let request_id = self.next_request_id()?;
+                let request = OutgoingRequest::join_room(request_id, room_id.as_str());
+                self.enqueue_request(request, Lane::Other)?;
+            }
+            MessengerCommand::LeaveRoom { room_id } => {
+                let request_id = self.next_request_id()?;
+                let request = OutgoingRequest::leave_room(request_id, &room_id);
+                self.enqueue_request(request, Lane::Other)?;
+            }
+            MessengerCommand::Invite { room_id, user_id } => {
+                let request_id = self.next_request_id()?;
+                let request = OutgoingRequest::invite(request_id, &room_id, &user_id);
+                self.enqueue_request(request, Lane::Other)?;
+            }
+            MessengerCommand::Kick { room_id, user_id, reason } => {
+                let request_id = self.next_request_id()?;
+                let request = OutgoingRequest::kick(request_id, &room_id, &user_id, reason.as_deref());
+                self.enqueue_request(request, Lane::Other)?;
+            }
+            MessengerCommand::SetTag { room_id, tag, order } => {
+                let mut content = self.current_tag_content(&room_id);
+                content.tags.insert(tag, TagInfo { order });
+                self.enqueue_tag_update(room_id, content)?;
+            }
+            MessengerCommand::RemoveTag { room_id, tag } => {
+                let mut content = self.current_tag_content(&room_id);
+                content.tags.remove(&tag);
+                self.enqueue_tag_update(room_id, content)?;
+            }
             MessengerCommand::MarkRead { room_id, event_id } => {
                 let request_id = self.next_request_id()?;
                 let body = serde_json::json!({ "m.fully_read": event_id.as_str(), "m.read": event_id.as_str() });
@@ -658,6 +1581,18 @@ impl<C: RecordCodec> MessengerCore<C> {
                 self.enqueue_request(request, Lane::Other)?;
             }
             MessengerCommand::SetTyping { room_id, typing } => {
+                if typing {
+                    let should_send = match self.typing_debounce.get(&room_id) {
+                        Some(&last_sent_ms) => now_ms.saturating_sub(last_sent_ms) >= TYPING_DEBOUNCE_MS,
+                        None => true,
+                    };
+                    if !should_send {
+                        return Ok(());
+                    }
+                    self.typing_debounce.insert(room_id.clone(), now_ms);
+                } else {
+                    self.typing_debounce.remove(&room_id);
+                }
                 let request_id = self.next_request_id()?;
                 let timeout_ms = typing.then_some(TYPING_TIMEOUT_MS);
                 let request = OutgoingRequest::typing(request_id, &room_id, &self.config.user_id, typing, timeout_ms);
@@ -683,6 +1618,60 @@ impl<C: RecordCodec> MessengerCore<C> {
                 self.pending_room_messages.insert(request_id, room_id);
             }
         }
+        Ok(())
+    }
+
+    /// `POST /createRoom`'s own body per [`CreateRoomKind`] (server plan
+    /// §5: the server derives `kind`/power levels from `visibility`+
+    /// `is_direct` itself — a client only ever sends those two fields plus
+    /// `invite`/`name`/`topic`).
+    fn dispatch_create_room(&mut self, kind: CreateRoomKind) -> Result<(), MessengerError> {
+        let body = match &kind {
+            CreateRoomKind::Dm { peer } => serde_json::json!({
+                "is_direct": true,
+                "invite": [peer.as_str()],
+            }),
+            CreateRoomKind::Group { name, invite, members_can_invite } => serde_json::json!({
+                "visibility": "private",
+                "is_direct": false,
+                "name": name,
+                "invite": invite.iter().map(UserId::as_str).collect::<Vec<_>>(),
+                "members_can_invite": members_can_invite,
+            }),
+            CreateRoomKind::Channel { name, topic } => {
+                let mut value = serde_json::json!({
+                    "visibility": "public",
+                    "is_direct": false,
+                    "name": name,
+                });
+                if let Some(topic) = topic {
+                    value["topic"] = serde_json::Value::String(topic.clone());
+                }
+                value
+            }
+        };
+        let request_id = self.next_request_id()?;
+        let request = OutgoingRequest::create_room(request_id.clone(), body);
+        self.pending_create_room.insert(request_id.clone(), kind);
+        self.enqueue_request(request, Lane::Other)?;
+        Ok(())
+    }
+
+    /// `room_id`'s current `m.tag` content, or an empty one if this core
+    /// has never seen one — [`MessengerCommand::SetTag`]/`RemoveTag` both
+    /// mutate a full copy of this (the account-data endpoint replaces the
+    /// whole value, there is no partial-update verb).
+    fn current_tag_content(&self, room_id: &RoomId) -> TagContent {
+        self.room_account_data(room_id, "m.tag")
+            .and_then(|value| serde_json::from_value(value.clone()).ok())
+            .unwrap_or_default()
+    }
+
+    fn enqueue_tag_update(&mut self, room_id: RoomId, content: TagContent) -> Result<(), MessengerError> {
+        let request_id = self.next_request_id()?;
+        let value = serde_json::to_value(&content)?;
+        let request = OutgoingRequest::room_account_data(request_id, &self.config.user_id, &room_id, "m.tag", value);
+        self.enqueue_request(request, Lane::Other)?;
         Ok(())
     }
 
@@ -1028,6 +2017,56 @@ fn stripped_state_to_raw_event(stripped: &StrippedStateEvent) -> RawEvent {
         state_key: Some(stripped.state_key.clone()),
         content: stripped.content.clone(),
         unsigned: Unsigned::default(),
+    }
+}
+
+/// The local-echo [`ItemContent`] for a not-yet-sent [`OutgoingMessage`] —
+/// always the plain new body, regardless of `reply_to`/`edit_of` (this
+/// crate's timeline has no dedicated "echo of an edit" rendering; the
+/// confirmed event, once it arrives back off `/sync`, carries the full
+/// `m.relates_to`-aware rendering via the ordinary
+/// [`crate::room::relations`] aggregation — this module's own doc).
+fn message_local_echo_content(message: &OutgoingMessage) -> ItemContent {
+    let body = TextLikeMessageContent { body: message.body.clone(), format: None, formatted_body: None };
+    match message.kind {
+        MessageKind::Text => ItemContent::Text(body),
+        MessageKind::Notice => ItemContent::Notice(body),
+        MessageKind::Emote => ItemContent::Emote(body),
+    }
+}
+
+/// The `m.room.message` wire content for `message` — plain
+/// `{msgtype, body}` for an ordinary send; a reply adds the legacy
+/// `m.in_reply_to` pointer; an edit instead prefixes the outer `body` with
+/// `"* "` (the client-side fallback convention for a client that does not
+/// understand `m.replace`) and carries the real replacement under
+/// `m.new_content`, with `m.relates_to: m.replace` naming the edited event
+/// (research doc §1.3; `reply_to` and `edit_of` are mutually exclusive at
+/// the wire level — [`OutgoingMessage`]'s own doc).
+fn message_wire_content(message: &OutgoingMessage) -> serde_json::Value {
+    let msgtype = message.kind.msgtype();
+    let new_content = serde_json::json!({ "msgtype": msgtype, "body": message.body });
+    let mut content = new_content.clone();
+    if let Some(edit_of) = &message.edit_of {
+        content["body"] = serde_json::Value::String(format!("* {}", message.body));
+        content["m.new_content"] = new_content;
+        content["m.relates_to"] = serde_json::json!({ "rel_type": "m.replace", "event_id": edit_of.as_str() });
+    } else if let Some(reply_to) = &message.reply_to {
+        content["m.relates_to"] = serde_json::json!({ "m.in_reply_to": { "event_id": reply_to.as_str() } });
+    }
+    content
+}
+
+/// The outer, unencrypted-envelope `m.relates_to` a Megolm-encrypted
+/// `message` must carry alongside its ciphertext (`crate::wire::events::
+/// MegolmEncryptedContent`'s own doc: copied verbatim from the cleartext
+/// plaintext's own relation, so the server can index it without ever
+/// decrypting). `None` for a plain send with neither a reply nor an edit.
+fn message_relates_to(message: &OutgoingMessage) -> Option<RelatesTo> {
+    if let Some(edit_of) = &message.edit_of {
+        Some(RelatesTo::Replace { event_id: edit_of.clone() })
+    } else {
+        message.reply_to.clone().map(|event_id| RelatesTo::InReplyTo(InReplyTo { event_id }))
     }
 }
 
@@ -1482,7 +2521,7 @@ mod tests {
         core.timelines.insert(room_id.clone(), timeline);
         flush_and_ack(&mut core);
 
-        core.dispatch(MessengerCommand::LoadOlder { room_id: room_id.clone() }).expect("dispatch succeeds");
+        core.dispatch(MessengerCommand::LoadOlder { room_id: room_id.clone() }, 0).expect("dispatch succeeds");
         flush_and_ack(&mut core);
         let requests = core.releasable_requests(0);
         let load_older = requests.iter().find(|r| r.kind == OutgoingRequestKind::RoomMessages);
@@ -1496,8 +2535,8 @@ mod tests {
         let room_id = RoomId::parse("!r:example.org").expect("valid room id");
         let event_id = EventId::parse("$1:example.org").expect("valid event id");
 
-        core.dispatch(MessengerCommand::MarkRead { room_id: room_id.clone(), event_id }).expect("dispatch succeeds");
-        core.dispatch(MessengerCommand::SetTyping { room_id: room_id.clone(), typing: true }).expect("dispatch succeeds");
+        core.dispatch(MessengerCommand::MarkRead { room_id: room_id.clone(), event_id }, 0).expect("dispatch succeeds");
+        core.dispatch(MessengerCommand::SetTyping { room_id: room_id.clone(), typing: true }, 0).expect("dispatch succeeds");
         flush_and_ack(&mut core);
 
         let requests = core.releasable_requests(0);

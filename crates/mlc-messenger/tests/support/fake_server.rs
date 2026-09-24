@@ -2,19 +2,33 @@
 //! own integration tests. Speaks [`OutgoingRequest`] -> [`HttpResponseDescriptor`]
 //! directly -- no HTTP, no async, no sockets -- but every request/response
 //! body is the real wire JSON shape the research doc's §3.2/§3.3 describe,
-//! so this is a contract test harness every later piece (Megolm group
-//! sessions, key backup, ...) can extend rather than a throwaway mock.
+//! so this is a contract test harness every later piece (cross-signing, key
+//! backup, ...) can extend rather than a throwaway mock.
 //!
-//! Deliberately out of scope, and left for a later piece to add:
-//! `/createRoom`, `/invite`, cross-signing, key backup -- room MEMBERSHIP
-//! for the Megolm group tests (`e2e_megolm_group.rs`) is supplied directly
-//! by the test as plain data, never fetched from this fake server. A
-//! request of any [`OutgoingRequestKind`] this fake does not implement gets
-//! a clean `501` rather than a panic, so extending this file never requires
-//! touching every call site that already works.
+//! Two room models coexist on purpose, never touching each other's code
+//! path: the original `RoomTimeline`/`pending_room_state`/
+//! `pending_room_timeline` triple (test-supplied membership, drain-on-read
+//! or queued-until-consumed delivery -- what `e2e_megolm_group.rs`/
+//! `e2e_core.rs` still use), and `Room`/`room_cursors` (M13b: a real
+//! `/createRoom`, full join/invite/leave/kick, and a per-device
+//! since-cursor delta over `/sync` -- what `e2e_send_pipeline.rs` uses).
+//! Still out of scope, left for a later piece: cross-signing, key backup.
+//! A request of any [`OutgoingRequestKind`] this fake does not implement
+//! gets a clean `501` rather than a panic, so extending this file never
+//! requires touching every call site that already works.
+//!
+//! # Test hooks (M13b)
+//!
+//! [`FakeServer::request_log`] records every dispatched request's own
+//! [`OutgoingRequestKind`] in call order, for a test that needs to assert
+//! cross-request ordering (e.g. "the room-key share landed before the room
+//! event it unblocks"). [`FakeServer::fail_next_room_send`] makes the next
+//! `RoomSend` for a given room fail outright (a one-shot fault injection);
+//! [`FakeServer::last_rejected_room_send_body`] then lets a test assert a
+//! subsequent `MessengerCommand::RetrySend` resent byte-identical content.
 
-use mlc_messenger::wire::{HttpResponseDescriptor, OutgoingRequest, OutgoingRequestKind};
-use mlc_messenger::{DeviceId, RoomId, UserId};
+use mlc_messenger::wire::{HttpResponseDescriptor, Membership, OutgoingRequest, OutgoingRequestKind};
+use mlc_messenger::{DeviceId, EventId, RoomId, UserId};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
@@ -70,6 +84,76 @@ struct RoomTimeline {
     next_event_seq: u64,
 }
 
+/// A full room this fake server created and now broadcasts through
+/// `/sync` on its own (M13b's send pipeline: `/createRoom`, join/leave/
+/// invite/kick, room account data) -- distinct from [`RoomTimeline`]
+/// above, which stays exactly as it was for the older, test-supplied-
+/// membership Megolm tests (module doc: never touched by this piece).
+#[derive(Default)]
+struct Room {
+    /// Current state, keyed by `(event_type, state_key)` -- the latest
+    /// event of each -- and also appended to `state_log` in order, so a
+    /// per-device cursor can compute a delta (module doc's own "state/
+    /// timeline delta" note: replaying the full ordered log to this
+    /// crate's own `RoomState::apply_state_event` produces the same final
+    /// state as a snapshot would, since every field is simply overwritten
+    /// in order).
+    current_state: BTreeMap<(String, String), Value>,
+    state_log: Vec<Value>,
+    timeline_log: Vec<Value>,
+    members: BTreeMap<UserId, Membership>,
+    next_event_seq: u64,
+}
+
+impl Room {
+    fn next_event_id(&mut self) -> String {
+        self.next_event_seq += 1;
+        format!("$room-evt{}:example.org", self.next_event_seq)
+    }
+
+    /// Applies one state event (creating a fresh server-assigned event id),
+    /// recording it as both this room's current value for
+    /// `(event_type, state_key)` and the next entry in `state_log`.
+    fn apply_state(&mut self, event_type: &str, state_key: &str, sender: &UserId, content: Value) {
+        let event_id = self.next_event_id();
+        let event = serde_json::json!({
+            "event_id": event_id,
+            "type": event_type,
+            "sender": sender.as_str(),
+            "origin_server_ts": self.next_event_seq as i64,
+            "state_key": state_key,
+            "content": content,
+        });
+        self.current_state.insert((event_type.to_string(), state_key.to_string()), event.clone());
+        self.state_log.push(event);
+    }
+
+    /// Appends one non-state timeline event (a message, a Megolm
+    /// ciphertext, a reaction, a redaction, ...), returning its
+    /// server-assigned event id.
+    fn append_timeline(&mut self, event_type: &str, sender: &UserId, content: Value) -> String {
+        let event_id = self.next_event_id();
+        let event = serde_json::json!({
+            "event_id": event_id,
+            "type": event_type,
+            "sender": sender.as_str(),
+            "origin_server_ts": self.next_event_seq as i64,
+            "content": content,
+        });
+        self.timeline_log.push(event);
+        event_id
+    }
+}
+
+/// How much of one room's own [`Room::state_log`]/[`Room::timeline_log`]
+/// this fake server has already delivered to one `(user, device)`'s
+/// `/sync` stream.
+#[derive(Default)]
+struct RoomSyncCursor {
+    state_seen: usize,
+    timeline_seen: usize,
+}
+
 fn json_response(status: u16, value: &Value) -> HttpResponseDescriptor {
     HttpResponseDescriptor { status, body: serde_json::to_vec(value).expect("a serde_json::Value always serializes") }
 }
@@ -109,6 +193,54 @@ fn parse_room_send_path(path: &str) -> Option<(RoomId, String)> {
     Some((room_id, event_type))
 }
 
+/// Extracts `(room_id, event_id)` from
+/// `/_matrix/client/v3/rooms/{room_id}/redact/{event_id}/{txn_id}`.
+fn parse_room_redact_path(path: &str) -> Option<(RoomId, EventId)> {
+    let segments: Vec<&str> = path.split('/').collect();
+    let rooms_idx = segments.iter().position(|segment| *segment == "rooms")?;
+    let redact_idx = segments.iter().position(|segment| *segment == "redact")?;
+    let room_id = RoomId::parse(percent_decode_minimal(segments.get(rooms_idx + 1)?)).ok()?;
+    let event_id = EventId::parse(percent_decode_minimal(segments.get(redact_idx + 1)?)).ok()?;
+    Some((room_id, event_id))
+}
+
+/// Extracts `room_id` from `/_matrix/client/v3/rooms/{room_id}/...`
+/// (leave/invite/kick all share this shape).
+fn parse_room_action_path(path: &str) -> Option<RoomId> {
+    let segments: Vec<&str> = path.split('/').collect();
+    let rooms_idx = segments.iter().position(|segment| *segment == "rooms")?;
+    RoomId::parse(percent_decode_minimal(segments.get(rooms_idx + 1)?)).ok()
+}
+
+/// Extracts `room_id_or_alias` from `/_matrix/client/v3/join/{room_id_or_alias}`.
+fn parse_join_path(path: &str) -> Option<RoomId> {
+    let segments: Vec<&str> = path.split('/').collect();
+    let join_idx = segments.iter().position(|segment| *segment == "join")?;
+    RoomId::parse(percent_decode_minimal(segments.get(join_idx + 1)?)).ok()
+}
+
+/// Extracts `(room_id, event_type)` from
+/// `/_matrix/client/v3/user/{user_id}/rooms/{room_id}/account_data/{event_type}`.
+fn parse_room_account_data_path(path: &str) -> Option<(RoomId, String)> {
+    let segments: Vec<&str> = path.split('/').collect();
+    let rooms_idx = segments.iter().position(|segment| *segment == "rooms")?;
+    let room_id = RoomId::parse(percent_decode_minimal(segments.get(rooms_idx + 1)?)).ok()?;
+    let event_type = percent_decode_minimal(segments.last()?);
+    Some((room_id, event_type))
+}
+
+/// Reshapes one full room-state event `Value` into the stripped-preview
+/// shape `invite_state.events` carries (`{type, state_key, sender,
+/// content}` -- no `event_id`/`origin_server_ts`/`unsigned`).
+fn to_stripped_state(event: &Value) -> Value {
+    serde_json::json!({
+        "type": event["type"],
+        "state_key": event["state_key"],
+        "sender": event["sender"],
+        "content": event["content"],
+    })
+}
+
 /// An in-process fake homeserver. See the module doc.
 #[derive(Default)]
 pub struct FakeServer {
@@ -125,6 +257,45 @@ pub struct FakeServer {
     pending_room_state: BTreeMap<(UserId, DeviceId), BTreeMap<RoomId, Vec<Value>>>,
     /// Timeline events queued the same way as `pending_room_state`.
     pending_room_timeline: BTreeMap<(UserId, DeviceId), BTreeMap<RoomId, Vec<Value>>>,
+
+    /// Rooms created through this fake's own `/createRoom` (M13b) --
+    /// broadcast automatically via `/sync`, unlike the legacy
+    /// `room_timelines`/`pending_room_*` model above (module doc).
+    rooms: BTreeMap<RoomId, Room>,
+    /// How much of each such room a given `(user, device)` has already
+    /// received.
+    room_cursors: BTreeMap<(UserId, DeviceId), BTreeMap<RoomId, RoomSyncCursor>>,
+    /// This fake's own room-id minting counter.
+    room_seq: u64,
+    /// Global (non-room) account data, current value per type, per user --
+    /// always redelivered in full on every `/sync` for that user (module
+    /// doc: simpler than tracking a delta, and harmless since this crate's
+    /// own `ingest_sync` folding is idempotent).
+    global_account_data: BTreeMap<UserId, BTreeMap<String, Value>>,
+    /// Room-scoped account data, same "always redeliver current value"
+    /// convention as `global_account_data`.
+    room_account_data: BTreeMap<(UserId, RoomId), BTreeMap<String, Value>>,
+
+    /// Every request's own [`OutgoingRequestKind`] this fake has ever
+    /// dispatched, in call order -- lets a test assert cross-request
+    /// ordering directly at this fake (e.g. "the room-key share landed
+    /// before the room event it unblocks").
+    request_log: Vec<OutgoingRequestKind>,
+    /// A one-shot injected failure for the next `RoomSend` this fake
+    /// receives for a given room -- a test's own fault-injection hook for a
+    /// send-pipeline retry test. Consumed (removed) the moment it fires.
+    fault_next_room_send: BTreeMap<RoomId, String>,
+    /// The `(path, body)` of the most recent `RoomSend` this fake received,
+    /// captured unconditionally (whether it then succeeded or was rejected
+    /// via `fault_next_room_send`) -- lets a test assert a retry sent
+    /// byte-identical wire content (same `txn_id`, embedded in `path`; same
+    /// ciphertext/content, in `body`) as a send this fake had already seen
+    /// once before.
+    last_room_send: Option<(String, Value)>,
+    /// The body of the most recent `RoomSend` this fake REJECTED under the
+    /// encrypted-room type rule (plaintext in an encrypted room) — read back
+    /// through [`FakeServer::last_rejected_room_send_body`].
+    last_rejected_room_send_body: Option<Value>,
 }
 
 /// Extracts the `{event_type}` path component from
@@ -152,6 +323,7 @@ impl FakeServer {
     /// `(as_user, as_device)` (this fake has no access-token concept --
     /// the caller supplies the authenticated identity directly).
     pub fn dispatch(&mut self, as_user: &UserId, as_device: &DeviceId, request: &OutgoingRequest) -> HttpResponseDescriptor {
+        self.request_log.push(request.kind);
         match request.kind {
             OutgoingRequestKind::KeysUpload => self.handle_keys_upload(as_user, as_device, request),
             OutgoingRequestKind::KeysQuery => self.handle_keys_query(request),
@@ -159,6 +331,16 @@ impl FakeServer {
             OutgoingRequestKind::SendToDevice => self.handle_send_to_device(as_user, request),
             OutgoingRequestKind::Sync => self.handle_sync(as_user, as_device, request),
             OutgoingRequestKind::RoomSend => self.handle_room_send(as_user, request),
+            OutgoingRequestKind::RoomRedact => self.handle_room_redact(as_user, request),
+            OutgoingRequestKind::CreateRoom => self.handle_create_room(as_user, request),
+            OutgoingRequestKind::JoinRoom => self.handle_join_room(as_user, request),
+            OutgoingRequestKind::LeaveRoom => self.handle_leave_room(as_user, request),
+            OutgoingRequestKind::Invite => self.handle_invite(as_user, request),
+            OutgoingRequestKind::Kick => self.handle_kick(as_user, request),
+            OutgoingRequestKind::Typing => json_response(200, &serde_json::json!({})),
+            OutgoingRequestKind::ReadMarkers => json_response(200, &serde_json::json!({})),
+            OutgoingRequestKind::AccountData => self.handle_account_data(as_user, request),
+            OutgoingRequestKind::RoomAccountData => self.handle_room_account_data(as_user, request),
             _ => json_response(
                 501,
                 &serde_json::json!({ "errcode": "M_UNRECOGNIZED", "error": "fake server: unsupported request kind" }),
@@ -175,6 +357,31 @@ impl FakeServer {
             .entry((for_user.clone(), for_device.clone()))
             .or_default()
             .push(changed_user.clone());
+    }
+
+    /// Every request kind this fake has dispatched so far, in call order --
+    /// lets a test assert cross-request ordering directly at this fake
+    /// (module doc's own "request_log" note), e.g. "the room-key share
+    /// landed before the room event it unblocks".
+    pub fn request_log(&self) -> &[OutgoingRequestKind] {
+        &self.request_log
+    }
+
+    /// Makes the NEXT `RoomSend` this fake receives for `room_id` fail with
+    /// `errcode` instead of succeeding -- a test's own fault-injection hook
+    /// for a send-pipeline retry test (module doc's own
+    /// `fault_next_room_send` note). Consumed the moment it fires; a
+    /// following `RoomSend` for the same room succeeds normally.
+    pub fn fail_next_room_send(&mut self, room_id: RoomId, errcode: &str) {
+        self.fault_next_room_send.insert(room_id, errcode.to_string());
+    }
+
+    /// The request body of the most recent `RoomSend` this fake rejected
+    /// via [`FakeServer::fail_next_room_send`] -- lets a test assert a
+    /// subsequent retry sent byte-identical ciphertext/content (module
+    /// doc's own `last_rejected_room_send_body` note).
+    pub fn last_rejected_room_send_body(&self) -> Option<&Value> {
+        self.last_rejected_room_send_body.as_ref()
     }
 
     /// Corrupts the signature of one of `(user_id, device_id)`'s currently
@@ -328,6 +535,21 @@ impl FakeServer {
             );
         };
         let body = request.body.clone().unwrap_or_else(|| Value::Object(Map::new()));
+
+        if let Some(errcode) = self.fault_next_room_send.remove(&room_id) {
+            self.last_rejected_room_send_body = Some(body);
+            return json_response(400, &serde_json::json!({ "errcode": errcode, "error": "fake server: injected failure" }));
+        }
+
+        // A room this fake's own `/createRoom` created broadcasts through
+        // the new per-device cursor model; everything else (the older
+        // Megolm-group tests' own test-supplied-membership rooms) keeps
+        // using the untouched legacy model (module doc).
+        if let Some(room) = self.rooms.get_mut(&room_id) {
+            let event_id = room.append_timeline(&event_type, as_user, body);
+            return json_response(200, &serde_json::json!({ "event_id": event_id }));
+        }
+
         let timeline = self.room_timelines.entry(room_id).or_default();
         timeline.next_event_seq += 1;
         let event_id = format!("$evt{}:example.org", timeline.next_event_seq);
@@ -341,6 +563,240 @@ impl FakeServer {
         timeline.events.push(event);
 
         json_response(200, &serde_json::json!({ "event_id": event_id }))
+    }
+
+    /// `PUT /rooms/{roomId}/redact/{eventId}/{txnId}` -- appends an
+    /// `m.room.redaction` timeline event naming `redacts`/`reason`. Only
+    /// implemented for a room created through this fake's own
+    /// `/createRoom` (M13b); the legacy Megolm-group tests never redact.
+    fn handle_room_redact(&mut self, as_user: &UserId, request: &OutgoingRequest) -> HttpResponseDescriptor {
+        let Some((room_id, target)) = parse_room_redact_path(&request.path) else {
+            return json_response(
+                400,
+                &serde_json::json!({ "errcode": "M_UNKNOWN", "error": "fake server: malformed redact path" }),
+            );
+        };
+        let Some(room) = self.rooms.get_mut(&room_id) else {
+            return json_response(404, &serde_json::json!({ "errcode": "M_NOT_FOUND", "error": "fake server: unknown room" }));
+        };
+        let reason = request.body.as_ref().and_then(|body| body.get("reason")).and_then(Value::as_str);
+        let mut content = serde_json::json!({ "redacts": target.as_str() });
+        if let Some(reason) = reason {
+            content["reason"] = Value::String(reason.to_string());
+        }
+        let event_id = room.append_timeline("m.room.redaction", as_user, content);
+        json_response(200, &serde_json::json!({ "event_id": event_id }))
+    }
+
+    /// `POST /createRoom` (M13b) -- derives `kind`/power levels from
+    /// `visibility`+`is_direct` (server plan §5), injects every bootstrap
+    /// state event server-side, and announces mutual device-list awareness
+    /// between every member this call adds (this file's own module doc).
+    fn handle_create_room(&mut self, as_user: &UserId, request: &OutgoingRequest) -> HttpResponseDescriptor {
+        let body = request.body.clone().unwrap_or_else(|| Value::Object(Map::new()));
+        let is_direct = body.get("is_direct").and_then(Value::as_bool).unwrap_or(false);
+        let visibility = body.get("visibility").and_then(Value::as_str).unwrap_or("private");
+        let name = body.get("name").and_then(Value::as_str).map(str::to_string);
+        let topic = body.get("topic").and_then(Value::as_str).map(str::to_string);
+        let members_can_invite = body.get("members_can_invite").and_then(Value::as_bool).unwrap_or(false);
+        let invite: Vec<UserId> = body
+            .get("invite")
+            .and_then(Value::as_array)
+            .map(|values| values.iter().filter_map(Value::as_str).filter_map(|s| UserId::parse(s).ok()).collect())
+            .unwrap_or_default();
+
+        let is_channel = !is_direct && visibility == "public";
+        let encrypted = !is_channel;
+        let (events_default, invite_level, join_rule, history_visibility) = if is_direct {
+            (0i64, 50i64, "invite", "shared")
+        } else if is_channel {
+            (50i64, 50i64, "public", "world_readable")
+        } else {
+            (0i64, if members_can_invite { 0i64 } else { 50i64 }, "invite", "shared")
+        };
+
+        self.room_seq += 1;
+        let room_id = RoomId::parse(format!("!room{}:example.org", self.room_seq)).expect("well-formed room id");
+        let mut room = Room::default();
+
+        room.apply_state("m.room.create", "", as_user, serde_json::json!({ "creator": as_user.as_str(), "room_version": "11" }));
+        room.apply_state("m.room.member", as_user.as_str(), as_user, serde_json::json!({ "membership": "join" }));
+        room.members.insert(as_user.clone(), Membership::Join);
+        for invitee in &invite {
+            room.apply_state(
+                "m.room.member",
+                invitee.as_str(),
+                as_user,
+                serde_json::json!({ "membership": "invite", "is_direct": is_direct }),
+            );
+            room.members.insert(invitee.clone(), Membership::Invite);
+        }
+
+        let mut users = Map::new();
+        users.insert(as_user.as_str().to_string(), Value::from(100));
+        room.apply_state(
+            "m.room.power_levels",
+            "",
+            as_user,
+            serde_json::json!({
+                "ban": 50, "kick": 50, "redact": 50, "state_default": 50,
+                "events_default": events_default, "users_default": 0,
+                "invite": invite_level, "users": Value::Object(users),
+            }),
+        );
+        room.apply_state("m.room.join_rules", "", as_user, serde_json::json!({ "join_rule": join_rule }));
+        room.apply_state(
+            "m.room.history_visibility",
+            "",
+            as_user,
+            serde_json::json!({ "history_visibility": history_visibility }),
+        );
+        if encrypted {
+            room.apply_state("m.room.encryption", "", as_user, serde_json::json!({ "algorithm": "m.megolm.v1.aes-sha2" }));
+        }
+        if let Some(name) = &name {
+            room.apply_state("m.room.name", "", as_user, serde_json::json!({ "name": name }));
+        }
+        if let Some(topic) = &topic {
+            room.apply_state("m.room.topic", "", as_user, serde_json::json!({ "topic": topic }));
+        }
+
+        self.rooms.insert(room_id.clone(), room);
+        self.broadcast_membership_awareness(&room_id, as_user);
+        for invitee in &invite {
+            self.broadcast_membership_awareness(&room_id, invitee);
+        }
+
+        json_response(200, &serde_json::json!({ "room_id": room_id.as_str() }))
+    }
+
+    /// `POST /join/{roomIdOrAlias}` -- this fake never checks a join rule
+    /// (module doc: spec-shaped, not spec-complete); joining a room that
+    /// does not exist in `self.rooms` is a `404`.
+    fn handle_join_room(&mut self, as_user: &UserId, request: &OutgoingRequest) -> HttpResponseDescriptor {
+        let Some(room_id) = parse_join_path(&request.path) else {
+            return json_response(400, &serde_json::json!({ "errcode": "M_UNKNOWN", "error": "fake server: malformed join path" }));
+        };
+        let Some(room) = self.rooms.get_mut(&room_id) else {
+            return json_response(404, &serde_json::json!({ "errcode": "M_NOT_FOUND", "error": "fake server: unknown room" }));
+        };
+        room.apply_state("m.room.member", as_user.as_str(), as_user, serde_json::json!({ "membership": "join" }));
+        room.members.insert(as_user.clone(), Membership::Join);
+        self.broadcast_membership_awareness(&room_id, as_user);
+        json_response(200, &serde_json::json!({ "room_id": room_id.as_str() }))
+    }
+
+    /// `POST /rooms/{roomId}/leave`.
+    fn handle_leave_room(&mut self, as_user: &UserId, request: &OutgoingRequest) -> HttpResponseDescriptor {
+        let Some(room_id) = parse_room_action_path(&request.path) else {
+            return json_response(400, &serde_json::json!({ "errcode": "M_UNKNOWN", "error": "fake server: malformed leave path" }));
+        };
+        let Some(room) = self.rooms.get_mut(&room_id) else {
+            return json_response(404, &serde_json::json!({ "errcode": "M_NOT_FOUND", "error": "fake server: unknown room" }));
+        };
+        room.apply_state("m.room.member", as_user.as_str(), as_user, serde_json::json!({ "membership": "leave" }));
+        room.members.insert(as_user.clone(), Membership::Leave);
+        json_response(200, &serde_json::json!({}))
+    }
+
+    /// `POST /rooms/{roomId}/invite`.
+    fn handle_invite(&mut self, as_user: &UserId, request: &OutgoingRequest) -> HttpResponseDescriptor {
+        let Some(room_id) = parse_room_action_path(&request.path) else {
+            return json_response(400, &serde_json::json!({ "errcode": "M_UNKNOWN", "error": "fake server: malformed invite path" }));
+        };
+        let body = request.body.clone().unwrap_or_else(|| Value::Object(Map::new()));
+        let Some(user_id) = body.get("user_id").and_then(Value::as_str).and_then(|s| UserId::parse(s).ok()) else {
+            return json_response(400, &serde_json::json!({ "errcode": "M_MISSING_PARAM", "error": "fake server: missing user_id" }));
+        };
+        let Some(room) = self.rooms.get_mut(&room_id) else {
+            return json_response(404, &serde_json::json!({ "errcode": "M_NOT_FOUND", "error": "fake server: unknown room" }));
+        };
+        room.apply_state("m.room.member", user_id.as_str(), as_user, serde_json::json!({ "membership": "invite" }));
+        room.members.insert(user_id.clone(), Membership::Invite);
+        self.broadcast_membership_awareness(&room_id, &user_id);
+        json_response(200, &serde_json::json!({}))
+    }
+
+    /// `POST /rooms/{roomId}/kick`.
+    fn handle_kick(&mut self, as_user: &UserId, request: &OutgoingRequest) -> HttpResponseDescriptor {
+        let Some(room_id) = parse_room_action_path(&request.path) else {
+            return json_response(400, &serde_json::json!({ "errcode": "M_UNKNOWN", "error": "fake server: malformed kick path" }));
+        };
+        let body = request.body.clone().unwrap_or_else(|| Value::Object(Map::new()));
+        let Some(user_id) = body.get("user_id").and_then(Value::as_str).and_then(|s| UserId::parse(s).ok()) else {
+            return json_response(400, &serde_json::json!({ "errcode": "M_MISSING_PARAM", "error": "fake server: missing user_id" }));
+        };
+        let reason = body.get("reason").and_then(Value::as_str);
+        let Some(room) = self.rooms.get_mut(&room_id) else {
+            return json_response(404, &serde_json::json!({ "errcode": "M_NOT_FOUND", "error": "fake server: unknown room" }));
+        };
+        let mut content = serde_json::json!({ "membership": "leave" });
+        if let Some(reason) = reason {
+            content["reason"] = Value::String(reason.to_string());
+        }
+        room.apply_state("m.room.member", user_id.as_str(), as_user, content);
+        room.members.insert(user_id.clone(), Membership::Leave);
+        json_response(200, &serde_json::json!({}))
+    }
+
+    /// `PUT /user/{userId}/account_data/{type}` -- overwrites the current
+    /// value in full (module doc: always redelivered whole, no delta
+    /// tracking).
+    fn handle_account_data(&mut self, as_user: &UserId, request: &OutgoingRequest) -> HttpResponseDescriptor {
+        let Some(event_type) = request.path.rsplit('/').next().map(percent_decode_minimal) else {
+            return json_response(400, &serde_json::json!({ "errcode": "M_UNKNOWN", "error": "fake server: malformed account_data path" }));
+        };
+        let body = request.body.clone().unwrap_or_else(|| Value::Object(Map::new()));
+        self.global_account_data.entry(as_user.clone()).or_default().insert(event_type, body);
+        json_response(200, &serde_json::json!({}))
+    }
+
+    /// `PUT /user/{userId}/rooms/{roomId}/account_data/{type}`.
+    fn handle_room_account_data(&mut self, as_user: &UserId, request: &OutgoingRequest) -> HttpResponseDescriptor {
+        let Some((room_id, event_type)) = parse_room_account_data_path(&request.path) else {
+            return json_response(
+                400,
+                &serde_json::json!({ "errcode": "M_UNKNOWN", "error": "fake server: malformed room account_data path" }),
+            );
+        };
+        let body = request.body.clone().unwrap_or_else(|| Value::Object(Map::new()));
+        self.room_account_data.entry((as_user.clone(), room_id)).or_default().insert(event_type, body);
+        json_response(200, &serde_json::json!({}))
+    }
+
+    /// Announces, both ways, that `user_id` and every OTHER current
+    /// join-or-invite member of `room_id` should now track each other's
+    /// device lists -- real Matrix's own `device_lists.changed` semantics
+    /// for "you now share a room with this user" (module doc; reuses the
+    /// existing [`FakeServer::note_device_list_changed`] mechanism a test
+    /// can also drive by hand).
+    fn broadcast_membership_awareness(&mut self, room_id: &RoomId, user_id: &UserId) {
+        let others: Vec<UserId> = self
+            .rooms
+            .get(room_id)
+            .map(|room| {
+                room.members
+                    .iter()
+                    .filter(|(other, membership)| matches!(membership, Membership::Join | Membership::Invite) && *other != user_id)
+                    .map(|(other, _)| other.clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for other in &others {
+            self.broadcast_device_list_change(other, user_id);
+            self.broadcast_device_list_change(user_id, other);
+        }
+    }
+
+    /// Queues a `device_lists.changed` entry for `changed_user` on every
+    /// device this fake has ever seen published for `for_user` (i.e. every
+    /// `(for_user, *)` key in `self.devices`).
+    fn broadcast_device_list_change(&mut self, for_user: &UserId, changed_user: &UserId) {
+        let devices: Vec<DeviceId> =
+            self.devices.keys().filter(|(user, _)| user == for_user).map(|(_, device)| device.clone()).collect();
+        for device in devices {
+            self.note_device_list_changed(for_user, &device, changed_user);
+        }
     }
 
     /// Every event currently stored in `room_id`'s server-side timeline,
@@ -406,11 +862,60 @@ impl FakeServer {
             );
         }
 
+        // M13b's own broadcast rooms (`/createRoom` and friends) -- a
+        // per-device cursor delta for a joined room, a current-state
+        // snapshot (no cursor: harmless to redeliver, module doc) for an
+        // invited one.
+        let mut invite = Map::new();
+        let room_ids_snapshot: Vec<RoomId> = self.rooms.keys().cloned().collect();
+        for room_id in room_ids_snapshot {
+            let membership = self.rooms.get(&room_id).and_then(|room| room.members.get(as_user)).cloned();
+            match membership {
+                Some(Membership::Join) => {
+                    let room_account_events: Vec<Value> = self
+                        .room_account_data
+                        .get(&(as_user.clone(), room_id.clone()))
+                        .map(|by_type| by_type.iter().map(|(t, c)| serde_json::json!({ "type": t, "content": c })).collect())
+                        .unwrap_or_default();
+                    let cursor =
+                        self.room_cursors.entry(key.clone()).or_default().entry(room_id.clone()).or_default();
+                    let room = self.rooms.get(&room_id).expect("just matched Some(Join) above");
+                    let state_events = room.state_log[cursor.state_seen..].to_vec();
+                    let timeline_events = room.timeline_log[cursor.timeline_seen..].to_vec();
+                    cursor.state_seen = room.state_log.len();
+                    cursor.timeline_seen = room.timeline_log.len();
+                    if !state_events.is_empty() || !timeline_events.is_empty() || !room_account_events.is_empty() {
+                        join.insert(
+                            room_id.as_str().to_string(),
+                            serde_json::json!({
+                                "state": { "events": state_events },
+                                "timeline": { "events": timeline_events },
+                                "account_data": { "events": room_account_events },
+                            }),
+                        );
+                    }
+                }
+                Some(Membership::Invite) => {
+                    let room = self.rooms.get(&room_id).expect("just matched Some(Invite) above");
+                    let stripped: Vec<Value> = room.current_state.values().map(to_stripped_state).collect();
+                    invite.insert(room_id.as_str().to_string(), serde_json::json!({ "invite_state": { "events": stripped } }));
+                }
+                _ => {}
+            }
+        }
+
+        let account_data_events: Vec<Value> = self
+            .global_account_data
+            .get(as_user)
+            .map(|by_type| by_type.iter().map(|(t, c)| serde_json::json!({ "type": t, "content": c })).collect())
+            .unwrap_or_default();
+
         json_response(
             200,
             &serde_json::json!({
                 "next_batch": format!("s{next_batch_index}"),
-                "rooms": { "join": Value::Object(join) },
+                "rooms": { "join": Value::Object(join), "invite": Value::Object(invite) },
+                "account_data": { "events": account_data_events },
                 "to_device": { "events": events },
                 "device_lists": { "changed": changed, "left": [] },
                 "device_one_time_keys_count": { "signed_curve25519": otk_count },
