@@ -747,3 +747,184 @@ async fn synced_sidebar_panel_resyncs_across_a_preset_switch_with_colliding_leaf
     );
 }
 
+// ─── Test 6: a shared/read-only chart's viewport snaps to the right edge ──
+//
+// Owner repro 2026-09-24: a chart opened from a share link showed roughly
+// HALF the chart width as empty future space to the right of the last bar,
+// instead of the standard small margin every other hydration path lands on
+// (`DEFAULT_SNAP_MARGIN` = 5 bars out of the ~100-bar default view —
+// `ChartContainer::consume_cold_snap` / `Viewport::fit_default_view`).
+//
+// Drives the REAL share-open path end to end — `ChartApp::open_shared_preset`
+// (`mlc-app/src/share_viewer.rs`) -> `ChartApp::load_preset` ->
+// `ChartOutEvent::LoadPreset` -> stashed `pending_cold_apply` ->
+// `ChartApp::drain_pending_cold_apply` -> `apply_preset_cold`
+// (`persistence/hydration_impl.rs`) — the exact sequence both shells run one
+// frame after a share link resolves, then feeds bars through the real
+// reactor (same two-stage cache-then-backfill sequence as Test 3) to prove
+// the shared window's viewport lands on the right edge like any other cold
+// hydration, not stuck at some other position.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test(flavor = "multi_thread", worker_threads = 2))]
+async fn shared_chart_viewport_snaps_to_right_edge_like_any_other_hydration() {
+    let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new().await;
+    let bridge = Arc::new(bridge);
+    let core = mlc_backend::BackendCore::new(bridge, None);
+    let mut app = ChartApp::new_empty(core);
+    let tf_name = tf_h1().name.clone();
+
+    // Set up + fully hydrate the visitor's OWN chart first — reproduces the
+    // realistic starting point ("I already have the app open on my own
+    // chart") the owner's report switches away FROM to look at the share.
+    let own_cid = app.panel_app.panel_grid.active_container_id()
+        .expect("new_empty seeds one active window");
+    let own_bid = app.create_auto_bubble([0.0, 0.0, 0.0, 0.0], "AAAUSDT".to_string(), tf_h1());
+    app.attach_chart_to_tag(own_cid, own_bid);
+    {
+        let win = app.panel_app.panel_grid.containers_mut().get_mut(&own_cid)
+            .expect("own window");
+        win.auto_tag_id = own_bid;
+        win.current_tag_id = own_bid;
+        win.pending_symbol_load = true;
+        win.needs_snap_after_backfill = true;
+        win.force_viewport_for_test(1000.0, 10.0, 0.0);
+    }
+    app.core.bubbles_mut().set_bid_instrument_full(
+        own_bid, "AAAUSDT".to_string(), "binance".to_string(), "S".to_string(), tf_h1(),
+    );
+    let own_base_ts: i64 = 1_699_999_200;
+    let own_bars: Vec<mlc_core::Bar> = (0..500i64)
+        .map(|i| mlc_core::Bar::new(own_base_ts + i * 3600, 100.0, 101.0, 99.0, 100.5))
+        .collect();
+    app.core.bubbles_mut().replace_bars(own_bid, own_bars.clone());
+    app.react_to_events(&[BubbleEvent::BarsLoaded {
+        bid: own_bid,
+        exchange_id: ExchangeId::Binance,
+        symbol: "AAAUSDT".to_string(),
+        account_type: "S".to_string(),
+        timeframe: tf_name.clone(),
+        bars: own_bars.clone(),
+        prev_bars: Vec::new(),
+    }], now_ms());
+    assert_eq!(
+        read_active_viewport_bar_count(&app), 500,
+        "setup: own chart did not hydrate before the share-open under test"
+    );
+
+    // Real save — `collect_state_into_preset` is the exact same call both
+    // shells' "share_chart" click handler relies on for the POST body
+    // (`mlc-app-shell-web/src/lib.rs`'s "Drain pending live-share requests").
+    let own_id = "own_preset".to_string();
+    app.collect_state_into_preset(&own_id, "Own");
+
+    // Build "the sharer's preset" from a real, structurally valid snapshot
+    // (same `windows`/`bubbles`/`layout` shape a genuine share upload
+    // carries) but a DIFFERENT instrument, so a stale/leftover viewport
+    // would be observable.
+    let mut shared_preset = app.core.presets().get(&own_id).cloned()
+        .expect("collect_state_into_preset must have saved the own preset");
+    for w in shared_preset.windows.iter_mut() {
+        w.symbol = "BBBUSDT".to_string();
+        w.exchange = "binance".to_string();
+    }
+    for b in shared_preset.bubbles.iter_mut() {
+        b.symbol = "BBBUSDT".to_string();
+        b.exchange = "binance".to_string();
+    }
+
+    let meta = mlc_app::SharedChartMeta {
+        token: "tok123".to_string(),
+        title: "Shared BBB chart".to_string(),
+        owner_label: "some_owner".to_string(),
+        kind: "live".to_string(),
+        rights: vec!["read".to_string()],
+        expires_at: "2099-01-01T00:00:00Z".to_string(),
+    };
+    let shared_id = app.open_shared_preset(meta, shared_preset)
+        .expect("open_shared_preset must accept a freshly-collected, same-version preset");
+    // The shell's render loop drains this one frame after `LoadPreset`
+    // stashed it — see `drain_pending_cold_apply`'s own doc.
+    app.drain_pending_cold_apply();
+
+    assert_eq!(
+        app.panel_app.active_preset_id, shared_id,
+        "setup: the shared preset did not become the active tab"
+    );
+    let shared_cid = app.panel_app.panel_grid.active_container_id()
+        .expect("shared window must be materialized after drain_pending_cold_apply");
+    let shared_bid = app.bubble_for_chart(shared_cid)
+        .expect("shared window must have a live bubble after apply_preset_cold");
+
+    // Production reality (same rationale as Test 3): by the time bars
+    // arrive, wasm's settled-dimensions resize has already run at least
+    // once. `force_viewport_for_test` only seeds a field that is still
+    // <= 0.0 — it does NOT touch `needs_snap_after_backfill`, so this does
+    // not bypass the fix under test, only supplies the geometry a real
+    // layout pass would already have provided.
+    if let Some(win) = app.panel_app.panel_grid.containers_mut().get_mut(&shared_cid) {
+        win.force_viewport_for_test(1000.0, 10.0, 0.0);
+    }
+
+    let chart_width: f64 = 1000.0;
+    let bar_spacing: f64 = 10.0;
+    let visible_f: f64 = chart_width / bar_spacing;
+    let expected_right_edge = |bar_count: usize| -> f64 {
+        let progressive = (0.05 * visible_f).ceil().max(0.0);
+        let margin = mlc_app::chart_container::DEFAULT_SNAP_MARGIN.min(progressive);
+        bar_count as f64 + margin - visible_f
+    };
+
+    // Stage 1: cache-served batch (same two-stage sequence as Test 3).
+    let shared_base_ts: i64 = 1_699_999_200;
+    let cache_bars: Vec<mlc_core::Bar> = (0..100i64)
+        .map(|i| mlc_core::Bar::new(shared_base_ts + i * 3600, 200.0, 201.0, 199.0, 200.5))
+        .collect();
+    app.core.bubbles_mut().replace_bars(shared_bid, cache_bars.clone());
+    app.react_to_events(&[BubbleEvent::BarsLoaded {
+        bid: shared_bid,
+        exchange_id: ExchangeId::Binance,
+        symbol: "BBBUSDT".to_string(),
+        account_type: "S".to_string(),
+        timeframe: tf_name.clone(),
+        bars: cache_bars.clone(),
+        prev_bars: Vec::new(),
+    }], now_ms());
+
+    let vs_after_cache = read_active_view_start(&app);
+    let edge_after_cache = expected_right_edge(cache_bars.len());
+    assert!(
+        (vs_after_cache - edge_after_cache).abs() < 1.0,
+        "[shared, stage 1] cache batch did not snap to its own right edge: \
+         view_start={vs_after_cache} expected~{edge_after_cache} bars={}",
+        cache_bars.len()
+    );
+
+    // Stage 2: real backfill prepends older bars — the owner-repro shape.
+    let full_bars: Vec<mlc_core::Bar> = (0..2001i64)
+        .map(|i| mlc_core::Bar::new(shared_base_ts + (i - 1901) * 3600, 190.0, 191.0, 189.0, 190.5))
+        .collect();
+    app.core.bubbles_mut().replace_bars(shared_bid, full_bars.clone());
+    app.react_to_events(&[BubbleEvent::BackfillCompleted {
+        bid: shared_bid,
+        exchange_id: ExchangeId::Binance,
+        symbol: "BBBUSDT".to_string(),
+        account_type: "S".to_string(),
+        timeframe: tf_name.clone(),
+        bars: full_bars.clone(),
+        prev_bars: cache_bars,
+    }], now_ms());
+
+    let vs_after_backfill = read_active_view_start(&app);
+    let bc_after_backfill = read_active_viewport_bar_count(&app);
+    let edge_after_backfill = expected_right_edge(full_bars.len());
+    assert_eq!(bc_after_backfill, 2001, "viewport.bar_count must track the full 2001-bar shared history");
+    assert!(
+        (vs_after_backfill - edge_after_backfill).abs() < 5.0,
+        "[owner repro 2026-09-24 — shared chart viewport] history prepend \
+         left the shared window's viewport off the right edge: \
+         view_start={vs_after_backfill} (expected ~{edge_after_backfill}, \
+         bar_count={bc_after_backfill}, total=2001, chart_width={chart_width}, \
+         bar_spacing={bar_spacing}) — this is the 'half the chart is empty \
+         future space' symptom",
+    );
+}
