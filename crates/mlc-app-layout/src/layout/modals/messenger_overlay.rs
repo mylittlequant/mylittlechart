@@ -59,7 +59,7 @@ use super::cloud_overlay::{
 use super::community::CommunityListPaneResult;
 use super::dm_overlay::{
     draw_error_line, draw_field, draw_key_changed_notice, draw_lock_glyph, draw_lookup_dropdown,
-    draw_open_peer_row, draw_vault_locked_header,
+    draw_open_peer_row,
 };
 
 const RAIL_W: f64 = 68.0;
@@ -86,10 +86,10 @@ const SYSTEM_NOTICE_H: f64 = 20.0;
 const CIPHERTEXT_MAX_LINES: usize = 3;
 const CONV_ROW_H: f64 = 52.0;
 const RAIL_ROW_H: f64 = 40.0;
-/// The docked send box's own height — draft field + gap + Send button. See
-/// this file's own top doc: the dock's exact shape is UI-2a piece 3's own
-/// job; this pass keeps the same footprint `dm_overlay.rs` used so the
-/// pane's scroll math never has to change twice.
+/// The docked send box's own height — draft field + gap + Send button, the
+/// SAME footprint every dock state uses (locked/peer-without-key/nick-
+/// required all fit inside it too — see [`draw_composer`]'s own doc) so
+/// the pane's scroll math never has to change per dock state.
 const COMPOSER_H: f64 = 8.0 + FIELD_H + 8.0 + ROW_H;
 
 /// `TimelineItem::sender`'s own opaque id for the signed-in caller's own
@@ -354,10 +354,9 @@ fn draw_room_row(
 // =============================================================================
 // Chat pane — header, day separators + bubbles/system notices from
 // [`MessengerProvider::timeline`], a bottom-anchored feed with a
-// jump-to-latest button, and the docked composer (UI-2a piece 3's own
-// polish target — see this file's own top doc for why this pass keeps
-// `dm_overlay.rs`'s existing dock shape rather than the final one-line/
-// button spec).
+// jump-to-latest button, and the docked composer ([`draw_composer`], UI-2a
+// piece 3): the single place every reason the composer cannot send yet
+// shows up, one calm line at a time — no separate pane-top notice.
 // =============================================================================
 
 #[allow(clippy::too_many_arguments)]
@@ -390,9 +389,8 @@ fn draw_chat_pane(
     }
 
     let locked = matches!(provider.vault_state(), VaultState::Locked);
-    let header_h = if locked { draw_vault_locked_header(ctx, coord, layer_id, x, y, w, tt) } else { 0.0 };
-    let body_y = y + header_h;
-    let body_viewport_h = (viewport_h - header_h).max(0.0);
+    let body_y = y;
+    let body_viewport_h = viewport_h;
 
     let DmView::Conversation { id, has_older, .. } = &state.dm.view else {
         draw_status(
@@ -510,7 +508,10 @@ fn draw_chat_pane(
         draw_jump_to_latest(ctx, coord, layer_id, x, body_y, w, scroll_h, tt);
     }
 
-    draw_composer(ctx, coord, layer_id, x, body_y, w, body_viewport_h, state, locked, tt, ft, current_time_ms, result);
+    draw_composer(
+        ctx, coord, layer_id, x, body_y, w, body_viewport_h, state, locked, has_key, tt, ft, current_time_ms,
+        result,
+    );
 }
 
 fn draw_jump_to_latest(
@@ -539,6 +540,17 @@ fn draw_jump_to_latest(
     coord.register_on_layer("cloud_overlay:dm:jump_latest", rect, Sense::CLICK | Sense::HOVER, layer_id);
 }
 
+/// The dock — the ONE place every reason the composer cannot send yet
+/// shows up (UI-2a piece 3, owner spec): a nick-required hint keeps its
+/// own pre-existing hint+button shape (a ladder-mandate gate, orthogonal
+/// to messaging itself); vault-locked and peer-without-key each get
+/// exactly the notice the owner asked for, one line (plus a button for
+/// the vault case) — replacing the three separate old notices this piece
+/// retires: the pane-top vault-locked header, the vault-locked composer's
+/// own OLD hint-with-no-button, and the header's old "no key
+/// published"/fingerprint-substitution line (`dm_overlay.rs`'s former
+/// `draw_right_conversation`, all three gone from this crate now — see
+/// this file's own top doc).
 #[allow(clippy::too_many_arguments)]
 fn draw_composer(
     ctx: &mut dyn RenderContext,
@@ -550,20 +562,13 @@ fn draw_composer(
     viewport_h: f64,
     state: &CommunityState,
     locked: bool,
+    has_key: bool,
     tt: &ToolbarTheme,
     ft: &FrameTheme,
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
 ) {
     let composer_y = y + (viewport_h - COMPOSER_H).max(0.0);
-    if locked || !state.dm.available {
-        ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(&tt.item_text_muted);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.fill_text(UserSettingsKey::DmUnlockVaultHint.get(current_language()), x, composer_y + 8.0);
-        return;
-    }
     if state.forum2.nick_required() {
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(&tt.item_text_muted);
@@ -576,6 +581,39 @@ fn draw_composer(
             WidgetRect::new(x, btn_y, w, ROW_H - ROW_GAP),
             UserSettingsKey::AccountChooseNickBtn.get(current_language()), tt,
         );
+        return;
+    }
+    // Vault locked (owner spec, UI-2a piece 3): ONE line + ONE accent
+    // button, replacing the old pane-top header notice AND the old
+    // button-less composer hint together.
+    if locked {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        let hint = crate::ui::widgets::fit_text_to_width(
+            ctx, "Vault locked. Messages stay encrypted until you unlock it.", w,
+        );
+        ctx.fill_text(&hint, x, composer_y + 8.0);
+        let btn_y = composer_y + 8.0 + FIELD_H + 8.0;
+        draw_action_row(
+            ctx, coord, layer_id, "cloud_overlay:dm:unlock_vault",
+            WidgetRect::new(x, btn_y, w, ROW_H - ROW_GAP), "Unlock vault", tt,
+        );
+        return;
+    }
+    // Peer has no messaging key published yet — a calm, no-button line
+    // (owner spec): there is nothing to click here, only something to
+    // wait for.
+    if !has_key {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        let hint = crate::ui::widgets::fit_text_to_width(
+            ctx, "This person hasn't set up messaging yet.", w,
+        );
+        ctx.fill_text(&hint, x, composer_y + 8.0);
         return;
     }
     let crate::ui::modal_settings::DmView::Conversation { draft_field_id, .. } = &state.dm.view else { return };

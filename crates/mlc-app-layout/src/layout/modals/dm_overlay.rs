@@ -9,8 +9,11 @@
 //! `conversation_scroll_h`/`message_h`/`message_lines` chain they sit on)
 //! and the small paint helpers `messenger_overlay.rs` reuses rather than
 //! duplicating ([`draw_field`], [`draw_open_peer_row`],
-//! [`draw_lookup_dropdown`], [`draw_vault_locked_header`],
-//! [`draw_key_changed_notice`], [`draw_lock_glyph`], [`draw_error_line`]).
+//! [`draw_lookup_dropdown`], [`draw_key_changed_notice`],
+//! [`draw_lock_glyph`], [`draw_error_line`]). The vault-locked/peer-no-key
+//! dock notices themselves (UI-2a piece 3) live entirely in
+//! `messenger_overlay.rs`'s own `draw_composer` now — this file no longer
+//! draws a pane-top vault-locked header at all.
 //! State lives in `CommunityState::dm` (`DmState`); see that type's own doc
 //! for the decryption-stage contract (`DmMessageBody`) — the shell decrypts
 //! what it can before this crate ever sees a message, but a sealed vault
@@ -94,14 +97,6 @@ pub(crate) fn list_height(state: &CommunityState) -> f64 {
     list_pane_h(&state.dm, state.forum2.nick_required())
 }
 
-/// [`draw_vault_locked_header`]'s own height, factored out so [`height`]'s
-/// sizing can never drift from what that function actually draws — same
-/// "one shared number" rule [`open_peer_row_h`]/[`list_pane_h`] already
-/// follow for the left column.
-fn vault_locked_header_h() -> f64 {
-    18.0 + 8.0 + (ROW_H - ROW_GAP) + 10.0
-}
-
 /// Whether `id`'s peer-key backfill has landed a different fingerprint than
 /// this session held before it — see [`DmState::has_peer_key_changed`]'s own
 /// doc. Threaded into every sizing/drawing call below so the header notice
@@ -121,7 +116,7 @@ pub(crate) fn height(state: &CommunityState) -> f64 {
             return if state.dm.last_error.is_some() { 20.0 } else { 0.0 };
         }
         DmUnavailableReason::VaultLocked => {
-            let body_h = match &state.dm.view {
+            return match &state.dm.view {
                 DmView::List => 24.0,
                 DmView::Conversation { id, messages, has_older, .. } => {
                     let key_changed = conversation_key_changed(&state.dm, *id);
@@ -129,7 +124,6 @@ pub(crate) fn height(state: &CommunityState) -> f64 {
                         + COMPOSER_H
                 }
             };
-            return vault_locked_header_h() + body_h;
         }
         DmUnavailableReason::None => {}
     }
@@ -181,39 +175,6 @@ pub(crate) fn draw_lock_glyph(ctx: &mut dyn RenderContext, cx: f64, cy: f64, siz
     ctx.stroke();
     ctx.set_fill_color(color);
     ctx.fill_rounded_rect(body_x, body_y, body_w, body_h, size * 0.16);
-}
-
-/// The right pane's header while the vault is sealed but the account is
-/// paid (owner ruling 2026-09-10): one line saying so, and a button that
-/// opens the Vault tab — reuses the Account tab's own `account_open_vault`
-/// handler (`"cloud_overlay:dm:unlock_vault"`, re-gated in `panel_click.rs`
-/// BEFORE the `dm.available` check so it keeps working precisely while this
-/// draws).
-pub(crate) fn draw_vault_locked_header(
-    ctx: &mut dyn RenderContext,
-    coord: &mut InputCoordinator,
-    layer_id: &LayerId,
-    x: f64,
-    y: f64,
-    w: f64,
-    tt: &ToolbarTheme,
-) -> f64 {
-    draw_lock_glyph(ctx, x + 8.0, y + 9.0, 14.0, &tt.item_text_muted);
-    ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    let hint = crate::ui::widgets::fit_text_to_width(
-        ctx, UserSettingsKey::DmUnlockVaultHint.get(current_language()), w - 24.0,
-    );
-    ctx.fill_text(&hint, x + 22.0, y + 2.0);
-    let btn_y = y + 18.0 + 8.0;
-    draw_action_row(
-        ctx, coord, layer_id, "cloud_overlay:dm:unlock_vault",
-        WidgetRect::new(x, btn_y, w, ROW_H - ROW_GAP),
-        UserSettingsKey::AccountOpenVault.get(current_language()), tt,
-    );
-    vault_locked_header_h()
 }
 
 pub(crate) fn draw_field(
