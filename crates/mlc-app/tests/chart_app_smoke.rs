@@ -625,3 +625,125 @@ async fn toolbar_dropdown_open_closes_the_open_settings_modal() {
          repro 2026-09-23, RSI settings modal)"
     );
 }
+
+// ─── Test 5: Synced sidebar panels must resync across a preset switch ──────
+//
+// Owner repro 2026-09-24: opening a shared chart renders the chart itself
+// fine, but every "Synced" right-sidebar panel (DOM, Trade Tape, L2, Big
+// Trades) that is supposed to always track the ACTIVE chart's instrument
+// stays empty — it never connects to any data. Switching to the user's own
+// normal tab and back "heals" it.
+//
+// Root cause: `ChartApp::prepare_frame`'s "active chart changed" detector
+// (`frame_lifecycle/prepare.rs`) compared `LeafId`s from
+// `panel_grid.docking().active_leaf()` — but `LeafId` counters are scoped to
+// ONE docking tree and restart per preset (`apply_preset_cold`'s
+// `replace_docking` installs a brand new tree deserialized from that
+// preset's own `layout` JSON). Two different, simple single-window presets
+// routinely land their sole leaf on the exact same small id (typically 0/1),
+// which made a genuine tab switch look like a no-op and skipped
+// `TagManager::reassign_synced_panels` / `ChartApp::apply_key_to_panels_in_group`
+// entirely — every Synced panel kept pointing at a tag group
+// `apply_preset_cold`'s `tags_mut().clear()` had already discarded, so it
+// could never resolve an instrument to subscribe to.
+//
+// Fix: key the detector on `ChartId` (`panel_grid.active_container_id()`)
+// instead — `ChartId` is a process-global, never-reset counter
+// (`generate_chart_id`/`bump_chart_id_past`), so two different presets'
+// active windows never collide.
+//
+// This test reproduces the exact collision shape without needing real
+// preset JSON: `ChartPanelGrid::new` always builds a fresh single-leaf
+// `DockingManager`, so two independently constructed panel grids (standing
+// in for "preset A" then "preset B", the same wholesale swap
+// `apply_preset_cold` performs via `replace_docking`) land their one leaf on
+// the same `LeafId` while their `ChartId`s (global counter) differ.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test(flavor = "multi_thread", worker_threads = 2))]
+async fn synced_sidebar_panel_resyncs_across_a_preset_switch_with_colliding_leaf_ids() {
+    let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new().await;
+    let bridge = Arc::new(bridge);
+    let core = mlc_backend::BackendCore::new(bridge, None);
+    let mut app = ChartApp::new_empty(core);
+
+    // Window A ("preset A"): a fresh single-leaf panel grid, instrument AAA.
+    let container_a = mlc_app::chart_container::ChartContainer::new("AAAUSDT", tf_h1());
+    let cid_a = container_a.id;
+    let bid_a = app.create_auto_bubble([0.0, 0.0, 0.0, 0.0], "AAAUSDT".to_string(), tf_h1());
+    app.core.bubbles_mut().set_bid_instrument_full(
+        bid_a, "AAAUSDT".to_string(), "binance".to_string(), "S".to_string(), tf_h1(),
+    );
+    app.panel_app.panel_grid = mlc_app::panel_grid::ChartPanelGrid::new(container_a);
+    {
+        let win = app.panel_app.panel_grid.containers_mut().get_mut(&cid_a).expect("window A");
+        win.auto_tag_id = bid_a;
+        win.current_tag_id = bid_a;
+    }
+    app.attach_chart_to_tag(cid_a, bid_a);
+    let leaf_a = app.panel_app.panel_grid.docking().active_leaf()
+        .expect("window A's fresh grid has an active leaf");
+
+    // A "Synced" DOM panel: the class of sidebar panel (DOM/Trade Tape/L2/
+    // Big Trades) that always mirrors whichever chart is active — exactly
+    // the family the owner reported empty on a shared/read-only tab.
+    let pid = mlc_core::state::PanelId(90_001);
+    app.panels_store.dom.insert(
+        pid,
+        mlc_app_panels::trading::order_flow::dom::DomState::new(String::new(), 0.01),
+    );
+    app.set_panel_synced(mlc_core::ids::SyncMemberId::Panel(pid.0), bid_a);
+
+    // Frame 1: `last_active_chart_id` starts `None`, so the detector always
+    // fires on the very first frame and resolves the Synced panel onto A.
+    app.prepare_frame(1000.0, 800.0);
+    let sym_after_a = app.panels_store.dom.get(&pid).map(|s| s.symbol.clone()).unwrap_or_default();
+    assert_eq!(
+        sym_after_a, "AAAUSDT",
+        "setup: Synced DOM panel did not resolve window A's instrument on the first frame"
+    );
+
+    // Window B ("preset B"): a SECOND, independently constructed panel grid
+    // — the same wholesale `panel_grid` replace `apply_preset_cold` performs
+    // on every cold preset/share load — instrument BBB.
+    let container_b = mlc_app::chart_container::ChartContainer::new("BBBUSDT", tf_h1());
+    let cid_b = container_b.id;
+    assert_ne!(cid_a, cid_b, "ChartId is a global counter — must differ across containers");
+    let bid_b = app.create_auto_bubble([0.0, 0.0, 0.0, 0.0], "BBBUSDT".to_string(), tf_h1());
+    app.core.bubbles_mut().set_bid_instrument_full(
+        bid_b, "BBBUSDT".to_string(), "binance".to_string(), "S".to_string(), tf_h1(),
+    );
+    app.panel_app.panel_grid = mlc_app::panel_grid::ChartPanelGrid::new(container_b);
+    {
+        let win = app.panel_app.panel_grid.containers_mut().get_mut(&cid_b).expect("window B");
+        win.auto_tag_id = bid_b;
+        win.current_tag_id = bid_b;
+    }
+    app.attach_chart_to_tag(cid_b, bid_b);
+    let leaf_b = app.panel_app.panel_grid.docking().active_leaf()
+        .expect("window B's fresh grid has an active leaf");
+
+    // Prove the premise the bug depended on: two independently built,
+    // simple single-window grids DO land on the same `LeafId` (their
+    // `ChartId`s differ regardless — asserted above). If uzor ever changes
+    // its leaf-id allocation scheme this stops holding and the assertion
+    // below would need a different repro shape, not a silently-wrong pass.
+    assert_eq!(
+        leaf_a, leaf_b,
+        "test premise: two fresh single-leaf panel grids must collide on \
+         LeafId for this to reproduce the pre-fix bug"
+    );
+
+    // Frame 2 (the "tab switch"): with the fix, `active_container_id()`
+    // (ChartId) correctly differs and resyncs the Synced panel onto B.
+    // Pre-fix, the LeafId comparison saw no change and left it on A.
+    app.prepare_frame(1000.0, 800.0);
+    let sym_after_b = app.panels_store.dom.get(&pid).map(|s| s.symbol.clone()).unwrap_or_default();
+    assert_eq!(
+        sym_after_b, "BBBUSDT",
+        "[owner repro 2026-09-24] Synced DOM panel did not resync after the \
+         active chart switched to a different preset whose leaf id collided \
+         with the previous one — this is why shared-chart sidebar panels \
+         never connected to data"
+    );
+}
+

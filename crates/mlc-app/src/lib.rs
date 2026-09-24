@@ -1222,9 +1222,29 @@ pub struct ChartApp {
     /// watchlist refreshes ~4 Hz instead of once per per-symbol tick.
     pub sidebar_ticker_mark: Option<web_time::Instant>,
 
-    /// Tracks the last active leaf so we can detect leaf switches and
+    /// Tracks the last active chart so we can detect a pane/tab switch and
     /// mark sidebar_data_dirty automatically.
-    last_active_leaf: Option<mlc_core::LeafId>,
+    ///
+    /// Keyed by `ChartId`, NOT `LeafId` (2026-09-24 fix): `LeafId` counters
+    /// are scoped to a single docking tree and reset per preset (every
+    /// fresh single-window preset — including any shared/read-only tab,
+    /// which always goes through `ChartPreset::remap_ids_for_import` —
+    /// lands its lone leaf on the same small id, typically 0). Comparing on
+    /// `LeafId` alone made a genuine cross-preset active-window change
+    /// silently look like a no-op whenever the two presets' active leaves
+    /// happened to share a numeric id, which skipped
+    /// `apply_key_to_panels_in_group`/`reassign_synced_panels` entirely —
+    /// every "Synced"/`BoundToChart` sidebar panel (DOM, Trade Tape, L2,
+    /// Big Trades) then kept pointing at a tag group `apply_preset_cold`'s
+    /// `tags_mut().clear()` had already discarded, so it could never
+    /// resolve an instrument to subscribe to (owner repro: shared-chart
+    /// tab's panels never connect to data; switching to another tab and
+    /// back "heals" it only because that second switch finally produces a
+    /// `ChartId` inequality). `ChartId` is allocated from a
+    /// process-global, never-reset counter (`generate_chart_id`/
+    /// `bump_chart_id_past`, bumped past every restored window id on every
+    /// cold load), so two DIFFERENT presets' active windows never collide.
+    last_active_chart_id: Option<mlc_core::ChartId>,
 
     /// Last render timing breakdown in microseconds (for PERF diagnostics).
     /// Tuple: (chart_us, toolbar_us, sidebar_us, setup_us)
@@ -3570,7 +3590,7 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             sidebar_ticker_mark: None,
-            last_active_leaf: None,
+            last_active_chart_id: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             indicator_heal_attempted: std::collections::HashSet::new(),
@@ -3968,7 +3988,7 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             sidebar_ticker_mark: None,
-            last_active_leaf: None,
+            last_active_chart_id: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             indicator_heal_attempted: std::collections::HashSet::new(),
@@ -4573,7 +4593,7 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             sidebar_ticker_mark: None,
-            last_active_leaf: None,
+            last_active_chart_id: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             indicator_heal_attempted: std::collections::HashSet::new(),
