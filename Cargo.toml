@@ -3,6 +3,7 @@ members = [
     "crates/mlc-core",
     "crates/mlc-vault",
     "crates/mlc-vodozemac",
+    "crates/mlc-messenger",
     "crates/mlc-cloud",
     "crates/mlc-updater",
     "crates/mlc-app-layout",

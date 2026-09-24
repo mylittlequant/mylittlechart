@@ -1,0 +1,67 @@
+//! [`MessengerError`], this crate's single error type.
+
+/// Every error this crate's public API can return. Sans-I/O by
+/// construction (see the crate doc): this type never itself performs I/O —
+/// it only describes a failure the caller (a shell, or another module in
+/// this crate) already observed.
+#[derive(Debug, thiserror::Error)]
+pub enum MessengerError {
+    /// One of the identifier newtypes in [`crate::ids`] rejected a value.
+    #[error("invalid {kind} {value:?}: {reason}")]
+    InvalidId {
+        /// The newtype that rejected the value (`"UserId"`, `"RoomId"`, …).
+        kind: &'static str,
+        /// The rejected input, verbatim.
+        value: String,
+        /// Why it was rejected.
+        reason: String,
+    },
+
+    /// A wire payload (an HTTP response body, a `/sync` response, …) was
+    /// not valid JSON, or did not match the shape this crate expected of
+    /// it.
+    #[error("failed to decode wire JSON: {0}")]
+    WireDecode(#[from] serde_json::Error),
+
+    /// An HTTP response came back with an error status and a Matrix-shaped
+    /// `{"errcode": ..., "error": ...}` body (client-server API's own
+    /// standard error response shape).
+    #[error("HTTP {status} {errcode}: {error}")]
+    Http {
+        /// The HTTP status code.
+        status: u16,
+        /// The Matrix `errcode` (e.g. `"M_FORBIDDEN"`).
+        errcode: String,
+        /// The Matrix `error` human-readable string.
+        error: String,
+    },
+
+    /// A cryptographic operation (Olm/Megolm/SAS via `mlc_vodozemac`, or
+    /// vault-derived key material via `mlc_vault`) failed. Wrapped as a
+    /// plain message rather than the concrete upstream error type: this
+    /// crate's own public API must not leak `mlc_vodozemac`'s error enum
+    /// shape as part of its own contract, since that type is free to
+    /// change per the fork's own upstream-delta review (see
+    /// `mlc-vodozemac/FORK.md`).
+    #[error("crypto: {0}")]
+    Crypto(String),
+
+    /// A `CryptoStore`/`StateStore` operation failed. The store traits
+    /// themselves land in a later piece (`store/mod.rs`); this variant
+    /// exists from M1 on so [`crate::error`] stays the single place this
+    /// crate's whole error surface is defined, rather than each later
+    /// piece growing its own separate error type.
+    #[error("store: {0}")]
+    Store(String),
+
+    /// Raised when a caller (a later piece's `outgoing_queue`/
+    /// `sync_engine`) attempts to release an outgoing request while
+    /// [`crate::persist::FlushGate::can_release_requests`] reports it is
+    /// not yet safe to do so — a state mutation the request depends on is
+    /// not yet durably flushed and acknowledged. See the `persist` module
+    /// doc for the exact ordering guarantee this enforces.
+    #[error(
+        "outgoing requests are blocked: a state mutation they depend on is not yet flushed and acknowledged"
+    )]
+    FlushPending,
+}
