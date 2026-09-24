@@ -853,6 +853,7 @@ fn draw_message(
     ctx.set_text_baseline(TextBaseline::Top);
     let line_x = bx + 10.0;
     let block = msg_idx as i64;
+    let hit_start = result.dm_message_line_rects.len();
     for (i, line) in visual.lines.iter().enumerate() {
         let line_y = y + BUBBLE_PAD_V + BUBBLE_NICK_H + i as f64 * BUBBLE_LINE_H;
         ctx.fill_text(line, line_x, line_y);
@@ -868,31 +869,41 @@ fn draw_message(
         });
     }
 
-    // Selection highlight — see this function's own doc.
+    // Selection highlight — see this function's own doc. Reads the rect
+    // geometry straight off the `LineHit`s just pushed above (`hit_start
+    // ..`) via `highlight_rect` rather than a second, independent copy of
+    // this bubble's own line-Y formula — ties the highlight band to the
+    // EXACT box the line was drawn and hit-tested with, by construction.
     if let Some(sel) = selection.filter(|s| !s.is_empty()) {
         let ((lo_block, lo_line, lo_char), (hi_block, hi_line, hi_char)) = sel.ordered();
         ctx.set_font(body_font);
-        ctx.set_fill_color(&tt.selection);
+        // Own (accent-tinted) bubble: the theme's `selection` token is
+        // the SAME hue `mine_bg` blends `accent` in — a same-hue
+        // highlight over its own tint reads as no highlight at all.
+        // `mine_text` is already the auto-contrast colour this bubble's
+        // own body text uses (`contrasting_text_color(&mine_bg)`), so it
+        // contrasts against `mine_bg` by the same construction. Peer
+        // bubbles keep the plain `text_selection` token — a neutral
+        // surface, no hue clash.
+        let highlight_color: &str = if m.mine { mine_text } else { &tt.selection };
+        ctx.set_fill_color(highlight_color);
         ctx.set_global_alpha(0.35);
-        for (i, line) in visual.lines.iter().enumerate() {
-            let line_idx = i as u16;
-            let pos = (block, line_idx);
+        for line in &result.dm_message_line_rects[hit_start..] {
+            let pos = (line.block, line.line);
             if pos < (lo_block, lo_line) || pos > (hi_block, hi_line) {
                 continue;
             }
-            let line_y = y + BUBBLE_PAD_V + BUBBLE_NICK_H + i as f64 * BUBBLE_LINE_H;
             let is_first = pos == (lo_block, lo_line);
             let is_last = pos == (hi_block, hi_line);
-            let line_width = ctx.measure_text(line);
             let prefix_width = |n: u16| -> f64 {
-                let prefix: String = line.chars().take(n as usize).collect();
+                let prefix: String = line.text.chars().take(n as usize).collect();
                 ctx.measure_text(&prefix)
             };
-            let (sel_x, sel_w) = crate::ui::selectable_text::highlight_span(
-                line_x, line_width, lo_char, hi_char, is_first, is_last, prefix_width,
+            let (rx, ry, rw, rh) = crate::ui::selectable_text::highlight_rect(
+                line, lo_char, hi_char, is_first, is_last, prefix_width,
             );
-            if sel_w > 0.0 {
-                ctx.fill_rect(sel_x, line_y, sel_w, BUBBLE_LINE_H);
+            if rw > 0.0 {
+                ctx.fill_rect(rx, ry, rw, rh);
             }
         }
         ctx.set_global_alpha(1.0);

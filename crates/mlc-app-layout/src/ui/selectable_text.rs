@@ -216,6 +216,30 @@ pub fn highlight_span(
     }
 }
 
+/// Highlight-rect geometry for ONE already-drawn line, anchored to that
+/// line's own [`LineHit`] — the exact `y_top`/`y_bot` the line was drawn
+/// and hit-tested with, never a second, independent copy of the caller's
+/// own vertical-layout formula. Two parallel copies of "where is this
+/// line" (one for painting the highlight, one for the `LineHit` push) are
+/// exactly the drift risk that produces a highlight band that no longer
+/// tracks the text it is meant to cover the moment either copy is edited
+/// without the other — this function removes the second copy entirely by
+/// reading straight off the [`LineHit`] instead of recomputing. Combines
+/// [`highlight_span`]'s X math with the line's own Y band into one
+/// `(x, y, width, height)` rect the caller passes straight to
+/// `fill_rect`.
+pub fn highlight_rect(
+    line: &LineHit,
+    lo_char: u16,
+    hi_char: u16,
+    is_first: bool,
+    is_last: bool,
+    prefix_width: impl Fn(u16) -> f64,
+) -> (f64, f64, f64, f64) {
+    let (x, w) = highlight_span(line.text_x, line.width, lo_char, hi_char, is_first, is_last, prefix_width);
+    (x, line.y_top, w, line.y_bot - line.y_top)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -275,5 +299,28 @@ mod tests {
         let (x, w) = highlight_span(10.0, 80.0, 0, 0, false, false, |n| n as f64 * 6.0);
         assert_eq!(x, 10.0);
         assert_eq!(w, 80.0);
+    }
+
+    #[test]
+    fn highlight_rect_takes_its_y_and_height_from_the_line_hit_not_a_recomputation() {
+        // A `y_top` that does NOT sit on any "obvious" multiple of a line
+        // height constant — if this function ever regressed to
+        // recomputing its own `y = n * LINE_H` formula instead of reading
+        // the `LineHit` it was given, a value like this would expose it.
+        let line = hit(2, 3, 137.5, "hello world", 20.0, 60.0);
+        let (x, y, w, h) = highlight_rect(&line, 0, 5, true, true, |n| n as f64 * 6.0);
+        assert_eq!(y, line.y_top);
+        assert_eq!(h, line.y_bot - line.y_top);
+        assert_eq!((x, w), highlight_span(line.text_x, line.width, 0, 5, true, true, |n| n as f64 * 6.0));
+    }
+
+    #[test]
+    fn highlight_rect_height_follows_a_non_default_line_hit_band() {
+        // `hit()` always uses a 16.0 band — build one with a different
+        // band by hand to prove the height is NOT a hardcoded constant.
+        let line = LineHit { block: 0, line: 0, y_top: 4.0, y_bot: 30.0, text: "x".to_string(), text_x: 0.0, width: 6.0, mono: false };
+        let (_, y, _, h) = highlight_rect(&line, 0, 1, true, true, |n| n as f64 * 6.0);
+        assert_eq!(y, 4.0);
+        assert_eq!(h, 26.0);
     }
 }
