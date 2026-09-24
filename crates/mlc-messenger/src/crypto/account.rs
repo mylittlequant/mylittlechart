@@ -37,7 +37,10 @@ use crate::error::MessengerError;
 use crate::ids::{DeviceId, RequestId, UserId};
 use crate::store::CryptoStore;
 use crate::wire::OutgoingRequest;
-use mlc_vodozemac::olm::{Account, AccountPickle, IdentityKeys};
+use mlc_vodozemac::olm::{
+    Account, AccountPickle, IdentityKeys, InboundCreationResult, PreKeyMessage, Session, SessionConfig,
+    SessionCreationError,
+};
 use mlc_vodozemac::Curve25519PublicKey;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
@@ -305,6 +308,44 @@ impl OlmAccountState {
         self.account.mark_keys_as_published();
         self.device_keys_published = true;
         self.save(store)
+    }
+
+    /// Creates an outbound Olm [`Session`] with `identity_key`/
+    /// `one_time_key` (a device this account just claimed a one-time key
+    /// from -- see [`crate::crypto::olm_sessions::OlmSessionManager::
+    /// on_keys_claim_response`]). Read-only on this account: nothing to
+    /// persist.
+    pub fn create_outbound_session(
+        &self,
+        session_config: SessionConfig,
+        identity_key: Curve25519PublicKey,
+        one_time_key: Curve25519PublicKey,
+    ) -> Result<Session, SessionCreationError> {
+        self.account.create_outbound_session(session_config, identity_key, one_time_key)
+    }
+
+    /// Creates an inbound Olm [`Session`] from a received pre-key message,
+    /// consuming one of this account's one-time keys in the process.
+    /// Persists the account through `store` before returning -- the plan's
+    /// "save the ACCOUNT and the new session together" rule (§4.3): this
+    /// call covers the account half; the caller ([`crate::crypto::
+    /// olm_sessions::OlmSessionManager::decrypt_to_device`]) persists the
+    /// new session itself immediately afterwards. The flush-before-send
+    /// barrier only needs both mutations to predate the next
+    /// `outgoing_requests()` call, not any particular order between them.
+    pub fn create_inbound_session<S: CryptoStore>(
+        &mut self,
+        store: &mut S,
+        session_config: SessionConfig,
+        their_identity_key: Curve25519PublicKey,
+        pre_key_message: &PreKeyMessage,
+    ) -> Result<InboundCreationResult, MessengerError> {
+        let result = self
+            .account
+            .create_inbound_session(session_config, their_identity_key, pre_key_message)
+            .map_err(|source| MessengerError::Crypto(format!("create inbound Olm session: {source}")))?;
+        self.save(store)?;
+        Ok(result)
     }
 
     fn save<S: CryptoStore>(&self, store: &mut S) -> Result<(), MessengerError> {

@@ -1,17 +1,27 @@
 //! The Olm/Megolm/cross-signing state machine — plan §3's `crypto/`.
 //!
-//! # Pieces landed so far (M5)
+//! # Pieces landed so far (M5, M6)
 //!
 //! **M5** — the device's own Olm account ([`account::OlmAccountState`]):
 //! generate-once-and-persist identity, one-time/fallback key maintenance
 //! off `/sync`'s own counters, and building the signed `device_keys`/
 //! `/keys/upload` request bodies (via [`crate::canonical_json`]).
 //!
-//! Device tracking, Olm sessions, Megolm group sessions, withheld/key-request
-//! bookkeeping, SAS verification, key backup, and cross-signing (plan's
-//! `device_tracker.rs`, `olm_sessions.rs`, `group_sessions.rs`,
-//! `withheld.rs`, `verification.rs`, `backup.rs`, `cross_signing.rs`, and the
-//! `CryptoMachine` type tying them together) are later pieces and are not
-//! present in this crate yet.
+//! **M6** — device-list tracking ([`device_tracker::DeviceTracker`]):
+//! tracked users, outdated bookkeeping, `/keys/query` request building and
+//! response validation (self-signature verification, key-change flagging);
+//! and per-device Olm 1:1 sessions ([`olm_sessions::OlmSessionManager`]):
+//! `/keys/claim`, to-device encryption/decryption with full payload
+//! binding, and the strict-ordering/replay-rejection guarantees Olm's
+//! double ratchet gives for free when this module's own append-and-persist
+//! discipline is followed.
+//!
+//! Megolm group sessions, withheld/key-request bookkeeping, SAS
+//! verification, key backup, and cross-signing (plan's `group_sessions.rs`,
+//! `withheld.rs`, `verification.rs`, `backup.rs`, `cross_signing.rs`, and
+//! the `CryptoMachine` type tying everything together) are later pieces
+//! and are not present in this crate yet.
 
 pub mod account;
+pub mod device_tracker;
+pub mod olm_sessions;

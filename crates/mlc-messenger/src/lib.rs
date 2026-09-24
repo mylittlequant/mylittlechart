@@ -71,9 +71,15 @@
 //! live v11-allow-list redaction, and [`room::RelationsBundle`] aggregation
 //! (reactions, edits, replies, threads).
 //!
-//! Device tracking, Olm sessions, Megolm group sessions, and the sync
-//! engine tying everything together (plan §5, M6-M15) are later pieces and
-//! are not present in this crate yet.
+//! **M6** — device-list tracking ([`crypto::device_tracker`]) and per-device
+//! Olm 1:1 sessions ([`crypto::olm_sessions`]): `/keys/query`/`/keys/claim`
+//! request building and response validation, to-device encryption/
+//! decryption with full payload binding, and the security checks that keep
+//! a key change or an unverified device from being silently trusted.
+//!
+//! Megolm group sessions and the sync engine tying everything together
+//! (plan §5, M7-M15) are later pieces and are not present in this crate
+//! yet.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -89,6 +95,10 @@ pub mod wire;
 
 pub use canonical_json::{sign_json, verify_json_signature, CanonicalJsonError};
 pub use crypto::account::OlmAccountState;
+pub use crypto::device_tracker::{DeviceKeyChanged, DeviceTracker, DroppedDevice, KeysQueryOutcome, StoredDevice};
+pub use crypto::olm_sessions::{
+    DecryptedToDevice, KeysClaimOutcome, KeysClaimRefusal, OlmDecryptError, OlmSessionManager,
+};
 pub use error::MessengerError;
 pub use ids::{DeviceId, EventId, RequestId, RoomId, TxnId, UserId};
 pub use persist::{FlushBatch, FlushGate, RecordKey, SealedRecord};
