@@ -64,9 +64,16 @@
 //! `/sync`'s own counters, and the signed `device_keys`/`/keys/upload`
 //! request bodies built from it.
 //!
-//! Room/timeline state, device tracking, Olm sessions, Megolm group
-//! sessions, and the sync engine tying everything together (plan §5, M4,
-//! M6-M15) are later pieces and are not present in this crate yet.
+//! **M4** — room state, timeline assembly, and relation aggregation
+//! ([`room`]): [`room::RoomState`] folded from `m.room.*` state events plus
+//! [`room::RoomKind`] derivation, [`room::Timeline`] assembled from `/sync`
+//! windows and `/messages` back-pages with local-echo reconciliation and
+//! live v11-allow-list redaction, and [`room::RelationsBundle`] aggregation
+//! (reactions, edits, replies, threads).
+//!
+//! Device tracking, Olm sessions, Megolm group sessions, and the sync
+//! engine tying everything together (plan §5, M6-M15) are later pieces and
+//! are not present in this crate yet.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -76,6 +83,7 @@ pub mod crypto;
 pub mod error;
 pub mod ids;
 pub mod persist;
+pub mod room;
 pub mod store;
 pub mod wire;
 
@@ -84,5 +92,10 @@ pub use crypto::account::OlmAccountState;
 pub use error::MessengerError;
 pub use ids::{DeviceId, EventId, RequestId, RoomId, TxnId, UserId};
 pub use persist::{FlushBatch, FlushGate, RecordKey, SealedRecord};
+pub use room::{
+    aggregate_relation, highlight, last_preview, recompute_bundle, EditRecord, GapMarker, ItemContent, MemberRole,
+    MemberState, RelatingEvent, RelationsBundle, RoomKind, RoomState, SendState, StateChangeSummary, Timeline,
+    TimelineItem,
+};
 pub use store::{CryptoStore, RecordCodec, StateStore, Store, StoreError};
 pub use wire::{HttpMethod, HttpResponseDescriptor, OutgoingRequest, OutgoingRequestKind};
