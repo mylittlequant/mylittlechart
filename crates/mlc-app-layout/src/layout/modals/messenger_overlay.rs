@@ -102,9 +102,15 @@ const BUBBLE_AVATAR_GAP: f64 = 8.0;
 const LIST_AVATAR_D: f64 = 42.0;
 const LIST_AVATAR_GAP: f64 = 10.0;
 const BUBBLE_LINE_H: f64 = 16.0;
-const BUBBLE_NICK_H: f64 = 14.0;
 const BUBBLE_TIME_H: f64 = 14.0;
-const BUBBLE_PAD_V: f64 = 8.0;
+/// A bubble's own inner padding — concept `.b{padding:6px 10px 5px}`.
+const BUBBLE_PAD_V: f64 = 6.0;
+const BUBBLE_PAD_H: f64 = 10.0;
+/// A bubble's own corner radius, and the tighter radius its one "tail"
+/// corner gets — concept `.b{border-radius:12px}` plus `.b.own`/`.b.peer`'s
+/// own 4px corner (see [`bubble_corners`]).
+const BUBBLE_RADIUS: f64 = 12.0;
+const BUBBLE_TAIL_RADIUS: f64 = 4.0;
 const BUBBLE_GAP: f64 = 10.0;
 const DAY_SEP_H: f64 = 24.0;
 const SYSTEM_NOTICE_H: f64 = 20.0;
@@ -143,6 +149,13 @@ const CHAT_FILTER_GAP: f64 = 8.0;
 /// required all fit inside it too — see [`draw_composer`]'s own doc) so
 /// the pane's scroll math never has to change per dock state.
 const COMPOSER_H: f64 = 8.0 + FIELD_H + 8.0 + ROW_H;
+/// The chat pane's own fixed header — concept `.ch{height:52px}`, drawn
+/// once above the scrollable feed rather than scrolling away with it (the
+/// concept's `.chat` is a column of THREE fixed-size siblings — rail-style
+/// header, a scrolling `.feed`, and the docked composer — not one long
+/// scrollable block with the header as its first row).
+const CHAT_HEADER_H: f64 = 52.0;
+const CHAT_HEADER_PAD_L: f64 = 14.0;
 
 /// `TimelineItem::sender`'s own opaque id for the signed-in caller's own
 /// messages — see `dm_messenger_provider::ME`'s own doc: this is the same
@@ -539,12 +552,101 @@ fn row_time_label(ts: Timestamp, now_ms: u64) -> String {
 }
 
 // =============================================================================
-// Chat pane — header, day separators + bubbles/system notices from
-// [`MessengerProvider::timeline`], a bottom-anchored feed with a
-// jump-to-latest button, and the docked composer ([`draw_composer`], UI-2a
-// piece 3): the single place every reason the composer cannot send yet
-// shows up, one calm line at a time — no separate pane-top notice.
+// Chat pane — a fixed header ([`draw_chat_header`]), day separators +
+// bubbles/system notices from [`MessengerProvider::timeline`] in a bottom-
+// anchored scrollable feed with a jump-to-latest button, and the docked
+// composer ([`draw_composer`], UI-2a piece 3): the single place every
+// reason the composer cannot send yet shows up, one calm line at a time —
+// no separate pane-top notice.
 // =============================================================================
+
+/// The chat pane's own fixed header (concept `.ch`) — the peer's name
+/// (plus their ladder rank chip, when [`DmConversationUi::peer_rank`] has
+/// resolved one) on line 1, a short key-fingerprint line on line 2. Never
+/// scrolls with the feed (see this section's own top doc).
+#[allow(clippy::too_many_arguments)]
+fn draw_chat_header(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    w: f64,
+    peer_label: &str,
+    peer_rank: Option<&str>,
+    fingerprint: Option<&str>,
+    has_key: bool,
+    key_changed: bool,
+    tt: &ToolbarTheme,
+) {
+    ctx.set_stroke_color(&tt.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(x, y + CHAT_HEADER_H);
+    ctx.line_to(x + w, y + CHAT_HEADER_H);
+    ctx.stroke();
+
+    let text_x = x + CHAT_HEADER_PAD_L;
+    let text_right = (x + w - 8.0).max(text_x);
+    let line1_y = y + (CHAT_HEADER_H - 25.5) / 2.0;
+    let line2_y = line1_y + 15.0;
+
+    ctx.set_font("600 13.5px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let name_budget = (text_right - text_x).max(0.0);
+    let name_label = crate::ui::widgets::fit_text_to_width(ctx, peer_label, name_budget);
+    let name_w = ctx.measure_text(&name_label).min(name_budget);
+    ctx.fill_text(&name_label, text_x, line1_y);
+
+    if let Some(rank) = peer_rank.filter(|r| !r.is_empty()) {
+        draw_rank_chip(ctx, text_x + name_w + 6.0, line1_y, text_right, rank, tt);
+    }
+
+    ctx.set_font("11px monospace");
+    ctx.set_fill_color(if key_changed { &tt.danger } else { &tt.item_text_muted });
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let key_line = match fingerprint {
+        Some(fp) => format!("key {}", short_fingerprint(fp)),
+        None if has_key => "key not published yet".to_string(),
+        None => "no messaging key yet".to_string(),
+    };
+    let fit = crate::ui::widgets::fit_text_to_width(ctx, &key_line, name_budget);
+    ctx.fill_text(&fit, text_x, line2_y);
+}
+
+/// A ladder-rank chip (concept `.rank`: small, bordered, monospace,
+/// uppercase) — drawn only up to `max_x`, so a long name never pushes it
+/// past the header's own right edge (silently skipped rather than clipped
+/// mid-glyph, since a half-drawn chip reads worse than none at all).
+fn draw_rank_chip(ctx: &mut dyn RenderContext, x: f64, name_top_y: f64, max_x: f64, rank: &str, tt: &ToolbarTheme) {
+    let label = rank.to_uppercase();
+    ctx.set_font("600 9px monospace");
+    let text_w = ctx.measure_text(&label);
+    let chip_h = 13.0;
+    let chip_w = text_w + 8.0;
+    if x + chip_w > max_x {
+        return;
+    }
+    let chip_y = name_top_y + 2.0;
+    ctx.set_fill_color(&tt.item_bg_hover);
+    ctx.fill_rounded_rect(x, chip_y, chip_w, chip_h, 3.0);
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(&label, x + chip_w / 2.0, chip_y + chip_h / 2.0 + 0.5);
+}
+
+/// The header's own short key-fingerprint label — the first 16 hex
+/// characters of `fp`, uppercased and grouped in 4s (`"3F9D 5445 E06B
+/// 50E3"`, concept `.ch .s`). `fp` may be a longer digest in whatever the
+/// model's own encoding is; this reads only its hex characters and stops
+/// at 16 so an unusually long value never overflows the header's fixed
+/// 52px row.
+fn short_fingerprint(fp: &str) -> String {
+    let hex: Vec<char> = fp.chars().filter(|c| c.is_ascii_hexdigit()).map(|c| c.to_ascii_uppercase()).take(16).collect();
+    hex.chunks(4).map(|c| c.iter().collect::<String>()).collect::<Vec<_>>().join(" ")
+}
 
 #[allow(clippy::too_many_arguments)]
 fn draw_chat_pane(
@@ -603,12 +705,20 @@ fn draw_chat_pane(
     // own top doc); [`Member::has_messaging_key`] backs the "no messaging
     // key yet" fallback, the fingerprint text itself is read off
     // `DmConversationUi` by id, same lookup `dm_overlay.rs` already did.
-    let fingerprint = state.dm.conversations.iter().find(|c| c.id == *id).and_then(|c| c.peer_fingerprint.as_deref());
+    let conversation = state.dm.conversations.iter().find(|c| c.id == *id);
+    let fingerprint = conversation.and_then(|c| c.peer_fingerprint.as_deref());
+    let peer_rank = conversation.and_then(|c| c.peer_rank.as_deref());
     let has_key = peer.map(|m| m.has_messaging_key).unwrap_or(false);
     let key_changed = state.dm.has_peer_key_changed(*id);
 
-    let scroll_h = (body_viewport_h - COMPOSER_H).max(0.0);
-    let viewport_rect = WidgetRect::new(x, body_y, w, scroll_h);
+    // Fixed 52px header (concept `.ch`) — drawn once, above the scrollable
+    // feed, rather than as the feed's own first scrolling row (see this
+    // function's own doc).
+    draw_chat_header(ctx, x, body_y, w, &peer_label, peer_rank, fingerprint, has_key, key_changed, tt);
+
+    let feed_y = body_y + CHAT_HEADER_H;
+    let feed_h = (body_viewport_h - CHAT_HEADER_H - COMPOSER_H).max(0.0);
+    let viewport_rect = WidgetRect::new(x, feed_y, w, feed_h);
     coord.register_on_layer("cloud_overlay:scroll_viewport", viewport_rect, Sense::SCROLL, layer_id);
     let scrollable = ScrollableContainer::new(viewport_rect, &state.scroll, Some(scroll_config()));
     scrollable.begin(ctx);
@@ -616,22 +726,6 @@ fn draw_chat_pane(
     let mut sy = scrollable.content_y();
     let sw = scrollable.content_width();
     let content_top = sy;
-
-    ctx.set_font("600 14px sans-serif");
-    ctx.set_fill_color(&tt.item_text);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.fill_text(&peer_label, sx, sy);
-    sy += 18.0;
-    ctx.set_font("10px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    let key_line = match fingerprint {
-        Some(fp) => format!("fingerprint: {fp}"),
-        None if has_key => "fingerprint: (published)".to_string(),
-        None => "no messaging key yet".to_string(),
-    };
-    ctx.fill_text(&key_line, sx, sy);
-    sy += 18.0;
 
     if key_changed {
         sy += draw_key_changed_notice(ctx, tt, sw, sx, sy);
@@ -680,7 +774,7 @@ fn draw_chat_pane(
     let widget_theme = crate::ui::widgets::types::WidgetTheme::default();
     let scroll_result = scrollable.end(ctx, content_h, &widget_theme);
     result.total_content_height = Some(content_h);
-    result.viewport_height = Some(scroll_h);
+    result.viewport_height = Some(feed_h);
     result.scroll_viewport_rect = Some(viewport_rect);
     result.scrollbar_handle_rect = scroll_result.handle_rect;
     result.scrollbar_track_rect = scroll_result.track_rect;
@@ -691,8 +785,8 @@ fn draw_chat_pane(
     // top doc for why LANDING at the bottom on open/new-message is not
     // wired this pass). Its own click is the one new widget id this piece
     // adds (`panel_click.rs`'s `"jump_latest"` arm).
-    if jump_button_visible(&state.scroll, content_h, scroll_h) {
-        draw_jump_to_latest(ctx, coord, layer_id, x, body_y, w, scroll_h, tt);
+    if jump_button_visible(&state.scroll, content_h, feed_h) {
+        draw_jump_to_latest(ctx, coord, layer_id, x, feed_y, w, feed_h, tt);
     }
 
     draw_composer(
@@ -898,8 +992,16 @@ fn draw_system_notice(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, label
     SYSTEM_NOTICE_H
 }
 
+/// The day separator — a small rounded pill, centred (concept `.day`).
 fn draw_day_separator(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, label: &str, tt: &ToolbarTheme) -> f64 {
     ctx.set_font("600 10px sans-serif");
+    let text_w = ctx.measure_text(label);
+    let pill_h = 16.0;
+    let pill_w = text_w + 20.0;
+    let pill_x = x + (w - pill_w) / 2.0;
+    let pill_y = y + (DAY_SEP_H - pill_h) / 2.0;
+    ctx.set_fill_color(&tt.button_bg);
+    ctx.fill_rounded_rect(pill_x, pill_y, pill_w, pill_h, pill_h / 2.0);
     ctx.set_fill_color(&tt.item_text_muted);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
@@ -925,13 +1027,16 @@ fn draw_bubble(
 ) -> f64 {
     let visual = content_visual(&item.content, vault_state);
     let line_count = visual.lines.len().max(1);
-    let bubble_inner_h = BUBBLE_NICK_H + line_count as f64 * BUBBLE_LINE_H + BUBBLE_TIME_H;
+    // No sender-name row (owner spec: "no 'You' label in a 1:1 chat" — this
+    // provider only ever carries a 1:1 room, so a bubble never needs to say
+    // whose it is; see this file's own top doc for why group/channel chrome
+    // stays undrawn here).
+    let bubble_inner_h = line_count as f64 * BUBBLE_LINE_H + BUBBLE_TIME_H;
     let bubble_h = bubble_inner_h + BUBBLE_PAD_V * 2.0;
 
     let has_avatar = !mine;
     let avatar_reserved = if has_avatar { BUBBLE_AVATAR_D + BUBBLE_AVATAR_GAP } else { 0.0 };
-    let avail_w = (w - avatar_reserved).max(0.0);
-    let bubble_w = (avail_w * BUBBLE_WIDTH_FRAC).max(BUBBLE_MIN_W);
+    let bubble_w = bubble_width_for((w - avatar_reserved).max(0.0));
     let bx = if mine { x + w - bubble_w } else { x + avatar_reserved };
 
     if has_avatar {
@@ -940,23 +1045,10 @@ fn draw_bubble(
         draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, BUBBLE_AVATAR_D / 2.0, peer_label, &tt.item_bg_active);
     }
 
-    let mine_bg = mlc_core::mix_colors(&tt.dropdown_bg, &tt.accent, 0.25);
-    let mine_text = contrasting_text_color(&mine_bg);
-    ctx.set_fill_color(if mine { &mine_bg } else { &tt.dropdown_bg });
-    ctx.fill_rounded_rect(bx, y, bubble_w, bubble_h, SETTINGS_BUTTON_RADIUS);
-
-    if visual.mono {
-        draw_lock_glyph(ctx, bx + bubble_w - 14.0, y + BUBBLE_PAD_V + 6.0, 10.0, &tt.item_text_muted);
-    }
-
-    let nick_color: &str = if mine { mine_text } else { &tt.item_text_muted };
-    let nick_label = if mine { UserSettingsKey::DmYou.get(current_language()) } else { peer_label };
-    ctx.set_font("600 10px sans-serif");
-    ctx.set_fill_color(nick_color);
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    let nick_fit = crate::ui::widgets::fit_text_to_width(ctx, nick_label, bubble_w - 24.0);
-    ctx.fill_text(&nick_fit, bx + 10.0, y + BUBBLE_PAD_V);
+    let mine_text = contrasting_text_color(&tt.bubble_user_bg);
+    ctx.set_fill_color(if mine { &tt.bubble_user_bg } else { &tt.button_bg });
+    let (tl, tr, br, bl) = bubble_corners(mine);
+    fill_rect_corners(ctx, bx, y, bubble_w, bubble_h, tl, tr, br, bl);
 
     let (body_font, body_color): (&str, &str) = if visual.mono {
         ("11px monospace", tt.item_text_muted.as_str())
@@ -969,11 +1061,11 @@ fn draw_bubble(
     ctx.set_fill_color(body_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    let line_x = bx + 10.0;
+    let line_x = bx + BUBBLE_PAD_H;
     let block = msg_idx as i64;
     let hit_start = result.dm_message_line_rects.len();
     for (i, line) in visual.lines.iter().enumerate() {
-        let line_y = y + BUBBLE_PAD_V + BUBBLE_NICK_H + i as f64 * BUBBLE_LINE_H;
+        let line_y = y + BUBBLE_PAD_V + i as f64 * BUBBLE_LINE_H;
         ctx.fill_text(line, line_x, line_y);
         result.dm_message_line_rects.push(LineHit {
             block,
@@ -1012,20 +1104,18 @@ fn draw_bubble(
         ctx.set_global_alpha(1.0);
     }
 
-    // Clock + send-state tick — bottom-right inside the bubble, own
-    // messages only (a peer's own message has no send-state to show the
-    // reader). A double tick for "read" only draws when the provider
+    // Clock + send-state tick (own messages) or a lock glyph (locked
+    // ciphertext) — bottom-right INSIDE the bubble, 10.5px mono (owner
+    // spec). A double tick for "read" only draws when the provider
     // actually reports read receipts (`Capabilities::receipts`) AND
     // `read_by` is non-empty — a provider that never sets `receipts: true`
     // never gets a double tick even if `read_by` happened to carry
     // something, honouring the flag rather than the raw data alone.
-    ctx.set_font("10px monospace");
+    ctx.set_font("10.5px monospace");
     ctx.set_fill_color(&tt.item_text_muted);
-    ctx.set_text_align(TextAlign::Right);
-    ctx.set_text_baseline(TextBaseline::Top);
-    let time_y = y + BUBBLE_PAD_V + BUBBLE_NICK_H + line_count as f64 * BUBBLE_LINE_H;
+    let time_y = y + BUBBLE_PAD_V + line_count as f64 * BUBBLE_LINE_H;
     let clock = clock_hm(item.ts);
-    let label = if mine {
+    let label = if mine && !visual.mono {
         let tick = match &item.send_state {
             SendState::LocalEcho | SendState::Sending => "\u{2022}",
             SendState::Failed { .. } => "!",
@@ -1036,9 +1126,49 @@ fn draw_bubble(
     } else {
         clock
     };
-    ctx.fill_text(&label, bx + bubble_w - 8.0, time_y);
+    let time_x = bx + bubble_w - BUBBLE_PAD_H;
+    ctx.set_text_align(TextAlign::Right);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(&label, time_x, time_y);
+    if visual.mono {
+        let label_w = ctx.measure_text(&label);
+        draw_lock_glyph(ctx, time_x - label_w - 7.0, time_y + 5.0, 8.0, &tt.item_text_muted);
+    }
 
     bubble_h + BUBBLE_GAP
+}
+
+/// A bubble's own max width — 72% of whatever width is left after an
+/// avatar reservation (own messages reserve none, see [`draw_bubble`]'s own
+/// call site), never narrower than [`BUBBLE_MIN_W`]. Pulled out as a pure
+/// function so geometry tests can prove it never overflows the pane at any
+/// width in the target range without needing a `RenderContext`.
+fn bubble_width_for(available_w: f64) -> f64 {
+    (available_w * BUBBLE_WIDTH_FRAC).max(BUBBLE_MIN_W)
+}
+
+/// A bubble's own corner radii `(tl, tr, br, bl)` — [`BUBBLE_RADIUS`]
+/// everywhere except the "tail" corner nearest its own avatar-less edge:
+/// bottom-right for an own message, bottom-left for a peer's (concept
+/// `.b.own`/`.b.peer`).
+fn bubble_corners(mine: bool) -> (f64, f64, f64, f64) {
+    if mine {
+        (BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS, BUBBLE_RADIUS)
+    } else {
+        (BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS)
+    }
+}
+
+/// Fill a rect with four independent corner radii — `rounded_rect_corners`
+/// is a path primitive (like `rect`/`arc`), not a one-shot fill helper the
+/// way `fill_rounded_rect` is, so this wraps the same
+/// `begin_path`/`…`/`fill` sequence every other multi-step shape in this
+/// file already uses (e.g. [`draw_all_chats_glyph`]).
+#[allow(clippy::too_many_arguments)]
+fn fill_rect_corners(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, h: f64, tl: f64, tr: f64, br: f64, bl: f64) {
+    ctx.begin_path();
+    ctx.rounded_rect_corners(x, y, w, h, tl, tr, br, bl);
+    ctx.fill();
 }
 
 // =============================================================================
@@ -1162,5 +1292,52 @@ mod tests {
         assert_eq!(initials("Trading desk"), "TD");
         assert_eq!(initials("kvant_42 extra words"), "KE");
         assert_eq!(initials(""), "");
+    }
+
+    #[test]
+    fn bubble_corners_put_the_tail_on_the_avatar_less_side() {
+        assert_eq!(bubble_corners(true), (BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS, BUBBLE_RADIUS));
+        assert_eq!(bubble_corners(false), (BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS));
+    }
+
+    #[test]
+    fn bubble_never_overflows_the_pane_across_the_target_width_range() {
+        // Own messages reserve no avatar; peer messages reserve
+        // BUBBLE_AVATAR_D + BUBBLE_AVATAR_GAP on their side — both must
+        // still fit inside the pane at every width the concept's own
+        // screenshots were taken at (470-700px).
+        for w in (470..=700).step_by(10) {
+            let w = w as f64;
+            let own_w = bubble_width_for(w);
+            assert!(own_w <= w, "own bubble {own_w} overflows pane width {w}");
+
+            let avatar_reserved = BUBBLE_AVATAR_D + BUBBLE_AVATAR_GAP;
+            let peer_w = bubble_width_for((w - avatar_reserved).max(0.0));
+            assert!(
+                avatar_reserved + peer_w <= w,
+                "peer bubble {peer_w} + avatar {avatar_reserved} overflows pane width {w}"
+            );
+        }
+    }
+
+    #[test]
+    fn bubble_width_never_collapses_below_the_minimum() {
+        assert!(bubble_width_for(0.0) >= BUBBLE_MIN_W);
+        assert!(bubble_width_for(50.0) >= BUBBLE_MIN_W);
+    }
+
+    #[test]
+    fn short_fingerprint_takes_16_hex_chars_grouped_in_4s() {
+        assert_eq!(short_fingerprint("3f9d5445e06b50e3"), "3F9D 5445 E06B 50E3");
+        // Non-hex separators (e.g. an existing "aa:bb:cc" style digest) are
+        // ignored — only hex characters count toward the 16.
+        assert_eq!(short_fingerprint("3f:9d:54:45:e0:6b:50:e3:ff"), "3F9D 5445 E06B 50E3");
+        // Shorter than 16 hex chars — grouped as far as it goes, no padding.
+        assert_eq!(short_fingerprint("abcd"), "ABCD");
+    }
+
+    #[test]
+    fn chat_header_height_matches_the_concept() {
+        assert_eq!(CHAT_HEADER_H, 52.0);
     }
 }
