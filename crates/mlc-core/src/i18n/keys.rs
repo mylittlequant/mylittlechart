@@ -2378,10 +2378,27 @@ pub enum ToolbarMenuKey {
     // Order-flow group header (markup-engines wave, 2026-08-25) — same
     // append-only reason as `HeaderSmartMoney` above.
     HeaderOrderFlow    = 77,
+    // Harmonics / Classic figures group headers (autodetectors A0,
+    // 2026-09-24, `docs/mlc/plans/autodetectors-a0-implementation-2026-09-24.md`
+    // piece 4) — `pattern_section()`'s flat "Patterns" header splits into
+    // these two plus the existing `HeaderElliottWaves`/`HeaderCandles`/
+    // `HeaderCycles` (piece 5). Same append-only reason as `HeaderCandles`
+    // above. Label text fixed by the arc doc verbatim — no sign-off needed.
+    HeaderHarmonics      = 78,
+    HeaderClassicFigures = 79,
+    // Coordinator decision (2026-09-24, `docs/mlc/plans/autodetectors-a0-
+    // implementation-2026-09-24.md`, "Coordinator decision" section): the
+    // Bars section header reads "Bars", not "Candles" — the owner's own
+    // word for the family. A NEW key, not a `HeaderCandles` (75) rename:
+    // append-only discriminants never renumber, and `HeaderCandles` had
+    // exactly one call site (`toolbar.rs::pattern_section`), which this
+    // arc's piece 5 repoints at `HeaderBars` instead — `HeaderCandles`
+    // itself stays defined (public API, no dead-code risk) but unused.
+    HeaderBars           = 80,
 }
 
 impl ToolbarMenuKey {
-    pub const COUNT: usize = 78;
+    pub const COUNT: usize = 81;
 
     /// Get translation for this key.
     #[inline]

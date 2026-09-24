@@ -1176,7 +1176,7 @@ pub(super) static TRADING_KEY_TABLE: [[&str; N_LANG]; 29] = [
 //
 //  Col:  0=En                          1=Ru                               2..14=""
 
-pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 78] = [
+pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 81] = [
     /* 0  Candles            */ [ "Candles",              "Свечи",                    "Velas",               "Kerzen",               "Chandeliers",           "Velas",               "蜡烛图",        "ローソク足",     "캔들",           "شموع",            "Candele",               "Mum Grafiği",           "Świece",              "Свічки",                  "कैंडल"              ],
     /* 1  HollowCandles      */ [ "Hollow Candles",       "Полые свечи",              "Velas huecas",        "Hohle Kerzen",         "Chandeliers creux",     "Velas vazias",        "空心蜡烛",      "中空ローソク足",  "속빈 캔들",      "شموع مجوفة",      "Candele vuote",         "İçi Boş Mum",           "Świece puste",        "Порожні свічки",          "खोखले कैंडल"        ],
     /* 2  HeikinAshi         */ [ "Heikin Ashi",          "Хейкин Аши",              "Heikin Ashi",         "Heikin Ashi",          "Heikin Ashi",           "Heikin Ashi",         "平均K线",       "平均足",         "헤이킨 아시",    "هيكن آشي",        "Heikin Ashi",           "Heikin Ashi",           "Heikin Ashi",         "Хейкін Асі",              "हेइकिन आशी"        ],
@@ -1255,6 +1255,9 @@ pub(super) static TOOLBAR_MENU_KEY_TABLE: [[&str; N_LANG]; 78] = [
     /* 75 HeaderCandles      */ [ "Candles",              "Свечи",                    "Velas",               "Kerzen",               "Bougies",               "Velas",               "K线",           "ローソク足",     "캔들",           "الشموع",          "Candele",               "Mumlar",                "Świece",              "Свічки",                  "कैंडल्स"            ],
     /* 76 HeaderSmartMoney   */ [ "Smart Money",          "Smart money",              "Smart money",         "Smart Money",          "Smart money",           "Smart money",         "聪明钱",        "スマートマネー", "스마트 머니",    "الأموال الذكية",  "Smart money",           "Smart Money",           "Smart money",         "Smart money",             "स्मार्ट मनी"        ],
     /* 77 HeaderOrderFlow    */ [ "Order Flow",           "Поток ордеров",            "Flujo de órdenes",    "Order-Flow",           "Flux d'ordres",         "Fluxo de ordens",     "订单流",        "オーダーフロー", "오더 플로우",    "تدفق الأوامر",    "Order flow",            "Emir Akışı",            "Przepływ zleceń",    "Потік ордерів",           "ऑर्डर फ्लो"         ],
+    /* 78 HeaderHarmonics    */ [ "Harmonics",            "Гармоники",                "Armónicos",           "Harmonics",            "Harmoniques",           "Harmônicos",          "谐波",          "ハーモニクス",   "하모닉",         "التوافقيات",      "Armonici",              "Harmonikler",           "Harmoniczne",         "Гармоніки",               "हार्मोनिक्स"        ],
+    /* 79 HeaderClassicFigures */ [ "Classic figures",    "Классические фигуры",     "Figuras clásicas",    "Klassische Figuren",   "Figures classiques",    "Figuras clássicas",   "经典形态",      "クラシックパターン","클래식 패턴",   "الأشكال الكلاسيكية","Figure classiche",     "Klasik Formasyonlar",  "Klasyczne formacje",  "Класичні фігури",         "क्लासिक फिगर"       ],
+    /* 80 HeaderBars         */ [ "Bars",                 "Бары",                     "Barras",              "Balken",               "Barres",                "Barras",              "K线",           "バー",           "바",             "أعمدة",           "Barre",                 "Çubuklar",              "Słupki",              "Бари",                    "बार"                ],
 ];
 
 // =============================================================================
