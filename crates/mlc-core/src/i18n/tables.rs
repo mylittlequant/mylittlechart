@@ -1384,7 +1384,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 468] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 469] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1868,6 +1868,7 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 468] = [
     /* 465 MarkupThresholdDisplacementAtrMultLabel */ [ "Displacement ATR mult", "Множитель ATR смещения", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 466 MarkupThresholdEqualLevelAtrTolLabel */ [ "Equal level ATR tolerance", "Допуск ATR равных уровней", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 467 MarkupThresholdDeltaDivergenceSwingNLabel */ [ "Delta divergence swing N", "Свинг N дельта-дивергенции", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 468 ScanClusterPatternsSuffix */ [ "patterns", "паттернов", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================
@@ -1933,6 +1934,35 @@ pub(super) static CANDLE_PATTERN_KEY_TABLE: [[&str; N_LANG]; 39] = [
     /* 36 RunawayGap               */ [ "Runaway Gap",      "Гэп разгона",       "Gap de Continuación",    "Fluchtlücke",           "Gap de continuation",  "Gap de Continuação",   "持续缺口", "継続ギャップ",     "지속 갭",   "فجوة الاستمرار",   "Gap di Continuazione","Kaçış Boşluğu",    "Luka kontynuacji", "Геп продовження",  "रनअवे गैप"      ],
     /* 37 ExhaustionGap            */ [ "Exhaustion Gap",   "Гэп истощения",     "Gap de Agotamiento",     "Erschöpfungslücke",     "Gap d'épuisement",     "Gap de Exaustão",      "衰竭缺口", "消耗ギャップ",     "소진 갭",   "فجوة الاستنفاد",   "Gap di Esaurimento", "Tükenme Boşluğu",   "Luka wyczerpania", "Геп виснаження",   "थकावट गैप"      ],
     /* 38 IslandGap                */ [ "Island Gap",       "Островной гэп",     "Gap de Isla",            "Insellücke",            "Gap d'île",            "Gap de Ilha",          "岛形缺口", "アイランドギャップ","아일랜드 갭","فجوة الجزيرة",     "Gap a Isola",        "Ada Boşluğu",       "Luka wyspowa",     "Острівний геп",    "द्वीप गैप"      ],
+];
+
+// =============================================================================
+// CandlePatternShortKey table  (21 variants x N_LANG) — see `CandlePatternShortKey`'s
+// own doc in keys.rs for why only 21 of the 39 wire ids get a row here, and
+// why (unlike `CANDLE_PATTERN_KEY_TABLE` above) every column is filled.
+// =============================================================================
+pub(super) static CANDLE_PATTERN_SHORT_KEY_TABLE: [[&str; N_LANG]; 21] = [
+    /*  0 GravestoneDoji          */ [ "Grave Doji",         "Дожи-надгробие",     "Doji Lápida",         "Grabstein-Doji",       "Doji Tombale",         "Doji Lápide",        "墓碑十字星",    "墓石ドジ",       "비석형 도지",   "دوجي الشاهد",       "Doji Lapide",        "Mezar Taşı Doji",    "Doji Nagrobek",         "Дожі-надгробок",     "समाधि दोजी"        ],
+    /*  1 LongLeggedDoji         */ [ "Long-Leg Doji",      "Длинноног. дожи",    "Doji Largo",          "Doji Langbein",        "Doji Long",            "Doji Longo",         "长腿十字星",    "足長ドジ",       "긴다리 도지",   "دوجي الأرجل",       "Doji Lungo",         "Uzun Bacaklı Doji",  "Doji Długonogi",       "Довгоног. дожі",     "लंबी टांग दोजी"    ],
+    /*  2 InvertedHammer         */ [ "Inv Hammer",         "Перев. молот",       "Martillo Inv.",       "Inv. Hammer",          "Marteau Inv.",         "Martelo Inv.",       "倒锤线",        "逆ハンマー",     "역망치형",      "مطرقة مقلوبة",      "Martello Inv.",      "Ters Çekiç",         "Młotek Odw.",          "Перев. молот",       "उल्टा हैमर"        ],
+    /*  3 BullishEngulfing       */ [ "Bull Engulfing",     "Бычье поглощ.",      "Envolvente Alcista",  "Hausse Engulfing",     "Envelop. Hausse",      "Engolfo Altista",    "看涨吞没",      "陽の包み線",     "상승 장악형",   "ابتلاع صعودي",      "Inglobante Rialzo",  "Boğa Yutan",         "Pochłon. Wzrost.",     "Бичаче поглин.",     "बुलिश एंगल्फिंग"   ],
+    /*  4 BearishEngulfing       */ [ "Bear Engulfing",     "Медв. поглощ.",      "Envolvente Bajista",  "Baisse Engulfing",     "Envelop. Baisse",      "Engolfo Baixista",   "看跌吞没",      "陰の包み線",     "하락 장악형",   "ابتلاع هبوطي",      "Inglobante Ribasso", "Ayı Yutan",          "Pochłon. Spadk.",      "Ведмеже поглин.",    "बेयरिश एंगल्फिंग"  ],
+    /*  5 BullishHarami          */ [ "Bull Harami",        "Бычья харами",       "Harami Alcista",      "Hausse Harami",        "Harami Haussier",      "Harami Altista",     "看涨孕线",      "陽のはらみ線",   "상승 하라미",   "هارامي صعودي",      "Harami Rialzista",   "Boğa Harami",        "Harami Wzrost.",       "Бичача харамі",      "बुलिश हरामी"       ],
+    /*  6 BearishHarami          */ [ "Bear Harami",        "Медв. харами",       "Harami Bajista",      "Baisse Harami",        "Harami Baissier",      "Harami Baixista",    "看跌孕线",      "陰のはらみ線",   "하락 하라미",   "هارامي هبوطي",      "Harami Ribassista",  "Ayı Harami",         "Harami Spadk.",        "Ведмежа харамі",     "बेयरिश हरामी"      ],
+    /*  7 PiercingPattern        */ [ "Piercing",           "Просвет",            "Penetrante",          "Durchdringung",        "Pénétrante",           "Penetração",         "刺透线",        "切り込み線",     "관통형",        "الاختراق",          "Penetrante",         "Nüfuz Eden",         "Przenikająca",         "Проникнення",        "पियर्सिंग"          ],
+    /*  8 DarkCloudCover         */ [ "Dark Cloud",         "Тёмное облако",      "Nube Oscura",         "Dunkle Wolke",         "Nuage Sombre",         "Nuvem Escura",       "乌云盖顶",      "かぶせ線",       "흑운형",        "الغيمة السوداء",    "Nuvola Scura",       "Kara Bulut",         "Ciemna Chmura",        "Темна хмара",        "डार्क क्लाउड"       ],
+    /*  9 MorningDojiStar        */ [ "Morning Doji",       "Утр. дожи-звезда",   "Doji Mañana",         "Morgen-Doji",          "Doji Matin",           "Doji Manhã",         "早晨十字星",    "明けの明星ドジ", "모닝 도지",     "دوجي الصباح",       "Doji Mattutina",     "Sabah Doji",         "Doji Poranne",         "Ранк. дожі-зірка",   "मॉर्निंग दोजी"     ],
+    /* 10 EveningDojiStar        */ [ "Evening Doji",       "Веч. дожи-звезда",   "Doji Noche",          "Abend-Doji",           "Doji Soir",            "Doji Noite",         "黄昏十字星",    "宵の明星ドジ",   "이브닝 도지",   "دوجي المساء",       "Doji Serale",        "Akşam Doji",         "Doji Wieczorne",       "Веч. дожі-зірка",    "इवनिंग दोजी"       ],
+    /* 11 ThreeWhiteSoldiers     */ [ "3 White Soldiers",   "3 белых солдата",    "3 Soldados Blancos",  "3 Weiße Soldaten",     "3 Soldats Blancs",     "3 Soldados Brancos", "三白兵",        "赤三兵",         "적삼병",        "3 جنود بيض",        "3 Soldati Bianchi",  "3 Beyaz Asker",      "3 Białe Żołnierze",    "3 білих солдати",    "3 व्हाइट सोल्जर्स" ],
+    /* 12 ThreeBlackCrows        */ [ "3 Black Crows",      "3 чёрные вороны",    "3 Cuervos Negros",    "3 Schwarze Krähen",    "3 Corbeaux Noirs",     "3 Corvos Pretos",    "三黑乌鸦",      "三羽烏",         "흑삼조",        "3 غربان سود",       "3 Corvi Neri",       "3 Kara Karga",       "3 Czarne Wrony",       "3 чорні ворони",     "3 ब्लैक क्रोज़"    ],
+    /* 13 ThreeInsideUp          */ [ "3 Inside Up",        "3 внутри вверх",     "3 Interior Alza",     "3 Innen Aufwärts",     "3 Intérieur Hausse",   "3 Interior Alta",    "三内涨",        "3内上昇",        "3내부 상승",    "3 داخلي صعود",      "3 Interno Rialzo",   "3 İçe Yukarı",       "3 Wewn. Wzrost",       "3 всередині вгору",  "3 इनसाइड अप"       ],
+    /* 14 ThreeInsideDown        */ [ "3 Inside Down",      "3 внутри вниз",      "3 Interior Baja",     "3 Innen Abwärts",      "3 Intérieur Baisse",   "3 Interior Baixa",   "三内跌",        "3内下降",        "3내부 하락",    "3 داخلي هبوط",      "3 Interno Ribasso",  "3 İçe Aşağı",        "3 Wewn. Spadek",       "3 всередині вниз",   "3 इनसाइड डाउन"     ],
+    /* 15 ThreeOutsideUp         */ [ "3 Outside Up",       "3 снаружи вверх",    "3 Exterior Alza",     "3 Außen Aufwärts",     "3 Extérieur Hausse",   "3 Exterior Alta",    "三外涨",        "3外上昇",        "3외부 상승",    "3 خارجي صعود",      "3 Esterno Rialzo",   "3 Dışa Yukarı",      "3 Zewn. Wzrost",       "3 назовні вгору",    "3 आउटसाइड अप"      ],
+    /* 16 ThreeOutsideDown       */ [ "3 Outside Down",     "3 снаружи вниз",     "3 Exterior Baja",     "3 Außen Abwärts",      "3 Extérieur Baisse",   "3 Exterior Baixa",   "三外跌",        "3外下降",        "3외부 하락",    "3 خارجي هبوط",      "3 Esterno Ribasso",  "3 Dışa Aşağı",       "3 Zewn. Spadek",       "3 назовні вниз",     "3 आउटसाइड डाउन"    ],
+    /* 17 RisingThreeMethods     */ [ "Rising 3 Methods",   "Метод 3 восход.",    "3 Métodos Alcistas",  "3 Methoden Steigend",  "3 Méthodes Hausse",    "3 Métodos Alta",     "上升三法",      "上げ三法",       "상승 3법",      "3 طرق صاعدة",       "3 Metodi Rialzo",    "Yükselen 3 Yöntem",  "3 Metody Rosnące",     "Метод 3 зростаючих", "राइजिंग 3 मेथड्स"  ],
+    /* 18 FallingThreeMethods    */ [ "Falling 3 Methods",  "Метод 3 нисход.",    "3 Métodos Bajistas",  "3 Methoden Fallend",   "3 Méthodes Baisse",    "3 Métodos Baixa",    "下降三法",      "下げ三法",       "하락 3법",      "3 طرق هابطة",       "3 Metodi Ribasso",   "Düşen 3 Yöntem",     "3 Metody Malejące",    "Метод 3 спадаючих",  "फॉलिंग 3 मेथड्स"   ],
+    /* 19 UpsideGapTwoCrows      */ [ "Up Gap 2 Crows",     "Гэп 2 вороны вверх", "Gap 2 Cuervos Alza",  "Lücke 2 Krähen Auf",   "Gap 2 Corbeaux Hausse","Gap 2 Corvos Alta",  "跳空两乌鸦",    "上放れ二羽烏",   "상승갭 까마귀2","فجوة غربان صعود",   "Gap 2 Corvi Rialzo", "Boşluk 2 Karga Yukarı","Luka 2 Wrony Wzrost", "Геп 2 ворони вгору", "गैप 2 क्रोज़ अप"   ],
+    /* 20 DownsideGapThreeMethods*/ [ "Down Gap 3 Methods", "Гэп 3 метода вниз",  "Gap 3 Métodos Baja",  "Lücke 3 Method. Ab",   "Gap 3 Méthodes Baisse","Gap 3 Métodos Baixa","下跳空三法",    "下放れ三法",     "하락갭 3법",    "فجوة 3 طرق هبوط",   "Gap 3 Metodi Ribasso","Boşluk 3 Yöntem Aşağı","Luka 3 Metody Spadek", "Геп 3 методи вниз",  "गैप 3 मेथड्स डाउन" ],
 ];
 
 // =============================================================================
@@ -2094,5 +2124,6 @@ mod completeness {
         assert_full("POSITION_POINT_KEY_TABLE", &POSITION_POINT_KEY_TABLE);
         assert_full("SHARE_VIEWER_KEY_TABLE", &SHARE_VIEWER_KEY_TABLE);
         assert_full("FORUM_KEY_TABLE", &FORUM_KEY_TABLE);
+        assert_full("CANDLE_PATTERN_SHORT_KEY_TABLE", &CANDLE_PATTERN_SHORT_KEY_TABLE);
     }
 }

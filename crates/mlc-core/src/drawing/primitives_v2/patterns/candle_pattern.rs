@@ -17,7 +17,7 @@
 
 use serde::{Deserialize, Serialize};
 use crate::{Bar, PriceScale, Viewport, timestamp_ms_to_bar_f64, find_bar_for_timestamp_ms};
-use crate::i18n::{current_language, CandlePatternKey, ConceptKey};
+use crate::i18n::{current_language, CandlePatternKey, CandlePatternShortKey, ConceptKey};
 use mli::events::candle_pattern::{CandlePatternKind, PatternBias, detect_at};
 use super::super::{
     Primitive, PrimitiveData, PrimitiveKind, ClickBehavior, HitTestResult,
@@ -51,6 +51,22 @@ pub(super) fn pattern_display_name(kind: CandlePatternKind) -> &'static str {
     match CandlePatternKey::from_id(kind.id()) {
         Some(key) => key.get(current_language()),
         None => kind.label(),
+    }
+}
+
+/// This pattern's own COMPACT localized display name — the short form
+/// [`super::candle_pattern_scan::CandlePatternScan::render`] labels a hit
+/// with, so a chart full of hits reads without opening the settings modal
+/// (owner complaint 0.5.615). [`CandlePatternShortKey::from_id`] when this
+/// kind's own full name was too long to use as-is (see that enum's own
+/// doc for which 21 of the 39 ids that is), falling back to
+/// [`pattern_display_name`] — the SAME full name `CandlePattern`'s own
+/// single-claim bracket already labels — for every kind already short
+/// enough not to need shortening.
+pub(super) fn pattern_short_display_name(kind: CandlePatternKind) -> &'static str {
+    match CandlePatternShortKey::from_id(kind.id()) {
+        Some(key) => key.get(current_language()),
+        None => pattern_display_name(kind),
     }
 }
 
@@ -610,6 +626,18 @@ mod tests {
     fn candle_pattern_key_resolves_every_mli_id() {
         for kind in CandlePatternKind::all() {
             assert!(CandlePatternKey::from_id(kind.id()).is_some(), "missing i18n key for {}", kind.id());
+        }
+    }
+
+    /// `pattern_short_display_name` never panics or falls through to an
+    /// empty string for any of `mli`'s 39 ids — the 21 shortened ones
+    /// resolve through `CandlePatternShortKey`, the other 18 through the
+    /// `pattern_display_name` fallback (see that function's own doc).
+    #[test]
+    fn pattern_short_display_name_resolves_every_mli_id_non_empty() {
+        for kind in CandlePatternKind::all() {
+            let name = pattern_short_display_name(*kind);
+            assert!(!name.is_empty(), "empty short display name for {}", kind.id());
         }
     }
 

@@ -84,6 +84,7 @@ pub use keys::{
     ShellKey,
     ConceptKey,
     CandlePatternKey,
+    CandlePatternShortKey,
     ShareViewerKey,
     ForumKey,
 };
