@@ -2949,6 +2949,45 @@ fn render_frame(state: Rc<RefCell<WebAppState>>, timer: &mut perf::FrameTimer) -
             st.chart.render(&mut ctx, now_ms, true);
             timer.enter(perf::Phase::RenderOverlay);
             st.chart.render_overlay(&mut ctx);
+
+            // Per-leaf loading spinner overlay — same rects and the shared
+            // spinning-hat renderer as native's `render_loading_spinners`
+            // (mlc-app-shell-vello/src/render/scene_builder.rs:805-818),
+            // drawn right after the overlay layer so it sits above the
+            // crosshair too, same ordering native uses. `elapsed_ms` reuses
+            // this frame's wall-clock `now_ms` — `draw_loading_hat` is a
+            // pure `elapsed_ms % 2400` loop, so any monotonic ms clock
+            // works, and the RAF loop (`request_animation_frame`, always
+            // rescheduled below) already redraws every frame while any
+            // leaf is loading, matching native's continuous-redraw rule
+            // with no extra gating needed. No `spinner_start`/
+            // `awaiting_first_live_frame` suppression here: those gate
+            // native's whole-window startup spinner for its off-thread
+            // skeleton-to-live `ChartApp` promote, which the single-window
+            // wasm shell has no equivalent of — the HTML boot splash IS
+            // the web startup spinner (see `index.html`). Still suppressed
+            // while the welcome wizard / profile manager screen is up,
+            // mirroring native's `_skel_active_for_spin` "one indicator on
+            // screen at a time" rule.
+            if !st.chart.last_loading_spinners.is_empty()
+                && !st.chart.panel_app.user_settings_state.show_profile_manager
+                && !st.chart.panel_app.user_settings_state.show_welcome_wizard
+            {
+                for (_leaf, (cx, cy, radius)) in &st.chart.last_loading_spinners {
+                    let size = radius * 2.0;
+                    mlc_app_layout::ui::widgets::draw_loading_hat(
+                        &mut ctx,
+                        mlc_core::state::toolbar_geometry::WidgetRect::new(
+                            cx - size / 2.0,
+                            cy - size / 2.0,
+                            size,
+                            size,
+                        ),
+                        now_ms,
+                    );
+                }
+            }
+
             st.chart.render_toolbar_only(&mut ctx);
             st.chart.render_modal_layer(&mut ctx, now_ms);
             // Panel overlay popups (sync color grid targeting a panel, e.g. the
