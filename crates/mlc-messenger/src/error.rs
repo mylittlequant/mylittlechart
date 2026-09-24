@@ -62,3 +62,14 @@ pub enum MessengerError {
     )]
     FlushPending,
 }
+
+impl From<crate::canonical_json::CanonicalJsonError> for MessengerError {
+    /// [`crate::canonical_json`] is its own small, dependency-light module
+    /// (it only needs `mlc_vodozemac`'s signature types, not this crate's
+    /// error type) -- this conversion is what lets `crypto::account` and
+    /// later pieces use `?` against it without that module needing to know
+    /// about [`MessengerError`] itself.
+    fn from(err: crate::canonical_json::CanonicalJsonError) -> Self {
+        MessengerError::Crypto(format!("canonical JSON: {err}"))
+    }
+}

@@ -57,18 +57,30 @@
 //! ([`wire::events::RelatesTo`]), and typed content for the state/timeline/
 //! to-device/account-data/ephemeral event types this crate reads.
 //!
-//! The sync engine and room/crypto state land in later pieces (plan §5,
-//! M4-M15) and are not present in this crate yet.
+//! **M5** — Matrix canonical-JSON signing ([`canonical_json`]:
+//! [`canonical_json::sign_json`], [`canonical_json::verify_json_signature`])
+//! and the device's own Olm account ([`crypto::account::OlmAccountState`]):
+//! generate-once-and-persist identity, one-time/fallback key maintenance off
+//! `/sync`'s own counters, and the signed `device_keys`/`/keys/upload`
+//! request bodies built from it.
+//!
+//! Room/timeline state, device tracking, Olm sessions, Megolm group
+//! sessions, and the sync engine tying everything together (plan §5, M4,
+//! M6-M15) are later pieces and are not present in this crate yet.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub mod canonical_json;
+pub mod crypto;
 pub mod error;
 pub mod ids;
 pub mod persist;
 pub mod store;
 pub mod wire;
 
+pub use canonical_json::{sign_json, verify_json_signature, CanonicalJsonError};
+pub use crypto::account::OlmAccountState;
 pub use error::MessengerError;
 pub use ids::{DeviceId, EventId, RequestId, RoomId, TxnId, UserId};
 pub use persist::{FlushBatch, FlushGate, RecordKey, SealedRecord};
