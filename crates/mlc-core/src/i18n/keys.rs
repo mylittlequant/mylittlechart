@@ -26,6 +26,7 @@ use super::tables::{
     CITY_KEY_TABLE,
     HEAD_SHOULDERS_KEY_TABLE,
     CANDLE_PATTERN_KEY_TABLE,
+    CANDLE_PATTERN_SHORT_KEY_TABLE,
     POSITION_POINT_KEY_TABLE,
     SHELL_KEY_TABLE,
     CONCEPT_KEY_TABLE,
@@ -3546,10 +3547,20 @@ pub enum ConceptKey {
     // already had a reader, `to_delta_divergence_config`, but no row until
     // now). Same append-only reason as `HarmonicKindAltBat` above.
     MarkupThresholdDeltaDivergenceSwingNLabel = 467,
+
+    // ---- Candle Pattern Scan readable-hits arc (owner complaint 0.5.615,
+    // 2026-09-24) — the word suffixed after a digit count in a collapsed
+    // cluster's own generic label (`"{count} patterns"`); see
+    // `candle_pattern_scan::merge_overlapping_label_boxes`'s own doc for
+    // why a collapsed cluster shows a generic count rather than one
+    // member's own specific pattern name (a cluster on this scan can mix
+    // different pattern kinds, unlike `SmcScan`'s own same-structure
+    // clusters).
+    ScanClusterPatternsSuffix = 468,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 468;
+    pub const COUNT: usize = 469;
 
     /// Get translation for this key.
     #[inline]
@@ -3696,6 +3707,103 @@ impl uzor::i18n::Translate for CandlePatternKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&CANDLE_PATTERN_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Candle Pattern SHORT Keys (compact on-chart labels for CandlePatternScan)
+// =============================================================================
+
+/// Compact display names for the subset of [`CandlePatternKey`]'s 39
+/// patterns whose full name is too long to sit as a readable on-chart
+/// label (`patterns::candle_pattern_scan::CandlePatternScan::render`,
+/// owner complaint 0.5.615 — "just marks bars with some unclear dots").
+/// Every candlestick kind already short enough (`Doji`, `Hammer`,
+/// `Marubozu`, the two Tweezers, the two Marubozu colours, the two Star
+/// kinds, ...) and all 5 gap kinds (already 2 words, already fully
+/// localized in [`CandlePatternKey`]'s own table) are deliberately NOT
+/// duplicated here — `pattern_short_display_name` falls back to
+/// [`pattern_display_name`] for exactly those, so this table only carries
+/// the ids that actually need shortening.
+///
+/// Unlike [`CandlePatternKey`] (En/Ru only, by owner-approved scope), this
+/// table carries all 15 columns: columns 2-14 are a best-effort
+/// compositional translation from the same candlestick-pattern vocabulary
+/// [`CandlePatternKey`]'s own Ru column and the gap-kind rows already use,
+/// NOT reviewed by a native speaker of that language — flagged here rather
+/// than silently claimed as reviewed. En (authored) and Ru (authored) are
+/// the two reviewed columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CandlePatternShortKey {
+    GravestoneDoji          = 0,
+    LongLeggedDoji          = 1,
+    InvertedHammer          = 2,
+    BullishEngulfing        = 3,
+    BearishEngulfing        = 4,
+    BullishHarami           = 5,
+    BearishHarami           = 6,
+    PiercingPattern         = 7,
+    DarkCloudCover          = 8,
+    MorningDojiStar         = 9,
+    EveningDojiStar         = 10,
+    ThreeWhiteSoldiers      = 11,
+    ThreeBlackCrows         = 12,
+    ThreeInsideUp           = 13,
+    ThreeInsideDown         = 14,
+    ThreeOutsideUp          = 15,
+    ThreeOutsideDown        = 16,
+    RisingThreeMethods      = 17,
+    FallingThreeMethods     = 18,
+    UpsideGapTwoCrows       = 19,
+    DownsideGapThreeMethods = 20,
+}
+
+impl CandlePatternShortKey {
+    pub const COUNT: usize = 21;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&CANDLE_PATTERN_SHORT_KEY_TABLE[self as usize], lang as usize)
+    }
+
+    /// The key for `mli`'s own wire id (`CandlePatternKind::id()`) — `None`
+    /// both for an id this table does not know AND for an id whose full
+    /// name never needed shortening in the first place (see this enum's
+    /// own doc); either way the caller falls back to
+    /// [`CandlePatternKey::from_id`].
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "gravestone_doji"            => Some(Self::GravestoneDoji),
+            "long_legged_doji"           => Some(Self::LongLeggedDoji),
+            "inverted_hammer"            => Some(Self::InvertedHammer),
+            "bullish_engulfing"          => Some(Self::BullishEngulfing),
+            "bearish_engulfing"          => Some(Self::BearishEngulfing),
+            "bullish_harami"             => Some(Self::BullishHarami),
+            "bearish_harami"             => Some(Self::BearishHarami),
+            "piercing_pattern"           => Some(Self::PiercingPattern),
+            "dark_cloud_cover"           => Some(Self::DarkCloudCover),
+            "morning_doji_star"          => Some(Self::MorningDojiStar),
+            "evening_doji_star"          => Some(Self::EveningDojiStar),
+            "three_white_soldiers"       => Some(Self::ThreeWhiteSoldiers),
+            "three_black_crows"          => Some(Self::ThreeBlackCrows),
+            "three_inside_up"            => Some(Self::ThreeInsideUp),
+            "three_inside_down"          => Some(Self::ThreeInsideDown),
+            "three_outside_up"           => Some(Self::ThreeOutsideUp),
+            "three_outside_down"         => Some(Self::ThreeOutsideDown),
+            "rising_three_methods"       => Some(Self::RisingThreeMethods),
+            "falling_three_methods"      => Some(Self::FallingThreeMethods),
+            "upside_gap_two_crows"       => Some(Self::UpsideGapTwoCrows),
+            "downside_gap_three_methods" => Some(Self::DownsideGapThreeMethods),
+            _ => None,
+        }
+    }
+}
+
+impl uzor::i18n::Translate for CandlePatternShortKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&CANDLE_PATTERN_SHORT_KEY_TABLE[self as usize], lang_index)
     }
 }
 

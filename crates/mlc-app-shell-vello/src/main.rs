@@ -3706,9 +3706,7 @@ impl App<'_> {
                 comm.dm.available = false;
                 comm.dm.unavailable_reason =
                     if messenger_ok { DmUnavailableReason::VaultLocked } else { DmUnavailableReason::NotPaid };
-                if messages_active {
-                    comm.dm.last_error = Some("Unlock the vault to use messages".to_string());
-                }
+                // No `last_error` for a locked vault: the dock says it once (owner 0.5.615).
             } else if !messenger_ok {
                 comm.dm.available = false;
                 comm.dm.unavailable_reason = DmUnavailableReason::NotPaid;
