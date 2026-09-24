@@ -7,11 +7,60 @@
 //! `docs/mlc/plans/autodetectors-a2-a4-implementation-2026-09-24.md`, "Shared
 //! hit-looks-like-a-hand-placed-structure constructor".
 
+use crate::Bar;
 use super::config::WaveDegree;
 use super::elliott::{CorrectionType, ElliottCorrection, ElliottImpulse, ElliottTriangle, ImpulseKind};
 use super::patterns::xabcd_pattern::XabcdHarmonicKind;
 use super::patterns::{AbcdPattern, CypherPattern, FiveZeroPattern, ThreeDrives, XabcdPattern};
+use super::scan_shape::{ScanShape, price_band_filter};
 use super::Primitive;
+
+/// One resolved hit — pivots ALREADY `(ts_ms, price)` pairs (see this
+/// module's own "pivot price" note on [`resolve_hit`]), never raw bar
+/// indices, so [`build_wave_primitive`]'s caller never re-derives this.
+/// Shared by BOTH `ElliottScan` and `HarmonicScan`'s own `cached_hits` — the
+/// SAME "no parallel vocabularies" reasoning this module's own doc gives for
+/// [`build_wave_primitive`] itself.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ResolvedWaveHit {
+    pub kind: mli::ewa::types::EwaPatternKind,
+    pub points: Vec<(i64, f64)>,
+    pub score: f64,
+}
+
+/// Maps one `EwaWaveHit`'s raw bar-index pivots to `(ts_ms, price)` pairs —
+/// price via the matching `EwaSwingPivot::price` (High/Low-aware: a pivot
+/// carries its own High-vs-Low tag, `bars[idx].close` does not), timestamp
+/// via `bars[idx].timestamp * 1000` (the ONE source of a pivot's own ms
+/// timestamp — `EwaSwingPivot` carries no timestamp of its own), never
+/// `bars[idx].close`. `None` when a pivot's own bar index has no matching
+/// entry in `pivots` or falls outside `bars` — a defensive case, unreachable
+/// for a hit `scan_waves`/`scan_waves_with_harmonic_tolerance` built from
+/// these same two slices, never a panic either way. Filters on the hit's own
+/// representative price (the LAST pivot's price, matching `CandlePatternHit`'s
+/// own completion-bar convention) via [`price_band_filter`]. Shared by BOTH
+/// `ElliottScan::resolved_scan` and `HarmonicScan::resolved_scan` — the ONE
+/// place a raw `EwaWaveHit` becomes a [`ResolvedWaveHit`], never forked.
+pub fn resolve_hit(
+    hit: mli::ewa::scan::EwaWaveHit,
+    pivots: &[mli::ewa::swing::EwaSwingPivot],
+    bars: &[Bar],
+    shape: ScanShape,
+    p1: f64,
+    p2: f64,
+) -> Option<ResolvedWaveHit> {
+    let mut points = Vec::with_capacity(hit.pivots.len());
+    for &idx in &hit.pivots {
+        let pivot = pivots.iter().find(|p| p.index == idx)?;
+        let bar = bars.get(idx)?;
+        points.push((bar.timestamp * 1000, pivot.price));
+    }
+    let representative_price = points.last()?.1;
+    if !price_band_filter(shape, p1, p2, representative_price) {
+        return None;
+    }
+    Some(ResolvedWaveHit { kind: hit.kind, points, score: hit.score })
+}
 
 fn arr6(p: &[(i64, f64)]) -> [(i64, f64); 6] {
     let mut a = [(0i64, 0.0); 6];

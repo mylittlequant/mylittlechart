@@ -30,8 +30,8 @@ use super::super::{
     RenderContext, render_primitive_text, TextAlign,
     config::{ConfigProperty, SelectOption, PropertyCategory, PropertyValue, StatRow, TableCell, Tone, WaveDegree, parse_table_cell_id},
 };
-use super::super::ewa_scan_shared::build_wave_primitive;
-use super::super::scan_shape::{ScanShape, render_scan_bracket, price_band_filter};
+use super::super::ewa_scan_shared::{build_wave_primitive, resolve_hit, ResolvedWaveHit};
+use super::super::scan_shape::{ScanShape, render_scan_bracket};
 use super::super::SCAN_MARKER_MIN_GAP_PX as MIN_MARKER_GAP_PX;
 use super::scan_kind::{EwaScanKind, default_all_kind_ids};
 
@@ -52,17 +52,6 @@ fn default_coverage() -> String {
 /// covers an old saved scan whose JSON is missing the field entirely).
 fn default_swing_n() -> usize {
     2
-}
-
-/// One resolved hit — pivots ALREADY `(ts_ms, price)` pairs (see
-/// `ewa_scan_shared`'s own "pivot price" note), never raw bar indices, so
-/// [`super::super::ewa_scan_shared::build_wave_primitive`]'s caller never
-/// re-derives this.
-#[derive(Clone, Debug, PartialEq)]
-pub struct ResolvedWaveHit {
-    pub kind: mli::ewa::types::EwaPatternKind,
-    pub points: Vec<(i64, f64)>,
-    pub score: f64,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -524,38 +513,6 @@ impl Primitive for ElliottScan {
         }
         false
     }
-}
-
-/// Maps one `EwaWaveHit`'s raw bar-index pivots to `(ts_ms, price)` pairs —
-/// price via the matching `EwaSwingPivot::price` (High/Low-aware, per
-/// `ewa_scan_shared`'s own "pivot price" note), timestamp via
-/// `bars[idx].timestamp * 1000` (the ONE source of a pivot's own ms
-/// timestamp — `EwaSwingPivot` carries no timestamp of its own), never
-/// `bars[idx].close`. `None` when a pivot's own bar index has no matching
-/// entry in `pivots` or falls outside `bars` — a defensive case, unreachable
-/// for a hit `scan_waves` built from these same two slices, never a panic
-/// either way. Filters on the hit's own representative price (the LAST
-/// pivot's price, matching `CandlePatternHit`'s own completion-bar
-/// convention) via [`price_band_filter`].
-fn resolve_hit(
-    hit: mli::ewa::scan::EwaWaveHit,
-    pivots: &[mli::ewa::swing::EwaSwingPivot],
-    bars: &[Bar],
-    shape: ScanShape,
-    p1: f64,
-    p2: f64,
-) -> Option<ResolvedWaveHit> {
-    let mut points = Vec::with_capacity(hit.pivots.len());
-    for &idx in &hit.pivots {
-        let pivot = pivots.iter().find(|p| p.index == idx)?;
-        let bar = bars.get(idx)?;
-        points.push((bar.timestamp * 1000, pivot.price));
-    }
-    let representative_price = points.last()?.1;
-    if !price_band_filter(shape, p1, p2, representative_price) {
-        return None;
-    }
-    Some(ResolvedWaveHit { kind: hit.kind, points, score: hit.score })
 }
 
 /// Draw a small `"×{count}"` badge above a marker — the count-badge half of
