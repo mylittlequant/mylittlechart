@@ -42,6 +42,7 @@ pub mod toolbar_geometry;
 pub mod gestures;
 pub mod ewa_engine;
 pub mod candle_pattern_engine;
+pub mod harmonic_engine;
 pub mod smc_engine;
 pub mod orderflow_engine;
 pub mod markup_engine;
@@ -117,6 +118,11 @@ pub use ewa_engine::{EwaEngineConfig, GuardFamilies, RatioRibDefaults, ewa_engin
 // surface for the candle-pattern markup engine (markup-engines wave,
 // 2026-08-25). See candle_pattern_engine.rs's own module doc.
 pub use candle_pattern_engine::{CandlePatternEngineConfig, candle_pattern_engine_config, set_candle_pattern_engine_config};
+
+// Harmonic engine configuration — process-global, SEED-ONLY settings surface
+// `HarmonicScan::new()` reads once, at construction (autodetector A3,
+// 2026-09-24). See harmonic_engine.rs's own module doc.
+pub use harmonic_engine::{HarmonicEngineConfig, harmonic_engine_config, set_harmonic_engine_config};
 
 // Smart-money engine configuration — process-global, user-level settings
 // surface for the smart-money markup engine (markup-engines wave,
