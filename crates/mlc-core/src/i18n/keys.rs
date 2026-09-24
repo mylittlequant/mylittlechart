@@ -3488,10 +3488,20 @@ pub enum ConceptKey {
     /// The Price Action modal's own ACTION row — the engine assembling the
     /// setups it found and drawing them (`markup::propose`).
     MarkupProposeSetupsLabel = 449,
+
+    // ---- Harmonic pattern kind names, part 2 (autodetectors A0,
+    // 2026-09-24) — `XabcdHarmonicKind::AltBat`/`::DeepCrab`
+    // (`xabcd_pattern.rs`), the 2 XABCD-shaped Carney kinds `HarmonicKind*`
+    // (347-351) above did not yet carry. Same append-only reason as
+    // `HeaderCandles` above: these join the family's own vocabulary but
+    // cannot sit next to `HarmonicKindShark` (347-351) without renumbering
+    // every key after it. Same Latin-spelling-in-every-column convention.
+    HarmonicKindAltBat = 450,
+    HarmonicKindDeepCrab = 451,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 450;
+    pub const COUNT: usize = 452;
 
     /// Get translation for this key.
     #[inline]

@@ -1381,7 +1381,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 450] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 452] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1843,6 +1843,11 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 450] = [
     /* 447 MarkupGuardNeighbourLabel          */ [ "Neighbour rules", "Правила соседей", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 448 MarkupGuardChainLabel              */ [ "Chain rules", "Правила цепочки", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 449 MarkupProposeSetupsLabel            */ [ "Propose setups from the bars", "Предложить сетапы по барам", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+
+    // Harmonic pattern kind names, part 2 (autodetectors A0, 2026-09-24) —
+    // same Latin-spelling convention as 347-351 above.
+    /* 450 HarmonicKindAltBat                 */ [ "Alt Bat", "Alt Bat", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 451 HarmonicKindDeepCrab               */ [ "Deep Crab", "Deep Crab", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================
