@@ -1838,10 +1838,14 @@ pub enum PrimitiveNameKey {
     OrderFlowScan       = 98,
     RayLeft             = 99,
     HorizontalRayLeft   = 100,
+    // Autodetector A2 (2026-09-24) — appended at the END for the same
+    // frozen-discriminant reason the VWAP pair and the markup-engine block
+    // above it were (101).
+    ElliottScan         = 101,
 }
 
 impl PrimitiveNameKey {
-    pub const COUNT: usize = 101;
+    pub const COUNT: usize = 102;
 
     /// Get translation for this key.
     #[inline]
@@ -1954,6 +1958,7 @@ impl PrimitiveNameKey {
             "absorption_mark"          => Some(Self::AbsorptionMark),
             "delta_divergence"         => Some(Self::DeltaDivergence),
             "order_flow_scan"          => Some(Self::OrderFlowScan),
+            "elliott_scan"             => Some(Self::ElliottScan),
             _                          => None,
         }
     }
@@ -3546,10 +3551,48 @@ pub enum ConceptKey {
     // already had a reader, `to_delta_divergence_config`, but no row until
     // now). Same append-only reason as `HarmonicKindAltBat` above.
     MarkupThresholdDeltaDivergenceSwingNLabel = 467,
+
+    // ---- Autodetector A2, Elliott (2026-09-24) — `EwaScanKind::label`'s
+    // own Contracting/Expanding split (`elliott::scan_kind`'s own doc):
+    // `WaveKindLeadingDiagonal`/`WaveKindEndingDiagonal` (287-353) name the
+    // DIAGONAL FAMILY, never the Contracting-vs-Expanding split `scan_waves`
+    // itself distinguishes, so that split gets its own 4 rows here rather
+    // than a silent reuse of the family-only label.
+    WaveKindLeadingDiagonalContracting = 468,
+    WaveKindLeadingDiagonalExpanding = 469,
+    WaveKindEndingDiagonalContracting = 470,
+    WaveKindEndingDiagonalExpanding = 471,
+
+    // ---- Autodetector A2/A3 (2026-09-24) — the `min_score`/`tolerance`
+    // "Any/Medium/High/Exact" pills row shared by `ElliottScan`/
+    // `HarmonicScan`'s own Thresholds group (`ScanThresholds`,
+    // `docs/mlc/plans/autodetectors-a2-a4-implementation-2026-09-24.md`,
+    // A2's own settings section) — one label + 4 option rows, reused
+    // verbatim by A3 rather than a second copy.
+    ScanMinScoreLabel = 472,
+    ScanMinScoreAny = 473,
+    ScanMinScoreMedium = 474,
+    ScanMinScoreHigh = 475,
+    ScanMinScoreExact = 476,
+
+    // ---- Autodetector A2/A3 (2026-09-24) — the Hits results table's own
+    // column headers (`[Kind, Pivots, Score, Place]`), shared by
+    // `ElliottScan`/`HarmonicScan`/`FibScan`'s own Hits table (the "Place"
+    // column is the SAME fire-once "click to place" mechanism all three
+    // scans share — see the arc's own "New mechanism" section).
+    ScanHitKindColumnHeader = 477,
+    ScanHitPivotsColumnHeader = 478,
+    ScanHitScoreColumnHeader = 479,
+    ScanHitPlaceColumnHeader = 480,
+    /// The What-to-detect kinds table's own name (`ConfigProperty::table`'s
+    /// `name` param, search text — not the `ScanWhatToDetect` group header,
+    /// which reuses `MarkupTabWhatToDetect`). Mirrors `SmcScanStructuresLabel`'s
+    /// own role for `SmcScan`'s structure table.
+    ScanKindsTableLabel = 481,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 468;
+    pub const COUNT: usize = 482;
 
     /// Get translation for this key.
     #[inline]

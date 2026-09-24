@@ -933,7 +933,7 @@ pub(super) static SIDEBAR_KEY_TABLE: [[&str; N_LANG]; 51] = [
 //
 //  Col:  0=En (registry display_name)              1=Ru                                          2..14=""
 
-pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 101] = [
+pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 102] = [
     /* 0  TrendLine           */ [ "Trend Line",                 "Линия тренда",                           "Línea de tendencia",          "Trendlinie",                    "Ligne de tendance",              "Linha de tendência",          "趋势线",        "トレンドライン",    "추세선",          "خط الاتجاه",         "Linea di tendenza",       "Trend Çizgisi",           "Linia trendu",            "Лінія тренду",              "ट्रेंड लाइन"           ],
     /* 1  HorizontalLine      */ [ "Horizontal Line",            "Горизонтальная линия",                   "Línea horizontal",            "Horizontale Linie",             "Ligne horizontale",              "Linha horizontal",            "水平线",        "水平線",            "수평선",          "خط أفقي",            "Linea orizzontale",       "Yatay Çizgi",             "Linia pozioma",           "Горизонтальна лінія",       "क्षैतिज रेखा"          ],
     /* 2  VerticalLine        */ [ "Vertical Line",              "Вертикальная линия",                     "Línea vertical",              "Vertikale Linie",               "Ligne verticale",                "Linha vertical",              "垂直线",        "垂直線",            "수직선",          "خط عمودي",           "Linea verticale",         "Dikey Çizgi",             "Linia pionowa",           "Вертикальна лінія",         "लंबवत रेखा"            ],
@@ -1035,6 +1035,11 @@ pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 101] = [
     /* 98 OrderFlowScan       */ [ "Order Flow Scan", "Скан потока ордеров", "Escáner de flujo de órdenes", "Order-Flow-Scan", "Scan du flux d'ordres", "Varredura de fluxo de ordens", "订单流扫描", "オーダーフロー検出", "오더 플로우 스캔", "مسح تدفق الأوامر", "Scansione order flow", "Emir Akışı Taraması", "Skan przepływu zleceń", "Скан потоку ордерів", "ऑर्डर फ्लो स्कैन" ],
     /* 99 RayLeft             */ [ "Ray Left", "Луч влево", "Rayo izquierdo", "Strahl links", "Rayon gauche", "Raio esquerdo", "向左射线", "左レイ", "왼쪽 레이", "شعاع يسار", "Raggio sinistro", "Sol Işın", "Promień w lewo", "Промінь ліворуч", "बाएं किरण" ],
     /* 100 HorizontalRayLeft  */ [ "Horizontal Ray Left", "Горизонтальный луч влево", "Rayo horizontal izquierdo", "Horizontaler Strahl links", "Rayon horizontal gauche", "Raio horizontal esquerdo", "向左水平射线", "左水平レイ", "왼쪽 수평 레이", "شعاع أفقي يسار", "Raggio orizzontale sinistro", "Sol Yatay Işın", "Promień poziomy w lewo", "Горизонтальний промінь ліворуч", "बाएं क्षैतिज किरण" ],
+    // 101 ElliottScan: En/Ru owner-approved verbatim (autodetectors A2-A4
+    // brief, 2026-09-24 — "Elliott autodetector" / "Автодетектор
+    // Эллиотта"); the remaining 13 columns are plain translations, NOT
+    // translator-reviewed (see this piece's own commit message).
+    /* 101 ElliottScan        */ [ "Elliott autodetector", "Автодетектор Эллиотта", "Autodetector de Elliott", "Elliott-Autodetektor", "Autodétecteur d'Elliott", "Autodetector de Elliott", "艾略特自动检测器", "エリオット自動検出", "엘리엇 자동 감지기", "الكاشف التلقائي لإليوت", "Autorilevatore di Elliott", "Elliott otomatik dedektörü", "Autodetektor Elliotta", "Автодетектор Елліотта", "इलियट ऑटोडिटेक्टर" ],
 ];
 
 // =============================================================================
@@ -1384,7 +1389,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 468] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 482] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1868,6 +1873,20 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 468] = [
     /* 465 MarkupThresholdDisplacementAtrMultLabel */ [ "Displacement ATR mult", "Множитель ATR смещения", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 466 MarkupThresholdEqualLevelAtrTolLabel */ [ "Equal level ATR tolerance", "Допуск ATR равных уровней", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 467 MarkupThresholdDeltaDivergenceSwingNLabel */ [ "Delta divergence swing N", "Свинг N дельта-дивергенции", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 468 WaveKindLeadingDiagonalContracting */ [ "Leading Diagonal (Contracting)", "Начальная диагональ (сходящаяся)", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 469 WaveKindLeadingDiagonalExpanding   */ [ "Leading Diagonal (Expanding)", "Начальная диагональ (расходящаяся)", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 470 WaveKindEndingDiagonalContracting  */ [ "Ending Diagonal (Contracting)", "Конечная диагональ (сходящаяся)", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 471 WaveKindEndingDiagonalExpanding    */ [ "Ending Diagonal (Expanding)", "Конечная диагональ (расходящаяся)", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 472 ScanMinScoreLabel                  */ [ "Minimum score", "Минимальная оценка", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 473 ScanMinScoreAny                    */ [ "Any", "Любая", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 474 ScanMinScoreMedium                 */ [ "Medium", "Средняя", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 475 ScanMinScoreHigh                   */ [ "High", "Высокая", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 476 ScanMinScoreExact                  */ [ "Exact", "Точная", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 477 ScanHitKindColumnHeader            */ [ "Kind", "Тип", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 478 ScanHitPivotsColumnHeader          */ [ "Pivots", "Пивоты", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 479 ScanHitScoreColumnHeader           */ [ "Score", "Оценка", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 480 ScanHitPlaceColumnHeader           */ [ "Place", "Разместить", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 481 ScanKindsTableLabel                */ [ "Wave kinds", "Виды волн", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================

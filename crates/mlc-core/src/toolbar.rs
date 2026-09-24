@@ -910,6 +910,10 @@ fn pattern_section() -> ToolbarSectionDef {
             DropdownItemDef::action("elliott_triangle", PN::ElliottTriangle.get(lang)).with_icon(ToolbarIconId::new("ElliottTriangle")),
             DropdownItemDef::action("elliott_double_combo", PN::ElliottDoubleCombo.get(lang)).with_icon(ToolbarIconId::new("ElliottDoubleCombo")),
             DropdownItemDef::action("elliott_triple_combo", PN::ElliottTripleCombo.get(lang)).with_icon(ToolbarIconId::new("ElliottTripleCombo")),
+            // Autodetector A2 (2026-09-24) — last item of the Elliott Waves
+            // theme, per the owner's own "autodetector = last item of its
+            // section" ruling.
+            DropdownItemDef::action("elliott_scan", PN::ElliottScan.get(lang)).with_icon(ToolbarIconId::new("elliott_scan")),
             // Harmonics — 7 named XABCD kind presets (A0, piece 2/3), family
             // order, labels reuse the Style tab's own `ConceptKey::HarmonicKind*`
             // (no duplicate `PrimitiveNameKey` for the same proper noun), then
@@ -1437,6 +1441,32 @@ mod pattern_section_tests {
                 "harmonic_gartley", "harmonic_bat", "harmonic_alt_bat",
                 "harmonic_butterfly", "harmonic_crab", "harmonic_deep_crab", "harmonic_shark",
                 "cypher_pattern", "abcd_pattern", "three_drives",
+            ],
+        );
+    }
+
+    /// The Elliott Waves header's own 6 action ids (A2, 2026-09-24): the 5
+    /// pre-existing manual primitives, then `elliott_scan` as the theme's
+    /// own trailing autodetector row.
+    #[test]
+    fn elliott_waves_header_has_six_actions_in_order() {
+        let lang = current_language();
+        let items = pattern_tools_items();
+        let elliott_label = MK::HeaderElliottWaves.get(lang).to_string();
+        let harmonics_label = MK::HeaderHarmonics.get(lang).to_string();
+
+        let start = items.iter().position(|i| matches!(i, DropdownItemDef::Header { label } if *label == elliott_label))
+            .expect("Elliott Waves header must be present");
+        let end = items.iter().position(|i| matches!(i, DropdownItemDef::Header { label } if *label == harmonics_label))
+            .expect("Harmonics header must be present");
+        assert!(end > start, "Harmonics header must come after Elliott Waves");
+
+        let elliott_ids = action_ids(&items[start..end]);
+        assert_eq!(
+            elliott_ids,
+            vec![
+                "elliott_impulse", "elliott_correction", "elliott_triangle",
+                "elliott_double_combo", "elliott_triple_combo", "elliott_scan",
             ],
         );
     }

@@ -310,6 +310,7 @@ impl PrimitiveRegistry {
         self.register_typed::<super::elliott::elliott_triangle::ElliottTriangle>(super::elliott::elliott_triangle::metadata());
         self.register_typed::<super::elliott::elliott_double_combo::ElliottDoubleCombo>(super::elliott::elliott_double_combo::metadata());
         self.register_typed::<super::elliott::elliott_triple_combo::ElliottTripleCombo>(super::elliott::elliott_triple_combo::metadata());
+        self.register_typed::<super::elliott::elliott_scan::ElliottScan>(super::elliott::elliott_scan::metadata());
 
         // Cycles
         self.register_typed::<super::cycles::cycle_lines::CycleLines>(super::cycles::cycle_lines::metadata());

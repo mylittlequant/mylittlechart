@@ -1462,6 +1462,22 @@ pub const ICON_AMD_CYCLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" vie
   <path d="M17.5 4h3.5v3.5"/>
 </svg>"##;
 
+/// A 5-wave impulse leg under the bracket scan-motif, five dotted pivots
+/// marking each wave's own endpoint — `icons_v4.json` batch B's own
+/// `elliott_scan` body (2026-09-23 toolbar icons, drawn ahead of A2, wired
+/// here), sharing `ICON_SMC_SCAN`'s own bracket wrapper so every autodetector
+/// reads as one family.
+pub const ICON_ELLIOTT_SCAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4.5 4H3v16h1.5"/>
+  <path d="M19.5 4H21v16h-1.5"/>
+  <path d="M6 17l2.5-4.5 2 2 3-6 2 3 2.5-4"/>
+  <circle cx="8.5" cy="12.5" r="1.2" fill="currentColor"/>
+  <circle cx="10.5" cy="14.5" r="1.2" fill="currentColor"/>
+  <circle cx="13.5" cy="8.5" r="1.2" fill="currentColor"/>
+  <circle cx="15.5" cy="11.5" r="1.2" fill="currentColor"/>
+  <circle cx="18" cy="7.5" r="1.2" fill="currentColor"/>
+</svg>"##;
+
 /// Two columns of unequal cells facing each other across a bar's centre —
 /// the bid-versus-ask reading a footprint cell carries.
 pub const ICON_IMBALANCE_ZONE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
@@ -2979,6 +2995,9 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "delta_divergence" | "deltadivergence" => Some(ICON_DELTA_DIVERGENCE),
         "order_flow_scan" | "orderflowscan" => Some(ICON_ORDER_FLOW_SCAN),
 
+        // Autodetector A2, Elliott (2026-09-24)
+        "elliott_scan" | "elliottscan" => Some(ICON_ELLIOTT_SCAN),
+
         // Autodetector rail families (2026-09-23, registered ahead of the rail UI)
         "family_ewa" => Some(ICON_FAMILY_EWA),
         "family_bars" => Some(ICON_FAMILY_BARS),
@@ -3491,6 +3510,7 @@ mod icon_stroke_width_guard {
         ("ICON_ABSORPTION_MARK", ICON_ABSORPTION_MARK),
         ("ICON_DELTA_DIVERGENCE", ICON_DELTA_DIVERGENCE),
         ("ICON_ORDER_FLOW_SCAN", ICON_ORDER_FLOW_SCAN),
+        ("ICON_ELLIOTT_SCAN", ICON_ELLIOTT_SCAN),
         ("ICON_CROSSHAIR", ICON_CROSSHAIR),
         ("ICON_AGENT_TERMINAL", ICON_AGENT_TERMINAL),
         ("ICON_AGENT_CHAT", ICON_AGENT_CHAT),
