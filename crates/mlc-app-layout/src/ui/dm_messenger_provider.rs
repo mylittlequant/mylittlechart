@@ -382,6 +382,17 @@ impl<'a> DmMessengerProviderView<'a> {
     pub fn new(state: &'a DmState) -> Self {
         Self { state }
     }
+
+    /// Same value as [`MessengerProvider::capabilities`] — an INHERENT
+    /// mirror so a caller that only needs this one read (`mlc-app`'s own
+    /// messenger right-click dispatch, `ChartApp::
+    /// try_messenger_right_click`) is not forced to bring the whole trait
+    /// (and this crate's own `mlc-messenger-model` dependency along with
+    /// it) into scope just to call one method — `mlc-app` depends on
+    /// `mlc-app-layout` already, never on `mlc-messenger-model` directly.
+    pub fn capabilities(&self) -> Capabilities {
+        reads::capabilities()
+    }
 }
 
 impl MessengerProvider for DmMessengerProviderView<'_> {

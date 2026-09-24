@@ -27,6 +27,18 @@ pub enum ContextMenuTarget {
     Indicator(u64),
     /// A color tag for a leaf panel
     ColorTag(LeafId),
+    /// A DM message bubble, by its own timeline block index — matches
+    /// [`crate::ui::selectable_text::LineHit::block`], the messenger UI-2b
+    /// right-click menu (Copy / Select all / Reply — cloud builds only,
+    /// `messenger_overlay.rs`'s own right-click dispatch in `mlc-app`).
+    #[cfg(feature = "cloud")]
+    DmMessage(i64),
+    /// A DM chat-list row, by its own room id string
+    /// (`mlc_messenger_model::RoomId::as_str()`) — the messenger UI-2b
+    /// right-click menu (Mark as read, when the provider's own
+    /// `Capabilities::receipts` supports it).
+    #[cfg(feature = "cloud")]
+    DmChatRow(String),
 }
 
 // =============================================================================
@@ -315,6 +327,59 @@ pub fn build_primitive_context_menu(
         ContextMenuItemState::separator(),
         ContextMenuItemState::danger_with_icon("delete", "delete", MenuKey::Delete.get(lang)),
     ]
+}
+
+// =============================================================================
+// Messenger UI-2b right-click menus (community-messenger arc, cloud builds
+// only) — items are always plain rows (no icon, no submenu): the messenger
+// concept's own row style for Copy/Select all/Reply/Mark as read draws no
+// icon glyphs, unlike the chart's own primitive menu above.
+// =============================================================================
+
+/// A DM message bubble's own right-click menu — Copy and Select all are
+/// generic client-side text operations DM always supports (they never
+/// touch the wire), so they show unconditionally; Reply only when the
+/// active provider's own `Capabilities::replies` says the wire protocol
+/// supports it (today's DM adapter never sets it — see
+/// `dm_messenger_provider::reads::capabilities`'s own doc — so this row is
+/// dead on arrival until a Matrix-shaped provider lands, same "kept wired,
+/// unreachable today" convention the wave-menu builders below already use
+/// for their own provider-gated rows).
+#[cfg(feature = "cloud")]
+pub fn build_dm_message_context_menu(caps: mlc_messenger_model::Capabilities) -> Vec<ContextMenuItemState> {
+    let mut items = vec![
+        ContextMenuItemState::action("dm_msg:copy", "Copy"),
+        ContextMenuItemState::action("dm_msg:select_all", "Select all"),
+    ];
+    if caps.replies {
+        items.push(ContextMenuItemState::action("dm_msg:reply", "Reply"));
+    }
+    items
+}
+
+/// A DM chat-list row's own right-click menu — "Mark as read" only when
+/// the provider's own `Capabilities::receipts` says read state is tracked
+/// at all. `can_mark_read` is a SEPARATE, per-call data-availability gate
+/// (the caller already resolved whether it actually has a message id to
+/// mark up to — a row for a conversation that has never been opened
+/// carries none, `RoomSummary::last_event` is always `None` for today's DM
+/// adapter): the row still SHOWS when the capability supports it, matching
+/// the concept's own "only supported items" rule, but is disabled rather
+/// than silently omitted when this one instance has nothing to act on —
+/// the same fail-visible convention [`ContextMenuItemState::set_enabled`]
+/// already offers everywhere else in this file. Empty (no rows at all)
+/// when `caps.receipts` is false — the caller is expected to skip opening
+/// a menu with nothing in it.
+#[cfg(feature = "cloud")]
+pub fn build_dm_chat_row_context_menu(
+    caps: mlc_messenger_model::Capabilities,
+    can_mark_read: bool,
+) -> Vec<ContextMenuItemState> {
+    let mut items = Vec::new();
+    if caps.receipts {
+        items.push(ContextMenuItemState::action("dm_chat_row:mark_read", "Mark as read").set_enabled(can_mark_read));
+    }
+    items
 }
 
 // =============================================================================

@@ -626,6 +626,23 @@ impl ChartApp {
             || self.tc_modal.is_open
             || self.rc_modal.is_open
             || self.dom_modal.is_open
+            || self.community_modal_open()
+    }
+
+    /// Whether the Community modal (Forum + Messages, cloud builds only) is
+    /// open — folded into [`Self::any_blocking_modal_open`] so a right-click
+    /// or a primitive clipboard hotkey never bleeds through to the chart
+    /// underneath it, the same guard every other modal in that list already
+    /// gets. `false` on a non-cloud build, where `community_state` does not
+    /// exist at all.
+    #[cfg(feature = "cloud")]
+    pub(crate) fn community_modal_open(&self) -> bool {
+        self.panel_app.community_state.is_open
+    }
+
+    #[cfg(not(feature = "cloud"))]
+    pub(crate) fn community_modal_open(&self) -> bool {
+        false
     }
 
     /// Ask the wave-gesture question for `(x, y)`: does it land on an
@@ -840,6 +857,18 @@ impl ChartApp {
     /// Opens a context menu: primitive menu if clicking on a primitive,
     /// chart background menu otherwise.
     pub fn on_right_click(&mut self, x: f64, y: f64) {
+        // The messenger UI-2b right-click menus (a DM message bubble or a
+        // chat-list row) run BEFORE the blocking-modal gate below — the
+        // Community modal is now folded into `any_blocking_modal_open`
+        // (see `community_modal_open`'s own doc), so without this the gate
+        // would refuse the very right-clicks this branch exists to handle.
+        #[cfg(feature = "cloud")]
+        {
+            if self.try_messenger_right_click(x, y) {
+                return;
+            }
+        }
+
         // Suppress context menu when any modal is open — right-clicks inside
         // modals must not bleed through to the chart background.
         if self.any_blocking_modal_open() {
@@ -1025,6 +1054,77 @@ impl ChartApp {
             }
             crate::panel_grid::ChartRightClickHit::Miss => {}
         }
+    }
+
+    /// Messenger UI-2b right-click dispatch (community-messenger arc) — the
+    /// ONE entry point `on_right_click` calls before its own chart hit-test,
+    /// same "ask the more specific surface first, fall through on a miss"
+    /// shape [`Self::try_wave_gesture`] already uses. Returns `true` (and
+    /// has already opened `panel_app.context_menu_state`) when the click
+    /// landed on a DM message bubble or a chat-list row; `false` — meaning
+    /// the caller falls through to `any_blocking_modal_open`'s now-
+    /// unconditional refusal while the Community modal is open (see
+    /// `community_modal_open`'s own doc) — for every other case: the modal
+    /// closed, the Forum tab active, or a click on the modal's own chrome.
+    #[cfg(feature = "cloud")]
+    fn try_messenger_right_click(&mut self, x: f64, y: f64) -> bool {
+        use mlc_app_layout::ui::context_menu::{build_dm_chat_row_context_menu, build_dm_message_context_menu};
+        use mlc_app_layout::ui::dm_messenger_provider::DmMessengerProviderView;
+        use mlc_app_layout::ui::modal_settings::CommunityTab;
+        use mlc_app_layout::ui::selectable_text::hit_test;
+
+        if !self.panel_app.community_state.is_open
+            || self.panel_app.community_state.active_tab() != CommunityTab::Messages
+        {
+            return false;
+        }
+        let Some(cm) = self.frame_result.as_ref().and_then(|r| r.community.as_ref()) else { return false };
+        let w = self.width as f64;
+        let h = self.height as f64;
+
+        // A message bubble line — the SAME raw `LineHit` scan Ctrl+C
+        // already uses (`ChartApp::dm_selection_text`'s own doc, R29):
+        // messages are collected paint-time rects, not `InputCoordinator`
+        // widgets, so there is nothing to hit-test through the coordinator
+        // here.
+        if let Some(hit) = hit_test(&cm.content.dm_message_line_rects, x, y) {
+            let msg_idx = hit.block;
+            let caps = DmMessengerProviderView::new(&self.panel_app.community_state.dm).capabilities();
+            let items = build_dm_message_context_menu(caps);
+            self.panel_app.context_menu_state.open_smart(
+                x, y, ContextMenuTarget::DmMessage(msg_idx), items, w, h,
+            );
+            log::debug!("[ChartApp] Context menu opened for DM message #{msg_idx}");
+            return true;
+        }
+
+        // A chat-list row — a REGISTERED widget
+        // (`cloud_overlay:dm:conversation:{room_id}`,
+        // `messenger_overlay::draw_room_row`), hit-tested through the
+        // `InputCoordinator` like every other right-click-aware widget in
+        // this crate (`process_right_click` is a pure query — no side
+        // effects — so borrowing `input_coordinator` here is safe even
+        // though `self` is otherwise `&mut`).
+        let hit_id = self.input_coordinator.borrow().process_right_click(x, y);
+        let Some(room_id) = hit_id.as_ref().and_then(|id| id.as_str().strip_prefix("cloud_overlay:dm:conversation:"))
+        else {
+            return false;
+        };
+        let caps = DmMessengerProviderView::new(&self.panel_app.community_state.dm).capabilities();
+        let can_mark_read = room_id
+            .parse::<i64>()
+            .ok()
+            .and_then(|id| self.panel_app.community_state.dm.open_conversation_last_message_id(id))
+            .is_some();
+        let items = build_dm_chat_row_context_menu(caps, can_mark_read);
+        if items.is_empty() {
+            return false;
+        }
+        self.panel_app.context_menu_state.open_smart(
+            x, y, ContextMenuTarget::DmChatRow(room_id.to_string()), items, w, h,
+        );
+        log::debug!("[ChartApp] Context menu opened for DM chat row {room_id}");
+        true
     }
 
     /// Handle a double-click at screen coordinates `(x, y)`.

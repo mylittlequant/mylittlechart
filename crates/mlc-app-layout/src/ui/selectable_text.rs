@@ -181,6 +181,49 @@ pub fn selection_text(rects: &[LineHit], sel: &Selection) -> Option<String> {
     }
 }
 
+/// Every line whose own `block` equals `block_id`, plain text joined by
+/// `\n`, in draw order — a message's own right-click "Copy" when there is
+/// no active drag selection (the concept's own "Ctrl+C / правый клик →
+/// Copy" row; with a selection, the caller uses [`selection_text`]
+/// instead). `None` when `block_id` matches no collected line (a stale
+/// widget/target, a closed conversation) — the caller is expected to check
+/// first; this returns `None` rather than an empty string, same "absent
+/// means nothing" convention this module's own callers already follow.
+pub fn block_text(rects: &[LineHit], block_id: i64) -> Option<String> {
+    let mut text = String::new();
+    for entry in rects.iter().filter(|l| l.block == block_id) {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&entry.text);
+    }
+    if text.is_empty() {
+        None
+    } else {
+        Some(text)
+    }
+}
+
+/// A [`Selection`] spanning every line in `rects` — "select the whole
+/// loaded chat" (a message's own right-click "Select all", same action
+/// Ctrl+A performs: the concept's own spec reads "Ctrl+A — весь загруженный
+/// чат"). Built from whichever `LineHit`s the caller's own last render pass
+/// collected, so it always matches exactly what is on screen rather than a
+/// second, independent reconstruction of the same bounds. `None` when
+/// `rects` is empty — nothing to select.
+pub fn select_all(rects: &[LineHit]) -> Option<Selection> {
+    let first = rects.first()?;
+    let last = rects.last()?;
+    Some(Selection {
+        start_block: first.block,
+        start_line: first.line,
+        start_char: 0,
+        end_block: last.block,
+        end_line: last.line,
+        end_char: last.text.chars().count() as u16,
+    })
+}
+
 /// Pure highlight-span geometry for ONE line already known to fall inside
 /// `sel`'s ordered range (the caller filters with this — walk `rects`,
 /// keep only entries whose `(block, line)` lies between [`Selection::
@@ -312,6 +355,32 @@ mod tests {
         assert_eq!(y, line.y_top);
         assert_eq!(h, line.y_bot - line.y_top);
         assert_eq!((x, w), highlight_span(line.text_x, line.width, 0, 5, true, true, |n| n as f64 * 6.0));
+    }
+
+    #[test]
+    fn block_text_joins_only_the_matching_blocks_own_lines() {
+        let rects = vec![
+            hit(0, 0, 0.0, "first line", 0.0, 80.0),
+            hit(0, 1, 16.0, "second line", 0.0, 80.0),
+            hit(1, 0, 32.0, "other message", 0.0, 80.0),
+        ];
+        assert_eq!(block_text(&rects, 0).as_deref(), Some("first line\nsecond line"));
+        assert_eq!(block_text(&rects, 1).as_deref(), Some("other message"));
+        assert_eq!(block_text(&rects, 2), None);
+    }
+
+    #[test]
+    fn select_all_spans_the_first_to_the_last_collected_line() {
+        let rects = vec![
+            hit(0, 0, 0.0, "first line", 0.0, 80.0),
+            hit(1, 0, 16.0, "second message", 0.0, 80.0),
+        ];
+        let sel = select_all(&rects).expect("non-empty rects yield a selection");
+        assert_eq!(sel.start_block, 0);
+        assert_eq!(sel.start_char, 0);
+        assert_eq!(sel.end_block, 1);
+        assert_eq!(sel.end_char, "second message".chars().count() as u16);
+        assert_eq!(select_all(&[]), None);
     }
 
     #[test]

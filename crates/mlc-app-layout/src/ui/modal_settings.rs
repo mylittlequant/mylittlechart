@@ -6567,6 +6567,22 @@ impl DmState {
         self.messages_fetched_at = Some(now_ms());
         self.messages_refreshing = false;
     }
+
+    /// The highest-loaded message id for the currently open conversation,
+    /// if `room_id` matches it and at least one message has landed — the
+    /// only honest source for a chat-list row's own right-click "Mark as
+    /// read" `up_to` (messenger UI-2b): a row for a DIFFERENT, unopened
+    /// conversation has no per-message id available client-side at all
+    /// (`RoomSummary::last_event` is always `None` for today's DM adapter
+    /// — see `DmMessengerProvider::rooms`'s own doc), so the caller
+    /// disables that row's own context-menu item instead of guessing one.
+    pub fn open_conversation_last_message_id(&self, room_id: i64) -> Option<i64> {
+        let DmView::Conversation { id, messages, .. } = &self.view else { return None };
+        if *id != room_id {
+            return None;
+        }
+        messages.last().map(|m| m.id)
+    }
 }
 
 // =============================================================================

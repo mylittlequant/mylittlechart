@@ -866,6 +866,17 @@ pub fn process_event(
                                 } else {
                                     state.last_click = Some((now, x, y));
                                     chart.on_click(x, chart_y);
+                                    // A context-menu "Copy" click (the
+                                    // messenger UI-2b DM message menu) has
+                                    // no clipboard access of its own inside
+                                    // `ChartApp` — it stages the text here,
+                                    // the same "core sets a flag, shell
+                                    // performs the platform call" split
+                                    // `drain_pending_screenshot` already
+                                    // uses.
+                                    if let Some(text) = chart.drain_pending_clipboard_text() {
+                                        platform.clipboard_write(&text);
+                                    }
                                 }
                             }
                         }

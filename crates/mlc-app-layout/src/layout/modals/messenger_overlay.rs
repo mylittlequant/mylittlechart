@@ -352,7 +352,11 @@ fn draw_room_row(
         ctx.fill_text(&fit, px, y + 24.0);
     }
 
-    coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
+    // `RIGHT_CLICK` alongside `CLICK` — the messenger UI-2b chat-row context
+    // menu (`ChartApp::try_messenger_right_click`, `mlc-app`) hit-tests this
+    // SAME registered widget through `InputCoordinator::process_right_click`
+    // rather than a second, parallel rect list.
+    coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER | Sense::RIGHT_CLICK, layer_id);
     CONV_ROW_H
 }
 

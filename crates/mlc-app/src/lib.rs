@@ -742,6 +742,14 @@ pub struct ChartApp {
     /// owns the cloud session/token. Mirror of `pending_screenshot`.
     pending_share_live: bool,
 
+    /// Pending clipboard write — set by a context-menu "Copy" action
+    /// (`ChartApp` itself has no clipboard access; only the shell's own
+    /// `Platform::clipboard_write` does), drained by the shared input
+    /// dispatch (`mlc-app-input-shell`) right after the click that set it.
+    /// Mirror of `pending_screenshot`/`pending_share_live` — same "core
+    /// sets a flag, shell performs the actual platform call" split.
+    pending_clipboard_text: Option<String>,
+
     /// When set, the frame loop should clear in-memory bars and re-fetch.
     pub pending_reset_cache: bool,
     /// When set, the frame loop should delete the .bin file, clear in-memory bars, and re-fetch.
@@ -3469,6 +3477,7 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            pending_clipboard_text: None,
             pending_reset_cache: false,
             pending_reset_storage: false,
             drag_start_points: None,
@@ -3863,6 +3872,7 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            pending_clipboard_text: None,
             pending_reset_cache: false,
             pending_reset_storage: false,
             drag_start_points: None,
@@ -4473,6 +4483,7 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            pending_clipboard_text: None,
             pending_reset_cache: false,
             pending_reset_storage: false,
             drag_start_points: None,
@@ -5786,6 +5797,15 @@ impl ChartApp {
         let pending = self.pending_share_live;
         self.pending_share_live = false;
         pending
+    }
+
+    /// Drain the pending clipboard-write text, if a context-menu "Copy"
+    /// action set one this frame. Called by the shared input dispatch
+    /// (`mlc-app-input-shell`) right after `on_click` returns, the same
+    /// place the Ctrl+C key handler already calls `Platform::
+    /// clipboard_write` — mirror of `drain_pending_screenshot`.
+    pub fn drain_pending_clipboard_text(&mut self) -> Option<String> {
+        self.pending_clipboard_text.take()
     }
 
     /// Return the chart content rect (toolbar-excluded area) from the last render.
