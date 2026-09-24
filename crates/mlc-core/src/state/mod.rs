@@ -43,6 +43,7 @@ pub mod gestures;
 pub mod ewa_engine;
 pub mod candle_pattern_engine;
 pub mod harmonic_engine;
+pub mod fib_engine;
 pub mod smc_engine;
 pub mod orderflow_engine;
 pub mod markup_engine;
@@ -123,6 +124,11 @@ pub use candle_pattern_engine::{CandlePatternEngineConfig, candle_pattern_engine
 // `HarmonicScan::new()` reads once, at construction (autodetector A3,
 // 2026-09-24). See harmonic_engine.rs's own module doc.
 pub use harmonic_engine::{HarmonicEngineConfig, harmonic_engine_config, set_harmonic_engine_config};
+
+// Fib engine configuration — process-global, SEED-ONLY settings surface
+// `FibScan::new()` reads once, at construction (autodetector A4,
+// 2026-09-24). See fib_engine.rs's own module doc.
+pub use fib_engine::{FibEngineConfig, fib_engine_config, set_fib_engine_config};
 
 // Smart-money engine configuration — process-global, user-level settings
 // surface for the smart-money markup engine (markup-engines wave,
