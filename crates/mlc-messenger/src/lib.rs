@@ -124,6 +124,7 @@ pub mod core;
 pub mod crypto;
 pub mod error;
 pub mod ids;
+pub mod legacy_dm;
 pub mod outgoing_queue;
 pub mod persist;
 pub mod room;
@@ -131,7 +132,10 @@ pub mod store;
 pub mod wire;
 
 pub use canonical_json::{sign_json, verify_json_signature, CanonicalJsonError};
-pub use core::{CoreConfig, Counters, CreateRoomKind, MessageKind, MessengerCommand, MessengerCore, MessengerEvent, OutgoingMessage};
+pub use core::{
+    CoreConfig, CoreSecrets, Counters, CreateRoomKind, MessageKind, MessengerCommand, MessengerCore, MessengerEvent,
+    OutgoingMessage,
+};
 pub use crypto::account::OlmAccountState;
 pub use crypto::device_tracker::{DeviceKeyChanged, DeviceTracker, DroppedDevice, KeysQueryOutcome, StoredDevice};
 pub use crypto::group_sessions::{
@@ -143,6 +147,7 @@ pub use crypto::olm_sessions::{
 };
 pub use error::MessengerError;
 pub use ids::{DeviceId, EventId, RequestId, RoomId, TxnId, UserId};
+pub use legacy_dm::{LegacyDmDecryptReason, LegacyDmOutcome};
 pub use outgoing_queue::{Jitter, Lane, OutgoingQueue, PendingRequest, ResponseOutcome};
 pub use persist::{FlushBatch, FlushEpoch, FlushGate, RecordKey, RequiredSeq, SealedRecord};
 pub use room::{

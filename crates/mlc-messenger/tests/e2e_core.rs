@@ -25,9 +25,9 @@ use mlc_messenger::store::InsecurePlainCodecForTests;
 use mlc_messenger::wire::events::RoomEncryptionContent;
 use mlc_messenger::wire::RoomEncryptedContent;
 use mlc_messenger::{
-    CoreConfig, DeviceId, DeviceTracker, EventId, GroupSessionManager, ItemContent, Jitter, MessengerCore,
-    MessengerEvent, OlmAccountState, OlmSessionManager, OutgoingRequest, OutgoingRequestKind, RecordKey, RequestId,
-    RoomId, SealedRecord, Store, StoredDevice, TxnId, UserId,
+    CoreConfig, CoreSecrets, DeviceId, DeviceTracker, EventId, GroupSessionManager, ItemContent, Jitter,
+    MessengerCore, MessengerEvent, OlmAccountState, OlmSessionManager, OutgoingRequest, OutgoingRequestKind,
+    RecordKey, RequestId, RoomId, SealedRecord, Store, StoredDevice, TxnId, UserId,
 };
 use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
@@ -48,8 +48,15 @@ fn core_config(user_id: &UserId, device_id: &DeviceId) -> CoreConfig {
 }
 
 fn open_core(user_id: &UserId, device_id: &DeviceId) -> TestCore {
-    MessengerCore::open(Vec::new(), InsecurePlainCodecForTests, core_config(user_id, device_id), 0, Box::new(FixedJitter(0.0)))
-        .expect("open succeeds on a brand-new device")
+    MessengerCore::open(
+        Vec::new(),
+        InsecurePlainCodecForTests,
+        core_config(user_id, device_id),
+        CoreSecrets::default(),
+        0,
+        Box::new(FixedJitter(0.0)),
+    )
+    .expect("open succeeds on a brand-new device")
 }
 
 /// Drains and acks every flush batch a shell would need to persist right
@@ -437,9 +444,15 @@ fn e2e_core_restart_mid_session_resumes_from_records() {
     // standing in for its on-disk store).
     let records: Vec<SealedRecord> =
         durable.iter().map(|(key, bytes)| SealedRecord { key: RecordKey::new(key.clone()), bytes: bytes.clone() }).collect();
-    let mut restarted =
-        MessengerCore::open(records, InsecurePlainCodecForTests, core_config(&user_id, &device_id), 0, Box::new(FixedJitter(0.0)))
-            .expect("reopen succeeds");
+    let mut restarted = MessengerCore::open(
+        records,
+        InsecurePlainCodecForTests,
+        core_config(&user_id, &device_id),
+        CoreSecrets::default(),
+        0,
+        Box::new(FixedJitter(0.0)),
+    )
+    .expect("reopen succeeds");
 
     // Room STATE survives a restart; timeline CONTENT deliberately does
     // not (re-fetched instead -- `crate::core`'s own doc) -- the room

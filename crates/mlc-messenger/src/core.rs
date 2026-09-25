@@ -114,6 +114,7 @@ use crate::crypto::group_sessions::{GroupSessionManager, RoomEventPlaintext};
 use crate::crypto::olm_sessions::{OlmDecryptError, OlmSessionManager};
 use crate::error::MessengerError;
 use crate::ids::{DeviceId, EventId, RequestId, RoomId, TxnId, UserId};
+use crate::legacy_dm::{self, LegacyDmOutcome};
 use crate::outgoing_queue::{Jitter, Lane, OutgoingQueue, ResponseOutcome};
 use crate::persist::{FlushBatch, SealedRecord};
 use crate::room::state::RoomState;
@@ -121,12 +122,13 @@ use crate::room::timeline::{interpret_content, ItemContent, SendState, Timeline}
 use crate::room::RoomKind;
 use crate::store::{CryptoStore, RecordCodec, StateStore, Store};
 use crate::wire::events::{
-    DirectContent, InReplyTo, MegolmEncryptedContent, Membership, RawEvent, ReceiptContent, RelatesTo,
-    RoomEncryptedContent, RoomKeyContent, StrippedStateEvent, TagContent, TagInfo, TextLikeMessageContent,
+    DirectContent, InReplyTo, LegacyDmContent, MegolmEncryptedContent, Membership, RawEvent, ReceiptContent,
+    RelatesTo, RoomEncryptedContent, RoomKeyContent, StrippedStateEvent, TagContent, TagInfo, TextLikeMessageContent,
     ToDeviceEvent, TypingContent, Unsigned,
 };
 use crate::wire::sync::{parse_sync_response, InvitedRoom, JoinedRoom, LeftRoom};
 use crate::wire::{HttpResponseDescriptor, OutgoingRequest, OutgoingRequestKind};
+use mlc_vault::dm::DmIdentity;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -205,6 +207,31 @@ pub struct CoreConfig {
     /// know it to reach the homeserver at all, and a still-later piece
     /// (minting a room alias's local part into a full alias) will need it.
     pub server_name: String,
+}
+
+/// Secret material a shell supplies once at [`MessengerCore::open`] time,
+/// alongside [`CoreConfig`]'s static identity fields -- kept in its own
+/// struct (rather than folded into [`CoreConfig`]) because it holds key
+/// material [`CoreConfig`]'s own fields never do, and because a later
+/// piece adds its own secret the same way (M14's store seal key, M9's
+/// backup key) rather than growing [`MessengerCore::open`]'s own argument
+/// list again. `Default`s to every field absent -- a shell with a sealed
+/// vault (or one that has not derived a secret yet) passes
+/// [`CoreSecrets::default()`], and each field's own consumer degrades
+/// exactly the way it documents (e.g. `crate::legacy_dm`'s own module doc:
+/// a `None` `legacy_dm_identity` leaves every `LegacyDm` item undecrypted
+/// with `LegacyDmDecryptReason::NoLegacyIdentity`, permanently for this
+/// core's own session).
+#[derive(Default)]
+pub struct CoreSecrets {
+    /// This account's vault-derived legacy-DM X25519 identity
+    /// ([`DmIdentity::from_vault_key`]) -- `None` when the vault is sealed
+    /// (or this account has no legacy DM history to migrate at all). The
+    /// core never sees the vault key itself, only this already-derived
+    /// identity; it self-wipes on drop simply by living inside this
+    /// struct ([`DmIdentity`]'s own doc: its secret half is
+    /// `Zeroizing`-wrapped), no `Drop` impl of this struct's own needed.
+    pub legacy_dm_identity: Option<DmIdentity>,
 }
 
 /// Which `m.room.message` shape [`OutgoingMessage`] renders as (M13b send
@@ -481,6 +508,20 @@ struct PendingDecryptItem {
     content: MegolmEncryptedContent,
 }
 
+/// One `org.mylittlechart.legacy_dm` item this core could not decrypt yet
+/// (a [`crate::legacy_dm::LegacyDmDecryptReason::MissingPeerKey`]/
+/// `LegacyKeyMismatch`) -- kept exactly like [`PendingDecryptItem`] tracks
+/// a Megolm session-key wait, so [`MessengerCore::retry_pending_legacy_dm`]
+/// can re-attempt it without re-fetching anything the moment the room's
+/// own `legacy_dm_key` state changes.
+#[derive(Clone)]
+struct PendingLegacyDmItem {
+    sender: UserId,
+    legacy_conversation_id: i64,
+    nonce_b64: String,
+    ciphertext_b64: String,
+}
+
 /// `GET /rooms/{roomId}/messages`'s response shape, the parts this module
 /// reads (research doc §1.5) — `chunk` arrives newest-first for a `dir=b`
 /// page, reversed by [`MessengerCore::ingest_room_messages_response`]
@@ -620,6 +661,7 @@ struct PendingSend {
 /// The single-writer kernel — see this module's own doc.
 pub struct MessengerCore<C: RecordCodec> {
     config: CoreConfig,
+    secrets: CoreSecrets,
     store: Store<C>,
     account: OlmAccountState,
     outgoing: OutgoingQueue,
@@ -635,6 +677,10 @@ pub struct MessengerCore<C: RecordCodec> {
     receipts: BTreeMap<RoomId, ReceiptContent>,
 
     pending_decrypt: BTreeMap<RoomId, BTreeMap<EventId, PendingDecryptItem>>,
+    /// Every `org.mylittlechart.legacy_dm` item currently waiting on a
+    /// `legacy_dm_key` state change -- [`crate::legacy_dm`]'s own
+    /// counterpart to `pending_decrypt`.
+    pending_legacy_dm: BTreeMap<RoomId, BTreeMap<EventId, PendingLegacyDmItem>>,
     unknown_sender_retry: VecDeque<ToDeviceEvent>,
 
     /// The last `now_ms` a [`MessengerCommand::SetTyping { typing: true,
@@ -689,7 +735,8 @@ pub struct MessengerCore<C: RecordCodec> {
 impl<C: RecordCodec> MessengerCore<C> {
     /// Rebuilds a core from whatever a shell already read back from
     /// durable storage (`records`, possibly empty for a brand-new device),
-    /// `config`, and a `jitter` source for
+    /// `config`, `secrets` (a shell's own vault-derived secret material —
+    /// [`CoreSecrets`]'s own doc), and a `jitter` source for
     /// [`crate::outgoing_queue::OutgoingQueue`]'s own retry backoff. `now_ms`
     /// is accepted for API symmetry with every other entry point (this
     /// crate's own "no clock inside" rule) but not read by anything in this
@@ -701,6 +748,7 @@ impl<C: RecordCodec> MessengerCore<C> {
         records: impl IntoIterator<Item = SealedRecord>,
         codec: C,
         config: CoreConfig,
+        secrets: CoreSecrets,
         _now_ms: i64,
         jitter: Box<dyn Jitter>,
     ) -> Result<Self, MessengerError> {
@@ -737,6 +785,7 @@ impl<C: RecordCodec> MessengerCore<C> {
 
         Ok(Self {
             config,
+            secrets,
             store,
             account,
             outgoing,
@@ -750,6 +799,7 @@ impl<C: RecordCodec> MessengerCore<C> {
             typing: BTreeMap::new(),
             receipts: BTreeMap::new(),
             pending_decrypt: BTreeMap::new(),
+            pending_legacy_dm: BTreeMap::new(),
             unknown_sender_retry: VecDeque::new(),
             typing_debounce: BTreeMap::new(),
             pending_sends: BTreeMap::new(),
@@ -1885,6 +1935,13 @@ impl<C: RecordCodec> MessengerCore<C> {
     }
 
     fn ingest_joined_room(&mut self, room_id: &RoomId, joined: &JoinedRoom) -> Result<(), MessengerError> {
+        // Snapshot BEFORE folding this batch's own state events -- compared
+        // below against the post-fold value so a `legacy_dm_key` state
+        // change (a peer-key backfill, this account's own key finally
+        // matching) can drive `retry_pending_legacy_dm` (`crate::legacy_dm`'s
+        // own "Retry" doc), the same way `unread_before`/`unread_after`
+        // already drives `MessengerEvent::UnreadChanged` below.
+        let legacy_dm_keys_before = self.rooms.get(room_id).map(|room| room.legacy_dm_keys.clone()).unwrap_or_default();
         for event in joined.state.events.iter().chain(joined.timeline.events.iter()) {
             self.rooms.entry(room_id.clone()).or_default().apply_state_event(event)?;
         }
@@ -1920,7 +1977,12 @@ impl<C: RecordCodec> MessengerCore<C> {
                 joined.timeline.prev_batch.clone(),
             );
             self.decrypt_new_timeline_events(room_id, &joined.timeline.events);
+            self.decrypt_legacy_dm_events(room_id, &joined.timeline.events);
             self.emit(MessengerEvent::TimelineChanged { room_id: room_id.clone() });
+        }
+
+        if self.rooms.get(room_id).is_some_and(|room| room.legacy_dm_keys != legacy_dm_keys_before) {
+            self.retry_pending_legacy_dm(room_id);
         }
 
         self.persist_room_state(room_id)
@@ -1935,6 +1997,7 @@ impl<C: RecordCodec> MessengerCore<C> {
     }
 
     fn ingest_left_room(&mut self, room_id: &RoomId, left: &LeftRoom) -> Result<(), MessengerError> {
+        let legacy_dm_keys_before = self.rooms.get(room_id).map(|room| room.legacy_dm_keys.clone()).unwrap_or_default();
         for event in left.state.events.iter().chain(left.timeline.events.iter()) {
             self.rooms.entry(room_id.clone()).or_default().apply_state_event(event)?;
         }
@@ -1948,7 +2011,11 @@ impl<C: RecordCodec> MessengerCore<C> {
                 left.timeline.prev_batch.clone(),
             );
             self.decrypt_new_timeline_events(room_id, &left.timeline.events);
+            self.decrypt_legacy_dm_events(room_id, &left.timeline.events);
             self.emit(MessengerEvent::TimelineChanged { room_id: room_id.clone() });
+        }
+        if self.rooms.get(room_id).is_some_and(|room| room.legacy_dm_keys != legacy_dm_keys_before) {
+            self.retry_pending_legacy_dm(room_id);
         }
         self.persist_room_state(room_id)
     }
@@ -2010,12 +2077,135 @@ impl<C: RecordCodec> MessengerCore<C> {
         }
     }
 
+    /// Attempts to decrypt every `org.mylittlechart.legacy_dm` event in
+    /// `events` (already applied to `room_id`'s timeline as
+    /// [`ItemContent::LegacyDm`] placeholders by the caller) -- the
+    /// legacy-DM counterpart to
+    /// [`MessengerCore::decrypt_new_timeline_events`], shared by forward
+    /// sync ([`MessengerCore::ingest_joined_room`]/
+    /// [`MessengerCore::ingest_left_room`]) and back-pagination
+    /// ([`MessengerCore::ingest_room_messages_response`]). A room key
+    /// arriving late is [`GroupSessionManager`]'s own retry path
+    /// ([`MessengerCore::retry_pending_for_session`]); this legacy scheme
+    /// has no room key at all -- [`MessengerCore::retry_pending_legacy_dm`]
+    /// is its counterpart, triggered by the room's own `legacy_dm_key`
+    /// state changing instead (`crate::legacy_dm`'s own "Retry" doc).
+    fn decrypt_legacy_dm_events(&mut self, room_id: &RoomId, events: &[RawEvent]) {
+        for event in events {
+            if event.event_type != "org.mylittlechart.legacy_dm" || event.state_key.is_some() {
+                continue;
+            }
+            let Ok(content) = serde_json::from_value::<LegacyDmContent>(event.content.clone()) else { continue };
+            let Some(room) = self.rooms.get(room_id) else { continue };
+            let outcome = legacy_dm::decrypt_legacy_dm_item(
+                self.secrets.legacy_dm_identity.as_ref(),
+                room,
+                &self.config.user_id,
+                &event.sender,
+                content.legacy_conversation_id,
+                &content.nonce_b64,
+                &content.ciphertext_b64,
+            );
+            match outcome {
+                LegacyDmOutcome::Plain(text) => {
+                    if let Some(timeline) = self.timelines.get_mut(room_id) {
+                        timeline.set_decrypted(&event.event_id, ItemContent::LegacyPlain(text));
+                    }
+                    if let Some(by_event) = self.pending_legacy_dm.get_mut(room_id) {
+                        by_event.remove(&event.event_id);
+                    }
+                }
+                LegacyDmOutcome::Undecryptable(reason) => {
+                    if let Some(timeline) = self.timelines.get_mut(room_id) {
+                        timeline.set_decrypted(
+                            &event.event_id,
+                            ItemContent::LegacyDmUndecryptable {
+                                legacy_message_id: content.legacy_message_id.clone(),
+                                legacy_conversation_id: content.legacy_conversation_id,
+                                nonce_b64: content.nonce_b64.clone(),
+                                ciphertext_b64: content.ciphertext_b64.clone(),
+                                reason: reason.clone(),
+                            },
+                        );
+                    }
+                    if reason == legacy_dm::LegacyDmDecryptReason::NoLegacyIdentity {
+                        // Permanent for this core's own session
+                        // (`crate::legacy_dm`'s own doc) -- never worth
+                        // tracking for a retry.
+                        continue;
+                    }
+                    self.pending_legacy_dm.entry(room_id.clone()).or_default().insert(
+                        event.event_id.clone(),
+                        PendingLegacyDmItem {
+                            sender: event.sender.clone(),
+                            legacy_conversation_id: content.legacy_conversation_id,
+                            nonce_b64: content.nonce_b64,
+                            ciphertext_b64: content.ciphertext_b64,
+                        },
+                    );
+                }
+            }
+        }
+    }
+
+    /// Re-attempts every currently-pending legacy DM item in `room_id`
+    /// ([`MessengerCore::pending_legacy_dm`]) -- called once this room's
+    /// own `legacy_dm_key` state has just changed shape (a peer-key
+    /// backfill, or this account's own key finally matching). Emits
+    /// [`MessengerEvent::TimelineChanged`] iff at least one item actually
+    /// decrypted, same convention as
+    /// [`MessengerCore::retry_pending_for_session`].
+    fn retry_pending_legacy_dm(&mut self, room_id: &RoomId) {
+        let Some(by_event) = self.pending_legacy_dm.get(room_id) else { return };
+        let candidates: Vec<EventId> = by_event.keys().cloned().collect();
+        let mut changed = false;
+        for event_id in candidates {
+            if self.retry_legacy_dm_one(room_id, &event_id) {
+                changed = true;
+            }
+        }
+        if changed {
+            self.emit(MessengerEvent::TimelineChanged { room_id: room_id.clone() });
+        }
+    }
+
+    /// Re-attempts decrypting one currently-pending legacy DM item,
+    /// applying the result to its timeline on success. Returns `true` iff
+    /// the item was found and successfully decrypted -- `false` for an
+    /// unknown item or a decrypt that still fails (left pending, exactly
+    /// as [`MessengerCore::retry_decrypt_one`] leaves a still-failing
+    /// Megolm item).
+    fn retry_legacy_dm_one(&mut self, room_id: &RoomId, event_id: &EventId) -> bool {
+        let Some(item) = self.pending_legacy_dm.get(room_id).and_then(|by_event| by_event.get(event_id)).cloned() else {
+            return false;
+        };
+        let Some(room) = self.rooms.get(room_id) else { return false };
+        let outcome = legacy_dm::decrypt_legacy_dm_item(
+            self.secrets.legacy_dm_identity.as_ref(),
+            room,
+            &self.config.user_id,
+            &item.sender,
+            item.legacy_conversation_id,
+            &item.nonce_b64,
+            &item.ciphertext_b64,
+        );
+        let LegacyDmOutcome::Plain(text) = outcome else { return false };
+        if let Some(timeline) = self.timelines.get_mut(room_id) {
+            timeline.set_decrypted(event_id, ItemContent::LegacyPlain(text));
+        }
+        if let Some(by_event) = self.pending_legacy_dm.get_mut(room_id) {
+            by_event.remove(event_id);
+        }
+        true
+    }
+
     fn ingest_room_messages_response(&mut self, room_id: &RoomId, body: &[u8]) -> Result<(), MessengerError> {
         let parsed: RoomMessagesResponseBody = serde_json::from_slice(body)?;
         let mut events = parsed.chunk;
         events.reverse();
         self.timelines.entry(room_id.clone()).or_default().prepend_back_page(&events, parsed.end);
         self.decrypt_new_timeline_events(room_id, &events);
+        self.decrypt_legacy_dm_events(room_id, &events);
         self.emit(MessengerEvent::TimelineChanged { room_id: room_id.clone() });
         self.persist_room_state(room_id)
     }
@@ -2122,7 +2312,7 @@ mod tests {
     }
 
     fn open_fresh_core() -> MessengerCore<InsecurePlainCodecForTests> {
-        MessengerCore::open(Vec::new(), InsecurePlainCodecForTests, test_config(), 0, Box::new(FixedJitter(0.0)))
+        MessengerCore::open(Vec::new(), InsecurePlainCodecForTests, test_config(), CoreSecrets::default(), 0, Box::new(FixedJitter(0.0)))
             .expect("open succeeds on a brand-new device")
     }
 
@@ -2177,6 +2367,7 @@ mod tests {
             batch.records,
             InsecurePlainCodecForTests,
             test_config(),
+            CoreSecrets::default(),
             0,
             Box::new(FixedJitter(0.0)),
         )
@@ -2384,7 +2575,7 @@ mod tests {
         };
 
         let mut core =
-            MessengerCore::open(Vec::new(), InsecurePlainCodecForTests, test_config(), 0, Box::new(FixedJitter(0.0)))
+            MessengerCore::open(Vec::new(), InsecurePlainCodecForTests, test_config(), CoreSecrets::default(), 0, Box::new(FixedJitter(0.0)))
                 .expect("open succeeds");
         core.store = bob_store;
         core.account = bob_account;
@@ -2487,7 +2678,7 @@ mod tests {
 
         let bob_config = CoreConfig { user_id: bob_user.clone(), device_id: bob_device.clone(), server_name: "example.org".to_string() };
         let mut core =
-            MessengerCore::open(Vec::new(), InsecurePlainCodecForTests, bob_config, 0, Box::new(FixedJitter(0.0)))
+            MessengerCore::open(Vec::new(), InsecurePlainCodecForTests, bob_config, CoreSecrets::default(), 0, Box::new(FixedJitter(0.0)))
                 .expect("open succeeds");
         core.store = bob_store;
         core.account = bob_account;

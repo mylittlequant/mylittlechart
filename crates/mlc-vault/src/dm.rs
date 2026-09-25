@@ -239,6 +239,22 @@ pub fn open_message(
     Ok(Zeroizing::new(plaintext))
 }
 
+/// AAD binding for one DM message's seal/open — conversation id plus the
+/// SENDING identity's own key fingerprint. Mirrors, byte for byte, the
+/// `dm_aad` helper both app shells carry their own private copy of
+/// (`mlc-app-shell-vello/src/main.rs`'s `dm_aad`,
+/// `mlc-app-shell-web/src/cloud_session.rs`'s `dm_aad`:
+/// `format!("{}|{}", conversation_id, sender_fingerprint)`) — this is the
+/// ONE shared copy every later caller (`mlc-messenger`'s own legacy-DM
+/// decrypt path included) should call instead of re-deriving the format
+/// string a third time; the two shells keep their own copies (each is a
+/// free function in a binary crate this workspace does not want a shared
+/// library dependency edge into) but must never let them drift from this
+/// one's exact output.
+pub fn message_aad(conversation_id: i64, sender_fingerprint: &str) -> Vec<u8> {
+    format!("{conversation_id}|{sender_fingerprint}").into_bytes()
+}
+
 /// Hex-encoded SHA-256 fingerprint of a DM public key — safe for the server
 /// to store and list, and for a user to read aloud or compare visually with
 /// a contact's, since it never reveals the private half.
@@ -347,6 +363,19 @@ mod tests {
         let k_bob = conversation_key(&bob.secret, &alice.public, "conv-1");
 
         assert_eq!(*k_alice, *k_bob, "vault-derived identities must still commute under ECDH");
+    }
+
+    #[test]
+    fn message_aad_matches_the_shells_own_dm_aad_format_string() {
+        // Byte-for-byte against `format!("{}|{}", conversation_id,
+        // sender_fingerprint)` — both shells' own `dm_aad` copies (this
+        // function's own doc) — transcribed literally here rather than
+        // re-deriving the same format call, so a future edit to either
+        // side has to change this literal too, not just the code that
+        // produces it.
+        assert_eq!(message_aad(42, "deadbeef"), b"42|deadbeef".to_vec());
+        assert_eq!(message_aad(-1, ""), b"-1|".to_vec());
+        assert_eq!(message_aad(0, "abc123"), b"0|abc123".to_vec());
     }
 
     #[test]

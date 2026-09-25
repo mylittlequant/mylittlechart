@@ -30,7 +30,7 @@ mod support;
 use mlc_messenger::store::InsecurePlainCodecForTests;
 use mlc_messenger::wire::{Membership, RoomMessageContent, TagContent};
 use mlc_messenger::{
-    CoreConfig, CreateRoomKind, DeviceId, EditRecord, ItemContent, Jitter, MessageKind, MessengerCommand,
+    CoreConfig, CoreSecrets, CreateRoomKind, DeviceId, EditRecord, ItemContent, Jitter, MessageKind, MessengerCommand,
     MessengerCore, MessengerEvent, OutgoingMessage, OutgoingRequestKind, RecordKey, RoomId, SealedRecord, SendState,
     TimelineItem, TxnId, UserId,
 };
@@ -67,8 +67,15 @@ impl Device {
     fn new(user: &str, device: &str) -> Self {
         let user_id = UserId::parse(format!("@{user}:example.org")).expect("valid user id");
         let device_id = DeviceId::parse(device).expect("valid device id");
-        let core = MessengerCore::open(Vec::new(), InsecurePlainCodecForTests, core_config(&user_id, &device_id), 0, Box::new(FixedJitter(0.0)))
-            .expect("open succeeds on a brand-new device");
+        let core = MessengerCore::open(
+            Vec::new(),
+            InsecurePlainCodecForTests,
+            core_config(&user_id, &device_id),
+            CoreSecrets::default(),
+            0,
+            Box::new(FixedJitter(0.0)),
+        )
+        .expect("open succeeds on a brand-new device");
         Self { user_id, device_id, core }
     }
 
@@ -597,9 +604,15 @@ fn e2e_restart_between_encrypt_and_send_resends_the_same_ciphertext() {
 
     let records: Vec<SealedRecord> =
         durable.iter().map(|(key, bytes)| SealedRecord { key: RecordKey::new(key.clone()), bytes: bytes.clone() }).collect();
-    let mut restarted =
-        MessengerCore::open(records, InsecurePlainCodecForTests, core_config(&user_id, &device_id), 0, Box::new(FixedJitter(0.0)))
-            .expect("reopen succeeds");
+    let mut restarted = MessengerCore::open(
+        records,
+        InsecurePlainCodecForTests,
+        core_config(&user_id, &device_id),
+        CoreSecrets::default(),
+        0,
+        Box::new(FixedJitter(0.0)),
+    )
+    .expect("reopen succeeds");
 
     let resent_body = drive_until_pending_capture(
         &mut restarted,

@@ -567,11 +567,20 @@ pub struct RoomPinnedEventsContent {
 /// `org.mylittlechart.legacy_dm_key` content (server plan manager decision
 /// #5): the migrated legacy-DM peer's X25519 public key, copied verbatim
 /// from `dm_identity_keys` at migration time so a client can still address
-/// pre-Matrix DM history without a lookup outside room state.
+/// pre-Matrix DM history without a lookup outside room state. One such
+/// state event lands per member that had a legacy DM identity key (the
+/// state event's own `state_key`, `crate::room::state::RoomState`'s own
+/// field doc) -- both sides of a migrated 1:1 legacy conversation, not
+/// only the peer.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacyDmKeyContent {
-    /// The peer's X25519 public key, base64-encoded.
+    /// This member's X25519 public key, base64-encoded.
     pub public_key_b64: String,
+    /// The pre-Matrix legacy DM conversation id this key belongs to --
+    /// `mlc_vault::dm::conversation_key`'s own `conversation_id` input,
+    /// and the same value every [`LegacyDmContent`] this conversation's
+    /// migrated messages carry.
+    pub legacy_conversation_id: i64,
 }
 
 // ---------------------------------------------------------------------
@@ -774,6 +783,10 @@ pub struct RedactionContent {
 pub struct LegacyDmContent {
     /// The message's id in the pre-migration legacy DM store.
     pub legacy_message_id: String,
+    /// The pre-Matrix legacy DM conversation id this message belongs to --
+    /// matches one of this room's own [`LegacyDmKeyContent::legacy_conversation_id`]
+    /// entries.
+    pub legacy_conversation_id: i64,
     /// The AES-GCM nonce, base64-encoded.
     pub nonce_b64: String,
     /// The AES-GCM ciphertext, base64-encoded.

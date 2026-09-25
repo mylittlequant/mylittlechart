@@ -35,6 +35,7 @@
 //! codebase.
 
 use crate::ids::{EventId, TxnId, UserId};
+use crate::legacy_dm::LegacyDmDecryptReason;
 use crate::room::relations::{aggregate_relation, recompute_bundle, RelatingEvent, RelationsBundle};
 use crate::wire::events::{
     LegacyDmContent, Membership, RawEvent, RedactionContent, RelatesTo, RoomEncryptedContent, RoomMessageContent,
@@ -133,11 +134,38 @@ pub enum ItemContent {
     LegacyDm {
         /// The message's id in the pre-migration legacy DM store.
         legacy_message_id: String,
+        /// The pre-Matrix legacy DM conversation id.
+        legacy_conversation_id: i64,
         /// The AES-GCM nonce, base64-encoded.
         nonce_b64: String,
         /// The AES-GCM ciphertext, base64-encoded.
         ciphertext_b64: String,
     },
+    /// A [`ItemContent::LegacyDm`] item `crate::legacy_dm` attempted to
+    /// decrypt but could not (yet) -- kept with the same ciphertext bytes
+    /// so a later `org.mylittlechart.legacy_dm_key` state change (a
+    /// peer-key backfill, or this account's own key finally matching) can
+    /// retry it without re-fetching anything (`crate::core::MessengerCore`'s
+    /// own retry hook).
+    LegacyDmUndecryptable {
+        /// The message's id in the pre-migration legacy DM store.
+        legacy_message_id: String,
+        /// The pre-Matrix legacy DM conversation id.
+        legacy_conversation_id: i64,
+        /// The AES-GCM nonce, base64-encoded.
+        nonce_b64: String,
+        /// The AES-GCM ciphertext, base64-encoded.
+        ciphertext_b64: String,
+        /// Why decryption did not (yet) succeed.
+        reason: LegacyDmDecryptReason,
+    },
+    /// A [`ItemContent::LegacyDm`] item successfully decrypted -- the
+    /// plain-text body, exactly as the pre-migration shells rendered it
+    /// (`String::from_utf8_lossy`, `crate::legacy_dm`'s own doc). Kept
+    /// distinct from [`ItemContent::Text`] so a migrated message stays
+    /// identifiable as one, rather than becoming indistinguishable from an
+    /// ordinary post-migration `m.room.message`.
+    LegacyPlain(String),
     /// This event was redacted and had nothing worth keeping under the
     /// v11 allow-list (research doc §1.1) -- see
     /// [`Timeline::apply_redaction`] for the one event type this crate
@@ -232,6 +260,7 @@ pub(crate) fn interpret_content(event_type: &str, state_key: Option<&str>, conte
         EVENT_LEGACY_DM => match serde_json::from_value::<LegacyDmContent>(content.clone()) {
             Ok(inner) => ItemContent::LegacyDm {
                 legacy_message_id: inner.legacy_message_id,
+                legacy_conversation_id: inner.legacy_conversation_id,
                 nonce_b64: inner.nonce_b64,
                 ciphertext_b64: inner.ciphertext_b64,
             },
