@@ -3990,6 +3990,17 @@ impl ChartApp {
             // Format: "dropdown:{dropdown_id}:{item_id}"
             let mut parts = rest.splitn(2, ':');
             if let (Some(dropdown_id), Some(item_id)) = (parts.next(), parts.next()) {
+                // One click on a flyout section's chevron toggles it. The
+                // dropdown stays open. The body of the same row is
+                // `__noop__` and only toggles on double-click.
+                if let Some(ordinal_str) = item_id.strip_prefix("__chevron__:header:") {
+                    if let Ok(ordinal) = ordinal_str.parse::<usize>() {
+                        let section_id = mlc_core::toolbar::flyout_section_id(dropdown_id, ordinal);
+                        self.panel_app.toolbar_state.toggle_flyout_section_collapsed(&section_id);
+                        self.persist_profile();
+                    }
+                    return;
+                }
                 // Noop items (disabled items, headers) use the "__noop__:" prefix.
                 // The click is already consumed by reaching here (it didn't hit __bg__),
                 // so we just return — the dropdown stays open with no action fired.

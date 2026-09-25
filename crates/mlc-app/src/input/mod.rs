@@ -1163,6 +1163,11 @@ impl ChartApp {
             if let Some(rest) = id.strip_prefix("dropdown:") {
                 let mut parts = rest.splitn(2, ':');
                 if let (Some(dropdown_id), Some(item_id)) = (parts.next(), parts.next()) {
+                    // The first click of a double-click on the chevron
+                    // already toggled the section. Do not toggle again.
+                    if item_id.starts_with("__chevron__:header:") {
+                        return;
+                    }
                     if let Some(ordinal_str) = item_id.strip_prefix("__noop__:header:") {
                         if let Ok(ordinal) = ordinal_str.parse::<usize>() {
                             let section_id = mlc_core::toolbar::flyout_section_id(dropdown_id, ordinal);

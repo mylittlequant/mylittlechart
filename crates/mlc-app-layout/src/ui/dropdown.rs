@@ -108,12 +108,12 @@ pub enum DropdownItem {
     /// 2026-09-25) — see [`DropdownItem::header_collapsible`].
     Header {
         label: String,
-        /// `None` (every plain [`DropdownItem::header`] row): no chevron,
-        /// today's behaviour. `Some(false)`/`Some(true)`
-        /// ([`DropdownItem::header_collapsible`]): draws a down-pointing
-        /// (expanded) or right-pointing (collapsed) chevron before the
-        /// label — the section's double-click target is the whole header
-        /// row, not just the glyph.
+        /// `None` (every plain [`DropdownItem::header`] row): no chevron.
+        /// `Some(false)` expanded, `Some(true)` collapsed. The glyph is the
+        /// shared chevron icon, on the right edge of the row. Collapsed
+        /// rows always show it; expanded rows show it only while the row
+        /// is hovered. One click on the glyph toggles the section. A
+        /// double-click on the rest of the row does the same.
         collapsed: Option<bool>,
     },
     /// Submenu (shows arrow, opens another menu)
@@ -953,34 +953,54 @@ where
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
 
-                // Collapsible header (toolbar-flyout-collapse arc, owner
-                // order 2026-09-25): a small filled chevron before the
-                // label — down-pointing when expanded, right-pointing when
-                // collapsed ("down = expanded, right = collapsed"). Plain
-                // headers (`collapsed: None`) draw no chevron at all, same
-                // as before this arc.
-                let label_x = if let Some(is_collapsed) = collapsed {
-                    let cx = menu_rect.x + config.item_padding_x + 4.0;
-                    let cy = header_rect.center_y();
-                    ctx.begin_path();
-                    if *is_collapsed {
-                        ctx.move_to(cx, cy - 4.0);
-                        ctx.line_to(cx + 4.0, cy);
-                        ctx.line_to(cx, cy + 4.0);
-                    } else {
-                        ctx.move_to(cx - 4.0, cy - 2.0);
-                        ctx.line_to(cx + 4.0, cy - 2.0);
-                        ctx.line_to(cx, cy + 3.0);
-                    }
-                    ctx.close_path();
-                    ctx.fill();
-                    menu_rect.x + config.item_padding_x + HEADER_CHEVRON_RESERVE
-                } else {
-                    menu_rect.x + config.item_padding_x
-                };
-                ctx.fill_text(label, label_x, header_rect.y + config.header_height / 2.0);
+                let body_id = format!("__noop__:header:{header_ordinal}");
+                let chev_id = format!("__chevron__:header:{header_ordinal}");
+                let header_hovered = hovered_id == Some(body_id.as_str())
+                    || hovered_id == Some(chev_id.as_str());
+                if header_hovered {
+                    ctx.set_fill_color(&theme.item_bg_hover);
+                    ctx.fill_rounded_rect(header_rect.x, header_rect.y, header_rect.width, header_rect.height, 2.0);
+                }
 
-                // Header bottom border
+                // Collapsible section header. The glyph is the product
+                // chevron (`Icon::ChevronDown` / `ChevronRight`), parked on
+                // the right edge. A collapsed section always shows it. An
+                // expanded section shows it only while this row is hovered.
+                // Plain headers (`collapsed: None`) draw none.
+                let show_chevron = match collapsed {
+                    Some(true) => true,
+                    Some(false) => header_hovered,
+                    None => false,
+                };
+                if show_chevron {
+                    use crate::ui::Icon;
+                    use mlc_core::engine::render::draw_svg_icon;
+                    let glyph = if collapsed == &Some(true) {
+                        Icon::ChevronRight
+                    } else {
+                        Icon::ChevronDown
+                    };
+                    let size = 12.0;
+                    let gx = header_rect.right() - config.item_padding_x - size;
+                    let gy = header_rect.center_y() - size / 2.0;
+                    draw_svg_icon(ctx, glyph.svg(), gx, gy, size, size, &theme.header_text);
+                }
+                ctx.set_font(&format!("bold {}px sans-serif", config.font_size));
+                ctx.set_fill_color(&theme.header_text);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Middle);
+                let text_right = if collapsed.is_some() {
+                    header_rect.right() - HEADER_CHEVRON_RESERVE - config.item_padding_x
+                } else {
+                    header_rect.right() - config.item_padding_x
+                };
+                ctx.save();
+                ctx.begin_path();
+                ctx.rect(header_rect.x, header_rect.y, (text_right - header_rect.x).max(0.0), header_rect.height);
+                ctx.clip();
+                ctx.fill_text(label, menu_rect.x + config.item_padding_x, header_rect.y + config.header_height / 2.0);
+                ctx.restore();
+
                 ctx.set_stroke_color(&theme.header_border);
                 ctx.set_stroke_width(1.0);
                 ctx.begin_path();
@@ -988,18 +1008,22 @@ where
                 ctx.line_to(header_rect.right(), header_rect.y + config.header_height - 1.0);
                 ctx.stroke();
 
-                // Register a hit zone so clicks on the header are consumed
-                // and don't fall through to the background (which would
-                // close the dropdown). The id carries the header's on-screen
-                // ORDINAL (not the localized label text) — `mlc-app`'s
-                // double-click handler extracts it and calls
-                // `mlc_core::toolbar::flyout_section_id` to build the same
-                // stable section id `chart_toolbar_render_dropdown` used to
-                // decide `collapsed` in the first place.
-                result.item_rects.push((
-                    format!("__noop__:header:{}", header_ordinal),
-                    header_rect,
-                ));
+                // Body swallows a single click and is the double-click
+                // target. The chevron strip is registered after it so a
+                // single click there wins and toggles immediately.
+                result.item_rects.push((body_id, header_rect));
+                if collapsed.is_some() {
+                    let hit_w = HEADER_CHEVRON_RESERVE + config.item_padding_x;
+                    result.item_rects.push((
+                        chev_id,
+                        WidgetRect::new(
+                            header_rect.right() - hit_w,
+                            header_rect.y,
+                            hit_w,
+                            header_rect.height,
+                        ),
+                    ));
+                }
                 header_ordinal += 1;
             }
             DropdownItem::Submenu { id, icon, label } => {
