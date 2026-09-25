@@ -6712,6 +6712,44 @@ impl ChartApp {
                 "header" => {
                     // Drag start handled in mouse_down.
                 }
+                rest if rest.starts_with("shareadm:") => {
+                    let mut parts = rest.splitn(3, ':');
+                    let _ = parts.next();
+                    let action = parts.next().unwrap_or("");
+                    let token = parts.next().unwrap_or("").to_string();
+                    if token.is_empty() {
+                        return;
+                    }
+                    let rows = &self.panel_app.user_settings_state.share_rows;
+                    let row = rows.iter().find(|r| r.token == token);
+                    self.pending_share_admin = Some(match action {
+                        "revoke" => crate::ShareAdminCmd::Revoke { token },
+                        "pin" => {
+                            let pinned = row.map(|r| !r.pinned).unwrap_or(true);
+                            crate::ShareAdminCmd::Patch {
+                                token,
+                                body: format!(r#"{{"pinned":{pinned}}}"#),
+                            }
+                        }
+                        "clone" => {
+                            let on = row.map(|r| !r.clone_allowed).unwrap_or(true);
+                            crate::ShareAdminCmd::Patch {
+                                token,
+                                body: format!(r#"{{"clone_allowed":{on}}}"#),
+                            }
+                        }
+                        "vis" => {
+                            let private = row.map(|r| r.visibility != "private").unwrap_or(true);
+                            let v = if private { "private" } else { "public" };
+                            crate::ShareAdminCmd::Patch {
+                                token,
+                                body: format!(r#"{{"visibility":"{v}"}}"#),
+                            }
+                        }
+                        _ => return,
+                    });
+                    self.panel_app.user_settings_state.share_status = "Saving…".to_string();
+                }
                 // Tab switching
                 rest if rest.starts_with("tab:") => {
                     let tab_id = &rest[4..];
@@ -6722,6 +6760,9 @@ impl ChartApp {
                         // other moment that can put it on screen.
                         if tab == UserSettingsTab::Vault {
                             self.sync_credentials_from_core();
+                        }
+                        if tab == UserSettingsTab::Shares {
+                            self.pending_share_admin = Some(crate::ShareAdminCmd::Refresh);
                         }
                         log::debug!("[ChartApp] user_settings tab switched to: {}", tab_id);
                     }

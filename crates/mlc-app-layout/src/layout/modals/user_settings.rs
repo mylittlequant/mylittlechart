@@ -90,6 +90,7 @@ pub fn render_user_settings_modal(
                 UserSettingsTab::Performance => Icon::Grid,
                 UserSettingsTab::Server => Icon::Layers,
                 UserSettingsTab::Account => Icon::User,
+                UserSettingsTab::Shares => Icon::Pin,
             };
             ModalTab::with_icon(tab.id(), tab.label(), icon)
         })
@@ -264,6 +265,24 @@ pub fn render_user_settings_modal(
                 state,
                 toolbar_theme,
                 frame_theme,
+                &scroll_widget_theme,
+                input_coordinator,
+                &layer_id,
+                &mut result,
+            );
+        }
+        UserSettingsTab::Shares => {
+            let viewport_rect = WidgetRect::new(
+                content_x + padding,
+                settings_y,
+                content_w - padding * 2.0,
+                scroll_viewport_h,
+            );
+            render_shares_tab(
+                ctx,
+                viewport_rect,
+                state,
+                toolbar_theme,
                 &scroll_widget_theme,
                 input_coordinator,
                 &layer_id,
@@ -905,6 +924,94 @@ fn render_add_key_view(
     }
 
     y
+}
+
+fn render_shares_tab(
+    ctx: &mut dyn RenderContext,
+    viewport_rect: WidgetRect,
+    state: &UserSettingsState,
+    toolbar_theme: &ToolbarTheme,
+    scroll_widget_theme: &WidgetTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    let container = ScrollableContainer::new(viewport_rect, &state.shares_tab_scroll, None);
+    container.begin(ctx);
+    let x = viewport_rect.x;
+    let w = container.content_width();
+    let mut cy = container.content_y();
+    ctx.set_font("13px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.set_fill_color(&toolbar_theme.item_text);
+    let status = if state.share_status.is_empty() {
+        "Your share links. Unpinned links past the cap are burned, oldest first."
+    } else {
+        state.share_status.as_str()
+    };
+    ctx.fill_text(status, x, cy + 10.0);
+    cy += 28.0;
+    if state.share_rows.is_empty() {
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.fill_text("No active share links.", x, cy + 10.0);
+        cy += 28.0;
+    }
+    for row in &state.share_rows {
+        let title = if row.title.is_empty() { row.token.as_str() } else { row.title.as_str() };
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.fill_text(
+            &format!("{}  {}  {}", title, row.kind, row.expires_at),
+            x,
+            cy + 12.0,
+        );
+        cy += 22.0;
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.fill_text(
+            &format!(
+                "{}  clone {}  {}  forward {}",
+                row.visibility,
+                if row.clone_allowed { "on" } else { "off" },
+                if row.interaction.is_empty() { "view" } else { row.interaction.as_str() },
+                if row.allow_forward { "on" } else { "off" },
+            ),
+            x,
+            cy + 10.0,
+        );
+        cy += 22.0;
+        let mut bx = x;
+        for (label, id_suffix) in [
+            (if row.pinned { "Unpin" } else { "Pin" }, "pin"),
+            ("Revoke", "revoke"),
+            (if row.clone_allowed { "Clone off" } else { "Clone on" }, "clone"),
+            (if row.visibility == "private" { "Make public" } else { "Make private" }, "vis"),
+        ] {
+            let bw = 88.0;
+            let r = WidgetRect::new(bx, cy, bw, 22.0);
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            ctx.fill_rounded_rect(r.x, r.y, r.width, r.height, 3.0);
+            ctx.set_fill_color(&toolbar_theme.item_text);
+            ctx.set_text_align(TextAlign::Center);
+            ctx.fill_text(label, r.center_x(), r.center_y());
+            ctx.set_text_align(TextAlign::Left);
+            let hit_id = format!("user_settings:shareadm:{id_suffix}:{}", row.token);
+            input_coordinator.register_on_layer(
+                hit_id.as_str(),
+                r,
+                Sense::CLICK,
+                layer_id,
+            );
+            bx += bw + 6.0;
+        }
+        cy += 32.0;
+        let _ = w;
+    }
+    let total_content_h = cy - container.content_y();
+    let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
+    result.scroll_viewport_rect = Some(viewport_rect);
+    result.scroll_content_height = scroll_result.content_height;
+    result.scrollbar_handle_rect = scroll_result.handle_rect;
+    result.scrollbar_track_rect = scroll_result.track_rect;
 }
 
 fn render_persistence_tab(

@@ -3483,6 +3483,9 @@ pub enum UserSettingsTab {
     /// signed-in caller, so [`Self::visible`] prepends it instead of
     /// filtering it out, the mirror image of `Server`'s own gate below.
     Account,
+    /// The caller's own share links: pin, revoke, and the rights the
+    /// server already stores on each token.
+    Shares,
 }
 
 impl UserSettingsTab {
@@ -3495,6 +3498,7 @@ impl UserSettingsTab {
             Self::Performance => "performance",
             Self::Server => "server",
             Self::Account => "account",
+            Self::Shares => "shares",
         }
     }
 
@@ -3509,6 +3513,7 @@ impl UserSettingsTab {
             Self::Performance => UserSettingsKey::TabPerformance.get(lang),
             Self::Server => UserSettingsKey::TabServer.get(lang),
             Self::Account => UserSettingsKey::TabAccount.get(lang),
+            Self::Shares => "Shares",
         }
     }
 
@@ -3534,6 +3539,7 @@ impl UserSettingsTab {
         let mut tabs = Vec::with_capacity(Self::all().len() + 1);
         if signed_in {
             tabs.push(Self::Account);
+            tabs.push(Self::Shares);
         }
         tabs.extend_from_slice(Self::all());
         if !signed_in {
@@ -3551,6 +3557,7 @@ impl UserSettingsTab {
             "performance" => Some(Self::Performance),
             "server" => Some(Self::Server),
             "account" => Some(Self::Account),
+            "shares" => Some(Self::Shares),
             _ => None,
         }
     }
@@ -3681,6 +3688,20 @@ pub fn validate_forum_body(body: &str) -> Result<(), String> {
         return Err("Body is too long (max 8192 bytes)".to_string());
     }
     Ok(())
+}
+
+/// One owned share link, as the Shares tab draws it.
+#[derive(Clone, Debug, Default)]
+pub struct ShareAdminRow {
+    pub token: String,
+    pub title: String,
+    pub kind: String,
+    pub pinned: bool,
+    pub clone_allowed: bool,
+    pub interaction: String,
+    pub visibility: String,
+    pub allow_forward: bool,
+    pub expires_at: String,
 }
 
 /// State for the User Settings modal.
@@ -3833,6 +3854,10 @@ pub struct UserSettingsState {
     pub performance_tab_scroll: ScrollState,
     /// Scroll state for the Account tab content.
     pub account_tab_scroll: ScrollState,
+    pub shares_tab_scroll: ScrollState,
+    /// Rows of `GET /api/share/mine`, filled by the shell.
+    pub share_rows: Vec<ShareAdminRow>,
+    pub share_status: String,
 
     // ── WELCOME WIZARD ──────────────────────────────────────────────────
     /// True when the first-run welcome wizard should be shown (no profile.json on first launch).
@@ -4141,6 +4166,9 @@ impl Default for UserSettingsState {
             server_tab_scroll: ScrollState::default(),
             performance_tab_scroll: ScrollState::default(),
             account_tab_scroll: ScrollState::default(),
+            shares_tab_scroll: ScrollState::default(),
+            share_rows: Vec::new(),
+            share_status: String::new(),
             show_welcome_wizard: false,
             needs_vault_unlock: false,
             vault_unlock_error: None,

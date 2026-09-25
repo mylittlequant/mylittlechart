@@ -259,6 +259,8 @@ struct Inner {
     /// which is the only place `&mut ChartApp` is reachable — the upload's
     /// own `spawn_local` body cannot log a system event directly.
     share_result: Option<(&'static str, Result<String, String>)>,
+    share_admin_rows: Option<Result<Vec<mlc_cloud::ShareListEntry>, String>>,
+    share_admin_busy: bool,
 
     // ── Chart-share clone (shared-viewer arc, 2026-09-06) ────────────────
     // `ChartApp::request_clone_share` is a one-shot mailbox a "Clone to my
@@ -375,6 +377,8 @@ impl CloudSession {
                 entitlements_result: None,
                 prev_entitlements: None,
                 share_result: None,
+                share_admin_rows: None,
+                share_admin_busy: false,
                 clone_in_flight: false,
                 clone_result: None,
                 forum_in_flight: false,
@@ -572,6 +576,45 @@ impl CloudSession {
 
     /// `POST /api/share/live` — freeze the active preset into a public link.
     /// Same refusal/result contract as [`Self::share_screenshot`].
+    fn fire_share_admin(&self, cmd: mlc_app::ShareAdminCmd) {
+        if !self.is_signed_in() {
+            return;
+        }
+        if self.inner.borrow().share_admin_busy {
+            return;
+        }
+        self.inner.borrow_mut().share_admin_busy = true;
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        spawn_local(async move {
+            let outcome = match cmd {
+                mlc_app::ShareAdminCmd::Refresh => transport.share_list().await.map_err(|e| e.to_string()),
+                mlc_app::ShareAdminCmd::Revoke { token } => transport
+                    .share_revoke(&token)
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and(transport.share_list().await.map_err(|e| e.to_string())),
+                mlc_app::ShareAdminCmd::Patch { token, body } => {
+                    let value = match serde_json::from_str::<serde_json::Value>(&body) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            inner.borrow_mut().share_admin_busy = false;
+                            inner.borrow_mut().share_admin_rows = Some(Err(e.to_string()));
+                            return;
+                        }
+                    };
+                    match transport.share_patch(&token, value).await {
+                        Ok(()) => transport.share_list().await.map_err(|e| e.to_string()),
+                        Err(e) => Err(e.to_string()),
+                    }
+                }
+            };
+            let mut inner = inner.borrow_mut();
+            inner.share_admin_busy = false;
+            inner.share_admin_rows = Some(outcome);
+        });
+    }
+
     pub fn share_live(&self, title: String, preset: serde_json::Value) {
         if !self.is_signed_in() {
             web_sys::console::warn_1(&"[share] live share refused: not signed in".into());
@@ -834,6 +877,38 @@ impl CloudSession {
                     chart.push_system_event(mlc_core::SystemEventKind::Share, "Share failed", message, true);
                 }
             }
+        }
+
+        if let Some(rows) = self.inner.borrow_mut().share_admin_rows.take() {
+            match rows {
+                Ok(rows) => {
+                    chart.panel_app.user_settings_state.share_rows = rows
+                        .into_iter()
+                        .map(|r| mlc_app_layout::ui::modal_settings::ShareAdminRow {
+                            token: r.token,
+                            title: r.title,
+                            kind: r.kind,
+                            pinned: r.pinned,
+                            clone_allowed: r.clone_allowed,
+                            interaction: r.interaction,
+                            visibility: if r.visibility.is_empty() {
+                                "public".to_string()
+                            } else {
+                                r.visibility
+                            },
+                            allow_forward: r.allow_forward,
+                            expires_at: r.expires_at,
+                        })
+                        .collect();
+                    chart.panel_app.user_settings_state.share_status.clear();
+                }
+                Err(message) => {
+                    chart.panel_app.user_settings_state.share_status = message;
+                }
+            }
+        }
+        if let Some(cmd) = chart.take_share_admin() {
+            self.fire_share_admin(cmd);
         }
 
         // ── Chart-share clone (shared-viewer arc, 2026-09-06) ──────────────

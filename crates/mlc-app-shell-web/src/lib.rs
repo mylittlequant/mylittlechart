@@ -653,10 +653,15 @@ async fn run(share_token: Option<String>) -> Result<(), JsValue> {
     if let ShareBoot::Live(preset, meta) = share_boot {
         let title = meta.title.clone();
         let token = meta.token.clone();
-        if app.share_token_already_open(&token) {
-            web_sys::console::log_1(
-                &format!("[share] '{}' already open — not stealing the active tab", title).into(),
-            );
+        if let Some(id) = app.share_tab_id_for_token(&token) {
+            match app.fill_shared_placeholder(&id, meta, preset) {
+                Ok(()) => web_sys::console::log_1(
+                    &format!("[share] filled existing tab {} for '{}'", id, title).into(),
+                ),
+                Err(e) => web_sys::console::error_1(
+                    &format!("[share] fill of '{}' failed: {}", title, e).into(),
+                ),
+            }
         } else {
             match app.open_shared_preset(meta, preset) {
                 Ok(id) => {

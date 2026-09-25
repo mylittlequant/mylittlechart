@@ -336,6 +336,17 @@ pub struct ShareListEntry {
     pub bytes: i64,
     pub created_at: String,
     pub expires_at: String,
+    /// Ring pin. Absent on a server that predates the column.
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub clone_allowed: bool,
+    #[serde(default)]
+    pub interaction: String,
+    #[serde(default)]
+    pub visibility: String,
+    #[serde(default)]
+    pub allow_forward: bool,
 }
 
 /// Response body from `GET /api/share/mine`.

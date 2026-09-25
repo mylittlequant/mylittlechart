@@ -563,6 +563,15 @@ impl WarmupBudget {
     }
 }
 
+/// One Shares-tab action the shell performs against the existing share API.
+#[derive(Clone, Debug)]
+pub enum ShareAdminCmd {
+    Refresh,
+    Revoke { token: String },
+    /// JSON body for `PATCH /api/share/{token}`.
+    Patch { token: String, body: String },
+}
+
 pub struct ChartApp {
     /// Live feeds each bubble currently holds on behalf of its indicators
     /// (see `ensure_bubble_indicator_feeds`). RAM-only bookkeeping: the
@@ -744,6 +753,10 @@ pub struct ChartApp {
     /// (via `ChartOutEvent::ShareLiveChart`), drained by the shell, which
     /// owns the cloud session/token. Mirror of `pending_screenshot`.
     pending_share_live: bool,
+
+    /// Shares-tab command for the shell: list, pin, revoke, or patch the
+    /// policy the server already stores on the token.
+    pub(crate) pending_share_admin: Option<ShareAdminCmd>,
 
     /// Pending clipboard write — set by a context-menu "Copy" action
     /// (`ChartApp` itself has no clipboard access; only the shell's own
@@ -3500,6 +3513,7 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            pending_share_admin: None,
             pending_clipboard_text: None,
             pending_reset_cache: false,
             pending_reset_storage: false,
@@ -3895,6 +3909,7 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            pending_share_admin: None,
             pending_clipboard_text: None,
             pending_reset_cache: false,
             pending_reset_storage: false,
@@ -4506,6 +4521,7 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            pending_share_admin: None,
             pending_clipboard_text: None,
             pending_reset_cache: false,
             pending_reset_storage: false,
@@ -5576,7 +5592,15 @@ impl ChartApp {
     /// The shell drains this flag via `drain_pending_share_live()` and POSTs
     /// the serialized preset to `/api/share/live` — the cloud session and
     /// its token live in the shell, not here.
+    pub fn take_share_admin(&mut self) -> Option<ShareAdminCmd> {
+        self.pending_share_admin.take()
+    }
+
     pub fn request_share_live(&mut self) {
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            dlog!("[Share] refused: this tab is bound to an existing share");
+            return;
+        }
         self.pending_share_live = true;
         dlog!("[Share] Live-share link requested");
     }

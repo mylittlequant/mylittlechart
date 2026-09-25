@@ -406,6 +406,16 @@ impl FetchTransport {
     }
 
     /// `DELETE /api/share/{token}` — owner revoke.
+    /// `PATCH /api/share/{token}` — owner policy. Absent JSON fields are
+    /// left unchanged by the server.
+    pub async fn share_patch(&self, token: &str, body: serde_json::Value) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&body).map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, resp) = self
+            .exchange("PATCH", &format!("/api/share/{}", token), Some(payload), &[])
+            .await?;
+        self.decode_success(status, &resp).map(|_: serde_json::Value| ())
+    }
+
     pub async fn share_revoke(&self, token: &str) -> Result<(), CloudError> {
         let (status, body) = self
             .exchange("DELETE", &format!("/api/share/{}", token), None, &[])

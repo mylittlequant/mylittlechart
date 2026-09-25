@@ -281,10 +281,20 @@ impl ChartApp {
         active
     }
 
-    /// A shared tab for `token` is already in this window's strip.
-    pub fn share_token_already_open(&self, token: &str) -> bool {
-        self.shared_chart_meta.values().any(|m| m.token == token)
-            || self.pending_share_tokens.values().any(|t| t == token)
+    /// Id of the tab already bound to `token`, if this window has one.
+    /// The token lives on the tab (`shared_chart_meta` once filled,
+    /// `pending_share_tokens` while it is still the boot placeholder).
+    pub fn share_tab_id_for_token(&self, token: &str) -> Option<String> {
+        self.shared_chart_meta
+            .iter()
+            .find(|(_, meta)| meta.token == token)
+            .map(|(id, _)| id.clone())
+            .or_else(|| {
+                self.pending_share_tokens
+                    .iter()
+                    .find(|(_, t)| t.as_str() == token)
+                    .map(|(id, _)| id.clone())
+            })
     }
 
     /// One-shot drain of the boot-time reopen queue — see
