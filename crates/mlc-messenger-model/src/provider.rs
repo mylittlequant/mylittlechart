@@ -3,7 +3,9 @@
 use crate::folder::Folder;
 use crate::ids::RoomId;
 use crate::member::Member;
-use crate::misc::{BackPagination, Capabilities, MessengerIntent, VaultState};
+use crate::misc::{
+    BackPagination, Capabilities, MessengerIntent, PublicRoomEntry, UserEntry, VaultState,
+};
 use crate::room::RoomSummary;
 use crate::timeline::TimelineItem;
 
@@ -45,6 +47,17 @@ pub trait MessengerProvider {
     /// Every folder this account has — built-ins (`id: None`) first, in
     /// display order, then custom folders by their own `order`.
     fn folders(&self) -> Vec<Folder>;
+
+    /// The latest [`MessengerIntent::SearchPublicRooms`] result set — empty
+    /// until one has landed, or when the backend has no directory.
+    fn public_rooms(&self) -> Vec<PublicRoomEntry> {
+        Vec::new()
+    }
+    /// The latest [`MessengerIntent::SearchUsers`] result set — empty until
+    /// one has landed, or when the backend has no user directory.
+    fn user_search(&self) -> Vec<UserEntry> {
+        Vec::new()
+    }
 
     /// Enqueue one user-triggered action for the provider to drain on its
     /// own schedule.
