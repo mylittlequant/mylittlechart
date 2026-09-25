@@ -28,7 +28,7 @@
 mod support;
 
 use mlc_messenger::store::InsecurePlainCodecForTests;
-use mlc_messenger::wire::{Membership, RoomMessageContent};
+use mlc_messenger::wire::{Membership, RoomMessageContent, TagContent};
 use mlc_messenger::{
     CoreConfig, CreateRoomKind, DeviceId, EditRecord, ItemContent, Jitter, MessageKind, MessengerCommand,
     MessengerCore, MessengerEvent, OutgoingMessage, OutgoingRequestKind, RoomId, SendState, TimelineItem, UserId,
@@ -418,4 +418,61 @@ fn e2e_channel_sends_plaintext_and_members_read_it() {
     let item = find_by_body(&bob.core, &room_id, "welcome");
     assert_eq!(item.event_type, "m.room.message", "channel content arrives as plaintext m.room.message, not encrypted");
     assert_eq!(item_body(item), Some("welcome"));
+}
+
+fn count_typing(server: &FakeServer) -> usize {
+    server.request_log().iter().filter(|kind| **kind == OutgoingRequestKind::Typing).count()
+}
+
+#[test]
+fn e2e_typing_is_debounced() {
+    let mut server = FakeServer::new();
+    let mut alice = Device::new("alice", "ALICE1");
+    let mut bob = Device::new("bob", "BOB1");
+    let room_id = create_dm(&mut alice, &mut bob, &mut server);
+
+    // Two `typing: true` asserts inside the debounce window (M13b's own
+    // `TYPING_DEBOUNCE_MS` = 4000): the second is a pure no-op inside
+    // dispatch itself (never even mints a request), so only one PUT ever
+    // reaches the server.
+    alice.core.dispatch(MessengerCommand::SetTyping { room_id: room_id.clone(), typing: true }, 0).expect("dispatch typing start");
+    alice.core.dispatch(MessengerCommand::SetTyping { room_id: room_id.clone(), typing: true }, 1_000).expect("dispatch debounced re-assert");
+    alice.drive_n(&mut server, 1_000, 6);
+    assert_eq!(count_typing(&server), 1, "a re-assert inside the debounce window sends nothing new");
+
+    // Past the debounce window: a fresh `true` sends again.
+    alice.core.dispatch(MessengerCommand::SetTyping { room_id: room_id.clone(), typing: true }, 5_000).expect("dispatch past debounce");
+    alice.drive_n(&mut server, 5_000, 6);
+    assert_eq!(count_typing(&server), 2, "a re-assert past the debounce window sends a fresh PUT");
+
+    // A `false` (stop) is never debounced (module doc: "false on send").
+    alice.core.dispatch(MessengerCommand::SetTyping { room_id: room_id.clone(), typing: false }, 5_000).expect("dispatch typing stop");
+    alice.drive_n(&mut server, 5_000, 6);
+    assert_eq!(count_typing(&server), 3, "stopping typing is never debounced");
+}
+
+fn room_has_tag(core: &TestCore, room_id: &RoomId, tag: &str) -> bool {
+    core.room_account_data(room_id, "m.tag").is_some_and(|value| {
+        serde_json::from_value::<TagContent>(value.clone()).is_ok_and(|content| content.tags.contains_key(tag))
+    })
+}
+
+#[test]
+fn e2e_tags_round_trip_as_folders() {
+    let mut server = FakeServer::new();
+    let mut alice = Device::new("alice", "ALICE1");
+    let mut bob = Device::new("bob", "BOB1");
+    let room_id = create_dm(&mut alice, &mut bob, &mut server);
+
+    // A tag is `m.tag` room account data -- visible only once it has
+    // round-tripped through the server and back via `/sync`, not merely
+    // dispatched (this crate keeps no separate "optimistic" tag cache).
+    alice
+        .core
+        .dispatch(MessengerCommand::SetTag { room_id: room_id.clone(), tag: "work".to_string(), order: Some(0.5) }, 0)
+        .expect("dispatch set_tag");
+    alice.drive_until(&mut server, 0, "alice's own tag round-trips back to her", |core| room_has_tag(core, &room_id, "work"));
+
+    alice.core.dispatch(MessengerCommand::RemoveTag { room_id: room_id.clone(), tag: "work".to_string() }, 0).expect("dispatch remove_tag");
+    alice.drive_until(&mut server, 0, "alice's tag removal round-trips back to her", |core| !room_has_tag(core, &room_id, "work"));
 }
