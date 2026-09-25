@@ -7,6 +7,8 @@
 //! `docs/mlc/plans/autodetectors-a2-a4-implementation-2026-09-24.md`, "Shared
 //! hit-looks-like-a-hand-placed-structure constructor".
 
+use std::ops::Range;
+
 use crate::Bar;
 use super::config::WaveDegree;
 use super::elliott::{CorrectionType, ElliottCorrection, ElliottImpulse, ElliottTriangle, ImpulseKind};
@@ -14,6 +16,65 @@ use super::patterns::xabcd_pattern::XabcdHarmonicKind;
 use super::patterns::{AbcdPattern, CypherPattern, FiveZeroPattern, ThreeDrives, XabcdPattern};
 use super::scan_shape::{ScanShape, price_band_filter};
 use super::Primitive;
+
+/// Hard safety margin under `mli::ewa::scan::MAX_PIVOTS_PER_SCAN` (500,
+/// oldest-first — the OLDEST `MAX_PIVOTS_PER_SCAN` pivots survive, every
+/// newer one is silently dropped before `scan_waves`/
+/// `scan_waves_with_harmonic_tolerance` ever apply their own
+/// `completion_range` filter). [`ElliottScan`]/[`HarmonicScan`] used to feed
+/// `mli::ewa::swing::extract_pivots` the WHOLE loaded bar series on every
+/// call (mirroring `CandlePatternScan`'s own "whole series" shape, which is
+/// safe for that scan only because its own `mli::events::candle_pattern`
+/// detector carries no such cap) — on any real multi-month/year chart that
+/// accumulates more than ~500 `swing_n` pivots, EVERY pivot in the survey's
+/// own recent range was discarded before `completion_range` could ever
+/// select it, so a scan dragged over current price action always returned
+/// zero hits (owner report 2026-09-25: "EWA scan doesn't work, Harmonic
+/// scan doesn't work").
+///
+/// Measured against 10,000 real 1H BTCUSDT bars
+/// (`mlq-stand/data/btcusdt_h1_10000.json`, coordinator's own diagnosis
+/// probe): the densest 800-bar window at `swing_n=1` (the most sensitive
+/// per-drawing setting either scan's own Thresholds tab offers) carries 350
+/// pivots — a 30% margin under the cap. 1000 bars already reaches 437 (a
+/// 13% margin, too tight for a value meant to hold regardless of how choppy
+/// a market gets) and 1500 bars exceeds the cap outright (651). 800 is
+/// wider than `SmcEngineConfig::judge_lookback_bars`'s own default (300) —
+/// `mli::ewa::scan`'s multi-leg pivot-chain enumeration needs more history
+/// to find a genuine structure than `mli::smc`'s single-bar-anchored
+/// detectors do.
+pub const EWA_SCAN_LOOKBACK_BARS: usize = 800;
+
+/// Bound `bars` down to the window [`ElliottScan`]/[`HarmonicScan`] should
+/// feed `mli::ewa::{swing, scan}` for a survey anchored at `[start, end]`
+/// (both GLOBAL, inclusive bar indices — `resolved_window`'s own return
+/// shape) — see [`EWA_SCAN_LOOKBACK_BARS`]'s own doc for why a bound exists
+/// at all. Anchored at the survey's own RIGHT edge (`end`),
+/// [`EWA_SCAN_LOOKBACK_BARS`] bars back, clamped to bar zero on a short
+/// series (`saturating_sub`) — mirrors `smc_judge::judge_window`'s own
+/// fixed-size-lookback shape: the window size never grows with how wide a
+/// range the survey itself covers (a `coverage == "all_bars"` survey over
+/// 10,000 bars gets the SAME ~800-bar window as a narrow dragged range
+/// would), because `mli::ewa::scan`'s own hard pivot cap makes a wider
+/// window than that unsafe regardless of what the survey asked for.
+///
+/// Returns the windowed bars slice plus the survey's own `[start, end]`
+/// translated into a HALF-OPEN range LOCAL to that slice — the same local
+/// index space `extract_pivots`/`build_segments` produce pivots in when
+/// handed this same slice, so neither `scan_waves` nor [`resolve_hit`]
+/// (called with this same windowed slice, never the original `bars`) needs
+/// any further index translation. When the survey's own `start` falls
+/// BEFORE the window (a wide/`"all_bars"` survey whose own requested start
+/// the lookback bound had to clip away), the local range's own start
+/// clamps to `0` — every pivot the bounded window carries is fair game for
+/// completion, since there is no earlier bar left to distinguish "inside
+/// the survey's own range" from "inside the window."
+pub fn ewa_scan_window(bars: &[Bar], start: usize, end: usize) -> (&[Bar], Range<usize>) {
+    let window_start = end.saturating_sub(EWA_SCAN_LOOKBACK_BARS);
+    let local_start = start.saturating_sub(window_start);
+    let local_end = end - window_start;
+    (&bars[window_start..=end], local_start..local_end + 1)
+}
 
 /// One resolved hit — pivots ALREADY `(ts_ms, price)` pairs (see this
 /// module's own "pivot price" note on [`resolve_hit`]), never raw bar
@@ -226,6 +287,50 @@ pub fn build_wave_primitive(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bars(n: usize) -> Vec<Bar> {
+        (0..n as i64).map(|i| Bar::new(i, 100.0, 101.0, 99.0, 100.5)).collect()
+    }
+
+    #[test]
+    fn a_narrow_survey_range_lands_fully_inside_the_fixed_lookback_window() {
+        let series = bars(2_000);
+        // Survey [1_000, 1_050] — 50 bars, far narrower than the 800-bar
+        // lookback: the window still reaches all the way back to
+        // `end - EWA_SCAN_LOOKBACK_BARS`, but the LOCAL range must resolve
+        // back to exactly [1_000, 1_050] once translated — the survey's own
+        // requested range is preserved, not widened or clipped.
+        let (window, local_range) = ewa_scan_window(&series, 1_000, 1_050);
+        let window_start = 1_050 - EWA_SCAN_LOOKBACK_BARS;
+        assert_eq!(window.len(), EWA_SCAN_LOOKBACK_BARS + 1);
+        assert_eq!(local_range, (1_000 - window_start)..(1_050 - window_start + 1));
+        assert_eq!(window.last().map(|b| b.timestamp), series.get(1_050).map(|b| b.timestamp));
+    }
+
+    #[test]
+    fn a_wide_all_bars_survey_clamps_to_the_lookback_bound_on_a_long_series() {
+        let series = bars(10_000);
+        // Survey the WHOLE series (`coverage == "all_bars"` shape) —
+        // [0, 9_999]. The window must clamp to the last
+        // `EWA_SCAN_LOOKBACK_BARS` bars, not the whole 10,000-bar series
+        // (the exact defect this fn exists to fix), and the local range
+        // must clamp to 0 since the survey's own `start` (0) falls before
+        // the window.
+        let (window, local_range) = ewa_scan_window(&series, 0, 9_999);
+        assert_eq!(window.len(), EWA_SCAN_LOOKBACK_BARS + 1);
+        assert_eq!(local_range, 0..(EWA_SCAN_LOOKBACK_BARS + 1));
+        // The window's own LAST bar must be the series' own last bar (the
+        // survey's right edge is never clipped, only its left edge is).
+        assert_eq!(window.last().map(|b| b.timestamp), series.last().map(|b| b.timestamp));
+    }
+
+    #[test]
+    fn window_never_starts_before_bar_zero_on_a_short_series() {
+        let series = bars(50);
+        let (window, local_range) = ewa_scan_window(&series, 0, 49);
+        assert_eq!(window.len(), 50);
+        assert_eq!(local_range, 0..50);
+    }
 
     /// Every named pivot as a distinct, strictly increasing (ts, price)
     /// pair — six is enough for every kind this function matches (a 4- or

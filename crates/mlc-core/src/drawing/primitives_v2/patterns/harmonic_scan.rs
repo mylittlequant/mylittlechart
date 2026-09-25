@@ -32,7 +32,7 @@ use super::super::{
     RenderContext, render_primitive_text, TextAlign,
     config::{ConfigProperty, SelectOption, PropertyCategory, PropertyValue, StatRow, TableCell, Tone, WaveDegree, parse_table_cell_id},
 };
-use super::super::ewa_scan_shared::{build_wave_primitive, resolve_hit, ResolvedWaveHit};
+use super::super::ewa_scan_shared::{build_wave_primitive, ewa_scan_window, resolve_hit, ResolvedWaveHit};
 use super::super::scan_shape::{ScanShape, render_scan_bracket};
 use super::super::SCAN_MARKER_MIN_GAP_PX as MIN_MARKER_GAP_PX;
 use super::harmonic_scan_kind::HarmonicScanKind;
@@ -176,17 +176,26 @@ impl HarmonicScan {
     /// `scan_waves` `ElliottScan` uses — `self.tolerance` must reach the
     /// band check for the arc's own "control over nothing" defect not to
     /// reappear here.
+    ///
+    /// [`ewa_scan_window`] bounds the bars handed to `extract_pivots`/
+    /// `scan_waves_with_harmonic_tolerance` to a lookback window anchored at
+    /// the survey's own right edge — see that fn's own doc for why:
+    /// `mli::ewa::scan`'s hard `MAX_PIVOTS_PER_SCAN` cap silently discards
+    /// every RECENT pivot once the loaded series accumulates too many, so
+    /// feeding it the whole series (as this used to) made a survey dragged
+    /// over current price action always return zero hits.
     pub fn resolved_scan(&self, bars: &[Bar]) -> Vec<ResolvedWaveHit> {
         let Some((start, end)) = self.resolved_window(bars) else { return Vec::new() };
-        let ohlc: Vec<(f64, f64, f64, f64)> = bars.iter().map(|b| (b.open, b.high, b.low, b.close)).collect();
+        let (window_bars, local_range) = ewa_scan_window(bars, start, end);
+        let ohlc: Vec<(f64, f64, f64, f64)> = window_bars.iter().map(|b| (b.open, b.high, b.low, b.close)).collect();
         let pivots = mli::ewa::swing::extract_pivots(&ohlc, self.swing_n.max(1));
         let segments = mli::ewa::swing::build_segments(&ohlc, &pivots);
         let kinds: Vec<mli::ewa::types::EwaPatternKind> =
             self.enabled_kinds.iter().filter_map(|id| HarmonicScanKind::from_id(id)).map(|k| k.as_ewa_kind()).collect();
-        mli::ewa::scan::scan_waves_with_harmonic_tolerance(&pivots, &segments, &kinds, start..end + 1, self.tolerance)
+        mli::ewa::scan::scan_waves_with_harmonic_tolerance(&pivots, &segments, &kinds, local_range, self.tolerance)
             .into_iter()
             .filter(|h| h.score >= self.min_score)
-            .filter_map(|h| resolve_hit(h, &pivots, bars, self.shape, self.p1, self.p2))
+            .filter_map(|h| resolve_hit(h, &pivots, window_bars, self.shape, self.p1, self.p2))
             .collect()
     }
 
@@ -683,6 +692,93 @@ mod tests {
         scan.min_score = 0.0;
         scan.tolerance = 0.0;
         scan
+    }
+
+    /// Same OHLC shape [`gartley_fixture_bars`] converts to `Bar`s, kept as
+    /// raw tuples so [`a_survey_over_a_long_series_still_finds_a_recent_gartley_despite_thousands_of_older_bars`]
+    /// can append it AFTER a long filler series without building `Bar`s
+    /// twice.
+    fn gartley_fixture_ohlc() -> Vec<(f64, f64, f64, f64)> {
+        let is_high = [false, true, false, true, false];
+        let prices = [1000.0, 1100.0, 1038.2, 1080.2, 1021.4];
+        let steps = 3usize;
+        let spread = 0.2;
+        let mut ohlc = Vec::new();
+        let lead_from = if is_high[0] { prices[0] - 8.0 } else { prices[0] + 8.0 };
+        ohlc.extend(ramp(lead_from, prices[0], 2, spread));
+        for i in 0..prices.len() {
+            if i > 0 {
+                ohlc.extend(ramp(prices[i - 1], prices[i], steps, spread));
+            }
+            ohlc.push(pivot_bar(is_high[i], prices[i], spread));
+        }
+        let last_price = *prices.last().unwrap_or(&0.0);
+        let trail_to = if *is_high.last().unwrap_or(&false) { last_price - 8.0 } else { last_price + 8.0 };
+        ohlc.extend(ramp(last_price, trail_to, 2, spread));
+        ohlc
+    }
+
+    /// A long run of small alternating up/down legs — noise that generates
+    /// hundreds of its own swing pivots without ever forming a valid
+    /// harmonic pattern, standing in for "years of ordinary price action"
+    /// ahead of a genuine pattern. `legs` * 4 bars each; `legs=700` yields
+    /// ~2,800 bars — comfortably past the pivot count `mli::ewa::scan::
+    /// MAX_PIVOTS_PER_SCAN` (500) caps a single scan call at, at any
+    /// `swing_n` this fixture's own caller uses.
+    fn filler_zigzag_ohlc(legs: usize) -> Vec<(f64, f64, f64, f64)> {
+        let mut ohlc = Vec::new();
+        let mut price = 500.0;
+        let mut is_high = true;
+        for _ in 0..legs {
+            let target = if is_high { price + 10.0 } else { price - 10.0 };
+            ohlc.extend(ramp(price, target, 3, 0.2));
+            ohlc.push(pivot_bar(is_high, target, 0.2));
+            price = target;
+            is_high = !is_high;
+        }
+        ohlc
+    }
+
+    /// Regression fence for the owner report 2026-09-25 ("Harmonic scan
+    /// doesn't work"): a genuine textbook Gartley sitting at the END of a
+    /// long series (2,800 filler bars ahead of it — well past `mli::ewa::
+    /// scan::MAX_PIVOTS_PER_SCAN`'s 500-pivot cap) must still be found
+    /// under `coverage == "all_bars"`. Same rationale as `elliott_scan.rs`'s
+    /// own `a_survey_over_a_long_series_still_finds_a_recent_impulse_
+    /// despite_thousands_of_older_bars` — before [`ewa_scan_window`]
+    /// bounded the input, every pivot belonging to this Gartley (all in the
+    /// last ~20 bars) was discarded by `scan_waves_with_harmonic_tolerance`'s
+    /// own oldest-500 truncation before `completion_range` ever got a
+    /// chance to select it.
+    #[test]
+    fn a_survey_over_a_long_series_still_finds_a_recent_gartley_despite_thousands_of_older_bars() {
+        let mut ohlc = filler_zigzag_ohlc(700);
+        let gartley_start_bar = ohlc.len();
+        ohlc.extend(gartley_fixture_ohlc());
+        let bars: Vec<Bar> = ohlc.into_iter().enumerate().map(|(i, (o, h, l, c))| Bar::new(i as i64, o, h, l, c)).collect();
+
+        let mut scan = HarmonicScan::new(0, 0, "#9C27B0");
+        scan.coverage = "all_bars".to_string();
+        scan.swing_n = 2;
+        scan.enabled_kinds = vec!["gartley".to_string()];
+        scan.min_score = 0.0;
+        scan.tolerance = 0.0;
+
+        let hits = scan.resolved_scan(&bars);
+        assert!(
+            !hits.is_empty(),
+            "a textbook Gartley at the end of a {}-bar series was not found — \
+             the lookback-window fix did not reach HarmonicScan::resolved_scan",
+            bars.len()
+        );
+        let last_pivot_ts = hits[0].points.last().map(|&(ts, _)| ts).unwrap_or(0);
+        let last_pivot_bar = (last_pivot_ts / 1000) as usize;
+        assert!(
+            last_pivot_bar >= gartley_start_bar,
+            "the hit found (last pivot at bar {last_pivot_bar}) is not the appended \
+             Gartley (which starts at bar {gartley_start_bar}) — filler noise must not \
+             score as a false positive here"
+        );
     }
 
     #[test]

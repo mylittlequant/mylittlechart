@@ -30,7 +30,7 @@ use super::super::{
     RenderContext, render_primitive_text, TextAlign,
     config::{ConfigProperty, SelectOption, PropertyCategory, PropertyValue, StatRow, TableCell, Tone, WaveDegree, parse_table_cell_id},
 };
-use super::super::ewa_scan_shared::{build_wave_primitive, resolve_hit, ResolvedWaveHit};
+use super::super::ewa_scan_shared::{build_wave_primitive, ewa_scan_window, resolve_hit, ResolvedWaveHit};
 use super::super::scan_shape::{ScanShape, render_scan_bracket};
 use super::super::SCAN_MARKER_MIN_GAP_PX as MIN_MARKER_GAP_PX;
 use super::scan_kind::{EwaScanKind, default_all_kind_ids};
@@ -154,17 +154,26 @@ impl ElliottScan {
     /// place this primitive calls `mli::ewa::{swing, scan}`, so a rendered
     /// hit and a cached hit-count can never drift apart. `render` and
     /// [`Primitive::refresh_bar_derived_cache`] both call this directly.
+    ///
+    /// [`ewa_scan_window`] bounds the bars handed to `extract_pivots`/
+    /// `scan_waves` to a lookback window anchored at the survey's own right
+    /// edge — see that fn's own doc for why: `mli::ewa::scan`'s hard
+    /// `MAX_PIVOTS_PER_SCAN` cap silently discards every RECENT pivot once
+    /// the loaded series accumulates too many, so feeding it the whole
+    /// series (as this used to) made a survey dragged over current price
+    /// action always return zero hits.
     pub fn resolved_scan(&self, bars: &[Bar]) -> Vec<ResolvedWaveHit> {
         let Some((start, end)) = self.resolved_window(bars) else { return Vec::new() };
-        let ohlc: Vec<(f64, f64, f64, f64)> = bars.iter().map(|b| (b.open, b.high, b.low, b.close)).collect();
+        let (window_bars, local_range) = ewa_scan_window(bars, start, end);
+        let ohlc: Vec<(f64, f64, f64, f64)> = window_bars.iter().map(|b| (b.open, b.high, b.low, b.close)).collect();
         let pivots = mli::ewa::swing::extract_pivots(&ohlc, self.swing_n.max(1));
         let segments = mli::ewa::swing::build_segments(&ohlc, &pivots);
         let kinds: Vec<mli::ewa::types::EwaPatternKind> =
             self.enabled_kinds.iter().filter_map(|id| EwaScanKind::from_id(id)).map(|k| k.as_ewa_kind()).collect();
-        mli::ewa::scan::scan_waves(&pivots, &segments, &kinds, start..end + 1)
+        mli::ewa::scan::scan_waves(&pivots, &segments, &kinds, local_range)
             .into_iter()
             .filter(|h| h.score >= self.min_score)
-            .filter_map(|h| resolve_hit(h, &pivots, bars, self.shape, self.p1, self.p2))
+            .filter_map(|h| resolve_hit(h, &pivots, window_bars, self.shape, self.p1, self.p2))
             .collect()
     }
 
@@ -640,6 +649,92 @@ mod tests {
         scan.enabled_kinds = vec!["impulse".to_string()];
         scan.min_score = 0.0;
         scan
+    }
+
+    /// Same OHLC shape [`impulse_fixture_bars`] converts to `Bar`s, kept as
+    /// raw tuples so [`a_survey_over_a_long_series_still_finds_a_recent_impulse_despite_thousands_of_older_bars`]
+    /// can append it AFTER a long filler series without building `Bar`s
+    /// twice.
+    fn impulse_fixture_ohlc() -> Vec<(f64, f64, f64, f64)> {
+        let is_high = [false, true, false, true, false, true];
+        let prices = [100.0, 110.0, 105.0, 121.18, 115.0, 125.0];
+        let steps = 3usize;
+        let spread = 0.2;
+        let mut ohlc = Vec::new();
+        let lead_from = if is_high[0] { prices[0] - 8.0 } else { prices[0] + 8.0 };
+        ohlc.extend(ramp(lead_from, prices[0], 2, spread));
+        for i in 0..prices.len() {
+            if i > 0 {
+                ohlc.extend(ramp(prices[i - 1], prices[i], steps, spread));
+            }
+            ohlc.push(pivot_bar(is_high[i], prices[i], spread));
+        }
+        let last_price = *prices.last().unwrap_or(&0.0);
+        let trail_to = if *is_high.last().unwrap_or(&false) { last_price - 8.0 } else { last_price + 8.0 };
+        ohlc.extend(ramp(last_price, trail_to, 2, spread));
+        ohlc
+    }
+
+    /// A long run of small alternating up/down legs — noise that generates
+    /// hundreds of its own swing pivots (one high/low pair every 4 bars)
+    /// without ever forming a valid 5-wave impulse, standing in for
+    /// "years of ordinary price action" ahead of a genuine pattern. `legs`
+    /// * 4 bars each; `legs=700` yields ~2,800 bars — comfortably past the
+    /// pivot count `mli::ewa::scan::MAX_PIVOTS_PER_SCAN` (500) caps a single
+    /// `scan_waves` call at, at any `swing_n` this fixture's own caller uses.
+    fn filler_zigzag_ohlc(legs: usize) -> Vec<(f64, f64, f64, f64)> {
+        let mut ohlc = Vec::new();
+        let mut price = 500.0;
+        let mut is_high = true;
+        for _ in 0..legs {
+            let target = if is_high { price + 10.0 } else { price - 10.0 };
+            ohlc.extend(ramp(price, target, 3, 0.2));
+            ohlc.push(pivot_bar(is_high, target, 0.2));
+            price = target;
+            is_high = !is_high;
+        }
+        ohlc
+    }
+
+    /// Regression fence for the owner report 2026-09-25 ("EWA scan doesn't
+    /// work"): a genuine textbook impulse sitting at the END of a long
+    /// series (2,800 filler bars ahead of it — well past `mli::ewa::scan::
+    /// MAX_PIVOTS_PER_SCAN`'s 500-pivot cap) must still be found under
+    /// `coverage == "all_bars"`, the automatic mode that hands the WHOLE
+    /// loaded series to `resolved_scan`. Before [`ewa_scan_window`] bounded
+    /// the input, `extract_pivots` ran over the entire series and
+    /// `scan_waves` silently truncated to its own oldest 500 pivots —
+    /// every pivot belonging to this impulse (all in the last ~30 bars)
+    /// was discarded before `completion_range` ever got a chance to select
+    /// it, so this assertion would fail on the pre-fix code.
+    #[test]
+    fn a_survey_over_a_long_series_still_finds_a_recent_impulse_despite_thousands_of_older_bars() {
+        let mut ohlc = filler_zigzag_ohlc(700);
+        let impulse_start_bar = ohlc.len();
+        ohlc.extend(impulse_fixture_ohlc());
+        let bars: Vec<Bar> = ohlc.into_iter().enumerate().map(|(i, (o, h, l, c))| Bar::new(i as i64, o, h, l, c)).collect();
+
+        let mut scan = ElliottScan::new(0, 0, "#2196F3");
+        scan.coverage = "all_bars".to_string();
+        scan.swing_n = 2;
+        scan.enabled_kinds = vec!["impulse".to_string()];
+        scan.min_score = 0.0;
+
+        let hits = scan.resolved_scan(&bars);
+        assert!(
+            !hits.is_empty(),
+            "a textbook impulse at the end of a {}-bar series was not found — \
+             the lookback-window fix did not reach ElliottScan::resolved_scan",
+            bars.len()
+        );
+        let last_pivot_ts = hits[0].points.last().map(|&(ts, _)| ts).unwrap_or(0);
+        let last_pivot_bar = (last_pivot_ts / 1000) as usize;
+        assert!(
+            last_pivot_bar >= impulse_start_bar,
+            "the hit found (last pivot at bar {last_pivot_bar}) is not the appended \
+             impulse (which starts at bar {impulse_start_bar}) — filler noise must not \
+             score as a false positive here"
+        );
     }
 
     #[test]
