@@ -2989,6 +2989,7 @@ fn map_forum_board(b: ForumBoard, caller_classes: &[String]) -> BoardUi {
         reply_count: b.reply_count,
         last_post_at: b.last_post_at,
         last_thread_title: b.last_thread_title,
+        last_post_author: b.last_post_author,
     }
 }
 
@@ -3051,6 +3052,7 @@ fn map_forum_search_hit(h: ForumSearchHit) -> ForumSearchHitUi {
         snippet: h.snippet,
         author: h.author,
         created_at: h.created_at,
+        board_title: h.board_title,
     }
 }
 

@@ -5531,6 +5531,11 @@ pub struct BoardUi {
     pub last_post_at: Option<String>,
     /// Title of the thread that carries `last_post_at`.
     pub last_thread_title: Option<String>,
+    /// Author of the post/thread that carries `last_post_at` — `None` under
+    /// the same conditions as `last_post_at` (Forum drill-down parity pass,
+    /// `forum_concept_v1.html`'s own `.lp-m` "author · time" line). Mirrors
+    /// `mlc_cloud::models::ForumBoard::last_post_author`.
+    pub last_post_author: Option<String>,
 }
 
 /// One row of a board's thread list. A flat mirror of `routes::forum_v2::
@@ -5617,6 +5622,11 @@ pub struct ForumSearchHitUi {
     pub snippet: String,
     pub author: String,
     pub created_at: String,
+    /// The hit's own board title, server-resolved — `None` on an older
+    /// server that does not send it yet. Mirrors `mlc_cloud::models::
+    /// ForumSearchHit::board_title` (see that field's own doc for why this
+    /// travels WITH the hit rather than a client-side `board_id` lookup).
+    pub board_title: Option<String>,
 }
 
 /// Which Forum-v2 sub-view is showing.

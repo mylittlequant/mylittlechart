@@ -43,6 +43,12 @@ pub struct ForumBoard {
     /// Title of the thread that carries `last_post_at`.
     #[serde(default)]
     pub last_thread_title: Option<String>,
+    /// Author of the post/thread that carries `last_post_at`. Same
+    /// soft-rollout `#[serde(default)]` idiom as `last_thread_title`
+    /// (Forum drill-down parity pass, `mlc_cloud::models::ForumBoard`'s own
+    /// copy of this field carries the full doc).
+    #[serde(default)]
+    pub last_post_author: Option<String>,
 }
 
 /// One row of `GET /api/forum/boards/{slug}/threads`.
@@ -132,6 +138,11 @@ pub struct ForumSearchHit {
     pub snippet: String,
     pub author: String,
     pub created_at: String,
+    /// The hit's own board title, server-resolved. Same soft-rollout idiom
+    /// as `ForumBoard::last_post_author` (`mlc_cloud::models::
+    /// ForumSearchHit::board_title` carries the full doc).
+    #[serde(default)]
+    pub board_title: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
