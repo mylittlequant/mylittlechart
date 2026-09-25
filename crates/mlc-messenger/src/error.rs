@@ -74,6 +74,12 @@ pub enum MessengerError {
         /// The event the caller tried to edit.
         event_id: crate::ids::EventId,
     },
+
+    /// A UI intent ([`mlc_messenger_model::MessengerIntent`]) could not be
+    /// applied by [`crate::provider::apply_intents`]. The message names the
+    /// intent and the reason (an unknown room, an invalid folder id, ...).
+    #[error("intent refused: {0}")]
+    IntentRefused(String),
 }
 
 impl From<crate::canonical_json::CanonicalJsonError> for MessengerError {

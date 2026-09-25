@@ -19,6 +19,9 @@ mylittlechart-vodozemac = { path = "../mlc-vodozemac" }
 # itself a pure leaf (no workspace deps of its own), so this stays a
 # one-way dependency edge, same shape as `mylittlechart-vodozemac` above.
 mylittlechart-vault = { path = "../mlc-vault" }
+# The UI data contract `provider::SnapshotProvider` implements -- a pure-std,
+# zero-dependency leaf, so this adds no supply-chain surface.
+mylittlechart-messenger-model = { path = "../mlc-messenger-model" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"

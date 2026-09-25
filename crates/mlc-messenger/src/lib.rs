@@ -123,6 +123,11 @@
 //! storage key as AAD. [`core::MessengerCore::open_sealed`] is the
 //! constructor a shell calls; [`core::MessengerCore::open`] stays generic so
 //! this crate's own tests keep using [`store::InsecurePlainCodecForTests`].
+//!
+//! **Provider seam** — [`provider::SnapshotProvider`] implements the UI
+//! contract `mlc_messenger_model::MessengerProvider` over a shared slot. A
+//! shell's I/O driver drains intents into the core, builds the view from it
+//! ([`provider::build_view`], [`provider::apply_intents`]) and publishes it.
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -135,6 +140,7 @@ pub mod ids;
 pub mod legacy_dm;
 pub mod outgoing_queue;
 pub mod persist;
+pub mod provider;
 pub mod room;
 pub mod store;
 pub mod wire;
@@ -158,6 +164,7 @@ pub use ids::{DeviceId, EventId, RequestId, RoomId, TxnId, UserId};
 pub use legacy_dm::{LegacyDmDecryptReason, LegacyDmOutcome};
 pub use outgoing_queue::{Jitter, Lane, OutgoingQueue, PendingRequest, ResponseOutcome};
 pub use persist::{FlushBatch, FlushEpoch, FlushGate, RecordKey, RequiredSeq, SealedRecord};
+pub use provider::{ProviderView, SnapshotProvider, SLICE_CAPABILITIES};
 pub use room::{
     aggregate_relation, highlight, last_preview, recompute_bundle, EditRecord, GapMarker, ItemContent, MemberRole,
     MemberState, RelatingEvent, RelationsBundle, RoomKind, RoomState, SendState, StateChangeSummary, Timeline,
