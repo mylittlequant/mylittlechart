@@ -1839,10 +1839,23 @@ pub enum PrimitiveNameKey {
     OrderFlowScan       = 98,
     RayLeft             = 99,
     HorizontalRayLeft   = 100,
+    // Autodetector A2 (2026-09-24) — appended at the END for the same
+    // frozen-discriminant reason the VWAP pair and the markup-engine block
+    // above it were (101).
+    ElliottScan         = 101,
+    // Autodetector A3, 5-0 manual primitive (2026-09-24) — same
+    // frozen-discriminant reason (102).
+    FiveZeroPattern     = 102,
+    // Autodetector A3, Harmonics autodetector (2026-09-24) — same
+    // frozen-discriminant reason (103).
+    HarmonicScan        = 103,
+    // Autodetector A4, Fib autodetector (2026-09-24) — same
+    // frozen-discriminant reason (104).
+    FibScan             = 104,
 }
 
 impl PrimitiveNameKey {
-    pub const COUNT: usize = 101;
+    pub const COUNT: usize = 105;
 
     /// Get translation for this key.
     #[inline]
@@ -1955,6 +1968,10 @@ impl PrimitiveNameKey {
             "absorption_mark"          => Some(Self::AbsorptionMark),
             "delta_divergence"         => Some(Self::DeltaDivergence),
             "order_flow_scan"          => Some(Self::OrderFlowScan),
+            "elliott_scan"             => Some(Self::ElliottScan),
+            "five_zero_pattern"        => Some(Self::FiveZeroPattern),
+            "harmonic_scan"            => Some(Self::HarmonicScan),
+            "fib_scan"                 => Some(Self::FibScan),
             _                          => None,
         }
     }
@@ -3548,6 +3565,75 @@ pub enum ConceptKey {
     // now). Same append-only reason as `HarmonicKindAltBat` above.
     MarkupThresholdDeltaDivergenceSwingNLabel = 467,
 
+    // ---- Autodetector A2, Elliott (2026-09-24) — `EwaScanKind::label`'s
+    // own Contracting/Expanding split (`elliott::scan_kind`'s own doc):
+    // `WaveKindLeadingDiagonal`/`WaveKindEndingDiagonal` (287-353) name the
+    // DIAGONAL FAMILY, never the Contracting-vs-Expanding split `scan_waves`
+    // itself distinguishes, so that split gets its own 4 rows here rather
+    // than a silent reuse of the family-only label.
+    WaveKindLeadingDiagonalContracting = 468,
+    WaveKindLeadingDiagonalExpanding = 469,
+    WaveKindEndingDiagonalContracting = 470,
+    WaveKindEndingDiagonalExpanding = 471,
+
+    // ---- Autodetector A2/A3 (2026-09-24) — the `min_score`/`tolerance`
+    // "Any/Medium/High/Exact" pills row shared by `ElliottScan`/
+    // `HarmonicScan`'s own Thresholds group (`ScanThresholds`,
+    // `docs/mlc/plans/autodetectors-a2-a4-implementation-2026-09-24.md`,
+    // A2's own settings section) — one label + 4 option rows, reused
+    // verbatim by A3 rather than a second copy.
+    ScanMinScoreLabel = 472,
+    ScanMinScoreAny = 473,
+    ScanMinScoreMedium = 474,
+    ScanMinScoreHigh = 475,
+    ScanMinScoreExact = 476,
+
+    // ---- Autodetector A2/A3 (2026-09-24) — the Hits results table's own
+    // column headers (`[Kind, Pivots, Score, Place]`), shared by
+    // `ElliottScan`/`HarmonicScan`/`FibScan`'s own Hits table (the "Place"
+    // column is the SAME fire-once "click to place" mechanism all three
+    // scans share — see the arc's own "New mechanism" section).
+    ScanHitKindColumnHeader = 477,
+    ScanHitPivotsColumnHeader = 478,
+    ScanHitScoreColumnHeader = 479,
+    ScanHitPlaceColumnHeader = 480,
+    /// The What-to-detect kinds table's own name (`ConfigProperty::table`'s
+    /// `name` param, search text — not the `ScanWhatToDetect` group header,
+    /// which reuses `MarkupTabWhatToDetect`). Mirrors `SmcScanStructuresLabel`'s
+    /// own role for `SmcScan`'s structure table.
+    ScanKindsTableLabel = 481,
+
+    // ---- Autodetector A4, Fib (2026-09-24) — `FibScan`'s own Thresholds
+    // row labels (`swing_mode`/`last_swings_n`/`direction` have no sibling
+    // row on `ElliottScan`/`HarmonicScan`, unlike `swing_n`/`min_score`,
+    // which already reuse `MarkupThresholdSwingNLabel`/`ScanMinScore*`
+    // above) and the What-to-detect levels table's own name. `direction`'s
+    // own VALUES (Up/Down) reuse `TrendValueUp`/`TrendValueDown` (381/382)
+    // rather than a fourth near-duplicate pair here — same wording, same
+    // "Up"/"Down" concept a swing's own leg direction already is.
+    /// `swing_mode` pills row label — "Largest swing" vs "Last N swings".
+    FibScanSwingModeLabel = 482,
+    FibScanSwingModeLargest = 483,
+    FibScanSwingModeLastN = 484,
+    /// `last_swings_n` pills row label — only rendered when `swing_mode ==
+    /// "last_n"` (`FibScan::style_properties`'s own conditional push).
+    FibScanLastSwingsNLabel = 485,
+    /// `direction` pills row label, reused verbatim as the Hits table's own
+    /// "Direction" column header (same wording, two contexts — the SAME
+    /// dual-role `MarkupTabWhatToDetect`/`MarkupTabThresholds` already play
+    /// between the A0 modal tab and this crate's `PropertyGroup` headers).
+    FibScanDirectionLabel = 486,
+    FibScanDirectionAuto = 487,
+    /// The What-to-detect levels table's own name (`ConfigProperty::table`'s
+    /// `name` param, search text) — mirrors `ScanKindsTableLabel`'s own role
+    /// for `ElliottScan`/`HarmonicScan`'s kinds table.
+    FibScanLevelsTableLabel = 488,
+    /// The Hits table's own "Range" column header — the swing's own
+    /// `[start_index, end_index]` bar span, the one column this table has
+    /// that `ScanHitPivotsColumnHeader` does not fit (a Fib swing is a pair
+    /// of bar indices, not a pivot count).
+    FibScanHitRangeColumnHeader = 489,
+
     // ---- Candle Pattern Scan readable-hits arc (owner complaint 0.5.615,
     // 2026-09-24) — the word suffixed after a digit count in a collapsed
     // cluster's own generic label (`"{count} patterns"`); see
@@ -3556,11 +3642,11 @@ pub enum ConceptKey {
     // member's own specific pattern name (a cluster on this scan can mix
     // different pattern kinds, unlike `SmcScan`'s own same-structure
     // clusters).
-    ScanClusterPatternsSuffix = 468,
+    ScanClusterPatternsSuffix = 490,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 469;
+    pub const COUNT: usize = 491;
 
     /// Get translation for this key.
     #[inline]

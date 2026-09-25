@@ -22,6 +22,7 @@ use mlc_core::indicator_source::{
     IndicatorInfo, IndicatorRenderInstance, IndicatorSettingsData, IndicatorSource, SignalShape,
 };
 use mlc_backend_indicator_engine::managers::indicator_manager::{IndicatorDefinition, IndicatorInstance};
+use mlc_backend_indicator_engine::managers::stream_event::StreamEvent;
 use mlc_backend_indicator_engine::{IndicatorParamValue, OutputConfig, RecalcMode};
 
 use crate::bubble::BubbleStore;
@@ -605,6 +606,17 @@ impl<'a> IndicatorsMut<'a> {
     pub fn recalc_bubble(&mut self, bid: BubbleId, bars: &[mlc_core::Bar]) {
         let deltas = self.build_deltas_for_bubble(bid, bars);
         self.mgr.calculate_for_bubble(bid.0, bars, deltas.as_deref());
+    }
+
+    /// Feed one stream event (tick, order book, order book delta, funding
+    /// rate, open interest, liquidation) to every stream-consuming
+    /// indicator on `bid`. Called once per event (`Tick`/`Funding`/
+    /// `OpenInterest`) or once per frame per changed snapshot
+    /// (`OrderBook`/`Liquidation`) — see the arc D plan's per-stream
+    /// hook-point table (`docs/mlc/plans/
+    /// indicator-streams-arc-d-2026-09-25.md` §3.3).
+    pub fn feed_stream(&mut self, bid: BubbleId, ev: &StreamEvent) {
+        self.mgr.feed_stream_for_bubble(bid.0, ev);
     }
 
     /// Build the real per-bar (buy_volume, sell_volume) delta series for
