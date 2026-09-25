@@ -21,17 +21,13 @@
 //!
 //! Every field this module sets on `CommunityState`/`ForumV2State`/
 //! `DmState` is public — nothing this task needed was blocked from the
-//! outside. One finding worth flagging for whoever compares a screenshot
-//! against the concept mockups: [`DmConversationUi::last_message_preview`]/
-//! `last_message_mine` are real public fields this fixture populates, but
-//! the chat-list row's own preview line never reads them —
-//! `dm_messenger_provider.rs`'s `reads::rooms` hardcodes
-//! `RoomSummary::last_event: None` regardless (that type's own doc already
-//! names the gap: "today's `routes::dm::list_conversations` caller
-//! populates no such field"). `DmConversationUi::peer_rank`/
-//! `peer_fingerprint` are NOT affected by that gap — the open
-//! conversation's own header reads those two straight off
-//! `state.dm.conversations`, not through the provider, and do show up.
+//! outside. `DmConversationUi::last_message_preview`/`last_message_mine`
+//! feed the chat-list row's own preview line via `dm_messenger_provider.rs`'s
+//! `reads::rooms` (`RoomSummary::last_event`, fixed 2026-09-25 — that method
+//! used to hardcode `None` regardless of these fields; see its own doc for
+//! the current mapping). `DmConversationUi::peer_rank`/`peer_fingerprint`
+//! are read a SECOND way, straight off `state.dm.conversations` by the open
+//! conversation's own header — not through the provider at all.
 //!
 //! Only four states are wired (`forum-index`, `forum-thread`,
 //! `messages-locked`, `messages-chat`, `forum-index` is the default for an
@@ -81,13 +77,20 @@ fn query_param(name: &str) -> Option<String> {
 }
 
 /// Which fixture [`CommunityState`] this page shows — `?state=...`, see
-/// this module's own top doc for the four names.
+/// this module's own top doc for the four names. `messages-group` (UI-1,
+/// 2026-09-25) is a fifth: it does NOT feed `DmState` at all — its
+/// `CommunityState.dm` stays a bare shell (just enough for `messenger_
+/// overlay.rs`'s own UI-side reads: which room is open, the draft field id)
+/// — the actual room/timeline data comes from
+/// `community_messenger_fixture::MessengerFixture`, passed to
+/// `render_community_modal`'s own `messenger_provider_override`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PageState {
     ForumIndex,
     ForumThread,
     MessagesLocked,
     MessagesChat,
+    MessagesGroup,
 }
 
 impl PageState {
@@ -96,6 +99,7 @@ impl PageState {
             Some("forum-thread") => Self::ForumThread,
             Some("messages-locked") => Self::MessagesLocked,
             Some("messages-chat") => Self::MessagesChat,
+            Some("messages-group") => Self::MessagesGroup,
             _ => Self::ForumIndex,
         }
     }
@@ -435,9 +439,35 @@ fn community_state_for(page: PageState, now_ms: f64) -> CommunityState {
             };
             CommunityTab::Messages
         }
+        PageState::MessagesGroup => {
+            // The messenger data itself comes from `MessengerFixture`, not
+            // `DmState` — this shell only carries what `messenger_overlay.
+            // rs` reads straight off `CommunityState.dm` for UI-side facts
+            // no `MessengerProvider` read covers (which room is open, the
+            // draft field id; see that file's own top doc).
+            dm = DmState {
+                view: DmView::Conversation {
+                    id: 1,
+                    messages: Vec::new(),
+                    draft_field_id: "dm_draft".to_string(),
+                    has_older: false,
+                },
+                available: true,
+                unavailable_reason: DmUnavailableReason::None,
+                ..DmState::default()
+            };
+            CommunityTab::Messages
+        }
     };
 
-    CommunityState { is_open: true, tab, forum2, dm, ..CommunityState::default() }
+    let messenger_reply_preview = matches!(page, PageState::MessagesGroup).then(|| {
+        mlc_app_layout::ui::modal_settings::MessengerReplyPreview {
+            sender_label: "moderator".to_string(),
+            preview: "@admin закрепил правила — глянь, пожалуйста".to_string(),
+        }
+    });
+
+    CommunityState { is_open: true, tab, forum2, dm, messenger_reply_preview, ..CommunityState::default() }
 }
 
 // ─── Render loop ────────────────────────────────────────────────────────────
@@ -446,6 +476,10 @@ struct CommunityLabState {
     theme_manager: ThemeManager,
     coordinator: InputCoordinator,
     community: CommunityState,
+    /// `Some` only for `PageState::MessagesGroup` — see [`community_state_
+    /// for`]'s own doc for why that state's `CommunityState.dm` carries no
+    /// real room data at all.
+    messenger_fixture: Option<crate::community_messenger_fixture::MessengerFixture>,
 }
 
 /// Boot this page in place of the primitive lab — see this module's own top
@@ -458,8 +492,16 @@ pub fn start() -> Result<(), JsValue> {
         theme_manager.set_preset(&preset);
     }
 
-    let community = community_state_for(PageState::from_query(), now_ms);
-    let lab = CommunityLabState { theme_manager, coordinator: InputCoordinator::new(), community };
+    let page = PageState::from_query();
+    let community = community_state_for(page, now_ms);
+    let messenger_fixture = matches!(page, PageState::MessagesGroup)
+        .then(|| crate::community_messenger_fixture::MessengerFixture::new(now_ms));
+    let lab = CommunityLabState {
+        theme_manager,
+        coordinator: InputCoordinator::new(),
+        community,
+        messenger_fixture,
+    };
     run_render_loop(lab)
 }
 
@@ -528,6 +570,7 @@ fn render_one_frame(state: &Rc<RefCell<CommunityLabState>>) -> Result<(), JsValu
     let toolbar_theme = theme::toolbar_theme(&lab.theme_manager);
 
     lab.coordinator.begin_frame(InputState::new());
+    let provider = lab.messenger_fixture.as_ref().map(|f| f as &dyn mlc_messenger_model::MessengerProvider);
     render_community_modal(
         &mut ctx,
         screen_w.max(WINDOW_W),
@@ -538,6 +581,7 @@ fn render_one_frame(state: &Rc<RefCell<CommunityLabState>>) -> Result<(), JsValu
         current_time_ms,
         &mut lab.coordinator,
         false,
+        provider,
     );
     let _ = lab.coordinator.end_frame();
 

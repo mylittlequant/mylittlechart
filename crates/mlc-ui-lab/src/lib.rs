@@ -20,6 +20,8 @@ mod approved_design;
 #[cfg(target_arch = "wasm32")]
 pub mod community;
 #[cfg(target_arch = "wasm32")]
+mod community_messenger_fixture;
+#[cfg(target_arch = "wasm32")]
 pub mod concept;
 #[cfg(target_arch = "wasm32")]
 mod dispatch;
