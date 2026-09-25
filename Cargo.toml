@@ -61,7 +61,7 @@ ed25519-dalek = { version = "2", features = ["std"] }
 base64 = "0.22"
 
 [workspace.package]
-version = "0.5.625"
+version = "0.5.626"
 edition = "2021"
 license = "BUSL-1.1"
 

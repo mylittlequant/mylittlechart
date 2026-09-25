@@ -293,6 +293,16 @@ impl ShareOpenState {
     }
 }
 
+/// Share-settings overlay. Presets pick the default rights for the next
+/// Share and, when this chart already has a link, patch that link.
+/// `hits` is `(nick, label)` from the nick search.
+#[derive(Clone, Debug, Default)]
+pub struct ShareSettingsState {
+    pub is_open: bool,
+    pub status: String,
+    pub hits: Vec<(String, String)>,
+}
+
 // =============================================================================
 // Slider Drag State
 // =============================================================================
@@ -3702,6 +3712,8 @@ pub struct ShareAdminRow {
     pub visibility: String,
     pub allow_forward: bool,
     pub expires_at: String,
+    /// Author chart this row is bound to. Empty when the server omitted it.
+    pub chart_id: String,
 }
 
 /// State for the User Settings modal.

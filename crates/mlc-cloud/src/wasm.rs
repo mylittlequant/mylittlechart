@@ -367,18 +367,38 @@ impl FetchTransport {
         title: &str,
         preset: serde_json::Value,
         chart_id: &str,
+        clone_allowed: bool,
+        interaction: &str,
+        visibility: &str,
     ) -> Result<ShareCreateResponse, CloudError> {
         let payload = serde_json::to_string(&ShareCreateLiveRequest {
             title: title.to_string(),
             preset,
             chart_id: chart_id.to_string(),
-            clone_allowed: true,
+            clone_allowed,
+            interaction: interaction.to_string(),
+            visibility: visibility.to_string(),
         })
         .map_err(|e| CloudError::Decode(e.to_string()))?;
         let (status, body) = self
             .exchange("POST", "/api/share/live", Some(payload), &[])
             .await?;
         self.decode_success(status, &body)
+    }
+
+    /// `POST /api/share/{token}/grants` — owner grants one nick a tier on
+    /// this link. The tier is view or clone. It does not let them write
+    /// the author's chart.
+    pub async fn share_grant(&self, token: &str, nick: &str, tier: &str) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({
+            "grantee_nick": nick,
+            "tier": tier,
+        }))
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", &format!("/api/share/{token}/grants"), Some(payload), &[])
+            .await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
     }
 
     /// `POST /api/share/screenshot` — multipart upload, one `png` field

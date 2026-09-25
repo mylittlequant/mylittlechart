@@ -4104,6 +4104,21 @@ impl ChartApp {
                 // enforced up top (this dropdown only opens once that gate
                 // already passed), and `open_share` is public regardless of
                 // sign-in.
+                if item_id == mlc_core::toolbar::SHARE_SETTINGS_ACTION_ID
+                    && (dropdown_id == "share_chart" || dropdown_id == "screenshot")
+                {
+                    self.panel_app.toolbar_state.open_dropdown_id = None;
+                    self.panel_app.share_settings_state.is_open = true;
+                    self.panel_app.share_settings_state.status.clear();
+                    let field_id = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
+                    let mut coord = self.input_coordinator.borrow_mut();
+                    let tf = coord.text_fields_mut();
+                    tf.set_text(&field_id, "");
+                    tf.begin_edit(&field_id);
+                    tf.focus(crate::text_input::SHARE_SETTINGS_NICK);
+                    return;
+                }
+
                 if dropdown_id == "share_chart" {
                     if item_id == "share_chart" {
                         self.process_chart_out_event(mlc_core::events::ChartOutEvent::ShareLiveChart);
@@ -5395,6 +5410,33 @@ impl ChartApp {
         // 2026-09-06) — public even signed-out, so no account gate here
         // (that gate lives on the `share_chart` button's OWN single-click
         // action above).
+        if let Some(rest) = widget_id.strip_prefix("share_settings:") {
+            match rest {
+                "close" | "cancel" => {
+                    self.panel_app.share_settings_state.is_open = false;
+                    self.panel_app.share_settings_state.hits.clear();
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                }
+                "input" => {
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                }
+                "modal_bg" => {}
+                other => {
+                    if let Some(preset) = other.strip_prefix("preset:") {
+                        self.set_share_rights_preset(preset);
+                    } else if let Some(rest) = other.strip_prefix("grant:") {
+                        let mut parts = rest.split(':');
+                        let idx: usize = parts.next().unwrap_or("").parse().unwrap_or(usize::MAX);
+                        let tier = parts.next().unwrap_or("clone");
+                        if let Some((nick, _)) = self.panel_app.share_settings_state.hits.get(idx).cloned() {
+                            self.grant_share_nick(&nick, tier);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
         if let Some(rest) = widget_id.strip_prefix("share_open:") {
             match rest {
                 "submit" => {

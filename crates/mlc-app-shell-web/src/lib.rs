@@ -2345,13 +2345,15 @@ fn run_render_loop(
                     } else {
                         let preset = st.chart.core.presets().get(&id).cloned();
                         let rect = st.chart.screenshot_rect();
-                        Some((st.cloud.clone(), preset, rect))
+                        let flags = st.chart.share_publish_flags();
+                        Some((st.cloud.clone(), preset, rect, flags))
                     }
                 } else {
                     None
                 }
             };
-            if let Some((cloud, preset, rect)) = request {
+            if let Some((cloud, preset, rect, flags)) = request {
+                let (clone_allowed, interaction, visibility) = flags;
                 match (cloud, preset) {
                     (Some(cloud), Some(preset)) if cloud.is_signed_in() => {
                         // The registry preset as-is: `bars` is
@@ -2371,16 +2373,36 @@ fn run_render_loop(
                                 let title_fallback = title.clone();
                                 let preset_fallback = preset_json.clone();
                                 let cloud_fallback = cloud.clone();
+                                let interaction_owned = interaction.to_string();
+                                let visibility_owned = visibility.to_string();
+                                let interaction_fallback = interaction_owned.clone();
+                                let visibility_fallback = visibility_owned.clone();
                                 let started = screenshot_region_blob(
                                     "chart",
                                     Some(rect),
                                     Some(SHARE_CARD_MAX_EDGE),
                                     move |blob| {
-                                        cloud.share_live(title, preset_json, preset_id, Some(blob));
+                                        cloud.share_live(
+                                            title,
+                                            preset_json,
+                                            preset_id,
+                                            Some(blob),
+                                            clone_allowed,
+                                            interaction_owned,
+                                            visibility_owned,
+                                        );
                                     },
                                 );
                                 if !started {
-                                    cloud_fallback.share_live(title_fallback, preset_fallback, preset_id_fallback, None);
+                                    cloud_fallback.share_live(
+                                        title_fallback,
+                                        preset_fallback,
+                                        preset_id_fallback,
+                                        None,
+                                        clone_allowed,
+                                        interaction_fallback,
+                                        visibility_fallback,
+                                    );
                                 }
                             }
                             Err(e) => {

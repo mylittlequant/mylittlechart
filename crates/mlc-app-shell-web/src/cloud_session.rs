@@ -268,6 +268,13 @@ struct Inner {
     share_rights: Option<(String, bool)>,
     share_admin_rows: Option<Result<Vec<mlc_cloud::ShareListEntry>, String>>,
     share_admin_busy: bool,
+    /// `(chart_id, token)` from the last successful live publish.
+    share_bound: Option<(String, String)>,
+    share_lookup_q: String,
+    share_lookup_at_ms: f64,
+    share_lookup_busy: bool,
+    share_lookup_hits: Option<Vec<(String, String)>>,
+    share_settings_note: Option<String>,
     /// Generation for the in-flight screenshot-share card. A late blob from
     /// the previous click is dropped when this moves.
     preview_epoch: u64,
@@ -398,6 +405,12 @@ impl CloudSession {
                 share_rights: None,
                 share_admin_rows: None,
                 share_admin_busy: false,
+                share_bound: None,
+                share_lookup_q: String::new(),
+                share_lookup_at_ms: 0.0,
+                share_lookup_busy: false,
+                share_lookup_hits: None,
+                share_settings_note: None,
                 preview_epoch: 0,
                 preview_token: None,
                 preview_card: None,
@@ -618,6 +631,16 @@ impl CloudSession {
                     .await
                     .map_err(|e| e.to_string())
                     .and(transport.share_list().await.map_err(|e| e.to_string())),
+                mlc_app::ShareAdminCmd::Grant { token, nick, tier } => {
+                    let note = match transport.share_grant(&token, &nick, &tier).await {
+                        Ok(()) => format!("Added {nick}"),
+                        Err(e) => e.to_string(),
+                    };
+                    let mut guard = inner.borrow_mut();
+                    guard.share_admin_busy = false;
+                    guard.share_settings_note = Some(note);
+                    return;
+                }
                 mlc_app::ShareAdminCmd::Patch { token, body } => {
                     let value = match serde_json::from_str::<serde_json::Value>(&body) {
                         Ok(v) => v,
@@ -713,6 +736,9 @@ impl CloudSession {
         preset: serde_json::Value,
         chart_id: String,
         preview: Option<web_sys::Blob>,
+        clone_allowed: bool,
+        interaction: String,
+        visibility: String,
     ) {
         if !self.is_signed_in() {
             web_sys::console::warn_1(&"[share] live share refused: not signed in".into());
@@ -721,11 +747,17 @@ impl CloudSession {
         let transport = self.inner.borrow().transport.snapshot();
         let inner = self.inner.clone();
         spawn_local(async move {
-            match transport.share_create_live(&title, preset, &chart_id).await {
+            match transport
+                .share_create_live(&title, preset, &chart_id, clone_allowed, &interaction, &visibility)
+                .await
+            {
                 Ok(resp) => {
                     let url = absolute_share_url(&resp.url_path);
                     crate::clipboard_write_text(&url);
                     web_sys::console::log_1(&format!("[share] live chart shared: {}", url).into());
+                    if !chart_id.is_empty() {
+                        inner.borrow_mut().share_bound = Some((chart_id.clone(), resp.token.clone()));
+                    }
                     if let Some(png) = preview {
                         match transport.share_upload_preview(&resp.token, png).await {
                             Ok(()) => {
@@ -747,6 +779,49 @@ impl CloudSession {
                     inner.borrow_mut().share_result = Some(("live", Err(message)));
                 }
             }
+        });
+    }
+
+    /// Nick search for the share-settings overlay. Same lookup the messenger
+    /// uses. Hits are nicks only — a grant needs a nick.
+    fn poll_share_nick_search(&self, chart: &ChartApp, now_ms: f64) {
+        let Some(q) = chart.share_settings_nick_query() else {
+            return;
+        };
+        if q.len() < 2 {
+            let mut inner = self.inner.borrow_mut();
+            if !inner.share_lookup_q.is_empty() {
+                inner.share_lookup_q.clear();
+                inner.share_lookup_hits = Some(Vec::new());
+            }
+            return;
+        }
+        {
+            let mut inner = self.inner.borrow_mut();
+            if inner.share_lookup_busy || inner.share_lookup_q == q || now_ms - inner.share_lookup_at_ms < 300.0 {
+                return;
+            }
+            inner.share_lookup_q = q.clone();
+            inner.share_lookup_at_ms = now_ms;
+            inner.share_lookup_busy = true;
+        }
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        spawn_local(async move {
+            let hits = match transport.dm_lookup(&q).await {
+                Ok(users) => users
+                    .into_iter()
+                    .filter_map(|u| {
+                        let nick = u.nick?;
+                        let label = if u.label == nick { String::new() } else { u.label };
+                        Some((nick, label))
+                    })
+                    .collect::<Vec<_>>(),
+                Err(_) => Vec::new(),
+            };
+            let mut guard = inner.borrow_mut();
+            guard.share_lookup_busy = false;
+            guard.share_lookup_hits = Some(hits);
         });
     }
 
@@ -793,6 +868,16 @@ impl CloudSession {
             chart.set_share_clone_allowed(&token, allowed);
         }
         self.poll_share_rights(chart, now_ms);
+        self.poll_share_nick_search(chart, now_ms);
+        if let Some((chart_id, token)) = self.inner.borrow_mut().share_bound.take() {
+            chart.note_chart_share_token(&chart_id, &token);
+        }
+        if let Some(hits) = self.inner.borrow_mut().share_lookup_hits.take() {
+            chart.set_share_lookup_hits(hits);
+        }
+        if let Some(note) = self.inner.borrow_mut().share_settings_note.take() {
+            chart.set_share_settings_note(note);
+        }
         // ── Server-rejected token → signed-out (Arc B1, 2026-09-06) ───────
         // Drained first thing, every frame: any authed call in this driver
         // (boot/post-login `auth_me()`, the entitlements refresh, share
@@ -1050,8 +1135,20 @@ impl CloudSession {
                             },
                             allow_forward: r.allow_forward,
                             expires_at: r.expires_at,
+                            chart_id: r.chart_id,
                         })
                         .collect();
+                    let bound: Vec<(String, String)> = chart
+                        .panel_app
+                        .user_settings_state
+                        .share_rows
+                        .iter()
+                        .filter(|r| !r.chart_id.is_empty())
+                        .map(|r| (r.chart_id.clone(), r.token.clone()))
+                        .collect();
+                    for (chart_id, token) in bound {
+                        chart.note_chart_share_token(&chart_id, &token);
+                    }
                     chart.panel_app.user_settings_state.share_status.clear();
                     let flags: Vec<(String, bool)> = chart
                         .panel_app
@@ -1081,39 +1178,14 @@ impl CloudSession {
         // needs it — is only reachable inside `drive()`.
         if let Some(token) = chart.take_pending_clone_share() {
             if !self.is_signed_in() {
-                // Belt-and-braces (plan §3/§5): the effective-rights answer
-                // never carries `"clone"` for a caller who isn't signed in,
-                // so the button that arms this request is never shown to
-                // one — this only fires if something else triggers the
-                // request anyway. Open the sign-in overlay instead of firing
-                // a POST that would just 401.
                 chart.panel_app.cloud_login_state.is_open = true;
-            } else if self.inner.borrow().clone_in_flight {
-                // Doubled trigger while one is already in flight — dropped,
-                // same tolerance the Forum tab's own request mailbox gives a
-                // doubled click (not worth a request queue for).
-                web_sys::console::warn_1(&"[share] clone request dropped: one is already in flight".into());
-            } else {
-                self.inner.borrow_mut().clone_in_flight = true;
-                self.inner.borrow_mut().clone_name = chart
-                    .share_tab_id_for_token(&token)
-                    .and_then(|id| {
-                        chart.shared_chart_meta(&id).map(|m| {
-                            format!("{} — {} (clone)", m.title, m.owner_label)
-                        })
-                    });
-                let transport = self.inner.borrow().transport.snapshot();
-                let inner = self.inner.clone();
-                spawn_local(async move {
-                    let raw = transport.share_clone(&token).await;
-                    if let Err(e) = &raw {
-                        mark_unauthorized(&inner, e);
-                    }
-                    let r = raw
-                        .map(|resp| (resp.preset, resp.stripped))
-                        .map_err(|e| clone_error_message(&e));
-                    inner.borrow_mut().clone_result = Some(r);
-                });
+            } else if !chart.clone_open_share_locally(&token) {
+                chart.push_system_event(
+                    mlc_core::SystemEventKind::Share,
+                    "Clone failed",
+                    "This shared chart is not open, or clone is not allowed.".to_string(),
+                    true,
+                );
             }
         }
 
@@ -3332,18 +3404,6 @@ fn log_share_error(what: &str, e: &mlc_cloud::CloudError) {
         _ => {
             web_sys::console::error_1(&format!("[share] {message}").into());
         }
-    }
-}
-
-/// Word a failed `/api/share/{token}/clone` for the system-event log. 403 is
-/// "this link has no clone right" (the owner left `clone_allowed` off, or
-/// the caller's effective rights never granted it) — say so in the server's
-/// own sentence rather than the transport's raw status; anything else is
-/// the transport's own description.
-fn clone_error_message(e: &mlc_cloud::CloudError) -> String {
-    match e {
-        mlc_cloud::CloudError::Forbidden(_) => "This chart cannot be cloned".to_string(),
-        other => format!("Clone failed: {other}"),
     }
 }
 

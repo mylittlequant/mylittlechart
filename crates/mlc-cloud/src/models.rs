@@ -286,6 +286,10 @@ pub struct ShareCreateLiveRequest {
     pub chart_id: String,
     /// New links grant clone unless the owner later turns it off.
     pub clone_allowed: bool,
+    /// `"view"` — the recipient cannot edit the author's chart.
+    pub interaction: String,
+    /// `"public"` or `"private"`.
+    pub visibility: String,
 }
 
 /// Response body from `POST /api/share/live` and `POST /api/share/screenshot`.
@@ -363,6 +367,9 @@ pub struct ShareListEntry {
     pub visibility: String,
     #[serde(default)]
     pub allow_forward: bool,
+    /// Author chart id this live row is bound to. Empty on older servers.
+    #[serde(default)]
+    pub chart_id: String,
 }
 
 /// Response body from `GET /api/share/mine`.

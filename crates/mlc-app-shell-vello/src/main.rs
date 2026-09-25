@@ -8317,10 +8317,14 @@ impl ApplicationHandler<UserEvent> for App<'_> {
             }
             if let Some(raw) = pw.chart.take_pending_clone_share() {
                 let token = extract_share_token(&raw);
-                let _ = self
-                    .updater_handle
-                    .cmd_tx
-                    .send(mlc_updater::UpdaterCommand::CloneShare { token });
+                if !pw.chart.clone_open_share_locally(&token) {
+                    pw.chart.push_system_event(
+                        mlc_core::SystemEventKind::Share,
+                        "Clone failed",
+                        "This shared chart is not open, or clone is not allowed.".to_string(),
+                        true,
+                    );
+                }
             }
 
             // Boot-time reopen queue (shared-tab-reload-anchor arc,

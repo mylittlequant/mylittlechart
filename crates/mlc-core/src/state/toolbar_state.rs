@@ -1201,19 +1201,10 @@ impl ChartToolbarState {
     /// toggle. See `screenshot_active()` and the `"screenshot"` arm below.
     const SCREENSHOT_ACTIVE_MS: u64 = 1000;
 
-    /// Window (ms) for the `share_chart` (globe) button's double-click-
-    /// opens-dropdown detection — same shape as `SCREENSHOT_ACTIVE_MS`, no
-    /// visual "just fired" pulse needed since sharing has no persistent
-    /// active state to paint.
-    const SHARE_DROPDOWN_MS: u64 = 1000;
-
     /// Handle a click on the `share_chart` (globe) toolbar button.
     ///
-    /// Returns `true` on the SECOND click within `SHARE_DROPDOWN_MS` — the
-    /// caller must open the `"share_chart"` dropdown (`"Share live chart"` /
-    /// `"Open shared chart…"`) instead of firing another share. Returns
-    /// `false` on the first click, where the caller fires
-    /// `ChartOutEvent::ShareLiveChart` exactly as before this arc.
+    /// Always returns `false`: the click shares. The menu is the hover
+    /// menu, not a second click.
     ///
     /// Factored out of `handle_toolbar_click_with_chart` (unlike magnet/
     /// screenshot, whose double-click arms live inline there) because
@@ -1221,17 +1212,9 @@ impl ChartToolbarState {
     /// this call — a signed-out click never reaches here at all, so this
     /// method never needs to know about sign-in.
     pub fn handle_share_click(&mut self) -> bool {
-        let now = Instant::now();
-        let is_double_click = self.last_share_click_time
-            .map(|t| now.duration_since(t).as_millis() < Self::SHARE_DROPDOWN_MS as u128)
-            .unwrap_or(false);
-        if is_double_click {
-            self.last_share_click_time = None;
-            self.open_dropdown_id = Some("share_chart".to_string());
-        } else {
-            self.last_share_click_time = Some(now);
-        }
-        is_double_click
+        // Hover owns the menu. A click always shares.
+        self.last_share_click_time = Some(Instant::now());
+        false
     }
 
     /// Handle a toolbar click, executing chart-internal actions and returning app-level events.
@@ -1319,24 +1302,10 @@ impl ChartToolbarState {
             // the way the magnet toggle is undone, so only the first click
             // fires) and clear the timestamp so the active phase ends.
             "screenshot" => {
-                let now = Instant::now();
-                let is_double_click = self.last_screenshot_click_time
-                    .map(|t| now.duration_since(t).as_millis() < Self::SCREENSHOT_ACTIVE_MS as u128)
-                    .unwrap_or(false);
-
-                if is_double_click {
-                    self.last_screenshot_click_time = None; // reset so next single-click is fresh
-                    eprintln!("[ChartToolbar] screenshot double-click — open dropdown");
-                    self.open_dropdown_id = Some("screenshot".to_string());
-                    vec![ChartOutEvent::Consumed]
-                } else {
-                    // First click: record time AND fire — starts the
-                    // SCREENSHOT_ACTIVE_MS active phase; if no second click
-                    // arrives within it, this acts as the single-click shot.
-                    self.last_screenshot_click_time = Some(now);
-                    eprintln!("[ChartToolbar] screenshot");
-                    vec![ChartOutEvent::Screenshot]
-                }
+                // Hover owns the destination menu. Every click fires.
+                self.last_screenshot_click_time = Some(Instant::now());
+                eprintln!("[ChartToolbar] screenshot");
+                vec![ChartOutEvent::Screenshot]
             }
 
             // === Chart settings — app-level modal ===
@@ -1867,21 +1836,18 @@ mod tests {
     }
 
     #[test]
-    fn screenshot_double_click_opens_dropdown_without_firing() {
+    fn screenshot_second_click_fires_again() {
         let mut tb = ChartToolbarState::default();
         let mut crosshair = Crosshair::default();
         let mut session = NoopDrawingSession;
 
-        // First click fires.
         let events = tb.handle_toolbar_click_with_chart("screenshot", &mut crosshair, &mut session);
         assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
 
-        // Second click within SCREENSHOT_ACTIVE_MS: opens the destination
-        // dropdown, Consumed (no second Screenshot event).
+        // The destination menu is the hover menu, so a second click still fires.
         let events = tb.handle_toolbar_click_with_chart("screenshot", &mut crosshair, &mut session);
-        assert!(events.iter().all(|e| matches!(e, ChartOutEvent::Consumed)));
-        assert_eq!(tb.open_dropdown_id.as_deref(), Some("screenshot"));
-        assert!(tb.last_screenshot_click_time.is_none());
+        assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
+        assert!(tb.open_dropdown_id.is_none());
     }
 
     #[test]

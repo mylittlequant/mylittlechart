@@ -207,6 +207,53 @@ impl ChartApp {
     /// stripped for a missing license (plan §3), so the recipient sees what
     /// changed instead of silently getting fewer indicators than the
     /// original. Returns the new preset id.
+    /// Fork the shared tab that is already open. Copies symbols, primitive
+    /// points, indicators and layout into a new writable tab named
+    /// `{title} — {owner} (clone)`. Does not fetch the preset again and
+    /// does not keep bar series — those reload from the exchange when the
+    /// new tab materialises. Returns false when `token` is not an open
+    /// shared tab or the caller has no clone right.
+    pub fn clone_open_share_locally(&mut self, token: &str) -> bool {
+        let Some(id) = self.share_tab_id_for_token(token) else {
+            return false;
+        };
+        let Some(meta) = self.shared_chart_meta(&id).cloned() else {
+            return false;
+        };
+        if !meta.has_right("clone") {
+            return false;
+        }
+        if self.panel_app.active_preset_id == id {
+            let name = self
+                .core
+                .presets()
+                .get(&id)
+                .map(|p| p.name.clone())
+                .unwrap_or_default();
+            self.collect_state_into_preset(&id, &name);
+        }
+        {
+            let mut presets = self.core.presets_mut();
+            if let Some(preset) = presets.get_mut(&id) {
+                for window in &mut preset.windows {
+                    window.bars.clear();
+                    window.command_history = None;
+                    window.stashed_command_history = None;
+                }
+            }
+        }
+        let Some(mut preset) = self.core.presets().get(&id).cloned() else {
+            return false;
+        };
+        preset.remap_ids_for_import();
+        let new_id = fresh_preset_id("preset");
+        preset.id = new_id.clone();
+        preset.name = format!("{} — {} (clone)", meta.title, meta.owner_label);
+        self.core.presets_mut().insert(new_id.clone(), preset);
+        self.load_preset(&new_id);
+        true
+    }
+
     pub fn apply_cloned_preset(
         &mut self,
         mut preset: ChartPreset,

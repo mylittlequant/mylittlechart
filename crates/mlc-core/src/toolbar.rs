@@ -56,6 +56,9 @@ pub const FAVORITES_BAR_ADD_ITEM_ID: &str = "__add__";
 /// on submit, call `ChartApp::request_open_share`.
 pub const OPEN_SHARE_ACTION_ID: &str = "open_share";
 
+/// Hover-menu row that opens the share-settings overlay.
+pub const SHARE_SETTINGS_ACTION_ID: &str = "share_settings";
+
 /// True when `id` is a real favorite tool slot (not grip / empty / add / bg).
 pub fn is_favorites_bar_tool_id(id: &str) -> bool {
     id != FAVORITES_BAR_EMPTY_ITEM_ID

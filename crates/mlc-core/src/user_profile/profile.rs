@@ -917,6 +917,17 @@ pub struct ProfileUiSettings {
     /// `favorite_primitives` above.
     #[serde(default)]
     pub collapsed_flyout_sections: std::collections::BTreeSet<String>,
+
+    /// Default rights for the next live share.
+    /// `public_clone` (default) | `view_only` | `private`.
+    /// Public + clone + view is the product default: anyone with the link
+    /// can look and clone, nobody but the author can edit.
+    #[serde(default = "default_share_rights_preset")]
+    pub share_rights_preset: String,
+}
+
+fn default_share_rights_preset() -> String {
+    "public_clone".to_string()
 }
 
 fn default_true() -> bool {
@@ -979,6 +990,7 @@ impl ProfileUiSettings {
             community_forum_size: None,
             community_messages_size: None,
             collapsed_flyout_sections: std::collections::BTreeSet::new(),
+            share_rights_preset: default_share_rights_preset(),
         }
     }
 }

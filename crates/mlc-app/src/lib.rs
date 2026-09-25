@@ -570,6 +570,8 @@ pub enum ShareAdminCmd {
     Revoke { token: String },
     /// JSON body for `PATCH /api/share/{token}`.
     Patch { token: String, body: String },
+    /// Grant `nick` view or clone on this link. Does not give edit.
+    Grant { token: String, nick: String, tier: String },
 }
 
 pub struct ChartApp {
@@ -5594,6 +5596,102 @@ impl ChartApp {
     /// its token live in the shell, not here.
     pub fn take_share_admin(&mut self) -> Option<ShareAdminCmd> {
         self.pending_share_admin.take()
+    }
+
+    /// `(clone_allowed, interaction, visibility)` for the next live share.
+    /// Default is public, clone on, view only — no edit right.
+    pub fn share_publish_flags(&self) -> (bool, &'static str, &'static str) {
+        match self.core.user().profile().ui.share_rights_preset.as_str() {
+            "view_only" => (false, "view", "public"),
+            "private" => (true, "view", "private"),
+            _ => (true, "view", "public"),
+        }
+    }
+
+    pub fn set_share_rights_preset(&mut self, preset: &str) {
+        let preset = match preset {
+            "view_only" | "private" => preset,
+            _ => "public_clone",
+        };
+        self.core.user_mut().profile_mut().ui.share_rights_preset = preset.to_string();
+        self.profile_dirty = true;
+        let active = self.panel_app.active_preset_id.clone();
+        let token = self
+            .shared_chart_meta(&active)
+            .filter(|m| m.has_right("edit"))
+            .map(|m| m.token.clone())
+            .or_else(|| self.panel_app.chart_share_tokens.get(&active).cloned());
+        let body = match preset {
+            "view_only" => r#"{"visibility":"public","clone_allowed":false,"interaction":"view"}"#,
+            "private" => r#"{"visibility":"private","clone_allowed":true,"interaction":"view"}"#,
+            _ => r#"{"visibility":"public","clone_allowed":true,"interaction":"view"}"#,
+        };
+        if let Some(token) = token {
+            if self.pending_share_admin.is_none() {
+                self.pending_share_admin = Some(ShareAdminCmd::Patch {
+                    token,
+                    body: body.to_string(),
+                });
+            }
+            self.panel_app.share_settings_state.status = "Saved for this chart".to_string();
+        } else {
+            self.panel_app.share_settings_state.status =
+                "Saved as the default for the next Share".to_string();
+        }
+    }
+
+    pub fn note_chart_share_token(&mut self, chart_id: &str, token: &str) {
+        if chart_id.is_empty() || token.is_empty() {
+            return;
+        }
+        self.panel_app
+            .chart_share_tokens
+            .insert(chart_id.to_string(), token.to_string());
+    }
+
+    pub fn share_settings_nick_query(&self) -> Option<String> {
+        if !self.panel_app.share_settings_state.is_open {
+            return None;
+        }
+        let wid = uzor::WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
+        Some(
+            self.input_coordinator
+                .borrow()
+                .text_fields()
+                .text(&wid)
+                .trim()
+                .to_string(),
+        )
+    }
+
+    pub fn set_share_lookup_hits(&mut self, hits: Vec<(String, String)>) {
+        self.panel_app.share_settings_state.hits = hits;
+    }
+
+    pub fn set_share_settings_note(&mut self, note: String) {
+        self.panel_app.share_settings_state.status = note;
+    }
+
+    pub fn grant_share_nick(&mut self, nick: &str, tier: &str) {
+        let tier = if tier == "view" { "view" } else { "clone" };
+        let active = self.panel_app.active_preset_id.clone();
+        let token = self
+            .shared_chart_meta(&active)
+            .filter(|m| m.has_right("edit"))
+            .map(|m| m.token.clone())
+            .or_else(|| self.panel_app.chart_share_tokens.get(&active).cloned());
+        let Some(token) = token else {
+            self.panel_app.share_settings_state.status = "Share this chart first".to_string();
+            return;
+        };
+        if self.pending_share_admin.is_none() {
+            self.pending_share_admin = Some(ShareAdminCmd::Grant {
+                token,
+                nick: nick.to_string(),
+                tier: tier.to_string(),
+            });
+            self.panel_app.share_settings_state.status = format!("Adding {nick}");
+        }
     }
 
     pub fn request_share_live(&mut self) {
@@ -11466,6 +11564,14 @@ impl ChartApp {
                     &wid,
                     (so.input_rect.x, so.input_rect.y, so.input_rect.width, so.input_rect.height),
                     so.char_x_positions.clone(),
+                );
+            }
+            if let Some(ref ss) = fr.share_settings {
+                let wid = WidgetId::from(text_input::SHARE_SETTINGS_NICK);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &wid,
+                    (ss.input_rect.x, ss.input_rect.y, ss.input_rect.width, ss.input_rect.height),
+                    ss.char_x_positions.clone(),
                 );
             }
             // Template name overlay modal (save-as dialog) — one instance per

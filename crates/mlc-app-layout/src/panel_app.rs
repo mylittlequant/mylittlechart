@@ -3609,6 +3609,7 @@ fn chart_toolbar_find_dropdown_items(
             ];
             if account_signed_in {
                 items.push(DropdownItemDef::action("shot_share_link", "Share Link").with_icon(ToolbarIconId::new("NewWindow")));
+                items.push(DropdownItemDef::action(mlc_core::toolbar::SHARE_SETTINGS_ACTION_ID, "Share settings…"));
             }
             return Some(items);
         }
@@ -3624,6 +3625,7 @@ fn chart_toolbar_find_dropdown_items(
             return Some(vec![
                 DropdownItemDef::action("share_chart", "Share live chart").with_icon(ToolbarIconId::new("Globe")),
                 DropdownItemDef::action(mlc_core::toolbar::OPEN_SHARE_ACTION_ID, "Open shared chart…"),
+                DropdownItemDef::action(mlc_core::toolbar::SHARE_SETTINGS_ACTION_ID, "Share settings…"),
             ]);
         }
 

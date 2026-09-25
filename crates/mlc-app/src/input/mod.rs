@@ -620,6 +620,7 @@ impl ChartApp {
             || self.panel_app.chart_settings_state.is_open
             || self.panel_app.preset_name_input.is_open
             || self.panel_app.share_open_state.is_open
+            || self.panel_app.share_settings_state.is_open
             || self.panel_app.chart_browser.is_open
             || self.panel_app.overlay_settings_state.is_open
             || self.panel_app.tags_tabs_state.is_open
@@ -3716,6 +3717,19 @@ impl ChartApp {
             ChartDragStartHit::Miss
         };
 
+        // A shared tab is a view of the author's chart. Moving a drawing
+        // here would change what this window shows, and a later snapshot
+        // can publish that back. Clone first; the copy is writable.
+        if self.is_readonly_tab(&self.panel_app.active_preset_id)
+            && matches!(
+                drag_start_hit,
+                ChartDragStartHit::Primitive { .. } | ChartDragStartHit::ControlPoint { .. }
+            )
+        {
+            log::warn!("[ChartApp] primitive drag refused: active tab is read-only (shared chart)");
+            return false;
+        }
+
         let (drag_start_mode, extra_actions) = match drag_start_hit {
             ChartDragStartHit::FreehandStarted => {
                 // Baseline behavior: do NOT touch crosshair on freehand start.
@@ -6163,11 +6177,17 @@ impl ChartApp {
                 if item_id != "__bg__" && item_id != mlc_core::toolbar::FAVORITES_BAR_EMPTY_ITEM_ID {
                     self.panel_app.toolbar_state.hovered_favorites_id = Some(item_id.to_string());
                 }
-            } else if id_str.starts_with("dropdown:") && id_str != "dropdown:__bg__" {
+            } else if id_str.starts_with("dropdown:") {
                 // "dropdown:{dropdown_id}:{item_id}" → store the item_id part
                 // on WHICHEVER toolbar instance owns the open dropdown (main
                 // topbar vs the trading container's embedded header).
-                let item_id = id_str.splitn(3, ':').nth(2).unwrap_or_default().to_string();
+                // `__bg__` keeps a hover menu open while the pointer is on
+                // the panel padding, and matches no row so nothing highlights.
+                let item_id = if id_str == "dropdown:__bg__" {
+                    "__bg__".to_string()
+                } else {
+                    id_str.splitn(3, ':').nth(2).unwrap_or_default().to_string()
+                };
                 if self.trading_header_tb.open_dropdown_id.is_some() {
                     self.trading_header_tb.hovered_dropdown_item = Some(item_id);
                 } else {

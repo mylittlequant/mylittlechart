@@ -227,6 +227,7 @@ impl ChartApp {
                 // builder — preserve-live-value pattern, same as
                 // `favorite_primitives` above.
                 collapsed_flyout_sections: self.panel_app.toolbar_state.collapsed_flyout_sections.clone(),
+                share_rights_preset: existing.ui.share_rights_preset.clone(),
             },
         }
     }
