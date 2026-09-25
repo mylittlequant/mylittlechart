@@ -81,11 +81,16 @@
 //! A second `m.room_key` for a session id this device already knows never
 //! regresses it to a worse (higher first-known-index) state --
 //! [`InboundGroupSession::compare`]/[`InboundGroupSession::merge`] decide
-//! whether the incoming share is `Better`/`Worse`/`Equal`/`Unconnected`;
-//! only `Worse` (the incoming share is a genuine improvement) replaces the
-//! stored session, and it keeps the existing replay index (the same
-//! underlying ratchet, just a lower starting point) while rebinding to
-//! the new share's own sender identity.
+//! whether the incoming share is `Better`/`Worse`/`Equal`/`Unconnected`.
+//! Only `Worse` (the incoming share is a genuine improvement) can ever
+//! change the stored record, and even then only when the incoming share's
+//! sender identity matches the record's EXISTING binding -- once a record
+//! exists, its `bound_user_id`/`bound_sender_curve25519`/
+//! `bound_sender_ed25519` never change for its lifetime
+//! ([`merge_inbound_session`]'s own doc). A connected, lower-index share
+//! from a DIFFERENT sender is ignored outright (kept, not merged, not
+//! rebound) -- a bound session's identity is a security property, not a
+//! cache of "whoever most recently improved this ratchet".
 //!
 //! [`GroupSessionManager::decrypt_event`] additionally checks, in order:
 //! a session exists at all ([`GroupDecryptError::MissingSession`]); the
@@ -214,32 +219,70 @@ struct OutboundGroupSessionRecord {
 
 /// One replay-protection entry: the first `(event_id, origin_server_ts)`
 /// this device ever saw a given Megolm `message_index` decrypted under.
+/// `pub(crate)` alongside [`InboundGroupSessionRecord::replay_index`]
+/// itself, which names this type in its own field type.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-struct ReplayEntry {
+pub(crate) struct ReplayEntry {
     event_id: EventId,
     origin_server_ts: i64,
+}
+
+/// A record of this session having already been uploaded to the server's
+/// key backup. Not yet read or written by anything in this crate -- kept on
+/// [`InboundGroupSessionRecord`] now (rather than added in a later schema
+/// migration) purely so the backup piece that eventually consumes it can
+/// land without another record-format change; `#[serde(default)]` on the
+/// field below is what makes that safe.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct BackedUpMark {
+    /// The backup version (the server's own opaque `version` string, minted
+    /// fresh every time the backup is reset) this mark was recorded
+    /// against -- a session backed up under an OLDER version needs
+    /// re-uploading to a newer one, since the server discards everything
+    /// on a version bump.
+    pub(crate) version: String,
+    /// The session's own [`mlc_vodozemac::megolm::InboundGroupSession::
+    /// first_known_index`] at the time it was last backed up. If the
+    /// session is later improved (a lower-index share arrives and merges,
+    /// [`InboundMergeOutcome::Merged`]), this mark goes stale even though
+    /// `version` hasn't changed.
+    pub(crate) first_message_index: u32,
 }
 
 /// The durable record behind [`crate::store::CryptoStore::
 /// inbound_group_session`]/[`crate::store::CryptoStore::
 /// save_inbound_group_session`] -- an opaque blob at that layer, same
-/// convention as [`OutboundGroupSessionRecord`].
+/// convention as [`OutboundGroupSessionRecord`]. `pub(crate)` (fields
+/// included) so a later, sibling module can read/write this same record
+/// shape -- via [`load_inbound_record`]/[`save_inbound_record`]/
+/// [`merge_inbound_session`] below -- rather than this module duplicating a
+/// second, parallel record type.
 #[derive(Serialize, Deserialize)]
-struct InboundGroupSessionRecord {
-    session: mlc_vodozemac::megolm::InboundGroupSessionPickle,
+pub(crate) struct InboundGroupSessionRecord {
+    pub(crate) session: mlc_vodozemac::megolm::InboundGroupSessionPickle,
     /// The user this session is bound to -- the Olm-verified sender of
     /// the `m.room_key` that (most recently, if merged) produced this
     /// record. A room event whose `sender` differs is never authenticated
-    /// by this session (module doc).
-    bound_user_id: UserId,
+    /// by this session (module doc). Once set, this identity (together
+    /// with `bound_sender_curve25519`/`bound_sender_ed25519`) never
+    /// changes for the lifetime of the record -- see
+    /// [`merge_inbound_session`]'s own doc for why a connected, lower-index
+    /// share from a DIFFERENT sender is ignored rather than merged.
+    pub(crate) bound_user_id: UserId,
     /// The bound sender device's Curve25519 identity key, base64.
-    bound_sender_curve25519: String,
+    pub(crate) bound_sender_curve25519: String,
     /// The bound sender device's Ed25519 signing key, base64.
-    bound_sender_ed25519: String,
+    pub(crate) bound_sender_ed25519: String,
     /// Every message index this device has already decrypted under this
     /// session, and what it was first seen as -- module doc's replay
     /// protection.
-    replay_index: BTreeMap<u32, ReplayEntry>,
+    pub(crate) replay_index: BTreeMap<u32, ReplayEntry>,
+    /// Set once this session has been uploaded to the server's key backup
+    /// -- `#[serde(default)]` so a record persisted before M9a (with no
+    /// such field at all) still deserializes, simply as `None` (never
+    /// backed up yet, from this field's own point of view).
+    #[serde(default)]
+    pub(crate) backed_up: Option<BackedUpMark>,
 }
 
 /// Every way [`GroupSessionManager::decrypt_event`] can fail. See the
@@ -315,6 +358,149 @@ impl GroupDecryptError {
         match self {
             GroupDecryptError::MissingSession { .. } => UtdReason::MissingSession,
             _ => UtdReason::Unknown,
+        }
+    }
+}
+
+/// Reads and decodes the inbound Megolm session record for
+/// `(room_id, session_id)`, if this store has one -- the shared
+/// load-and-decode step [`GroupSessionManager::receive_room_key`] and (a
+/// later, sibling piece) key-backup import both go through, so neither ever
+/// duplicates the other's decode error message or forgets a field.
+pub(crate) fn load_inbound_record<S: CryptoStore>(
+    store: &S,
+    room_id: &RoomId,
+    session_id: &str,
+) -> Result<Option<InboundGroupSessionRecord>, MessengerError> {
+    let Some(bytes) = store.inbound_group_session(room_id, session_id)? else { return Ok(None) };
+    let record: InboundGroupSessionRecord = serde_json::from_slice(bytes).map_err(|source| {
+        MessengerError::Crypto(format!("decode inbound Megolm session for room {room_id} session {session_id}: {source}"))
+    })?;
+    Ok(Some(record))
+}
+
+/// Encodes and persists `record` as the inbound Megolm session for
+/// `(room_id, session_id)` -- the write-side counterpart to
+/// [`load_inbound_record`], same sharing rationale.
+pub(crate) fn save_inbound_record<S: CryptoStore>(
+    store: &mut S,
+    room_id: &RoomId,
+    session_id: &str,
+    record: &InboundGroupSessionRecord,
+) -> Result<(), MessengerError> {
+    let bytes = serde_json::to_vec(record).map_err(|source| {
+        MessengerError::Crypto(format!("encode inbound Megolm session for room {room_id} session {session_id}: {source}"))
+    })?;
+    store.save_inbound_group_session(room_id, session_id, bytes)?;
+    Ok(())
+}
+
+/// The result of [`merge_inbound_session`] -- every way an incoming inbound
+/// Megolm session share can interact with whatever record (if any) already
+/// exists for the same `(room_id, session_id)` slot.
+pub(crate) enum InboundMergeOutcome {
+    /// No record existed yet -- `record` is brand new, bound to the
+    /// incoming share's own sender identity.
+    New {
+        /// The freshly created record, not yet persisted.
+        record: InboundGroupSessionRecord,
+    },
+    /// A record already existed and is at least as good as the incoming
+    /// share (`Equal`/`Better`), or the incoming share does not even
+    /// connect to it (`Unconnected`, see [`SessionOrdering`]'s own doc) --
+    /// kept verbatim, nothing to persist.
+    Kept,
+    /// The incoming share connects to the existing record and is a genuine
+    /// improvement (`SessionOrdering::Worse` -- see that type's own doc for
+    /// why that name means "the existing session was worse"), AND its
+    /// sender identity matches the existing record's own binding -- merged,
+    /// keeping the record's binding and replay index, adopting the
+    /// incoming share's lower ratchet index.
+    Merged {
+        /// The merged record, not yet persisted.
+        record: InboundGroupSessionRecord,
+    },
+    /// The incoming share connects and is a genuine improvement by ratchet
+    /// index alone, but its sender identity does NOT match the existing
+    /// record's own binding. A bound record's identity is a security
+    /// property, not a cache of "whoever most recently improved this
+    /// ratchet" (module doc) -- so this share is ignored outright and the
+    /// existing record is kept exactly as it was.
+    IgnoredSenderMismatch,
+}
+
+/// Merges an incoming inbound Megolm session share (freshly constructed via
+/// [`InboundGroupSession::new`] from an `m.room_key`, or -- a later, sibling
+/// piece -- [`InboundGroupSession::import`] from a key-backup entry)
+/// against whatever record already exists for the same `(room_id,
+/// session_id)` slot, enforcing the module doc's two rules in one place so
+/// they can never drift between callers: merge-not-overwrite (a later share
+/// never regresses an already-better session), and binding-never-changes
+/// (a record's sender identity, once set, is fixed for its lifetime --
+/// a connected-but-worse share from a different sender is ignored, never
+/// merged, even though its ratchet index alone would otherwise qualify).
+pub(crate) fn merge_inbound_session(
+    existing: Option<InboundGroupSessionRecord>,
+    mut incoming_session: InboundGroupSession,
+    sender_user_id: &UserId,
+    sender_curve25519: Curve25519PublicKey,
+    sender_ed25519: Ed25519PublicKey,
+) -> InboundMergeOutcome {
+    let Some(existing_record) = existing else {
+        return InboundMergeOutcome::New {
+            record: InboundGroupSessionRecord {
+                session: incoming_session.pickle(),
+                bound_user_id: sender_user_id.clone(),
+                bound_sender_curve25519: sender_curve25519.to_base64(),
+                bound_sender_ed25519: sender_ed25519.to_base64(),
+                replay_index: BTreeMap::new(),
+                backed_up: None,
+            },
+        };
+    };
+
+    let InboundGroupSessionRecord { session, bound_user_id, bound_sender_curve25519, bound_sender_ed25519, replay_index, backed_up } =
+        existing_record;
+    let mut existing_session = InboundGroupSession::from_pickle(session);
+
+    match existing_session.compare(&mut incoming_session) {
+        // The stored session is already at least as good, or this share
+        // does not even connect to it -- never let a later share regress
+        // (or hijack) an already-known session (module doc).
+        SessionOrdering::Equal | SessionOrdering::Better | SessionOrdering::Unconnected => InboundMergeOutcome::Kept,
+        SessionOrdering::Worse => {
+            let sender_matches = bound_user_id == *sender_user_id
+                && bound_sender_curve25519 == sender_curve25519.to_base64()
+                && bound_sender_ed25519 == sender_ed25519.to_base64();
+            if sender_matches {
+                // `compare() == Worse` only when `connected()` is true (its
+                // own doc), so `merge` always succeeds here -- the
+                // fallback re-derives an equivalent session from the
+                // incoming share's own pickle, never a load-bearing branch:
+                // even if that invariant were somehow violated, adopting
+                // the incoming session outright (still strictly better by
+                // index than what we had) is still forward progress, never
+                // a panic.
+                let merged = existing_session
+                    .merge(&mut incoming_session)
+                    .unwrap_or_else(|| InboundGroupSession::from_pickle(incoming_session.pickle()));
+                InboundMergeOutcome::Merged {
+                    record: InboundGroupSessionRecord {
+                        session: merged.pickle(),
+                        bound_user_id,
+                        bound_sender_curve25519,
+                        bound_sender_ed25519,
+                        replay_index,
+                        backed_up,
+                    },
+                }
+            } else {
+                // A bound record's identity never changes, even for a
+                // connected, genuinely-lower-index share -- see this
+                // function's own doc and the module doc's "Inbound"
+                // section.
+                InboundMergeOutcome::IgnoredSenderMismatch
+            }
         }
     }
 }
@@ -543,62 +729,21 @@ impl GroupSessionManager {
         }
         let session_key = SessionKey::from_base64(&content.session_key)
             .map_err(|source| MessengerError::Crypto(format!("malformed Megolm session_key: {source}")))?;
-        let mut incoming_session = InboundGroupSession::new(&session_key, SessionConfig::version_1());
+        let incoming_session = InboundGroupSession::new(&session_key, SessionConfig::version_1());
 
-        let existing_bytes = store.inbound_group_session(&content.room_id, &content.session_id)?.map(<[u8]>::to_vec);
-
-        let record = match existing_bytes {
-            None => InboundGroupSessionRecord {
-                session: incoming_session.pickle(),
-                bound_user_id: sender_user_id.clone(),
-                bound_sender_curve25519: sender_curve25519.to_base64(),
-                bound_sender_ed25519: sender_ed25519.to_base64(),
-                replay_index: BTreeMap::new(),
-            },
-            Some(bytes) => {
-                let existing_record: InboundGroupSessionRecord = serde_json::from_slice(&bytes).map_err(|source| {
-                    MessengerError::Crypto(format!(
-                        "decode inbound Megolm session for room {} session {}: {source}",
-                        content.room_id, content.session_id
-                    ))
-                })?;
-                let mut existing_session = InboundGroupSession::from_pickle(existing_record.session);
-                match existing_session.compare(&mut incoming_session) {
-                    // The stored session is already at least as good, or
-                    // this share does not even connect to it -- never let
-                    // a later share regress (or hijack) an already-known
-                    // session (module doc).
-                    SessionOrdering::Equal | SessionOrdering::Better | SessionOrdering::Unconnected => return Ok(()),
-                    SessionOrdering::Worse => {
-                        // `compare() == Worse` only when `connected()` is
-                        // true (its own doc), so `merge` always succeeds
-                        // here -- `unwrap_or` is a defensive fallback,
-                        // never a load-bearing branch: even if that
-                        // invariant were somehow violated, adopting the
-                        // incoming session outright (still strictly
-                        // better by index than what we had) is still
-                        // forward progress, never a panic.
-                        let merged = existing_session.merge(&mut incoming_session).unwrap_or(incoming_session);
-                        InboundGroupSessionRecord {
-                            session: merged.pickle(),
-                            bound_user_id: sender_user_id.clone(),
-                            bound_sender_curve25519: sender_curve25519.to_base64(),
-                            bound_sender_ed25519: sender_ed25519.to_base64(),
-                            replay_index: existing_record.replay_index,
-                        }
-                    }
-                }
+        let existing = load_inbound_record(store, &content.room_id, &content.session_id)?;
+        match merge_inbound_session(existing, incoming_session, sender_user_id, sender_curve25519, sender_ed25519) {
+            // A brand-new record, or a genuine, same-sender improvement --
+            // persist it.
+            InboundMergeOutcome::New { record } | InboundMergeOutcome::Merged { record } => {
+                save_inbound_record(store, &content.room_id, &content.session_id, &record)
             }
-        };
-
-        let bytes = serde_json::to_vec(&record).map_err(|source| {
-            MessengerError::Crypto(format!(
-                "encode inbound Megolm session for room {} session {}: {source}",
-                content.room_id, content.session_id
-            ))
-        })?;
-        store.save_inbound_group_session(&content.room_id, &content.session_id, bytes)?;
-        Ok(())
+            // Already at least as good, unconnected, or a lower-index share
+            // from a sender that doesn't match the existing binding --
+            // nothing changes (module doc; `merge_inbound_session`'s own
+            // doc for the binding-never-changes rule).
+            InboundMergeOutcome::Kept | InboundMergeOutcome::IgnoredSenderMismatch => Ok(()),
+        }
     }
 
     /// Decrypts one `m.room.encrypted` (Megolm) room event. See the
@@ -1096,5 +1241,135 @@ mod tests {
         let decrypted = GroupSessionManager::decrypt_event(&mut bob_store, &room_id, &event_id, 1, &alice, &encrypted_0)
             .expect("the earlier share's lower index must have won, so message 0 is decryptable");
         assert_eq!(decrypted.content, serde_json::json!({ "body": "msg0" }));
+    }
+
+    #[test]
+    fn lower_index_share_from_a_different_sender_does_not_rebind() {
+        let alice = user("alice");
+        let mallory = user("mallory");
+        let alice_identity = Account::new().identity_keys();
+        let mallory_identity = Account::new().identity_keys();
+        let room_id = room("r");
+
+        let mut group_session = GroupSession::new(SessionConfig::version_1());
+        // Captured BEFORE encrypting -- the index-0 key mallory will
+        // (falsely) claim to have shared. `message_0` (index 0) stays
+        // unreachable from the record alice's share below actually
+        // creates; `message_1` (index 1) is what that record CAN decrypt,
+        // and is what proves the binding itself never moved to mallory.
+        let key_at_0 = group_session.session_key();
+        let message_0 = group_session.encrypt(plaintext_bytes(&room_id, "msg0"));
+        let key_at_1 = group_session.session_key();
+        let message_1 = group_session.encrypt(plaintext_bytes(&room_id, "msg1"));
+
+        let content_at_1 = RoomKeyContent {
+            algorithm: MEGOLM_ALGORITHM.to_string(),
+            room_id: room_id.clone(),
+            session_id: group_session.session_id(),
+            session_key: key_at_1.to_base64(),
+        };
+        let content_at_0 = RoomKeyContent { session_key: key_at_0.to_base64(), ..content_at_1.clone() };
+
+        let mut bob_store = new_store();
+        // Alice genuinely shares at index 1 first -- this binds the record
+        // to alice.
+        GroupSessionManager::receive_room_key(&mut bob_store, &alice, alice_identity.curve25519, alice_identity.ed25519, &content_at_1)
+            .expect("receive alice's genuine share at index 1");
+
+        // A share for the SAME session id, connected and at a genuinely
+        // lower index, now arrives claiming to be from mallory instead --
+        // must be ignored outright: no error, but no rebind and no merge.
+        GroupSessionManager::receive_room_key(
+            &mut bob_store,
+            &mallory,
+            mallory_identity.curve25519,
+            mallory_identity.ed25519,
+            &content_at_0,
+        )
+        .expect("receiving mallory's share is not itself an error -- it's just ignored");
+
+        // The record is still bound to alice, not mallory: an event at
+        // index 1 (which the record CAN decrypt) claiming mallory as
+        // sender is rejected on that binding, not on a missing ratchet
+        // key.
+        let encrypted_1 = MegolmEncryptedContent {
+            ciphertext: message_1.to_base64(),
+            session_id: group_session.session_id(),
+            sender_key: None,
+            device_id: None,
+            relates_to: None,
+        };
+        let event_id_1 = EventId::parse("$evt1:example.org").expect("valid event id");
+        let claimed_mallory = GroupSessionManager::decrypt_event(&mut bob_store, &room_id, &event_id_1, 1, &mallory, &encrypted_1);
+        assert!(
+            matches!(claimed_mallory, Err(GroupDecryptError::WrongSender { .. })),
+            "record is still bound to alice, not mallory: {claimed_mallory:?}"
+        );
+        let claimed_alice = GroupSessionManager::decrypt_event(&mut bob_store, &room_id, &event_id_1, 1, &alice, &encrypted_1)
+            .expect("the record is genuinely bound to alice, so an event she sent decrypts fine");
+        assert_eq!(claimed_alice.content, serde_json::json!({ "body": "msg1" }));
+
+        // The record's ratchet is also still at index 1 -- mallory's
+        // (ignored) lower-index share never merged in, so message 0 (only
+        // decryptable from index 0) is still unreachable.
+        let encrypted_0 = MegolmEncryptedContent {
+            ciphertext: message_0.to_base64(),
+            session_id: group_session.session_id(),
+            sender_key: None,
+            device_id: None,
+            relates_to: None,
+        };
+        let event_id_0 = EventId::parse("$evt0:example.org").expect("valid event id");
+        let still_index_1 = GroupSessionManager::decrypt_event(&mut bob_store, &room_id, &event_id_0, 2, &alice, &encrypted_0);
+        assert!(
+            matches!(still_index_1, Err(GroupDecryptError::Vodozemac(MegolmDecryptionError::UnknownMessageIndex(..)))),
+            "the ratchet never advanced to index 0: {still_index_1:?}"
+        );
+    }
+
+    #[test]
+    fn old_record_without_backed_up_field_deserializes() {
+        let mut store = new_store();
+        let room_id = room("r");
+        let alice = user("alice");
+        let alice_dev = device("ALICEDEV");
+        let bob = user("bob");
+        let bob_device = stored_device(&bob, &device("BOBDEV"));
+        let members: BTreeSet<UserId> = [alice.clone(), bob.clone()].into_iter().collect();
+        let encryption = default_encryption();
+        let identity = Account::new().identity_keys();
+
+        let mut alice_store = new_store();
+        let update = GroupSessionManager::ensure_outbound_session(
+            &mut alice_store,
+            &room_id,
+            &alice,
+            &alice_dev,
+            &encryption,
+            &members,
+            std::slice::from_ref(&bob_device),
+            0,
+        )
+        .expect("create+share");
+        let room_key_content = update.room_key_content.expect("bob is a new recipient");
+
+        GroupSessionManager::receive_room_key(&mut store, &alice, identity.curve25519, identity.ed25519, &room_key_content)
+            .expect("receive");
+
+        let bytes = store
+            .inbound_group_session(&room_id, &room_key_content.session_id)
+            .expect("no error")
+            .expect("record exists");
+
+        // Simulate a record persisted BEFORE the `backed_up` field existed
+        // at all -- an old writer never wrote the key, not even as `null`.
+        let mut value: serde_json::Value = serde_json::from_slice(bytes).expect("valid JSON");
+        value.as_object_mut().expect("a JSON object").remove("backed_up");
+        let old_bytes = serde_json::to_vec(&value).expect("valid JSON");
+
+        let record: InboundGroupSessionRecord =
+            serde_json::from_slice(&old_bytes).expect("a record without `backed_up` at all still deserializes");
+        assert_eq!(record.backed_up, None);
+        assert_eq!(record.bound_user_id, alice);
     }
 }
