@@ -897,6 +897,21 @@ pub struct ProfileUiSettings {
     /// own 1000×640 default.
     #[serde(default)]
     pub community_messages_size: Option<(f64, f64)>,
+
+    /// Collapsed state of drawing-tool flyout sub-sections (toolbar-flyout-
+    /// collapse arc, owner order 2026-09-25) — a UI preference, not viewport
+    /// state, same class as `sidebar_width`/`active_ui_style` above. Keyed
+    /// by the stable, positional id `mlc_core::toolbar::flyout_section_id`
+    /// mints (`"{dropdown_id}#{header_ordinal}"`), never the localized
+    /// header text — present means collapsed, absent means expanded (every
+    /// profile saved before this field existed loads with every section
+    /// expanded, today's behaviour). Mutated in-place via
+    /// `ChartToolbarState::toggle_flyout_section_collapsed` at
+    /// double-click time (`mlc-app`'s `on_double_click`), not by this
+    /// snapshot builder — preserve-live-value pattern, same as
+    /// `favorite_primitives` above.
+    #[serde(default)]
+    pub collapsed_flyout_sections: std::collections::BTreeSet<String>,
 }
 
 fn default_true() -> bool {
@@ -958,6 +973,7 @@ impl ProfileUiSettings {
             header_account_display: HeaderAccountDisplay::default(),
             community_forum_size: None,
             community_messages_size: None,
+            collapsed_flyout_sections: std::collections::BTreeSet::new(),
         }
     }
 }

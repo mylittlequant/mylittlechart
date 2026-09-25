@@ -1408,6 +1408,8 @@ pub fn render_indicator_settings_modal(
                             shadow_blur: 24.0,
                             grid_columns: None,
                             clamp_x: None,
+                            max_height: None,
+                            scroll_offset: 0.0,
                         };
 
                         let dropdown_theme = DropdownTheme {

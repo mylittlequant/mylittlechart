@@ -97,6 +97,17 @@ pub const DRAWING_FLYOUT_IDS: &[&str] = &[
     "price_action_tools", "brush_tools", "annotation_tools", "projection_tools",
 ];
 
+/// Stable id for a collapsible flyout sub-section (toolbar-flyout-collapse
+/// arc, owner order 2026-09-25): `header_ordinal` is that section's Header
+/// row's 0-based position among the OTHER headers in the same flyout, in
+/// on-screen order — never the localized label text, which changes with the
+/// active language and would have changed again under the SCAN rename.
+/// Persisted verbatim in `ProfileUiSettings::collapsed_flyout_sections` /
+/// read via `ChartToolbarState::is_flyout_section_collapsed`.
+pub fn flyout_section_id(dropdown_id: &str, header_ordinal: usize) -> String {
+    format!("{dropdown_id}#{header_ordinal}")
+}
+
 /// Build the chart's left-side drawing tools toolbar (vertical, 50px wide)
 pub fn left_toolbar() -> PanelToolbarDef {
     PanelToolbarDef::vertical(vec![
@@ -1631,6 +1642,25 @@ mod pattern_section_tests {
             ],
             "fib_scan must be the LAST action in the Fibonacci group, right after fib_fan",
         );
+    }
+}
+
+#[cfg(test)]
+mod flyout_section_id_tests {
+    //! Toolbar-flyout-collapse arc (owner order 2026-09-25): the persisted
+    //! collapse key must be positional, not the localized header text —
+    //! it has to survive a language switch and the SCAN rename unchanged.
+    use super::*;
+
+    #[test]
+    fn id_is_positional_and_language_independent() {
+        assert_eq!(flyout_section_id("pattern_tools", 0), "pattern_tools#0");
+        assert_eq!(flyout_section_id("pattern_tools", 2), "pattern_tools#2");
+        // Same dropdown, same ordinal -> same id, regardless of which
+        // language happened to render the header the ordinal counts.
+        assert_eq!(flyout_section_id("pattern_tools", 2), flyout_section_id("pattern_tools", 2));
+        // Different dropdowns never collide on the same ordinal.
+        assert_ne!(flyout_section_id("pattern_tools", 0), flyout_section_id("fib_tools", 0));
     }
 }
 

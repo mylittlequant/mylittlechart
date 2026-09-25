@@ -1035,29 +1035,33 @@ pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 105] = [
     /* 98 OrderFlowScan       */ [ "Order Flow Scan", "Скан потока ордеров", "Escáner de flujo de órdenes", "Order-Flow-Scan", "Scan du flux d'ordres", "Varredura de fluxo de ordens", "订单流扫描", "オーダーフロー検出", "오더 플로우 스캔", "مسح تدفق الأوامر", "Scansione order flow", "Emir Akışı Taraması", "Skan przepływu zleceń", "Скан потоку ордерів", "ऑर्डर फ्लो स्कैन" ],
     /* 99 RayLeft             */ [ "Ray Left", "Луч влево", "Rayo izquierdo", "Strahl links", "Rayon gauche", "Raio esquerdo", "向左射线", "左レイ", "왼쪽 레이", "شعاع يسار", "Raggio sinistro", "Sol Işın", "Promień w lewo", "Промінь ліворуч", "बाएं किरण" ],
     /* 100 HorizontalRayLeft  */ [ "Horizontal Ray Left", "Горизонтальный луч влево", "Rayo horizontal izquierdo", "Horizontaler Strahl links", "Rayon horizontal gauche", "Raio horizontal esquerdo", "向左水平射线", "左水平レイ", "왼쪽 수평 레이", "شعاع أفقي يسار", "Raggio orizzontale sinistro", "Sol Yatay Işın", "Promień poziomy w lewo", "Горизонтальний промінь ліворуч", "बाएं क्षैतिज किरण" ],
-    // 101 ElliottScan: En/Ru owner-approved verbatim (autodetectors A2-A4
-    // brief, 2026-09-24 — "Elliott autodetector" / "Автодетектор
-    // Эллиотта"); the remaining 13 columns are plain translations, NOT
-    // translator-reviewed (see this piece's own commit message).
-    /* 101 ElliottScan        */ [ "Elliott autodetector", "Автодетектор Эллиотта", "Autodetector de Elliott", "Elliott-Autodetektor", "Autodétecteur d'Elliott", "Autodetector de Elliott", "艾略特自动检测器", "エリオット自動検出", "엘리엇 자동 감지기", "الكاشف التلقائي لإليوت", "Autorilevatore di Elliott", "Elliott otomatik dedektörü", "Autodetektor Elliotta", "Автодетектор Елліотта", "इलियट ऑटोडिटेक्टर" ],
+    // 101 ElliottScan: SCAN naming arc (owner order 2026-09-25) — En/Ru
+    // owner-approved verbatim "Elliott Scan" / "Скан Эллиотта", replacing
+    // this row's former "Elliott autodetector" / "Автодетектор Эллиотта"
+    // (autodetectors A2-A4 brief, 2026-09-24). The remaining 13 columns
+    // carried the same "Autodetector"/"Автодетектор" wording and got the
+    // matching per-language swap to each language's own "Scan" word,
+    // mirroring `CandlePatternScan`'s (row 87) already-shipped convention.
+    /* 101 ElliottScan        */ [ "Elliott Scan", "Скан Эллиотта", "Escáner de Elliott", "Elliott-Scan", "Scan d'Elliott", "Varredura de Elliott", "艾略特扫描", "エリオット検出", "엘리엇 스캔", "مسح إليوت", "Scansione di Elliott", "Elliott Taraması", "Skan Elliotta", "Скан Елліотта", "इलियट स्कैन" ],
     // 102 FiveZeroPattern: "5-0" is a numeral pattern name (Duddella), owner
     // pre-approved verbatim (autodetectors A3 brief, 2026-09-24) — kept in
     // the SAME Latin/numeral spelling in every language column, matching
     // `HarmonicKindGartley`'s own proper-noun convention (`xabcd_pattern.rs`'s
     // own doc: harmonic pattern names are proper nouns, never translated).
     /* 102 FiveZeroPattern    */ [ "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0" ],
-    // 103 HarmonicScan: En/Ru owner-approved verbatim (autodetectors A2-A4
-    // brief, 2026-09-24 — "Harmonics autodetector" / "Автодетектор
-    // гармоник"); the remaining 13 columns are plain translations, NOT
-    // translator-reviewed (see this piece's own commit message), mirroring
-    // `ElliottScan`'s own row shape exactly.
-    /* 103 HarmonicScan       */ [ "Harmonics autodetector", "Автодетектор гармоник", "Autodetector de armónicos", "Harmonics-Autodetektor", "Autodétecteur harmonique", "Autodetector de harmônicos", "谐波自动检测器", "ハーモニクス自動検出", "하모닉 자동 감지기", "الكاشف التلقائي للتوافقيات", "Autorilevatore armonico", "Harmonik otomatik dedektörü", "Autodetektor harmoniczny", "Автодетектор гармонік", "हार्मोनिक्स ऑटोडिटेक्टर" ],
-    // 104 FibScan: En/Ru owner-approved verbatim (autodetectors A2-A4 brief,
-    // 2026-09-24 — "Fib autodetector" / "Автодетектор Фибоначчи"); the
-    // remaining 13 columns are plain translations, NOT translator-reviewed
-    // (see this piece's own commit message), mirroring `ElliottScan`'s/
-    // `HarmonicScan`'s own row shape exactly.
-    /* 104 FibScan            */ [ "Fib autodetector", "Автодетектор Фибоначчи", "Autodetector de Fibonacci", "Fibonacci-Autodetektor", "Autodétecteur de Fibonacci", "Autodetector de Fibonacci", "斐波那契自动检测器", "フィボナッチ自動検出", "피보나치 자동 감지기", "الكاشف التلقائي لفيبوناتشي", "Autorilevatore di Fibonacci", "Fibonacci otomatik dedektörü", "Autodetektor Fibonacciego", "Автодетектор Фібоначчі", "फिबोनाची ऑटोडिटेक्टर" ],
+    // 103 HarmonicScan: SCAN naming arc (owner order 2026-09-25) — En/Ru
+    // owner-approved verbatim "Harmonic Scan" / "Скан гармоник", replacing
+    // this row's former "Harmonics autodetector" / "Автодетектор гармоник"
+    // (autodetectors A2-A4 brief, 2026-09-24). Remaining columns: same
+    // per-language "Scan" swap as `ElliottScan`'s own row above.
+    /* 103 HarmonicScan       */ [ "Harmonic Scan", "Скан гармоник", "Escáner de armónicos", "Harmonics-Scan", "Scan harmonique", "Varredura de harmônicos", "谐波扫描", "ハーモニクス検出", "하모닉 스캔", "مسح التوافقيات", "Scansione armonica", "Harmonik Taraması", "Skan harmoniczny", "Скан гармонік", "हार्मोनिक्स स्कैन" ],
+    // 104 FibScan: SCAN naming arc (owner order 2026-09-25) — En/Ru
+    // owner-approved verbatim "Fib Scan" / "Скан Фибоначчи", replacing this
+    // row's former "Fib autodetector" / "Автодетектор Фибоначчи"
+    // (autodetectors A2-A4 brief, 2026-09-24). Remaining columns: same
+    // per-language "Scan" swap as `ElliottScan`'s/`HarmonicScan`'s own rows
+    // above.
+    /* 104 FibScan            */ [ "Fib Scan", "Скан Фибоначчи", "Escáner de Fibonacci", "Fibonacci-Scan", "Scan de Fibonacci", "Varredura de Fibonacci", "斐波那契扫描", "フィボナッチ検出", "피보나치 스캔", "مسح فيبوناتشي", "Scansione di Fibonacci", "Fibonacci Taraması", "Skan Fibonacciego", "Скан Фібоначчі", "फिबोनाची स्कैन" ],
 ];
 
 // =============================================================================
@@ -2173,5 +2177,60 @@ mod completeness {
         assert_full("SHARE_VIEWER_KEY_TABLE", &SHARE_VIEWER_KEY_TABLE);
         assert_full("FORUM_KEY_TABLE", &FORUM_KEY_TABLE);
         assert_full("CANDLE_PATTERN_SHORT_KEY_TABLE", &CANDLE_PATTERN_SHORT_KEY_TABLE);
+    }
+
+    /// SCAN-naming arc (owner order 2026-09-25): "Elliott autodetector" /
+    /// "Harmonics autodetector" / "Fib autodetector" and their Ru
+    /// "Автодетектор …" counterparts (`TOOLBAR_MENU_KEY_TABLE` rows 101/103/
+    /// 104) became "Elliott Scan" / "Harmonic Scan" / "Fib Scan" and "Скан
+    /// Эллиотта" / "Скан гармоник" / "Скан Фибоначчи". Every OTHER language
+    /// column in those same 3 rows carried the same En "Autodetector"/Ru
+    /// "Автодетектор" wording too (Es/Pt/De/Uk all borrow the literal word)
+    /// and got the matching per-language "Scan" swap. This is a real data
+    /// scan, not a raw-text grep — it reads every cell of every production
+    /// i18n table this file owns, so a NEW row (any table, any future arc)
+    /// that reintroduces either word trips it too.
+    fn assert_no_autodetector_wording(name: &str, rows: &[[&str; N_LANG]]) {
+        for (r, row) in rows.iter().enumerate() {
+            for (c, cell) in row.iter().enumerate() {
+                let lower = cell.to_lowercase();
+                assert!(
+                    !lower.contains("autodetector") && !lower.contains("автодетектор"),
+                    "{name}: row {r}, language column {c} still reads {cell:?} — SCAN naming arc \
+                     (owner order 2026-09-25) renamed every autodetector/автодетектор string",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_autodetector_wording_remains_in_any_table() {
+        assert_no_autodetector_wording("MENU_KEY_TABLE", &MENU_KEY_TABLE);
+        assert_no_autodetector_wording("CONFIG_KEY_TABLE", &CONFIG_KEY_TABLE);
+        assert_no_autodetector_wording("WAVE_DEGREE_KEY_TABLE", &WAVE_DEGREE_KEY_TABLE);
+        assert_no_autodetector_wording("STYLE_KEY_TABLE", &STYLE_KEY_TABLE);
+        assert_no_autodetector_wording("LABEL_POSITION_KEY_TABLE", &LABEL_POSITION_KEY_TABLE);
+        assert_no_autodetector_wording("TOOLBAR_TOOLTIP_KEY_TABLE", &TOOLBAR_TOOLTIP_KEY_TABLE);
+        assert_no_autodetector_wording("WIZARD_KEY_TABLE", &WIZARD_KEY_TABLE);
+        assert_no_autodetector_wording("CLOCK_KEY_TABLE", &CLOCK_KEY_TABLE);
+        assert_no_autodetector_wording("SETTINGS_KEY_TABLE", &SETTINGS_KEY_TABLE);
+        assert_no_autodetector_wording("USER_SETTINGS_KEY_TABLE", &USER_SETTINGS_KEY_TABLE);
+        assert_no_autodetector_wording("PROFILE_KEY_TABLE", &PROFILE_KEY_TABLE);
+        assert_no_autodetector_wording("MODAL_KEY_TABLE", &MODAL_KEY_TABLE);
+        assert_no_autodetector_wording("INDICATOR_MODAL_KEY_TABLE", &INDICATOR_MODAL_KEY_TABLE);
+        assert_no_autodetector_wording("SIDEBAR_KEY_TABLE", &SIDEBAR_KEY_TABLE);
+        assert_no_autodetector_wording("PRIMITIVE_NAME_TABLE", &PRIMITIVE_NAME_TABLE);
+        assert_no_autodetector_wording("PRIMITIVE_TOOLTIP_TABLE", &PRIMITIVE_TOOLTIP_TABLE);
+        assert_no_autodetector_wording("TRADING_KEY_TABLE", &TRADING_KEY_TABLE);
+        assert_no_autodetector_wording("TOOLBAR_MENU_KEY_TABLE", &TOOLBAR_MENU_KEY_TABLE);
+        assert_no_autodetector_wording("CITY_KEY_TABLE", &CITY_KEY_TABLE);
+        assert_no_autodetector_wording("HEAD_SHOULDERS_KEY_TABLE", &HEAD_SHOULDERS_KEY_TABLE);
+        assert_no_autodetector_wording("POSITION_POINT_KEY_TABLE", &POSITION_POINT_KEY_TABLE);
+        assert_no_autodetector_wording("SHELL_KEY_TABLE", &SHELL_KEY_TABLE);
+        assert_no_autodetector_wording("CONCEPT_KEY_TABLE", &CONCEPT_KEY_TABLE);
+        assert_no_autodetector_wording("CANDLE_PATTERN_KEY_TABLE", &CANDLE_PATTERN_KEY_TABLE);
+        assert_no_autodetector_wording("CANDLE_PATTERN_SHORT_KEY_TABLE", &CANDLE_PATTERN_SHORT_KEY_TABLE);
+        assert_no_autodetector_wording("SHARE_VIEWER_KEY_TABLE", &SHARE_VIEWER_KEY_TABLE);
+        assert_no_autodetector_wording("FORUM_KEY_TABLE", &FORUM_KEY_TABLE);
     }
 }

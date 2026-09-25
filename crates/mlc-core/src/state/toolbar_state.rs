@@ -322,6 +322,7 @@ pub struct ToggleIconPair {
 use web_time::Instant;
 
 use crate::state::geometry::LayoutRect;
+use crate::state::scroll_state::ScrollState;
 use crate::state::toolbar_geometry::ToolbarRenderResult;
 use crate::state::toolbar_geometry::WidgetRect;
 use crate::chart::types::crosshair::Crosshair;
@@ -547,6 +548,17 @@ pub struct DropdownRenderInfo {
     /// closed or the dropdown rendered is not `settings_gear`. Same
     /// threading role as `granularity_edit_input` above — see its doc.
     pub watermark_text_input: Option<(WidgetRect, Vec<f64>)>,
+    /// Full (unclamped) content height this dropdown's rows would need —
+    /// `mlc_app_layout::ui::dropdown::DropdownConfig::calculate_height()`'s
+    /// answer for the row list actually drawn this frame. Together with
+    /// `viewport_height` this is what `ChartApp::on_scroll`'s
+    /// `"dropdown:__scroll__"` handler feeds `ScrollState::handle_wheel`
+    /// (toolbar-flyout-collapse arc) — equal to `viewport_height` whenever
+    /// the flyout fit without clamping.
+    pub content_height: f64,
+    /// What the flyout actually got clamped to this frame — see
+    /// `content_height`'s own doc.
+    pub viewport_height: f64,
 }
 
 /// Hit-test information for an inline popup dropdown (style or width picker).
@@ -875,6 +887,25 @@ pub struct ChartToolbarState {
     /// native shell's redraw-gating loop. `None` (or lapsed) draws the hat
     /// at rest.
     pub mascot_anim: Option<MascotAnim>,
+    /// Collapsed state of drawing-tool flyout sub-sections (toolbar-flyout-
+    /// collapse arc, owner order 2026-09-25) — keyed by the stable,
+    /// language-independent id [`crate::toolbar::flyout_section_id`] mints
+    /// (`"{dropdown_id}#{header_ordinal}"`), never by the localized header
+    /// text. Present = collapsed; absent = expanded (today's behaviour for
+    /// every profile saved before this field existed). Persisted on
+    /// `ProfileUiSettings::collapsed_flyout_sections`, same live-mutated-
+    /// in-place / synced-at-load-and-save class as `favorites_bar_visible`.
+    pub collapsed_flyout_sections: std::collections::BTreeSet<String>,
+    /// Scroll state of the currently open toolbar dropdown/flyout, once its
+    /// content is taller than the panel it opened in (toolbar-flyout-
+    /// collapse arc) — mirrors the modal clamp fix
+    /// (`mlc-app-layout/src/ui/widgets/modal.rs`'s `ModalShellSpec::
+    /// max_content_height`), just for the lighter-weight dropdown popup
+    /// instead of a modal shell. Reset whenever a NEW dropdown opens
+    /// (`ChartApp`'s render call site, keyed off `DropdownRenderInfo::
+    /// dropdown_id` changing) — not persisted, purely transient UI state
+    /// like `top_scroll_offset` above.
+    pub dropdown_scroll: ScrollState,
 }
 
 impl Default for ChartToolbarState {
@@ -936,6 +967,8 @@ impl Default for ChartToolbarState {
             open_dropdown_position: None,
             active_param_chart_type: None,
             mascot_anim: None,
+            collapsed_flyout_sections: std::collections::BTreeSet::new(),
+            dropdown_scroll: ScrollState::new(),
         }
     }
 }
@@ -943,6 +976,21 @@ impl Default for ChartToolbarState {
 impl ChartToolbarState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Whether the flyout sub-section identified by `section_id` (see
+    /// [`crate::toolbar::flyout_section_id`]) is collapsed. Absent from
+    /// `collapsed_flyout_sections` means expanded.
+    pub fn is_flyout_section_collapsed(&self, section_id: &str) -> bool {
+        self.collapsed_flyout_sections.contains(section_id)
+    }
+
+    /// Flip a flyout sub-section's collapsed state — fired on a double-click
+    /// on its header or chevron (owner order 2026-09-25).
+    pub fn toggle_flyout_section_collapsed(&mut self, section_id: &str) {
+        if !self.collapsed_flyout_sections.remove(section_id) {
+            self.collapsed_flyout_sections.insert(section_id.to_string());
+        }
     }
 
     /// Check if a toolbar item is the active tool
@@ -1916,5 +1964,46 @@ mod tests {
             serde_json::to_string(&ScreenshotDestination::ShareLink).unwrap(),
             "\"share_link\""
         );
+    }
+
+    /// Toolbar-flyout-collapse arc (owner order 2026-09-25): a section
+    /// toggles on the SECOND (double) click and stays toggled after the
+    /// profile round-trips through a save (`build_user_profile`'s
+    /// `collapsed_flyout_sections: self.panel_app.toolbar_state.
+    /// collapsed_flyout_sections.clone()`) and a reload (`apply_profile_
+    /// state`'s `self.panel_app.toolbar_state.collapsed_flyout_sections =
+    /// profile.ui.collapsed_flyout_sections.clone()`) — this test exercises
+    /// exactly that shape without needing a full `ChartApp`.
+    #[test]
+    fn a_section_toggles_on_double_click_and_survives_a_profile_reload() {
+        let section_id = crate::toolbar::flyout_section_id("pattern_tools", 2);
+
+        let mut tb = ChartToolbarState::default();
+        assert!(!tb.is_flyout_section_collapsed(&section_id), "starts expanded");
+
+        // First double-click: collapse.
+        tb.toggle_flyout_section_collapsed(&section_id);
+        assert!(tb.is_flyout_section_collapsed(&section_id));
+
+        // Save: mirrors `build_user_profile`'s field mapping.
+        let mut ui = crate::user_profile::ProfileUiSettings::default();
+        ui.collapsed_flyout_sections = tb.collapsed_flyout_sections.clone();
+
+        // Reload into a FRESH toolbar state: mirrors `apply_profile_state`'s
+        // field mapping — the collapse must survive the round trip.
+        let mut reloaded = ChartToolbarState::default();
+        reloaded.collapsed_flyout_sections = ui.collapsed_flyout_sections.clone();
+        assert!(reloaded.is_flyout_section_collapsed(&section_id), "collapse survives save+reload");
+
+        // Second double-click (post-reload): expand again, and the empty
+        // set persists just as cleanly.
+        reloaded.toggle_flyout_section_collapsed(&section_id);
+        assert!(!reloaded.is_flyout_section_collapsed(&section_id));
+        ui.collapsed_flyout_sections = reloaded.collapsed_flyout_sections.clone();
+        assert!(ui.collapsed_flyout_sections.is_empty());
+
+        // A DIFFERENT section's id never collides with this one.
+        let other = crate::toolbar::flyout_section_id("fib_tools", 2);
+        assert!(!reloaded.is_flyout_section_collapsed(&other));
     }
 }

@@ -5321,6 +5321,10 @@ impl ChartApp {
         }
         self.panel_app.toolbar_state.favorites_bar_visible = profile.ui.favorites_bar_visible;
         self.panel_app.toolbar_state.screenshot_destination = profile.ui.screenshot_destination;
+        // Collapsed flyout sub-sections (toolbar-flyout-collapse arc,
+        // owner order 2026-09-25) — a plain UI preference, same load shape
+        // as `favorites_bar_visible` just above.
+        self.panel_app.toolbar_state.collapsed_flyout_sections = profile.ui.collapsed_flyout_sections.clone();
 
         // Community modal per-tab size (community-modal chrome arc, cloud
         // builds only) — flat profile field, no per-window mirror, same
@@ -8052,6 +8056,17 @@ impl ChartApp {
             let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
             let clock_glitch_enabled = self.core.user().profile().ui.clock_glitch_enabled;
             let is_capturing_screenshot = self.is_capturing_screenshot();
+            // A freshly opened dropdown always starts scrolled to its own
+            // top (toolbar-flyout-collapse arc) — reset `dropdown_scroll`
+            // the frame `open_dropdown_id` changes, rather than carrying
+            // over whatever a PREVIOUS (possibly taller, possibly shorter)
+            // flyout left it at.
+            let last_open_dropdown_id = self.last_toolbar_result.as_ref()
+                .and_then(|r| r.dropdown_result.as_ref())
+                .map(|dd| dd.dropdown_id.as_str());
+            if self.panel_app.toolbar_state.open_dropdown_id.as_deref() != last_open_dropdown_id {
+                self.panel_app.toolbar_state.dropdown_scroll.reset();
+            }
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -8281,6 +8296,24 @@ impl ChartApp {
                         format!("dropdown:{}:{}", dd.dropdown_id, item_id),
                         uzor::Rect::new(rect.x, rect.y, rect.width, rect.height),
                         Sense::CLICK,
+                        &dd_layer,
+                    );
+                }
+
+                // Wheel-scrollable viewport (toolbar-flyout-collapse arc,
+                // owner order 2026-09-25) — `dd.menu_rect` is already the
+                // CLAMPED frame (`chart_toolbar_render_dropdown`'s vertical
+                // clamp-and-scroll block), so registering the scroll sense
+                // over the whole menu rect is correct without any further
+                // geometry. Only registered while there is actually
+                // something to scroll to, same gate `ChartApp::on_scroll`'s
+                // `"dropdown:__scroll__"` handler re-checks before moving
+                // `dropdown_scroll`.
+                if dd.content_height > dd.viewport_height {
+                    self.input_coordinator.borrow_mut().register_on_layer(
+                        "dropdown:__scroll__",
+                        uzor::Rect::new(dd.menu_rect.x, dd.menu_rect.y, dd.menu_rect.width, dd.menu_rect.height),
+                        Sense::SCROLL,
                         &dd_layer,
                     );
                 }
@@ -9306,6 +9339,16 @@ impl ChartApp {
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
         let is_capturing_screenshot = self.is_capturing_screenshot();
+        // See the twin reset in `render_to_scene` for the rationale — same
+        // "a freshly opened dropdown starts scrolled to its own top" rule,
+        // needed here too since `render_toolbar_only` is the OTHER path
+        // that can observe `open_dropdown_id` change.
+        let last_open_dropdown_id = self.last_toolbar_result.as_ref()
+            .and_then(|r| r.dropdown_result.as_ref())
+            .map(|dd| dd.dropdown_id.as_str());
+        if self.panel_app.toolbar_state.open_dropdown_id.as_deref() != last_open_dropdown_id {
+            self.panel_app.toolbar_state.dropdown_scroll.reset();
+        }
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,

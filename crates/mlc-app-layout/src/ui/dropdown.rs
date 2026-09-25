@@ -14,6 +14,10 @@ const TRAILING_ICON_SIZE: f64 = 16.0;
 const TRAILING_ICON_GAP: f64 = 4.0;
 /// Padding between the rightmost trailing icon and the row's right edge.
 const TRAILING_ICON_PAD_RIGHT: f64 = 8.0;
+/// Horizontal space a collapsible header's chevron glyph reserves before its
+/// label — used by both the width-measuring pass and the draw pass so they
+/// stay in lockstep (same contract as `trailing_icons_zone_width`).
+const HEADER_CHEVRON_RESERVE: f64 = 16.0;
 
 /// Total horizontal space `n` trailing icons reserve on the right edge of a
 /// dropdown row: `pad_right + n * icon_size + (n - 1) * gap` for `n > 0`,
@@ -99,9 +103,18 @@ pub enum DropdownItem {
     },
     /// Separator line
     Separator,
-    /// Header/title (non-clickable text).
+    /// Header/title (non-clickable text). Doubles as a collapsible
+    /// flyout-section toggle (toolbar-flyout-collapse arc, owner order
+    /// 2026-09-25) — see [`DropdownItem::header_collapsible`].
     Header {
         label: String,
+        /// `None` (every plain [`DropdownItem::header`] row): no chevron,
+        /// today's behaviour. `Some(false)`/`Some(true)`
+        /// ([`DropdownItem::header_collapsible`]): draws a down-pointing
+        /// (expanded) or right-pointing (collapsed) chevron before the
+        /// label — the section's double-click target is the whole header
+        /// row, not just the glyph.
+        collapsed: Option<bool>,
     },
     /// Submenu (shows arrow, opens another menu)
     Submenu {
@@ -218,6 +231,17 @@ impl DropdownItem {
     pub fn header(label: &str) -> Self {
         Self::Header {
             label: label.to_string(),
+            collapsed: None,
+        }
+    }
+
+    /// A collapsible flyout-section header (toolbar-flyout-collapse arc,
+    /// owner order 2026-09-25) — draws a chevron reflecting `collapsed`
+    /// before the label. See [`DropdownItem::Header::collapsed`]'s own doc.
+    pub fn header_collapsible(label: &str, collapsed: bool) -> Self {
+        Self::Header {
+            label: label.to_string(),
+            collapsed: Some(collapsed),
         }
     }
 
@@ -273,6 +297,19 @@ pub struct DropdownConfig {
     /// button-aligned dropdowns would otherwise escape the window; `None`
     /// keeps the historical button-aligned position untouched.
     pub clamp_x: Option<(f64, f64)>,
+    /// Clamp the menu's drawn height to this many pixels — the excess
+    /// becomes scrollable via `scroll_offset` instead of running past the
+    /// caller's own bounds (toolbar-flyout-collapse arc; same idea as the
+    /// modal clamp fix, `ModalShellSpec::max_content_height`,
+    /// `mlc-app-layout/src/ui/widgets/modal.rs`). `None` keeps the
+    /// historical unclamped-height behaviour every other caller relies on.
+    pub max_height: Option<f64>,
+    /// Vertical scroll offset applied when `max_height` clamps the content
+    /// — the caller's own `ScrollState::animated_offset()`, already clamped
+    /// to `[0, content_height - max_height]`. Rows that land outside the
+    /// clamped viewport after this shift are neither painted nor
+    /// hit-testable. `0.0` (the default) is a no-op.
+    pub scroll_offset: f64,
 }
 
 impl Default for DropdownConfig {
@@ -292,6 +329,8 @@ impl Default for DropdownConfig {
             shadow_blur: 24.0,
             grid_columns: None,
             clamp_x: None,
+            max_height: None,
+            scroll_offset: 0.0,
         }
     }
 }
@@ -318,15 +357,48 @@ impl DropdownConfig {
         self.grid_columns.is_some()
     }
 
-    /// Calculate required height for the menu
+    /// Calculate required height for the menu.
+    ///
+    /// Mirrors `draw_dropdown`'s own layout pass exactly — including its
+    /// grid flow (`grid_columns` cells per row, Header/Separator rows
+    /// flushing a partially-filled row first) — so a caller measuring
+    /// before drawing (vertical fit guards, `DropdownConfig::max_height`
+    /// callers) gets the SAME height `draw_dropdown` actually produces.
+    /// Bug fix (toolbar-flyout-collapse arc): previously counted one
+    /// `item_height` per Item/Submenu regardless of `grid_columns`, wildly
+    /// over-estimating grid dropdowns (e.g. the favorites-bar "+" picker's
+    /// 4-column grid).
     pub fn calculate_height(&self) -> f64 {
+        let cols = usize::from(self.grid_columns.unwrap_or(1).max(1));
         let mut height = self.padding * 2.0;
+        let mut col = 0usize;
         for item in &self.items {
-            height += match item {
-                DropdownItem::Item { .. } | DropdownItem::Submenu { .. } => self.item_height,
-                DropdownItem::Separator => self.separator_height,
-                DropdownItem::Header { .. } => self.header_height,
-            };
+            match item {
+                DropdownItem::Item { .. } | DropdownItem::Submenu { .. } => {
+                    col += 1;
+                    if col >= cols {
+                        col = 0;
+                        height += self.item_height;
+                    }
+                }
+                DropdownItem::Separator => {
+                    if col != 0 {
+                        col = 0;
+                        height += self.item_height;
+                    }
+                    height += self.separator_height;
+                }
+                DropdownItem::Header { .. } => {
+                    if col != 0 {
+                        col = 0;
+                        height += self.item_height;
+                    }
+                    height += self.header_height;
+                }
+            }
+        }
+        if col != 0 {
+            height += self.item_height;
         }
         height
     }
@@ -491,8 +563,11 @@ where
                 // Track maximum width
                 content_width = content_width.max(item_width);
             }
-            DropdownItem::Header { label } => {
-                let header_width = ctx.measure_text(label) + config.item_padding_x * 2.0;
+            DropdownItem::Header { label, collapsed } => {
+                // Collapsible headers reserve room for the chevron glyph
+                // drawn before the label (see the draw pass below).
+                let chevron_reserve = if collapsed.is_some() { HEADER_CHEVRON_RESERVE } else { 0.0 };
+                let header_width = ctx.measure_text(label) + config.item_padding_x * 2.0 + chevron_reserve;
                 content_width = content_width.max(header_width);
             }
             DropdownItem::Separator => {
@@ -597,7 +672,23 @@ where
     if col != 0 {
         y_off += config.item_height;
     }
-    let menu_height = y_off + config.padding;
+    let full_content_height = y_off + config.padding;
+
+    // Height clamp + vertical scroll (toolbar-flyout-collapse arc): shift
+    // every row up by `scroll_offset` — mirrors `ScrollableContainer`'s
+    // `content_y = viewport.y - offset` (`mlc-app-layout/src/ui/
+    // scroll_widget.rs`) — then draw the frame at the CLAMPED height
+    // instead of `full_content_height`. A no-op when `max_height` is `None`
+    // (every caller but the ones that overflow their own bounds).
+    let menu_height = match config.max_height {
+        Some(max_h) => full_content_height.min(max_h),
+        None => full_content_height,
+    };
+    if config.scroll_offset != 0.0 {
+        for r in rects.iter_mut() {
+            r.y -= config.scroll_offset;
+        }
+    }
 
     let menu_rect = WidgetRect::new(origin.0, origin.1, menu_width, menu_height);
     result.menu_rect = menu_rect;
@@ -619,7 +710,22 @@ where
     ctx.set_stroke_width(1.0);
     ctx.stroke_rounded_rect(menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height, config.radius);
 
-    // Draw items — rects precomputed by the layout pass above.
+    // Clamped flyout: clip painting to the visible band so a row shifted
+    // above/below it by `scroll_offset` never bleeds past the frame border
+    // just drawn — same purpose as `ScrollableContainer::begin`'s clip.
+    let clamped = config.max_height.is_some();
+    if clamped {
+        ctx.save();
+        ctx.begin_path();
+        ctx.rect(menu_rect.x, menu_rect.y, menu_rect.width, menu_rect.height);
+        ctx.clip();
+    }
+
+    // Draw items — rects precomputed by the layout pass above. Counts
+    // Header rows in on-screen order — the noop hit id below encodes this
+    // ordinal, not the (localized, renameable) label text, matching
+    // `mlc_core::toolbar::flyout_section_id`'s own positional id shape.
+    let mut header_ordinal = 0usize;
     for (idx, item) in config.items.iter().enumerate() {
         match item {
             DropdownItem::Item { id, icon, label, shortcut, disabled, danger, subtitle, accent_color, toggle, param_field, trailing_icons, swatch } => {
@@ -839,14 +945,40 @@ where
                 ctx.line_to(sep_rect.right(), sep_y);
                 ctx.stroke();
             }
-            DropdownItem::Header { label } => {
+            DropdownItem::Header { label, collapsed } => {
                 let header_rect = rects[idx];
 
                 ctx.set_font(&format!("bold {}px sans-serif", config.font_size));
                 ctx.set_fill_color(&theme.header_text);
                 ctx.set_text_align(TextAlign::Left);
                 ctx.set_text_baseline(TextBaseline::Middle);
-                ctx.fill_text(label, menu_rect.x + config.item_padding_x, header_rect.y + config.header_height / 2.0);
+
+                // Collapsible header (toolbar-flyout-collapse arc, owner
+                // order 2026-09-25): a small filled chevron before the
+                // label — down-pointing when expanded, right-pointing when
+                // collapsed ("down = expanded, right = collapsed"). Plain
+                // headers (`collapsed: None`) draw no chevron at all, same
+                // as before this arc.
+                let label_x = if let Some(is_collapsed) = collapsed {
+                    let cx = menu_rect.x + config.item_padding_x + 4.0;
+                    let cy = header_rect.center_y();
+                    ctx.begin_path();
+                    if *is_collapsed {
+                        ctx.move_to(cx, cy - 4.0);
+                        ctx.line_to(cx + 4.0, cy);
+                        ctx.line_to(cx, cy + 4.0);
+                    } else {
+                        ctx.move_to(cx - 4.0, cy - 2.0);
+                        ctx.line_to(cx + 4.0, cy - 2.0);
+                        ctx.line_to(cx, cy + 3.0);
+                    }
+                    ctx.close_path();
+                    ctx.fill();
+                    menu_rect.x + config.item_padding_x + HEADER_CHEVRON_RESERVE
+                } else {
+                    menu_rect.x + config.item_padding_x
+                };
+                ctx.fill_text(label, label_x, header_rect.y + config.header_height / 2.0);
 
                 // Header bottom border
                 ctx.set_stroke_color(&theme.header_border);
@@ -856,12 +988,19 @@ where
                 ctx.line_to(header_rect.right(), header_rect.y + config.header_height - 1.0);
                 ctx.stroke();
 
-                // Register a noop hit zone so clicks on the header are consumed
-                // and don't fall through to the background (which would close the dropdown).
+                // Register a hit zone so clicks on the header are consumed
+                // and don't fall through to the background (which would
+                // close the dropdown). The id carries the header's on-screen
+                // ORDINAL (not the localized label text) — `mlc-app`'s
+                // double-click handler extracts it and calls
+                // `mlc_core::toolbar::flyout_section_id` to build the same
+                // stable section id `chart_toolbar_render_dropdown` used to
+                // decide `collapsed` in the first place.
                 result.item_rects.push((
-                    format!("__noop__:header:{}", label),
+                    format!("__noop__:header:{}", header_ordinal),
                     header_rect,
                 ));
+                header_ordinal += 1;
             }
             DropdownItem::Submenu { id, icon, label } => {
                 let item_rect = rects[idx];
@@ -922,6 +1061,30 @@ where
                 }
             }
         }
+    }
+
+    if clamped {
+        ctx.restore();
+        // A row scrolled fully (or partly) outside the clamped viewport is
+        // no longer painted there (the clip above already saw to that) —
+        // its hit zone must shrink to match, or a click could land on
+        // supposedly-empty space and fire an invisible row. Intersect every
+        // registered rect with the visible band; drop it entirely when
+        // nothing remains (same clip-and-drop shape `primitive_settings.rs`
+        // already uses for its own scrollable rows).
+        let visible_top = menu_rect.y;
+        let visible_bottom = menu_rect.bottom();
+        result.item_rects.retain_mut(|(_, r)| {
+            let top = r.y.max(visible_top);
+            let bottom = (r.y + r.height).min(visible_bottom);
+            if bottom <= top {
+                false
+            } else {
+                r.y = top;
+                r.height = bottom - top;
+                true
+            }
+        });
     }
 
     result
@@ -1439,6 +1602,95 @@ mod tests {
 
         let height = config.calculate_height();
         assert!(height > 0.0);
+    }
+
+    /// Toolbar-flyout-collapse arc bug fix: `calculate_height()` used to
+    /// count one `item_height` per Item/Submenu regardless of
+    /// `grid_columns`, wildly over-estimating a grid dropdown (the
+    /// favorites-bar "+" picker's 4-column grid). It must now match a
+    /// single-column list exactly (no grid) AND account for `cols` when
+    /// one is set.
+    #[test]
+    fn calculate_height_accounts_for_grid_columns() {
+        let single_col = DropdownConfig::new(vec![
+            DropdownItem::item("a", "A"),
+            DropdownItem::item("b", "B"),
+            DropdownItem::item("c", "C"),
+            DropdownItem::item("d", "D"),
+        ]);
+        // 4 rows, 1 per row -> padding*2 + 4*item_height.
+        assert_eq!(single_col.calculate_height(), single_col.padding * 2.0 + 4.0 * single_col.item_height);
+
+        let mut grid = single_col.clone();
+        grid.grid_columns = Some(2);
+        // Same 4 items, 2 per row -> only 2 rows.
+        assert_eq!(grid.calculate_height(), grid.padding * 2.0 + 2.0 * grid.item_height);
+
+        // A trailing partial row (5 items, 2 cols) still counts as a row.
+        let mut grid5 = grid.clone();
+        grid5.items.push(DropdownItem::item("e", "E"));
+        assert_eq!(grid5.calculate_height(), grid5.padding * 2.0 + 3.0 * grid5.item_height);
+
+        // A Header flushes a partially-filled grid row before its own row.
+        let mut grid_with_header = DropdownConfig::new(vec![
+            DropdownItem::item("a", "A"),
+            DropdownItem::header("Section"),
+            DropdownItem::item("b", "B"),
+        ]);
+        grid_with_header.grid_columns = Some(2);
+        // "A" flushes its own row (partial), header its own row, "B" its own row.
+        assert_eq!(
+            grid_with_header.calculate_height(),
+            grid_with_header.padding * 2.0 + grid_with_header.item_height * 2.0 + grid_with_header.header_height,
+        );
+    }
+
+    /// Height clamp + wheel scroll (toolbar-flyout-collapse arc, owner order
+    /// 2026-09-25) — `draw_dropdown`'s own row-level math, exercised without
+    /// a `RenderContext` by driving the SAME layout arithmetic the draw
+    /// pass uses: a clamped `max_height` shrinks the drawn frame, and a
+    /// nonzero `scroll_offset` moves every row up by that amount — which is
+    /// exactly what makes scrolling reveal rows that were clamped out.
+    #[test]
+    fn a_clamped_flyout_scrolls() {
+        let items: Vec<DropdownItem> = (0..10)
+            .map(|i| DropdownItem::item(&format!("row{i}"), &format!("Row {i}")))
+            .collect();
+        let mut config = DropdownConfig::new(items);
+        let full_height = config.calculate_height();
+
+        // Clamp to less than half the content.
+        let viewport_h = full_height / 2.0;
+        config.max_height = Some(viewport_h);
+
+        // Unscrolled: the frame is clamped to the viewport height.
+        config.scroll_offset = 0.0;
+        assert_eq!(clamped_menu_height(&config), viewport_h);
+
+        // Scrolled to the max: the frame height is unchanged (still
+        // clamped) — scrolling moves CONTENT, not the frame.
+        let max_scroll = full_height - viewport_h;
+        config.scroll_offset = max_scroll;
+        assert_eq!(clamped_menu_height(&config), viewport_h);
+
+        // The row that was clamped out at zero scroll is reachable once
+        // scrolled all the way: row 9's unscrolled y sits past the
+        // viewport, its scrolled y (y - scroll_offset) sits inside it.
+        let unscrolled_last_row_y = config.padding + 9.0 * config.item_height;
+        assert!(unscrolled_last_row_y >= viewport_h, "row 9 must start clamped OUT at zero scroll");
+        let scrolled_last_row_y = unscrolled_last_row_y - max_scroll;
+        assert!(scrolled_last_row_y < viewport_h, "row 9 must be back inside the viewport once scrolled to max");
+    }
+
+    /// Mirrors `draw_dropdown`'s own `menu_height` computation (`config.
+    /// max_height.map(|m| full.min(m)).unwrap_or(full)`) without needing a
+    /// `RenderContext` — used by `a_clamped_flyout_scrolls` above.
+    fn clamped_menu_height(config: &DropdownConfig) -> f64 {
+        let full = config.calculate_height();
+        match config.max_height {
+            Some(max_h) => full.min(max_h),
+            None => full,
+        }
     }
 }
 
