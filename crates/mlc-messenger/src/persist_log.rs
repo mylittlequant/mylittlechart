@@ -126,6 +126,9 @@ fn read_bytes(bytes: &[u8], at: usize) -> Option<(&[u8], usize)> {
     Some((slice, end))
 }
 
+/// One payload's own decoded writes and deletes, in the order they appear.
+type DecodedFrame = (Vec<(String, Vec<u8>)>, Vec<String>);
+
 /// Decodes one already hash-verified payload into its writes/deletes.
 /// `None` means the payload's own declared lengths ran past its actual end,
 /// or left trailing bytes unaccounted for — [`replay`] treats that exactly
@@ -133,7 +136,7 @@ fn read_bytes(bytes: &[u8], at: usize) -> Option<(&[u8], usize)> {
 /// these are genuinely the bytes this module wrote, so a shape mismatch
 /// here would mean this module's own encoder and decoder disagree, not a
 /// disk-level corruption — still not something to panic on in a boot path.
-fn decode_payload(payload: &[u8]) -> Option<(Vec<(String, Vec<u8>)>, Vec<String>)> {
+fn decode_payload(payload: &[u8]) -> Option<DecodedFrame> {
     let (_batch_id, mut at) = read_u64(payload, 0)?;
     let (record_count, next) = read_u32(payload, at)?;
     at = next;
@@ -174,8 +177,7 @@ fn decode_payload(payload: &[u8]) -> Option<(Vec<(String, Vec<u8>)>, Vec<String>
 pub fn replay(bytes: &[u8]) -> (BTreeMap<RecordKey, Vec<u8>>, usize) {
     let mut map = BTreeMap::new();
     let mut pos = 0usize;
-    loop {
-        let Some((payload_len, header_end)) = read_u32(bytes, pos) else { break };
+    while let Some((payload_len, header_end)) = read_u32(bytes, pos) {
         let Some(hash_end) = header_end.checked_add(HASH_LEN) else { break };
         let Some(payload_end) = hash_end.checked_add(payload_len as usize) else { break };
         let Some(stored_hash) = bytes.get(header_end..hash_end) else { break };
@@ -234,7 +236,7 @@ mod tests {
         assert_eq!(valid_len, full_len, "only the first, complete frame counts");
         assert_eq!(records.len(), 1);
         assert_eq!(records.get(&RecordKey::new("a")), Some(&b"1".to_vec()));
-        assert!(records.get(&RecordKey::new("b")).is_none(), "the torn second frame never applied");
+        assert!(!records.contains_key(&RecordKey::new("b")), "the torn second frame never applied");
     }
 
     #[test]

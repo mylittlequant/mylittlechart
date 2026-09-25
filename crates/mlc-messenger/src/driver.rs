@@ -35,17 +35,25 @@
 //!    here on [`MessengerDriver::tick`] drives the ordinary pump loop (see
 //!    below).
 //!
-//! A boot failure — `whoami` came back non-200 or undecodable, a transport
-//! error hit it, or [`crate::core::MessengerCore::open_sealed`] itself
-//! failed opening the records the shell handed back (wrong vault key, a
-//! corrupted record) — reports through
-//! [`crate::provider::SnapshotProvider::set_last_error`] and leaves
+//! A `whoami` transport error, `5xx`, or `429` is treated as TRANSIENT (a
+//! flaky connection or a rate limit, not a bad credential): it reports
+//! through [`crate::provider::SnapshotProvider::set_last_error`] as a
+//! "connecting…" message and reschedules another `whoami` probe after a
+//! jittered, doubling backoff (base 1s, capped at 30s — the same
+//! [`SeededJitter`] shape as [`MessengerCore::open_sealed`]'s own retry
+//! jitter), with [`MessengerDriver::tick`] re-emitting it once `now_ms`
+//! reaches that schedule. Every other boot failure — a `401`/`403`/other
+//! `4xx` `whoami` response, an undecodable body, or
+//! [`crate::core::MessengerCore::open_sealed`] itself failing to open the
+//! records the shell handed back (wrong vault key, a corrupted record) — is
+//! TERMINAL: it reports the same way but leaves
 //! [`crate::provider::SnapshotProvider::vault_state`] at
-//! [`VaultState::Locked`] permanently for this driver instance: it never
+//! [`VaultState::Locked`] permanently for this driver instance, and never
 //! falls back to opening an empty store instead, because that is exactly
 //! how a wrong vault key would silently destroy this device's own history
-//! rather than refuse loudly. A shell that wants to retry (e.g. after the
-//! user re-authenticates) builds a fresh [`MessengerDriver`].
+//! rather than refuse loudly. A shell that wants to retry a terminal
+//! failure (e.g. after the user re-authenticates) builds a fresh
+//! [`MessengerDriver`].
 //!
 //! # The pump loop
 //!
@@ -86,6 +94,27 @@ use mlc_messenger_model::VaultState;
 /// `GET /_matrix/client/v3/account/whoami` — this driver's own boot-time
 /// probe (module doc's "Boot phases").
 const WHOAMI_PATH: &str = "/_matrix/client/v3/account/whoami";
+
+/// A transient `whoami` failure's own starting backoff (module doc).
+const WHOAMI_RETRY_BASE_MS: u64 = 1_000;
+/// A transient `whoami` failure's own backoff ceiling (module doc).
+const WHOAMI_RETRY_CAP_MS: u64 = 30_000;
+
+/// Computes `min(30_000, 1000 * 2^attempt)` milliseconds, then jitters the
+/// result to `[50%, 100%]` of that value using `jitter_unit` (clamped to
+/// `[0.0, 1.0]`), then re-caps — the exact same shape as
+/// [`crate::outgoing_queue`]'s own `capped_exponential_backoff_ms`, just
+/// with this module's own, tighter ceiling (module doc: 30s, not 60s).
+/// `attempt` is capped at `5` internally: `1000 * 2^5 = 32_000` already
+/// exceeds [`WHOAMI_RETRY_CAP_MS`], so every attempt from `5` onward
+/// computes the same, fully-capped value.
+fn whoami_retry_backoff_ms(attempt: u32, jitter_unit: f64) -> u64 {
+    let shift = attempt.min(5);
+    let base = WHOAMI_RETRY_BASE_MS.saturating_mul(1u64 << shift).min(WHOAMI_RETRY_CAP_MS);
+    let unit = jitter_unit.clamp(0.0, 1.0);
+    let jittered = (base as f64 * (0.5 + 0.5 * unit)).round() as u64;
+    jittered.min(WHOAMI_RETRY_CAP_MS)
+}
 
 /// The subset of `whoami`'s response body this driver reads. `device_id` is
 /// optional per the Client-Server API, but a token that does not identify a
@@ -251,6 +280,15 @@ pub struct MessengerDriver {
     provider: SnapshotProvider,
     core: Option<MessengerCore<SealedRecordCodec>>,
     whoami_sent: bool,
+    /// How many transient `whoami` failures have happened in a row since
+    /// the last successful send — [`whoami_retry_backoff_ms`]'s own
+    /// `attempt` (module doc's "connecting…" retry).
+    whoami_attempt: u32,
+    /// `Some(t)` while waiting out a transient `whoami` failure's own
+    /// backoff — [`MessengerDriver::tick`] re-sends once `now_ms >= t`.
+    /// `None` means either never failed yet, or a probe is already
+    /// in flight awaiting its response.
+    whoami_next_attempt_at: Option<i64>,
     last_published_change_counter: u64,
 }
 
@@ -266,6 +304,8 @@ impl MessengerDriver {
             provider: SnapshotProvider::new(SLICE_CAPABILITIES),
             core: None,
             whoami_sent: false,
+            whoami_attempt: 0,
+            whoami_next_attempt_at: None,
             last_published_change_counter: 0,
         }
     }
@@ -293,6 +333,20 @@ impl MessengerDriver {
         self.provider.set_last_error(Some(reason));
     }
 
+    /// A transient `whoami` failure (transport error, `5xx`, `429`, module
+    /// doc): schedules a retry after a jittered, doubling backoff instead
+    /// of failing boot outright, and reports it as "connecting…" rather
+    /// than a hard error.
+    fn schedule_whoami_retry(&mut self, now_ms: i64, reason: String) {
+        let attempt = self.whoami_attempt;
+        self.whoami_attempt = self.whoami_attempt.saturating_add(1);
+        let mut jitter = SeededJitter::new(now_ms.wrapping_add(i64::from(attempt)));
+        let backoff = whoami_retry_backoff_ms(attempt, jitter.next_unit());
+        self.whoami_next_attempt_at = Some(now_ms.saturating_add(backoff as i64));
+        self.whoami_sent = false;
+        self.provider.set_last_error(Some(format!("connecting… ({reason})")));
+    }
+
     /// Advances the pump loop by one step — see the module doc's "The pump
     /// loop" (once [`DriverPhase::Running`]) or "Boot phases" (before then).
     /// Never blocks; a shell calls this as often as it likes (e.g. once per
@@ -301,10 +355,17 @@ impl MessengerDriver {
     pub fn tick(&mut self, now_ms: i64) -> DriverOutput {
         match &self.phase {
             DriverPhase::Booting(BootPhase::AwaitingWhoami) => {
-                if self.whoami_sent {
+                if let Some(next_attempt_at) = self.whoami_next_attempt_at {
+                    if now_ms < next_attempt_at {
+                        return DriverOutput::default();
+                    }
+                } else if self.whoami_sent {
+                    // Already sent once and still awaiting its response --
+                    // no retry scheduled (yet).
                     return DriverOutput::default();
                 }
                 self.whoami_sent = true;
+                self.whoami_next_attempt_at = None;
                 DriverOutput { requests: vec![DriverRequest::whoami()], flush: Vec::new() }
             }
             DriverPhase::Booting(_) => DriverOutput::default(),
@@ -340,7 +401,18 @@ impl MessengerDriver {
         DriverOutput { requests, flush }
     }
 
-    fn on_boot_whoami_response(&mut self, status: u16, body: Vec<u8>) {
+    /// `true` for a status this driver treats as a transient `whoami`
+    /// failure (module doc) — a rate limit or a server-side hiccup, not a
+    /// bad credential.
+    fn is_transient_whoami_status(status: u16) -> bool {
+        status == 429 || (500..=599).contains(&status)
+    }
+
+    fn on_boot_whoami_response(&mut self, status: u16, body: Vec<u8>, now_ms: i64) {
+        if Self::is_transient_whoami_status(status) {
+            self.schedule_whoami_retry(now_ms, format!("HTTP {status}"));
+            return;
+        }
         if status != 200 {
             self.fail_boot(format!("whoami failed: HTTP {status}"));
             return;
@@ -360,6 +432,9 @@ impl MessengerDriver {
             Ok(device_id) => device_id,
             Err(error) => return self.fail_boot(format!("whoami returned an invalid device_id: {error}")),
         };
+        // Recovered from any earlier "connecting…" retry -- the UI should
+        // not keep showing it once boot is actually making progress again.
+        self.provider.set_last_error(None);
         self.phase = DriverPhase::Booting(BootPhase::AwaitingRecords { user_id, device_id });
     }
 
@@ -367,7 +442,7 @@ impl MessengerDriver {
     /// matching [`DriverRequest`] carried.
     pub fn on_response(&mut self, id: DriverRequestId, status: u16, body: Vec<u8>, now_ms: i64) {
         match id {
-            DriverRequestId::Whoami => self.on_boot_whoami_response(status, body),
+            DriverRequestId::Whoami => self.on_boot_whoami_response(status, body, now_ms),
             DriverRequestId::Core(request_id) => {
                 if let Some(core) = self.core.as_mut() {
                     let _ = core.on_response(request_id, crate::wire::HttpResponseDescriptor { status, body }, now_ms);
@@ -377,9 +452,11 @@ impl MessengerDriver {
     }
 
     /// Feeds one transport-level failure (no HTTP response at all) back in.
+    /// A `whoami` transport error is always transient (module doc) -- it
+    /// schedules a retry rather than failing boot outright.
     pub fn on_transport_error(&mut self, id: &DriverRequestId, now_ms: i64) {
         match id {
-            DriverRequestId::Whoami => self.fail_boot("whoami request failed: transport error".to_string()),
+            DriverRequestId::Whoami => self.schedule_whoami_retry(now_ms, "transport error".to_string()),
             DriverRequestId::Core(request_id) => {
                 if let Some(core) = self.core.as_mut() {
                     core.on_transport_error(request_id, now_ms);
@@ -512,6 +589,53 @@ mod tests {
         // Boot stays failed permanently -- further ticks raise nothing.
         assert!(driver.tick(0).requests.is_empty());
         assert!(driver.tick(0).flush.is_empty());
+    }
+
+    #[test]
+    fn whoami_transport_error_retries_with_backoff() {
+        let mut driver = MessengerDriver::new(Zeroizing::new([7u8; 32]));
+        assert_eq!(driver.tick(0).requests.len(), 1, "first tick sends whoami");
+
+        driver.on_transport_error(&DriverRequestId::Whoami, 0);
+        assert!(driver.provider().last_error().is_some(), "a transient failure still surfaces as a 'connecting' message");
+        assert_eq!(driver.provider().vault_state(), VaultState::Locked, "not terminal -- still booting");
+
+        // Attempt 0's own backoff window is [500ms, 1000ms] -- 100ms is
+        // never enough, 1500ms always is, regardless of jitter.
+        assert!(driver.tick(100).requests.is_empty(), "backoff has not elapsed yet");
+        let output = driver.tick(1_500);
+        assert_eq!(output.requests.len(), 1, "whoami is retried once the first backoff window elapsed");
+        assert_eq!(output.requests[0].id, DriverRequestId::Whoami);
+
+        // A second failure grows the backoff (attempt 1: [1000ms, 2000ms]
+        // measured from now_ms=1_500, so due somewhere in [2_500, 3_500]).
+        driver.on_transport_error(&DriverRequestId::Whoami, 1_500);
+        assert!(driver.tick(2_000).requests.is_empty(), "the second, larger backoff window has not elapsed yet");
+        let output = driver.tick(4_000);
+        assert_eq!(output.requests.len(), 1, "the growing backoff still eventually retries -- never terminal on its own");
+
+        // Recovery still completes boot normally.
+        driver.on_response(DriverRequestId::Whoami, 200, whoami_body("@alice:example.org", "DEV1"), 4_000);
+        let (user_id, device_id) = driver.awaiting_records().expect("recovered and resolved a device");
+        assert_eq!(user_id.as_str(), "@alice:example.org");
+        assert_eq!(device_id.as_str(), "DEV1");
+        assert!(driver.provider().last_error().is_none(), "the 'connecting…' message clears once boot is making progress again");
+    }
+
+    #[test]
+    fn whoami_401_is_terminal() {
+        let mut driver = MessengerDriver::new(Zeroizing::new([7u8; 32]));
+        driver.tick(0);
+        driver.on_response(DriverRequestId::Whoami, 401, Vec::new(), 0);
+
+        assert_eq!(driver.provider().vault_state(), VaultState::Locked);
+        assert!(driver.provider().last_error().is_some());
+        assert!(driver.awaiting_records().is_none());
+
+        // Terminal -- further ticks never retry, even long after any
+        // transient backoff window would have elapsed.
+        assert!(driver.tick(60_000).requests.is_empty());
+        assert!(driver.tick(60_000).flush.is_empty());
     }
 
     #[test]

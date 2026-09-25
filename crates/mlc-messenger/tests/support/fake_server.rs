@@ -367,6 +367,18 @@ impl FakeServer {
         &self.request_log
     }
 
+    /// `GET /_matrix/client/v3/account/whoami` -- outside `dispatch`'s own
+    /// [`OutgoingRequestKind`] routing, since a driver's boot-time probe
+    /// (`mlc_messenger::driver::MessengerDriver`) is never a
+    /// [`mlc_messenger::wire::OutgoingRequest`] at all (no core exists yet
+    /// to have minted one). This fake has no real access-token concept
+    /// (module doc), so it just echoes back whichever identity the caller
+    /// names, exactly as a real homeserver would resolve that identity's
+    /// own bearer token.
+    pub fn whoami(&self, as_user: &UserId, as_device: &DeviceId) -> HttpResponseDescriptor {
+        json_response(200, &serde_json::json!({ "user_id": as_user.as_str(), "device_id": as_device.as_str() }))
+    }
+
     /// Makes the NEXT `RoomSend` this fake receives for `room_id` fail with
     /// `errcode` instead of succeeding -- a test's own fault-injection hook
     /// for a send-pipeline retry test (module doc's own
