@@ -22,6 +22,12 @@ mylittlechart-vault = { path = "../mlc-vault" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2"
+# Zeroizing wrappers for vault-derived key material this crate now holds
+# directly (`core::CoreSecrets::store_seal_key`/`backup_key`,
+# `store::sealed::SealedRecordCodec`'s own key) -- already a direct
+# dependency of `mylittlechart-vault` (see that crate's own Cargo.toml note),
+# so depending on it here too adds no new supply-chain surface.
+zeroize = "1"
 # Still not called from this piece's own code. `wire::events` (M3) keeps
 # Olm/Megolm ciphertext, Megolm session-key exports, and OTK/backup blobs as
 # opaque base64 *strings* at the wire-parsing layer -- decoding them to bytes

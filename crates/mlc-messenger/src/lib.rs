@@ -115,6 +115,14 @@
 //! `sync_engine.rs` never materialized as its own module — everything it
 //! described lives directly in [`core`] instead, alongside the kernel it
 //! would otherwise have had to be threaded through anyway.
+//!
+//! **M14** — at-rest sealing ([`store::sealed::SealedRecordCodec`]): the
+//! production [`store::RecordCodec`], AES-256-GCM under a vault-derived,
+//! per-device key ([`core::CoreSecrets::from_vault`],
+//! `mlc_vault::messenger::MessengerSecrets`), binding each record's own
+//! storage key as AAD. [`core::MessengerCore::open_sealed`] is the
+//! constructor a shell calls; [`core::MessengerCore::open`] stays generic so
+//! this crate's own tests keep using [`store::InsecurePlainCodecForTests`].
 
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
@@ -155,5 +163,6 @@ pub use room::{
     MemberState, RelatingEvent, RelationsBundle, RoomKind, RoomState, SendState, StateChangeSummary, Timeline,
     TimelineItem,
 };
+pub use store::sealed::SealedRecordCodec;
 pub use store::{CryptoStore, RecordCodec, StateStore, Store, StoreError};
 pub use wire::{HttpMethod, HttpResponseDescriptor, OutgoingRequest, OutgoingRequestKind};

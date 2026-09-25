@@ -120,6 +120,7 @@ use crate::persist::{FlushBatch, SealedRecord};
 use crate::room::state::RoomState;
 use crate::room::timeline::{interpret_content, ItemContent, SendState, Timeline};
 use crate::room::RoomKind;
+use crate::store::sealed::SealedRecordCodec;
 use crate::store::{CryptoStore, RecordCodec, StateStore, Store};
 use crate::wire::events::{
     DirectContent, InReplyTo, LegacyDmContent, MegolmEncryptedContent, Membership, RawEvent, ReceiptContent,
@@ -129,8 +130,11 @@ use crate::wire::events::{
 use crate::wire::sync::{parse_sync_response, InvitedRoom, JoinedRoom, LeftRoom};
 use crate::wire::{HttpResponseDescriptor, OutgoingRequest, OutgoingRequestKind};
 use mlc_vault::dm::DmIdentity;
+use mlc_vault::messenger::MessengerSecrets;
+use mlc_vault::VaultKey;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
+use zeroize::Zeroizing;
 
 /// `/sync`'s own long-poll timeout (research doc §1.4's convention).
 const SYNC_TIMEOUT_MS: u64 = 30_000;
@@ -232,6 +236,40 @@ pub struct CoreSecrets {
     /// struct ([`DmIdentity`]'s own doc: its secret half is
     /// `Zeroizing`-wrapped), no `Drop` impl of this struct's own needed.
     pub legacy_dm_identity: Option<DmIdentity>,
+    /// This device's own vault-derived record-sealing key
+    /// ([`mlc_vault::messenger::MessengerSecrets::store_seal_key`]) -- `None`
+    /// when this core is opened with a non-sealing codec (every test in
+    /// this crate uses [`crate::store::InsecurePlainCodecForTests`] instead)
+    /// or before the vault key has ever been derived.
+    /// [`MessengerCore::open_sealed`] is the only consumer: it requires
+    /// this field to build its own [`SealedRecordCodec`] and fails loudly
+    /// if it is absent rather than silently falling back to an unsealed
+    /// store.
+    pub store_seal_key: Option<Zeroizing<[u8; 32]>>,
+    /// This account's vault-derived server-side key-backup key
+    /// ([`mlc_vault::messenger::MessengerSecrets::backup_key`]) -- the SAME
+    /// on every device of the account, unlike `store_seal_key` above.
+    /// Carried here for M9 (Megolm session backup/restore); nothing in this
+    /// crate reads it yet.
+    pub backup_key: Option<Zeroizing<[u8; 32]>>,
+}
+
+impl CoreSecrets {
+    /// Derives every vault-backed secret this crate currently needs from
+    /// `vault_key`, scoped to `device_id` exactly as [`crate::store::Store`]'s
+    /// own `messenger/{device_id}/...` record-key layout is -- the ONE
+    /// `mlc_vault` entry point a shell calls before
+    /// [`MessengerCore::open_sealed`]: the legacy-DM identity
+    /// ([`DmIdentity::from_vault_key`]) plus this device's own
+    /// [`MessengerSecrets`] (`store_seal_key`, `backup_key`).
+    pub fn from_vault(vault_key: &VaultKey, device_id: &str) -> Self {
+        let messenger_secrets = MessengerSecrets::derive(vault_key, device_id);
+        Self {
+            legacy_dm_identity: Some(DmIdentity::from_vault_key(vault_key)),
+            store_seal_key: Some(messenger_secrets.store_seal_key),
+            backup_key: Some(messenger_secrets.backup_key),
+        }
+    }
 }
 
 /// Which `m.room.message` shape [`OutgoingMessage`] renders as (M13b send
@@ -2208,6 +2246,36 @@ impl<C: RecordCodec> MessengerCore<C> {
         self.decrypt_legacy_dm_events(room_id, &events);
         self.emit(MessengerEvent::TimelineChanged { room_id: room_id.clone() });
         self.persist_room_state(room_id)
+    }
+}
+
+impl MessengerCore<SealedRecordCodec> {
+    /// The production entry point (M14): opens a core whose store seals
+    /// every record with AES-256-GCM under `secrets.store_seal_key` — the
+    /// constructor a shell calls, in place of the generic
+    /// [`MessengerCore::open`] this crate's own tests use with
+    /// [`crate::store::InsecurePlainCodecForTests`].
+    ///
+    /// Fails with [`MessengerError::Crypto`] if `secrets.store_seal_key` is
+    /// `None` — a shell must call [`CoreSecrets::from_vault`] first; there
+    /// is no unsealed fallback here by design (an unsealed messenger record
+    /// store is exactly what [`SealedRecordCodec`] exists to keep off
+    /// disk).
+    pub fn open_sealed(
+        records: impl IntoIterator<Item = SealedRecord>,
+        secrets: CoreSecrets,
+        config: CoreConfig,
+        now_ms: i64,
+        jitter: Box<dyn Jitter>,
+    ) -> Result<Self, MessengerError> {
+        let seal_key = secrets.store_seal_key.clone().ok_or_else(|| {
+            MessengerError::Crypto(
+                "MessengerCore::open_sealed requires CoreSecrets::store_seal_key -- call CoreSecrets::from_vault first"
+                    .to_string(),
+            )
+        })?;
+        let codec = SealedRecordCodec::new(seal_key);
+        Self::open(records, codec, config, secrets, now_ms, jitter)
     }
 }
 

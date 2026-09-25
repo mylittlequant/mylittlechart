@@ -25,14 +25,16 @@
 //! [`RecordCodec`] is the seam between "how a value is turned into bytes
 //! safe to hand a shell" and everything else in this module. [`Store`] is
 //! generic over it (`Store<C: RecordCodec>`) rather than owning a concrete
-//! encryption implementation, so this piece never needs the real AES-256-GCM
-//! codec the plan's §3.3 describes (`store/sealed.rs`'s
-//! `mlc_vault::crypto`-backed codec — a later piece, M14, binding the record
-//! key as AAD). [`InsecurePlainCodecForTests`] is the only codec this piece
-//! ships: an identity function, good for nothing but letting this crate's
-//! own tests build and round-trip a [`Store`] without a real vault key. It
-//! is gated behind the `test-support` Cargo feature (off by default, turned
-//! on for this crate's own test builds only — see its own doc comment) so no
+//! encryption implementation, so this piece never needed the real
+//! AES-256-GCM codec the plan's §3.3 describes up front —
+//! [`sealed::SealedRecordCodec`] (M14) is that codec now: AES-256-GCM via
+//! `mlc_vault::dm::{seal_message, open_message}`, binding the record key as
+//! AAD, keyed by a vault-derived [`mlc_vault::messenger::MessengerSecrets::store_seal_key`].
+//! [`InsecurePlainCodecForTests`] stays as the crate's own test-only codec:
+//! an identity function, good for nothing but letting this crate's own
+//! tests build and round-trip a [`Store`] without a real vault key. It is
+//! gated behind the `test-support` Cargo feature (off by default, turned on
+//! for this crate's own test builds only — see its own doc comment) so no
 //! shell can compile against it by accident.
 //!
 //! # Key layout
@@ -87,6 +89,8 @@
 //! is the opposite: a hard [`StoreError::UnknownRecordLayout`], because at
 //! that point this store knows enough to know something is wrong, not
 //! enough to know what to do about it.
+
+pub mod sealed;
 
 use crate::core::Counters;
 use crate::ids::{DeviceId, RequestId, RoomId, UserId};

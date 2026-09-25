@@ -299,7 +299,7 @@ fn e2e_migrated_dm_room_shows_old_messages_then_new_megolm_messages() {
         Vec::new(),
         InsecurePlainCodecForTests,
         core_config(&our_user, &our_device),
-        CoreSecrets { legacy_dm_identity: Some(our_identity) },
+        CoreSecrets { legacy_dm_identity: Some(our_identity), ..CoreSecrets::default() },
         0,
         Box::new(FixedJitter(0.0)),
     )
