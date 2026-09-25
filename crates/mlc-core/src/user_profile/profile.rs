@@ -141,6 +141,11 @@ pub struct PersistedSharedTab {
     pub window_id: String,
     /// Index in that window's `open_tabs` at save time.
     pub index: usize,
+    /// This shared tab was the window's active tab at save time. The
+    /// placeholder id is minted fresh on the next boot, so the saved
+    /// `active_preset_id` cannot name it. The token can.
+    #[serde(default)]
+    pub was_active: bool,
 }
 
 // =============================================================================

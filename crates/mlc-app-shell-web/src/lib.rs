@@ -238,6 +238,36 @@ fn share_token_from_url() -> Option<String> {
         .map(|t| t.to_string())
 }
 
+/// Drop `share` from the page query without a navigation.
+///
+/// A shared chart is a tab. Leaving `?share=` in the address bar makes
+/// every reload run the viewer boot again and focus that tab over the
+/// one the user had active. `history.replaceState` keeps the tab the
+/// browser already has; it only forgets the query.
+#[cfg(target_arch = "wasm32")]
+fn strip_share_query() {
+    let Some(win) = web_sys::window() else { return };
+    let Ok(search) = win.location().search() else { return };
+    if !search.contains("share=") {
+        return;
+    }
+    let kept: Vec<&str> = search
+        .trim_start_matches('?')
+        .split('&')
+        .filter(|p| !p.is_empty() && !p.starts_with("share="))
+        .collect();
+    let path = win.location().pathname().unwrap_or_else(|_| "/".to_string());
+    let hash = win.location().hash().unwrap_or_default();
+    let next = if kept.is_empty() {
+        format!("{path}{hash}")
+    } else {
+        format!("{path}?{}{hash}", kept.join("&"))
+    };
+    if let Ok(history) = win.history() {
+        let _ = history.replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&next));
+    }
+}
+
 /// Console log level: `?log=trace|debug|info|warn|error` in the page URL,
 /// else `localStorage["mlc.log"]` with the same words, else INFO. Same split
 /// grammar as `share_token_from_url` above; read once at boot, before the
@@ -622,18 +652,26 @@ async fn run(share_token: Option<String>) -> Result<(), JsValue> {
     #[cfg(feature = "cloud")]
     if let ShareBoot::Live(preset, meta) = share_boot {
         let title = meta.title.clone();
-        match app.open_shared_preset(meta, preset) {
-            Ok(id) => {
-                web_sys::console::log_1(
-                    &format!("[share] opened shared preset '{}' ({}) as a read-only tab", title, id).into(),
-                );
-            }
-            Err(e) => {
-                web_sys::console::error_1(
-                    &format!("[share] failed to open shared preset '{}': {} — staying on the restored tab", title, e).into(),
-                );
+        let token = meta.token.clone();
+        if app.share_token_already_open(&token) {
+            web_sys::console::log_1(
+                &format!("[share] '{}' already open — not stealing the active tab", title).into(),
+            );
+        } else {
+            match app.open_shared_preset(meta, preset) {
+                Ok(id) => {
+                    web_sys::console::log_1(
+                        &format!("[share] opened shared preset '{}' ({}) as a read-only tab", title, id).into(),
+                    );
+                }
+                Err(e) => {
+                    web_sys::console::error_1(
+                        &format!("[share] failed to open shared preset '{}': {} — staying on the restored tab", title, e).into(),
+                    );
+                }
             }
         }
+        strip_share_query();
     }
 
     // First-run courtesy (owner's ruling 2026-08-31): `bootstrap_first_run`
@@ -743,13 +781,12 @@ fn install_persistence_flush_hooks(
                 // session merely because a share link was ever opened. The
                 // OPFS market-data flush below stays ungated regardless —
                 // it is not localStorage.
-                if !st.chart.is_readonly_tab(&st.chart.panel_app.active_preset_id)
-                    && mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
+                if mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
                 {
-                    // Reborrow once: `st.chart`/`st.perf` through two separate
-                    // `RefMut` derefs in the same call don't split as disjoint
-                    // fields (same trap `render_frame`'s tab-sync block below
-                    // already documents for `chrome`/`chart`).
+                    // A shared tab does not block this. `save_persistent_state`
+                    // already skips that preset's body. Skipping the whole
+                    // save used to drop the active-tab id and the collapsed
+                    // flyout sections whenever the share was what was showing.
                     let st = &mut *st;
                     persistence::save_persistent_state(&mut st.chart, &mut st.perf);
                 }
@@ -794,13 +831,8 @@ fn install_persistence_flush_hooks(
                 // session merely because a share link was ever opened. The
                 // OPFS market-data flush below stays ungated regardless —
                 // it is not localStorage.
-                if !st.chart.is_readonly_tab(&st.chart.panel_app.active_preset_id)
-                    && mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
+                if mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
                 {
-                    // Reborrow once: `st.chart`/`st.perf` through two separate
-                    // `RefMut` derefs in the same call don't split as disjoint
-                    // fields (same trap `render_frame`'s tab-sync block below
-                    // already documents for `chrome`/`chart`).
                     let st = &mut *st;
                     persistence::save_persistent_state(&mut st.chart, &mut st.perf);
                 }
@@ -1658,8 +1690,7 @@ fn run_render_loop(
             // loop additionally skips any readonly preset's body regardless
             // of which tab is active, so a shared preset can never reach
             // local preset storage even via an unrelated dirty flag.
-            let active_readonly = st.chart.is_readonly_tab(&st.chart.panel_app.active_preset_id);
-            if !active_readonly && persist_safe
+            if persist_safe
                 && (st.chart.profile_dirty || st.chart.profile_geometry_dirty || st.chart.watchlists_dirty
                     || !st.chart.preset_actions.is_empty())
             {

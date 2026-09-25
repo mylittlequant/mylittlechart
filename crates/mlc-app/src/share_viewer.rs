@@ -265,12 +265,26 @@ impl ChartApp {
     pub(crate) fn install_shared_tab_placeholders(
         &mut self,
         shared: &[mlc_core::user_profile::profile::PersistedSharedTab],
-    ) {
+    ) -> Option<PresetId> {
+        let mut active: Option<PresetId> = None;
         let entries: Vec<(usize, PresetId)> = shared
             .iter()
-            .map(|entry| (entry.index, self.queue_shared_tab_placeholder(&entry.token)))
+            .map(|entry| {
+                let id = self.queue_shared_tab_placeholder(&entry.token);
+                if entry.was_active {
+                    active = Some(id.clone());
+                }
+                (entry.index, id)
+            })
             .collect();
         reinsert_at_saved_indices(&mut self.panel_app.open_tabs, &entries);
+        active
+    }
+
+    /// A shared tab for `token` is already in this window's strip.
+    pub fn share_token_already_open(&self, token: &str) -> bool {
+        self.shared_chart_meta.values().any(|m| m.token == token)
+            || self.pending_share_tokens.values().any(|t| t == token)
     }
 
     /// One-shot drain of the boot-time reopen queue — see
@@ -381,6 +395,7 @@ impl ChartApp {
                 token: token.to_string(),
                 window_id: self.window_id.clone(),
                 index,
+                was_active: false,
             });
         }
         self.remove_shared_placeholder_tab(placeholder_id);
@@ -426,6 +441,7 @@ impl ChartApp {
                     token,
                     window_id: self.window_id.clone(),
                     index,
+                    was_active: id == &self.panel_app.active_preset_id,
                 })
             })
             .collect();

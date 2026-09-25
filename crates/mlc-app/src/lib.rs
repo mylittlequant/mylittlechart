@@ -4701,7 +4701,9 @@ impl ChartApp {
                 // the legacy top-level list AND the per-window one.
                 if restore.is_none() {
                     let shared = user_manager.profile.ui.open_shared_tabs.clone();
-                    app.install_shared_tab_placeholders(&shared);
+                    if let Some(id) = app.install_shared_tab_placeholders(&shared) {
+                        app.panel_app.active_preset_id = id;
+                    }
                 }
 
                 let presets_guard = app.core.presets();
@@ -4769,10 +4771,21 @@ impl ChartApp {
                 // Re-anchor this window's own shared tabs — see the
                 // matching (and, for this restore path, deliberately
                 // skipped) block in the legacy top-level seed above.
-                app.install_shared_tab_placeholders(&ws.open_shared_tabs);
+                let active_shared = app.install_shared_tab_placeholders(&ws.open_shared_tabs);
+                let saved_active_alive = !ws.active_preset_id.is_empty()
+                    && app.core.presets().contains_key(&ws.active_preset_id);
+                if saved_active_alive {
+                    app.panel_app.active_preset_id = ws.active_preset_id.clone();
+                } else if let Some(id) = active_shared {
+                    // The active tab was a shared one. Its placeholder id
+                    // is new this boot; `was_active` on the token is what
+                    // still names it.
+                    app.panel_app.active_preset_id = id;
+                }
             }
             if !ws.active_preset_id.is_empty()
                 && app.core.presets().contains_key(&ws.active_preset_id)
+                && app.panel_app.active_preset_id != ws.active_preset_id
             {
                 app.panel_app.active_preset_id = ws.active_preset_id.clone();
             }
