@@ -6720,27 +6720,44 @@ impl ChartApp {
                     if token.is_empty() {
                         return;
                     }
-                    let rows = &self.panel_app.user_settings_state.share_rows;
-                    let row = rows.iter().find(|r| r.token == token);
+                    let (is_pinned, clone_on, to_private) = {
+                        let rows = &self.panel_app.user_settings_state.share_rows;
+                        match rows.iter().find(|r| r.token == token) {
+                            Some(r) => (r.pinned, r.clone_allowed, r.visibility != "private"),
+                            None => (false, false, true),
+                        }
+                    };
+                    if action == "keep" {
+                        self.panel_app.user_settings_state.share_revoke_confirm = None;
+                        self.panel_app.user_settings_state.share_status.clear();
+                        return;
+                    }
+                    if action == "revoke" && is_pinned {
+                        self.panel_app.user_settings_state.share_revoke_confirm = Some(token);
+                        self.panel_app.user_settings_state.share_status =
+                            "Revoke this pinned share?".to_string();
+                        return;
+                    }
                     self.pending_share_admin = Some(match action {
-                        "revoke" => crate::ShareAdminCmd::Revoke { token },
+                        "revoke" | "revoke_yes" => {
+                            self.panel_app.user_settings_state.share_revoke_confirm = None;
+                            crate::ShareAdminCmd::Revoke { token }
+                        }
                         "pin" => {
-                            let pinned = row.map(|r| !r.pinned).unwrap_or(true);
+                            let pinned = !is_pinned;
                             crate::ShareAdminCmd::Patch {
                                 token,
                                 body: format!(r#"{{"pinned":{pinned}}}"#),
                             }
                         }
                         "clone" => {
-                            let on = row.map(|r| !r.clone_allowed).unwrap_or(true);
                             crate::ShareAdminCmd::Patch {
                                 token,
-                                body: format!(r#"{{"clone_allowed":{on}}}"#),
+                                body: format!(r#"{{"clone_allowed":{}}}"#, !clone_on),
                             }
                         }
                         "vis" => {
-                            let private = row.map(|r| r.visibility != "private").unwrap_or(true);
-                            let v = if private { "private" } else { "public" };
+                            let v = if to_private { "private" } else { "public" };
                             crate::ShareAdminCmd::Patch {
                                 token,
                                 body: format!(r#"{{"visibility":"{v}"}}"#),

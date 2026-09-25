@@ -3858,6 +3858,9 @@ pub struct UserSettingsState {
     /// Rows of `GET /api/share/mine`, filled by the shell.
     pub share_rows: Vec<ShareAdminRow>,
     pub share_status: String,
+    /// Token of a pinned share whose Revoke click is waiting for Confirm.
+    /// Unpinned revoke does not arm this.
+    pub share_revoke_confirm: Option<String>,
 
     // ── WELCOME WIZARD ──────────────────────────────────────────────────
     /// True when the first-run welcome wizard should be shown (no profile.json on first launch).
@@ -4169,6 +4172,7 @@ impl Default for UserSettingsState {
             shares_tab_scroll: ScrollState::default(),
             share_rows: Vec::new(),
             share_status: String::new(),
+            share_revoke_confirm: None,
             show_welcome_wizard: false,
             needs_vault_unlock: false,
             vault_unlock_error: None,

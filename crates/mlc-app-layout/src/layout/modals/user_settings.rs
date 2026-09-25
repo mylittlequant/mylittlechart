@@ -980,12 +980,29 @@ fn render_shares_tab(
         );
         cy += 22.0;
         let mut bx = x;
-        for (label, id_suffix) in [
-            (if row.pinned { "Unpin" } else { "Pin" }, "pin"),
-            ("Revoke", "revoke"),
-            (if row.clone_allowed { "Clone off" } else { "Clone on" }, "clone"),
-            (if row.visibility == "private" { "Make public" } else { "Make private" }, "vis"),
-        ] {
+        let armed = state.share_revoke_confirm.as_deref() == Some(row.token.as_str());
+        let pin_label = if row.pinned { "Unpin" } else { "Pin" };
+        let clone_label = if row.clone_allowed { "Clone off" } else { "Clone on" };
+        let vis_label = if row.visibility == "private" {
+            "Make public"
+        } else {
+            "Make private"
+        };
+        let actions: Vec<(&str, &str)> = if armed {
+            vec![
+                (pin_label, "pin"),
+                ("Confirm", "revoke_yes"),
+                ("Cancel", "keep"),
+            ]
+        } else {
+            vec![
+                (pin_label, "pin"),
+                ("Revoke", "revoke"),
+                (clone_label, "clone"),
+                (vis_label, "vis"),
+            ]
+        };
+        for (label, id_suffix) in actions {
             let bw = 88.0;
             let r = WidgetRect::new(bx, cy, bw, 22.0);
             ctx.set_fill_color(&toolbar_theme.item_bg_hover);
@@ -1012,6 +1029,33 @@ fn render_shares_tab(
     result.scroll_content_height = scroll_result.content_height;
     result.scrollbar_handle_rect = scroll_result.handle_rect;
     result.scrollbar_track_rect = scroll_result.track_rect;
+    result.scroll_viewport_height = scroll_result.viewport_height;
+
+    if let Some(ref hr) = result.scrollbar_handle_rect {
+        let inflated = uzor::types::Rect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_handle",
+            inflated,
+            uzor::input::Sense::DRAG,
+            layer_id,
+        );
+    }
+    if let Some(ref tr) = result.scrollbar_track_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_track",
+            uzor::types::Rect::new(tr.x, tr.y, tr.width, tr.height),
+            uzor::input::Sense::CLICK,
+            layer_id,
+        );
+    }
+    if let Some(ref vp) = result.scroll_viewport_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scroll_viewport",
+            uzor::types::Rect::new(vp.x, vp.y, vp.width, vp.height),
+            uzor::input::Sense::SCROLL,
+            layer_id,
+        );
+    }
 }
 
 fn render_persistence_tab(

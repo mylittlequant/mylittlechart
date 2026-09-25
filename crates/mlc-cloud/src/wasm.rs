@@ -398,6 +398,26 @@ impl FetchTransport {
         self.decode_success(status, &body)
     }
 
+    /// `POST /api/share/{token}/preview` — raw PNG body. The server
+    /// re-encodes it into the link-preview card. Owner of `token` only.
+    pub async fn share_upload_preview(
+        &self,
+        token: &str,
+        png: web_sys::Blob,
+    ) -> Result<(), CloudError> {
+        let path = format!("/api/share/{token}/preview");
+        let req = self.build_request(
+            "POST",
+            &path,
+            Some(png.into()),
+            false,
+            true,
+            &[("Content-Type", "image/png")],
+        )?;
+        let (status, body) = self.perform(&req).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
     /// `GET /api/share/mine` — the caller's own active shares.
     pub async fn share_list(&self) -> Result<Vec<ShareListEntry>, CloudError> {
         let (status, body) = self.exchange("GET", "/api/share/mine", None, &[]).await?;

@@ -2282,9 +2282,19 @@ fn run_render_loop(
                             };
                             match upload {
                                 Some((cloud, title)) => {
-                                    screenshot_region_blob("chart", Some(rect), move |blob| {
-                                        cloud.share_screenshot(blob, title);
+                                    let epoch = cloud.begin_preview();
+                                    let cloud_card = cloud.clone();
+                                    screenshot_region_blob("chart", Some(rect), None, move |blob| {
+                                        cloud.share_screenshot(blob, title, epoch);
                                     });
+                                    screenshot_region_blob(
+                                        "chart",
+                                        Some(rect),
+                                        Some(SHARE_CARD_MAX_EDGE),
+                                        move |card| {
+                                            cloud_card.offer_preview_card(epoch, card);
+                                        },
+                                    );
                                 }
                                 // The dropdown's ShareLink row is hidden for
                                 // anonymous sessions; a shot landing here
@@ -2323,12 +2333,13 @@ fn run_render_loop(
                 if st.chart.drain_pending_share_live() {
                     let id = st.chart.panel_app.active_preset_id.clone();
                     let preset = st.chart.core.presets().get(&id).cloned();
-                    Some((st.cloud.clone(), preset))
+                    let rect = st.chart.screenshot_rect();
+                    Some((st.cloud.clone(), preset, rect))
                 } else {
                     None
                 }
             };
-            if let Some((cloud, preset)) = request {
+            if let Some((cloud, preset, rect)) = request {
                 match (cloud, preset) {
                     (Some(cloud), Some(preset)) if cloud.is_signed_in() => {
                         // The registry preset as-is: `bars` is
@@ -2336,9 +2347,28 @@ fn run_render_loop(
                         // so the JSON is the restorable skeleton already —
                         // the mlc-updater strip pass exists for OLD files
                         // that still carry bars, not for this in-memory
-                        // serialization.
+                        // serialization. The card PNG is the same chart
+                        // crop the camera uses, capped so the preview
+                        // route accepts it. The link is still created if
+                        // the crop cannot start.
                         match serde_json::to_value(&preset) {
-                            Ok(preset_json) => cloud.share_live(preset.name.clone(), preset_json),
+                            Ok(preset_json) => {
+                                let title = preset.name.clone();
+                                let title_fallback = title.clone();
+                                let preset_fallback = preset_json.clone();
+                                let cloud_fallback = cloud.clone();
+                                let started = screenshot_region_blob(
+                                    "chart",
+                                    Some(rect),
+                                    Some(SHARE_CARD_MAX_EDGE),
+                                    move |blob| {
+                                        cloud.share_live(title, preset_json, Some(blob));
+                                    },
+                                );
+                                if !started {
+                                    cloud_fallback.share_live(title_fallback, preset_fallback, None);
+                                }
+                            }
                             Err(e) => {
                                 web_sys::console::error_1(
                                     &format!("[share] preset serialize failed: {}", e).into(),
@@ -3164,12 +3194,20 @@ fn clipboard_write_text(text: &str) {
 ///
 /// The toBlob `Closure` is stored in an `Rc<RefCell<Option<…>>>` so the JS GC
 /// cannot collect it before the callback fires, then it self-destructs.
+///
+/// `max_edge` caps the longer side. The share-card route refuses a PNG above
+/// 2048 px or 2 MiB, so a card capture passes [`SHARE_CARD_MAX_EDGE`]. A
+/// clipboard, download, or screenshot-share body passes `None`.
+///
+/// Returns whether `toBlob` was started. A `false` means `consumer` will not
+/// run (crop failed, or the browser refused the encode).
 #[cfg(target_arch = "wasm32")]
 fn screenshot_region_blob(
     canvas_id: &str,
     rect_css: Option<(u32, u32, u32, u32)>,
+    max_edge: Option<u32>,
     consumer: impl FnOnce(web_sys::Blob) + 'static,
-) {
+) -> bool {
     use wasm_bindgen::JsCast;
 
     let result: Result<web_sys::HtmlCanvasElement, JsValue> = (|| {
@@ -3202,8 +3240,19 @@ fn screenshot_region_blob(
         let tmp = doc
             .create_element("canvas")?
             .dyn_into::<web_sys::HtmlCanvasElement>()?;
-        tmp.set_width(sw);
-        tmp.set_height(sh);
+        let long = sw.max(sh).max(1);
+        let (dw, dh) = match max_edge {
+            Some(max_edge) if long > max_edge => {
+                let scale = max_edge as f64 / long as f64;
+                (
+                    ((sw as f64 * scale).round() as u32).max(1),
+                    ((sh as f64 * scale).round() as u32).max(1),
+                )
+            }
+            _ => (sw, sh),
+        };
+        tmp.set_width(dw);
+        tmp.set_height(dh);
         let tctx = tmp
             .get_context("2d")?
             .ok_or_else(|| JsValue::from_str("no 2d context"))?
@@ -3216,8 +3265,8 @@ fn screenshot_region_blob(
             sh as f64,
             0.0,
             0.0,
-            sw as f64,
-            sh as f64,
+            dw as f64,
+            dh as f64,
         )?;
         Ok(tmp)
     })();
@@ -3226,7 +3275,7 @@ fn screenshot_region_blob(
         Ok(c) => c,
         Err(e) => {
             web_sys::console::error_1(&format!("[screenshot] crop failed: {:?}", e).into());
-            return;
+            return false;
         }
     };
 
@@ -3253,9 +3302,18 @@ fn screenshot_region_blob(
                 &format!("[screenshot] to_blob_with_type failed: {:?}", e).into(),
             );
             let _ = closure_slot.borrow_mut().take();
+            return false;
         }
+        return true;
     }
+    false
 }
+
+/// Longer side of the PNG posted to `POST /api/share/{token}/preview`.
+/// The route rejects either side above 2048 and a body above 2 MiB; 1600
+/// stays under both for a chart crop.
+#[cfg(target_arch = "wasm32")]
+const SHARE_CARD_MAX_EDGE: u32 = 1600;
 
 /// Copies the current chart region (open space + scales, no chrome/toolbars/
 /// sidebar — parity with the native crop) as a PNG to the OS clipboard.
@@ -3264,7 +3322,7 @@ fn screenshot_region_blob(
 /// `navigator.clipboard.write([item])`.
 #[cfg(target_arch = "wasm32")]
 fn trigger_screenshot_to_clipboard(canvas_id: &str, rect_css: Option<(u32, u32, u32, u32)>) {
-    screenshot_region_blob(canvas_id, rect_css, |blob| {
+    screenshot_region_blob(canvas_id, rect_css, None, |blob| {
         let result: Result<(), JsValue> = (|| {
             // Build ClipboardItem: { "image/png": blob }
             let record = js_sys::Object::new();
@@ -3311,7 +3369,7 @@ fn trigger_screenshot_to_clipboard(canvas_id: &str, rect_css: Option<(u32, u32, 
 fn trigger_screenshot_download(canvas_id: &str, rect_css: Option<(u32, u32, u32, u32)>) {
     use wasm_bindgen::JsCast;
 
-    screenshot_region_blob(canvas_id, rect_css, |blob| {
+    screenshot_region_blob(canvas_id, rect_css, None, |blob| {
         let result: Result<(), JsValue> = (|| {
             let url = web_sys::Url::create_object_url_with_blob(&blob)?;
             let win = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;

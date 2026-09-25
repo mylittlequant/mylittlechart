@@ -261,6 +261,14 @@ struct Inner {
     share_result: Option<(&'static str, Result<String, String>)>,
     share_admin_rows: Option<Result<Vec<mlc_cloud::ShareListEntry>, String>>,
     share_admin_busy: bool,
+    /// Generation for the in-flight screenshot-share card. A late blob from
+    /// the previous click is dropped when this moves.
+    preview_epoch: u64,
+    /// Token of the screenshot share that should receive the card, tagged
+    /// with the epoch that created it.
+    preview_token: Option<(u64, String)>,
+    /// Capped chart PNG waiting for that token.
+    preview_card: Option<(u64, web_sys::Blob)>,
 
     // ── Chart-share clone (shared-viewer arc, 2026-09-06) ────────────────
     // `ChartApp::request_clone_share` is a one-shot mailbox a "Clone to my
@@ -379,6 +387,9 @@ impl CloudSession {
                 share_result: None,
                 share_admin_rows: None,
                 share_admin_busy: false,
+                preview_epoch: 0,
+                preview_token: None,
+                preview_card: None,
                 clone_in_flight: false,
                 clone_result: None,
                 forum_in_flight: false,
@@ -549,13 +560,14 @@ impl CloudSession {
     /// `POST /api/share/screenshot` — upload the cropped chart-region PNG.
     /// Anonymous sessions are refused up front (the camera dropdown already
     /// hides its ShareLink row for them; this is the belt to its braces).
-    pub fn share_screenshot(&self, png: web_sys::Blob, title: String) {
+    pub fn share_screenshot(&self, png: web_sys::Blob, title: String, epoch: u64) {
         if !self.is_signed_in() {
             web_sys::console::warn_1(&"[share] screenshot share refused: not signed in".into());
             return;
         }
         let transport = self.inner.borrow().transport.snapshot();
         let inner = self.inner.clone();
+        let session = self.clone();
         spawn_local(async move {
             match transport.share_create_screenshot(&title, png).await {
                 Ok(resp) => {
@@ -563,6 +575,7 @@ impl CloudSession {
                     crate::clipboard_write_text(&url);
                     web_sys::console::log_1(&format!("[share] screenshot shared: {}", url).into());
                     inner.borrow_mut().share_result = Some(("screenshot", Ok(url)));
+                    session.offer_preview_token(epoch, resp.token);
                 }
                 Err(e) => {
                     mark_unauthorized(&inner, &e);
@@ -615,7 +628,80 @@ impl CloudSession {
         });
     }
 
-    pub fn share_live(&self, title: String, preset: serde_json::Value) {
+    /// Bump the screenshot-card generation and drop anything still queued
+    /// from the previous click.
+    pub fn begin_preview(&self) -> u64 {
+        let mut inner = self.inner.borrow_mut();
+        inner.preview_epoch = inner.preview_epoch.wrapping_add(1);
+        inner.preview_token = None;
+        inner.preview_card = None;
+        inner.preview_epoch
+    }
+
+    /// Chart PNG for the screenshot share that `begin_preview` just armed.
+    /// A blob from an older click is ignored.
+    pub fn offer_preview_card(&self, epoch: u64, card: web_sys::Blob) {
+        {
+            let mut inner = self.inner.borrow_mut();
+            if inner.preview_epoch != epoch {
+                return;
+            }
+            inner.preview_card = Some((epoch, card));
+        }
+        self.flush_preview();
+    }
+
+    fn offer_preview_token(&self, epoch: u64, token: String) {
+        {
+            let mut inner = self.inner.borrow_mut();
+            if inner.preview_epoch != epoch {
+                return;
+            }
+            inner.preview_token = Some((epoch, token));
+        }
+        self.flush_preview();
+    }
+
+    /// When both halves of one epoch are present, POST the card. Either
+    /// half may arrive first.
+    fn flush_preview(&self) {
+        let ready = {
+            let mut inner = self.inner.borrow_mut();
+            match (inner.preview_token.take(), inner.preview_card.take()) {
+                (Some((epoch_t, token)), Some((epoch_c, card))) if epoch_t == epoch_c => {
+                    Some((token, card))
+                }
+                (token, card) => {
+                    inner.preview_token = token;
+                    inner.preview_card = card;
+                    None
+                }
+            }
+        };
+        let Some((token, card)) = ready else {
+            return;
+        };
+        let transport = self.inner.borrow().transport.snapshot();
+        spawn_local(async move {
+            match transport.share_upload_preview(&token, card).await {
+                Ok(()) => {
+                    web_sys::console::log_1(&"[share] preview card uploaded".into());
+                }
+                Err(e) => {
+                    web_sys::console::warn_1(
+                        &format!("[share] preview card upload failed: {e}").into(),
+                    );
+                }
+            }
+        });
+    }
+
+    pub fn share_live(
+        &self,
+        title: String,
+        preset: serde_json::Value,
+        preview: Option<web_sys::Blob>,
+    ) {
         if !self.is_signed_in() {
             web_sys::console::warn_1(&"[share] live share refused: not signed in".into());
             return;
@@ -628,6 +714,18 @@ impl CloudSession {
                     let url = absolute_share_url(&resp.url_path);
                     crate::clipboard_write_text(&url);
                     web_sys::console::log_1(&format!("[share] live chart shared: {}", url).into());
+                    if let Some(png) = preview {
+                        match transport.share_upload_preview(&resp.token, png).await {
+                            Ok(()) => {
+                                web_sys::console::log_1(&"[share] preview card uploaded".into());
+                            }
+                            Err(e) => {
+                                web_sys::console::warn_1(
+                                    &format!("[share] preview card upload failed: {e}").into(),
+                                );
+                            }
+                        }
+                    }
                     inner.borrow_mut().share_result = Some(("live", Ok(url)));
                 }
                 Err(e) => {
