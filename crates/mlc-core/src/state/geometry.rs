@@ -1489,9 +1489,13 @@ mod tests {
         assert_eq!(layout.sub_panes[0].instance_id, 10);
         assert_eq!(layout.sub_panes[0].content.height, header);
         assert_eq!(layout.sub_panes[0].separator.height, 0.0);
-        // Target sub-pane (id 20) takes the remainder.
+        // Target sub-pane (id 20) takes the remainder — every OTHER slot
+        // (main + the non-target sub-pane, 2 header strips total) is freed,
+        // same `available_height - header * sub_pane_count` the main-expand
+        // case above uses (sub_pane_count is the count of collapsed slots
+        // regardless of which slot is the expanded one).
         assert_eq!(layout.sub_panes[1].instance_id, 20);
-        assert_eq!(layout.sub_panes[1].content.height, available_height - header);
+        assert_eq!(layout.sub_panes[1].content.height, available_height - 2.0 * header);
         assert_eq!(layout.sub_panes[1].separator.height, 0.0);
     }
 }
