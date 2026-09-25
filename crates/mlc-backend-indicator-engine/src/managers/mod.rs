@@ -15,6 +15,7 @@
 pub mod indicator_bridge;
 pub mod indicator_calculator;
 pub mod indicator_manager;
+pub mod stream_event;
 
 pub use indicator_manager::{
     IndicatorDefinition, IndicatorInstance, IndicatorParam,
@@ -23,3 +24,4 @@ pub use indicator_manager::{
 };
 pub use indicator_bridge::IndicatorBridge;
 pub use indicator_calculator::{IndicatorCalculator, CalculationResult};
+pub use stream_event::StreamEvent;
