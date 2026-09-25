@@ -2374,6 +2374,21 @@ impl DrawingManager {
         }
     }
 
+    /// The footprint counterpart of [`Self::refresh_bar_derived`] for ONE
+    /// bubble — see `bar_derived_cache::refresh_footprint_derived_caches`'s
+    /// own doc for why this hook is never reached by the ordinary write
+    /// paths for a bubble whose `footprint_bars` was written directly
+    /// (`BubblesMut::with_bubble_mut`) rather than through a trade-fold
+    /// install. Exposed on the facade (`DrawingsMut::refresh_footprint_derived`)
+    /// for exactly that case — a test harness (or any future caller) that
+    /// seeds `footprint_bars` by hand and needs every order-flow-family
+    /// primitive's own cache to reflect it without waiting for the next
+    /// live trade-fold event.
+    pub(crate) fn refresh_footprint_derived(&self, bubbles: &mut BubbleStore, bid: BubbleId) {
+        let Some(b) = bubbles.bubble_mut(bid) else { return };
+        crate::bubble::bar_derived_cache::refresh_footprint_derived_caches(b);
+    }
+
     pub(crate) fn refresh_bar_derived(&self, bubbles: &mut BubbleStore, bid: BubbleId) {
         let Some(b) = bubbles.bubble_mut(bid) else { return };
         crate::bubble::bar_derived_cache::refresh_bar_derived_caches(b);

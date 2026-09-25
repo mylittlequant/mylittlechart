@@ -3643,10 +3643,20 @@ pub enum ConceptKey {
     // different pattern kinds, unlike `SmcScan`'s own same-structure
     // clusters).
     ScanClusterPatternsSuffix = 490,
+
+    // ---- Order Flow footprint-shadow-feed fix (owner bug, prod 0.5.617,
+    // 2026-09-25) — the second "nothing to report" state `OrderFlowScan`
+    // can hit once its own footprint feed is real: the feed exists but
+    // this survey's own dragged range predates/exceeds what it has
+    // loaded (e.g. older than the venue's retained trade history).
+    // Distinct from `RuleOrderFlowDataMissing` (404 — no feed at all, see
+    // that key's own doc) so the analyst reads "no trade data for THIS
+    // range" rather than a generic "still nothing".
+    RuleOrderFlowRangeNoData = 491,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 491;
+    pub const COUNT: usize = 492;
 
     /// Get translation for this key.
     #[inline]
