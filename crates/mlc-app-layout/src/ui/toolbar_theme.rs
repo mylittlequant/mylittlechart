@@ -31,6 +31,17 @@ pub struct ToolbarTheme {
     pub item_text: String,
     /// Muted icon / label colour (for secondary/disabled items).
     pub item_text_muted: String,
+    /// Fainter than [`Self::item_text_muted`] — a THIRD text tier
+    /// (`rt.colors.text_muted`, distinct from `item_text_muted`'s own
+    /// `text_secondary`) for chrome that should read quieter still: table
+    /// column headers, timestamps, breadcrumb segments, tag/pill borders and
+    /// their label text. Added for the Forum drill-down's board-index/
+    /// thread-list/thread-card parity pass (`forum_concept_v1.html`'s own
+    /// `--text-muted`, one shade darker than its `--text-dim` —
+    /// `item_text_muted` already covers `--text-dim`; this token was the one
+    /// piece of that concept's two-tier muted-text hierarchy with no
+    /// matching field here before this pass).
+    pub item_text_faint: String,
     /// Colour for hidden (invisible) items — item_text at 50% opacity.
     pub item_text_hidden: String,
     /// Icon / label colour on hover.
@@ -86,6 +97,7 @@ impl Default for ToolbarTheme {
             button_bg_hover: "#2a2e39".into(),
             item_text: "#a6adc8".into(),
             item_text_muted: "#6c7086".into(),
+            item_text_faint: "#585b70".into(),
             item_text_hidden: "#a6adc880".into(),
             item_text_hover: "#cdd6f4".into(),
             item_text_active: "#cdd6f4".into(),

@@ -41,6 +41,7 @@ pub fn toolbar_theme(theme_manager: &ThemeManager) -> ToolbarTheme {
         button_bg_hover: rt.colors.button_bg_hover.clone(),
         item_text: rt.colors.text_primary.clone(),
         item_text_muted: rt.colors.text_secondary.clone(),
+        item_text_faint: rt.colors.text_muted.clone(),
         item_text_hidden: mlc_core::apply_opacity(&rt.colors.text_primary, 0.5),
         item_text_hover: rt.colors.text_primary.clone(),
         item_text_active: rt.colors.text_active.clone(),
