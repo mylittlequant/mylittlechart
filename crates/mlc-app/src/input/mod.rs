@@ -2275,6 +2275,15 @@ impl ChartApp {
                             true
                         } else { false }
                     }
+                    "share_settings" => {
+                        let header = self.frame_result.as_ref()
+                            .and_then(|r| r.share_settings.as_ref())
+                            .map(|s| (s.header_rect.x, s.header_rect.y));
+                        if let Some((hx, hy)) = header {
+                            self.panel_app.share_settings_state.start_drag(x, y, hx, hy);
+                            true
+                        } else { false }
+                    }
                     // The welcome wizard renders into the SAME
                     // `result.user_settings` slot (`chart_panel_app.rs`), so
                     // its header rect arrives here under that field — but it
@@ -4483,6 +4492,10 @@ impl ChartApp {
             self.panel_app.user_settings_state.update_drag(x, y);
             return;
         }
+        if self.panel_app.share_settings_state.is_dragging {
+            self.panel_app.share_settings_state.update_drag(x, y);
+            return;
+        }
         if self.panel_app.user_settings_state.wizard_is_dragging {
             self.panel_app.user_settings_state.wizard_update_drag(x, y);
             return;
@@ -5646,6 +5659,10 @@ impl ChartApp {
         if self.panel_app.user_settings_state.is_dragging {
             self.panel_app.user_settings_state.end_drag();
             log::debug!("[ChartApp] user_settings modal drag ended");
+            return;
+        }
+        if self.panel_app.share_settings_state.is_dragging {
+            self.panel_app.share_settings_state.end_drag();
             return;
         }
         if self.panel_app.user_settings_state.wizard_is_dragging {

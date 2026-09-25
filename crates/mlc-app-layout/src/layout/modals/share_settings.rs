@@ -11,8 +11,8 @@ use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::modal_settings::ShareSettingsState;
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{
-    draw_input, draw_input_cursor, render_modal_shell, InputConfig, ModalFooter, ModalShell,
-    ModalShellSpec, ModalTheme, WidgetState, SETTINGS_BUTTON_RADIUS,
+    draw_input, draw_input_cursor, render_modal_shell, InputConfig, ModalFooter, ModalPlacement,
+    ModalShell, ModalShellSpec, ModalTheme, WidgetState, SETTINGS_BUTTON_RADIUS,
 };
 
 const FIELD: &str = "share_settings_nick";
@@ -23,19 +23,20 @@ const GAP: f64 = 8.0;
 const LABEL_H: f64 = 16.0;
 const HIT_H: f64 = 28.0;
 
-fn content_height(hits: usize) -> f64 {
-    let hits = hits.min(6) as f64;
-    LABEL_H + GAP + 3.0 * (BTN_H + GAP) + LABEL_H + GAP + FIELD_H + GAP
-        + hits * (HIT_H + 4.0)
-        + LABEL_H
-        + GAP
-        + BTN_H
+fn content_height(hits: usize, show_people: bool) -> f64 {
+    let mut h = LABEL_H + GAP + 3.0 * (BTN_H + GAP) + LABEL_H + GAP;
+    if show_people {
+        let hits = hits.min(6) as f64;
+        h += FIELD_H + GAP + hits * (HIT_H + 4.0);
+    }
+    h + LABEL_H + GAP + BTN_H
 }
 
 #[derive(Clone, Debug, Default)]
 pub struct ShareSettingsResult {
     pub input_rect: WidgetRect,
     pub char_x_positions: Vec<f64>,
+    pub header_rect: WidgetRect,
 }
 
 pub fn render_share_settings_overlay(
@@ -49,10 +50,16 @@ pub fn render_share_settings_overlay(
     input_coordinator: &mut InputCoordinator,
 ) -> ShareSettingsResult {
     let theme = ModalTheme::from_toolbar(&frame_theme.modal_bg, &toolbar_theme.separator, toolbar_theme);
+    let show_people = state.rights_preset == "private";
     let spec = ModalShellSpec {
-        draggable: false,
+        placement: ModalPlacement::At(state.position),
         footer: ModalFooter::None,
-        ..ModalShellSpec::new("share_settings", "Share settings", MODAL_W, content_height(state.hits.len()))
+        ..ModalShellSpec::new(
+            "share_settings",
+            "Share settings",
+            MODAL_W,
+            content_height(state.hits.len(), show_people),
+        )
     };
     let mut field: Option<(WidgetRect, Vec<f64>)> = None;
     let _shell = render_modal_shell(
@@ -68,6 +75,7 @@ pub fn render_share_settings_overlay(
                 layer_id,
                 shell,
                 state,
+                show_people,
                 toolbar_theme,
                 frame_theme,
                 current_time_ms,
@@ -75,7 +83,11 @@ pub fn render_share_settings_overlay(
         },
     );
     let (input_rect, char_x_positions) = field.unwrap_or_default();
-    ShareSettingsResult { input_rect, char_x_positions }
+    ShareSettingsResult {
+        input_rect,
+        char_x_positions,
+        header_rect: _shell.header,
+    }
 }
 
 fn draw_body(
@@ -84,6 +96,7 @@ fn draw_body(
     layer_id: &LayerId,
     shell: &ModalShell,
     state: &ShareSettingsState,
+    show_people: bool,
     tt: &ToolbarTheme,
     ft: &FrameTheme,
     current_time_ms: u64,
@@ -110,38 +123,52 @@ fn draw_body(
         y += BTN_H + GAP;
     }
 
-    ctx.set_font("12px sans-serif");
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.fill_text("Add a person by nick. They can view or clone, not edit.", x, y);
-    y += LABEL_H + GAP;
+    let (field_rect, char_x_positions) = if show_people {
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text("Who can open this private link. View or clone, not edit.", x, y);
+        y += LABEL_H + GAP;
 
-    let field_rect = WidgetRect::new(x, y, w, FIELD_H);
-    let wid = WidgetId::from(FIELD);
-    if !coord.text_fields().is_focused(&wid) {
-        coord.text_fields_mut().focus(wid.clone());
-    }
-    let text = coord.text_fields().text(&wid).to_string();
-    let cursor = coord.text_fields().cursor(&wid);
-    let (sel_start, sel_end) = match coord.text_fields().selection_range(&wid) {
-        Some((lo, hi)) => (Some(lo), Some(hi)),
-        None => (None, None),
+        let field_rect = WidgetRect::new(x, y, w, FIELD_H);
+        let wid = WidgetId::from(FIELD);
+        if !coord.text_fields().is_focused(&wid) {
+            let fields = coord.text_fields_mut();
+            fields.begin_edit(&wid);
+            fields.focus(wid.clone());
+        }
+        let text = coord.text_fields().text(&wid).to_string();
+        let cursor = coord.text_fields().cursor(&wid);
+        let (sel_start, sel_end) = match coord.text_fields().selection_range(&wid) {
+            Some((lo, hi)) => (Some(lo), Some(hi)),
+            None => (None, None),
+        };
+        let engaged = coord.text_fields().is_engaged(&wid);
+        let widget_theme = toolbar_to_widget_theme(tt, ft);
+        let config = InputConfig::new(&text)
+            .with_focused(engaged)
+            .with_cursor(cursor)
+            .with_placeholder("Nick")
+            .with_selection(sel_start, sel_end);
+        let drawn = draw_input(ctx, &config, WidgetState::Normal, field_rect, &widget_theme);
+        coord.register_on_layer("share_settings:input", field_rect, Sense::CLICK | Sense::DRAG, layer_id);
+        if engaged && coord.text_fields().cursor_visible(current_time_ms) {
+            draw_input_cursor(ctx, drawn.cursor_x, drawn.cursor_y, drawn.cursor_height, &tt.item_text);
+        }
+        y += FIELD_H + GAP;
+        (field_rect, drawn.char_x_positions)
+    } else {
+        ctx.set_font("12px sans-serif");
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text("People are only for a private link.", x, y);
+        y += LABEL_H + GAP;
+        (WidgetRect::default(), Vec::new())
     };
-    let engaged = coord.text_fields().is_engaged(&wid);
-    let widget_theme = toolbar_to_widget_theme(tt, ft);
-    let config = InputConfig::new(&text)
-        .with_focused(engaged)
-        .with_cursor(cursor)
-        .with_placeholder("Nick")
-        .with_selection(sel_start, sel_end);
-    let drawn = draw_input(ctx, &config, WidgetState::Normal, field_rect, &widget_theme);
-    coord.register_on_layer("share_settings:input", field_rect, Sense::CLICK, layer_id);
-    if engaged && coord.text_fields().cursor_visible(current_time_ms) {
-        draw_input_cursor(ctx, drawn.cursor_x, drawn.cursor_y, drawn.cursor_height, &tt.item_text);
-    }
-    y += FIELD_H + GAP;
 
+    if show_people {
     for (idx, (nick, label)) in state.hits.iter().take(6).enumerate() {
         let name_w = w - 150.0;
         let name = WidgetRect::new(x, y, name_w, HIT_H);
@@ -157,6 +184,7 @@ fn draw_body(
         draw_secondary_button(ctx, coord, layer_id, &format!("share_settings:grant:{idx}:clone"), clone, "Clone", tt);
         y += HIT_H + 4.0;
     }
+    }
 
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(&tt.item_text_muted);
@@ -168,7 +196,7 @@ fn draw_body(
     let close = WidgetRect::new(x, y, w, BTN_H);
     draw_secondary_button(ctx, coord, layer_id, "share_settings:close", close, "Close", tt);
 
-    (field_rect, drawn.char_x_positions)
+    (field_rect, char_x_positions)
 }
 
 fn draw_secondary_button(

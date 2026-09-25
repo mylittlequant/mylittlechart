@@ -5574,7 +5574,9 @@ impl ChartApp {
     /// becomes the captured frame — see `capturing_screenshot`'s doc for why
     /// vello needs the explicit form).
     pub fn is_capturing_screenshot(&self) -> bool {
-        self.pending_screenshot || self.capturing_screenshot
+        // Live share uploads the same chart crop. The hover menu is open
+        // on that click; without this the dropdown is in the card.
+        self.pending_screenshot || self.pending_share_live || self.capturing_screenshot
     }
 
     /// Explicitly mark whether the render pass about to run is capturing a
@@ -5613,6 +5615,7 @@ impl ChartApp {
             "view_only" | "private" => preset,
             _ => "public_clone",
         };
+        self.panel_app.share_settings_state.rights_preset = preset.to_string();
         self.core.user_mut().profile_mut().ui.share_rights_preset = preset.to_string();
         self.profile_dirty = true;
         let active = self.panel_app.active_preset_id.clone();

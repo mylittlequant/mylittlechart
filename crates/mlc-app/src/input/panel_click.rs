@@ -4110,6 +4110,12 @@ impl ChartApp {
                     self.panel_app.toolbar_state.open_dropdown_id = None;
                     self.panel_app.share_settings_state.is_open = true;
                     self.panel_app.share_settings_state.status.clear();
+                    let preset = self.core.user().profile().ui.share_rights_preset.clone();
+                    self.panel_app.share_settings_state.rights_preset = if preset.is_empty() {
+                        "public_clone".to_string()
+                    } else {
+                        preset
+                    };
                     let field_id = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
                     let mut coord = self.input_coordinator.borrow_mut();
                     let tf = coord.text_fields_mut();
@@ -5418,6 +5424,13 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                 }
                 "input" => {
+                    let field_id = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
+                    {
+                        let mut coord = self.input_coordinator.borrow_mut();
+                        let tf = coord.text_fields_mut();
+                        tf.begin_edit(&field_id);
+                        tf.focus(crate::text_input::SHARE_SETTINGS_NICK);
+                    }
                     self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                 }
                 "modal_bg" => {}

@@ -301,6 +301,29 @@ pub struct ShareSettingsState {
     pub is_open: bool,
     pub status: String,
     pub hits: Vec<(String, String)>,
+    /// `public_clone` | `view_only` | `private`.
+    pub rights_preset: String,
+    pub position: Option<(f64, f64)>,
+    pub is_dragging: bool,
+    pub drag_offset: Option<(f64, f64)>,
+}
+
+impl ShareSettingsState {
+    pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {
+        self.is_dragging = true;
+        self.drag_offset = Some((mouse_x - modal_x, mouse_y - modal_y));
+    }
+
+    pub fn update_drag(&mut self, mouse_x: f64, mouse_y: f64) {
+        if let Some((offset_x, offset_y)) = self.drag_offset {
+            self.position = Some((mouse_x - offset_x, mouse_y - offset_y));
+        }
+    }
+
+    pub fn end_drag(&mut self) {
+        self.is_dragging = false;
+        self.drag_offset = None;
+    }
 }
 
 // =============================================================================
