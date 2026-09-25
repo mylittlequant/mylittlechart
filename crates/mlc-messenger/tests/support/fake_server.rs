@@ -384,6 +384,15 @@ impl FakeServer {
         self.last_rejected_room_send_body.as_ref()
     }
 
+    /// The `(path, body)` of the most recent `RoomSend` this fake received,
+    /// captured unconditionally (module doc's own `last_room_send` note) --
+    /// lets a test assert a retry sent byte-identical wire content (same
+    /// `txn_id`, embedded in `path`; same ciphertext/content, in `body`) as
+    /// an earlier send this fake already saw.
+    pub fn last_room_send(&self) -> Option<(&str, &Value)> {
+        self.last_room_send.as_ref().map(|(path, body)| (path.as_str(), body))
+    }
+
     /// Corrupts the signature of one of `(user_id, device_id)`'s currently
     /// unclaimed regular one-time keys in place -- simulates a corrupted
     /// upload or an in-flight tamper, for a test that must prove a
@@ -535,6 +544,7 @@ impl FakeServer {
             );
         };
         let body = request.body.clone().unwrap_or_else(|| Value::Object(Map::new()));
+        self.last_room_send = Some((request.path.clone(), body.clone()));
 
         if let Some(errcode) = self.fault_next_room_send.remove(&room_id) {
             self.last_rejected_room_send_body = Some(body);

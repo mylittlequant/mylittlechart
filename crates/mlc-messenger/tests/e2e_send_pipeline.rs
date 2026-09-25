@@ -31,8 +31,10 @@ use mlc_messenger::store::InsecurePlainCodecForTests;
 use mlc_messenger::wire::{Membership, RoomMessageContent, TagContent};
 use mlc_messenger::{
     CoreConfig, CreateRoomKind, DeviceId, EditRecord, ItemContent, Jitter, MessageKind, MessengerCommand,
-    MessengerCore, MessengerEvent, OutgoingMessage, OutgoingRequestKind, RoomId, SendState, TimelineItem, UserId,
+    MessengerCore, MessengerEvent, OutgoingMessage, OutgoingRequestKind, RecordKey, RoomId, SealedRecord, SendState,
+    TimelineItem, TxnId, UserId,
 };
+use std::collections::BTreeMap;
 use support::fake_server::FakeServer;
 
 type TestCore = MessengerCore<InsecurePlainCodecForTests>;
@@ -475,4 +477,142 @@ fn e2e_tags_round_trip_as_folders() {
 
     alice.core.dispatch(MessengerCommand::RemoveTag { room_id: room_id.clone(), tag: "work".to_string() }, 0).expect("dispatch remove_tag");
     alice.drive_until(&mut server, 0, "alice's tag removal round-trips back to her", |core| !room_has_tag(core, &room_id, "work"));
+}
+
+#[test]
+fn e2e_send_failure_marks_failed_and_retry_resends_identical_bytes() {
+    let mut server = FakeServer::new();
+    let mut alice = Device::new("alice", "ALICE1");
+    let mut bob = Device::new("bob", "BOB1");
+    let room_id = create_dm(&mut alice, &mut bob, &mut server);
+
+    server.fail_next_room_send(room_id.clone(), "M_UNKNOWN");
+    let txn_id = TxnId::new(900_001);
+    alice
+        .core
+        .dispatch(
+            MessengerCommand::SendMessage { room_id: room_id.clone(), message: text_message("resend me"), txn_id: Some(txn_id.clone()) },
+            0,
+        )
+        .expect("dispatch send_message");
+    alice.drive_until(&mut server, 0, "alice's send fails", |core| core.send_failure_reason(&txn_id) == Some("M_UNKNOWN"));
+    assert_eq!(
+        find_by_body(&alice.core, &room_id, "resend me").send_state,
+        SendState::Failed { reason: "M_UNKNOWN".to_string() }
+    );
+    let first_body = server.last_rejected_room_send_body().cloned().expect("the failed attempt's own body was captured");
+
+    alice.core.dispatch(MessengerCommand::RetrySend { room_id: room_id.clone(), txn_id: txn_id.clone() }, 0).expect("dispatch retry_send");
+    alice.drive_until(&mut server, 0, "alice's retry succeeds", |core| {
+        find_by_body(core, &room_id, "resend me").send_state == SendState::Sent
+    });
+
+    let (_, retried_body) = server.last_room_send().expect("the retry's own RoomSend was captured");
+    assert_eq!(retried_body, &first_body, "a retry resends byte-identical ciphertext -- it never re-encrypts");
+}
+
+/// Drives `core` forward, durably persisting every flush batch into
+/// `durable` as it goes (`e2e_core.rs`'s own `drive_tick_capturing`
+/// pattern), until an [`OutgoingRequest`][mlc_messenger::wire::OutgoingRequest]
+/// of kind `target_kind` becomes releasable — captured (its own body) and
+/// returned WITHOUT ever calling [`MessengerCore::on_response`] for it
+/// (every OTHER concurrently-releasable request in the same tick is driven
+/// through normally). This is this file's own "simulate a crash after a
+/// mutation is durable but before its response arrives" primitive
+/// (`e2e_restart_...`'s own scenario) — bounded at [`MAX_TICKS`], panics
+/// naming `loop_name` if `target_kind` never becomes releasable.
+fn drive_until_pending_capture(
+    core: &mut TestCore,
+    server: &mut FakeServer,
+    identity: (&UserId, &DeviceId),
+    now_ms: i64,
+    durable: &mut BTreeMap<String, Vec<u8>>,
+    target_kind: OutgoingRequestKind,
+    loop_name: &str,
+) -> serde_json::Value {
+    let (user_id, device_id) = identity;
+    fn drain_into(core: &mut TestCore, durable: &mut BTreeMap<String, Vec<u8>>) {
+        while let Some(batch) = core.take_flush_batch() {
+            for record in batch.records {
+                durable.insert(record.key.as_str().to_string(), record.bytes);
+            }
+            for key in batch.deletes {
+                durable.remove(key.as_str());
+            }
+            core.ack_flush(batch.id);
+        }
+    }
+    for _ in 0..MAX_TICKS {
+        drain_into(core, durable);
+        let requests = core.releasable_requests(now_ms);
+        let mut captured = None;
+        for request in requests {
+            if request.kind == target_kind && captured.is_none() {
+                captured = Some(request.body.clone().unwrap_or(serde_json::Value::Null));
+                continue;
+            }
+            let response = server.dispatch(user_id, device_id, &request);
+            core.on_response(request.id.clone(), response, now_ms);
+        }
+        drain_into(core, durable);
+        if let Some(body) = captured {
+            return body;
+        }
+    }
+    panic!("{loop_name}: condition not met after {MAX_TICKS} ticks");
+}
+
+#[test]
+fn e2e_restart_between_encrypt_and_send_resends_the_same_ciphertext() {
+    let mut server = FakeServer::new();
+    let mut alice = Device::new("alice", "ALICE1");
+    let mut bob = Device::new("bob", "BOB1");
+    let room_id = create_dm(&mut alice, &mut bob, &mut server);
+
+    let mut durable: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+    let txn_id = TxnId::new(900_002);
+    alice
+        .core
+        .dispatch(
+            MessengerCommand::SendMessage { room_id: room_id.clone(), message: text_message("crash me"), txn_id: Some(txn_id.clone()) },
+            0,
+        )
+        .expect("dispatch send_message");
+    let original_body = drive_until_pending_capture(
+        &mut alice.core,
+        &mut server,
+        (&alice.user_id, &alice.device_id),
+        0,
+        &mut durable,
+        OutgoingRequestKind::RoomSend,
+        "alice's ciphertext is durable before the simulated crash",
+    );
+
+    // "Crash": everything alice's core knew that never made it into
+    // `durable` (its own in-memory-only "this request is in flight" flag,
+    // in particular) is gone the moment this value is dropped.
+    let user_id = alice.user_id.clone();
+    let device_id = alice.device_id.clone();
+    drop(alice);
+
+    let records: Vec<SealedRecord> =
+        durable.iter().map(|(key, bytes)| SealedRecord { key: RecordKey::new(key.clone()), bytes: bytes.clone() }).collect();
+    let mut restarted =
+        MessengerCore::open(records, InsecurePlainCodecForTests, core_config(&user_id, &device_id), 0, Box::new(FixedJitter(0.0)))
+            .expect("reopen succeeds");
+
+    let resent_body = drive_until_pending_capture(
+        &mut restarted,
+        &mut server,
+        (&user_id, &device_id),
+        0,
+        &mut durable,
+        OutgoingRequestKind::RoomSend,
+        "the restarted core re-releases the same pending RoomSend",
+    );
+
+    assert_eq!(
+        resent_body, original_body,
+        "a restart resends byte-identical ciphertext -- the flush-before-send barrier already made it durable before the crash"
+    );
 }
