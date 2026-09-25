@@ -90,6 +90,7 @@ macro_rules! impl_resizable_modal {
 pub use mlc_core::state::modal_data::{
     SubPaneButton,
     SubPaneOverlayState,
+    ExpandedPane,
     IndicatorDisplayInfo,
     IndicatorParamDef,
     IndicatorParamType,

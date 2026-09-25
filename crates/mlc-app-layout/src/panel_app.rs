@@ -361,6 +361,73 @@ pub fn floating_inline_update_drag(
 /// sub-zone split) opens the fast-search with the active symbol seeded as
 /// editable text directly ON the button; the dropdown shows live results.
 /// The former separate "inline input" mode/flag is deleted.
+/// Drop the bottom toolbar's "expand" (grid-level maximize) icon button
+/// when the active tab's grid has one chart or fewer — nothing to expand
+/// into (owner item 4: "the central grid expand button is hidden when the
+/// active tab has a single chart and shown only for multi-chart grids").
+///
+/// Extracted as a pure fn (operates on already-converted sections, no
+/// `RenderContext`/theme needed) so the visibility rule itself is
+/// unit-testable without a full toolbar render pass.
+fn filter_bottom_sections_for_grid(sections: &mut Vec<ToolbarSection>, grid_chart_count: usize) {
+    if grid_chart_count > 1 {
+        return;
+    }
+    for section in sections.iter_mut() {
+        section.items.retain(|item| {
+            !matches!(item, TcToolbarItem::IconButton { id, .. } if id == "expand")
+        });
+    }
+}
+
+#[cfg(test)]
+mod grid_expand_button_visibility_tests {
+    //! Owner item 4: "the central grid expand button is hidden when the
+    //! active tab has a single chart and shown only for multi-chart grids."
+    use super::*;
+
+    fn icon_button(id: &str) -> TcToolbarItem {
+        TcToolbarItem::IconButton {
+            id: id.to_string(),
+            icon: IconId::new("Expand"),
+            active: false,
+            disabled: false,
+            min_width: 0.0,
+        }
+    }
+
+    #[test]
+    fn single_chart_grid_hides_expand_button() {
+        let mut sections = vec![ToolbarSection::new(vec![icon_button("expand"), icon_button("other")])];
+        filter_bottom_sections_for_grid(&mut sections, 1);
+        assert!(
+            !sections[0].items.iter().any(|i| matches!(i, TcToolbarItem::IconButton { id, .. } if id == "expand")),
+            "expand button must be gone on a single-chart grid"
+        );
+        assert_eq!(sections[0].items.len(), 1, "non-expand items must survive the filter");
+    }
+
+    #[test]
+    fn zero_chart_grid_also_hides_expand_button() {
+        // `grid_chart_count <= 1` covers "no grid" and "single chart"
+        // identically — nothing to expand into either way.
+        let mut sections = vec![ToolbarSection::new(vec![icon_button("expand")])];
+        filter_bottom_sections_for_grid(&mut sections, 0);
+        assert!(sections[0].items.is_empty());
+    }
+
+    #[test]
+    fn multi_chart_grid_keeps_expand_button() {
+        let mut sections = vec![ToolbarSection::new(vec![icon_button("expand"), icon_button("other")])];
+        filter_bottom_sections_for_grid(&mut sections, 2);
+        assert!(
+            sections[0].items.iter().any(|i| matches!(i, TcToolbarItem::IconButton { id, .. } if id == "expand")),
+            "expand button must stay for a multi-chart grid"
+        );
+        assert_eq!(sections[0].items.len(), 2);
+    }
+}
+
 pub fn chart_toolbar_render_toolbars(
     tb: &ChartToolbarState,
     ctx: &mut dyn ChartRenderContext,
@@ -375,6 +442,11 @@ pub fn chart_toolbar_render_toolbars(
     autosave_enabled: bool,
     sync_flags: Option<&mlc_core::SyncFlags>,
     is_expanded: bool,
+    // Leaf count of the active tab's own grid (owner item 4): the
+    // bottom-toolbar "expand" (grid-level maximize) button is hidden
+    // outright when there is nothing to expand into (a single-chart tab).
+    // Callers with no grid concept of their own (embedded headers) pass 1.
+    grid_chart_count: usize,
     split_without_group: bool,
     is_mono_group: bool,
     active_symbol: Option<&str>,
@@ -1052,6 +1124,10 @@ pub fn chart_toolbar_render_toolbars(
                     }
                 }
             }
+
+            // Hide the "expand" button outright on a single-chart tab —
+            // nothing to expand into (owner item 4).
+            filter_bottom_sections_for_grid(&mut bottom_sections, grid_chart_count);
 
             let bottom_config = TcConfig {
                 sections: bottom_sections,

@@ -354,4 +354,31 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn test_extended_hit_tester_main_overlay_button() {
+        use crate::layout::Margins;
+        use crate::layout::LayoutRect;
+
+        let margins = Margins::zero();
+        let layout = ExtendedFrameLayout::compute(
+            800.0, 600.0, &margins,
+            &[1], // One sub-pane, so the main overlay button is meaningful
+            100.0, 1.0,
+        );
+        let main_overlay = SubPaneOverlayResult {
+            expand_rect: Some(LayoutRect::new(700.0, 10.0, 18.0, 18.0)),
+            ..Default::default()
+        };
+
+        let tester = ExtendedLayoutHitTester::new(&layout).with_main_overlay(&main_overlay);
+
+        assert_eq!(
+            tester.hit_test(705.0, 15.0),
+            HitResult::MainPaneOverlayButton { button: SubPaneButton::Expand }
+        );
+        // Outside the button rect still resolves to the ordinary chart hit.
+        let main_chart_y = layout.main_chart.chart.y + 50.0;
+        assert_eq!(tester.hit_test(100.0, main_chart_y), HitResult::Chart);
+    }
 }
