@@ -31,6 +31,14 @@ thiserror = "2"
 # dependency of `mylittlechart-vault` (see that crate's own Cargo.toml note),
 # so depending on it here too adds no new supply-chain surface.
 zeroize = "1"
+# The record-log codec (`persist_log`, reached as `driver::persist_log`) —
+# frames the native shell's `records.log` as
+# `[len][SHA-256(payload)][payload]` so boot-time replay can tell a torn
+# tail (a crash mid-write) apart from real data. Already in this
+# workspace's dependency graph at this exact version spec via
+# `mylittlechart-vault`'s own `Cargo.toml` (see that crate's note next to
+# its own `sha2` line) -- this adds no new supply-chain surface.
+sha2 = "0.10"
 # Still not called from this piece's own code. `wire::events` (M3) keeps
 # Olm/Megolm ciphertext, Megolm session-key exports, and OTK/backup blobs as
 # opaque base64 *strings* at the wire-parsing layer -- decoding them to bytes

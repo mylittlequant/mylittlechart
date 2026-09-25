@@ -135,6 +135,7 @@
 pub mod canonical_json;
 pub mod core;
 pub mod crypto;
+pub mod driver;
 pub mod error;
 pub mod ids;
 pub mod legacy_dm;
