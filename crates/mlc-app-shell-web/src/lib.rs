@@ -2334,9 +2334,19 @@ fn run_render_loop(
                 let mut st = state_clone.borrow_mut();
                 if st.chart.drain_pending_share_live() {
                     let id = st.chart.panel_app.active_preset_id.clone();
-                    let preset = st.chart.core.presets().get(&id).cloned();
-                    let rect = st.chart.screenshot_rect();
-                    Some((st.cloud.clone(), preset, rect))
+                    let name = st.chart.core.presets().get(&id).map(|p| p.name.clone()).unwrap_or_default();
+                    // The registry copy is not the open chart. Drawings live
+                    // in the live store until this snapshot. Publishing the
+                    // registry copy overwrites the link with an empty chart.
+                    st.chart.collect_state_into_preset(&id, &name);
+                    if st.chart.load_state.is_loading() {
+                        web_sys::console::warn_1(&"[share] refused: chart is still loading".into());
+                        None
+                    } else {
+                        let preset = st.chart.core.presets().get(&id).cloned();
+                        let rect = st.chart.screenshot_rect();
+                        Some((st.cloud.clone(), preset, rect))
+                    }
                 } else {
                     None
                 }

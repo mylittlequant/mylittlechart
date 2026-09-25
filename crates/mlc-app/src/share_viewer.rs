@@ -353,36 +353,6 @@ impl ChartApp {
         Ok(())
     }
 
-    /// Replace the body of an already-open shared tab when the author
-    /// republished. Same id, same token. A matching revision is a no-op so
-    /// a poll does not reload the chart.
-    pub fn refresh_shared_tab(
-        &mut self,
-        tab_id: &str,
-        meta: SharedChartMeta,
-        mut preset: ChartPreset,
-    ) -> Result<(), String> {
-        if self.shared_chart_meta.get(tab_id).map(|m| m.revision) == Some(meta.revision) {
-            return Ok(());
-        }
-        if preset.version != PRESET_VERSION {
-            return Err(format!(
-                "shared preset version {} unsupported (this build is on {})",
-                preset.version, PRESET_VERSION,
-            ));
-        }
-        preset.remap_ids_for_import();
-        preset.id = tab_id.to_string();
-        preset.name = format!("{} — {}", meta.title, meta.owner_label);
-        self.readonly_preset_ids.insert(tab_id.to_string());
-        self.shared_chart_meta.insert(tab_id.to_string(), meta);
-        self.core.presets_mut().insert(tab_id.to_string(), preset);
-        if self.panel_app.active_preset_id == tab_id {
-            self.load_preset(tab_id);
-        }
-        Ok(())
-    }
-
     /// Drop a placeholder tab from `open_tabs`/`presets`/
     /// `readonly_preset_ids`, falling back the active tab exactly like an
     /// ordinary `CloseTab` when it was the one showing. Shared by
