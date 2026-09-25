@@ -218,6 +218,10 @@ fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
     // Chat-list name filter (messenger UI-2b) — same registration gap
     // `FORUM_SEARCH`/`DM_DRAFT`/`DM_PEER`'s own comment above documents.
     tf.register(text_input::DM_CHAT_FILTER, TextFieldConfig::text().with_max_len(64));
+    // Share settings nick box. Same contract as `DM_PEER`: `register` is
+    // what makes `update_field` / `focus` / `on_char` actually land. A
+    // field that is only drawn and never registered cannot take a caret.
+    tf.register(text_input::SHARE_SETTINGS_NICK, TextFieldConfig::text().with_max_len(64));
 }
 
 use std::cell::RefCell;
