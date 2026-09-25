@@ -597,6 +597,11 @@ impl ChartApp {
         // pulled from the same station rings the LIQ panel reads, one cursor
         // per venue, so nothing is lost to a frame that did not run.
         self.pump_liquidations();
+        // Arc D step 5 (docs/mlc/plans/indicator-streams-arc-d-2026-09-25.md
+        // §3.3): feed every Liquidation-declaring compute indicator the
+        // same rings, independent of whether a liquidation overlay is
+        // visible on that bubble's chart.
+        self.feed_liquidation_indicators();
         self.refresh_liq_projection();
         // Bars from other venues for the two profiles that fold them. Unlike
         // the book and liquidation folds this one has to OPEN the feed: bars
@@ -605,6 +610,10 @@ impl ChartApp {
         // Books for the DOM heat layer — its venue set decides which, the
         // same way the liquidation roster works.
         self.ensure_dom_book_rosters();
+        // Arc D step 5: feed every OrderBook-declaring compute indicator
+        // the reconstructed book, once per frame, from the same trackers
+        // the DOM Heatmap/ladder panels already read.
+        self.feed_orderbook_indicators();
         // Bar-aligned series for the host-rendered sub-panes, so they draw
         // through the ordinary output path instead of a bespoke painter.
         self.refresh_subpane_series();

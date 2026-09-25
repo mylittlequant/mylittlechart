@@ -274,4 +274,250 @@ impl crate::ChartApp {
         self.liq_armed
             .insert(bid, (symbol.to_string(), aggregate, want_key, now_ms));
     }
+
+    /// Feed every `Liquidation`-declaring compute indicator on a bubble
+    /// every print newer than this feed's own cursor, oldest first (Arc D
+    /// plan §3.3, `docs/mlc/plans/indicator-streams-arc-d-2026-09-25.md`).
+    ///
+    /// Deliberately independent of [`Self::liq_overlay_active_for_chart`]'s
+    /// gate: unlike [`Self::pump_liquidations`], which only drains for a
+    /// bubble with a VISIBLE liquidation overlay, a compute indicator can
+    /// want this stream with no overlay open. Every individual print is fed
+    /// (never just the latest) because `LiquidationConsumer` implementations
+    /// (cascade/cooldown/rate detectors) need each one.
+    ///
+    /// Read-only: this drains whatever rings [`BackendCore::liq_series_for_symbol`]
+    /// already resolves (armed by the LIQ tape/heatmap panel or an
+    /// aggregating roster) — it never subscribes on its own, so an
+    /// indicator with no accompanying panel stays at `is_ready() == false`
+    /// until something arms that venue, the same graceful cold-start state
+    /// the OrderBook feed (`frame_lifecycle/dom_books.rs`) already has.
+    pub(crate) fn feed_liquidation_indicators(&mut self) {
+        use mlc_backend_indicator_engine::StreamKind;
+
+        let targets: Vec<(BubbleId, String)> = {
+            let mut seen: std::collections::HashSet<BubbleId> = std::collections::HashSet::new();
+            self.panel_app
+                .panel_grid
+                .containers()
+                .keys()
+                .copied()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .filter_map(|cid| {
+                    let bid = self.bubble_for_chart(cid)?;
+                    if !seen.insert(bid) {
+                        return None;
+                    }
+                    let wants_liq = self.core.indicators().instances_for_bubble(bid).iter().any(|inst| {
+                        self.core
+                            .indicators()
+                            .definition_streams(&inst.type_id)
+                            .contains(&StreamKind::Liquidation)
+                    });
+                    if !wants_liq {
+                        return None;
+                    }
+                    let symbol = self.symbol_for_chart(cid)?;
+                    if symbol.is_empty() {
+                        return None;
+                    }
+                    Some((bid, symbol))
+                })
+                .collect()
+        };
+
+        for (bid, symbol) in targets {
+            for (venue, at, handle) in self.core.liq_series_for_symbol(&symbol) {
+                // Same contract-size normalisation `pump_liquidations` uses
+                // (see its own comment): Gate/OKX/KuCoin/HTX quote a
+                // derivative size in contracts, and feeding a raw contract
+                // count into a cascade/rate detector calibrated on notional
+                // size would be off by the contract multiplier.
+                let futures =
+                    !matches!(at, digdigdig3::AccountType::Spot | digdigdig3::AccountType::Margin);
+                let (contract_size, quotes_contracts) = {
+                    let syms = self.core.exchange_symbols();
+                    (
+                        syms.contract_size_for(venue.as_str(), &symbol, futures),
+                        futures && syms.quotes_contracts(venue.as_str()),
+                    )
+                };
+                if quotes_contracts && contract_size == 1.0 {
+                    continue;
+                }
+                let label = format!("{}:{:?}", venue.as_str(), at);
+                let cursor = self
+                    .indicator_liq_cursors
+                    .get(&(bid, label.clone()))
+                    .copied()
+                    .unwrap_or(0);
+                let snapshot = {
+                    let guard = handle.blocking_read();
+                    guard.snapshot()
+                };
+                let mut new_cursor = cursor;
+                for p in snapshot.iter().filter(|p| p.ts_ms > cursor) {
+                    if p.ts_ms > new_cursor {
+                        new_cursor = p.ts_ms;
+                    }
+                    let liq = liquidation_event(&symbol, p.ts_ms, p.price, p.quantity, p.side, contract_size);
+                    self.core.indicators_mut().feed_stream(
+                        bid,
+                        &mlc_backend_indicator_engine::StreamEvent::Liquidation(liq),
+                    );
+                }
+                if new_cursor != cursor {
+                    self.indicator_liq_cursors.insert((bid, label), new_cursor);
+                }
+            }
+        }
+    }
+}
+
+/// Build one `mli`-side `Liquidation` event from a raw station print.
+///
+/// Kept standalone with primitive parameters (no `digdigdig3_station`
+/// type in the signature — that crate is a dev-dependency here, not a
+/// normal one) so the side-byte decode has a direct unit test: it is the
+/// one genuinely easy-to-get-backwards part of this adapter.
+///
+/// `digdigdig3_station`'s own encode (`side_byte` in `digdigdig3-station/
+/// src/data/liquidation_ext.rs`, mirrored by `LiquidationPoint::
+/// from_stream_event`) writes `TradeSide::Buy -> 0`, `TradeSide::Sell ->
+/// 1` — consistent across every liquidation point flavour in that crate,
+/// and matching dig3-core's own doc-fixed (2026-08-01) semantics ("Sell =
+/// long was liquidated"). `side_byte` is decoded the same way it was
+/// encoded.
+fn liquidation_event(
+    symbol: &str,
+    ts_ms: i64,
+    price: f64,
+    quantity: f64,
+    side_byte: u8,
+    contract_size: f64,
+) -> mlc_backend_indicator_engine::types::Liquidation {
+    let side = if side_byte == 0 {
+        mlc_backend_indicator_engine::types::TradeSide::Buy
+    } else {
+        mlc_backend_indicator_engine::types::TradeSide::Sell
+    };
+    mlc_backend_indicator_engine::types::Liquidation {
+        symbol: symbol.to_string(),
+        side,
+        price,
+        quantity: quantity * contract_size,
+        timestamp: ts_ms,
+        value: Some(price * quantity * contract_size),
+        ..Default::default()
+    }
+}
+
+#[cfg(test)]
+mod feed_liquidation_indicators_tests {
+    use super::*;
+
+    #[test]
+    fn liquidation_event_decodes_the_station_side_byte_convention() {
+        let buy = liquidation_event("BTCUSDT", 1_000, 100.0, 2.0, 0, 1.0);
+        assert_eq!(
+            buy.side,
+            mlc_backend_indicator_engine::types::TradeSide::Buy,
+            "side byte 0 = short liquidated = TradeSide::Buy"
+        );
+        let sell = liquidation_event("BTCUSDT", 1_000, 100.0, 2.0, 1, 1.0);
+        assert_eq!(
+            sell.side,
+            mlc_backend_indicator_engine::types::TradeSide::Sell,
+            "side byte 1 = long liquidated = TradeSide::Sell"
+        );
+    }
+
+    #[test]
+    fn liquidation_event_applies_contract_size_to_quantity_and_value() {
+        let liq = liquidation_event("BTCUSDT", 1_000, 100.0, 2.0, 0, 10_000.0);
+        assert_eq!(liq.quantity, 20_000.0, "contract count -> base units");
+        assert_eq!(liq.value, Some(2_000_000.0), "price * base-unit quantity");
+        assert_eq!(liq.timestamp, 1_000);
+        assert_eq!(liq.symbol, "BTCUSDT");
+    }
+
+    /// `digdigdig3_station::Station`'s `series_handles` registry (the only
+    /// place a `SharedLiquidationSeries` handle comes from) is populated
+    /// exclusively by a successful `Station::subscribe` — synchronously
+    /// inside `spawn_forwarder`, which the fail-closed 0.3.7 subscribe path
+    /// never reaches without a connected WS connector — and offers no
+    /// public test-seeding hook from outside its own crate (unlike the
+    /// `OrderBookTracker` DashMap `mlc-backend-data-bridge` owns directly,
+    /// see `dom_books.rs`'s own tests). Compounding that: NO `Liquidation`-
+    /// declaring catalog entry is even creatable via `IndicatorManager::
+    /// create_instance` today — a pre-existing, unrelated `mylittleindicators`
+    /// bug found live while wiring this step (`UnifiedIndicatorCatalog::
+    /// get_all()` never enumerates the `Liquidations` category; see
+    /// `mlc-backend-indicator-engine`'s own `liquidation_funding_open_
+    /// interest_entries_are_unreachable_pending_mli_get_all_fix` test,
+    /// which pins this exact gap). So the only hermetically-testable slice
+    /// of this feed's ORCHESTRATION half is "a bubble with NO
+    /// Liquidation-declaring instance -> no panic, no fabricated value" —
+    /// the conversion math is covered by
+    /// [`liquidation_event_decodes_the_station_side_byte_convention`] and
+    /// [`liquidation_event_applies_contract_size_to_quantity_and_value`];
+    /// the "fires on a real print" half needs BOTH mli's gap closed AND a
+    /// live d2b pass (the plan's own step 8) to prove end-to-end.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn feed_liquidation_indicators_is_a_noop_with_no_declaring_instance() {
+        use digdigdig3::core::types::{AccountType, ExchangeId};
+        use mlc_backend_data_bridge::DataBridge;
+        use mlc_core::state::Timeframe;
+
+        let (bridge, _rx, _connector_ready_rx) = DataBridge::new().await;
+        let bridge = std::sync::Arc::new(bridge);
+        let core = mlc_backend::BackendCore::new(bridge, None);
+        let mut app = crate::ChartApp::new_empty(core);
+        app.seed_default_chart(ExchangeId::Binance, "BTCUSDT", Timeframe::m1(), AccountType::Spot, 5);
+        let cid = app.panel_app.panel_grid.active_container_id().expect("active container");
+        let bid = app.bubble_for_chart(cid).expect("seeded bubble");
+
+        // `book_imb` declares `OrderBook`, not `Liquidation` — a control
+        // showing the target scan finds nothing to feed on this bubble.
+        let id = app
+            .core
+            .indicators_mut()
+            .add(Some(bid), "book_imb")
+            .expect("book_imb catalog entry exists");
+        let bars: Vec<mlc_core::Bar> = (0..5)
+            .map(|i| mlc_core::Bar {
+                timestamp: i as i64,
+                open: 100.0,
+                high: 101.0,
+                low: 99.0,
+                close: 100.0,
+                volume: 10.0,
+                ..Default::default()
+            })
+            .collect();
+        app.core.indicators_mut().recalc_bubble(bid, &bars);
+
+        let values_of = |app: &crate::ChartApp| -> std::collections::HashMap<String, Vec<f64>> {
+            app.core
+                .indicators()
+                .instances_for_bubble(bid)
+                .into_iter()
+                .find(|inst| inst.id == id)
+                .map(|inst| (*inst.values).clone())
+                .expect("instance exists")
+        };
+
+        let before = values_of(&app);
+        // No Liquidation-declaring instance on this bubble — the target
+        // scan in `feed_liquidation_indicators` finds nothing, so the drain
+        // loop body never runs (never even calls `liq_series_for_symbol`).
+        app.feed_liquidation_indicators();
+        let after = values_of(&app);
+
+        assert_eq!(
+            before, after,
+            "no Liquidation-declaring instance — book_imb must stay untouched, not panic"
+        );
+    }
 }

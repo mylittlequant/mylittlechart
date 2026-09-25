@@ -9,7 +9,7 @@ use crate::ChartApp;
 use crate::WarmupBudget;
 use crate::chart_container::DEFAULT_SNAP_MARGIN;
 use mlc_backend::BubbleEvent;
-use mlc_backend_indicator_engine::RecalcMode;
+use mlc_backend_indicator_engine::{RecalcMode, StreamKind};
 
 impl ChartApp {
     /// React to one [`BubbleEvent`] from the backend writer.
@@ -1439,7 +1439,20 @@ impl ChartApp {
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> =
                     self.panel_app.panel_grid.containers().iter()
                         .filter_map(|(cid, win)| {
-                            if !self.overlay_instance_active(win.current_tag_id, Self::OI_DELTA_TYPE_ID) { return None; }
+                            let overlay_active = self.overlay_instance_active(win.current_tag_id, Self::OI_DELTA_TYPE_ID);
+                            // Arc D step 6 (docs/mlc/plans/indicator-streams-
+                            // arc-d-2026-09-25.md §3.3): a real compute
+                            // indicator (OiChangeRate, ...) declaring
+                            // `OpenInterest` on this bubble is as much a
+                            // target as the opaque OI Delta overlay — the
+                            // OR closes the gap where the feed was already
+                            // flowing but only the overlay ever saw it.
+                            let compute_active = self.bubble_for_chart(*cid).is_some_and(|bid| {
+                                self.core.indicators().instances_for_bubble(bid).iter().any(|inst| {
+                                    self.core.indicators().definition_streams(&inst.type_id).contains(&StreamKind::OpenInterest)
+                                })
+                            });
+                            if !overlay_active && !compute_active { return None; }
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
                             if s != *symbol || a != event_account_type { return None; }
@@ -1449,6 +1462,12 @@ impl ChartApp {
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in bids {
                     self.core.bubbles_mut().with_bubble_mut(b, |bubble| bubble.append_oi(*point));
+                    let oi = mlc_backend_indicator_engine::types::OpenInterest {
+                        open_interest: point.oi,
+                        timestamp: point.ts_ms,
+                        ..Default::default()
+                    };
+                    self.core.indicators_mut().feed_stream(b, &mlc_backend_indicator_engine::StreamEvent::OpenInterest(oi));
                 }
             }
 
@@ -1481,7 +1500,17 @@ impl ChartApp {
                 let target_cids: std::collections::HashSet<mlc_core::state::ChartId> =
                     self.panel_app.panel_grid.containers().iter()
                         .filter_map(|(cid, win)| {
-                            if !self.overlay_instance_active(win.current_tag_id, Self::FUNDING_RATE_TYPE_ID) { return None; }
+                            let overlay_active = self.overlay_instance_active(win.current_tag_id, Self::FUNDING_RATE_TYPE_ID);
+                            // Arc D step 6, same widening as the OI arm
+                            // above: a compute indicator (FundingMomentum,
+                            // ...) declaring `Funding` is as much a target
+                            // as the opaque Funding Rate overlay.
+                            let compute_active = self.bubble_for_chart(*cid).is_some_and(|bid| {
+                                self.core.indicators().instances_for_bubble(bid).iter().any(|inst| {
+                                    self.core.indicators().definition_streams(&inst.type_id).contains(&StreamKind::Funding)
+                                })
+                            });
+                            if !overlay_active && !compute_active { return None; }
                             let s = self.symbol_for_chart(*cid)?;
                             let a = self.account_type_for_chart(*cid)?;
                             if s != *symbol || a != event_account_type { return None; }
@@ -1491,6 +1520,12 @@ impl ChartApp {
                     target_cids.iter().filter_map(|cid| self.bubble_for_chart(*cid)).collect();
                 for b in bids {
                     self.core.bubbles_mut().with_bubble_mut(b, |bubble| bubble.append_funding(*point));
+                    let fr = mlc_backend_indicator_engine::types::FundingRate {
+                        rate: point.rate,
+                        timestamp: point.ts_ms,
+                        ..Default::default()
+                    };
+                    self.core.indicators_mut().feed_stream(b, &mlc_backend_indicator_engine::StreamEvent::Funding(fr));
                 }
             }
 
@@ -1999,5 +2034,104 @@ mod live_seam_regression_tests {
             let id = if b.derived_ts_ms != 0 { b.derived_ts_ms } else { b.timestamp };
             assert!(seen.insert(id), "duplicate bar identity {id} in tail — забор regression: {bars:?}");
         }
+    }
+}
+
+#[cfg(test)]
+mod oi_funding_widen_tests {
+    //! Arc D step 6 (`docs/mlc/plans/indicator-streams-arc-d-2026-09-25.md`
+    //! §3.3): `target_cids` in the `OiUpdatePassthrough`/
+    //! `FundingRatePassthrough` arms now ORs a real compute indicator's
+    //! `definition_streams` membership alongside the opaque overlay check.
+    //!
+    //! **The compute-indicator half is written and correct by construction
+    //! but not exercisable via a real catalog instance today**: a live
+    //! diagnostic (`mlc-backend-indicator-engine`'s
+    //! `liquidation_funding_open_interest_entries_are_unreachable_pending_
+    //! mli_get_all_fix` test) found ZERO `Funding`/`OpenInterest`-declaring
+    //! catalog entries reachable via `IndicatorManager::create_instance` —
+    //! the SAME pre-existing `mylittleindicators` `UnifiedIndicatorCatalog::
+    //! get_all()` category-enumeration gap `dom_books.rs`/`liq_pump.rs`
+    //! document for `OrderBook`/`Liquidation`. `FUNDING_MOMENTUM`/
+    //! `OI_CHANGE_RATE` (`FundingAdvanced`/`OpenInterest` categories) are
+    //! both affected. What IS tested here: the regression guard that the
+    //! widening did not break the EXISTING, working opaque-overlay path.
+    //! Once mli's gap closes, the compute half needs no further mlc-side
+    //! change — `definition_streams`/`instances_for_bubble` already work
+    //! for any instance that manages to exist.
+
+    use super::*;
+    use digdigdig3::core::types::{AccountType, ExchangeId};
+    use mlc_core::state::Timeframe;
+
+    async fn build_app_with_bubble() -> (ChartApp, mlc_core::ids::BubbleId) {
+        let (bridge, _rx, _connector_ready_rx) = mlc_backend_data_bridge::DataBridge::new().await;
+        let bridge = std::sync::Arc::new(bridge);
+        let core = mlc_backend::BackendCore::new(bridge, None);
+        let mut app = ChartApp::new_empty(core);
+        app.seed_default_chart(ExchangeId::Binance, "BTCUSDT", Timeframe::m1(), AccountType::Spot, 5);
+        let cid = app.panel_app.panel_grid.active_container_id().expect("active container");
+        let bid = app.bubble_for_chart(cid).expect("seeded bubble");
+        (app, bid)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn oi_update_still_reaches_a_bubble_with_only_the_opaque_overlay_active() {
+        let (mut app, bid) = build_app_with_bubble().await;
+        app.core
+            .indicators_mut()
+            .add(Some(bid), ChartApp::OI_DELTA_TYPE_ID)
+            .expect("overlay_oi_delta catalog entry exists");
+
+        let event = mlc_backend::BubbleEvent::OiUpdatePassthrough {
+            exchange_id: ExchangeId::Binance,
+            account_type: "S".to_string(),
+            symbol: "BTCUSDT".to_string(),
+            point: mlc_core::types::OiDeltaBar { ts_ms: 1_000, oi: 500.0, delta: 10.0 },
+        };
+        app.react_to_bubble_event(&event, 0);
+
+        let bubbles = app.core.bubbles();
+        let series = bubbles.oi_delta(bid).unwrap_or(&[]);
+        assert_eq!(series.len(), 1, "the opaque OI Delta overlay must still receive the point after the widening");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn funding_update_still_reaches_a_bubble_with_only_the_opaque_overlay_active() {
+        let (mut app, bid) = build_app_with_bubble().await;
+        app.core
+            .indicators_mut()
+            .add(Some(bid), ChartApp::FUNDING_RATE_TYPE_ID)
+            .expect("overlay_funding_rate catalog entry exists");
+
+        let event = mlc_backend::BubbleEvent::FundingRatePassthrough {
+            exchange_id: ExchangeId::Binance,
+            account_type: "S".to_string(),
+            symbol: "BTCUSDT".to_string(),
+            point: mlc_core::types::FundingRateCell { ts_ms: 1_000, rate: 0.0001, interval_hours: 8 },
+        };
+        app.react_to_bubble_event(&event, 0);
+
+        let bubbles = app.core.bubbles();
+        let series = bubbles.funding_rate(bid).unwrap_or(&[]);
+        assert_eq!(series.len(), 1, "the opaque Funding Rate overlay must still receive the point after the widening");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn oi_update_does_not_reach_a_bubble_with_neither_overlay_nor_compute_indicator() {
+        let (mut app, bid) = build_app_with_bubble().await;
+        // No `overlay_oi_delta` instance, no compute indicator at all.
+        let event = mlc_backend::BubbleEvent::OiUpdatePassthrough {
+            exchange_id: ExchangeId::Binance,
+            account_type: "S".to_string(),
+            symbol: "BTCUSDT".to_string(),
+            point: mlc_core::types::OiDeltaBar { ts_ms: 1_000, oi: 500.0, delta: 10.0 },
+        };
+        app.react_to_bubble_event(&event, 0);
+
+        assert!(
+            app.core.bubbles().oi_delta(bid).unwrap_or(&[]).is_empty(),
+            "neither gate is active — the bubble must not receive the point"
+        );
     }
 }

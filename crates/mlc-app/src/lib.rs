@@ -618,6 +618,13 @@ pub struct ChartApp {
     /// up by the next one instead of losing what arrived in between.
     pub(crate) liq_cursors: std::collections::HashMap<(mlc_core::ids::BubbleId, String), i64>,
 
+    /// Per-(bubble, venue) read position [`Self::feed_liquidation_indicators`]
+    /// (Arc D plan §3.3) has drained into `feed_stream`, kept SEPARATE from
+    /// [`Self::liq_cursors`] — the tape's own cursor — so the two drains
+    /// never race each other off the same ring: whichever ran first would
+    /// otherwise consume the other's "new since last read" prints.
+    pub(crate) indicator_liq_cursors: std::collections::HashMap<(mlc_core::ids::BubbleId, String), i64>,
+
     /// The (symbol, aggregate, venues, armed-at-ms) the liquidation overlay
     /// last armed feeds for, per bubble. RAM-only, and it exists so the
     /// arming runs on a CHANGE — plus a throttled repair while a venue is
@@ -3553,6 +3560,7 @@ impl ChartApp {
         let mut app = Self {
             bubble_feeds: std::collections::HashMap::new(),
             liq_cursors: std::collections::HashMap::new(),
+            indicator_liq_cursors: std::collections::HashMap::new(),
             liq_armed: std::collections::HashMap::new(),
             oi_hist_armed: std::collections::HashMap::new(),
             dom_books_armed: std::collections::HashMap::new(),
@@ -3959,6 +3967,7 @@ impl ChartApp {
         let mut app = Self {
             bubble_feeds: std::collections::HashMap::new(),
             liq_cursors: std::collections::HashMap::new(),
+            indicator_liq_cursors: std::collections::HashMap::new(),
             liq_armed: std::collections::HashMap::new(),
             oi_hist_armed: std::collections::HashMap::new(),
             dom_books_armed: std::collections::HashMap::new(),
@@ -4581,6 +4590,7 @@ impl ChartApp {
         let mut app = Self {
             bubble_feeds: std::collections::HashMap::new(),
             liq_cursors: std::collections::HashMap::new(),
+            indicator_liq_cursors: std::collections::HashMap::new(),
             liq_armed: std::collections::HashMap::new(),
             oi_hist_armed: std::collections::HashMap::new(),
             dom_books_armed: std::collections::HashMap::new(),

@@ -28,6 +28,21 @@ use super::indicator_manager::{
 /// (`docs/mlc/plans/indicator-streams-arc-d-2026-09-25.md` §6 steps 5-6)
 /// extend ONLY this array (`OrderBook` + `Liquidation` in step 5, `Funding`
 /// + `OpenInterest` in step 6) rather than re-deriving the un-hide rule.
+///
+/// `OrderBook` joined in step 5: `mlc-app/src/frame_lifecycle/dom_books.rs`
+/// polls the same `OrderBookTracker` the DOM Heatmap/ladder panels already
+/// read, once per frame. `Liquidation` joined in the same step:
+/// `mlc-app/src/frame_lifecycle/liq_pump.rs` drains the same station rings
+/// the LIQ tape/heatmap panel already reads, one cursor per (bubble, venue).
+/// Both are reads only — neither opens a subscription of its own.
+///
+/// `Funding` + `OpenInterest` joined in step 6: `mlc-app/src/
+/// frame_lifecycle/react.rs` widens the `OiUpdatePassthrough`/
+/// `FundingRatePassthrough` arms' `target_cids` filter to OR in a real
+/// compute indicator's `definition_streams` membership alongside the
+/// opaque `overlay_oi_delta`/`overlay_funding_rate` check that already
+/// fed the bubble — same read, no new subscription.
+///
 /// `OrderbookDelta` is deliberately absent even though `StreamEvent`/
 /// `feed_stream_event` already dispatch it (step 1): no app-layer producer
 /// calls `feed_stream(..., StreamEvent::OrderbookDelta(...))` anywhere yet
@@ -37,6 +52,10 @@ use super::indicator_manager::{
 const FED_STREAMS: &[mli::data_loader::stream_kind::StreamKind] = &[
     mli::data_loader::stream_kind::StreamKind::Bar,
     mli::data_loader::stream_kind::StreamKind::Tick,
+    mli::data_loader::stream_kind::StreamKind::OrderBook,
+    mli::data_loader::stream_kind::StreamKind::Liquidation,
+    mli::data_loader::stream_kind::StreamKind::Funding,
+    mli::data_loader::stream_kind::StreamKind::OpenInterest,
 ];
 
 /// Whether EVERY stream `signature` declares (primary + every aux) is in
@@ -634,25 +653,55 @@ mod tests {
     /// Pins the exact count of un-hidden entries (Arc D step 4's own ask,
     /// §6 step 4: "pinning the exact count of entries that become
     /// visible" — replaces the plan's hand-waved "~63-67", which covered
-    /// steps 5/6 too; after step 3 only `Tick` joined `Bar`). Excludes the
-    /// opaque host overlays (`machine_id: None`, always visible regardless
-    /// of `streams`) and pure-`Bar` entries (already visible before this
-    /// arc) — counts only NEWLY visible non-`Bar`-primary compute entries.
+    /// steps 5/6 too). Excludes the opaque host overlays (`machine_id:
+    /// None`, always visible regardless of `streams`) and pure-`Bar`
+    /// entries (already visible before this arc) — counts only NEWLY
+    /// visible non-`Bar`-primary compute entries.
     ///
-    /// 10, not the CLAUDE.md stream table's raw "Tick 22" primary count:
-    /// 12 of those 22 declare at least one `aux_streams` entry outside
-    /// `{Bar, Tick}` (composites needing e.g. `OrderBook`/`Funding`
-    /// alongside their `Tick` primary) and correctly stay hidden per the
-    /// composite rule (§3.6 case 1) — a live catalog query is the only
-    /// correct source for this number, matching this task's own
-    /// instruction to verify every plan example against the catalog. The
-    /// 10 (verified live, 2026-09-25): `trade_flow_imbalance`,
-    /// `uptick_downtick_volume`, `aggressor_imbalance`,
-    /// `large_trade_filter`, `tick_volume`, `footprint_chart`,
-    /// `footprint_imb`, `footprint_poc`, `absorption_detector`,
-    /// `trade_cluster_detector`.
-    /// A future step (5 or 6) extending `FED_STREAMS` is expected to move
-    /// this number — update it deliberately, not silently.
+    /// History: 10 after step 3 (`Tick` joined `Bar`) — not the CLAUDE.md
+    /// stream table's raw "Tick 22" primary count, because 12 of those 22
+    /// declare at least one `aux_streams` entry outside `{Bar, Tick}` and
+    /// correctly stayed hidden per the composite rule (§3.6 case 1). 28
+    /// after step 5 (`OrderBook` + `Liquidation` joined): +18, not
+    /// CLAUDE.md's raw "OrderBook 21 + Liquidation 7 = 28" mli DISPATCH-ARM
+    /// count.
+    ///
+    /// **The 18-vs-28 gap is a pre-existing `mylittleindicators` catalog
+    /// bug, found live while wiring this step** —
+    /// `UnifiedIndicatorCatalog::get_all()` (`mylittleindicators/src/
+    /// catalog/unified.rs:137-172`) enumerates a HARDCODED list of
+    /// `IndicatorCategory` variants that omits every "stream-specialized"
+    /// category added after the original list (`FundingAdvanced`,
+    /// `OpenInterest`, `MarkPriceAdvanced`, `TickerAdvanced`,
+    /// **`Liquidations`**, `TickAdvanced`, `BookAdvanced`, `Composites`,
+    /// `Sentiment`, `IndexBasis`, `VolatilityAdvanced`, `Greeks`, `Stress`,
+    /// `Microstructure`, `RiskFunding` — confirmed against `mylittleindicators/
+    /// src/catalog/data/indicator_signature.rs:116-131`). `IndicatorBridge::
+    /// get_all_definitions` (this file) and `IndicatorManager::
+    /// register_from_catalog` (`mlc-backend/src/indicator/manager.rs`) both
+    /// build their definition tables EXCLUSIVELY from `get_all()`, so all 7
+    /// `Liquidations`-category entries (LIQUIDATION_RATE and its 6
+    /// siblings) are absent from `all` here — not filtered by
+    /// `fed_by_engine`, never enumerated in the first place. A live
+    /// diagnostic query (`d.streams.contains(&OrderBook | &Liquidation)`
+    /// over `get_all_definitions()`'s own output) found 18 `OrderBook`
+    /// entries and confirmed **0** `Liquidation` entries — the whole +18
+    /// delta is `OrderBook` (mostly cataloged under `Book`/`Clusters`,
+    /// which ARE in `get_all()`'s list); `Liquidation`'s un-hide has zero
+    /// visible effect until `mylittleindicators` fixes `get_all()` (mli is
+    /// pinned exactly and out of this task's edit scope — reported, not
+    /// worked around). `fed_by_engine` is still computed correctly for the
+    /// `Liquidations`-category entries (see `get_definition`, which
+    /// bypasses `get_all()`'s enumeration via a direct id lookup) — the fix
+    /// on this side needs nothing further once mli's gap closes. A live
+    /// catalog query is the only correct source for this number, matching
+    /// this task's own instruction to verify every plan example against
+    /// the catalog. Still 28 after step 6 (`Funding` + `OpenInterest`
+    /// joined, this task): the same diagnostic confirmed 0 reachable
+    /// `Funding`/`OpenInterest` entries too, so this pin does not move —
+    /// verified by re-running this exact test after the step 6 change, not
+    /// assumed from the step 5 pattern. If `FED_STREAMS` is extended again
+    /// later, re-verify and update this pin deliberately, not silently.
     #[test]
     fn newly_visible_non_bar_primary_entry_count_is_pinned() {
         use mli::data_loader::stream_kind::StreamKind;
@@ -666,17 +715,54 @@ mod tests {
             .count();
 
         assert_eq!(
-            newly_visible, 10,
-            "newly-visible non-Bar-primary compute entry count drifted from the Arc D step 4 pin (10)"
+            newly_visible, 28,
+            "newly-visible non-Bar-primary compute entry count drifted from the Arc D step 5 pin (28)"
         );
     }
 
-    /// A representative entry per still-hidden non-`Tick` stream (OrderBook,
-    /// Funding, OpenInterest, Liquidation — steps 5/6, not yet landed) stays
-    /// hidden; a representative `Tick`-primary entry (step 3, this task) is
-    /// now visible. Same indicators `mlc-backend-indicator-engine`'s and
-    /// `mlc-backend`'s own step 1-3 tests already exercise, so a name typo
-    /// here would already be caught upstream.
+    /// Documents the pre-existing `mylittleindicators` catalog gap this
+    /// step found (see [`newly_visible_non_bar_primary_entry_count_is_pinned`]'s
+    /// doc comment for the full explanation): `get_all_definitions()`
+    /// reaches 18 `OrderBook`-declaring entries but ZERO `Liquidation`/
+    /// `Funding`/`OpenInterest`-declaring ones, because
+    /// `UnifiedIndicatorCatalog::get_all()` never enumerates their
+    /// categories. A red version of this test (any of the three
+    /// non-`OrderBook` counts going non-zero) is the signal that mli's
+    /// `get_all()` gap has closed — flip it from `assert_eq!(0, ...)` to a
+    /// positive-count assertion at that point, not before.
+    #[test]
+    fn liquidation_funding_open_interest_entries_are_unreachable_pending_mli_get_all_fix() {
+        use mli::data_loader::stream_kind::StreamKind;
+        let bridge = IndicatorBridge::new();
+        let all = bridge.get_all_definitions();
+        let reachable = |want: StreamKind| -> usize {
+            all.iter()
+                .filter(|d| d.machine_id.is_some())
+                .filter(|d| d.streams.contains(&want))
+                .count()
+        };
+        assert!(reachable(StreamKind::OrderBook) > 0, "OrderBook entries ARE reachable via get_all() (Book/Clusters categories)");
+        assert_eq!(reachable(StreamKind::Liquidation), 0, "Liquidations category still not enumerated by get_all() — see doc comment above");
+        assert_eq!(reachable(StreamKind::Funding), 0, "FundingAdvanced category still not enumerated by get_all() — see doc comment above");
+        assert_eq!(reachable(StreamKind::OpenInterest), 0, "OpenInterest category still not enumerated by get_all() — see doc comment above");
+    }
+
+    /// A representative entry per non-`Bar` stream fed by this arc
+    /// (`Tick` step 3, `OrderBook`/`Liquidation` step 5, `Funding`/
+    /// `OpenInterest` step 6, this task) is visible. Same indicators
+    /// `mlc-backend-indicator-engine`'s and `mlc-backend`'s own step-by-step
+    /// tests already exercise, so a name typo here would already be caught
+    /// upstream.
+    ///
+    /// `LIQUIDATION_RATE`/`FUNDING_MOMENTUM`/`OI_CHANGE_RATE`'s
+    /// `fed_by_engine == true` here is CORRECT (this test uses
+    /// `get_definition`, a direct id lookup that bypasses `get_all()`) but
+    /// currently has no visible effect anywhere else — see
+    /// [`liquidation_funding_open_interest_entries_are_unreachable_pending_mli_get_all_fix`]:
+    /// `get_all()`'s enumeration gap means no `Liquidations`/
+    /// `FundingAdvanced`/`OpenInterest`-category instance can be created
+    /// via `IndicatorManager::create_instance` at all today. Kept correct
+    /// here regardless — it needs no further change once mli's gap closes.
     #[test]
     fn representative_entries_per_stream_match_expected_visibility() {
         let bridge = IndicatorBridge::new();
@@ -684,11 +770,11 @@ mod tests {
         let tick = bridge.get_definition("TRADE_FLOW_IMBALANCE").expect("TRADE_FLOW_IMBALANCE in catalog");
         assert!(tick.fed_by_engine, "Tick-primary entry must be visible after step 3's Tick hook");
 
-        for hidden_id in ["BOOK_IMB", "FUNDING_MOMENTUM", "OI_CHANGE_RATE", "LIQUIDATION_RATE"] {
-            let def = bridge.get_definition(hidden_id).unwrap_or_else(|| panic!("{hidden_id} in catalog"));
+        for visible_id in ["BOOK_IMB", "LIQUIDATION_RATE", "FUNDING_MOMENTUM", "OI_CHANGE_RATE"] {
+            let def = bridge.get_definition(visible_id).unwrap_or_else(|| panic!("{visible_id} in catalog"));
             assert!(
-                !def.fed_by_engine,
-                "{hidden_id} declares a stream steps 5/6 haven't landed yet — must stay hidden"
+                def.fed_by_engine,
+                "{visible_id} declares a stream this arc's hooks now feed — must be visible"
             );
         }
     }
