@@ -86,9 +86,6 @@ pub(crate) const DM_CHAT_FILTER_FIELD: &str = "dm_chat_filter";
 /// own board-list width, not this constant — the two tabs' left columns
 /// never needed to match.
 pub(crate) const LIST_COL_W: f64 = 290.0;
-/// Gap between the two columns, split evenly by the hairline
-/// [`draw_column_divider`] draws at its midpoint.
-pub(crate) const COL_GAP: f64 = 16.0;
 
 /// Social/project links shown in the News overlay's LINKS section (id,
 /// label, URL). Keep in sync with the landing footer. The click handler
@@ -511,19 +508,6 @@ pub(crate) fn register_scrollbar_hit_zones(
             layer_id,
         );
     }
-}
-
-/// Vertical divider between the Community modal's two columns — one
-/// hairline at the gap's midpoint, running the full pane height. Shared by
-/// `forum_v2_overlay`/`dm_overlay`'s own two-pane `draw` entry points
-/// (community-modal arc W2).
-pub(crate) fn draw_column_divider(ctx: &mut dyn RenderContext, x: f64, y: f64, h: f64, tt: &ToolbarTheme) {
-    ctx.set_stroke_color(&tt.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(x, y);
-    ctx.line_to(x, y + h);
-    ctx.stroke();
 }
 
 fn draw_body(

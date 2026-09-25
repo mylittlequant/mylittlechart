@@ -6741,6 +6741,20 @@ impl CommunityTab {
     }
 }
 
+/// The messenger composer's own "replying to" banner (concept `.cbar`) —
+/// set by clicking Reply on a bubble, cleared by its own ✕ or by sending.
+/// Carries only what the banner needs to PAINT (sender label, quoted
+/// preview); the `event_id` a real `MessengerIntent::SendText`'s own
+/// `reply_to` would attach is a later click-dispatch piece's job, same
+/// "paint now, wire the mutation later" split `messenger_overlay.rs`'s own
+/// top doc already draws for the folder rail's active-folder selection.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MessengerReplyPreview {
+    pub sender_label: String,
+    pub preview: String,
+}
+
 /// State for the Community modal (Forum + Messages). Pure UI state + the
 /// forum-v2/DM state it now owns — effects live in the shell driver, same
 /// mailbox contract as [`CloudOverlayState`].
@@ -6798,6 +6812,10 @@ pub struct CommunityState {
     /// [`UserSettingsState::focus_seq`]'s own doc for the "last opened is
     /// on top" rule this drives against that field.
     pub focus_seq: u64,
+    /// The messenger composer's own reply banner — see
+    /// [`MessengerReplyPreview`]'s own doc. `None` while nothing is queued
+    /// as a reply target.
+    pub messenger_reply_preview: Option<MessengerReplyPreview>,
 }
 
 #[cfg(feature = "cloud")]
@@ -6817,6 +6835,7 @@ impl Default for CommunityState {
             forum2: ForumV2State::default(),
             dm: DmState::default(),
             focus_seq: 0,
+            messenger_reply_preview: None,
         }
     }
 }

@@ -17,8 +17,21 @@ pub struct ToolbarTheme {
     /// than the toolbar).  Modals that render inline dropdowns should use
     /// this field rather than `background`.
     pub dropdown_bg: String,
-    /// Separator line colour.
+    /// Separator line colour — the STRONG divider (`UITheme::ui_border`,
+    /// the messenger concept's own `--border`): the outer modal frame, not
+    /// internal chrome.
     pub separator: String,
+    /// The SOFT divider (`UITheme::border_light`, the messenger concept's
+    /// own `--soft`) — every internal rule inside the Community modal's
+    /// Messages pane (rail/list/pane column dividers, the chat header's own
+    /// bottom rule, the pin bar, the composer's top rule): one shade
+    /// lighter than [`Self::separator`], added rather than reusing that
+    /// field because the concept draws the two at genuinely different
+    /// strengths (`messenger_concept_v1.html`'s own `--border` vs `--soft`
+    /// tokens, `crates/mlc-ui-lab/designs/2026-09-24-messenger/
+    /// messenger_concept_v1.html:24`) and no existing `ToolbarTheme` field
+    /// carried the softer one.
+    pub divider_soft: String,
     /// Item background when hovered.
     pub item_bg_hover: String,
     /// Item background when active/selected.
@@ -29,8 +42,17 @@ pub struct ToolbarTheme {
     pub button_bg_hover: String,
     /// Default icon / label colour.
     pub item_text: String,
-    /// Muted icon / label colour (for secondary/disabled items).
+    /// Muted icon / label colour (for secondary/disabled items) —
+    /// `UITheme::text_secondary`, the messenger concept's own `--dim`.
     pub item_text_muted: String,
+    /// The THIRD, most de-saturated grey (`UITheme::text_muted`, the
+    /// messenger concept's own `--muted`) — a SEPARATE shade from
+    /// [`Self::item_text_muted`] (`text_secondary`/`--dim`): the concept
+    /// genuinely draws with both at once (folder-rail labels, chat-list
+    /// timestamps, mute/pin glyphs and a muted badge's own fill use
+    /// `--muted`; preview lines and the chat header's subtitle use `--dim`)
+    /// and no existing field carried this darker one.
+    pub muted_ink: String,
     /// Colour for hidden (invisible) items — item_text at 50% opacity.
     pub item_text_hidden: String,
     /// Icon / label colour on hover.
@@ -80,12 +102,14 @@ impl Default for ToolbarTheme {
             background: "#1e1e2e".into(),
             dropdown_bg: "#1e222d".into(),
             separator: "#313244".into(),
+            divider_soft: "#2a2e39".into(),
             item_bg_hover: "#45475a".into(),
             item_bg_active: "#585b70".into(),
             button_bg: "#1e222d".into(),
             button_bg_hover: "#2a2e39".into(),
             item_text: "#a6adc8".into(),
             item_text_muted: "#6c7086".into(),
+            muted_ink: "#585b70".into(),
             item_text_hidden: "#a6adc880".into(),
             item_text_hover: "#cdd6f4".into(),
             item_text_active: "#cdd6f4".into(),

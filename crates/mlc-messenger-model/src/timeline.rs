@@ -101,6 +101,25 @@ pub struct ReactionSummary {
     pub by_me: bool,
 }
 
+/// A shared chart/preset attachment on one timeline item (the concept's own
+/// `.card`: symbol/timeframe/venue header, a preview, and Open/Clone
+/// actions) — a Matrix custom-event attachment, carried ALONGSIDE
+/// [`MessageContent::Text`] on the same item rather than as its own
+/// `MessageContent` variant: the concept's own message bubble shows BOTH a
+/// card AND a text line under it in the same bubble, the same "relation
+/// arrives already aggregated onto the item" shape [`TimelineItem::
+/// reactions`]/`reply_to` already use for their own attachments.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SharedChartCard {
+    pub symbol: String,
+    pub timeframe: String,
+    pub venue: String,
+    /// The card's own subtitle line (concept: "SMC scan · 2 order blocks ·
+    /// shared chart") — free text the sender wrote, not derived from the
+    /// symbol/timeframe/venue above.
+    pub note: String,
+}
+
 /// Where one item sits in its own send lifecycle. `Sent` is a durable,
 /// server-accepted fact; READ status is deliberately not a variant here —
 /// see [`TimelineItem::read_by`]: a message can be read by some recipients
@@ -137,4 +156,15 @@ pub struct TimelineItem {
     /// the rest of this type.
     pub read_by: Vec<UserId>,
     pub pinned: bool,
+    /// A shared chart/preset attachment, if the sender attached one — see
+    /// [`SharedChartCard`]'s own doc.
+    pub shared_chart: Option<SharedChartCard>,
+    /// Whether this event's push rules highlighted the CURRENT viewer
+    /// specifically (an `@mention` of them, or an equivalent room-level
+    /// rule) — aggregated per-event, the same per-message counterpart to
+    /// [`crate::RoomSummary::highlight_count`]'s own room-level total.
+    /// Drives the bubble's own accent outline; never re-derived from the
+    /// message text (a plain "@word" token elsewhere in the text is styled
+    /// on its own, independent of whether it is actually THIS viewer).
+    pub mentions_me: bool,
 }

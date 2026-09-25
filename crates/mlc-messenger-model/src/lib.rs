@@ -41,5 +41,5 @@ pub use provider::MessengerProvider;
 pub use room::{LastEventPreview, PreviewContent, RoomKind, RoomSummary, Tag};
 pub use timeline::{
     LegacyContent, MembershipChange, MembershipEvent, MessageContent, ReactionSummary,
-    ReplyPreview, SendState, TimelineItem, UtdReason,
+    ReplyPreview, SendState, SharedChartCard, TimelineItem, UtdReason,
 };

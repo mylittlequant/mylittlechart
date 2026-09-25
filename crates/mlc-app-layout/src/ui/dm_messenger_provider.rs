@@ -32,9 +32,9 @@
 //! construction — see its own doc.
 
 use mlc_messenger_model::{
-    initials_from_name, BackPagination, Capabilities, EventId, Folder, Member, MemberRole,
-    MessageContent, MessengerIntent, MessengerProvider, PowerLevel, RoomId, RoomKind, RoomSummary,
-    SendState, Timestamp, TimelineItem, UserId, UtdReason, VaultState,
+    initials_from_name, BackPagination, Capabilities, EventId, Folder, LastEventPreview, Member,
+    MemberRole, MessageContent, MessengerIntent, MessengerProvider, PowerLevel, PreviewContent,
+    RoomId, RoomKind, RoomSummary, SendState, Timestamp, TimelineItem, UserId, UtdReason, VaultState,
 };
 
 use super::modal_settings::{DmMessageBody, DmMessagePage, DmRequest, DmState, DmUnavailableReason, DmView};
@@ -150,13 +150,18 @@ mod reads {
             is_public: false,
             notification_count: c.unread_count.max(0) as u64,
             highlight_count: 0,
-            // `DmConversationUi` carries a last-message TIMESTAMP
-            // (`last_message_at`) but no last-message TEXT/ciphertext at
-            // all — the row preview is drawn from a fetched message list
-            // in today's UI, not a summary field. Honestly `None` rather
-            // than a synthesized "Encrypted" marker with a fabricated
-            // timestamp/sender.
-            last_event: None,
+            // `DmConversationUi::last_message_preview`/`last_message_mine`
+            // ARE real fields a caller can populate (see that field's own
+            // doc) — the chat-list row's own preview line now reads them,
+            // closing the gap this method's own doc used to name. A
+            // conversation whose caller never resolved a preview (today's
+            // production `routes::dm::list_conversations`) still reads
+            // honestly as `None`, not a fabricated placeholder.
+            last_event: c.last_message_preview.as_ref().map(|text| LastEventPreview {
+                sender: if c.last_message_mine { UserId::from(ME) } else { peer_user_id(&c.peer_label) },
+                content: PreviewContent::Text(text.clone()),
+                ts: c.last_message_at.as_deref().map(timestamp).unwrap_or(Timestamp(0)),
+            }),
             muted: false,
             pinned: false,
             archived: false,
@@ -209,6 +214,11 @@ mod reads {
                 send_state: if sending { SendState::Sending } else { SendState::Sent },
                 read_by: if m.read_at.is_some() { vec![peer_user_id(peer_label)] } else { Vec::new() },
                 pinned: false,
+                // Today's DM model carries no shared-chart-attachment or
+                // per-message mention concept — honestly absent rather than
+                // guessed at.
+                shared_chart: None,
+                mentions_me: false,
             }
         }).collect()
     }

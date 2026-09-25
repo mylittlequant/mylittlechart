@@ -1,20 +1,21 @@
-//! Messenger UI-2a — the Community modal's Messages tab body, drawn ONLY
-//! from [`mlc_messenger_model::MessengerProvider`] (`DmMessengerProviderView`,
-//! today's read-only view over `DmState` — see that type's own doc for why
-//! this paint pass never holds `&mut DmState`) instead of reading `DmState`
+//! Messenger UI-2a/2b — the Community modal's Messages tab body, drawn ONLY
+//! from [`mlc_messenger_model::MessengerProvider`] (a `&dyn` trait object
+//! the CALLER builds — `community.rs`'s real call site wraps `state.dm` in
+//! `DmMessengerProviderView`, `mlc-ui-lab`'s own fixture wraps a hand-built
+//! room/timeline set — see [`draw`]'s own doc) instead of reading `DmState`
 //! fields ad hoc the way `dm_overlay.rs` still does. `Capabilities` gates
 //! what draws: today's DM adapter reports every flag false except
-//! `receipts` (`dm_messenger_provider::reads::capabilities`), so this file
-//! never draws group/channel chrome, custom folders, reactions, edit
-//! badges, reply previews or a typing indicator — not because this file
-//! forgot them, but because the provider says they do not exist here.
+//! `receipts`, so a DM-backed provider never exercises the group/channel
+//! paths below — not because this file forgot them, but because that
+//! provider's own rooms are all `RoomKind::Direct`.
 //!
 //! Two things the model genuinely cannot carry are read straight off
 //! `state.dm`/`state.forum2` instead, each documented at its own read site
 //! rather than silently papered over:
 //! - the peer's short key FINGERPRINT STRING (`DmConversationUi::
 //!   peer_fingerprint`) — [`Member::has_messaging_key`] says WHETHER a key
-//!   exists, but the model carries no fingerprint text field at all;
+//!   exists, but the model carries no fingerprint text field at all; this is
+//!   read only for `RoomKind::Direct` rooms, the only kind that has one;
 //! - "which room is open" and the nick-required/nick-search flow
 //!   (`DmState::view`, `ForumV2State::nick_required`, the lookup dropdown)
 //!   — [`MessengerProvider`] has no navigation or account-ladder concept;
@@ -24,25 +25,35 @@
 //!
 //! Reuses `dm_overlay.rs`'s own row/field/notice painters (widened to
 //! `pub(crate)` for this file) rather than duplicating them — this file's
-//! own job is the NEW three-column shape (folder rail / chat list / chat
-//! pane) and reading through the provider trait, not re-deriving text-
-//! field or button painting a second time. Widget ids are mostly the
-//! `cloud_overlay:dm:*` ids `dm_overlay.rs` already used (community-modal
-//! arc W1/W2); this file's own additions, each with a matching `mlc-app`
-//! `panel_click.rs`/`input/mod.rs` arm: `cloud_overlay:dm:jump_latest`
-//! (UI-2a, the bottom-anchored feed's own "jump to latest" button),
-//! `cloud_overlay:dm:chat_filter_input`/`cloud_overlay:dm:
-//! new_conversation_toggle` (UI-2b, [`draw_chat_filter_row`]'s own name
-//! filter + pencil toggle), plus the right-click context menus UI-2b adds
-//! on a message bubble and a chat-list row (`ChartApp::
-//! try_messenger_right_click`, `mlc-app`) — those dispatch through
-//! `panel_app.context_menu_state`, not a `cloud_overlay:dm:*` widget id at
-//! all.
-
+//! own job is the three-column shape (folder rail / chat list / chat pane),
+//! group/channel-aware chrome, and reading through the provider trait, not
+//! re-deriving text-field or button painting a second time.
+//!
+//! UI-2b (2026-09-25, messenger concept v1 screen "1 · Группа" parity):
+//! folder rail now draws every built-in (All chats/Personal/Groups/
+//! Channels, computed client-side from `RoomKind`/`archived` — folder.rs's
+//! own doc) plus every CUSTOM folder the provider reports, with real
+//! `Folder::matches`-derived counts, and Archive/Folders pinned to the
+//! rail's own bottom. No folder besides "All chats" is ever selectable yet
+//! — switching the active folder needs UI-side selection state this pass
+//! does not add (same gap the previous pass already named for the rail).
+//! Chat-list rows are now KIND-aware (circle/rounded-square avatar, a
+//! presence dot or a kind-corner-badge, a ladder-rank chip for a Direct
+//! peer, a mute glyph, and a single trailing marker chosen by priority
+//! mention > unread-count > pinned — never more than one at once, matching
+//! the concept's own row anatomy) instead of the DM-only row the previous
+//! pass drew. The chat pane grows group/channel chrome too: a typing/
+//! member-count subtitle instead of a fingerprint line, a pinned-message
+//! bar, message GROUPING (consecutive same-sender bubbles share one avatar
+//! and one name/rank header), a shared-chart-card attachment, a reply
+//! quote, `@mention` token colouring, a reactions row, an "edited" badge,
+//! an unread separator derived from `RoomSummary::notification_count`, and
+//! a round jump-to-latest button with its own unread badge.
 use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::i18n::{current_language, UserSettingsKey};
 use mlc_messenger_model::{
-    MembershipChange, MembershipEvent, MessageContent, MessengerProvider, RoomId, SendState,
+    FolderIcon, MembershipChange, MembershipEvent, MessageContent, MessengerProvider, PreviewContent,
+    RankBadge, ReactionSummary, ReplyPreview, RoomId, RoomKind, RoomSummary, SendState, SharedChartCard,
     Timestamp, UtdReason, VaultState,
 };
 use uzor::input::{InputCoordinator, LayerId, Sense};
@@ -52,7 +63,6 @@ use uzor::WidgetId;
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::avatar_widget::{draw_avatar, AvatarColors, AvatarShape, CornerMarker};
 use crate::ui::count_badge::{badge_width, draw_count_badge, BadgeColors, BadgeContent};
-use crate::ui::dm_messenger_provider::DmMessengerProviderView;
 use crate::ui::modal_settings::CommunityState;
 use crate::ui::scroll_widget::{jump_button_visible, ScrollableContainer};
 use crate::ui::selectable_text::{highlight_rect, LineHit, Selection};
@@ -61,9 +71,8 @@ use crate::ui::widgets::avatar::contrasting_text_color;
 use crate::ui::widgets::{draw_avatar_placeholder, SETTINGS_BUTTON_RADIUS};
 
 use super::cloud_overlay::{
-    draw_action_row, draw_column_divider, draw_expand_row, draw_status, register_scrollbar_hit_zones,
-    scroll_config, wrap_text, CloudOverlayResult, COL_GAP, DM_CHAT_FILTER_FIELD, FIELD_H, LIST_COL_W,
-    ROW_GAP, ROW_H,
+    draw_action_row, draw_expand_row, draw_status, register_scrollbar_hit_zones, scroll_config,
+    wrap_text, CloudOverlayResult, DM_CHAT_FILTER_FIELD, FIELD_H, LIST_COL_W, ROW_GAP, ROW_H,
 };
 use super::community::CommunityListPaneResult;
 use super::dm_overlay::{
@@ -87,6 +96,11 @@ const RAIL_ITEM_H: f64 =
 const RAIL_ITEM_RADIUS: f64 = 6.0;
 /// The active indicator bar's own width — concept `.fold.on::before{width:3px}`.
 const RAIL_ACTIVE_BAR_W: f64 = 3.0;
+/// Gap between consecutive rail rows — concept `.rail{gap:2px}`.
+const RAIL_ROW_GAP: f64 = 2.0;
+/// Bottom inset for the last pinned rail row (Archive/Folders) — concept
+/// `.rail{padding:6px 0}` (same value as the rail's own top inset).
+const RAIL_BOTTOM_PAD: f64 = 6.0;
 
 // Bubble geometry — mirrors `dm_overlay.rs`'s own constants (same numeric
 // values) so a conversation opened through either path reads identically;
@@ -108,13 +122,38 @@ const BUBBLE_PAD_V: f64 = 6.0;
 const BUBBLE_PAD_H: f64 = 10.0;
 /// A bubble's own corner radius, and the tighter radius its one "tail"
 /// corner gets — concept `.b{border-radius:12px}` plus `.b.own`/`.b.peer`'s
-/// own 4px corner (see [`bubble_corners`]).
+/// own 4px corner (see [`bubble_corners_grouped`]).
 const BUBBLE_RADIUS: f64 = 12.0;
 const BUBBLE_TAIL_RADIUS: f64 = 4.0;
-const BUBBLE_GAP: f64 = 10.0;
+/// Gap BETWEEN two message groups (or a group and a day/unread separator) —
+/// concept `.grp{margin-top:6px}`.
+const BUBBLE_GAP: f64 = 6.0;
+/// Gap between two bubbles WITHIN the same group — concept `.grp .col2{gap:2px}`.
+const GROUP_INNER_GAP: f64 = 2.0;
 const DAY_SEP_H: f64 = 24.0;
+const UNREAD_SEP_H: f64 = 24.0;
 const SYSTEM_NOTICE_H: f64 = 20.0;
 const CIPHERTEXT_MAX_LINES: usize = 3;
+/// A peer/own group's own name+rank header row — concept `.b .nm{font:600
+/// 12px;margin-bottom:1px}`.
+const NAME_HEADER_H: f64 = 16.0;
+/// A reply-quote block's own footprint (sender line + one preview line) —
+/// concept `.quote{padding:2px 8px;margin:1px 0 4px}`.
+const QUOTE_H: f64 = 34.0;
+const QUOTE_PAD_H: f64 = 8.0;
+const QUOTE_PAD_V: f64 = 2.0;
+const QUOTE_BAR_W: f64 = 2.0;
+/// The reactions row's own footprint, added to a bubble's height only when
+/// it carries at least one reaction — concept `.rx{margin-top:4px}`.
+const REACTIONS_ROW_H: f64 = 22.0;
+/// A shared-chart-card attachment's own footprint — concept `.card{margin:
+/// 4px 0 2px;width:330px}` (chart 74px + a 1px divider + a 40px info row).
+const CARD_W: f64 = 330.0;
+const CARD_CHART_H: f64 = 74.0;
+const CARD_INFO_H: f64 = 40.0;
+const CARD_MARGIN_TOP: f64 = 4.0;
+const CARD_MARGIN_BOTTOM: f64 = 2.0;
+const CARD_RADIUS: f64 = 8.0;
 /// A chat-list row's own corner radius — concept `.row{border-radius:6px}`.
 const LIST_ROW_RADIUS: f64 = 6.0;
 /// A row's own vertical/horizontal padding — concept `.row{padding:7px 8px}`.
@@ -129,8 +168,7 @@ const CONV_ROW_RECT_H: f64 = LIST_AVATAR_D + LIST_ROW_PAD_V * 2.0;
 const CONV_ROW_H: f64 = CONV_ROW_RECT_H + ROW_GAP;
 /// The chat-list header row: the name-filter field plus its own pencil
 /// button (concept v1's `.lhead`: `[Search][pencil]`) — one fixed row,
-/// always drawn, above the (now conditional) "New message" recipient
-/// search and the room rows themselves.
+/// always drawn, above the room rows themselves.
 const CHAT_FILTER_ROW_H: f64 = SEARCH_FIELD_H + 12.0;
 /// The filter field's own height/radius — concept `.search{height:30px;
 /// border-radius:15px}` (fully rounded, radius = height / 2). A local,
@@ -139,11 +177,17 @@ const CHAT_FILTER_ROW_H: f64 = SEARCH_FIELD_H + 12.0;
 /// drag the forum's/DM's plain boxes along with them.
 const SEARCH_FIELD_H: f64 = 30.0;
 const SEARCH_FIELD_RADIUS: f64 = SEARCH_FIELD_H / 2.0;
-const SEARCH_FIELD_H_PADDING: f64 = 14.0;
+/// Left text inset — wide enough to clear the magnifier glyph
+/// [`draw_chat_filter_row`] draws first (concept `.search{padding:0 11px;
+/// gap:7px}`: an icon, a 7px gap, THEN the text — not a plain left pad).
+const SEARCH_FIELD_H_PADDING: f64 = 32.0;
 /// The pencil button's own square footprint, to the filter field's right —
 /// concept `.ib{width:30px;height:30px}`.
 const CHAT_FILTER_PENCIL_W: f64 = 30.0;
 const CHAT_FILTER_GAP: f64 = 8.0;
+/// A chat header's own icon button (search/members/more) — concept `.ib`.
+const HEADER_ICON_D: f64 = 30.0;
+const HEADER_ICON_GAP: f64 = 2.0;
 /// The docked composer's own ONE-row footprint (concept `.comp`/`.cin`:
 /// a 36px draft field + round send button side by side, `padding:8px 10px
 /// 9px`) — every non-nick-gated dock state (locked, peer-without-key,
@@ -162,6 +206,8 @@ const COMPOSER_GAP: f64 = 8.0;
 /// height:36px;border-radius:50%}`.
 const COMPOSER_SEND_D: f64 = 36.0;
 const COMPOSER_H: f64 = COMPOSER_PAD_TOP + COMPOSER_FIELD_H + COMPOSER_PAD_BOTTOM;
+/// The composer's own reply-preview banner — concept `.cbar`.
+const REPLY_BANNER_H: f64 = 40.0;
 /// A dock notice row's own compact button — concept `.btn{padding:8px
 /// 16px;border-radius:4px}`, sized to its own text rather than the pane's
 /// full width (the old dock stretched "Unlock vault" across the whole
@@ -176,19 +222,30 @@ const DOCK_BTN_H: f64 = DOCK_BTN_TEXT_H + DOCK_BTN_PAD_V * 2.0;
 /// for why every other dock state got a new, single-row footprint this pass
 /// and this one did not).
 const NICK_REQUIRED_DOCK_H: f64 = 8.0 + FIELD_H + 8.0 + ROW_H;
+/// The pin bar's own footprint — concept `.pinbar{height:40px}`.
+const PINBAR_H: f64 = 40.0;
+/// The round jump-to-latest button's own diameter — concept `.jump{width:
+/// 38px;height:38px;border-radius:50%}`.
+const JUMP_D: f64 = 38.0;
 
 /// The docked composer's own footprint for the CURRENT dock state — see
 /// [`COMPOSER_H`]'s own doc. Read by both `draw_chat_pane` (to size the
 /// feed above the dock) and `draw_composer` (to anchor the dock's own top),
 /// so the two can never disagree about where the dock starts.
 fn dock_h(state: &CommunityState) -> f64 {
-    if state.forum2.nick_required() { NICK_REQUIRED_DOCK_H } else { COMPOSER_H }
+    if state.forum2.nick_required() {
+        NICK_REQUIRED_DOCK_H
+    } else if state.messenger_reply_preview.is_some() {
+        COMPOSER_H + REPLY_BANNER_H
+    } else {
+        COMPOSER_H
+    }
 }
 /// The chat pane's own fixed header — concept `.ch{height:52px}`, drawn
 /// once above the scrollable feed rather than scrolling away with it (the
-/// concept's `.chat` is a column of THREE fixed-size siblings — rail-style
-/// header, a scrolling `.feed`, and the docked composer — not one long
-/// scrollable block with the header as its first row).
+/// concept's `.chat` is a column of fixed-size siblings — header, an
+/// optional pin bar, a scrolling `.feed`, and the docked composer — not one
+/// long scrollable block with the header as its first row).
 const CHAT_HEADER_H: f64 = 52.0;
 const CHAT_HEADER_PAD_L: f64 = 14.0;
 
@@ -203,6 +260,14 @@ const CHAT_HEADER_PAD_L: f64 = 14.0;
 /// here.
 const ME: &str = "me";
 
+/// Draw the Messages tab's whole body — folder rail, chat list, chat pane —
+/// against `provider`. The CALLER decides which provider backs this frame:
+/// `community.rs`'s real call site wraps `state.dm` in a fresh
+/// `DmMessengerProviderView` every frame (that adapter's own doc explains
+/// why a read-only view, not `&mut`, is correct for a paint pass); a lab/
+/// test fixture passes its own `MessengerProvider` impl straight through —
+/// this file draws identically either way, by construction.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn draw(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
@@ -212,13 +277,13 @@ pub(crate) fn draw(
     w: f64,
     viewport_h: f64,
     state: &CommunityState,
+    provider: &dyn MessengerProvider,
     ft: &FrameTheme,
     tt: &ToolbarTheme,
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
     list_result: &mut CommunityListPaneResult,
 ) {
-    let provider = DmMessengerProviderView::new(&state.dm);
     let caps = provider.capabilities();
 
     let list_x = x + RAIL_W;
@@ -226,90 +291,264 @@ pub(crate) fn draw(
     let pane_x = list_x + list_w + COL_GAP;
     let pane_w = (w - RAIL_W - list_w - COL_GAP).max(0.0);
 
-    draw_folder_rail(ctx, x, y, RAIL_W, viewport_h, &provider, tt);
-    draw_column_divider(ctx, pane_x - COL_GAP / 2.0, y, viewport_h, tt);
+    draw_folder_rail(ctx, coord, layer_id, x, y, RAIL_W, viewport_h, provider, tt);
+    draw_soft_divider_v(ctx, x + RAIL_W, y, viewport_h, tt);
+    draw_soft_divider_v(ctx, pane_x - COL_GAP / 2.0, y, viewport_h, tt);
 
     draw_chat_list(
-        ctx, coord, layer_id, list_x, y, list_w, viewport_h, state, &provider, ft, tt, current_time_ms,
+        ctx, coord, layer_id, list_x, y, list_w, viewport_h, state, provider, ft, tt, current_time_ms,
         result, list_result,
     );
 
     draw_chat_pane(
-        ctx, coord, layer_id, pane_x, y, pane_w, viewport_h, state, &provider, caps, ft, tt,
+        ctx, coord, layer_id, pane_x, y, pane_w, viewport_h, state, provider, caps, ft, tt,
         current_time_ms, result,
     );
 }
 
+/// Column gap between the chat list and the chat pane — same numeric value
+/// `cloud_overlay::COL_GAP` uses (kept file-local so this file no longer
+/// needs that shared constant for anything else).
+const COL_GAP: f64 = 16.0;
+
+/// A vertical 1px rule in the concept's own SOFT shade (`--soft`,
+/// [`ToolbarTheme::divider_soft`]) — every internal divider in this pane
+/// (rail/list/pane column rules, the chat header's own bottom rule, the pin
+/// bar, the composer's top rule) uses this shade, never the stronger
+/// [`ToolbarTheme::separator`] the outer modal frame uses.
+fn draw_soft_divider_v(ctx: &mut dyn RenderContext, x: f64, y: f64, h: f64, tt: &ToolbarTheme) {
+    ctx.set_stroke_color(&tt.divider_soft);
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(x, y);
+    ctx.line_to(x, y + h);
+    ctx.stroke();
+}
+
+fn draw_soft_divider_h(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, tt: &ToolbarTheme) {
+    ctx.set_stroke_color(&tt.divider_soft);
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(x, y);
+    ctx.line_to(x + w, y);
+    ctx.stroke();
+}
+
 // =============================================================================
-// Left rail — built-in folders only (`capabilities().folders == false`
-// today: [`Folder`]'s own doc says built-ins draw regardless of that flag,
-// it only gates CUSTOM folder CRUD — see this file's own top doc). Purely
+// Left rail — every built-in folder (All chats/Personal/Groups/Channels,
+// computed client-side from `RoomKind` — folder.rs's own doc) plus every
+// CUSTOM folder the provider reports (`id: Some(_)`), with real
+// `Folder::matches`-derived counts; Archive and Folders (a settings action,
+// not a real folder) are pinned to the rail's own bottom. Purely
 // informational this pass: switching which folder is active needs UI-side
-// selection state this piece does not add (no new dispatch arm beyond
-// `jump_latest` — see top doc); "All chats" always reads as the active one.
+// selection state this piece does not add (no new dispatch arm) — "All
+// chats" always reads as the active one, same gap the previous pass named.
 // =============================================================================
 
-/// The rail's own single "All chats" item — the provider carries no folder
-/// concept at all (today's DM adapter's `Capabilities::folders == false`,
-/// this file's own top doc), so drawing the concept's Personal/Groups/
-/// Channels/Trading-desk/Archive/Folders rows here would be inventing rooms
-/// this crate cannot actually switch to. "All chats" is the one row every
-/// conversation genuinely belongs to — always active (there is nothing else
-/// to select), badged with the total unread count across every room.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RailIcon {
+    All,
+    Person,
+    Group,
+    Channel,
+    Candles,
+    Bookmark,
+    Folder,
+    Archive,
+    Edit,
+}
+
+fn rail_icon_for(icon: FolderIcon) -> RailIcon {
+    match icon {
+        FolderIcon::Candles => RailIcon::Candles,
+        FolderIcon::Folder => RailIcon::Folder,
+        FolderIcon::Group => RailIcon::Group,
+        FolderIcon::Channel => RailIcon::Channel,
+        FolderIcon::Bookmark => RailIcon::Bookmark,
+        FolderIcon::Person => RailIcon::Person,
+    }
+}
+
+struct RailRow {
+    icon: RailIcon,
+    label: String,
+    /// `None` draws no badge at all (Archive/Folders never show a count,
+    /// same as the concept).
+    count: Option<String>,
+    /// Muted/grey badge fill (concept `.bd.m`, the Channels folder only) —
+    /// every other folder's badge is accent-filled (`.bd`).
+    muted_badge: bool,
+    active: bool,
+}
+
+/// Every rail row, split into the top (scrollable-in-spirit, but never
+/// actually taller than the rail today) group and the bottom-pinned group —
+/// see this section's own top doc.
+fn rail_rows(provider: &dyn MessengerProvider) -> (Vec<RailRow>, Vec<RailRow>) {
+    let rooms = provider.rooms();
+    let count_kind = |k: RoomKind| rooms.iter().filter(|r| r.kind == k).count();
+    let mut top = vec![
+        RailRow {
+            icon: RailIcon::All,
+            label: "All chats".to_string(),
+            count: Some(rooms.len().to_string()),
+            muted_badge: false,
+            active: true,
+        },
+        RailRow {
+            icon: RailIcon::Person,
+            label: "Personal".to_string(),
+            count: Some(count_kind(RoomKind::Direct).to_string()),
+            muted_badge: false,
+            active: false,
+        },
+        RailRow {
+            icon: RailIcon::Group,
+            label: "Groups".to_string(),
+            count: Some(count_kind(RoomKind::Group).to_string()),
+            muted_badge: false,
+            active: false,
+        },
+        RailRow {
+            icon: RailIcon::Channel,
+            label: "Channels".to_string(),
+            count: Some(count_kind(RoomKind::Channel).to_string()),
+            muted_badge: true,
+            active: false,
+        },
+    ];
+    for folder in provider.folders() {
+        // Built-ins are computed above, never round-tripped through this
+        // method (folder.rs's own top doc) — only a genuinely custom folder
+        // (its own tag identity) adds a row here.
+        if folder.id.is_none() {
+            continue;
+        }
+        let n = rooms.iter().filter(|r| folder.matches(r)).count();
+        top.push(RailRow {
+            icon: rail_icon_for(folder.icon),
+            label: folder.name.clone(),
+            count: Some(n.to_string()),
+            muted_badge: false,
+            active: false,
+        });
+    }
+    let bottom = vec![
+        RailRow { icon: RailIcon::Archive, label: "Archive".to_string(), count: None, muted_badge: false, active: false },
+        RailRow { icon: RailIcon::Edit, label: "Folders".to_string(), count: None, muted_badge: false, active: false },
+    ];
+    (top, bottom)
+}
+
 fn draw_folder_rail(
     ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
     x: f64,
     y: f64,
     w: f64,
     h: f64,
-    provider: &DmMessengerProviderView,
+    provider: &dyn MessengerProvider,
     tt: &ToolbarTheme,
 ) {
     ctx.set_fill_color(&tt.dropdown_bg);
     ctx.fill_rect(x, y, w, h);
 
-    let unread: i64 = provider.rooms().iter().map(|r| r.notification_count as i64).sum();
-    let rect = WidgetRect::new(x + (w - RAIL_ITEM_W) / 2.0, y + 6.0, RAIL_ITEM_W, RAIL_ITEM_H);
+    let (top, bottom) = rail_rows(provider);
 
-    // Active indicator — a bar flush with the RAIL's own left edge (concept
-    // `.fold.on::before{left:-4px}` relative to the item, which sits inset
-    // from the rail by that same 4px margin).
-    ctx.set_fill_color(&tt.accent);
-    ctx.fill_rect(x, rect.y + 9.0, RAIL_ACTIVE_BAR_W, (rect.height - 18.0).max(0.0));
-
-    ctx.set_fill_color(&tt.button_bg);
-    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, RAIL_ITEM_RADIUS);
-
-    let icon_cy = rect.y + RAIL_ITEM_PAD_TOP + RAIL_ITEM_ICON_D / 2.0;
-    draw_all_chats_glyph(ctx, rect.center_x(), icon_cy, RAIL_ITEM_ICON_D / 2.0, &tt.item_text);
-
-    ctx.set_font("600 10.5px sans-serif");
-    ctx.set_fill_color(&tt.item_text);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Top);
-    let label_y = rect.y + RAIL_ITEM_PAD_TOP + RAIL_ITEM_ICON_D + RAIL_ITEM_ICON_LABEL_GAP;
-    let fit = crate::ui::widgets::fit_text_to_width(ctx, "All chats", rect.width - 4.0);
-    ctx.fill_text(&fit, rect.center_x(), label_y);
-
-    if unread > 0 {
-        let label = if unread > 99 { "99+".to_string() } else { unread.to_string() };
-        let badge_h = 16.0;
-        let bw = badge_width(ctx, &BadgeContent::Count(&label), badge_h);
-        let bx = rect.x + rect.width - 9.0 - bw;
-        let by = rect.y + 2.0;
-        draw_count_badge(
-            ctx, bx, by, bw, badge_h, &BadgeContent::Count(&label),
-            &BadgeColors { background: &tt.accent, text: contrasting_text_color(&tt.accent) },
-        );
+    let mut ry = y + RAIL_BOTTOM_PAD;
+    for row in &top {
+        draw_rail_row(ctx, coord, layer_id, x, ry, w, row, tt);
+        ry += RAIL_ITEM_H + RAIL_ROW_GAP;
+    }
+    let bottom_h = bottom.len() as f64 * RAIL_ITEM_H + (bottom.len().saturating_sub(1)) as f64 * RAIL_ROW_GAP;
+    let mut by = (y + h - RAIL_BOTTOM_PAD - bottom_h).max(ry);
+    for row in &bottom {
+        draw_rail_row(ctx, coord, layer_id, x, by, w, row, tt);
+        by += RAIL_ITEM_H + RAIL_ROW_GAP;
     }
 }
 
+fn draw_rail_row(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    row: &RailRow,
+    tt: &ToolbarTheme,
+) {
+    let rect = WidgetRect::new(x + (w - RAIL_ITEM_W) / 2.0, y, RAIL_ITEM_W, RAIL_ITEM_H);
+    let id = format!("cloud_overlay:dm:folder:{}", row.label.to_lowercase().replace(' ', "_"));
+    let hovered = coord.is_hovered(&WidgetId::from(id.as_str()));
+
+    if row.active {
+        ctx.set_fill_color(&tt.accent);
+        ctx.fill_rect(x, rect.y + 9.0, RAIL_ACTIVE_BAR_W, (rect.height - 18.0).max(0.0));
+        ctx.set_fill_color(&tt.button_bg);
+        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, RAIL_ITEM_RADIUS);
+    } else if hovered {
+        ctx.set_fill_color(&tt.item_bg_hover);
+        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, RAIL_ITEM_RADIUS);
+    }
+
+    let icon_color: &str = if row.active { tt.item_text.as_str() } else { tt.muted_ink.as_str() };
+    let icon_cy = rect.y + RAIL_ITEM_PAD_TOP + RAIL_ITEM_ICON_D / 2.0;
+    draw_rail_icon(ctx, row.icon, rect.center_x(), icon_cy, RAIL_ITEM_ICON_D / 2.0, icon_color);
+
+    ctx.set_font("600 10.5px sans-serif");
+    ctx.set_fill_color(if row.active { tt.item_text.as_str() } else { tt.muted_ink.as_str() });
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let label_y = rect.y + RAIL_ITEM_PAD_TOP + RAIL_ITEM_ICON_D + RAIL_ITEM_ICON_LABEL_GAP;
+    let fit = crate::ui::widgets::fit_text_to_width(ctx, &row.label, rect.width - 4.0);
+    ctx.fill_text(&fit, rect.center_x(), label_y);
+
+    if let Some(count) = &row.count {
+        let badge_h = 16.0;
+        let bw = badge_width(ctx, &BadgeContent::Count(count), badge_h);
+        let bx = rect.x + rect.width - 9.0 - bw;
+        let by = rect.y + 2.0;
+        let (bg, fg): (&str, &str) = if row.muted_badge {
+            (tt.muted_ink.as_str(), tt.background.as_str())
+        } else {
+            (tt.accent.as_str(), contrasting_text_color(&tt.accent))
+        };
+        draw_count_badge(ctx, bx, by, bw, badge_h, &BadgeContent::Count(count), &BadgeColors { background: bg, text: fg });
+    }
+
+    coord.register_on_layer(id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
+}
+
+fn draw_rail_icon(ctx: &mut dyn RenderContext, icon: RailIcon, cx: f64, cy: f64, r: f64, color: &str) {
+    match icon {
+        RailIcon::All => draw_icon_all_chats(ctx, cx, cy, r, color),
+        RailIcon::Person => draw_icon_person(ctx, cx, cy, r, color),
+        RailIcon::Group => draw_icon_group(ctx, cx, cy, r, color),
+        RailIcon::Channel => draw_icon_channel(ctx, cx, cy, r, color),
+        RailIcon::Candles => draw_icon_candles(ctx, cx, cy, r, color),
+        RailIcon::Bookmark => draw_icon_bookmark(ctx, cx, cy, r, color),
+        RailIcon::Folder => draw_icon_folder(ctx, cx, cy, r, color),
+        RailIcon::Archive => draw_icon_archive(ctx, cx, cy, r, color),
+        RailIcon::Edit => draw_icon_sliders(ctx, cx, cy, r, color),
+    }
+}
+
+// =============================================================================
+// Small vector glyphs — plain shapes (rects/circles/paths), the same idiom
+// every other icon in this crate below the `IconId` SVG registry's own home
+// uses (see `dm_overlay.rs`'s `draw_lock_glyph`'s own doc). Schematic, not
+// pixel copies of the concept's own SVG paths — recognisable at 22px, which
+// is all a rail/header/avatar glyph needs to be.
+// =============================================================================
+
+const TAU: f64 = std::f64::consts::TAU;
+
 /// A small filled speech-bubble: a rounded-rect body with a triangular tail
 /// at its bottom-left corner — the rail's own "All chats" glyph (concept
-/// `#i-all`). Plain vector shapes, same idiom `dm_overlay.rs`'s own
-/// `draw_lock_glyph` uses, for the same reason: this crate sits below the
-/// `IconId` SVG registry's own home (see that function's own doc).
-fn draw_all_chats_glyph(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+/// `#i-all`).
+fn draw_icon_all_chats(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
     let w = r * 1.8;
     let h = r * 1.3;
     let x = cx - w / 2.0;
@@ -322,6 +561,200 @@ fn draw_all_chats_glyph(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, c
     ctx.line_to(x + w * 0.42, y + h);
     ctx.close_path();
     ctx.fill();
+}
+
+fn draw_icon_person(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_fill_color(color);
+    ctx.begin_path();
+    ctx.arc(cx, cy - r * 0.35, r * 0.32, 0.0, TAU);
+    ctx.fill();
+    let sw = r * 0.85;
+    let sh = r * 0.6;
+    let sy = cy + r * 0.1;
+    ctx.begin_path();
+    ctx.move_to(cx - sw, sy + sh);
+    ctx.line_to(cx - sw, sy + sh * 0.3);
+    ctx.quadratic_curve_to(cx - sw, sy, cx, sy);
+    ctx.quadratic_curve_to(cx + sw, sy, cx + sw, sy + sh * 0.3);
+    ctx.line_to(cx + sw, sy + sh);
+    ctx.close_path();
+    ctx.fill();
+}
+
+fn draw_icon_group(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_global_alpha(0.55);
+    draw_icon_person(ctx, cx - r * 0.32, cy + r * 0.08, r * 0.8, color);
+    ctx.set_global_alpha(1.0);
+    draw_icon_person(ctx, cx + r * 0.2, cy - r * 0.05, r * 0.8, color);
+}
+
+/// A schematic "broadcast" glyph — a flag/pennant shape plus a small
+/// quarter-arc "wave" to its right (concept `#i-channel`'s own megaphone).
+fn draw_icon_channel(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_fill_color(color);
+    ctx.begin_path();
+    ctx.move_to(cx - r * 0.55, cy - r * 0.4);
+    ctx.line_to(cx - r * 0.55, cy + r * 0.4);
+    ctx.line_to(cx + r * 0.2, cy + r * 0.72);
+    ctx.line_to(cx + r * 0.2, cy - r * 0.72);
+    ctx.close_path();
+    ctx.fill();
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(1.3);
+    ctx.set_line_cap("round");
+    ctx.begin_path();
+    ctx.arc(cx + r * 0.2, cy, r * 0.55, -std::f64::consts::FRAC_PI_3, std::f64::consts::FRAC_PI_3);
+    ctx.stroke();
+}
+
+/// Three candlestick bars of different heights — the "Trading desk" custom
+/// folder's own icon (concept `#i-candles`).
+fn draw_icon_candles(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(1.2);
+    ctx.set_fill_color(color);
+    let bars: [(f64, f64, f64); 3] = [(-0.55, 0.5, 0.9), (0.0, 0.8, 0.5), (0.55, 0.35, 0.75)];
+    for (xo, bh, wk) in bars {
+        let bx = cx + xo * r;
+        let bw = (r * 0.32).max(1.5);
+        let body_h = r * bh;
+        ctx.begin_path();
+        ctx.move_to(bx, cy - body_h / 2.0 - r * wk * 0.35);
+        ctx.line_to(bx, cy + body_h / 2.0 + r * wk * 0.35);
+        ctx.stroke();
+        ctx.fill_rect(bx - bw / 2.0, cy - body_h / 2.0, bw, body_h);
+    }
+}
+
+/// A box with a lid and a short handle line — Archive (concept `#i-archive`).
+fn draw_icon_archive(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_fill_color(color);
+    let w = r * 1.6;
+    ctx.fill_rounded_rect(cx - w / 2.0, cy - r * 0.85, w, r * 0.45, r * 0.15);
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(1.3);
+    ctx.begin_path();
+    ctx.rect(cx - w * 0.42, cy - r * 0.2, w * 0.84, r * 0.95);
+    ctx.stroke();
+    ctx.begin_path();
+    ctx.move_to(cx - r * 0.25, cy + r * 0.25);
+    ctx.line_to(cx + r * 0.25, cy + r * 0.25);
+    ctx.stroke();
+}
+
+/// Two horizontal slider rows with small handle dots — the "Folders"
+/// settings action (concept `#i-edit`).
+fn draw_icon_sliders(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(1.3);
+    ctx.begin_path();
+    ctx.move_to(cx - r * 0.7, cy - r * 0.35);
+    ctx.line_to(cx + r * 0.7, cy - r * 0.35);
+    ctx.stroke();
+    ctx.begin_path();
+    ctx.move_to(cx - r * 0.7, cy + r * 0.35);
+    ctx.line_to(cx + r * 0.7, cy + r * 0.35);
+    ctx.stroke();
+    ctx.set_fill_color(color);
+    ctx.begin_path();
+    ctx.arc(cx + r * 0.3, cy - r * 0.35, r * 0.16, 0.0, TAU);
+    ctx.fill();
+    ctx.begin_path();
+    ctx.arc(cx - r * 0.25, cy + r * 0.35, r * 0.16, 0.0, TAU);
+    ctx.fill();
+}
+
+/// A plain folder tab shape — the generic custom-folder icon (concept
+/// `#i-folder`), used only if a custom folder ever picks [`FolderIcon::Folder`].
+fn draw_icon_folder(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_fill_color(color);
+    ctx.fill_rounded_rect(cx - r * 0.75, cy - r * 0.35, r * 1.5, r * 0.9, r * 0.15);
+}
+
+/// A bookmark ribbon (a rect with a V-notch cut from its bottom edge) —
+/// "Saved messages"'s own avatar glyph and [`FolderIcon::Bookmark`]
+/// (concept `#i-bookmark`).
+fn draw_icon_bookmark(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_fill_color(color);
+    ctx.begin_path();
+    ctx.move_to(cx - r * 0.45, cy - r * 0.65);
+    ctx.line_to(cx + r * 0.45, cy - r * 0.65);
+    ctx.line_to(cx + r * 0.45, cy + r * 0.65);
+    ctx.line_to(cx, cy + r * 0.2);
+    ctx.line_to(cx - r * 0.45, cy + r * 0.65);
+    ctx.close_path();
+    ctx.fill();
+}
+
+/// A speaker shape with a diagonal slash — the mute glyph (concept
+/// `#i-mute`).
+fn draw_icon_mute(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_fill_color(color);
+    ctx.begin_path();
+    ctx.move_to(cx - r * 0.7, cy - r * 0.25);
+    ctx.line_to(cx - r * 0.25, cy - r * 0.25);
+    ctx.line_to(cx + r * 0.15, cy - r * 0.6);
+    ctx.line_to(cx + r * 0.15, cy + r * 0.6);
+    ctx.line_to(cx - r * 0.25, cy + r * 0.25);
+    ctx.line_to(cx - r * 0.7, cy + r * 0.25);
+    ctx.close_path();
+    ctx.fill();
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(1.3);
+    ctx.begin_path();
+    ctx.move_to(cx + r * 0.35, cy - r * 0.5);
+    ctx.line_to(cx + r * 0.85, cy + r * 0.5);
+    ctx.stroke();
+}
+
+/// A thumbtack pin (a circle head, a triangular point) — concept `#i-pin`.
+fn draw_icon_pin(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_fill_color(color);
+    ctx.begin_path();
+    ctx.arc(cx, cy - r * 0.15, r * 0.5, 0.0, TAU);
+    ctx.fill();
+    ctx.begin_path();
+    ctx.move_to(cx - r * 0.18, cy + r * 0.2);
+    ctx.line_to(cx + r * 0.18, cy + r * 0.2);
+    ctx.line_to(cx, cy + r * 0.75);
+    ctx.close_path();
+    ctx.fill();
+}
+
+/// A plain checkmark — the verified-channel corner badge (concept
+/// `#i-verified`, simplified to just its own check).
+fn draw_icon_check(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(1.4);
+    ctx.set_line_cap("round");
+    ctx.set_line_join("round");
+    ctx.begin_path();
+    ctx.move_to(cx - r * 0.5, cy);
+    ctx.line_to(cx - r * 0.1, cy + r * 0.4);
+    ctx.line_to(cx + r * 0.55, cy - r * 0.4);
+    ctx.stroke();
+}
+
+fn draw_icon_search(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(1.4);
+    ctx.set_line_cap("round");
+    ctx.begin_path();
+    ctx.arc(cx - r * 0.15, cy - r * 0.15, r * 0.45, 0.0, TAU);
+    ctx.stroke();
+    ctx.begin_path();
+    ctx.move_to(cx + r * 0.2, cy + r * 0.2);
+    ctx.line_to(cx + r * 0.65, cy + r * 0.65);
+    ctx.stroke();
+}
+
+fn draw_icon_more(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_fill_color(color);
+    for dy in [-0.5, 0.0, 0.5] {
+        ctx.begin_path();
+        ctx.arc(cx, cy + dy * r, r * 0.12, 0.0, TAU);
+        ctx.fill();
+    }
 }
 
 // =============================================================================
@@ -365,6 +798,10 @@ fn draw_chat_filter_row(
         ctx, coord, layer_id, "cloud_overlay:dm:chat_filter_input", DM_CHAT_FILTER_FIELD, field_rect,
         "Search", ft, tt, current_time_ms, SEARCH_FIELD_RADIUS, SEARCH_FIELD_H_PADDING,
     );
+    // The magnifier glyph — drawn AFTER the field so it sits on top of its
+    // own placeholder/caret paint, left-inset the same amount the field's
+    // own text padding already reserves.
+    draw_icon_search(ctx, rect.x + 15.0, rect.center_y(), 7.0, &tt.muted_ink);
     result.dm_chat_filter_rect = Some(rect);
     result.dm_chat_filter_char_positions = chars;
 
@@ -395,7 +832,7 @@ fn draw_chat_list(
     w: f64,
     viewport_h: f64,
     state: &CommunityState,
-    provider: &DmMessengerProviderView,
+    provider: &dyn MessengerProvider,
     ft: &FrameTheme,
     tt: &ToolbarTheme,
     current_time_ms: u64,
@@ -433,7 +870,8 @@ fn draw_chat_list(
         draw_status(ctx, tt, lx, ly, lw, msg, None);
     } else {
         for r in &rooms {
-            ly += draw_room_row(ctx, coord, layer_id, lx, ly, lw, r, state, current_time_ms, tt);
+            let is_open = matches!(&state.dm.view, crate::ui::modal_settings::DmView::Conversation { id, .. } if id.to_string() == r.id.as_str());
+            ly += draw_room_row(ctx, coord, layer_id, lx, ly, lw, r, provider, is_open, current_time_ms, tt);
         }
     }
 
@@ -459,21 +897,100 @@ fn open_peer_row_h(nick_required: bool) -> f64 {
 /// `draw_chat_list`'s own filter step) — sizing off the filtered count is
 /// correct here: the scroll container only ever needs room for what this
 /// frame actually draws below the header.
-fn list_content_h(state: &CommunityState, rooms: &[mlc_messenger_model::RoomSummary]) -> f64 {
+fn list_content_h(state: &CommunityState, rooms: &[RoomSummary]) -> f64 {
     let open_h = if state.dm.new_conversation_open { open_peer_row_h(state.forum2.nick_required()) } else { 0.0 };
     let rows_h = if rooms.is_empty() { 24.0 } else { rooms.len() as f64 * CONV_ROW_H };
     CHAT_FILTER_ROW_H + open_h + rows_h
 }
 
-/// Up to two initials (first letter of the first two words), uppercased —
-/// [`draw_avatar`]'s own harvest-ready widget takes the initials string
-/// pre-computed rather than deriving them itself.
-fn initials(name: &str) -> String {
-    name.split_whitespace().filter_map(|w| w.chars().next()).take(2).flat_map(|c| c.to_uppercase()).collect()
+/// Whether a room's row/reactions-adjacent badges should render in the
+/// MUTED/grey style (concept `.ub.m`/`.bd.m`) rather than accent — either
+/// the room itself is individually muted, or it is a Channel (channels read
+/// as lower-urgency by convention, same as the rail's own Channels badge).
+fn unread_badge_muted(room: &RoomSummary) -> bool {
+    room.muted || matches!(room.kind, RoomKind::Channel)
 }
 
-/// One chat-list row — concept v1 `.row`: a 42px avatar, then two text
-/// lines (name + time; preview + unread pill). Padding 7×8, radius 6.
+/// A room's own chat-list preview line — the last-event text (or a typing
+/// override), plus an optional bold "author: " prefix for a group/channel
+/// room or an own last message (concept `.rp b`).
+struct RoomPreview {
+    prefix: Option<String>,
+    text: String,
+    encrypted: bool,
+    typing: bool,
+}
+
+fn room_preview(r: &RoomSummary, is_self_chat: bool) -> Option<RoomPreview> {
+    if !r.typing_user_ids.is_empty() {
+        return Some(RoomPreview {
+            prefix: None,
+            text: format!("{} is typing…", r.typing_user_ids[0].as_str()),
+            encrypted: false,
+            typing: true,
+        });
+    }
+    let ev = r.last_event.as_ref()?;
+    let (text, encrypted) = match &ev.content {
+        PreviewContent::Text(t) => (t.clone(), false),
+        PreviewContent::Encrypted => ("Encrypted message".to_string(), true),
+        PreviewContent::Redacted => ("Message deleted".to_string(), false),
+        PreviewContent::Notice(n) => (n.clone(), false),
+    };
+    let prefix = if is_self_chat {
+        None
+    } else if matches!(r.kind, RoomKind::Group) {
+        // Channels are single-broadcaster-shaped in the concept's own row
+        // anatomy (screen 2's own channel rows never prefix an author) —
+        // only a multi-sender GROUP row gets one.
+        Some(format!("{}: ", ev.sender.as_str()))
+    } else if ev.sender.as_str() == ME {
+        Some("You: ".to_string())
+    } else {
+        None
+    };
+    Some(RoomPreview { prefix, text, encrypted, typing: false })
+}
+
+/// The row's own single trailing marker (concept: at most ONE of a pin
+/// icon / an unread pill / an `@` mention pill ever shows per row). The
+/// currently OPEN row suppresses its own unread/mention marker (you are
+/// already looking at it) and shows only its pin state, if any.
+enum Trailing {
+    None,
+    Pin,
+    Unread(u64, bool),
+    Mention,
+}
+
+fn trailing_marker(r: &RoomSummary, is_open: bool) -> Trailing {
+    if is_open {
+        return if r.pinned { Trailing::Pin } else { Trailing::None };
+    }
+    if r.highlight_count > 0 {
+        Trailing::Mention
+    } else if r.notification_count > 0 {
+        Trailing::Unread(r.notification_count, unread_badge_muted(r))
+    } else if r.pinned {
+        Trailing::Pin
+    } else {
+        Trailing::None
+    }
+}
+
+fn rank_label(rank: RankBadge) -> &'static str {
+    match rank {
+        RankBadge::Paid => "PAID",
+        RankBadge::Trusted => "TRUSTED",
+        RankBadge::Moderator => "MOD",
+        RankBadge::Admin => "ADMIN",
+    }
+}
+
+/// One chat-list row — concept v1 `.row`: a 42px avatar (circle for a
+/// person, rounded square with a kind badge for a group/channel), then two
+/// text lines (name [+ rank chip] [+ mute glyph] + time; preview [+ author
+/// prefix] + one trailing marker). Padding 7×8, radius 6.
 #[allow(clippy::too_many_arguments)]
 fn draw_room_row(
     ctx: &mut dyn RenderContext,
@@ -482,16 +999,16 @@ fn draw_room_row(
     x: f64,
     y: f64,
     w: f64,
-    r: &mlc_messenger_model::RoomSummary,
-    state: &CommunityState,
+    r: &RoomSummary,
+    provider: &dyn MessengerProvider,
+    is_open: bool,
     current_time_ms: u64,
     tt: &ToolbarTheme,
 ) -> f64 {
     let widget_id = format!("cloud_overlay:dm:conversation:{}", r.id.as_str());
     let rect = WidgetRect::new(x, y, w, CONV_ROW_RECT_H);
     let hovered = coord.is_hovered(&WidgetId::from(widget_id.as_str()));
-    let open = matches!(&state.dm.view, crate::ui::modal_settings::DmView::Conversation { id, .. } if id.to_string() == r.id.as_str());
-    if open {
+    if is_open {
         ctx.set_fill_color(&tt.button_bg);
         ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, LIST_ROW_RADIUS);
     } else if hovered {
@@ -499,69 +1016,140 @@ fn draw_room_row(
         ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, LIST_ROW_RADIUS);
     }
 
+    // "Saved messages" is a self-chat — no clean model signal exists for
+    // "this Direct room's only other member is me" (see `RoomSummary`'s own
+    // doc: no peer-user-id field), so this one name is matched literally, a
+    // narrow, documented special case rather than a general rule.
+    let is_self_chat = r.name == "Saved messages";
+
     let avatar_cx = x + LIST_ROW_PAD_H + LIST_AVATAR_D / 2.0;
     let avatar_cy = rect.y + rect.height / 2.0;
-    draw_avatar(
-        ctx, avatar_cx, avatar_cy, LIST_AVATAR_D / 2.0, AvatarShape::Circle, &initials(&r.name),
-        &AvatarColors { background: &tt.item_bg_hover, text: contrasting_text_color(&tt.item_bg_hover), ring: &tt.background },
-        CornerMarker::None,
+    let avatar_bg: &str = if matches!(r.kind, RoomKind::Channel) { tt.button_bg.as_str() } else { tt.item_bg_hover.as_str() };
+    let (shape, corner) = match r.kind {
+        RoomKind::Direct => {
+            let online = !is_self_chat
+                && r.peer_last_active.map(|t| (current_time_ms as i64 - t.0).abs() < 5 * 60_000).unwrap_or(false);
+            (AvatarShape::Circle, if online { CornerMarker::Presence { color: &tt.success } } else { CornerMarker::None })
+        }
+        RoomKind::Group => (AvatarShape::RoundedSquare, CornerMarker::Kind { background: avatar_bg }),
+        RoomKind::Channel => (AvatarShape::RoundedSquare, CornerMarker::Kind { background: avatar_bg }),
+    };
+    let marker = draw_avatar(
+        ctx, avatar_cx, avatar_cy, LIST_AVATAR_D / 2.0, shape,
+        if is_self_chat { "" } else { &r.initials },
+        &AvatarColors { background: avatar_bg, text: contrasting_text_color(avatar_bg), ring: &tt.dropdown_bg },
+        corner,
     );
+    if is_self_chat {
+        draw_icon_bookmark(ctx, avatar_cx, avatar_cy, LIST_AVATAR_D * 0.28, &tt.item_text);
+    }
+    if let Some((bx, by, br)) = marker {
+        match r.kind {
+            RoomKind::Group => draw_icon_group(ctx, bx, by, br * 0.85, &tt.item_text),
+            RoomKind::Channel if r.is_public => draw_icon_check(ctx, bx, by, br * 0.85, &tt.item_text),
+            RoomKind::Channel => draw_icon_channel(ctx, bx, by, br * 0.7, &tt.item_text),
+            RoomKind::Direct => {}
+        }
+    }
+
     let text_x = x + LIST_ROW_PAD_H + LIST_AVATAR_D + LIST_AVATAR_GAP;
     let text_right = x + w - LIST_ROW_PAD_H;
 
-    // Line 1 — name (left) + time (mono, right-aligned, same line).
-    let time_label = r.last_event.as_ref().map(|ev| row_time_label(ev.ts, current_time_ms));
+    // Line 1 — name [+ rank chip] (left) + [mute glyph] + time (right).
+    let peer_rank = if matches!(r.kind, RoomKind::Direct) && !is_self_chat {
+        provider.members(&r.id).into_iter().find(|m| m.user_id.as_str() != ME).and_then(|m| m.rank)
+    } else {
+        None
+    };
+    let time_label = row_time_label_for(r, current_time_ms);
     let time_w = time_label.as_ref().map(|t| {
         ctx.set_font("11px monospace");
         ctx.measure_text(t)
     });
+    let mute_w = if r.muted { 18.0 } else { 0.0 };
     let line1_y = rect.y + (rect.height - 29.0) / 2.0;
-    let name_right = time_w.map(|tw| text_right - tw - 6.0).unwrap_or(text_right);
+    let name_right = text_right - time_w.unwrap_or(0.0) - mute_w - if time_label.is_some() { 6.0 } else { 0.0 };
     ctx.set_font("600 13px sans-serif");
-    ctx.set_fill_color(if hovered || open { &tt.item_text_hover } else { &tt.item_text });
+    ctx.set_fill_color(if hovered || is_open { &tt.item_text_hover } else { &tt.item_text });
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    let label = crate::ui::widgets::fit_text_to_width(ctx, &r.name, (name_right - text_x).max(0.0));
+    let name_budget = (name_right - text_x - if peer_rank.is_some() { 34.0 } else { 0.0 }).max(0.0);
+    let label = crate::ui::widgets::fit_text_to_width(ctx, &r.name, name_budget);
     ctx.fill_text(&label, text_x, line1_y);
+    let name_w = ctx.measure_text(&label);
+    if let Some(rank) = peer_rank {
+        draw_rank_chip(ctx, text_x + name_w + 6.0, line1_y, name_right, rank_label(rank), tt);
+    }
+    if r.muted {
+        draw_icon_mute(ctx, text_right - (time_w.unwrap_or(0.0) + 6.0) - 8.0, line1_y + 6.5, 7.0, &tt.muted_ink);
+    }
     if let Some(t) = &time_label {
         ctx.set_font("11px monospace");
-        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_fill_color(&tt.muted_ink);
         ctx.set_text_align(TextAlign::Right);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.fill_text(t, text_right, line1_y);
     }
 
-    // Line 2 — preview (left, ellipsised) + unread pill (right-aligned).
+    // Line 2 — preview [+ author prefix] (left) + trailing marker (right).
     let line2_y = line1_y + 15.0;
+    let trailing = trailing_marker(r, is_open);
     let badge_h = 16.0;
-    let mut preview_right = text_right;
-    if r.notification_count > 0 {
-        let badge_label = if r.notification_count > 99 { "99+".to_string() } else { r.notification_count.to_string() };
-        let bw = badge_width(ctx, &BadgeContent::Count(&badge_label), badge_h);
-        let bx = text_right - bw;
-        let by = line2_y - 1.0;
-        draw_count_badge(
-            ctx, bx, by, bw, badge_h, &BadgeContent::Count(&badge_label),
-            &BadgeColors { background: &tt.accent, text: contrasting_text_color(&tt.accent) },
-        );
-        preview_right = bx - 6.0;
-    }
-    // Preview line — only when the provider actually has one
-    // (`RoomSummary::last_event`, honestly `None` for today's DM adapter;
-    // see this file's own top doc). Nothing fabricated when it is absent.
-    if let Some(ev) = &r.last_event {
-        let (label, encrypted) = match &ev.content {
-            mlc_messenger_model::PreviewContent::Text(t) => (t.clone(), false),
-            mlc_messenger_model::PreviewContent::Encrypted => ("Encrypted message".to_string(), true),
-            mlc_messenger_model::PreviewContent::Redacted => ("Message deleted".to_string(), false),
-            mlc_messenger_model::PreviewContent::Notice(n) => (n.clone(), false),
+    let (trailing_w, trailing_draw): (f64, Box<dyn FnOnce(&mut dyn RenderContext, f64)>) = match trailing {
+        Trailing::None => (0.0, Box::new(|_, _| {})),
+        Trailing::Pin => (14.0, Box::new(move |ctx: &mut dyn RenderContext, tx: f64| {
+            draw_icon_pin(ctx, tx + 7.0, line2_y + 6.5, 7.0, &tt.muted_ink);
+        })),
+        Trailing::Mention => {
+            let bw = badge_h;
+            (bw, Box::new(move |ctx: &mut dyn RenderContext, tx: f64| {
+                draw_count_badge(
+                    ctx, tx, line2_y - 1.0, bw, badge_h, &BadgeContent::Mention,
+                    &BadgeColors { background: &tt.accent, text: contrasting_text_color(&tt.accent) },
+                );
+            }))
+        }
+        Trailing::Unread(count, muted) => {
+            let label = if count > 99 { "99+".to_string() } else { count.to_string() };
+            let bw = badge_width(ctx, &BadgeContent::Count(&label), badge_h);
+            let (bg, fg): (&str, &str) = if muted {
+                (tt.item_bg_hover.as_str(), tt.item_text_muted.as_str())
+            } else {
+                (tt.accent.as_str(), contrasting_text_color(&tt.accent))
+            };
+            (bw, Box::new(move |ctx: &mut dyn RenderContext, tx: f64| {
+                draw_count_badge(ctx, tx, line2_y - 1.0, bw, badge_h, &BadgeContent::Count(&label), &BadgeColors { background: bg, text: fg });
+            }))
+        }
+    };
+    let trailing_x = text_right - trailing_w;
+    trailing_draw(ctx, trailing_x);
+    let preview_right = if trailing_w > 0.0 { trailing_x - 6.0 } else { text_right };
+
+    if let Some(p) = room_preview(r, is_self_chat) {
+        let mut px = text_x;
+        if let Some(prefix) = &p.prefix {
+            ctx.set_font("500 12.5px sans-serif");
+            ctx.set_fill_color(&tt.item_text);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            let fit = crate::ui::widgets::fit_text_to_width(ctx, prefix, (preview_right - px).max(0.0));
+            ctx.fill_text(&fit, px, line2_y);
+            px += ctx.measure_text(&fit);
+        }
+        let (font, color): (&str, &str) = if p.typing {
+            ("12.5px sans-serif", tt.accent.as_str())
+        } else if p.encrypted {
+            ("italic 12.5px sans-serif", tt.muted_ink.as_str())
+        } else {
+            ("12.5px sans-serif", tt.item_text_muted.as_str())
         };
-        ctx.set_font(if encrypted { "italic 12.5px sans-serif" } else { "12.5px sans-serif" });
-        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_font(font);
+        ctx.set_fill_color(color);
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
-        let fit = crate::ui::widgets::fit_text_to_width(ctx, &label, (preview_right - text_x).max(0.0));
-        ctx.fill_text(&fit, text_x, line2_y);
+        let fit = crate::ui::widgets::fit_text_to_width(ctx, &p.text, (preview_right - px).max(0.0));
+        ctx.fill_text(&fit, px, line2_y);
     }
 
     // `RIGHT_CLICK` alongside `CLICK` — the messenger UI-2b chat-row context
@@ -572,30 +1160,60 @@ fn draw_room_row(
     CONV_ROW_H
 }
 
-/// A chat-list row's own last-message time — `HH:MM` for something that
-/// landed today, the same Today/Yesterday/date label [`draw_day_separator`]
-/// uses otherwise (today's DM adapter never actually reaches the "today"
-/// branch here in practice, since that's exactly what `clock_hm` already
-/// covers — kept as one shared rule with the timeline's own day labels
-/// rather than a second, narrower one).
+/// A ladder-rank chip (concept `.rank`: small, bordered, monospace,
+/// uppercase) — drawn only up to `max_x`, so a long name never pushes it
+/// past its own row/header's right edge (silently skipped rather than
+/// clipped mid-glyph).
+fn draw_rank_chip(ctx: &mut dyn RenderContext, x: f64, name_top_y: f64, max_x: f64, rank: &str, tt: &ToolbarTheme) {
+    let label = rank.to_uppercase();
+    ctx.set_font("600 9px monospace");
+    let text_w = ctx.measure_text(&label);
+    let chip_h = 13.0;
+    let chip_w = text_w + 8.0;
+    if x + chip_w > max_x {
+        return;
+    }
+    let chip_y = name_top_y + 2.0;
+    ctx.set_fill_color(&tt.item_bg_hover);
+    ctx.fill_rounded_rect(x, chip_y, chip_w, chip_h, 3.0);
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(&label, x + chip_w / 2.0, chip_y + chip_h / 2.0 + 0.5);
+}
+
+/// A chat-list row's own last-message/typing time label — `HH:MM` for
+/// today, a short weekday name within the last week, else `D Mon` (concept
+/// v1's own mix: `14:32`/`Mon`/`Tue`/`Sun`/`12 Sep`).
+fn row_time_label_for(r: &RoomSummary, now_ms: u64) -> Option<String> {
+    let ev = r.last_event.as_ref()?;
+    Some(row_time_label(ev.ts, now_ms))
+}
+
 fn row_time_label(ts: Timestamp, now_ms: u64) -> String {
-    if day_key(ts) == day_key(Timestamp(now_ms as i64)) {
+    let day = day_key(ts);
+    let today = day_key(Timestamp(now_ms as i64));
+    let delta = today - day;
+    if delta == 0 {
         clock_hm(ts)
+    } else if (1..7).contains(&delta) {
+        weekday_short(day).to_string()
     } else {
-        day_label(ts, now_ms)
+        let (_, m, d) = civil_from_days(day);
+        format!("{d} {}", month_short(m))
     }
 }
 
 // =============================================================================
-// Chat pane — a fixed header ([`draw_chat_header`]), day separators +
-// bubbles/system notices from [`MessengerProvider::timeline`] in a bottom-
-// anchored scrollable feed with a jump-to-latest button, and the docked
-// composer ([`draw_composer`], UI-2a piece 3): the single place every
-// reason the composer cannot send yet shows up, one calm line at a time —
-// no separate pane-top notice.
+// Chat pane — a fixed header ([`draw_chat_header`]/[`draw_chat_header_group`]),
+// an optional pin bar, day/unread separators + message GROUPS from
+// [`MessengerProvider::timeline`] in a bottom-anchored scrollable feed with a
+// jump-to-latest button, and the docked composer ([`draw_composer`]): the
+// single place every reason the composer cannot send yet shows up, one calm
+// line at a time — no separate pane-top notice.
 // =============================================================================
 
-/// The chat pane's own fixed header (concept `.ch`) — the peer's name
+/// The chat pane's own fixed 1:1 header (concept `.ch`) — the peer's name
 /// (plus their ladder rank chip, when [`DmConversationUi::peer_rank`] has
 /// resolved one) on line 1, a short key-fingerprint line on line 2. Never
 /// scrolls with the feed (see this section's own top doc).
@@ -612,12 +1230,7 @@ fn draw_chat_header(
     key_changed: bool,
     tt: &ToolbarTheme,
 ) {
-    ctx.set_stroke_color(&tt.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(x, y + CHAT_HEADER_H);
-    ctx.line_to(x + w, y + CHAT_HEADER_H);
-    ctx.stroke();
+    draw_soft_divider_h(ctx, x, y + CHAT_HEADER_H, w, tt);
 
     let text_x = x + CHAT_HEADER_PAD_L;
     let text_right = (x + w - 8.0).max(text_x);
@@ -650,37 +1263,109 @@ fn draw_chat_header(
     ctx.fill_text(&fit, text_x, line2_y);
 }
 
+/// The chat pane's own fixed GROUP/CHANNEL header — name on line 1,
+/// a typing indicator (accent) or a member/subscriber count (muted) on
+/// line 2 (concept `.ch .n`/`.ch .s`/`.ch .s.typing`).
+fn draw_chat_header_group(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, name: &str, subtitle: &str, subtitle_accent: bool, tt: &ToolbarTheme) {
+    draw_soft_divider_h(ctx, x, y + CHAT_HEADER_H, w, tt);
+
+    let text_x = x + CHAT_HEADER_PAD_L;
+    let text_right = (x + w - 8.0).max(text_x);
+    let line1_y = y + (CHAT_HEADER_H - 25.5) / 2.0;
+    let line2_y = line1_y + 15.0;
+
+    ctx.set_font("600 13.5px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let name_budget = (text_right - text_x).max(0.0);
+    let fit = crate::ui::widgets::fit_text_to_width(ctx, name, name_budget);
+    ctx.fill_text(&fit, text_x, line1_y);
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(if subtitle_accent { &tt.accent } else { &tt.item_text_muted });
+    let fit_sub = crate::ui::widgets::fit_text_to_width(ctx, subtitle, name_budget);
+    ctx.fill_text(&fit_sub, text_x, line2_y);
+}
+
+/// The three header icon buttons (search/members/more, concept `.ch`'s own
+/// trailing `.ib` row) — inert this pass (no `MessengerIntent`/context-menu
+/// equivalent wired yet), registered for hover only so the chrome reads
+/// correctly; a later click-dispatch piece gives them a real action.
+fn draw_header_icons(ctx: &mut dyn RenderContext, coord: &mut InputCoordinator, layer_id: &LayerId, x: f64, y: f64, w: f64, tt: &ToolbarTheme) {
+    let names = ["search", "members", "more"];
+    let mut bx = x + w - 8.0 - HEADER_ICON_D;
+    for name in names.iter().rev() {
+        let id = format!("cloud_overlay:dm:header_{name}");
+        let rect = WidgetRect::new(bx, y + (CHAT_HEADER_H - HEADER_ICON_D) / 2.0, HEADER_ICON_D, HEADER_ICON_D);
+        let hovered = coord.is_hovered(&WidgetId::from(id.as_str()));
+        if hovered {
+            ctx.set_fill_color(&tt.item_bg_hover);
+            ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+        }
+        match *name {
+            "search" => draw_icon_search(ctx, rect.center_x(), rect.center_y(), 8.0, &tt.item_text_muted),
+            "members" => draw_icon_group(ctx, rect.center_x(), rect.center_y(), 9.0, &tt.item_text_muted),
+            _ => draw_icon_more(ctx, rect.center_x(), rect.center_y(), 8.0, &tt.item_text_muted),
+        }
+        coord.register_on_layer(id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
+        bx -= HEADER_ICON_D + HEADER_ICON_GAP;
+    }
+}
+
+/// A group/channel room's own header subtitle — a typing indicator when
+/// anyone is typing, else a plain member/subscriber count (never fabricated
+/// — `members.len()` is exactly what [`MessengerProvider::members`]
+/// reported). Returns `(text, is_accent)`.
+fn group_subtitle(room: &RoomSummary, member_count: usize) -> (String, bool) {
+    if let Some(who) = room.typing_user_ids.first() {
+        return (format!("{} is typing…", who.as_str()), true);
+    }
+    let noun = if matches!(room.kind, RoomKind::Channel) { "subscribers" } else { "members" };
+    (format!("{member_count} {noun}"), false)
+}
+
 /// A ladder-rank chip (concept `.rank`: small, bordered, monospace,
 /// uppercase) — drawn only up to `max_x`, so a long name never pushes it
 /// past the header's own right edge (silently skipped rather than clipped
 /// mid-glyph, since a half-drawn chip reads worse than none at all).
-fn draw_rank_chip(ctx: &mut dyn RenderContext, x: f64, name_top_y: f64, max_x: f64, rank: &str, tt: &ToolbarTheme) {
-    let label = rank.to_uppercase();
-    ctx.set_font("600 9px monospace");
-    let text_w = ctx.measure_text(&label);
-    let chip_h = 13.0;
-    let chip_w = text_w + 8.0;
-    if x + chip_w > max_x {
-        return;
-    }
-    let chip_y = name_top_y + 2.0;
-    ctx.set_fill_color(&tt.item_bg_hover);
-    ctx.fill_rounded_rect(x, chip_y, chip_w, chip_h, 3.0);
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(&label, x + chip_w / 2.0, chip_y + chip_h / 2.0 + 0.5);
-}
-
-/// The header's own short key-fingerprint label — the first 16 hex
-/// characters of `fp`, uppercased and grouped in 4s (`"3F9D 5445 E06B
-/// 50E3"`, concept `.ch .s`). `fp` may be a longer digest in whatever the
-/// model's own encoding is; this reads only its hex characters and stops
-/// at 16 so an unusually long value never overflows the header's fixed
-/// 52px row.
 fn short_fingerprint(fp: &str) -> String {
     let hex: Vec<char> = fp.chars().filter(|c| c.is_ascii_hexdigit()).map(|c| c.to_ascii_uppercase()).take(16).collect();
     hex.chunks(4).map(|c| c.iter().collect::<String>()).collect::<Vec<_>>().join(" ")
+}
+
+/// The pinned-message bar (concept `.pinbar`) — drawn only when the open
+/// room's currently-held timeline carries a [`TimelineItem::pinned`] item
+/// (the FIRST one found; a real Matrix room can only ever have one message
+/// pinned to this exact bar at a time in the concept's own design). Returns
+/// the bar's own height, `0.0` when nothing is pinned.
+fn draw_pin_bar(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, item: &mlc_messenger_model::TimelineItem, vault_state: VaultState, tt: &ToolbarTheme) -> f64 {
+    draw_soft_divider_h(ctx, x, y + PINBAR_H, w, tt);
+    let bar_x = x + CHAT_HEADER_PAD_L;
+    let bar_h = 26.0;
+    let bar_y = y + (PINBAR_H - bar_h) / 2.0;
+    ctx.set_fill_color(&tt.accent);
+    ctx.fill_rounded_rect(bar_x, bar_y, 2.0, bar_h, 1.0);
+
+    let text_x = bar_x + 10.0;
+    let icon_w = 24.0;
+    let text_right = (x + w - 10.0 - icon_w).max(text_x);
+    let line1_y = y + (PINBAR_H - 26.0) / 2.0;
+    ctx.set_font("600 11.5px sans-serif");
+    ctx.set_fill_color(&tt.accent);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text("Pinned message", text_x, line1_y);
+
+    let visual = content_visual(&item.content, vault_state);
+    let preview = visual.lines.join(" ");
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&tt.item_text_muted);
+    let fit = crate::ui::widgets::fit_text_to_width(ctx, &preview, (text_right - text_x).max(0.0));
+    ctx.fill_text(&fit, text_x, line1_y + 14.0);
+
+    draw_icon_pin(ctx, x + w - 10.0 - icon_w / 2.0, y + PINBAR_H / 2.0, 8.0, &tt.muted_ink);
+    PINBAR_H
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -693,7 +1378,7 @@ fn draw_chat_pane(
     w: f64,
     viewport_h: f64,
     state: &CommunityState,
-    provider: &DmMessengerProviderView,
+    provider: &dyn MessengerProvider,
     caps: mlc_messenger_model::Capabilities,
     ft: &FrameTheme,
     tt: &ToolbarTheme,
@@ -731,28 +1416,39 @@ fn draw_chat_pane(
     }
 
     let room_id = RoomId::from(id.to_string());
-    let room = provider.room(&room_id);
+    let Some(room) = provider.room(&room_id) else {
+        draw_status(ctx, tt, x, body_y, w, "Conversation not found.", None);
+        return;
+    };
     let members = provider.members(&room_id);
     let timeline = provider.timeline(&room_id);
+    let is_direct = matches!(room.kind, RoomKind::Direct);
+
     let peer = members.iter().find(|m| m.user_id.as_str() != ME);
-    let peer_label = room.as_ref().map(|r| r.name.clone()).unwrap_or_else(|| "Unknown".to_string());
-    // Fingerprint STRING — the model has no field for it (see this file's
-    // own top doc); [`Member::has_messaging_key`] backs the "no messaging
-    // key yet" fallback, the fingerprint text itself is read off
-    // `DmConversationUi` by id, same lookup `dm_overlay.rs` already did.
-    let conversation = state.dm.conversations.iter().find(|c| c.id == *id);
+    let conversation = if is_direct { state.dm.conversations.iter().find(|c| c.id == *id) } else { None };
     let fingerprint = conversation.and_then(|c| c.peer_fingerprint.as_deref());
     let peer_rank = conversation.and_then(|c| c.peer_rank.as_deref());
-    let has_key = peer.map(|m| m.has_messaging_key).unwrap_or(false);
-    let key_changed = state.dm.has_peer_key_changed(*id);
+    let has_key = if is_direct { peer.map(|m| m.has_messaging_key).unwrap_or(false) } else { true };
+    let key_changed = is_direct && state.dm.has_peer_key_changed(*id);
 
     // Fixed 52px header (concept `.ch`) — drawn once, above the scrollable
-    // feed, rather than as the feed's own first scrolling row (see this
-    // function's own doc).
-    draw_chat_header(ctx, x, body_y, w, &peer_label, peer_rank, fingerprint, has_key, key_changed, tt);
+    // feed, rather than as the feed's own first scrolling row.
+    if is_direct {
+        draw_chat_header(ctx, x, body_y, w, &room.name, peer_rank, fingerprint, has_key, key_changed, tt);
+    } else {
+        let (subtitle, accent) = group_subtitle(&room, members.len());
+        draw_chat_header_group(ctx, x, body_y, w, &room.name, &subtitle, accent, tt);
+    }
+    draw_header_icons(ctx, coord, layer_id, x, body_y, w, tt);
 
-    let feed_y = body_y + CHAT_HEADER_H;
-    let feed_h = (body_viewport_h - CHAT_HEADER_H - dock_h(state)).max(0.0);
+    let mut feed_top = body_y + CHAT_HEADER_H;
+    let pinned_item = timeline.iter().find(|i| i.pinned);
+    if let Some(item) = pinned_item {
+        feed_top += draw_pin_bar(ctx, x, feed_top, w, item, provider.vault_state(), tt);
+    }
+
+    let feed_y = feed_top;
+    let feed_h = (body_viewport_h - (feed_top - body_y) - dock_h(state)).max(0.0);
     let viewport_rect = WidgetRect::new(x, feed_y, w, feed_h);
     coord.register_on_layer("cloud_overlay:scroll_viewport", viewport_rect, Sense::SCROLL, layer_id);
     let scrollable = ScrollableContainer::new(viewport_rect, &state.scroll, Some(scroll_config()));
@@ -782,27 +1478,7 @@ fn draw_chat_pane(
     if timeline.is_empty() {
         draw_status(ctx, tt, sx, sy, sw, "No messages yet.", None);
     } else {
-        let mut prev_day: Option<i64> = None;
-        let mut msg_idx: u16 = 0;
-        for item in &timeline {
-            let day = day_key(item.ts);
-            if prev_day != Some(day) {
-                let label = day_label(item.ts, current_time_ms);
-                sy += draw_day_separator(ctx, sx, sy, sw, &label, tt);
-                prev_day = Some(day);
-            }
-            if let Some(notice) = system_notice_text(&item.content) {
-                sy += draw_system_notice(ctx, sx, sy, sw, &notice, tt);
-                continue;
-            }
-            let mine = item.sender.as_str() == ME;
-            let peer_name = peer.map(|m| m.display_name.as_str()).unwrap_or(peer_label.as_str());
-            sy += draw_bubble(
-                ctx, sx, sy, sw, msg_idx, item, mine, peer_name, provider.vault_state(), caps,
-                state.dm.selection, tt, result,
-            );
-            msg_idx += 1;
-        }
+        sy += draw_timeline(ctx, sx, sy, sw, &timeline, &room, &members, is_direct, provider.vault_state(), caps, current_time_ms, state.dm.selection, tt, result);
     }
     let content_h = sy - content_top;
 
@@ -821,13 +1497,149 @@ fn draw_chat_pane(
     // wired this pass). Its own click is the one new widget id this piece
     // adds (`panel_click.rs`'s `"jump_latest"` arm).
     if jump_button_visible(&state.scroll, content_h, feed_h) {
-        draw_jump_to_latest(ctx, coord, layer_id, x, feed_y, w, feed_h, tt);
+        draw_jump_to_latest(ctx, coord, layer_id, x, feed_y, w, feed_h, room.notification_count, tt);
     }
 
     draw_composer(
         ctx, coord, layer_id, x, body_y, w, body_viewport_h, state, locked, has_key, tt, ft, current_time_ms,
         result,
     );
+}
+
+/// One contiguous run of same-sender, same-day, non-system-notice timeline
+/// items — the concept's own `.grp`: they share ONE avatar (drawn once, on
+/// the LAST bubble) and ONE name/rank header (drawn once, on the FIRST).
+/// System-notice items are never grouped (each is its own one-item "group",
+/// tagged `is_notice`).
+struct BubbleGroup<'a> {
+    day: i64,
+    sender: &'a str,
+    items: Vec<&'a mlc_messenger_model::TimelineItem>,
+    is_notice: bool,
+}
+
+fn group_timeline(timeline: &[mlc_messenger_model::TimelineItem]) -> Vec<BubbleGroup<'_>> {
+    let mut groups: Vec<BubbleGroup> = Vec::new();
+    for item in timeline {
+        let day = day_key(item.ts);
+        if system_notice_text(&item.content).is_some() {
+            groups.push(BubbleGroup { day, sender: item.sender.as_str(), items: vec![item], is_notice: true });
+            continue;
+        }
+        if let Some(last) = groups.last_mut() {
+            if !last.is_notice && last.day == day && last.sender == item.sender.as_str() {
+                last.items.push(item);
+                continue;
+            }
+        }
+        groups.push(BubbleGroup { day, sender: item.sender.as_str(), items: vec![item], is_notice: false });
+    }
+    groups
+}
+
+/// Draw the whole feed body: day separators, an unread separator derived
+/// from `RoomSummary::notification_count` (the last N items read as
+/// "unread", the same backward-counting convention most chat clients use —
+/// no per-item read-receipt field exists to place it more precisely), and
+/// one call to [`draw_message_group`] per [`BubbleGroup`]. Returns the
+/// total height drawn.
+#[allow(clippy::too_many_arguments)]
+fn draw_timeline(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    w: f64,
+    timeline: &[mlc_messenger_model::TimelineItem],
+    room: &RoomSummary,
+    members: &[mlc_messenger_model::Member],
+    is_direct: bool,
+    vault_state: VaultState,
+    caps: mlc_messenger_model::Capabilities,
+    current_time_ms: u64,
+    selection: Option<Selection>,
+    tt: &ToolbarTheme,
+    result: &mut CloudOverlayResult,
+) -> f64 {
+    let groups = group_timeline(timeline);
+    let unread_from = timeline.len().saturating_sub(room.notification_count as usize);
+    let mut sy = y;
+    let top = y;
+    let mut prev_day: Option<i64> = None;
+    let mut consumed: usize = 0;
+    let mut unread_drawn = false;
+    let mut msg_idx: u16 = 0;
+    for group in &groups {
+        if prev_day != Some(group.day) {
+            let label = day_label(Timestamp(group.day * 86_400_000), current_time_ms);
+            if sy > top {
+                sy += BUBBLE_GAP;
+            }
+            sy += draw_day_separator(ctx, x, sy, w, &label, tt);
+            prev_day = Some(group.day);
+        } else if sy > top {
+            sy += BUBBLE_GAP;
+        }
+        if !unread_drawn && room.notification_count > 0 && consumed >= unread_from {
+            sy += draw_unread_separator(ctx, x, sy, w, tt);
+            unread_drawn = true;
+        }
+        if group.is_notice {
+            let notice = system_notice_text(&group.items[0].content).unwrap_or_default();
+            sy += draw_system_notice(ctx, x, sy, w, &notice, tt);
+            consumed += 1;
+            msg_idx += 1;
+            continue;
+        }
+        let mine = group.sender == ME;
+        let member = members.iter().find(|m| m.user_id.as_str() == group.sender);
+        let sender_display = member.map(|m| m.display_name.as_str()).unwrap_or(group.sender);
+        let sender_rank = member.and_then(|m| m.rank);
+        let show_header = !mine && !is_direct;
+        let group_h = draw_message_group(
+            ctx, x, sy, w, msg_idx, group, mine, show_header, sender_display, sender_rank, vault_state, caps,
+            selection, tt, result,
+        );
+        sy += group_h;
+        consumed += group.items.len();
+        msg_idx += group.items.len() as u16;
+    }
+    sy - y
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_message_group(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    w: f64,
+    start_idx: u16,
+    group: &BubbleGroup,
+    mine: bool,
+    show_name_header: bool,
+    sender_display: &str,
+    sender_rank: Option<RankBadge>,
+    vault_state: VaultState,
+    caps: mlc_messenger_model::Capabilities,
+    selection: Option<Selection>,
+    tt: &ToolbarTheme,
+    result: &mut CloudOverlayResult,
+) -> f64 {
+    let n = group.items.len();
+    let mut cy = y;
+    for (i, item) in group.items.iter().enumerate() {
+        let is_first = i == 0;
+        let is_last = i == n - 1;
+        let h = draw_bubble(
+            ctx, x, cy, w, start_idx + i as u16, item, mine, is_first, is_last,
+            show_name_header && is_first, sender_display, sender_rank.filter(|_| show_name_header && is_first),
+            vault_state, caps, selection, tt, result,
+        );
+        cy += h;
+        if !is_last {
+            cy += GROUP_INNER_GAP;
+        }
+    }
+    cy - y
 }
 
 fn draw_jump_to_latest(
@@ -838,35 +1650,60 @@ fn draw_jump_to_latest(
     y: f64,
     w: f64,
     scroll_h: f64,
+    unread: u64,
     tt: &ToolbarTheme,
 ) {
-    let label = "\u{2193} Jump to latest";
-    ctx.set_font("600 11px sans-serif");
-    let text_w = ctx.measure_text(label);
-    let pill_w = text_w + 24.0;
-    let pill_h = 26.0;
-    let rect = WidgetRect::new(x + (w - pill_w) / 2.0, y + scroll_h - pill_h - 10.0, pill_w, pill_h);
+    let rect = WidgetRect::new(x + w - JUMP_D - 16.0, y + scroll_h - JUMP_D - 12.0, JUMP_D, JUMP_D);
     let hovered = coord.is_hovered(&WidgetId::from("cloud_overlay:dm:jump_latest"));
-    ctx.set_fill_color(if hovered { &tt.accent_hover } else { &tt.accent });
-    ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, rect.height / 2.0);
-    ctx.set_fill_color(contrasting_text_color(&tt.accent));
-    ctx.set_text_align(TextAlign::Center);
-    ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(label, rect.center_x(), rect.center_y());
+    ctx.set_fill_color(&tt.dropdown_bg);
+    ctx.begin_path();
+    ctx.arc(rect.center_x(), rect.center_y(), JUMP_D / 2.0, 0.0, TAU);
+    ctx.fill();
+    ctx.set_stroke_color(&tt.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.arc(rect.center_x(), rect.center_y(), JUMP_D / 2.0 - 0.5, 0.0, TAU);
+    ctx.stroke();
+    if hovered {
+        ctx.set_fill_color(&tt.item_bg_hover);
+        ctx.set_global_alpha(0.4);
+        ctx.begin_path();
+        ctx.arc(rect.center_x(), rect.center_y(), JUMP_D / 2.0, 0.0, TAU);
+        ctx.fill();
+        ctx.set_global_alpha(1.0);
+    }
+    ctx.set_stroke_color(&tt.item_text_muted);
+    ctx.set_stroke_width(1.6);
+    ctx.set_line_cap("round");
+    ctx.begin_path();
+    ctx.move_to(rect.center_x(), rect.center_y() - 6.0);
+    ctx.line_to(rect.center_x(), rect.center_y() + 6.0);
+    ctx.move_to(rect.center_x() - 5.0, rect.center_y() + 1.0);
+    ctx.line_to(rect.center_x(), rect.center_y() + 6.0);
+    ctx.line_to(rect.center_x() + 5.0, rect.center_y() + 1.0);
+    ctx.stroke();
+
+    if unread > 0 {
+        let label = if unread > 99 { "99+".to_string() } else { unread.to_string() };
+        let badge_h = 16.0;
+        let bw = badge_width(ctx, &BadgeContent::Count(&label), badge_h);
+        let bx = rect.x + rect.width - 4.0 - bw / 2.0;
+        let by = rect.y - 7.0;
+        draw_count_badge(
+            ctx, bx, by, bw, badge_h, &BadgeContent::Count(&label),
+            &BadgeColors { background: &tt.accent, text: contrasting_text_color(&tt.accent) },
+        );
+    }
     coord.register_on_layer("cloud_overlay:dm:jump_latest", rect, Sense::CLICK | Sense::HOVER, layer_id);
 }
 
 /// The dock — the ONE place every reason the composer cannot send yet
-/// shows up (UI-2a piece 3, owner spec): a nick-required hint keeps its
-/// own pre-existing hint+button shape (a ladder-mandate gate, orthogonal
-/// to messaging itself); vault-locked and peer-without-key each get
-/// exactly the notice the owner asked for, one line (plus a button for
-/// the vault case) — replacing the three separate old notices this piece
-/// retires: the pane-top vault-locked header, the vault-locked composer's
-/// own OLD hint-with-no-button, and the header's old "no key
-/// published"/fingerprint-substitution line (`dm_overlay.rs`'s former
-/// `draw_right_conversation`, all three gone from this crate now — see
-/// this file's own top doc).
+/// shows up (owner spec): a nick-required hint keeps its own pre-existing
+/// hint+button shape (a ladder-mandate gate, orthogonal to messaging
+/// itself); vault-locked and peer-without-key each get exactly the notice
+/// the owner asked for, one line (plus a button for the vault case); a
+/// pending reply (`CommunityState::messenger_reply_preview`) adds its own
+/// banner above the draft field (concept `.cbar`).
 #[allow(clippy::too_many_arguments)]
 fn draw_composer(
     ctx: &mut dyn RenderContext,
@@ -899,8 +1736,14 @@ fn draw_composer(
         );
         return;
     }
-    let row_y = composer_y + COMPOSER_PAD_TOP;
-    let row_cy = row_y + COMPOSER_FIELD_H / 2.0;
+
+    let mut row_y = composer_y;
+    if let Some(reply) = &state.messenger_reply_preview {
+        draw_soft_divider_h(ctx, x, composer_y, w, tt);
+        row_y += draw_reply_banner(ctx, coord, layer_id, x, composer_y, w, reply, tt);
+    }
+    let row_cy = row_y + COMPOSER_PAD_TOP + COMPOSER_FIELD_H / 2.0;
+    row_y += COMPOSER_PAD_TOP;
     // Vault locked (owner spec, UI-2a piece 3): ONE row — a lock glyph, the
     // notice, and a COMPACT accent button hugging its own text, right-
     // aligned (not the pane's full width — see [`DOCK_BTN_H`]'s own doc).
@@ -957,6 +1800,57 @@ fn draw_composer(
     draw_send_button(ctx, coord, layer_id, send_rect, tt);
 }
 
+/// The composer's own "replying to" banner (concept `.cbar`) — see
+/// [`crate::ui::modal_settings::MessengerReplyPreview`]'s own doc for why
+/// its own ✕ is registered but unwired this pass. Returns the banner's own
+/// height.
+fn draw_reply_banner(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    reply: &crate::ui::modal_settings::MessengerReplyPreview,
+    tt: &ToolbarTheme,
+) -> f64 {
+    let bar_h = 28.0;
+    let bar_y = y + (REPLY_BANNER_H - bar_h) / 2.0;
+    ctx.set_fill_color(&tt.accent);
+    ctx.fill_rounded_rect(x + 2.0, bar_y, 2.0, bar_h, 1.0);
+
+    let close_w = 20.0;
+    let text_x = x + 14.0;
+    let text_right = x + w - 8.0 - close_w;
+    ctx.set_font("600 11.5px sans-serif");
+    ctx.set_fill_color(&tt.accent);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let label = format!("Reply to {}", reply.sender_label);
+    let fit_label = crate::ui::widgets::fit_text_to_width(ctx, &label, (text_right - text_x).max(0.0));
+    ctx.fill_text(&fit_label, text_x, bar_y);
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&tt.item_text_muted);
+    let fit_preview = crate::ui::widgets::fit_text_to_width(ctx, &reply.preview, (text_right - text_x).max(0.0));
+    ctx.fill_text(&fit_preview, text_x, bar_y + 14.0);
+
+    let close_rect = WidgetRect::new(x + w - 8.0 - close_w, bar_y - 2.0, close_w, close_w);
+    let hovered = coord.is_hovered(&WidgetId::from("cloud_overlay:dm:cancel_reply"));
+    ctx.set_stroke_color(if hovered { &tt.item_text } else { &tt.item_text_muted });
+    ctx.set_stroke_width(1.4);
+    ctx.set_line_cap("round");
+    ctx.begin_path();
+    ctx.move_to(close_rect.x + 5.0, close_rect.y + 5.0);
+    ctx.line_to(close_rect.x + close_rect.width - 5.0, close_rect.y + close_rect.height - 5.0);
+    ctx.move_to(close_rect.x + close_rect.width - 5.0, close_rect.y + 5.0);
+    ctx.line_to(close_rect.x + 5.0, close_rect.y + close_rect.height - 5.0);
+    ctx.stroke();
+    coord.register_on_layer("cloud_overlay:dm:cancel_reply", close_rect, Sense::CLICK | Sense::HOVER, layer_id);
+
+    REPLY_BANNER_H
+}
+
 /// The round accent send button (concept `.send`) — a filled circle with a
 /// plain glyph, same "font-glyph icon" idiom [`draw_chat_filter_row`]'s own
 /// pencil button already uses rather than a vector path (this crate sits
@@ -970,13 +1864,13 @@ fn draw_send_button(ctx: &mut dyn RenderContext, coord: &mut InputCoordinator, l
     let r = rect.width.min(rect.height) / 2.0;
     ctx.set_fill_color(&tt.accent);
     ctx.begin_path();
-    ctx.arc(cx, cy, r, 0.0, std::f64::consts::TAU);
+    ctx.arc(cx, cy, r, 0.0, TAU);
     ctx.fill();
     if hovered {
         ctx.set_fill_color(&tt.item_bg_hover);
         ctx.set_global_alpha(0.3);
         ctx.begin_path();
-        ctx.arc(cx, cy, r, 0.0, std::f64::consts::TAU);
+        ctx.arc(cx, cy, r, 0.0, TAU);
         ctx.fill();
         ctx.set_global_alpha(1.0);
     }
@@ -1088,6 +1982,42 @@ fn draw_day_separator(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, label
     DAY_SEP_H
 }
 
+/// The unread separator bar (concept `.unreadbar`) — full-width, centred
+/// label.
+fn draw_unread_separator(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, tt: &ToolbarTheme) -> f64 {
+    ctx.set_fill_color(&tt.button_bg);
+    ctx.fill_rect(x, y, w, UNREAD_SEP_H);
+    ctx.set_font("11.5px sans-serif");
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Unread messages", x + w / 2.0, y + UNREAD_SEP_H / 2.0);
+    UNREAD_SEP_H
+}
+
+/// A bubble's own content-block heights, BEFORE the trailing meta row —
+/// name/rank header, reply quote, shared-chart card, and the wrapped text
+/// itself — shared by the caller's height math and [`draw_bubble`]'s own
+/// drawing pass so the two can never disagree.
+fn bubble_content_h(line_count: usize, has_header: bool, has_quote: bool, has_card: bool) -> f64 {
+    let mut h = 0.0;
+    if has_header {
+        h += NAME_HEADER_H;
+    }
+    if has_quote {
+        h += QUOTE_H;
+    }
+    if has_card {
+        h += chart_card_height();
+    }
+    h += line_count as f64 * BUBBLE_LINE_H;
+    h
+}
+
+fn chart_card_height() -> f64 {
+    CARD_MARGIN_TOP + CARD_CHART_H + 1.0 + CARD_INFO_H + CARD_MARGIN_BOTTOM
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_bubble(
     ctx: &mut dyn RenderContext,
@@ -1097,7 +2027,11 @@ fn draw_bubble(
     msg_idx: u16,
     item: &mlc_messenger_model::TimelineItem,
     mine: bool,
-    peer_label: &str,
+    is_first_in_group: bool,
+    is_last_in_group: bool,
+    show_header: bool,
+    sender_display: &str,
+    sender_rank: Option<RankBadge>,
     vault_state: VaultState,
     caps: mlc_messenger_model::Capabilities,
     selection: Option<Selection>,
@@ -1106,28 +2040,65 @@ fn draw_bubble(
 ) -> f64 {
     let visual = content_visual(&item.content, vault_state);
     let line_count = visual.lines.len().max(1);
-    // No sender-name row (owner spec: "no 'You' label in a 1:1 chat" — this
-    // provider only ever carries a 1:1 room, so a bubble never needs to say
-    // whose it is; see this file's own top doc for why group/channel chrome
-    // stays undrawn here).
-    let bubble_inner_h = line_count as f64 * BUBBLE_LINE_H + BUBBLE_TIME_H;
+    let quote = item.reply_to.as_ref();
+    let card = item.shared_chart.as_ref();
+
+    let content_h = bubble_content_h(line_count, show_header, quote.is_some(), card.is_some());
+    let reactions_h = if item.reactions.is_empty() { 0.0 } else { REACTIONS_ROW_H };
+    let bubble_inner_h = content_h + BUBBLE_TIME_H + reactions_h;
     let bubble_h = bubble_inner_h + BUBBLE_PAD_V * 2.0;
 
-    let has_avatar = !mine;
-    let avatar_reserved = if has_avatar { BUBBLE_AVATAR_D + BUBBLE_AVATAR_GAP } else { 0.0 };
-    let bubble_w = bubble_width_for((w - avatar_reserved).max(0.0));
+    let reserves_avatar = !mine;
+    let avatar_reserved = if reserves_avatar { BUBBLE_AVATAR_D + BUBBLE_AVATAR_GAP } else { 0.0 };
+    let card_w = card.map(|_| CARD_W + BUBBLE_PAD_H * 2.0);
+    let bubble_w = card_w
+        .map(|cw| cw.min((w - avatar_reserved).max(BUBBLE_MIN_W)).max(BUBBLE_MIN_W))
+        .unwrap_or_else(|| bubble_width_for((w - avatar_reserved).max(0.0)));
     let bx = if mine { x + w - bubble_w } else { x + avatar_reserved };
 
-    if has_avatar {
+    if !mine && is_last_in_group {
         let avatar_cx = x + BUBBLE_AVATAR_D / 2.0;
         let avatar_cy = y + bubble_h / 2.0;
-        draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, BUBBLE_AVATAR_D / 2.0, peer_label, &tt.item_bg_active);
+        draw_avatar_placeholder(ctx, avatar_cx, avatar_cy, BUBBLE_AVATAR_D / 2.0, sender_display, &tt.item_bg_active);
     }
 
     let mine_text = contrasting_text_color(&tt.bubble_user_bg);
     ctx.set_fill_color(if mine { &tt.bubble_user_bg } else { &tt.button_bg });
-    let (tl, tr, br, bl) = bubble_corners(mine);
+    let (tl, tr, br, bl) = bubble_corners_grouped(mine, is_first_in_group);
     fill_rect_corners(ctx, bx, y, bubble_w, bubble_h, tl, tr, br, bl);
+    if item.mentions_me {
+        ctx.set_stroke_color(&tt.accent);
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect_corners(bx, y, bubble_w, bubble_h, tl, tr, br, bl);
+    }
+
+    let text_left = bx + BUBBLE_PAD_H;
+    let text_right = bx + bubble_w - BUBBLE_PAD_H;
+    let mut cy = y + BUBBLE_PAD_V;
+
+    if show_header {
+        ctx.set_font("600 12px sans-serif");
+        ctx.set_fill_color(&tt.item_text);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        let fit = crate::ui::widgets::fit_text_to_width(ctx, sender_display, (text_right - text_left).max(0.0));
+        ctx.fill_text(&fit, text_left, cy);
+        if let Some(rank) = sender_rank {
+            let name_w = ctx.measure_text(&fit);
+            draw_rank_chip(ctx, text_left + name_w + 6.0, cy, text_right, rank_label(rank), tt);
+        }
+        cy += NAME_HEADER_H;
+    }
+
+    if let Some(q) = quote {
+        draw_quote(ctx, text_left, cy, text_right - text_left, q, tt);
+        cy += QUOTE_H;
+    }
+
+    if let Some(c) = card {
+        draw_chart_card(ctx, text_left, cy, (text_right - text_left).min(CARD_W), c, tt);
+        cy += chart_card_height();
+    }
 
     let (body_font, body_color): (&str, &str) = if visual.mono {
         ("11px monospace", tt.item_text_muted.as_str())
@@ -1137,22 +2108,25 @@ fn draw_bubble(
         ("12px sans-serif", tt.item_text.as_str())
     };
     ctx.set_font(body_font);
-    ctx.set_fill_color(body_color);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    let line_x = bx + BUBBLE_PAD_H;
     let block = msg_idx as i64;
     let hit_start = result.dm_message_line_rects.len();
     for (i, line) in visual.lines.iter().enumerate() {
-        let line_y = y + BUBBLE_PAD_V + i as f64 * BUBBLE_LINE_H;
-        ctx.fill_text(line, line_x, line_y);
+        let line_y = cy + i as f64 * BUBBLE_LINE_H;
+        if visual.mono || mine {
+            ctx.set_fill_color(body_color);
+            ctx.fill_text(line, text_left, line_y);
+        } else {
+            draw_line_with_mentions(ctx, line, text_left, line_y, body_color, &tt.accent);
+        }
         result.dm_message_line_rects.push(LineHit {
             block,
             line: i as u16,
             y_top: line_y,
             y_bot: line_y + BUBBLE_LINE_H,
             text: line.clone(),
-            text_x: line_x,
+            text_x: text_left,
             width: ctx.measure_text(line),
             mono: visual.mono,
         });
@@ -1187,24 +2161,21 @@ fn draw_bubble(
     // ciphertext) — bottom-right INSIDE the bubble, 10.5px mono (owner
     // spec). A double tick for "read" only draws when the provider
     // actually reports read receipts (`Capabilities::receipts`) AND
-    // `read_by` is non-empty — a provider that never sets `receipts: true`
-    // never gets a double tick even if `read_by` happened to carry
-    // something, honouring the flag rather than the raw data alone.
+    // `read_by` is non-empty.
     ctx.set_font("10.5px monospace");
     ctx.set_fill_color(&tt.item_text_muted);
-    let time_y = y + BUBBLE_PAD_V + line_count as f64 * BUBBLE_LINE_H;
+    let time_y = cy + line_count as f64 * BUBBLE_LINE_H;
     let clock = clock_hm(item.ts);
-    let label = if mine && !visual.mono {
+    let mut label = if item.edited { format!("edited {clock}") } else { clock };
+    if mine && !visual.mono {
         let tick = match &item.send_state {
             SendState::LocalEcho | SendState::Sending => "\u{2022}",
             SendState::Failed { .. } => "!",
             SendState::Sent if caps.receipts && !item.read_by.is_empty() => "\u{2713}\u{2713}",
             SendState::Sent => "\u{2713}",
         };
-        format!("{clock} {tick}")
-    } else {
-        clock
-    };
+        label = format!("{label} {tick}");
+    }
     let time_x = bx + bubble_w - BUBBLE_PAD_H;
     ctx.set_text_align(TextAlign::Right);
     ctx.set_text_baseline(TextBaseline::Top);
@@ -1214,7 +2185,203 @@ fn draw_bubble(
         draw_lock_glyph(ctx, time_x - label_w - 7.0, time_y + 5.0, 8.0, &tt.item_text_muted);
     }
 
+    if !item.reactions.is_empty() {
+        draw_reactions_row(ctx, text_left, time_y + BUBBLE_TIME_H, &item.reactions, tt);
+    }
+
     bubble_h + BUBBLE_GAP
+}
+
+/// A reply-quote block inside a bubble (concept `.quote`) — the quoted
+/// sender's own display name (resolved by the caller; a raw opaque id when
+/// no matching member exists) and its preview text, single line, elided.
+fn draw_quote(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, quote: &ReplyPreview, tt: &ToolbarTheme) -> f64 {
+    ctx.set_fill_color(&tt.item_bg_hover);
+    ctx.fill_rounded_rect(x, y, w, QUOTE_H - 4.0, 4.0);
+    ctx.set_fill_color(&tt.accent);
+    ctx.fill_rect(x, y, QUOTE_BAR_W, QUOTE_H - 4.0);
+
+    let text_x = x + QUOTE_BAR_W + QUOTE_PAD_H;
+    let text_w = (w - QUOTE_BAR_W - QUOTE_PAD_H * 2.0).max(0.0);
+    ctx.set_font("600 11.5px sans-serif");
+    ctx.set_fill_color(&tt.accent);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let fit_sender = crate::ui::widgets::fit_text_to_width(ctx, quote.sender.as_str(), text_w);
+    ctx.fill_text(&fit_sender, text_x, y + QUOTE_PAD_V);
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&tt.item_text_muted);
+    let fit_preview = crate::ui::widgets::fit_text_to_width(ctx, &quote.preview, text_w);
+    ctx.fill_text(&fit_preview, text_x, y + QUOTE_PAD_V + 13.0);
+
+    QUOTE_H
+}
+
+/// The shared-chart-card attachment (concept `.card`) — a bordered card
+/// with a schematic candlestick pattern, a symbol/timeframe/venue title,
+/// the sender's own note, and Open/Clone buttons. `--up`/`--down` have no
+/// dedicated [`ToolbarTheme`] field (those live on the chart-specific theme
+/// this file never otherwise touches) — [`ToolbarTheme::success`]/`danger`
+/// stand in, the same teal/red pairing the Dark preset already uses for
+/// both concepts.
+fn draw_chart_card(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, card: &SharedChartCard, tt: &ToolbarTheme) -> f64 {
+    let top = y + CARD_MARGIN_TOP;
+    let total_h = CARD_CHART_H + 1.0 + CARD_INFO_H;
+    ctx.set_fill_color(&tt.background);
+    ctx.fill_rounded_rect(x, top, w, total_h, CARD_RADIUS);
+    ctx.set_stroke_color(&tt.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(x, top, w, total_h, CARD_RADIUS);
+
+    draw_chart_card_candles(ctx, x, top, w, CARD_CHART_H, tt);
+
+    let info_y = top + CARD_CHART_H + 1.0;
+    draw_soft_divider_h(ctx, x, info_y, w, tt);
+
+    let label_open = "Open";
+    let label_clone = "Clone";
+    ctx.set_font("600 11.5px sans-serif");
+    let open_w = ctx.measure_text(label_open) + 16.0;
+    let clone_w = ctx.measure_text(label_clone) + 16.0;
+    let btn_h = 24.0;
+    let btn_y = info_y + (CARD_INFO_H - btn_h) / 2.0;
+    let clone_rect = WidgetRect::new(x + w - 9.0 - clone_w, btn_y, clone_w, btn_h);
+    let open_rect = WidgetRect::new(clone_rect.x - 6.0 - open_w, btn_y, open_w, btn_h);
+
+    ctx.set_fill_color(&tt.button_bg);
+    ctx.fill_rounded_rect(open_rect.x, open_rect.y, open_rect.width, open_rect.height, 4.0);
+    ctx.set_stroke_color(&tt.divider_soft);
+    ctx.stroke_rounded_rect(open_rect.x, open_rect.y, open_rect.width, open_rect.height, 4.0);
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(label_open, open_rect.center_x(), open_rect.center_y());
+
+    ctx.set_fill_color(&tt.accent);
+    ctx.fill_rounded_rect(clone_rect.x, clone_rect.y, clone_rect.width, clone_rect.height, 4.0);
+    ctx.set_fill_color(contrasting_text_color(&tt.accent));
+    ctx.fill_text(label_clone, clone_rect.center_x(), clone_rect.center_y());
+
+    let text_x = x + 9.0;
+    let text_right = (open_rect.x - 8.0).max(text_x);
+    ctx.set_font("600 12px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    let title = format!("{} · {} · {}", card.symbol, card.timeframe, card.venue);
+    let fit_title = crate::ui::widgets::fit_text_to_width(ctx, &title, (text_right - text_x).max(0.0));
+    ctx.fill_text(&fit_title, text_x, info_y + 6.0);
+
+    ctx.set_font("11px monospace");
+    ctx.set_fill_color(&tt.muted_ink);
+    let fit_note = crate::ui::widgets::fit_text_to_width(ctx, &card.note, (text_right - text_x).max(0.0));
+    ctx.fill_text(&fit_note, text_x, info_y + 21.0);
+
+    chart_card_height()
+}
+
+/// A deterministic, schematic candlestick pattern — illustrative content
+/// only (this is not real market data), a pure function of the slot index
+/// so it never allocates a `rand` dependency this crate does not otherwise
+/// need.
+fn draw_chart_card_candles(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, h: f64, tt: &ToolbarTheme) {
+    let n = 18;
+    let slot_w = w / n as f64;
+    for i in 0..n {
+        let phase = i as f64 * 0.62;
+        let seed = phase.sin();
+        let up = seed >= 0.0;
+        let body_h = (h * 0.16) + seed.abs() * (h * 0.32);
+        let cy = y + h * 0.55 - (phase * 0.7).sin() * (h * 0.18);
+        let bx = x + slot_w * i as f64 + slot_w * 0.3;
+        let bw = (slot_w * 0.4).max(2.0);
+        let color: &str = if up { tt.success.as_str() } else { tt.danger.as_str() };
+        ctx.set_stroke_color(color);
+        ctx.set_stroke_width(1.0);
+        ctx.begin_path();
+        ctx.move_to(bx + bw / 2.0, cy - body_h / 2.0 - 3.0);
+        ctx.line_to(bx + bw / 2.0, cy + body_h / 2.0 + 3.0);
+        ctx.stroke();
+        ctx.set_fill_color(color);
+        ctx.fill_rect(bx, cy - body_h / 2.0, bw, body_h);
+    }
+}
+
+/// A single reactions row (concept `.rx`) — one small pill per reaction,
+/// accent-outlined and filled with [`ToolbarTheme::selection`] when
+/// [`ReactionSummary::by_me`], plain-bordered otherwise.
+fn draw_reactions_row(ctx: &mut dyn RenderContext, x: f64, y: f64, reactions: &[ReactionSummary], tt: &ToolbarTheme) -> f64 {
+    let h = 18.0;
+    let mut cx = x;
+    for r in reactions {
+        let label = format!("{} {}", r.key, r.count);
+        ctx.set_font("11.5px sans-serif");
+        let text_w = ctx.measure_text(&label);
+        let pill_w = text_w + 14.0;
+        if r.by_me {
+            ctx.set_fill_color(&tt.selection);
+            ctx.fill_rounded_rect(cx, y, pill_w, h, h / 2.0);
+            ctx.set_stroke_color(&tt.accent);
+        } else {
+            ctx.set_fill_color(&tt.background);
+            ctx.fill_rounded_rect(cx, y, pill_w, h, h / 2.0);
+            ctx.set_stroke_color(&tt.divider_soft);
+        }
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(cx, y, pill_w, h, h / 2.0);
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(&label, cx + pill_w / 2.0, y + h / 2.0 + 0.5);
+        cx += pill_w + 4.0;
+    }
+    h + 4.0
+}
+
+/// Split `line` into alternating (text, is_mention) segments, preserving
+/// the original text exactly when concatenated back together — a token
+/// counts as a mention when it starts with `@` at a word boundary (start of
+/// line, or right after whitespace) and runs to the next whitespace. Pure,
+/// so [`draw_line_with_mentions`] and its own unit tests share one
+/// definition of "what counts as a mention token".
+fn mention_segments(line: &str) -> Vec<(String, bool)> {
+    let mut segments = Vec::new();
+    let mut current = String::new();
+    let mut in_mention = false;
+    let mut at_word_start = true;
+    for c in line.chars() {
+        if at_word_start && c == '@' && !in_mention {
+            if !current.is_empty() {
+                segments.push((std::mem::take(&mut current), false));
+            }
+            in_mention = true;
+        }
+        if c.is_whitespace() && in_mention {
+            segments.push((std::mem::take(&mut current), true));
+            in_mention = false;
+        }
+        current.push(c);
+        at_word_start = c.is_whitespace();
+    }
+    if !current.is_empty() {
+        segments.push((current, in_mention));
+    }
+    segments
+}
+
+/// Draw `line` left-aligned at `(x, y)`, colouring `@mention` tokens in
+/// `accent_color` and everything else in `normal_color` — plain-text bubble
+/// lines only (mono/ciphertext lines never call this).
+fn draw_line_with_mentions(ctx: &mut dyn RenderContext, line: &str, x: f64, y: f64, normal_color: &str, accent_color: &str) {
+    let mut cx = x;
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    for (seg, is_mention) in mention_segments(line) {
+        ctx.set_fill_color(if is_mention { accent_color } else { normal_color });
+        ctx.fill_text(&seg, cx, y);
+        cx += ctx.measure_text(&seg);
+    }
 }
 
 /// A bubble's own max width — 72% of whatever width is left after an
@@ -1227,14 +2394,19 @@ fn bubble_width_for(available_w: f64) -> f64 {
 }
 
 /// A bubble's own corner radii `(tl, tr, br, bl)` — [`BUBBLE_RADIUS`]
-/// everywhere except the "tail" corner nearest its own avatar-less edge:
-/// bottom-right for an own message, bottom-left for a peer's (concept
-/// `.b.own`/`.b.peer`).
-fn bubble_corners(mine: bool) -> (f64, f64, f64, f64) {
+/// everywhere except the "tail" corner nearest its own avatar-less edge
+/// (bottom-right for an own message, bottom-left for a peer's — concept
+/// `.b.own`/`.b.peer`), and ALSO the corner nearest the group's own
+/// PREVIOUS bubble when this one is not the first in its group (concept
+/// `.b.own.cont`/`.b.peer.mid`: the top corner on that same side flattens
+/// too, so consecutive bubbles read as one continuous shape).
+fn bubble_corners_grouped(mine: bool, is_first_in_group: bool) -> (f64, f64, f64, f64) {
     if mine {
-        (BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS, BUBBLE_RADIUS)
+        let tr = if is_first_in_group { BUBBLE_RADIUS } else { BUBBLE_TAIL_RADIUS };
+        (BUBBLE_RADIUS, tr, BUBBLE_TAIL_RADIUS, BUBBLE_RADIUS)
     } else {
-        (BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS)
+        let tl = if is_first_in_group { BUBBLE_RADIUS } else { BUBBLE_TAIL_RADIUS };
+        (tl, BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS)
     }
 }
 
@@ -1242,7 +2414,7 @@ fn bubble_corners(mine: bool) -> (f64, f64, f64, f64) {
 /// is a path primitive (like `rect`/`arc`), not a one-shot fill helper the
 /// way `fill_rounded_rect` is, so this wraps the same
 /// `begin_path`/`…`/`fill` sequence every other multi-step shape in this
-/// file already uses (e.g. [`draw_all_chats_glyph`]).
+/// file already uses (e.g. [`draw_icon_all_chats`]).
 #[allow(clippy::too_many_arguments)]
 fn fill_rect_corners(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, h: f64, tl: f64, tr: f64, br: f64, bl: f64) {
     ctx.begin_path();
@@ -1276,6 +2448,18 @@ fn civil_from_days(days_since_epoch: i64) -> (i64, i64, i64) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     (y, m, d)
+}
+
+/// A short weekday name for `day` (days since the Unix epoch) — 1970-01-01
+/// (day 0) was a Thursday, so the table starts there and cycles every 7.
+fn weekday_short(day: i64) -> &'static str {
+    const NAMES: [&str; 7] = ["Thu", "Fri", "Sat", "Sun", "Mon", "Tue", "Wed"];
+    NAMES[day.rem_euclid(7) as usize]
+}
+
+fn month_short(m: i64) -> &'static str {
+    const NAMES: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    NAMES[(m - 1).rem_euclid(12) as usize]
 }
 
 fn day_label(ts: Timestamp, now_ms: u64) -> String {
@@ -1330,6 +2514,25 @@ mod tests {
     }
 
     #[test]
+    fn weekday_short_of_the_epoch_is_thursday() {
+        assert_eq!(weekday_short(0), "Thu");
+        assert_eq!(weekday_short(7), "Thu");
+        assert_eq!(weekday_short(3), "Sun");
+    }
+
+    #[test]
+    fn row_time_label_picks_clock_this_week_or_date_by_age() {
+        let now = 10 * 86_400_000_u64 + 12 * 3_600_000; // day 10, noon (clear of the midnight boundary).
+        let recent = Timestamp(now as i64 - 3_600_000); // same day, 1h ago.
+        assert_eq!(row_time_label(recent, now), clock_hm(recent));
+        // 2 days ago -> a short weekday name (day 8).
+        assert_eq!(row_time_label(Timestamp(8 * 86_400_000), now), weekday_short(8));
+        // Beyond the "this week" window -> a date (day -10, well before day 10).
+        let (_, m, d) = civil_from_days(-10);
+        assert_eq!(row_time_label(Timestamp(-10 * 86_400_000), now), format!("{d} {}", month_short(m)));
+    }
+
+    #[test]
     fn rail_item_is_centred_inside_the_rail_with_a_4px_margin_either_side() {
         let margin = (RAIL_W - RAIL_ITEM_W) / 2.0;
         assert_eq!(margin, 4.0);
@@ -1337,10 +2540,6 @@ mod tests {
 
     #[test]
     fn rail_active_bar_sits_flush_with_the_rails_own_left_edge() {
-        // The item itself starts 4px in from the rail's left edge; the
-        // active bar is drawn at the RAIL's own x (see `draw_folder_rail`),
-        // i.e. exactly `margin` to the left of the item — same offset the
-        // concept's own `left:-4px` (relative to the item) describes.
         let margin = (RAIL_W - RAIL_ITEM_W) / 2.0;
         let rail_x = 0.0;
         let item_x = rail_x + margin;
@@ -1361,30 +2560,23 @@ mod tests {
 
     #[test]
     fn search_field_is_fully_rounded() {
-        // A fully-rounded pill's own radius is exactly half its height.
         assert_eq!(SEARCH_FIELD_RADIUS, SEARCH_FIELD_H / 2.0);
     }
 
     #[test]
-    fn initials_takes_up_to_two_words_uppercased() {
-        assert_eq!(initials("zeng3ld"), "Z");
-        assert_eq!(initials("Trading desk"), "TD");
-        assert_eq!(initials("kvant_42 extra words"), "KE");
-        assert_eq!(initials(""), "");
+    fn bubble_corners_first_in_group_matches_the_plain_own_peer_shape() {
+        assert_eq!(bubble_corners_grouped(true, true), (BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS, BUBBLE_RADIUS));
+        assert_eq!(bubble_corners_grouped(false, true), (BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS));
     }
 
     #[test]
-    fn bubble_corners_put_the_tail_on_the_avatar_less_side() {
-        assert_eq!(bubble_corners(true), (BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS, BUBBLE_RADIUS));
-        assert_eq!(bubble_corners(false), (BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS));
+    fn bubble_corners_continuation_flattens_the_near_top_corner() {
+        assert_eq!(bubble_corners_grouped(true, false), (BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS, BUBBLE_TAIL_RADIUS, BUBBLE_RADIUS));
+        assert_eq!(bubble_corners_grouped(false, false), (BUBBLE_TAIL_RADIUS, BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS));
     }
 
     #[test]
     fn bubble_never_overflows_the_pane_across_the_target_width_range() {
-        // Own messages reserve no avatar; peer messages reserve
-        // BUBBLE_AVATAR_D + BUBBLE_AVATAR_GAP on their side — both must
-        // still fit inside the pane at every width the concept's own
-        // screenshots were taken at (470-700px).
         for w in (470..=700).step_by(10) {
             let w = w as f64;
             let own_w = bubble_width_for(w);
@@ -1408,10 +2600,7 @@ mod tests {
     #[test]
     fn short_fingerprint_takes_16_hex_chars_grouped_in_4s() {
         assert_eq!(short_fingerprint("3f9d5445e06b50e3"), "3F9D 5445 E06B 50E3");
-        // Non-hex separators (e.g. an existing "aa:bb:cc" style digest) are
-        // ignored — only hex characters count toward the 16.
         assert_eq!(short_fingerprint("3f:9d:54:45:e0:6b:50:e3:ff"), "3F9D 5445 E06B 50E3");
-        // Shorter than 16 hex chars — grouped as far as it goes, no padding.
         assert_eq!(short_fingerprint("abcd"), "ABCD");
     }
 
@@ -1444,8 +2633,73 @@ mod tests {
 
     #[test]
     fn dock_btn_is_compact_not_a_full_row() {
-        // The old dock stretched every button to ROW_H (40px) across the
-        // whole composer; the concept's own compact button is shorter.
         assert!(DOCK_BTN_H < ROW_H);
+    }
+
+    #[test]
+    fn mention_segments_round_trip_to_the_original_line() {
+        let line = "@admin закрепил правила — глянь";
+        let segments = mention_segments(line);
+        let rebuilt: String = segments.iter().map(|(s, _)| s.as_str()).collect();
+        assert_eq!(rebuilt, line);
+        assert!(segments[0].1, "first segment must be the @mention token");
+    }
+
+    #[test]
+    fn mention_segments_ignores_an_email_like_token_mid_word() {
+        // "@" only starts a mention at a WORD boundary — mid-word it is just
+        // a literal character, same as the concept's own `.mention` rule
+        // (only ever applied to a leading `@handle`).
+        let line = "user@name text";
+        let segments = mention_segments(line);
+        assert!(segments.iter().all(|(_, is_mention)| !is_mention));
+    }
+
+    #[test]
+    fn unread_badge_muted_is_true_for_a_muted_room_or_any_channel() {
+        let mut r = test_room(RoomKind::Group, false, 0);
+        assert!(!unread_badge_muted(&r));
+        r.muted = true;
+        assert!(unread_badge_muted(&r));
+        let ch = test_room(RoomKind::Channel, false, 0);
+        assert!(unread_badge_muted(&ch));
+    }
+
+    #[test]
+    fn trailing_marker_on_the_open_row_never_shows_unread_or_mention() {
+        let mut r = test_room(RoomKind::Group, false, 5);
+        r.highlight_count = 1;
+        r.pinned = true;
+        assert!(matches!(trailing_marker(&r, true), Trailing::Pin));
+        assert!(matches!(trailing_marker(&r, false), Trailing::Mention));
+    }
+
+    #[test]
+    fn chart_card_height_is_the_sum_of_its_own_blocks() {
+        assert_eq!(chart_card_height(), CARD_MARGIN_TOP + CARD_CHART_H + 1.0 + CARD_INFO_H + CARD_MARGIN_BOTTOM);
+    }
+
+    fn test_room(kind: RoomKind, muted: bool, notification_count: u64) -> RoomSummary {
+        use mlc_messenger_model::{MemberRole, PowerLevel};
+        RoomSummary {
+            id: RoomId::from("!r:x"),
+            kind,
+            name: "x".to_string(),
+            initials: "X".to_string(),
+            is_encrypted: true,
+            is_public: false,
+            notification_count,
+            highlight_count: 0,
+            last_event: None,
+            muted,
+            pinned: false,
+            archived: false,
+            tags: Vec::new(),
+            typing_user_ids: Vec::new(),
+            peer_last_active: None,
+            my_role: MemberRole::Member,
+            my_power_level: PowerLevel(0),
+            can_post: true,
+        }
     }
 }
