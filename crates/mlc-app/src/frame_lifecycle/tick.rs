@@ -126,6 +126,18 @@ impl ChartApp {
         // every tick.
         self.release_idle_parked_presets();
 
+        // Order-flow footprint shadow feed (owner bug, prod 0.5.617,
+        // 2026-09-25 — "Order Flow scan doesn't work"): any bubble carrying
+        // an `order_flow_scan`/`imbalance_zone`/`absorption_mark`/
+        // `delta_divergence` primitive but no footprint feed yet gets one
+        // subscribed here, without touching the bubble's own visible
+        // chart_type — see `BackendCore::ensure_order_flow_footprint_feeds`'s
+        // own doc. Self-limiting, not gated: the subscribe it triggers
+        // stamps `footprint_bars = Some(_)` synchronously, so a bubble that
+        // already has a feed costs one cheap id/primitive scan and nothing
+        // more.
+        self.core.ensure_order_flow_footprint_feeds();
+
         // Load chat history for any restored chat leaves on the very first tick.
         // PTY sessions spawn-on-demand only (user must click [Start]).
         if !self.agent_autostarted {

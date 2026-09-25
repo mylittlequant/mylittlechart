@@ -831,6 +831,19 @@ impl<'a> DrawingsMut<'a> {
         self.mgr.refresh_wave_guards(&mut self.bubbles, bid)
     }
 
+    /// See `DrawingManager::refresh_footprint_derived` — the footprint
+    /// counterpart of [`Self::refresh_all_derived`]'s own bar-derived pass,
+    /// scoped to one bubble. Ordinary production writes to
+    /// `DataBubble::footprint_bars` already call this via
+    /// `bar_derived_cache::refresh_footprint_derived_caches` at their own
+    /// write point (every trade-fold install); this is for a caller that
+    /// wrote `footprint_bars` directly (`BubblesMut::with_bubble_mut`) and
+    /// needs every order-flow-family primitive's own cache to catch up
+    /// without waiting for the next live trade-fold event.
+    pub fn refresh_footprint_derived(&mut self, bid: BubbleId) {
+        self.mgr.refresh_footprint_derived(&mut self.bubbles, bid)
+    }
+
     // ---- Test-harness lifecycle -----------------------------------------
 
     pub fn drop_bubble(&mut self, bid: BubbleId) {
