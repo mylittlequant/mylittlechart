@@ -186,6 +186,11 @@ pub const BOTTOM_TOOLBAR_HEIGHT: f64 = 40.0;
 /// Height of the top toolbar in pixels
 pub const TOP_TOOLBAR_HEIGHT: f64 = 40.0;
 
+/// Fixed height (px) of a collapsed pane's header strip in pane-expand mode
+/// — tall enough for the existing overlay button row (button_size=18 +
+/// 2*margin, render_chart.rs:2010-2021) to render unchanged.
+pub const PANE_HEADER_STRIP_HEIGHT: f64 = 28.0;
+
 /// Height of the status bar in pixels (0 = hidden/removed)
 pub const STATUS_BAR_HEIGHT: f64 = 0.0;
 

@@ -102,6 +102,14 @@ pub enum HitResult {
         button: SubPaneButton,
     },
 
+    /// The main pane's own overlay button (Expand/Restore only — mirrors
+    /// `SubPaneOverlayButton` but for the main chart, shown only when the
+    /// container has >= 1 sub-pane).
+    MainPaneOverlayButton {
+        /// Which button was hit.
+        button: SubPaneButton,
+    },
+
     /// Toolbar area.
     ///
     /// Any toolbar (top, left, right, bottom) - should not start chart interactions.
@@ -156,6 +164,7 @@ impl HitResult {
             HitResult::Primitive { .. } => CursorStyle::Move,
             HitResult::ControlPoint { .. } => CursorStyle::Move,
             HitResult::SubPaneOverlayButton { .. } => CursorStyle::Pointer,
+            HitResult::MainPaneOverlayButton { .. } => CursorStyle::Pointer,
             HitResult::ScaleCorner | HitResult::Toolbar | HitResult::None => CursorStyle::Default,
         }
     }
@@ -312,6 +321,15 @@ mod tests {
 
         assert!(!HitResult::None.is_interactive());
         assert!(!HitResult::Toolbar.is_interactive());
+    }
+
+    #[test]
+    fn test_hit_result_main_pane_overlay_button() {
+        let hit = HitResult::MainPaneOverlayButton {
+            button: SubPaneButton::Expand,
+        };
+        assert!(hit.is_interactive());
+        assert_eq!(hit.cursor(), CursorStyle::Pointer);
     }
 
     #[test]
