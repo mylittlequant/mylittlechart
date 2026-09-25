@@ -110,7 +110,7 @@
 
 use crate::crypto::account::OlmAccountState;
 use crate::crypto::device_tracker::{DeviceTracker, StoredDevice};
-use crate::crypto::group_sessions::GroupSessionManager;
+use crate::crypto::group_sessions::{GroupSessionManager, RoomEventPlaintext};
 use crate::crypto::olm_sessions::{OlmDecryptError, OlmSessionManager};
 use crate::error::MessengerError;
 use crate::ids::{DeviceId, EventId, RequestId, RoomId, TxnId, UserId};
@@ -1689,14 +1689,43 @@ impl<C: RecordCodec> MessengerCore<C> {
         else {
             return false;
         };
-        let content = interpret_content(&plaintext.event_type, None, &plaintext.content);
-        if let Some(timeline) = self.timelines.get_mut(room_id) {
-            timeline.set_decrypted(event_id, content);
-        }
+        self.apply_decrypted_plaintext(room_id, event_id, &item.sender, item.origin_server_ts, &plaintext);
         if let Some(by_event) = self.pending_decrypt.get_mut(room_id) {
             by_event.remove(event_id);
         }
         true
+    }
+
+    /// Applies one successfully-decrypted Megolm plaintext to `room_id`'s
+    /// timeline entry for `event_id` — as an ordinary message
+    /// ([`Timeline::set_decrypted`]), or, when the plaintext itself carries
+    /// an `m.annotation`/`m.replace` relation, via
+    /// [`Timeline::apply_decrypted_relation`] instead (`room::timeline`'s
+    /// own doc: an encrypted relation's real content — its `m.new_content`
+    /// — only exists post-decrypt, unlike its `m.relates_to` pointer, which
+    /// the outer envelope already copies in cleartext; a still-ciphertext
+    /// event is therefore always given an ordinary placeholder row first,
+    /// and this is the one place that later resolves what it actually was).
+    /// Shared by forward decrypt ([`MessengerCore::decrypt_new_timeline_events`])
+    /// and [`MessengerCore::retry_decrypt_one`].
+    fn apply_decrypted_plaintext(
+        &mut self,
+        room_id: &RoomId,
+        event_id: &EventId,
+        sender: &UserId,
+        origin_server_ts: i64,
+        plaintext: &RoomEventPlaintext,
+    ) {
+        let Some(timeline) = self.timelines.get_mut(room_id) else { return };
+        if let Some(relation) = RelatesTo::from_content(&plaintext.content) {
+            if matches!(relation, RelatesTo::Annotation { .. } | RelatesTo::Replace { .. }) {
+                let new_content = plaintext.content.get("m.new_content").cloned();
+                timeline.apply_decrypted_relation(event_id, sender.clone(), origin_server_ts, relation, new_content);
+                return;
+            }
+        }
+        let content = interpret_content(&plaintext.event_type, None, &plaintext.content);
+        timeline.set_decrypted(event_id, content);
     }
 
     fn retry_pending_for_session(&mut self, room_id: &RoomId, session_id: &str) {
@@ -1935,8 +1964,8 @@ impl<C: RecordCodec> MessengerCore<C> {
     /// Attempts to decrypt every well-formed Megolm `m.room.encrypted`
     /// event in `events` (already applied to `room_id`'s timeline as
     /// `Encrypted{session_id}` placeholders by the caller), patching each
-    /// one in place via [`Timeline::set_decrypted`] — shared by forward
-    /// sync ([`MessengerCore::ingest_joined_room`]/
+    /// one in place via [`MessengerCore::apply_decrypted_plaintext`] — shared
+    /// by forward sync ([`MessengerCore::ingest_joined_room`]/
     /// [`MessengerCore::ingest_left_room`]) and back-pagination
     /// ([`MessengerCore::ingest_room_messages_response`]).
     fn decrypt_new_timeline_events(&mut self, room_id: &RoomId, events: &[RawEvent]) {
@@ -1957,10 +1986,7 @@ impl<C: RecordCodec> MessengerCore<C> {
                 &content,
             ) {
                 Ok(plaintext) => {
-                    let item_content = interpret_content(&plaintext.event_type, None, &plaintext.content);
-                    if let Some(timeline) = self.timelines.get_mut(room_id) {
-                        timeline.set_decrypted(&event.event_id, item_content);
-                    }
+                    self.apply_decrypted_plaintext(room_id, &event.event_id, &event.sender, event.origin_server_ts, &plaintext);
                     if let Some(by_event) = self.pending_decrypt.get_mut(room_id) {
                         by_event.remove(&event.event_id);
                     }

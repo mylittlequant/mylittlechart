@@ -28,10 +28,10 @@
 mod support;
 
 use mlc_messenger::store::InsecurePlainCodecForTests;
-use mlc_messenger::wire::Membership;
+use mlc_messenger::wire::{Membership, RoomMessageContent};
 use mlc_messenger::{
-    CoreConfig, CreateRoomKind, DeviceId, ItemContent, Jitter, MessageKind, MessengerCommand, MessengerCore,
-    MessengerEvent, OutgoingMessage, OutgoingRequestKind, RoomId, SendState, TimelineItem, UserId,
+    CoreConfig, CreateRoomKind, DeviceId, EditRecord, ItemContent, Jitter, MessageKind, MessengerCommand,
+    MessengerCore, MessengerEvent, OutgoingMessage, OutgoingRequestKind, RoomId, SendState, TimelineItem, UserId,
 };
 use support::fake_server::FakeServer;
 
@@ -164,6 +164,15 @@ fn item_body(item: &TimelineItem) -> Option<&str> {
 
 fn text_message(body: &str) -> OutgoingMessage {
     OutgoingMessage { kind: MessageKind::Text, body: body.to_string(), reply_to: None, edit_of: None }
+}
+
+fn edit_body(record: &EditRecord) -> Option<&str> {
+    match &record.content {
+        RoomMessageContent::Text(inner) | RoomMessageContent::Notice(inner) | RoomMessageContent::Emote(inner) => {
+            Some(inner.body.as_str())
+        }
+        RoomMessageContent::Unknown(_) => None,
+    }
 }
 
 fn is_joined(core: &TestCore, room_id: &RoomId, user_id: &UserId) -> bool {
@@ -308,4 +317,105 @@ fn e2e_three_cores_group_kick_excludes_leaver_from_new_messages() {
         carol.core.timeline(&room_id).is_none_or(|timeline| !timeline.items().iter().any(|item| item_body(item) == Some("bye carol"))),
         "the kicked member must never receive a message sent after her own kick"
     );
+}
+
+#[test]
+fn e2e_edit_reply_and_reaction_round_trip() {
+    let mut server = FakeServer::new();
+    let mut alice = Device::new("alice", "ALICE1");
+    let mut bob = Device::new("bob", "BOB1");
+    let room_id = create_dm(&mut alice, &mut bob, &mut server);
+
+    alice
+        .core
+        .dispatch(MessengerCommand::SendMessage { room_id: room_id.clone(), message: text_message("hello"), txn_id: None }, 0)
+        .expect("dispatch send_message");
+    alice.drive_until(&mut server, 0, "alice's message reaches Sent", |core| {
+        find_by_body(core, &room_id, "hello").send_state == SendState::Sent
+    });
+    let msg1_id = find_by_body(&alice.core, &room_id, "hello").event_id.clone().expect("event id assigned on Sent");
+    bob.drive_until(&mut server, 0, "bob receives alice's message", |core| has_body(core, &room_id, "hello"));
+    let bob_item_count_before_edit = bob.core.timeline(&room_id).expect("room present").items().len();
+
+    // Edit: alice edits her own message.
+    let edit = OutgoingMessage { kind: MessageKind::Text, body: "hello v2".to_string(), reply_to: None, edit_of: Some(msg1_id.clone()) };
+    alice.core.dispatch(MessengerCommand::SendMessage { room_id: room_id.clone(), message: edit, txn_id: None }, 0).expect("dispatch edit");
+    alice.drive_until(&mut server, 0, "alice's edit reaches Sent", |core| {
+        find_by_body(core, &room_id, "hello v2").send_state == SendState::Sent
+    });
+    let target_id = msg1_id.clone();
+    bob.drive_until(&mut server, 0, "bob sees alice's edit", |core| {
+        core.timeline(&room_id)
+            .and_then(|timeline| timeline.item_by_event_id(&target_id))
+            .and_then(|item| item.relations.latest_edit.as_ref())
+            .and_then(edit_body)
+            == Some("hello v2")
+    });
+    assert_eq!(
+        bob.core.timeline(&room_id).expect("room present").items().len(),
+        bob_item_count_before_edit,
+        "an edit folds onto its target -- it never becomes its own row"
+    );
+
+    // Reply: bob replies to alice's (still-original-bodied) message.
+    let reply = OutgoingMessage { kind: MessageKind::Text, body: "replying".to_string(), reply_to: Some(msg1_id.clone()), edit_of: None };
+    bob.core.dispatch(MessengerCommand::SendMessage { room_id: room_id.clone(), message: reply, txn_id: None }, 0).expect("dispatch reply");
+    bob.drive_until(&mut server, 0, "bob's reply reaches Sent", |core| {
+        find_by_body(core, &room_id, "replying").send_state == SendState::Sent
+    });
+    alice.drive_until(&mut server, 0, "alice receives bob's reply", |core| has_body(core, &room_id, "replying"));
+    assert_eq!(find_by_body(&alice.core, &room_id, "replying").relations.reply_to, Some(msg1_id.clone()));
+
+    // Reaction: bob reacts to alice's message.
+    bob.core
+        .dispatch(MessengerCommand::React { room_id: room_id.clone(), target: msg1_id.clone(), key: "\u{1F44D}".to_string() }, 0)
+        .expect("dispatch react");
+    // A reaction never gets a local echo (`start_new_send`'s own doc: only
+    // a `SendPayload::Message` does), so there is no timeline row to poll
+    // for -- a plaintext reaction needs no key pipeline either, so a small
+    // fixed tick count is enough to land it on the server.
+    bob.drive_n(&mut server, 0, 6);
+    let bob_user_id = bob.user_id.clone();
+    let target_id = msg1_id.clone();
+    alice.drive_until(&mut server, 0, "alice sees bob's reaction", |core| {
+        core.timeline(&room_id)
+            .and_then(|timeline| timeline.item_by_event_id(&target_id))
+            .is_some_and(|item| item.relations.reactions.get("\u{1F44D}").is_some_and(|reactors| reactors.contains(&bob_user_id)))
+    });
+}
+
+#[test]
+fn e2e_channel_sends_plaintext_and_members_read_it() {
+    let mut server = FakeServer::new();
+    let mut alice = Device::new("alice", "ALICE1");
+    let mut bob = Device::new("bob", "BOB1");
+    alice.bootstrap(&mut server);
+    bob.bootstrap(&mut server);
+
+    let kind = CreateRoomKind::Channel { name: "announcements".to_string(), topic: None };
+    alice.core.dispatch(MessengerCommand::CreateRoom { kind }, 0).expect("dispatch create_room");
+    alice.drive_until(&mut server, 0, "alice's own channel appears", |core| core.room_ids().next().is_some());
+    let room_id = alice.core.room_ids().next().cloned().expect("room present");
+    assert!(alice.core.room_state(&room_id).expect("room present").encryption.is_none(), "a channel is never encrypted");
+
+    // A public channel is discovered out of band (a directory search, a
+    // shared link, ...), not via an invite -- this test's own harness plays
+    // that role by handing bob the room id directly, same as a real client
+    // would after a directory lookup.
+    bob.core.dispatch(MessengerCommand::JoinRoom { room_id: room_id.clone() }, 0).expect("dispatch join_room");
+    let bob_user_id = bob.user_id.clone();
+    bob.drive_until(&mut server, 0, "bob's own join lands", |core| is_joined(core, &room_id, &bob_user_id));
+
+    alice
+        .core
+        .dispatch(MessengerCommand::SendMessage { room_id: room_id.clone(), message: text_message("welcome"), txn_id: None }, 0)
+        .expect("dispatch send_message");
+    alice.drive_until(&mut server, 0, "alice's send reaches Sent", |core| {
+        find_by_body(core, &room_id, "welcome").send_state == SendState::Sent
+    });
+    bob.drive_until(&mut server, 0, "bob receives the channel message", |core| has_body(core, &room_id, "welcome"));
+
+    let item = find_by_body(&bob.core, &room_id, "welcome");
+    assert_eq!(item.event_type, "m.room.message", "channel content arrives as plaintext m.room.message, not encrypted");
+    assert_eq!(item_body(item), Some("welcome"));
 }

@@ -444,7 +444,17 @@ impl Timeline {
             return;
         }
 
-        if event.state_key.is_none() {
+        // A still-ciphertext `m.room.encrypted` event's OUTER envelope
+        // already copies its `m.relates_to` pointer in cleartext (server
+        // indexing convention, `wire::events::MegolmEncryptedContent`'s own
+        // doc) -- but an edit's actual `m.new_content` lives only inside
+        // the ciphertext, so this event cannot be classified as a relation
+        // yet. It gets an ordinary (temporary) placeholder row here, same
+        // as any other not-yet-decrypted event; `MessengerCore`'s own
+        // decrypt pass calls [`Timeline::apply_decrypted_relation`] instead
+        // of [`Timeline::set_decrypted`] once the plaintext reveals the
+        // truth, retracting this placeholder (this method's own doc).
+        if event.state_key.is_none() && event.event_type != EVENT_ROOM_ENCRYPTED {
             if let Some(relation) = event.relates_to() {
                 if matches!(relation, RelatesTo::Annotation { .. } | RelatesTo::Replace { .. }) {
                     self.apply_relation_contribution(event, relation);
@@ -473,10 +483,6 @@ impl Timeline {
     }
 
     fn apply_relation_contribution(&mut self, event: &RawEvent, relation: RelatesTo) {
-        let target = match &relation {
-            RelatesTo::Annotation { event_id, .. } | RelatesTo::Replace { event_id } => event_id.clone(),
-            _ => return,
-        };
         let new_content =
             if matches!(relation, RelatesTo::Replace { .. }) { event.content.get("m.new_content").cloned() } else { None };
         let relating = RelatingEvent {
@@ -486,12 +492,21 @@ impl Timeline {
             relation,
             new_content,
         };
+        self.fold_or_queue_relation(relating);
+    }
 
+    /// Folds `relating` onto its own target's bundle if the target is
+    /// already loaded, or queues it for later if not (module doc's "a
+    /// relation can arrive before its target" section) -- the shared tail
+    /// end of [`Timeline::apply_relation_contribution`] (a live plaintext
+    /// relation event) and [`Timeline::apply_decrypted_relation`] (a
+    /// Megolm-encrypted one, resolved post-decrypt).
+    fn fold_or_queue_relation(&mut self, relating: RelatingEvent) {
+        let target = match &relating.relation {
+            RelatesTo::Annotation { event_id, .. } | RelatesTo::Replace { event_id } => event_id.clone(),
+            _ => return,
+        };
         let Some(&idx) = self.by_event_id.get(&target) else {
-            // Target not loaded yet -- queue it (module doc's "a relation
-            // can arrive before its target" section) rather than dropping
-            // it; `Timeline::resolve_pending_for` applies it once the
-            // target does load.
             self.queue_pending_relation(target, relating);
             return;
         };
@@ -750,6 +765,39 @@ impl Timeline {
         if let Some(&idx) = self.by_event_id.get(event_id) {
             self.items[idx].content = content;
         }
+    }
+
+    /// Resolves a Megolm-encrypted event that, once decrypted, turns out to
+    /// carry an `m.annotation`/`m.replace` relation rather than being an
+    /// ordinary message — the counterpart to [`Timeline::set_decrypted`] for
+    /// that case, and the reason [`Timeline::apply_one_event`] always gives
+    /// a still-ciphertext event an ordinary placeholder row first (this
+    /// type's own module doc; that method's own doc explains why the
+    /// classification cannot happen before decryption). Retracts that
+    /// placeholder row entirely (a relation never gets its own row) and
+    /// folds it onto its real target exactly as a live plaintext relation
+    /// event would have ([`Timeline::apply_relation_contribution`]).
+    /// Returns `false`, doing nothing, if `event_id` names no current item
+    /// (already resolved some other way) or if `relation` is not actually
+    /// an annotation/replace (that plaintext case belongs to
+    /// [`Timeline::set_decrypted`] instead).
+    pub(crate) fn apply_decrypted_relation(
+        &mut self,
+        event_id: &EventId,
+        sender: UserId,
+        origin_server_ts: i64,
+        relation: RelatesTo,
+        new_content: Option<serde_json::Value>,
+    ) -> bool {
+        if !matches!(relation, RelatesTo::Annotation { .. } | RelatesTo::Replace { .. }) {
+            return false;
+        }
+        let Some(&idx) = self.by_event_id.get(event_id) else { return false };
+        self.items.remove(idx);
+        self.reindex();
+        let relating = RelatingEvent { event_id: event_id.clone(), sender, origin_server_ts, relation, new_content };
+        self.fold_or_queue_relation(relating);
+        true
     }
 
     /// Attaches the server-confirmed event id to a not-yet-reconciled local
