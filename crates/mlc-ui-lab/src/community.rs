@@ -174,7 +174,12 @@ fn boards(now_ms: f64) -> Vec<BoardUi> {
             description: "Strategy breakdowns, backtests, walk-forwards.".to_string(),
             read_class: "public".to_string(),
             write_class: "paid".to_string(),
-            can_write: true,
+            // `false` regardless of `forum_state_base`'s own `caller_classes`
+            // (which does include "paid") — concept state 1 shows this
+            // board's own "write: paid" tag, i.e. illustrates a caller who
+            // canNOT write here; `can_write` is fixture-literal data, not
+            // re-derived from `caller_classes` anywhere in this file.
+            can_write: false,
             thread_count: 58,
             // Concept Posts = 412; 412 - 58 = 354 replies.
             reply_count: 354,
