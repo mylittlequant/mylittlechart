@@ -49,6 +49,8 @@ pub struct SharedChartMeta {
     pub rights: Vec<String>,
     /// RFC 3339 instant after which the share stops resolving.
     pub expires_at: String,
+    /// Author publish generation last applied to this tab. `0` if unknown.
+    pub revision: u64,
 }
 
 impl SharedChartMeta {
@@ -347,6 +349,36 @@ impl ChartApp {
         self.core.presets_mut().insert(placeholder_id.to_string(), preset);
         if self.panel_app.active_preset_id == placeholder_id {
             self.load_preset(placeholder_id);
+        }
+        Ok(())
+    }
+
+    /// Replace the body of an already-open shared tab when the author
+    /// republished. Same id, same token. A matching revision is a no-op so
+    /// a poll does not reload the chart.
+    pub fn refresh_shared_tab(
+        &mut self,
+        tab_id: &str,
+        meta: SharedChartMeta,
+        mut preset: ChartPreset,
+    ) -> Result<(), String> {
+        if self.shared_chart_meta.get(tab_id).map(|m| m.revision) == Some(meta.revision) {
+            return Ok(());
+        }
+        if preset.version != PRESET_VERSION {
+            return Err(format!(
+                "shared preset version {} unsupported (this build is on {})",
+                preset.version, PRESET_VERSION,
+            ));
+        }
+        preset.remap_ids_for_import();
+        preset.id = tab_id.to_string();
+        preset.name = format!("{} — {}", meta.title, meta.owner_label);
+        self.readonly_preset_ids.insert(tab_id.to_string());
+        self.shared_chart_meta.insert(tab_id.to_string(), meta);
+        self.core.presets_mut().insert(tab_id.to_string(), preset);
+        if self.panel_app.active_preset_id == tab_id {
+            self.load_preset(tab_id);
         }
         Ok(())
     }

@@ -57,6 +57,8 @@ pub enum LeafTabHoverZone {
     ColorTag,
     /// The gear/settings menu icon.
     GearMenu,
+    /// Clone, on a shared chart the viewer is allowed to copy.
+    Clone,
 }
 
 /// Hit zones returned after rendering a leaf tab header.
@@ -70,6 +72,8 @@ pub struct LeafTabHitZones {
     pub color_tag_rect: [f64; 4],
     /// Gear-menu rect `[x, y, w, h]`.
     pub dots_rect: [f64; 4],
+    /// Clone button. Zero size when this tab is not a cloneable share.
+    pub clone_rect: [f64; 4],
     /// Editable text-input rect `[x, y, w, h]` + char-boundary x-positions —
     /// populated ONLY when `render_leaf_tab`'s `editing` argument was
     /// `Some(..)` this frame (the Trading Container header-tab's inline
@@ -132,6 +136,7 @@ pub fn render_leaf_tab(
     color_tag: Option<[f32; 4]>,
     toolbar_theme: &ToolbarTheme,
     editing: Option<&SymbolQuickSearchRender>,
+    show_clone: bool,
 ) -> LeafTabHitZones {
     // ── Constants ────────────────────────────────────────────────────────────
     const TAB_HEIGHT: f64 = LEAF_TAB_HEIGHT;
@@ -142,7 +147,9 @@ pub fn render_leaf_tab(
     const TAG_SIZE: f64 = 12.0;
     const TAG_CONTAINER_W: f64 = TAG_SIZE;
     const DOTS_CONTAINER_W_EXPANDED: f64 = 20.0;
+    const CLONE_W: f64 = 46.0;
     const ACCENT_BAR_W: f64 = 2.0;
+    let clone_w = if show_clone { CLONE_W } else { 0.0 };
 
     // Reserve the dots container width unconditionally — geometry (tab_rect,
     // color_tag_rect, dots_rect, and text truncation width) must be
@@ -181,7 +188,7 @@ pub fn render_leaf_tab(
     };
 
     // Available width for the text container.
-    let max_text_w = (max_width - LEFT_PAD - TAG_GAP - TAG_CONTAINER_W - dots_w - RIGHT_PAD).max(0.0);
+    let max_text_w = (max_width - LEFT_PAD - TAG_GAP - TAG_CONTAINER_W - dots_w - clone_w - RIGHT_PAD).max(0.0);
 
     let measured_w = ctx.measure_text(&display_text);
     // While editing, claim the FULL available width regardless of the live
@@ -192,7 +199,7 @@ pub fn render_leaf_tab(
     let text_container_w = if editing.is_some() { max_text_w } else { measured_w.min(max_text_w) };
 
     // Total tab width.
-    let tab_width = (LEFT_PAD + text_container_w + TAG_GAP + TAG_CONTAINER_W + dots_w + RIGHT_PAD).min(max_width);
+    let tab_width = (LEFT_PAD + text_container_w + TAG_GAP + clone_w + if show_clone { TAG_GAP } else { 0.0 } + TAG_CONTAINER_W + dots_w + RIGHT_PAD).min(max_width);
 
     // Early-out when there is not enough room for any text.
     if text_container_w < 24.0 {
@@ -201,7 +208,8 @@ pub fn render_leaf_tab(
 
     // Derived x positions.
     let text_x = (x + LEFT_PAD).round();
-    let tag_container_x = text_x + text_container_w + TAG_GAP;
+    let clone_x = text_x + text_container_w + TAG_GAP;
+    let tag_container_x = clone_x + clone_w + if show_clone { TAG_GAP } else { 0.0 };
     let dots_container_x = tag_container_x + TAG_CONTAINER_W;
 
     // ── Background ───────────────────────────────────────────────────────────
@@ -233,6 +241,9 @@ pub fn render_leaf_tab(
         }
         LeafTabHoverZone::GearMenu => {
             ctx.draw_hover_rect(dots_container_x, y, dots_w, TAB_HEIGHT, "rgba(255,255,255,0.08)");
+        }
+        LeafTabHoverZone::Clone => {
+            ctx.draw_hover_rect(clone_x, y, clone_w, TAB_HEIGHT, "rgba(255,255,255,0.08)");
         }
         LeafTabHoverZone::None => {}
     }
@@ -314,6 +325,15 @@ pub fn render_leaf_tab(
         ctx.fill_rounded_rect(tag_x, tag_y, TAG_SIZE, TAG_SIZE, 2.0);
     }
 
+    if show_clone && hovered_zone != LeafTabHoverZone::None {
+        ctx.set_font("11px sans-serif");
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.fill_text("Clone", clone_x + clone_w / 2.0, center_y);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_font("12px sans-serif");
+    }
+
     // ── Gear menu (shown when any zone is hovered) ────────────────────────────
     if hovered_zone != LeafTabHoverZone::None {
         let gear_size = 14.0_f64;
@@ -328,6 +348,7 @@ pub fn render_leaf_tab(
         tab_rect: [x, y, tab_width, TAB_HEIGHT],
         color_tag_rect: [tag_container_x, y, TAG_CONTAINER_W, TAB_HEIGHT],
         dots_rect: [dots_container_x, y, DOTS_CONTAINER_W_EXPANDED, TAB_HEIGHT],
+        clone_rect: if show_clone { [clone_x, y, clone_w, TAB_HEIGHT] } else { [0.0, 0.0, 0.0, 0.0] },
         text_edit,
     }
 }

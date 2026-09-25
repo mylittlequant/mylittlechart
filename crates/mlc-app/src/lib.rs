@@ -7081,10 +7081,14 @@ impl ChartApp {
                     color_tag,
                     &leaf_tab_toolbar_theme,
                     None, // static text — inline editing is Trading-tab only
+                    self.shared_chart_meta(&self.panel_app.active_preset_id)
+                        .map(|m| m.has_right("clone"))
+                        .unwrap_or(false),
                 );
                 let tab_rect = hit_zones.tab_rect;
                 let dots_rect = hit_zones.dots_rect;
                 let color_tag_rect = hit_zones.color_tag_rect;
+                let clone_rect = hit_zones.clone_rect;
                 out_leaf_tab_hit_zones.insert(leaf_id, hit_zones);
 
                 // Register overlay tab sub-zones so crosshair hides, cursor is default,
@@ -7114,6 +7118,14 @@ impl ChartApp {
                         coord.register(
                             format!("leaf_tab:{}:color_tag", leaf_id.0),
                             uzor::Rect::new(cx, cy, cw, ch),
+                            Sense::CLICK,
+                        );
+                    }
+                    let [kx, ky, kw, kh] = clone_rect;
+                    if kw > 0.0 && kh > 0.0 {
+                        coord.register(
+                            format!("leaf_tab:{}:clone", leaf_id.0),
+                            uzor::Rect::new(kx, ky, kw, kh),
                             Sense::CLICK,
                         );
                     }
@@ -7759,10 +7771,14 @@ impl ChartApp {
                     single_color_tag,
                     &leaf_tab_toolbar_theme,
                     None, // static text — inline editing is Trading-tab only
+                    self.shared_chart_meta(&self.panel_app.active_preset_id)
+                        .map(|m| m.has_right("clone"))
+                        .unwrap_or(false),
                 );
                 let tab_rect = hit_zones.tab_rect;
                 let dots_rect = hit_zones.dots_rect;
                 let color_tag_rect = hit_zones.color_tag_rect;
+                let clone_rect = hit_zones.clone_rect;
                 out_leaf_tab_hit_zones.insert(single_leaf_id, hit_zones);
 
                 // Register overlay tab sub-zones so crosshair hides, cursor is default,
@@ -7792,6 +7808,14 @@ impl ChartApp {
                         coord.register(
                             format!("leaf_tab:{}:color_tag", single_leaf_id.0),
                             uzor::Rect::new(cx, cy, cw, ch),
+                            Sense::CLICK,
+                        );
+                    }
+                    let [kx, ky, kw, kh] = clone_rect;
+                    if kw > 0.0 && kh > 0.0 {
+                        coord.register(
+                            format!("leaf_tab:{}:clone", single_leaf_id.0),
+                            uzor::Rect::new(kx, ky, kw, kh),
                             Sense::CLICK,
                         );
                     }

@@ -8114,6 +8114,15 @@ impl ChartApp {
                         "gear" => {
                             self.panel_app.open_tags_tabs_for_leaf(leaf_id);
                         }
+                        "clone" => {
+                            let token = self
+                                .shared_chart_meta(&self.panel_app.active_preset_id)
+                                .filter(|m| m.has_right("clone"))
+                                .map(|m| m.token.clone());
+                            if let Some(token) = token {
+                                self.request_clone_share(&token);
+                            }
+                        }
                         "color_tag" => {
                             if let Some(zones) = self.leaf_tab_hit_zones.get(&leaf_id).cloned() {
                                 let anchor = zones.color_tag_rect;

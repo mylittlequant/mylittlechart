@@ -254,7 +254,7 @@ fn strip_share_query() {
     let kept: Vec<&str> = search
         .trim_start_matches('?')
         .split('&')
-        .filter(|p| !p.is_empty() && !p.starts_with("share="))
+        .filter(|p| !p.is_empty() && !p.starts_with("share=") && !p.starts_with("v="))
         .collect();
     let path = win.location().pathname().unwrap_or_else(|_| "/".to_string());
     let hash = win.location().hash().unwrap_or_default();
@@ -341,7 +341,7 @@ async fn resolve_share_boot(token: Option<String>) -> ShareBoot {
             }
             ShareBoot::Redirect
         }
-        Ok(mlc_cloud::SharePublicResponse::Live { preset, title, owner, expires_at, rights, .. }) => {
+        Ok(mlc_cloud::SharePublicResponse::Live { preset, title, owner, expires_at, rights, revision, .. }) => {
             match serde_json::from_value::<mlc_core::preset::preset::ChartPreset>(preset) {
                 Ok(p) if p.version == mlc_core::preset::preset::PRESET_VERSION => {
                     web_sys::console::log_1(
@@ -354,6 +354,7 @@ async fn resolve_share_boot(token: Option<String>) -> ShareBoot {
                         kind: "live".to_string(),
                         rights,
                         expires_at,
+                        revision,
                     };
                     ShareBoot::Live(p, meta)
                 }
@@ -406,7 +407,7 @@ fn spawn_share_reopen_fetches(
                 attestation: None,
             });
             match transport.share_get_public(&entry.token).await {
-                Ok(mlc_cloud::SharePublicResponse::Live { preset, title, owner, expires_at, rights, .. }) => {
+                Ok(mlc_cloud::SharePublicResponse::Live { preset, title, owner, expires_at, rights, revision, .. }) => {
                     match serde_json::from_value::<mlc_core::preset::preset::ChartPreset>(preset) {
                         Ok(p) if p.version == mlc_core::preset::preset::PRESET_VERSION => {
                             let meta = mlc_app::SharedChartMeta {
@@ -416,6 +417,7 @@ fn spawn_share_reopen_fetches(
                                 kind: "live".to_string(),
                                 rights,
                                 expires_at,
+                                revision,
                             };
                             if let Ok(mut st) = state.try_borrow_mut() {
                                 if let Err(e) = st.chart.fill_shared_placeholder(&entry.placeholder_id, meta, p) {
@@ -2354,6 +2356,8 @@ fn run_render_loop(
                         match serde_json::to_value(&preset) {
                             Ok(preset_json) => {
                                 let title = preset.name.clone();
+                                let preset_id = preset.id.clone();
+                                let preset_id_fallback = preset_id.clone();
                                 let title_fallback = title.clone();
                                 let preset_fallback = preset_json.clone();
                                 let cloud_fallback = cloud.clone();
@@ -2362,11 +2366,11 @@ fn run_render_loop(
                                     Some(rect),
                                     Some(SHARE_CARD_MAX_EDGE),
                                     move |blob| {
-                                        cloud.share_live(title, preset_json, Some(blob));
+                                        cloud.share_live(title, preset_json, preset_id, Some(blob));
                                     },
                                 );
                                 if !started {
-                                    cloud_fallback.share_live(title_fallback, preset_fallback, None);
+                                    cloud_fallback.share_live(title_fallback, preset_fallback, preset_id_fallback, None);
                                 }
                             }
                             Err(e) => {

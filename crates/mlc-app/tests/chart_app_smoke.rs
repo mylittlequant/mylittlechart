@@ -839,6 +839,7 @@ async fn shared_chart_viewport_snaps_to_right_edge_like_any_other_hydration() {
         kind: "live".to_string(),
         rights: vec!["read".to_string()],
         expires_at: "2099-01-01T00:00:00Z".to_string(),
+        revision: 0,
     };
     let shared_id = app.open_shared_preset(meta, shared_preset)
         .expect("open_shared_preset must accept a freshly-collected, same-version preset");

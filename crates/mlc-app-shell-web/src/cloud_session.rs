@@ -259,6 +259,9 @@ struct Inner {
     /// which is the only place `&mut ChartApp` is reachable — the upload's
     /// own `spawn_local` body cannot log a system event directly.
     share_result: Option<(&'static str, Result<String, String>)>,
+    share_sync_at_ms: f64,
+    share_sync_busy: bool,
+    share_sync: Option<ShareSyncNote>,
     share_admin_rows: Option<Result<Vec<mlc_cloud::ShareListEntry>, String>>,
     share_admin_busy: bool,
     /// Generation for the in-flight screenshot-share card. A late blob from
@@ -335,6 +338,26 @@ struct Inner {
     dm_in_flight: bool,
 }
 
+struct ShareSyncBody {
+    preset: serde_json::Value,
+    title: String,
+    owner: String,
+    rights: Vec<String>,
+    expires_at: String,
+    revision: u64,
+}
+
+enum ShareSyncKind {
+    Updated(ShareSyncBody),
+    Gone,
+}
+
+struct ShareSyncNote {
+    tab_id: String,
+    token: String,
+    kind: ShareSyncKind,
+}
+
 pub struct CloudSession {
     inner: Rc<RefCell<Inner>>,
 }
@@ -385,6 +408,9 @@ impl CloudSession {
                 entitlements_result: None,
                 prev_entitlements: None,
                 share_result: None,
+                share_sync_at_ms: 0.0,
+                share_sync_busy: false,
+                share_sync: None,
                 share_admin_rows: None,
                 share_admin_busy: false,
                 preview_epoch: 0,
@@ -700,6 +726,7 @@ impl CloudSession {
         &self,
         title: String,
         preset: serde_json::Value,
+        chart_id: String,
         preview: Option<web_sys::Blob>,
     ) {
         if !self.is_signed_in() {
@@ -709,7 +736,7 @@ impl CloudSession {
         let transport = self.inner.borrow().transport.snapshot();
         let inner = self.inner.clone();
         spawn_local(async move {
-            match transport.share_create_live(&title, preset).await {
+            match transport.share_create_live(&title, preset, &chart_id).await {
                 Ok(resp) => {
                     let url = absolute_share_url(&resp.url_path);
                     crate::clipboard_write_text(&url);
@@ -738,7 +765,92 @@ impl CloudSession {
         });
     }
 
+    /// While a shared chart is the active tab, re-read it. A new revision
+    /// replaces the preset. A 404/403/410 means the author revoked view
+    /// (or the link died) and the tab closes.
+    fn poll_shared_chart(&self, chart: &ChartApp, now_ms: f64) {
+        const INTERVAL_MS: f64 = 8000.0;
+        let due = {
+            let mut inner = self.inner.borrow_mut();
+            if inner.share_sync_busy || now_ms - inner.share_sync_at_ms < INTERVAL_MS {
+                return;
+            }
+            let active = chart.panel_app.active_preset_id.clone();
+            let Some(meta) = chart.shared_chart_meta(&active) else {
+                return;
+            };
+            if meta.kind != "live" || meta.token.is_empty() {
+                return;
+            }
+            inner.share_sync_at_ms = now_ms;
+            inner.share_sync_busy = true;
+            (active, meta.token.clone(), meta.revision)
+        };
+        let (tab_id, token, known_rev) = due;
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        spawn_local(async move {
+            let note = match transport.share_get_public(&token).await {
+                Ok(mlc_cloud::SharePublicResponse::Live {
+                    preset,
+                    title,
+                    owner,
+                    expires_at,
+                    rights,
+                    revision,
+                    ..
+                }) if revision != known_rev => Some(ShareSyncNote {
+                    tab_id,
+                    token,
+                    kind: ShareSyncKind::Updated(ShareSyncBody {
+                        preset,
+                        title,
+                        owner,
+                        rights,
+                        expires_at,
+                        revision,
+                    }),
+                }),
+                Err(mlc_cloud::CloudError::Http { status, .. })
+                    if status == 404 || status == 403 || status == 410 =>
+                {
+                    Some(ShareSyncNote {
+                        tab_id,
+                        token,
+                        kind: ShareSyncKind::Gone,
+                    })
+                }
+                _ => None,
+            };
+            let mut guard = inner.borrow_mut();
+            guard.share_sync_busy = false;
+            if note.is_some() {
+                guard.share_sync = note;
+            }
+        });
+    }
+
     pub fn drive(&self, chart: &mut ChartApp, now_ms: f64) {
+        if let Some(note) = self.inner.borrow_mut().share_sync.take() {
+            match note.kind {
+                ShareSyncKind::Gone => chart.share_reopen_gone(&note.tab_id),
+                ShareSyncKind::Updated(body) => {
+                    if let Ok(preset) = serde_json::from_value(body.preset) {
+                        let meta = mlc_app::SharedChartMeta {
+                            token: note.token,
+                            title: body.title,
+                            owner_label: body.owner,
+                            kind: "live".to_string(),
+                            rights: body.rights,
+                            expires_at: body.expires_at,
+                            revision: body.revision,
+                        };
+                        let _ = chart.refresh_shared_tab(&note.tab_id, meta, preset);
+                    }
+                }
+            }
+        }
+        self.poll_shared_chart(chart, now_ms);
         // ── Server-rejected token → signed-out (Arc B1, 2026-09-06) ───────
         // Drained first thing, every frame: any authed call in this driver
         // (boot/post-login `auth_me()`, the entitlements refresh, share

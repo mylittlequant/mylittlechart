@@ -281,6 +281,9 @@ impl EntitlementsResponse {
 pub struct ShareCreateLiveRequest {
     pub title: String,
     pub preset: serde_json::Value,
+    /// Author chart id. The server reuses the token for this id.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub chart_id: String,
 }
 
 /// Response body from `POST /api/share/live` and `POST /api/share/screenshot`.
@@ -288,10 +291,13 @@ pub struct ShareCreateLiveRequest {
 pub struct ShareCreateResponse {
     pub token: String,
     /// Root-relative link target (`/?share=<token>`) — prefix with the
-    /// origin before handing it to a clipboard.
+    /// origin before handing it to a clipboard. A republish appends `&v=`.
     pub url_path: String,
     /// RFC 3339 instant after which the share stops resolving.
     pub expires_at: String,
+    /// Publish generation. Absent on an older server.
+    #[serde(default)]
+    pub revision: u64,
 }
 
 /// Public view of one share (`GET /api/share/{token}`), tagged by `kind`.
@@ -314,6 +320,9 @@ pub enum SharePublicResponse {
         /// sent this field at all.
         #[serde(default)]
         rights: Vec<String>,
+        /// Author publish generation of this preset. `0` on an older server.
+        #[serde(default)]
+        revision: u64,
     },
     Screenshot {
         title: String,

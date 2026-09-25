@@ -6186,6 +6186,7 @@ impl ChartApp {
                         self.leaf_tab_hover = match sub_zone {
                             "gear" => mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::GearMenu,
                             "color_tag" => mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::ColorTag,
+                            "clone" => mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::Clone,
                             _ => mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::Body,
                         };
                     }

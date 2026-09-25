@@ -7464,6 +7464,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             kind: meta.kind,
                                             rights: meta.rights,
                                             expires_at: meta.expires_at,
+                                            revision: 0,
                                         };
                                         match self.system_event_window_mut() {
                                             None => Err("no window to open the shared chart in".to_string()),
@@ -7551,6 +7552,7 @@ impl ApplicationHandler<UserEvent> for App<'_> {
                                             kind: meta.kind,
                                             rights: meta.rights,
                                             expires_at: meta.expires_at,
+                                            revision: 0,
                                         };
                                         match self.windows.values_mut().find(|pw| pw.chart.has_open_tab(&placeholder_id)) {
                                             None => Ok(()), // tab already closed this session — nothing to fill

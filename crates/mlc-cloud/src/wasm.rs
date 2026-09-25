@@ -366,10 +366,12 @@ impl FetchTransport {
         &self,
         title: &str,
         preset: serde_json::Value,
+        chart_id: &str,
     ) -> Result<ShareCreateResponse, CloudError> {
         let payload = serde_json::to_string(&ShareCreateLiveRequest {
             title: title.to_string(),
             preset,
+            chart_id: chart_id.to_string(),
         })
         .map_err(|e| CloudError::Decode(e.to_string()))?;
         let (status, body) = self
