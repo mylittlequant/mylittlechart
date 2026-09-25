@@ -5469,24 +5469,9 @@ impl ChartApp {
             return;
         }
 
-        // === Shared-chart viewer row "Clone to my charts" click
-        // (native-share-viewer arc, 2026-09-06) — `mlc-app-layout`'s
-        // `ui::share_viewer_row::draw_share_viewer_row` own `share:clone:
-        // <preset_id>` hit-id contract; only ever drawn when
-        // `shared_chart_meta(id).has_right("clone")` is true, but a signed-
-        // out session still needs its own gate here (mirrors `share_chart`'s
-        // own single-click account gate above) since cloning writes a new
-        // preset under this account, unlike opening the read-only tab
-        // itself, which is public.
+        // Public share: a signed-out viewer may clone the open chart into
+        // a local tab. Creating a share still requires an account.
         if let Some(preset_id) = widget_id.strip_prefix("share:clone:") {
-            if !self.panel_app.user_settings_state.account_signed_in {
-                log::warn!("[ChartApp] share:clone refused: account_signed_in=false");
-                #[cfg(feature = "cloud")]
-                {
-                    self.panel_app.cloud_login_state.open();
-                }
-                return;
-            }
             match self.shared_chart_meta(preset_id).map(|m| m.token.clone()) {
                 Some(token) => {
                     self.request_clone_share(&token);

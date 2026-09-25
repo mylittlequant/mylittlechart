@@ -1936,6 +1936,37 @@ impl ChartApp {
         // recorded them. The counter has to resume ABOVE the highest one, or
         // the first command of this session stamps below the restored ones
         // and undo walks the two histories in the wrong order.
+        // Cold load paints `bubble.primitives` on the bubble the window
+        // actually points at. Drawings captured on the window snapshot are
+        // applied earlier onto a bubble that `bubbles_mut().clear()` then
+        // discards, and a share preset often has those drawings only on the
+        // window. Copy them onto the visible bubble when it is still empty.
+        for snap in &preset.windows {
+            let chart_id = mlc_core::ids::ChartId(snap.window_id);
+            let Some(bid) = self.bubble_for_chart(chart_id) else { continue };
+            let already = self.with_bubble(bid, |b| b.primitives.len()).unwrap_or(0);
+            if already > 0 {
+                continue;
+            }
+            let source: &[mlc_core::drawing::PrimitiveSnapshot] =
+                if !snap.drawings.primitives.is_empty() {
+                    &snap.drawings.primitives
+                } else {
+                    &snap.stashed_primitives
+                };
+            if source.is_empty() {
+                continue;
+            }
+            if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                let mut guard = self.core.drawings_mut();
+                for prim_snap in source {
+                    if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                        guard.add_external(bid, prim);
+                    }
+                }
+            }
+        }
+
         self.resume_undo_sequence();
         // The id sweeps above re-number primitives, which leaves every
         // restored command pointing at an id that no longer exists.

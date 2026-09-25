@@ -1177,9 +1177,7 @@ impl CloudSession {
         // here because `&mut ChartApp` — and `apply_cloned_preset`, which
         // needs it — is only reachable inside `drive()`.
         if let Some(token) = chart.take_pending_clone_share() {
-            if !self.is_signed_in() {
-                chart.panel_app.cloud_login_state.is_open = true;
-            } else if !chart.clone_open_share_locally(&token) {
+            if !chart.clone_open_share_locally(&token) {
                 chart.push_system_event(
                     mlc_core::SystemEventKind::Share,
                     "Clone failed",
