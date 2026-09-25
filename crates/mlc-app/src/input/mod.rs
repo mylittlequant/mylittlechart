@@ -1149,6 +1149,31 @@ impl ChartApp {
         let dbl_clicked_id = self.input_coordinator.borrow_mut().process_click(x, y)
             .map(|w| w.as_str().to_string());
         if let Some(id) = dbl_clicked_id {
+            // Collapsible flyout section header/chevron (toolbar-flyout-
+            // collapse arc, owner order 2026-09-25): double-click toggles
+            // the section; a single click stays a no-op (`dispatch_panel_
+            // click`'s `"__noop__:"` early return, unchanged below). Must
+            // run BEFORE the generic toolbar dispatch further down — that
+            // dispatch would otherwise just re-run the same swallow. Widget
+            // id shape: `"dropdown:{dropdown_id}:__noop__:header:{ordinal}"`
+            // (`draw_dropdown`'s Header draw arm, `mlc-app-layout/src/ui/
+            // dropdown.rs`) — `DRAWING_FLYOUT_IDS` is the only family that
+            // ever renders a collapsible header, so this never needs to
+            // pick between the main and trading-header toolbar instance.
+            if let Some(rest) = id.strip_prefix("dropdown:") {
+                let mut parts = rest.splitn(2, ':');
+                if let (Some(dropdown_id), Some(item_id)) = (parts.next(), parts.next()) {
+                    if let Some(ordinal_str) = item_id.strip_prefix("__noop__:header:") {
+                        if let Ok(ordinal) = ordinal_str.parse::<usize>() {
+                            let section_id = mlc_core::toolbar::flyout_section_id(dropdown_id, ordinal);
+                            self.panel_app.toolbar_state.toggle_flyout_section_collapsed(&section_id);
+                            self.persist_profile();
+                            return;
+                        }
+                    }
+                }
+            }
+
             let is_toolbar = id.starts_with("toolbar:")
                 || id.starts_with("dtb:")
                 || id.starts_with("csb:")
@@ -7273,6 +7298,29 @@ impl ChartApp {
                                             vp.height,
                                         );
                                     }
+                                }
+                            }
+                            return;
+                        }
+                        "dropdown:__scroll__" => {
+                            // Toolbar-flyout-collapse arc (owner order
+                            // 2026-09-25): a clamped left-toolbar flyout's
+                            // own wheel scroll. Geometry comes from the
+                            // LAST render (`self.last_toolbar_result`), same
+                            // "read the cached snapshot" shape every other
+                            // arm here already uses — `chart_toolbar_render_
+                            // dropdown` only ever clamps the MAIN toolbar
+                            // instance's dropdowns (`DRAWING_FLYOUT_IDS`
+                            // never opens via the trading-header instance),
+                            // so `self.panel_app.toolbar_state.dropdown_
+                            // scroll` is always the right owner.
+                            if let Some(ref result) = self.last_toolbar_result {
+                                if let Some(ref dd) = result.dropdown_result {
+                                    self.panel_app.toolbar_state.dropdown_scroll.handle_wheel(
+                                        scroll_step,
+                                        dd.content_height,
+                                        dd.viewport_height,
+                                    );
                                 }
                             }
                             return;
