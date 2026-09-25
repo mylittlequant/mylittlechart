@@ -61,6 +61,22 @@ impl SharedChartMeta {
     }
 }
 
+impl ChartApp {
+    /// Flip the clone right on every open tab bound to `token`.
+    /// Does not touch the preset. A policy change must not reload the chart.
+    pub fn set_share_clone_allowed(&mut self, token: &str, allowed: bool) {
+        for meta in self.shared_chart_meta.values_mut() {
+            if meta.token != token {
+                continue;
+            }
+            meta.rights.retain(|r| r != "clone");
+            if allowed {
+                meta.rights.push("clone".to_string());
+            }
+        }
+    }
+}
+
 /// One indicator instance a clone dropped because its `type_id` names a
 /// paid/private vendor indicator the recipient holds no grant for (plan
 /// §3). Local mirror of `mlc_cloud::models::StrippedIndicator` — see

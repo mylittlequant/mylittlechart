@@ -372,6 +372,7 @@ impl FetchTransport {
             title: title.to_string(),
             preset,
             chart_id: chart_id.to_string(),
+            clone_allowed: true,
         })
         .map_err(|e| CloudError::Decode(e.to_string()))?;
         let (status, body) = self

@@ -284,6 +284,8 @@ pub struct ShareCreateLiveRequest {
     /// Author chart id. The server reuses the token for this id.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub chart_id: String,
+    /// New links grant clone unless the owner later turns it off.
+    pub clone_allowed: bool,
 }
 
 /// Response body from `POST /api/share/live` and `POST /api/share/screenshot`.
@@ -323,6 +325,11 @@ pub enum SharePublicResponse {
         /// Author publish generation of this preset. `0` on an older server.
         #[serde(default)]
         revision: u64,
+        /// The link's own clone flag, not the caller's resolved tier.
+        /// The owner is always `CloneProtected`, so `rights` contains
+        /// `"clone"` for them even when this is false.
+        #[serde(default)]
+        clone_allowed: bool,
     },
     Screenshot {
         title: String,

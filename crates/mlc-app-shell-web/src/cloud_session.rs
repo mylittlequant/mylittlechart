@@ -261,6 +261,11 @@ struct Inner {
     share_result: Option<(&'static str, Result<String, String>)>,
     /// Name for the chart a clone is about to create: `title — owner (clone)`.
     clone_name: Option<String>,
+    share_rights_at_ms: f64,
+    share_rights_busy: bool,
+    /// `(token, clone_allowed)` from a rights poll. Applied on the next drive.
+    /// Never carries a preset.
+    share_rights: Option<(String, bool)>,
     share_admin_rows: Option<Result<Vec<mlc_cloud::ShareListEntry>, String>>,
     share_admin_busy: bool,
     /// Generation for the in-flight screenshot-share card. A late blob from
@@ -388,6 +393,9 @@ impl CloudSession {
                 prev_entitlements: None,
                 share_result: None,
                 clone_name: None,
+                share_rights_at_ms: 0.0,
+                share_rights_busy: false,
+                share_rights: None,
                 share_admin_rows: None,
                 share_admin_busy: false,
                 preview_epoch: 0,
@@ -742,7 +750,49 @@ impl CloudSession {
         });
     }
 
+    /// Re-read only the rights of the active shared tab. The preset stays.
+    /// A policy toggle must show or hide Clone without reloading drawings.
+    fn poll_share_rights(&self, chart: &ChartApp, now_ms: f64) {
+        const INTERVAL_MS: f64 = 8000.0;
+        let due = {
+            let mut inner = self.inner.borrow_mut();
+            if inner.share_rights_busy || now_ms - inner.share_rights_at_ms < INTERVAL_MS {
+                return;
+            }
+            let active = chart.panel_app.active_preset_id.clone();
+            let Some(meta) = chart.shared_chart_meta(&active) else {
+                return;
+            };
+            if meta.kind != "live" || meta.token.is_empty() {
+                return;
+            }
+            inner.share_rights_at_ms = now_ms;
+            inner.share_rights_busy = true;
+            meta.token.clone()
+        };
+        let token = due;
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        spawn_local(async move {
+            let allowed = match transport.share_get_public(&token).await {
+                Ok(mlc_cloud::SharePublicResponse::Live { clone_allowed, .. }) => {
+                    Some(clone_allowed)
+                }
+                _ => None,
+            };
+            let mut guard = inner.borrow_mut();
+            guard.share_rights_busy = false;
+            if let Some(allowed) = allowed {
+                guard.share_rights = Some((token, allowed));
+            }
+        });
+    }
+
     pub fn drive(&self, chart: &mut ChartApp, now_ms: f64) {
+        if let Some((token, allowed)) = self.inner.borrow_mut().share_rights.take() {
+            chart.set_share_clone_allowed(&token, allowed);
+        }
+        self.poll_share_rights(chart, now_ms);
         // ── Server-rejected token → signed-out (Arc B1, 2026-09-06) ───────
         // Drained first thing, every frame: any authed call in this driver
         // (boot/post-login `auth_me()`, the entitlements refresh, share
@@ -1003,6 +1053,16 @@ impl CloudSession {
                         })
                         .collect();
                     chart.panel_app.user_settings_state.share_status.clear();
+                    let flags: Vec<(String, bool)> = chart
+                        .panel_app
+                        .user_settings_state
+                        .share_rows
+                        .iter()
+                        .map(|r| (r.token.clone(), r.clone_allowed))
+                        .collect();
+                    for (token, allowed) in flags {
+                        chart.set_share_clone_allowed(&token, allowed);
+                    }
                 }
                 Err(message) => {
                     chart.panel_app.user_settings_state.share_status = message;
