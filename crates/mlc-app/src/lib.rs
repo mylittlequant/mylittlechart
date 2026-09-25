@@ -5634,12 +5634,12 @@ impl ChartApp {
             _ => r#"{"visibility":"public","clone_allowed":true,"interaction":"view"}"#,
         };
         if let Some(token) = token {
-            if self.pending_share_admin.is_none() {
-                self.pending_share_admin = Some(ShareAdminCmd::Patch {
-                    token,
-                    body: body.to_string(),
-                });
-            }
+            // Latest click wins. A private save still in flight must not
+            // swallow the public click that follows it.
+            self.pending_share_admin = Some(ShareAdminCmd::Patch {
+                token,
+                body: body.to_string(),
+            });
             self.panel_app.share_settings_state.status = "Saved for this chart".to_string();
         } else {
             self.panel_app.share_settings_state.status =

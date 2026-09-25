@@ -5437,6 +5437,24 @@ impl ChartApp {
                 other => {
                     if let Some(preset) = other.strip_prefix("preset:") {
                         self.set_share_rights_preset(preset);
+                    } else if let Some(rest) = other.strip_prefix("pick:") {
+                        let idx: usize = rest.parse().unwrap_or(usize::MAX);
+                        if let Some((nick, _)) = self.panel_app.share_settings_state.hits.get(idx).cloned() {
+                            let field_id = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
+                            let mut coord = self.input_coordinator.borrow_mut();
+                            let tf = coord.text_fields_mut();
+                            tf.set_text(&field_id, &nick);
+                            tf.begin_edit(&field_id);
+                            tf.focus(crate::text_input::SHARE_SETTINGS_NICK);
+                        }
+                    } else if let Some(tier) = other.strip_prefix("grantfield:") {
+                        let field_id = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
+                        let nick = self.input_coordinator.borrow().text_fields().text(&field_id).trim().to_string();
+                        if nick.is_empty() {
+                            self.panel_app.share_settings_state.status = "Type or pick a nick".to_string();
+                        } else {
+                            self.grant_share_nick(&nick, tier);
+                        }
                     } else if let Some(rest) = other.strip_prefix("grant:") {
                         let mut parts = rest.split(':');
                         let idx: usize = parts.next().unwrap_or("").parse().unwrap_or(usize::MAX);

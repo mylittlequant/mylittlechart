@@ -808,20 +808,29 @@ impl CloudSession {
         let transport = self.inner.borrow().transport.snapshot();
         let inner = self.inner.clone();
         spawn_local(async move {
-            let hits = match transport.dm_lookup(&q).await {
-                Ok(users) => users
-                    .into_iter()
-                    .filter_map(|u| {
-                        let nick = u.nick?;
-                        let label = if u.label == nick { String::new() } else { u.label };
-                        Some((nick, label))
-                    })
-                    .collect::<Vec<_>>(),
-                Err(_) => Vec::new(),
+            let (hits, note) = match transport.dm_lookup(&q).await {
+                Ok(users) => {
+                    let hits = users
+                        .into_iter()
+                        .filter_map(|u| {
+                            let nick = u.nick.filter(|n| !n.is_empty()).unwrap_or(u.label.clone());
+                            if nick.is_empty() {
+                                return None;
+                            }
+                            let label = if u.label == nick { String::new() } else { u.label };
+                            Some((nick, label))
+                        })
+                        .collect::<Vec<_>>();
+                    (hits, None)
+                }
+                Err(e) => (Vec::new(), Some(e.to_string())),
             };
             let mut guard = inner.borrow_mut();
             guard.share_lookup_busy = false;
             guard.share_lookup_hits = Some(hits);
+            if let Some(note) = note {
+                guard.share_settings_note = Some(note);
+            }
         });
     }
 
@@ -1162,12 +1171,15 @@ impl CloudSession {
                     }
                 }
                 Err(message) => {
-                    chart.panel_app.user_settings_state.share_status = message;
+                    chart.panel_app.user_settings_state.share_status = message.clone();
+                    chart.panel_app.share_settings_state.status = message;
                 }
             }
         }
-        if let Some(cmd) = chart.take_share_admin() {
-            self.fire_share_admin(cmd);
+        if !self.inner.borrow().share_admin_busy {
+            if let Some(cmd) = chart.take_share_admin() {
+                self.fire_share_admin(cmd);
+            }
         }
 
         // ── Chart-share clone (shared-viewer arc, 2026-09-06) ──────────────

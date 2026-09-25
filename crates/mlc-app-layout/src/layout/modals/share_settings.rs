@@ -26,8 +26,8 @@ const HIT_H: f64 = 28.0;
 fn content_height(hits: usize, show_people: bool) -> f64 {
     let mut h = LABEL_H + GAP + 3.0 * (BTN_H + GAP) + LABEL_H + GAP;
     if show_people {
-        let hits = hits.min(6) as f64;
-        h += FIELD_H + GAP + hits * (HIT_H + 4.0);
+        let rows = hits.min(6).max(1) as f64;
+        h += FIELD_H + GAP + rows * (HIT_H + 4.0) + BTN_H + GAP;
     }
     h + LABEL_H + GAP + BTN_H
 }
@@ -119,7 +119,17 @@ fn draw_body(
     ];
     for (id, label) in presets {
         let rect = WidgetRect::new(x, y, w, BTN_H);
-        draw_secondary_button(ctx, coord, layer_id, &format!("share_settings:preset:{id}"), rect, label, tt);
+        let selected = state.rights_preset == id || (state.rights_preset.is_empty() && id == "public_clone");
+        draw_secondary_button(
+            ctx,
+            coord,
+            layer_id,
+            &format!("share_settings:preset:{id}"),
+            rect,
+            label,
+            tt,
+            selected,
+        );
         y += BTN_H + GAP;
     }
 
@@ -157,6 +167,42 @@ fn draw_body(
             draw_input_cursor(ctx, drawn.cursor_x, drawn.cursor_y, drawn.cursor_height, &tt.item_text);
         }
         y += FIELD_H + GAP;
+        if state.hits.is_empty() {
+            let q = coord.text_fields().text(&wid);
+            if q.trim().chars().count() >= 2 {
+                ctx.set_font("12px sans-serif");
+                ctx.set_fill_color(&tt.item_text_muted);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Top);
+                ctx.fill_text("No one found.", x, y);
+                y += LABEL_H + GAP;
+            }
+        }
+        for (idx, (nick, label)) in state.hits.iter().take(6).enumerate() {
+            let rect = WidgetRect::new(x, y, w, HIT_H);
+            let widget_id = format!("share_settings:pick:{idx}");
+            let hovered = coord.is_hovered(&WidgetId::from(widget_id.as_str()));
+            if hovered {
+                ctx.set_fill_color(&tt.item_bg_hover);
+                ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+            }
+            ctx.set_font("600 13px sans-serif");
+            ctx.set_fill_color(&tt.item_text);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            let shown = if label.is_empty() || label == nick {
+                format!("@{nick}")
+            } else {
+                format!("@{nick}  {label}")
+            };
+            ctx.fill_text(&shown, rect.x + 8.0, rect.center_y());
+            coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
+            y += HIT_H + 4.0;
+        }
+        let half = (w - GAP) / 2.0;
+        draw_secondary_button(ctx, coord, layer_id, "share_settings:grantfield:view", WidgetRect::new(x, y, half, BTN_H), "View", tt, false);
+        draw_secondary_button(ctx, coord, layer_id, "share_settings:grantfield:clone", WidgetRect::new(x + half + GAP, y, half, BTN_H), "Clone", tt, false);
+        y += BTN_H + GAP;
         (field_rect, drawn.char_x_positions)
     } else {
         ctx.set_font("12px sans-serif");
@@ -168,24 +214,6 @@ fn draw_body(
         (WidgetRect::default(), Vec::new())
     };
 
-    if show_people {
-    for (idx, (nick, label)) in state.hits.iter().take(6).enumerate() {
-        let name_w = w - 150.0;
-        let name = WidgetRect::new(x, y, name_w, HIT_H);
-        ctx.set_font("13px sans-serif");
-        ctx.set_fill_color(&tt.item_text);
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Middle);
-        let shown = if label.is_empty() || label == nick { nick.clone() } else { format!("{nick}  {label}") };
-        ctx.fill_text(&shown, name.x + 6.0, name.center_y());
-        let view = WidgetRect::new(x + name_w + 6.0, y, 64.0, HIT_H);
-        let clone = WidgetRect::new(x + name_w + 76.0, y, 70.0, HIT_H);
-        draw_secondary_button(ctx, coord, layer_id, &format!("share_settings:grant:{idx}:view"), view, "View", tt);
-        draw_secondary_button(ctx, coord, layer_id, &format!("share_settings:grant:{idx}:clone"), clone, "Clone", tt);
-        y += HIT_H + 4.0;
-    }
-    }
-
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(&tt.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
@@ -194,7 +222,7 @@ fn draw_body(
     y += LABEL_H + GAP;
 
     let close = WidgetRect::new(x, y, w, BTN_H);
-    draw_secondary_button(ctx, coord, layer_id, "share_settings:close", close, "Close", tt);
+    draw_secondary_button(ctx, coord, layer_id, "share_settings:close", close, "Close", tt, false);
 
     (field_rect, char_x_positions)
 }
@@ -207,9 +235,10 @@ fn draw_secondary_button(
     rect: WidgetRect,
     label: &str,
     tt: &ToolbarTheme,
+    selected: bool,
 ) {
     let hovered = coord.is_hovered(&WidgetId::from(widget_id));
-    let bg = if hovered { tt.button_bg_hover.as_str() } else { tt.dropdown_bg.as_str() };
+    let bg = if selected || hovered { tt.button_bg_hover.as_str() } else { tt.dropdown_bg.as_str() };
     ctx.set_fill_color(bg);
     ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
     ctx.set_stroke_color(&tt.separator);
