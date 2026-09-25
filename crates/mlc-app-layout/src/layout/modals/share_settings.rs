@@ -9,6 +9,7 @@ use uzor::WidgetId;
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::modal_settings::ShareSettingsState;
+use crate::ui::toggle_widget::{self, ToggleColors};
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::{
     draw_input, draw_input_cursor, render_modal_shell, InputConfig, ModalFooter, ModalPlacement,
@@ -22,12 +23,22 @@ const BTN_H: f64 = 30.0;
 const GAP: f64 = 8.0;
 const LABEL_H: f64 = 16.0;
 const HIT_H: f64 = 28.0;
+const ROW_H: f64 = 36.0;
+
+fn flags(preset: &str) -> (bool, bool) {
+    match preset {
+        "view_only" => (true, false),
+        "private" => (false, true),
+        "private_view" => (false, false),
+        _ => (true, true),
+    }
+}
 
 fn content_height(hits: usize, show_people: bool) -> f64 {
-    let mut h = LABEL_H + GAP + 3.0 * (BTN_H + GAP) + LABEL_H + GAP;
+    let mut h = 2.0 * (ROW_H + GAP);
     if show_people {
         let rows = hits.min(6).max(1) as f64;
-        h += FIELD_H + GAP + rows * (HIT_H + 4.0) + BTN_H + GAP;
+        h += LABEL_H + GAP + FIELD_H + GAP + rows * (HIT_H + 4.0);
     }
     h + LABEL_H + GAP + BTN_H
 }
@@ -50,7 +61,8 @@ pub fn render_share_settings_overlay(
     input_coordinator: &mut InputCoordinator,
 ) -> ShareSettingsResult {
     let theme = ModalTheme::from_toolbar(&frame_theme.modal_bg, &toolbar_theme.separator, toolbar_theme);
-    let show_people = state.rights_preset == "private";
+    let (public_on, _) = flags(&state.rights_preset);
+    let show_people = !public_on;
     let spec = ModalShellSpec {
         placement: ModalPlacement::At(state.position),
         footer: ModalFooter::None,
@@ -105,40 +117,18 @@ fn draw_body(
     let mut y = shell.content.y;
     let w = shell.content.width;
 
-    ctx.set_text_align(TextAlign::Left);
-    ctx.set_text_baseline(TextBaseline::Top);
-    ctx.set_font("12px sans-serif");
-    ctx.set_fill_color(&tt.item_text_muted);
-    ctx.fill_text("Rights for the next share. No edit.", x, y);
-    y += LABEL_H + GAP;
-
-    let presets = [
-        ("public_clone", "Public + clone"),
-        ("view_only", "Public, view only"),
-        ("private", "Private"),
-    ];
-    for (id, label) in presets {
-        let rect = WidgetRect::new(x, y, w, BTN_H);
-        let selected = state.rights_preset == id || (state.rights_preset.is_empty() && id == "public_clone");
-        draw_secondary_button(
-            ctx,
-            coord,
-            layer_id,
-            &format!("share_settings:preset:{id}"),
-            rect,
-            label,
-            tt,
-            selected,
-        );
-        y += BTN_H + GAP;
-    }
+    let (public_on, clone_on) = flags(&state.rights_preset);
+    draw_toggle_row(ctx, coord, layer_id, x, y, w, "share_settings:toggle:public", "Public", public_on, tt);
+    y += ROW_H + GAP;
+    draw_toggle_row(ctx, coord, layer_id, x, y, w, "share_settings:toggle:clone", "Clone", clone_on, tt);
+    y += ROW_H + GAP;
 
     let (field_rect, char_x_positions) = if show_people {
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.set_fill_color(&tt.item_text_muted);
-        ctx.fill_text("Who can open this private link. View or clone, not edit.", x, y);
+        ctx.fill_text("Who can open this private link.", x, y);
         y += LABEL_H + GAP;
 
         let field_rect = WidgetRect::new(x, y, w, FIELD_H);
@@ -199,18 +189,8 @@ fn draw_body(
             coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
             y += HIT_H + 4.0;
         }
-        let half = (w - GAP) / 2.0;
-        draw_secondary_button(ctx, coord, layer_id, "share_settings:grantfield:view", WidgetRect::new(x, y, half, BTN_H), "View", tt, false);
-        draw_secondary_button(ctx, coord, layer_id, "share_settings:grantfield:clone", WidgetRect::new(x + half + GAP, y, half, BTN_H), "Clone", tt, false);
-        y += BTN_H + GAP;
         (field_rect, drawn.char_x_positions)
     } else {
-        ctx.set_font("12px sans-serif");
-        ctx.set_text_align(TextAlign::Left);
-        ctx.set_text_baseline(TextBaseline::Top);
-        ctx.set_fill_color(&tt.item_text_muted);
-        ctx.fill_text("People are only for a private link.", x, y);
-        y += LABEL_H + GAP;
         (WidgetRect::default(), Vec::new())
     };
 
@@ -222,9 +202,43 @@ fn draw_body(
     y += LABEL_H + GAP;
 
     let close = WidgetRect::new(x, y, w, BTN_H);
-    draw_secondary_button(ctx, coord, layer_id, "share_settings:close", close, "Close", tt, false);
+    draw_secondary_button(ctx, coord, layer_id, "share_settings:close", close, "Close", tt);
 
     (field_rect, char_x_positions)
+}
+
+fn draw_toggle_row(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    widget_id: &str,
+    label: &str,
+    on: bool,
+    tt: &ToolbarTheme,
+) {
+    let (tw, th) = toggle_widget::track_size(18.0);
+    let row = WidgetRect::new(x, y, w, ROW_H);
+    ctx.set_font("13px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(label, x, row.center_y());
+    let track = WidgetRect::new(x + w - tw, y + (ROW_H - th) / 2.0, tw, th);
+    toggle_widget::draw_toggle(
+        ctx,
+        track,
+        on,
+        &ToggleColors {
+            track_off: &tt.separator,
+            track_on: &tt.accent,
+            thumb_off: &tt.item_text,
+            thumb_on: &tt.item_text,
+        },
+    );
+    coord.register_on_layer(widget_id, row, Sense::CLICK | Sense::HOVER, layer_id);
 }
 
 fn draw_secondary_button(
@@ -235,10 +249,9 @@ fn draw_secondary_button(
     rect: WidgetRect,
     label: &str,
     tt: &ToolbarTheme,
-    selected: bool,
 ) {
     let hovered = coord.is_hovered(&WidgetId::from(widget_id));
-    let bg = if selected || hovered { tt.button_bg_hover.as_str() } else { tt.dropdown_bg.as_str() };
+    let bg = if hovered { tt.button_bg_hover.as_str() } else { tt.dropdown_bg.as_str() };
     ctx.set_fill_color(bg);
     ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
     ctx.set_stroke_color(&tt.separator);

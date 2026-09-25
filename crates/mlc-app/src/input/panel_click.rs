@@ -5435,17 +5435,41 @@ impl ChartApp {
                 }
                 "modal_bg" => {}
                 other => {
-                    if let Some(preset) = other.strip_prefix("preset:") {
+                    if let Some(which) = other.strip_prefix("toggle:") {
+                        let (public_on, clone_on) = match self.panel_app.share_settings_state.rights_preset.as_str() {
+                            "view_only" => (true, false),
+                            "private" => (false, true),
+                            "private_view" => (false, false),
+                            _ => (true, true),
+                        };
+                        let (public_on, clone_on) = match which {
+                            "public" => (!public_on, clone_on),
+                            "clone" => (public_on, !clone_on),
+                            _ => (public_on, clone_on),
+                        };
+                        let preset = match (public_on, clone_on) {
+                            (true, true) => "public_clone",
+                            (true, false) => "view_only",
+                            (false, true) => "private",
+                            (false, false) => "private_view",
+                        };
                         self.set_share_rights_preset(preset);
                     } else if let Some(rest) = other.strip_prefix("pick:") {
                         let idx: usize = rest.parse().unwrap_or(usize::MAX);
                         if let Some((nick, _)) = self.panel_app.share_settings_state.hits.get(idx).cloned() {
                             let field_id = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
-                            let mut coord = self.input_coordinator.borrow_mut();
-                            let tf = coord.text_fields_mut();
-                            tf.set_text(&field_id, &nick);
-                            tf.begin_edit(&field_id);
-                            tf.focus(crate::text_input::SHARE_SETTINGS_NICK);
+                            {
+                                let mut coord = self.input_coordinator.borrow_mut();
+                                let tf = coord.text_fields_mut();
+                                tf.set_text(&field_id, &nick);
+                                tf.begin_edit(&field_id);
+                                tf.focus(crate::text_input::SHARE_SETTINGS_NICK);
+                            }
+                            let clone_on = !matches!(
+                                self.panel_app.share_settings_state.rights_preset.as_str(),
+                                "view_only" | "private_view"
+                            );
+                            self.grant_share_nick(&nick, if clone_on { "clone" } else { "view" });
                         }
                     } else if let Some(tier) = other.strip_prefix("grantfield:") {
                         let field_id = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);

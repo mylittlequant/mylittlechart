@@ -5610,13 +5610,14 @@ impl ChartApp {
         match self.core.user().profile().ui.share_rights_preset.as_str() {
             "view_only" => (false, "view", "public"),
             "private" => (true, "view", "private"),
+            "private_view" => (false, "view", "private"),
             _ => (true, "view", "public"),
         }
     }
 
     pub fn set_share_rights_preset(&mut self, preset: &str) {
         let preset = match preset {
-            "view_only" | "private" => preset,
+            "view_only" | "private" | "private_view" => preset,
             _ => "public_clone",
         };
         self.panel_app.share_settings_state.rights_preset = preset.to_string();
@@ -5631,6 +5632,7 @@ impl ChartApp {
         let body = match preset {
             "view_only" => r#"{"visibility":"public","clone_allowed":false,"interaction":"view"}"#,
             "private" => r#"{"visibility":"private","clone_allowed":true,"interaction":"view"}"#,
+            "private_view" => r#"{"visibility":"private","clone_allowed":false,"interaction":"view"}"#,
             _ => r#"{"visibility":"public","clone_allowed":true,"interaction":"view"}"#,
         };
         if let Some(token) = token {
