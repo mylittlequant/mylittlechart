@@ -10454,6 +10454,7 @@ impl ChartApp {
                 let action = mlc_core::i18n::t_share_viewer(
                     mlc_core::i18n::ShareViewerKey::StreamEndedAction,
                 );
+                let chart_bg = self.panel_app.theme_manager.current().chart.background.clone();
                 let mut coord = self.input_coordinator.borrow_mut();
                 let cover = uzor::types::Rect::new(
                     content_rect.x,
@@ -10468,6 +10469,7 @@ impl ChartApp {
                     cover,
                     title,
                     action,
+                    &chart_bg,
                     &toolbar_theme,
                 );
             }

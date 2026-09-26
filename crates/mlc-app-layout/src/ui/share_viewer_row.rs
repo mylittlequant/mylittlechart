@@ -131,9 +131,10 @@ pub fn draw_stream_ended(
     rect: WidgetRect,
     title: &str,
     action: &str,
+    chart_bg: &str,
     tt: &ToolbarTheme,
 ) {
-    ctx.set_fill_color(&tt.dropdown_bg);
+    ctx.set_fill_color(chart_bg);
     ctx.fill_rect(rect.x, rect.y, rect.width, rect.height);
     coord.register_on_layer("share_end:bg", rect, Sense::CLICK, layer_id);
 
@@ -145,7 +146,7 @@ pub fn draw_stream_ended(
         card_w,
         card_h,
     );
-    ctx.set_fill_color(&tt.button_bg);
+    ctx.set_fill_color(chart_bg);
     ctx.fill_rounded_rect(card.x, card.y, card.width, card.height, 8.0);
 
     ctx.set_font("600 16px sans-serif");
