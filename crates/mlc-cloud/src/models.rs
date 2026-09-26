@@ -929,6 +929,18 @@ pub struct ShareChartOp {
     pub seq: i64,
 }
 
+/// `GET /api/share/{token}/stream-open` — ticket the edge relay redeems.
+/// The socket itself cannot carry the session cookie across to the relay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareStreamOpen {
+    #[serde(default)]
+    pub publish: bool,
+    #[serde(default)]
+    pub owner: String,
+    #[serde(default)]
+    pub ticket: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShareOpsResponse {
     pub head: i64,

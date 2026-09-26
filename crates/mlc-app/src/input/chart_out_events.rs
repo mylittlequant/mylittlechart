@@ -1894,7 +1894,9 @@ impl ChartApp {
                     // runs (clippy::significant_drop_in_scrutinee).
                     let outgoing_preset = self.core.presets().get(&prev_id).cloned();
                     if let Some(preset) = outgoing_preset {
-                        self.preset_actions.push(crate::PresetAction::Upsert(preset));
+                        if !self.is_share_link(&prev_id) {
+                            self.preset_actions.push(crate::PresetAction::Upsert(preset));
+                        }
                     }
                     log::debug!(
                         "[ChartApp] LoadPreset: persisted outgoing preset '{}' synchronously before switch (active='{}')",

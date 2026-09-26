@@ -4723,6 +4723,21 @@ impl ChartApp {
         app.core.templates_mut().replace_all(user_manager.template_manager.clone());
         app.core.presets_mut().replace_all(user_manager.presets.clone());
 
+        // A link tab is not a chart this profile owns. Copies written by
+        // older builds used a `shared_` id; drop them so a reload cannot
+        // open that file as a writable tab.
+        let leaked: Vec<String> = app
+            .core
+            .presets()
+            .keys()
+            .filter(|id| id.starts_with("shared_"))
+            .cloned()
+            .collect();
+        for id in leaked {
+            app.core.presets_mut().remove(&id);
+            let _ = mlc_core::preset::storage::delete_preset(&id);
+        }
+
         // Always restore active_preset_id from profile (not just on restore).
         // This prevents skeleton launches from creating spurious new Untitled presets.
         if !user_manager.profile.ui.active_preset_id.is_empty()

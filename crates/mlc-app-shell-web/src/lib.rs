@@ -238,36 +238,6 @@ fn share_token_from_url() -> Option<String> {
         .map(|t| t.to_string())
 }
 
-/// Drop `share` from the page query without a navigation.
-///
-/// A shared chart is a tab. Leaving `?share=` in the address bar makes
-/// every reload run the viewer boot again and focus that tab over the
-/// one the user had active. `history.replaceState` keeps the tab the
-/// browser already has; it only forgets the query.
-#[cfg(target_arch = "wasm32")]
-fn strip_share_query() {
-    let Some(win) = web_sys::window() else { return };
-    let Ok(search) = win.location().search() else { return };
-    if !search.contains("share=") {
-        return;
-    }
-    let kept: Vec<&str> = search
-        .trim_start_matches('?')
-        .split('&')
-        .filter(|p| !p.is_empty() && !p.starts_with("share=") && !p.starts_with("v="))
-        .collect();
-    let path = win.location().pathname().unwrap_or_else(|_| "/".to_string());
-    let hash = win.location().hash().unwrap_or_default();
-    let next = if kept.is_empty() {
-        format!("{path}{hash}")
-    } else {
-        format!("{path}?{}{hash}", kept.join("&"))
-    };
-    if let Ok(history) = win.history() {
-        let _ = history.replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&next));
-    }
-}
-
 /// Console log level: `?log=trace|debug|info|warn|error` in the page URL,
 /// else `localStorage["mlc.log"]` with the same words, else INFO. Same split
 /// grammar as `share_token_from_url` above; read once at boot, before the
@@ -312,6 +282,9 @@ enum ShareBoot {
     /// `ChartApp::open_shared_preset` needs to label the tab and gate the
     /// Clone action: token, title, owner, kind, effective rights, expiry.
     Live(mlc_core::preset::preset::ChartPreset, mlc_app::SharedChartMeta),
+    /// `?share=` was in the address bar and the link did not open.
+    /// The tab stays and says so. The query stays, so a reload asks again.
+    Dead(String),
 }
 
 /// Resolve a `?share=<token>` boot BEFORE any chart state exists.
@@ -360,24 +333,24 @@ async fn resolve_share_boot(token: Option<String>) -> ShareBoot {
                 }
                 Ok(p) => {
                     web_sys::console::error_1(
-                        &format!("[share] preset version {} unsupported (client is on {}) — normal boot",
+                        &format!("[share] preset version {} unsupported (client is on {}) — link tab stays",
                             p.version, mlc_core::preset::preset::PRESET_VERSION).into(),
                     );
-                    ShareBoot::Normal
+                    ShareBoot::Dead(token)
                 }
                 Err(e) => {
                     web_sys::console::error_1(
-                        &format!("[share] shared preset did not deserialize: {} — normal boot", e).into(),
+                        &format!("[share] shared preset did not deserialize: {} — link tab stays", e).into(),
                     );
-                    ShareBoot::Normal
+                    ShareBoot::Dead(token)
                 }
             }
         }
         Err(e) => {
             web_sys::console::error_1(
-                &format!("[share] share fetch failed ({}): {} — normal boot", token, e).into(),
+                &format!("[share] share fetch failed: {e}").into(),
             );
-            ShareBoot::Normal
+            ShareBoot::Dead(token)
         }
     }
 }
@@ -652,33 +625,41 @@ async fn run(share_token: Option<String>) -> Result<(), JsValue> {
     // `new_window`'s own restore so the shared tab wins the strip; the
     // visitor's OWN tabs, if any, stay exactly as restored.
     #[cfg(feature = "cloud")]
-    if let ShareBoot::Live(preset, meta) = share_boot {
-        let title = meta.title.clone();
-        let token = meta.token.clone();
-        if let Some(id) = app.share_tab_id_for_token(&token) {
-            match app.fill_shared_placeholder(&id, meta, preset) {
-                Ok(()) => web_sys::console::log_1(
-                    &format!("[share] filled existing tab {} for '{}'", id, title).into(),
-                ),
-                Err(e) => web_sys::console::error_1(
-                    &format!("[share] fill of '{}' failed: {}", title, e).into(),
-                ),
-            }
-        } else {
-            match app.open_shared_preset(meta, preset) {
-                Ok(id) => {
-                    web_sys::console::log_1(
-                        &format!("[share] opened shared preset '{}' ({}) as a read-only tab", title, id).into(),
-                    );
+    match share_boot {
+        ShareBoot::Live(preset, meta) => {
+            let title = meta.title.clone();
+            let token = meta.token.clone();
+            if let Some(id) = app.share_tab_id_for_token(&token) {
+                match app.fill_shared_placeholder(&id, meta, preset) {
+                    Ok(()) => web_sys::console::log_1(
+                        &format!("[share] filled existing tab {} for '{}'", id, title).into(),
+                    ),
+                    Err(e) => web_sys::console::error_1(
+                        &format!("[share] fill of '{}' failed: {}", title, e).into(),
+                    ),
                 }
-                Err(e) => {
-                    web_sys::console::error_1(
-                        &format!("[share] failed to open shared preset '{}': {} — staying on the restored tab", title, e).into(),
-                    );
+            } else {
+                match app.open_shared_preset(meta, preset) {
+                    Ok(id) => {
+                        web_sys::console::log_1(
+                            &format!("[share] opened shared preset '{}' ({}) as a read-only tab", title, id).into(),
+                        );
+                    }
+                    Err(e) => {
+                        web_sys::console::error_1(
+                            &format!("[share] failed to open shared preset '{}': {} — link tab stays", title, e).into(),
+                        );
+                        app.open_dead_share_tab(&token);
+                    }
                 }
             }
         }
-        strip_share_query();
+        ShareBoot::Dead(token) => {
+            if app.share_tab_id_for_token(&token).is_none() {
+                app.open_dead_share_tab(&token);
+            }
+        }
+        ShareBoot::Normal | ShareBoot::Redirect => {}
     }
 
     // First-run courtesy (owner's ruling 2026-08-31): `bootstrap_first_run`

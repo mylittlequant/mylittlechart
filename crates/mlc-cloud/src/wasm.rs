@@ -557,6 +557,16 @@ impl FetchTransport {
         self.decode_success(status, &body)
     }
 
+    /// `GET /api/share/{token}/stream-open` — same credential as the ops
+    /// calls. The returned ticket is what the live socket sends first; the
+    /// relay cannot see this request's cookie.
+    pub async fn share_stream_open(&self, token: &str) -> Result<ShareStreamOpen, CloudError> {
+        let (status, body) = self
+            .exchange("GET", &format!("/api/share/{token}/stream-open"), None, &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
     /// `POST /api/share/{token}/clone` (auth required) — clone a shared
     /// chart into the caller's own presets, already stripped server-side of
     /// any indicator instance the caller holds no license for (rights v1,

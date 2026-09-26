@@ -9816,7 +9816,7 @@ impl ChartApp {
         // a read-only tab's edits must never reach disk/localStorage. This is
         // the ONE place every preset id's autosave funnels through for both
         // shells, so the check lives here rather than at each click site.
-        if self.is_readonly_tab(&target_id) {
+        if self.is_share_link(&target_id) {
             return;
         }
         // LoadState gate. While a cold hydrate is in flight, `panel_grid`

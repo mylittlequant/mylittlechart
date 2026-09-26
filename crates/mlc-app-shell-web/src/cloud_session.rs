@@ -300,6 +300,13 @@ struct Inner {
     edge_socket: Option<web_sys::WebSocket>,
     edge_token: String,
     edge_in: Vec<String>,
+    /// Ticket from `stream-open`. The socket's first frame is `hello` with
+    /// this value. Empty until that GET returns.
+    edge_ticket: String,
+    edge_ticket_for: String,
+    edge_ticket_busy: bool,
+    edge_ticket_next_ms: f64,
+    edge_hello_sent: bool,
     /// `(chart_id, token)` from the last successful live publish.
     share_bound: Option<(String, String)>,
     share_lookup_q: String,
@@ -450,6 +457,11 @@ impl CloudSession {
                 edge_socket: None,
                 edge_token: String::new(),
                 edge_in: Vec::new(),
+                edge_ticket: String::new(),
+                edge_ticket_for: String::new(),
+                edge_ticket_busy: false,
+                edge_ticket_next_ms: 0.0,
+                edge_hello_sent: false,
                 share_bound: None,
                 share_lookup_q: String::new(),
                 share_lookup_at_ms: 0.0,
@@ -1043,7 +1055,7 @@ impl CloudSession {
         });
     }
 
-    fn poll_edge(&self, chart: &mut ChartApp) {
+    fn poll_edge(&self, chart: &mut ChartApp, now_ms: f64) {
         let incoming = std::mem::take(&mut self.inner.borrow_mut().edge_in);
         for frame in incoming {
             chart.apply_edge_frame(&frame);
@@ -1054,9 +1066,54 @@ impl CloudSession {
             return;
         }
         let token = token.unwrap();
+        let (have_ticket, busy, ticket_for, next_ms) = {
+            let guard = self.inner.borrow();
+            (
+                !guard.edge_ticket.is_empty() && guard.edge_ticket_for == token,
+                guard.edge_ticket_busy,
+                guard.edge_ticket_for.clone(),
+                guard.edge_ticket_next_ms,
+            )
+        };
+        if !have_ticket {
+            if busy && ticket_for == token {
+                return;
+            }
+            if now_ms < next_ms && ticket_for == token {
+                return;
+            }
+            {
+                let mut guard = self.inner.borrow_mut();
+                guard.edge_ticket_busy = true;
+                guard.edge_ticket.clear();
+                guard.edge_ticket_for = token.clone();
+                guard.edge_hello_sent = false;
+            }
+            self.close_edge_socket();
+            let transport = self.inner.borrow().transport.snapshot();
+            let inner = self.inner.clone();
+            let token_fetch = token.clone();
+            spawn_local(async move {
+                let result = transport.share_stream_open(&token_fetch).await;
+                let mut guard = inner.borrow_mut();
+                guard.edge_ticket_busy = false;
+                match result {
+                    Ok(body) if !body.ticket.is_empty() && guard.edge_ticket_for == token_fetch => {
+                        guard.edge_ticket = body.ticket;
+                    }
+                    _ => {
+                        if guard.edge_ticket_for == token_fetch {
+                            guard.edge_ticket_for.clear();
+                            guard.edge_ticket_next_ms = now_ms + 1000.0;
+                        }
+                    }
+                }
+            });
+            return;
+        }
         self.ensure_edge(&token);
         let open = self.inner.borrow().edge_socket.as_ref().map(|ws| ws.ready_state()) == Some(1);
-        if !open {
+        if !open || !self.inner.borrow().edge_hello_sent {
             return;
         }
         let Some((_, frames)) = chart.take_edge_frames() else {
@@ -1071,27 +1128,45 @@ impl CloudSession {
         }
     }
 
-    fn close_edge(&self) {
+    fn close_edge_socket(&self) {
         let mut guard = self.inner.borrow_mut();
         if let Some(ws) = guard.edge_socket.take() {
             let _ = ws.close();
         }
         guard.edge_token.clear();
+        guard.edge_hello_sent = false;
+    }
+
+    fn close_edge(&self) {
+        self.close_edge_socket();
+        let mut guard = self.inner.borrow_mut();
+        guard.edge_ticket.clear();
+        guard.edge_ticket_for.clear();
+        guard.edge_ticket_busy = false;
     }
 
     fn ensure_edge(&self, token: &str) {
+        let mut dead = false;
         {
             let guard = self.inner.borrow();
-            if guard.edge_token == token {
-                if let Some(ws) = guard.edge_socket.as_ref() {
+            if let Some(ws) = guard.edge_socket.as_ref() {
+                if guard.edge_token == token {
                     let state = ws.ready_state();
                     if state == 0 || state == 1 {
                         return;
                     }
                 }
+                dead = true;
             }
         }
-        self.close_edge();
+        if dead {
+            self.close_edge_socket();
+            let mut guard = self.inner.borrow_mut();
+            guard.edge_ticket.clear();
+            guard.edge_ticket_for.clear();
+            return;
+        }
+        let ticket = self.inner.borrow().edge_ticket.clone();
         let Some(win) = web_sys::window() else { return };
         let loc = win.location();
         let proto = loc.protocol().ok().map(|p| if p.starts_with("https") { "wss" } else { "ws" }).unwrap_or("wss");
@@ -1106,6 +1181,18 @@ impl CloudSession {
         }) as Box<dyn FnMut(web_sys::MessageEvent)>);
         ws.set_onmessage(Some(on_msg.as_ref().unchecked_ref()));
         on_msg.forget();
+        let inner_open = self.inner.clone();
+        let on_open = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
+            let hello = format!("{{\"t\":\"hello\",\"k\":\"{ticket}\"}}");
+            let guard = inner_open.borrow();
+            if let Some(sock) = guard.edge_socket.as_ref() {
+                let _ = sock.send_with_str(&hello);
+            }
+            drop(guard);
+            inner_open.borrow_mut().edge_hello_sent = true;
+        }) as Box<dyn FnMut()>);
+        ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
+        on_open.forget();
         let mut guard = self.inner.borrow_mut();
         guard.edge_socket = Some(ws);
         guard.edge_token = token.to_string();
@@ -1486,7 +1573,7 @@ impl CloudSession {
             }
         }
         self.poll_share_ops(chart, now_ms);
-        self.poll_edge(chart);
+        self.poll_edge(chart, now_ms);
         self.poll_friends(chart);
 
         // ── Chart-share clone (shared-viewer arc, 2026-09-06) ──────────────

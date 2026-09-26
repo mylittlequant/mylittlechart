@@ -448,23 +448,37 @@ impl ChartApp {
         self.persist_profile();
     }
 
-    /// The re-fetch for `placeholder_id` came back GONE — 404/410/403
-    /// (unknown, expired, or revoked token, or access withdrawn — the
-    /// server bundles all three into one bare 404 by design, see
-    /// `mlc-updater/src/share.rs::error_message`'s own doc). Drops the
-    /// placeholder for good: no reorder of the remaining tabs beyond
-    /// closing that one slot, one toast through the existing system-event/
-    /// toast path, and the entry never comes back in `open_shared_tabs` on
-    /// the next save (it is no longer in `open_tabs` for
-    /// `collect_open_shared_tabs` to find).
+    /// The re-fetch came back gone (404/403/410). The tab stays — it is the
+    /// link — and its name says the link does not work.
     pub fn share_reopen_gone(&mut self, placeholder_id: &str) {
-        self.remove_shared_placeholder_tab(placeholder_id);
+        let title = mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneTitle).to_string();
+        if let Some(preset) = self.core.presets_mut().get_mut(placeholder_id) {
+            preset.name = title;
+        }
         self.push_system_event(
             SystemEventKind::Share,
             mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneTitle),
             mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneBody),
             true,
         );
+    }
+
+    /// The address bar had `?share=` and the fetch said the link is gone.
+    /// The tab stays. It is still the link, and it says the link does not work.
+    pub fn open_dead_share_tab(&mut self, token: &str) {
+        let id = fresh_preset_id("shared");
+        let title = mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneTitle).to_string();
+        let mut placeholder = ChartPreset::new(title);
+        placeholder.id = id.clone();
+        self.readonly_preset_ids.insert(id.clone());
+        self.share_keep_ids.insert(id.clone());
+        self.pending_share_tokens.insert(id.clone(), token.to_string());
+        self.core.presets_mut().insert(id.clone(), placeholder);
+        if !self.panel_app.open_tabs.iter().any(|t| t == &id) {
+            self.panel_app.open_tabs.push(id.clone());
+        }
+        self.load_preset(&id);
+        self.share_reopen_gone(&id);
     }
 
     /// The re-fetch for `placeholder_id` failed TRANSIENTLY — offline or a
@@ -516,7 +530,7 @@ impl ChartApp {
             .open_tabs
             .iter()
             .enumerate()
-            .filter(|(_, id)| self.is_readonly_tab(id))
+            .filter(|(_, id)| self.is_share_link(id))
             .filter_map(|(index, id)| {
                 let token = self
                     .shared_chart_meta
