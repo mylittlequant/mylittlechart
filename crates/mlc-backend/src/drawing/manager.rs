@@ -229,10 +229,6 @@ struct BubbleDrawingSession {
     preview_cache: Mutex<Option<PreviewCache>>,
     /// Shift held — 8-compass / square snap of the live drawing cursor.
     shift_constrain: bool,
-    /// Author's selection on a live viewer. Paint only; hit-test reads `selected`.
-    remote_highlight: Option<u64>,
-    /// Drawing projection. Rendered, never inserted into the bubble.
-    remote_ghost: Mutex<Option<Box<dyn Primitive>>>,
 }
 
 impl Default for BubbleDrawingSession {
@@ -251,8 +247,6 @@ impl Default for BubbleDrawingSession {
             default_color: "#2196F3".to_string(),
             preview_cache: Mutex::new(None),
             shift_constrain: false,
-            remote_highlight: None,
-            remote_ghost: Mutex::new(None),
         }
     }
 }
@@ -372,32 +366,6 @@ impl DrawingManager {
 
     pub(crate) fn shift_constrain(&self, bid: BubbleId) -> bool {
         self.session(bid).is_some_and(|s| s.shift_constrain)
-    }
-
-    pub(crate) fn remote_highlight(&self, bid: BubbleId) -> Option<u64> {
-        self.session(bid).and_then(|s| s.remote_highlight)
-    }
-
-    pub(crate) fn remote_ghost(&self, bid: BubbleId) -> Option<Box<dyn Primitive>> {
-        let session = self.session(bid)?;
-        let guard = session.remote_ghost.lock().unwrap_or_else(|e| e.into_inner());
-        guard.as_ref().map(|prim| prim.clone_box())
-    }
-
-    pub(crate) fn set_remote_overlay(
-        &mut self,
-        bid: BubbleId,
-        highlight: Option<u64>,
-        ghost: Option<Box<dyn Primitive>>,
-    ) {
-        let session = self.session_mut(bid);
-        session.remote_highlight = highlight;
-        *session.remote_ghost.lock().unwrap_or_else(|e| e.into_inner()) = ghost;
-    }
-
-    pub(crate) fn clear_remote_ghost(&mut self, bid: BubbleId) {
-        let Some(session) = self.sessions.get_mut(&bid) else { return };
-        *session.remote_ghost.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     pub(crate) fn set_shift_constrain(&mut self, bid: BubbleId, held: bool) {

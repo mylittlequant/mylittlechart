@@ -300,12 +300,6 @@ struct Inner {
     edge_socket: Option<web_sys::WebSocket>,
     edge_token: String,
     edge_in: Vec<String>,
-    /// First frame on a new socket. Empty once it has been sent.
-    edge_hello: String,
-    edge_busy: bool,
-    edge_next_ms: f64,
-    /// `(token, wss url, hello frame)` waiting for the next drive.
-    edge_pending: Option<(String, String, String)>,
     /// `(chart_id, token)` from the last successful live publish.
     share_bound: Option<(String, String)>,
     share_lookup_q: String,
@@ -456,10 +450,6 @@ impl CloudSession {
                 edge_socket: None,
                 edge_token: String::new(),
                 edge_in: Vec::new(),
-                edge_hello: String::new(),
-                edge_busy: false,
-                edge_next_ms: 0.0,
-                edge_pending: None,
                 share_bound: None,
                 share_lookup_q: String::new(),
                 share_lookup_at_ms: 0.0,
@@ -1053,87 +1043,32 @@ impl CloudSession {
         });
     }
 
-    fn poll_edge(&self, chart: &mut ChartApp, now_ms: f64) {
+    fn poll_edge(&self, chart: &mut ChartApp) {
         let incoming = std::mem::take(&mut self.inner.borrow_mut().edge_in);
         for frame in incoming {
             chart.apply_edge_frame(&frame);
         }
-        let Some(token) = chart.edge_live_token() else {
+        let token = chart.edge_live_token();
+        if token.is_none() {
             self.close_edge();
             return;
+        }
+        let token = token.unwrap();
+        self.ensure_edge(&token);
+        let open = self.inner.borrow().edge_socket.as_ref().map(|ws| ws.ready_state()) == Some(1);
+        if !open {
+            return;
+        }
+        let Some((_, frames)) = chart.take_edge_frames() else {
+            return;
         };
-        if let Some((pend_token, url, hello)) = self.inner.borrow_mut().edge_pending.take() {
-            if pend_token == token {
-                self.open_edge_socket(&token, &url, &hello, now_ms);
-            }
-        }
-        let (same, state) = {
-            let guard = self.inner.borrow();
-            let same = guard.edge_token == token;
-            let state = guard.edge_socket.as_ref().map(|ws| ws.ready_state());
-            (same, state)
+        let guard = self.inner.borrow();
+        let Some(ws) = guard.edge_socket.as_ref() else {
+            return;
         };
-        if same && state == Some(0) {
-            return;
+        for frame in frames {
+            let _ = ws.send_with_str(&frame);
         }
-        if same && state == Some(1) {
-            let hello = {
-                let mut guard = self.inner.borrow_mut();
-                std::mem::take(&mut guard.edge_hello)
-            };
-            let ws = self.inner.borrow().edge_socket.clone();
-            let Some(ws) = ws else {
-                return;
-            };
-            if !hello.is_empty() {
-                let _ = ws.send_with_str(&hello);
-            }
-            let Some((_, frames)) = chart.take_edge_frames() else {
-                return;
-            };
-            for frame in frames {
-                let _ = ws.send_with_str(&frame);
-            }
-            return;
-        }
-        if self.inner.borrow().edge_busy || now_ms < self.inner.borrow().edge_next_ms {
-            return;
-        }
-        self.inner.borrow_mut().edge_busy = true;
-        let transport = self.inner.borrow().transport.snapshot();
-        let inner = self.inner.clone();
-        let token2 = token.clone();
-        let retry_at = now_ms + 500.0;
-        spawn_local(async move {
-            let door = transport.share_stream_open(&token2).await.ok();
-            let mut guard = inner.borrow_mut();
-            guard.edge_busy = false;
-            let pending = door.and_then(|v| {
-                let origin = v.get("origin").and_then(|x| x.as_str()).unwrap_or("");
-                let ticket = v.get("ticket").and_then(|x| x.as_str()).unwrap_or("");
-                let publish = v.get("publish").and_then(|x| x.as_bool()).unwrap_or(false);
-                let owner = v.get("owner").and_then(|x| x.as_str()).unwrap_or("");
-                if origin.is_empty() || ticket.is_empty() || (!publish && owner.is_empty()) {
-                    return None;
-                }
-                let host = origin
-                    .trim_start_matches("https://")
-                    .trim_start_matches("http://")
-                    .trim_end_matches('/');
-                let proto = if origin.starts_with("http://") { "ws" } else { "wss" };
-                let url = format!("{proto}://{host}/api/share-live/{token2}");
-                let hello = format!(
-                    "{{\"t\":\"hello\",\"k\":{}}}",
-                    serde_json::to_string(ticket).unwrap_or_else(|_| "\"\"".into())
-                );
-                Some((token2, url, hello))
-            });
-            if pending.is_some() {
-                guard.edge_pending = pending;
-            } else {
-                guard.edge_next_ms = retry_at;
-            }
-        });
     }
 
     fn close_edge(&self) {
@@ -1142,16 +1077,27 @@ impl CloudSession {
             let _ = ws.close();
         }
         guard.edge_token.clear();
-        guard.edge_hello.clear();
-        guard.edge_pending = None;
     }
 
-    fn open_edge_socket(&self, token: &str, url: &str, hello: &str, now_ms: f64) {
+    fn ensure_edge(&self, token: &str) {
+        {
+            let guard = self.inner.borrow();
+            if guard.edge_token == token {
+                if let Some(ws) = guard.edge_socket.as_ref() {
+                    let state = ws.ready_state();
+                    if state == 0 || state == 1 {
+                        return;
+                    }
+                }
+            }
+        }
         self.close_edge();
-        let Ok(ws) = web_sys::WebSocket::new(url) else {
-            self.inner.borrow_mut().edge_next_ms = now_ms + 500.0;
-            return;
-        };
+        let Some(win) = web_sys::window() else { return };
+        let loc = win.location();
+        let proto = loc.protocol().ok().map(|p| if p.starts_with("https") { "wss" } else { "ws" }).unwrap_or("wss");
+        let Ok(host) = loc.host() else { return };
+        let url = format!("{proto}://{host}/api/share-live/{token}");
+        let Ok(ws) = web_sys::WebSocket::new(&url) else { return };
         let inner = self.inner.clone();
         let on_msg = wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::MessageEvent| {
             if let Some(text) = ev.data().as_string() {
@@ -1163,7 +1109,6 @@ impl CloudSession {
         let mut guard = self.inner.borrow_mut();
         guard.edge_socket = Some(ws);
         guard.edge_token = token.to_string();
-        guard.edge_hello = hello.to_string();
     }
 
     fn poll_share_ops(&self, chart: &mut ChartApp, now_ms: f64) {
@@ -1541,7 +1486,7 @@ impl CloudSession {
             }
         }
         self.poll_share_ops(chart, now_ms);
-        self.poll_edge(chart, now_ms);
+        self.poll_edge(chart);
         self.poll_friends(chart);
 
         // ── Chart-share clone (shared-viewer arc, 2026-09-06) ──────────────

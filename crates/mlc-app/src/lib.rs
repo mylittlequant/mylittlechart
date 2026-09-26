@@ -1061,9 +1061,9 @@ pub struct ChartApp {
     /// ids on import. The op stream speaks author ids.
     pub(crate) share_import_prims: std::collections::HashMap<String, std::collections::HashMap<u64, u64>>,
 
-    /// Last picture of a share link. Not a preset and not the viewer's objects.
-    /// Clone is what copies it into a chart.
-    pub(crate) share_link_prims: std::collections::HashMap<String, Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>>>,
+    /// Snapshot primitive id → the id hydration actually stored.
+    /// Share updates name the snapshot id. The loaded line has the other one.
+    pub(crate) hydrate_prim_ids: std::collections::HashMap<u64, u64>,
 
     /// Per-preset op cursor and the last JSON sent or applied, keyed by
     /// the stream's object id (`p:{author_id}` or `n:…`).
@@ -3593,7 +3593,7 @@ impl ChartApp {
             readonly_preset_ids: std::collections::HashSet::new(),
             shared_chart_meta: std::collections::HashMap::new(),
             share_import_prims: std::collections::HashMap::new(),
-            share_link_prims: std::collections::HashMap::new(),
+            hydrate_prim_ids: std::collections::HashMap::new(),
             share_streams: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
@@ -3995,7 +3995,7 @@ impl ChartApp {
             readonly_preset_ids: std::collections::HashSet::new(),
             shared_chart_meta: std::collections::HashMap::new(),
             share_import_prims: std::collections::HashMap::new(),
-            share_link_prims: std::collections::HashMap::new(),
+            hydrate_prim_ids: std::collections::HashMap::new(),
             share_streams: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
@@ -4604,7 +4604,7 @@ impl ChartApp {
             readonly_preset_ids: std::collections::HashSet::new(),
             shared_chart_meta: std::collections::HashMap::new(),
             share_import_prims: std::collections::HashMap::new(),
-            share_link_prims: std::collections::HashMap::new(),
+            hydrate_prim_ids: std::collections::HashMap::new(),
             share_streams: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
@@ -6762,7 +6762,6 @@ impl ChartApp {
         // content_rect and right_toolbar_left_x are returned in RenderOutput and
         // applied by apply_render_output().
         let out_right_toolbar_left_x = panel_layout.right_toolbar_rect.x;
-        let share_link_frame = self.cloned_share_link_frame();
 
         // 4. Render chart content.
         //    When split, iterate over panel_grid leaves and call
@@ -7042,17 +7041,12 @@ impl ChartApp {
                 let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let split_drawings_guard = self.core.drawings();
                 let split_view = split_drawings_guard.with_bubble(window.current_tag_id);
-                let split_link = share_link_frame.as_ref().map(|p| share_viewer::ShareLinkDraw { prims: p });
                 let split_indicator_view = indicator_guard_split.with_bubble(window.current_tag_id);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
                     corner_state: &scale_corner_state,
-                    drawing_manager: Some(if let Some(ref link) = split_link {
-                        link as &dyn mlc_core::drawing::DrawingRenderView
-                    } else {
-                        &split_view as &dyn mlc_core::drawing::DrawingRenderView
-                    }),
+                    drawing_manager: Some(&split_view as &dyn mlc_core::drawing::DrawingRenderView),
                     indicator_source: Some(&split_indicator_view as &dyn IndicatorSource),
                     symbol: Some(split_symbol.as_str()),
                     sub_pane_y_state: Some(&window.sub_pane_y_state),
@@ -7685,17 +7679,12 @@ impl ChartApp {
                 let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let single_window_drawings_guard = self.core.drawings();
                 let single_window_view = single_window_drawings_guard.with_bubble(window.current_tag_id);
-                let single_link = share_link_frame.as_ref().map(|p| share_viewer::ShareLinkDraw { prims: p });
                 let single_indicator_view = indicator_guard_single.with_bubble(window.current_tag_id);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
                     config: &render_config,
                     corner_state: &scale_corner_state,
-                    drawing_manager: Some(if let Some(ref link) = single_link {
-                        link as &dyn mlc_core::drawing::DrawingRenderView
-                    } else {
-                        &single_window_view as &dyn mlc_core::drawing::DrawingRenderView
-                    }),
+                    drawing_manager: Some(&single_window_view as &dyn mlc_core::drawing::DrawingRenderView),
                     indicator_source: Some(&single_indicator_view as &dyn IndicatorSource),
                     symbol: Some(single_sym),
                     sub_pane_y_state: Some(&window.sub_pane_y_state),

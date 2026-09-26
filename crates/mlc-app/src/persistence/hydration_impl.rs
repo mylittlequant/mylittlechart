@@ -246,13 +246,17 @@ impl ChartApp {
                                         } else {
                                             &snap.stashed_primitives
                                         };
+                                    let mut id_pairs: Vec<(u64, u64)> = Vec::new();
                                     self.core.bubbles_mut().with_bubble_mut(auto_bid, |auto_bub| {
                                         auto_bub.primitives.clear();
                                         if !restore_snap.is_empty() {
                                             if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                                                 for prim_snap in restore_snap {
                                                     if let Some(mut prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                        prim.data_mut().id = mlc_core::drawing::alloc_primitive_id();
+                                                        let snapshot_id = prim.data().id;
+                                                        let live_id = mlc_core::drawing::alloc_primitive_id();
+                                                        prim.data_mut().id = live_id;
+                                                        id_pairs.push((snapshot_id, live_id));
                                                         auto_bub.primitives.push(prim);
                                                     }
                                                 }
@@ -265,6 +269,9 @@ impl ChartApp {
                                             auto_bub.command_history = h;
                                         }
                                     });
+                                    for (snapshot_id, live_id) in id_pairs {
+                                        self.hydrate_prim_ids.insert(snapshot_id, live_id);
+                                    }
 
                                     // Restore per-symbol drawing cache
                                     window.symbol_drawings = snap.symbol_drawings_snapshots.clone();

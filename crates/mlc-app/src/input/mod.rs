@@ -994,9 +994,6 @@ impl ChartApp {
 
         match hit {
             crate::panel_grid::ChartRightClickHit::Primitive { prim_id } => {
-                if self.is_readonly_tab(&self.panel_app.active_preset_id) {
-                    return;
-                }
                 // Wave-gesture second control surface (owner ask
                 // 2026-08-13): when `GestureBindings::wave_menu`/
                 // `successor_menu` is bound to RightClick, a right-click on

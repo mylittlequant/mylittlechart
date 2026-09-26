@@ -283,11 +283,7 @@ impl ChartApp {
         match kind {
             "g" => {
                 let body = value.get("b").map(|v| v.to_string()).unwrap_or_default();
-                if self.share_link_prims.contains_key(&preset_id) {
-                    self.link_gesture(&preset_id, &body);
-                } else {
-                    self.apply_share_gesture(&preset_id, bid, &body);
-                }
+                self.apply_share_gesture(&preset_id, bid, &body);
             }
             "v" => {
                 let body = value.get("b").map(|v| v.to_string()).unwrap_or_default();
@@ -296,29 +292,8 @@ impl ChartApp {
             "p" => {
                 let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let body = value.get("b").and_then(|v| v.as_str()).unwrap_or("");
-                if id.is_empty() || body.is_empty() {
-                    return;
-                }
-                if self.share_link_prims.contains_key(&preset_id) {
-                    self.link_upsert(&preset_id, body);
-                    return;
-                }
                 if self.local_drag_key(&preset_id).as_deref() == Some(id) {
                     return;
-                }
-                self.ensure_share_keys(&preset_id);
-                let known = self
-                    .share_streams
-                    .get(&preset_id)
-                    .is_some_and(|s| s.key_to_local.contains_key(id));
-                let is_new = value.get("new").and_then(|v| v.as_u64()) == Some(1);
-                // A drag frame for an object this chart does not have is not
-                // a create. Creating here was the duplicate line.
-                if !known && !is_new {
-                    return;
-                }
-                if is_new {
-                    self.core.drawings_mut().clear_remote_ghost(bid);
                 }
                 let op = ShareInboundOp {
                     seq: 0,
@@ -479,8 +454,9 @@ impl ChartApp {
         };
         let import = self.share_import_prims.get(preset_id).cloned().unwrap_or_default();
         let mut local_to_author: HashMap<u64, u64> = HashMap::new();
-        for (author, local) in &import {
-            local_to_author.insert(*local, *author);
+        for (author, snapshot_id) in &import {
+            let live = self.hydrate_prim_ids.get(snapshot_id).copied().unwrap_or(*snapshot_id);
+            local_to_author.insert(live, *author);
         }
         let preview = self.share_streams.get(preset_id).and_then(|s| s.preview_local);
         let ids: Vec<u64> = self.core.drawings().primitives(bid).iter().map(|p| p.data().id).collect();
@@ -556,28 +532,12 @@ impl ChartApp {
     }
 
     fn apply_one_share_op(&mut self, preset_id: &str, op: &ShareInboundOp) {
-        if self.share_link_prims.contains_key(preset_id) {
-            match op.kind.as_str() {
-                "primitive_upsert" => {
-                    self.link_upsert(preset_id, &op.body);
-                    return;
-                }
-                "primitive_delete" => {
-                    self.link_delete(preset_id, &op.object_id);
-                    return;
-                }
-                "gesture" => {
-                    self.link_gesture(preset_id, &op.body);
-                    return;
-                }
-                _ => {}
-            }
-        }
         let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else {
             return;
         };
         match op.kind.as_str() {
             "primitive_delete" => {
+                self.ensure_share_keys(preset_id);
                 let local = self.share_streams.get(preset_id).and_then(|s| s.key_to_local.get(&op.object_id).copied());
                 if let Some(local) = local {
                     self.core.drawings_mut().delete(bid, local);
@@ -728,7 +688,6 @@ impl ChartApp {
         let phase = value.get("phase").and_then(|v| v.as_str()).unwrap_or("idle");
         let tool = value.get("tool").and_then(|v| v.as_str()).unwrap_or("");
         let selected = value.get("selected").and_then(|v| v.as_str()).unwrap_or("");
-        let dragging = value.get("dragging").and_then(|v| v.as_str()).unwrap_or("");
         let points: Vec<(i64, f64)> = value
             .get("points")
             .and_then(|v| v.as_array())
@@ -741,25 +700,18 @@ impl ChartApp {
                     .collect()
             })
             .unwrap_or_default();
-        // Old builds inserted the projection as a real primitive. Drop it.
-        self.clear_share_preview(preset_id, bid);
-        self.ensure_share_keys(preset_id);
-        if self.is_readonly_tab(preset_id) {
-            self.core.drawings_mut().deselect(bid);
+        if phase == "draw" && !tool.is_empty() && !points.is_empty() {
+            self.set_share_preview(preset_id, bid, tool, &points);
+        } else {
+            self.clear_share_preview(preset_id, bid);
         }
-        let hand = if selected.is_empty() { dragging } else { selected };
-        let highlight = if hand.is_empty() {
-            None
-        } else {
-            self.share_streams.get(preset_id).and_then(|s| s.key_to_local.get(hand).copied())
-        };
-        let ghost = if phase == "draw" && !tool.is_empty() && !points.is_empty() {
-            let registry = mlc_core::drawing::primitives_v2::PrimitiveRegistry::global().read().unwrap();
-            registry.create(tool, &points, None)
-        } else {
-            None
-        };
-        self.core.drawings_mut().set_remote_overlay(bid, highlight, ghost);
+        if selected.is_empty() {
+            if phase == "idle" {
+                self.core.drawings_mut().deselect(bid);
+            }
+        } else if let Some(local) = self.share_streams.get(preset_id).and_then(|s| s.key_to_local.get(selected).copied()) {
+            self.core.drawings_mut().select(bid, local);
+        }
     }
 
     fn apply_share_viewport(&mut self, body: &str) {
@@ -785,4 +737,16 @@ impl ChartApp {
         }
     }
 
+    fn set_share_preview(&mut self, preset_id: &str, bid: mlc_core::ids::BubbleId, tool: &str, points: &[(i64, f64)]) {
+        let registry = mlc_core::drawing::primitives_v2::PrimitiveRegistry::global().read().unwrap();
+        let Some(prim) = registry.create(tool, points, None) else {
+            return;
+        };
+        drop(registry);
+        self.clear_share_preview(preset_id, bid);
+        let id = self.core.drawings_mut().add_external(bid, prim);
+        if let Some(stream) = self.share_streams.get_mut(preset_id) {
+            stream.preview_local = Some(id);
+        }
+    }
 }

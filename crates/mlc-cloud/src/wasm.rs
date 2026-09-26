@@ -474,14 +474,6 @@ impl FetchTransport {
         self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
     }
 
-    /// `GET /api/share/{token}/stream-open` — which edge holds the live
-    /// cache, and a one-minute ticket for the socket on that edge's name.
-    pub async fn share_stream_open(&self, token: &str) -> Result<serde_json::Value, CloudError> {
-        let path = format!("/api/share/{token}/stream-open");
-        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
-        self.decode_success(status, &body)
-    }
-
     /// `GET /api/share/{token}/ops?after=`.
     pub async fn share_get_ops(&self, token: &str, after: i64) -> Result<ShareOpsResponse, CloudError> {
         let path = format!("/api/share/{token}/ops?after={after}");
