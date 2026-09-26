@@ -2726,6 +2726,10 @@ impl ChartApp {
                 self.request_share_live();
             }
 
+            ChartOutEvent::ShareStreamChart => {
+                self.request_share_stream();
+            }
+
             ref other => {
                 log::warn!("[ChartApp] unhandled event: {:?}", other);
             }

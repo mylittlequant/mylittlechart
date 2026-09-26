@@ -3840,6 +3840,18 @@ impl ChartApp {
                 self.process_chart_out_event(mlc_core::events::ChartOutEvent::ShareLiveChart);
                 return;
             }
+            if item_id == "share_stream" {
+                if !self.panel_app.user_settings_state.account_signed_in {
+                    log::warn!("[ChartApp] share_stream refused: account_signed_in=false");
+                    #[cfg(feature = "cloud")]
+                    {
+                        self.panel_app.cloud_login_state.open();
+                    }
+                    return;
+                }
+                self.process_chart_out_event(mlc_core::events::ChartOutEvent::ShareStreamChart);
+                return;
+            }
 
             // Pinned-favorites quick-pick buttons on the top toolbar (user-
             // granularity-templates-inner arc, кусок 3 — TradingView

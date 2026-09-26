@@ -761,6 +761,10 @@ pub struct ChartApp {
     /// (via `ChartOutEvent::ShareLiveChart`), drained by the shell, which
     /// owns the cloud session/token. Mirror of `pending_screenshot`.
     pending_share_live: bool,
+    /// Stream button: after the link exists, turn the socket on.
+    arm_live_after_share: bool,
+    /// Stream button on a chart that already has a link: shell copies it.
+    pending_share_copy: bool,
 
     /// Shares-tab command for the shell: list, pin, revoke, or patch the
     /// policy the server already stores on the token.
@@ -3539,6 +3543,8 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            arm_live_after_share: false,
+            pending_share_copy: false,
             pending_share_admin: None,
             pending_clipboard_text: None,
             pending_reset_cache: false,
@@ -3940,6 +3946,8 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            arm_live_after_share: false,
+            pending_share_copy: false,
             pending_share_admin: None,
             pending_clipboard_text: None,
             pending_reset_cache: false,
@@ -4557,6 +4565,8 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            arm_live_after_share: false,
+            pending_share_copy: false,
             pending_share_admin: None,
             pending_clipboard_text: None,
             pending_reset_cache: false,
@@ -5791,6 +5801,38 @@ impl ChartApp {
         }
         self.pending_share_live = true;
         dlog!("[Share] Live-share link requested");
+    }
+
+    /// Bolt next to Share. Copies the link and turns the socket on.
+    /// The corner overlay is the live controls. No settings modal.
+    pub fn request_share_stream(&mut self) {
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            return;
+        }
+        let id = self.panel_app.active_preset_id.clone();
+        if self.panel_app.chart_share_tokens.contains_key(&id) {
+            self.pending_share_copy = true;
+            self.set_share_live(true);
+            return;
+        }
+        self.arm_live_after_share = true;
+        self.pending_share_live = true;
+    }
+
+    pub fn take_pending_share_copy(&mut self) -> bool {
+        let pending = self.pending_share_copy;
+        self.pending_share_copy = false;
+        pending
+    }
+
+    pub fn take_arm_live(&mut self) -> bool {
+        let arm = self.arm_live_after_share;
+        self.arm_live_after_share = false;
+        arm
+    }
+
+    pub fn clear_arm_live(&mut self) {
+        self.arm_live_after_share = false;
     }
 
     // -------------------------------------------------------------------------
@@ -10373,7 +10415,9 @@ impl ChartApp {
                         &toolbar_theme,
                     );
                 }
-            } else if self.panel_app.chart_share_tokens.contains_key(&active_preset_id) {
+            } else if self.panel_app.share_settings_state.live_on
+                && self.panel_app.chart_share_tokens.contains_key(&active_preset_id)
+            {
                 let row_y = content_rect.y + 2.0;
                 let row_height = mlc_app_layout::layout::panel_overlay::LEAF_TAB_HEIGHT - 4.0;
                 let plot_right_edge = {

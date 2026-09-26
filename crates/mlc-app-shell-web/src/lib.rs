@@ -2442,6 +2442,19 @@ fn run_render_loop(
         {
             let request = {
                 let mut st = state_clone.borrow_mut();
+                if st.chart.take_pending_share_copy() {
+                    let id = st.chart.panel_app.active_preset_id.clone();
+                    if let Some(token) = st.chart.panel_app.chart_share_tokens.get(&id).cloned() {
+                        let url = cloud_session::absolute_share_url(&format!("/?share={token}"));
+                        crate::clipboard_write_text(&url);
+                        st.chart.push_system_event(
+                            mlc_core::SystemEventKind::Share,
+                            "Stream on",
+                            format!("Link copied to clipboard: {url}"),
+                            true,
+                        );
+                    }
+                }
                 if st.chart.drain_pending_share_live() {
                     let id = st.chart.panel_app.active_preset_id.clone();
                     let name = st.chart.core.presets().get(&id).map(|p| p.name.clone()).unwrap_or_default();

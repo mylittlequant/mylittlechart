@@ -1288,7 +1288,11 @@ impl CloudSession {
         self.poll_share_nick_search(chart, now_ms);
         self.poll_friend_lookup(chart, now_ms);
         if let Some((chart_id, token)) = self.inner.borrow_mut().share_bound.take() {
+            let arm = chart.take_arm_live();
             chart.note_chart_share_token(&chart_id, &token);
+            if arm {
+                chart.set_share_live(true);
+            }
         }
         if let Some(hits) = self.inner.borrow_mut().share_lookup_hits.take() {
             chart.set_share_lookup_hits(hits);
@@ -1529,6 +1533,7 @@ impl CloudSession {
                     );
                 }
                 Err(message) => {
+                    chart.clear_arm_live();
                     chart.push_system_event(mlc_core::SystemEventKind::Share, "Share failed", message, true);
                 }
             }
@@ -3797,7 +3802,7 @@ fn map_forum_search_hit(h: ForumSearchHit) -> ForumSearchHitUi {
 /// `origin + url_path` → the absolute share URL handed to the clipboard.
 /// `url_path` is root-relative (`/?share=<token>`) exactly so the client
 /// pins the origin the share was created on.
-fn absolute_share_url(url_path: &str) -> String {
+pub(crate) fn absolute_share_url(url_path: &str) -> String {
     let origin = web_sys::window()
         .and_then(|w| w.location().origin().ok())
         .unwrap_or_default();
