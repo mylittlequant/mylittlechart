@@ -1081,16 +1081,14 @@ impl CloudSession {
                 let mut guard = self.inner.borrow_mut();
                 std::mem::take(&mut guard.edge_hello)
             };
-            if !hello.is_empty() {
-                if let Some(ws) = self.inner.borrow().edge_socket.as_ref() {
-                    let _ = ws.send_with_str(&hello);
-                }
-            }
-            let Some((_, frames)) = chart.take_edge_frames() else {
+            let ws = self.inner.borrow().edge_socket.clone();
+            let Some(ws) = ws else {
                 return;
             };
-            let guard = self.inner.borrow();
-            let Some(ws) = guard.edge_socket.as_ref() else {
+            if !hello.is_empty() {
+                let _ = ws.send_with_str(&hello);
+            }
+            let Some((_, frames)) = chart.take_edge_frames() else {
                 return;
             };
             for frame in frames {

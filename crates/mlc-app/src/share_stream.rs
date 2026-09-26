@@ -41,9 +41,6 @@ pub struct ShareStream {
     pub viewport_sent: String,
     /// Local id of the in-progress draw preview. Kept out of the object diff.
     pub preview_local: Option<u64>,
-    /// Finished-object JSON already handed to the socket. Not `last`:
-    /// `last` is what the control box has acknowledged.
-    pub edge_final: HashMap<String, String>,
 }
 
 impl ShareStream {
@@ -66,7 +63,6 @@ impl ShareStream {
             gesture_sent: String::new(),
             viewport_sent: String::new(),
             preview_local: None,
-            edge_final: HashMap::new(),
         }
     }
 }
@@ -236,8 +232,6 @@ impl ChartApp {
         let current = self.share_object_json(&preset_id);
         let stream = self.share_streams.get_mut(&preset_id)?;
         let mut frames = Vec::new();
-        let phase_now = gesture.as_ref().map(|(phase, _)| phase.as_str()).unwrap_or("");
-        let phase_now = phase_now.to_string();
         if let Some((phase, json)) = gesture {
             let send_idle = phase == "idle" && !stream.gesture_phase.is_empty() && stream.edge_phase != "idle" && stream.edge_phase != phase;
             let send_move = phase != "idle" && stream.gesture_sent != json;
@@ -265,27 +259,6 @@ impl ChartApp {
                     ));
                     stream.edge_point = body.clone();
                 }
-            }
-        }
-        // Mouse-up: one frame of the finished object, same tick as idle.
-        // The control-box post still happens from `share_ops_due`.
-        if phase_now == "idle" {
-            let settled: Vec<(String, String)> = current
-                .iter()
-                .filter(|(key, body)| {
-                    !key.starts_with('i')
-                        && stream.last.get(*key) != Some(*body)
-                        && stream.edge_final.get(*key) != Some(*body)
-                })
-                .map(|(key, body)| (key.clone(), body.clone()))
-                .collect();
-            for (key, body) in settled {
-                frames.push(format!(
-                    "{{\"t\":\"p\",\"id\":{},\"b\":{},\"new\":1}}",
-                    serde_json::to_string(&key).unwrap_or_else(|_| "\"\"".into()),
-                    serde_json::to_string(&body).unwrap_or_else(|_| "\"\"".into())
-                ));
-                stream.edge_final.insert(key, body);
             }
         }
         if frames.is_empty() {
