@@ -302,8 +302,10 @@ impl ChartApp {
                     body: body.to_string(),
                 };
                 self.apply_one_share_op(&preset_id, &op);
-                if let Some(stream) = self.share_streams.get_mut(&preset_id) {
-                    stream.last.insert(id.to_string(), body.to_string());
+                if !follow.can_send {
+                    if let Some(stream) = self.share_streams.get_mut(&preset_id) {
+                        stream.last.insert(id.to_string(), body.to_string());
+                    }
                 }
             }
             _ => {}
@@ -430,9 +432,20 @@ impl ChartApp {
                 if op.seq > stream.cursor {
                     stream.cursor = op.seq;
                 }
+                if !held {
+                    match op.kind.as_str() {
+                        "primitive_upsert" | "indicator_upsert" => {
+                            stream.last.insert(op.object_id.clone(), op.body.clone());
+                        }
+                        "primitive_delete" | "indicator_delete" => {
+                            stream.last.remove(&op.object_id);
+                        }
+                        _ => {}
+                    }
+                }
+                stream.baseline = true;
             }
         }
-        self.resync_share_last(&preset_id);
     }
 
     fn ensure_share_keys(&mut self, preset_id: &str) {
@@ -577,15 +590,6 @@ impl ChartApp {
                 self.core.indicators_mut().restore_from_snapshot(&snap);
             }
             _ => {}
-        }
-    }
-
-    fn resync_share_last(&mut self, preset_id: &str) {
-        self.ensure_share_keys(preset_id);
-        let current = self.share_object_json(preset_id);
-        if let Some(stream) = self.share_streams.get_mut(preset_id) {
-            stream.last = current;
-            stream.baseline = true;
         }
     }
 

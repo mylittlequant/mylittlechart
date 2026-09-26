@@ -1055,6 +1055,10 @@ impl CloudSession {
         }
         let token = token.unwrap();
         self.ensure_edge(&token);
+        let open = self.inner.borrow().edge_socket.as_ref().map(|ws| ws.ready_state()) == Some(1);
+        if !open {
+            return;
+        }
         let Some((_, frames)) = chart.take_edge_frames() else {
             return;
         };
@@ -1062,9 +1066,6 @@ impl CloudSession {
         let Some(ws) = guard.edge_socket.as_ref() else {
             return;
         };
-        if ws.ready_state() != 1 {
-            return;
-        }
         for frame in frames {
             let _ = ws.send_with_str(&frame);
         }
@@ -1081,8 +1082,13 @@ impl CloudSession {
     fn ensure_edge(&self, token: &str) {
         {
             let guard = self.inner.borrow();
-            if guard.edge_token == token && guard.edge_socket.is_some() {
-                return;
+            if guard.edge_token == token {
+                if let Some(ws) = guard.edge_socket.as_ref() {
+                    let state = ws.ready_state();
+                    if state == 0 || state == 1 {
+                        return;
+                    }
+                }
             }
         }
         self.close_edge();

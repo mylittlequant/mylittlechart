@@ -1113,25 +1113,42 @@ fn friend_person_row(
     nick: &str,
     actions: &[(&str, &str)],
 ) -> f64 {
-    ctx.set_fill_color(&tt.item_text);
     ctx.set_font("12px sans-serif");
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
-    ctx.fill_text(&format!("@{nick}"), x, y + 12.0);
-    let mut bx = x + w;
+    let mut buttons: Vec<(f64, String, String)> = Vec::new();
+    let mut used = 0.0;
     for (label, action) in actions.iter().rev() {
-        let bw = 78.0;
-        bx -= bw + 4.0;
-        let r = WidgetRect::new(bx, y, bw, 22.0);
-        ctx.set_fill_color(&tt.dropdown_bg);
+        let bw = (label.len() as f64) * 7.2 + 18.0;
+        used += bw + 6.0;
+        buttons.push((bw, (*label).to_string(), (*action).to_string()));
+    }
+    let nick_chars = ((w - used - 8.0) / 7.0).floor().max(4.0) as usize;
+    let shown = {
+        let raw = format!("@{nick}");
+        if raw.chars().count() > nick_chars {
+            raw.chars().take(nick_chars).collect()
+        } else {
+            raw
+        }
+    };
+    ctx.set_fill_color(&tt.item_text);
+    ctx.fill_text(&shown, x, y + 13.0);
+    let mut bx = x + w;
+    for (bw, label, action) in buttons {
+        bx -= bw + 6.0;
+        let r = WidgetRect::new(bx, y + 1.0, bw, 24.0);
+        let hit = format!("user_settings:friend_{action}:{nick}");
+        let hovered = coord.is_hovered(&uzor::WidgetId::from(hit.as_str()));
+        ctx.set_fill_color(if hovered { &tt.item_bg_hover } else { &tt.dropdown_bg });
         ctx.fill_rounded_rect(r.x, r.y, r.width, r.height, 4.0);
         ctx.set_fill_color(&tt.item_text);
         ctx.set_text_align(TextAlign::Center);
-        ctx.fill_text(label, r.center_x(), r.center_y());
-        let hit = format!("user_settings:friend_{action}:{nick}");
-        coord.register_on_layer(hit.as_str(), r, Sense::CLICK, layer_id);
+        ctx.fill_text(&label, r.center_x(), r.center_y());
+        coord.register_on_layer(hit.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
+        ctx.set_text_align(TextAlign::Left);
     }
-    y + 26.0
+    y + 30.0
 }
 
 fn render_shares_tab(
