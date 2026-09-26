@@ -1432,6 +1432,9 @@ impl ChartContainer {
             price_min
         };
 
+        if self.crosshair.follow_remote {
+            return;
+        }
         self.crosshair.visible = true;
         self.crosshair.synced = false; // Local mouse update — not synced
         self.crosshair.pane_index = pane_index;

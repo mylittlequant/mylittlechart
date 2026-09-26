@@ -141,6 +141,19 @@ fn draw_body(
             tt,
         );
         y += ROW_H + GAP;
+        draw_toggle_row(
+            ctx,
+            coord,
+            layer_id,
+            x,
+            y,
+            w,
+            "share_settings:toggle:cursor",
+            "Cursor",
+            state.live_cursor,
+            tt,
+        );
+        y += ROW_H + GAP;
     }
 
     let (field_rect, char_x_positions) = if show_people {

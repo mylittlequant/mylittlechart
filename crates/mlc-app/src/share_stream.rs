@@ -21,6 +21,9 @@ pub struct ShareStream {
     pub live: bool,
     /// Pan/zoom rides the channel. Only meaningful while `live` is on.
     pub live_viewport: bool,
+    pub live_cursor: bool,
+    pub cursor_sent: String,
+    pub preview_sent: String,
     pub baseline: bool,
     pub last_push_ms: f64,
     pub last_pull_ms: f64,
@@ -50,6 +53,9 @@ impl ShareStream {
             cursor: 0,
             live: false,
             live_viewport: false,
+            live_cursor: false,
+            cursor_sent: String::new(),
+            preview_sent: String::new(),
             baseline: false,
             last_push_ms: 0.0,
             last_pull_ms: 0.0,
@@ -82,6 +88,13 @@ pub struct ShareFollow {
 }
 
 #[derive(Clone, Debug)]
+#[derive(Default)]
+struct LiveHand {
+    drag: Option<(String, String)>,
+    preview: Option<String>,
+    cursor: Option<String>,
+}
+
 pub struct ShareInboundOp {
     pub seq: i64,
     pub kind: String,
@@ -216,6 +229,54 @@ impl ChartApp {
         if stream.live { Some(follow.token) } else { None }
     }
 
+    /// Drag, control-point move, in-progress drawing, and the cursor.
+    /// These are the live picture. HTTP only carries the line after release.
+    fn live_hand(&self, preset_id: &str) -> LiveHand {
+        let Some(window) = self.panel_app.panel_grid.active_container() else {
+            return LiveHand::default();
+        };
+        let bid = window.current_tag_id;
+        let cross = window.crosshair;
+        let cursor = self.share_streams.get(preset_id).is_some_and(|s| s.live_cursor).then(|| {
+            serde_json::json!({
+                "bar": cross.bar_f64,
+                "price": cross.price,
+                "visible": cross.visible,
+            })
+            .to_string()
+        });
+        let idx = cross.bar_f64.floor().max(0.0) as usize;
+        let ts = self
+            .core
+            .bubbles()
+            .bars(bid)
+            .get(idx)
+            .map(|bar| bar.timestamp.saturating_mul(1000))
+            .unwrap_or(0);
+        let drawings = self.core.drawings();
+        let drag = drawings.dragging(bid).and_then(|id| {
+            let prim = drawings.primitives(bid).iter().find(|p| p.data().id == id)?;
+            let body = serde_json::json!({
+                "type_id": prim.type_id(),
+                "json": prim.to_json(),
+            })
+            .to_string();
+            Some((format!("p:{id}"), body))
+        });
+        let preview = if drawings.is_drawing(bid) {
+            drawings.create_preview(bid, ts, cross.price).map(|prim| {
+                serde_json::json!({
+                    "type_id": prim.type_id(),
+                    "json": prim.to_json(),
+                })
+                .to_string()
+            })
+        } else {
+            None
+        };
+        LiveHand { drag, preview, cursor }
+    }
+
     /// Frames for the edge socket. Empty when Live is off. The moving line
     /// is one of these frames, not a row in the control-box log.
     pub fn take_edge_frames(&mut self) -> Option<(String, Vec<String>)> {
@@ -228,8 +289,7 @@ impl ChartApp {
         let token = follow.token.clone();
         let gesture = self.share_gesture(&preset_id);
         let viewport = self.share_viewport_json(&preset_id);
-        let hot = self.local_drag_key(&preset_id);
-        let current = self.share_object_json(&preset_id);
+        let hand = self.live_hand(&preset_id);
         let stream = self.share_streams.get_mut(&preset_id)?;
         let mut frames = Vec::new();
         if let Some((phase, json)) = gesture {
@@ -249,17 +309,43 @@ impl ChartApp {
                 }
             }
         }
-        if let Some(hot) = hot {
-            if let Some(body) = current.get(&hot) {
-                if stream.edge_point != *body {
+        if let Some((key, body)) = hand.drag {
+            if stream.edge_point != body {
+                frames.push(format!(
+                    "{{\"t\":\"p\",\"id\":{},\"b\":{}}}",
+                    serde_json::to_string(&key).unwrap_or_else(|_| "\"\"".into()),
+                    serde_json::to_string(&body).unwrap_or_else(|_| "\"\"".into())
+                ));
+                stream.edge_point = body;
+            }
+        }
+        match hand.preview {
+            Some(body) if stream.preview_sent != body => {
+                frames.push(format!(
+                    "{{\"t\":\"preview\",\"b\":{}}}",
+                    serde_json::to_string(&body).unwrap_or_else(|_| "\"\"".into())
+                ));
+                stream.preview_sent = body;
+            }
+            None if !stream.preview_sent.is_empty() => {
+                frames.push("{\"t\":\"preview\",\"b\":\"\"}".to_string());
+                stream.preview_sent.clear();
+            }
+            _ => {}
+        }
+        if stream.live_cursor {
+            if let Some(body) = hand.cursor {
+                if stream.cursor_sent != body {
                     frames.push(format!(
-                        "{{\"t\":\"p\",\"id\":{},\"b\":{}}}",
-                        serde_json::to_string(&hot).unwrap_or_else(|_| "\"\"".into()),
-                        serde_json::to_string(body).unwrap_or_else(|_| "\"\"".into())
+                        "{{\"t\":\"c\",\"b\":{}}}",
+                        serde_json::to_string(&body).unwrap_or_else(|_| "\"\"".into())
                     ));
-                    stream.edge_point = body.clone();
+                    stream.cursor_sent = body;
                 }
             }
+        } else if !stream.cursor_sent.is_empty() {
+            frames.push("{\"t\":\"c\",\"off\":true}".to_string());
+            stream.cursor_sent.clear();
         }
         if frames.is_empty() {
             None
@@ -289,7 +375,19 @@ impl ChartApp {
                 let body = value.get("b").map(|v| v.to_string()).unwrap_or_default();
                 self.apply_share_viewport(&body);
             }
+            "preview" => {
+                let body = value.get("b").and_then(|v| v.as_str()).unwrap_or("");
+                if body.is_empty() {
+                    self.clear_share_preview(&preset_id, bid);
+                } else {
+                    self.apply_share_preview_body(&preset_id, bid, body);
+                }
+            }
+            "c" => {
+                self.apply_share_cursor(&value);
+            }
             "p" => {
+                self.clear_share_preview(&preset_id, bid);
                 let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let body = value.get("b").and_then(|v| v.as_str()).unwrap_or("");
                 if self.local_drag_key(&preset_id).as_deref() == Some(id) {
@@ -362,10 +460,12 @@ impl ChartApp {
             stream.live = live;
             if !live {
                 stream.live_viewport = false;
+                stream.live_cursor = false;
             }
         }
         if !live {
             self.panel_app.share_settings_state.live_viewport = false;
+            self.panel_app.share_settings_state.live_cursor = false;
         }
         let token = self
             .shared_chart_meta(&active)
@@ -381,6 +481,23 @@ impl ChartApp {
         } else {
             self.panel_app.share_settings_state.status =
                 "Saved as the default for the next Share".to_string();
+        }
+    }
+
+    pub fn set_share_cursor(&mut self, on: bool) {
+        if !self.panel_app.share_settings_state.live_on {
+            return;
+        }
+        self.panel_app.share_settings_state.live_cursor = on;
+        let active = self.panel_app.active_preset_id.clone();
+        if let Some(stream) = self.share_streams.get_mut(&active) {
+            stream.live_cursor = on;
+            stream.cursor_sent.clear();
+        }
+        if !on {
+            if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                window.crosshair.follow_remote = false;
+            }
         }
     }
 
@@ -414,6 +531,7 @@ impl ChartApp {
         self.panel_app.share_settings_state.live_on = live;
         if !live {
             self.panel_app.share_settings_state.live_viewport = false;
+            self.panel_app.share_settings_state.live_cursor = false;
         }
         let preset_id = follow.preset_id.clone();
         if reset {
@@ -733,6 +851,46 @@ impl ChartApp {
             return;
         };
         window.apply_shared_view(view_start, bar_spacing, price);
+    }
+
+    fn apply_share_cursor(&mut self, value: &serde_json::Value) {
+        let Some(window) = self.panel_app.panel_grid.active_container_mut() else {
+            return;
+        };
+        if value.get("off").and_then(|v| v.as_bool()).unwrap_or(false) {
+            window.crosshair.follow_remote = false;
+            return;
+        }
+        let body = value.get("b").and_then(|v| v.as_str()).unwrap_or("");
+        let Ok(cursor) = serde_json::from_str::<serde_json::Value>(body) else {
+            return;
+        };
+        let bar = cursor.get("bar").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let price = cursor.get("price").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let visible = cursor.get("visible").and_then(|v| v.as_bool()).unwrap_or(false);
+        window.set_crosshair_from_bar(bar, price, visible, None);
+        window.crosshair.follow_remote = true;
+    }
+
+    fn apply_share_preview_body(&mut self, preset_id: &str, bid: mlc_core::ids::BubbleId, body: &str) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+            return;
+        };
+        let type_id = value.get("type_id").and_then(|v| v.as_str()).unwrap_or("");
+        let json = value.get("json").and_then(|v| v.as_str()).unwrap_or("");
+        if type_id.is_empty() || json.is_empty() {
+            return;
+        }
+        let registry = mlc_core::drawing::primitives_v2::PrimitiveRegistry::global().read().unwrap();
+        let Some(prim) = registry.from_json(type_id, json) else {
+            return;
+        };
+        drop(registry);
+        self.clear_share_preview(preset_id, bid);
+        let id = self.core.drawings_mut().add_external(bid, prim);
+        if let Some(stream) = self.share_streams.get_mut(preset_id) {
+            stream.preview_local = Some(id);
+        }
     }
 
     fn clear_share_preview(&mut self, preset_id: &str, bid: mlc_core::ids::BubbleId) {

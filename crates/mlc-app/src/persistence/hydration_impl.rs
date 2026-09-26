@@ -1954,10 +1954,9 @@ impl ChartApp {
         for snap in &preset.windows {
             let chart_id = mlc_core::ids::ChartId(snap.window_id);
             let Some(bid) = self.bubble_for_chart(chart_id) else { continue };
-            let already = self.with_bubble(bid, |b| b.primitives.len()).unwrap_or(0);
-            if already > 0 {
-                continue;
-            }
+            let existing: std::collections::HashSet<u64> = self
+                .with_bubble(bid, |b| b.primitives.iter().map(|p| p.data().id).collect())
+                .unwrap_or_default();
             let source: &[mlc_core::drawing::PrimitiveSnapshot] =
                 if !snap.drawings.primitives.is_empty() {
                     &snap.drawings.primitives
@@ -1970,6 +1969,9 @@ impl ChartApp {
             if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                 let mut guard = self.core.drawings_mut();
                 for prim_snap in source {
+                    if prim_snap.id().is_some_and(|id| existing.contains(&id)) {
+                        continue;
+                    }
                     if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
                         guard.add_external(bid, prim);
                     }

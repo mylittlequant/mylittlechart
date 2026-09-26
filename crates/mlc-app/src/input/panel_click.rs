@@ -5451,6 +5451,11 @@ impl ChartApp {
                             self.set_share_viewport(on);
                             return;
                         }
+                        if which == "cursor" {
+                            let on = !self.panel_app.share_settings_state.live_cursor;
+                            self.set_share_cursor(on);
+                            return;
+                        }
                         let (public_on, clone_on) = match self.panel_app.share_settings_state.rights_preset.as_str() {
                             "view_only" => (true, false),
                             "private" => (false, true),

@@ -312,6 +312,8 @@ pub struct ShareSettingsState {
     pub live_on: bool,
     /// Stream pan and zoom with Live. Drawn only while Live is on.
     pub live_viewport: bool,
+    /// Stream the author's crosshair and hide the viewer's. Drawn only while Live is on.
+    pub live_cursor: bool,
     pub position: Option<(f64, f64)>,
     pub is_dragging: bool,
     pub drag_offset: Option<(f64, f64)>,

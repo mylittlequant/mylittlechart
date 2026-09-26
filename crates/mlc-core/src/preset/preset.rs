@@ -529,8 +529,43 @@ impl ChartPreset {
         }
 
         // A share viewer watches the author's objects. Their numbers stay.
-        // Clone passes false: that chart is new data and gets new numbers.
+        // Window ids inside each primitive still follow the remapped window,
+        // or the drawings name a window that no longer exists and the reload
+        // drops them. Clone passes false: that chart is new data.
         if keep_primitive_ids {
+            let mut identity: HashMap<u64, u64> = HashMap::new();
+            let mut note = |snaps: &[PrimitiveSnapshot]| {
+                for snap in snaps {
+                    if let Some(old_id) = snap.id() {
+                        identity.insert(old_id, old_id);
+                    }
+                }
+            };
+            for bubble in &self.bubbles {
+                note(&bubble.primitives);
+            }
+            for window in &self.windows {
+                note(&window.drawings.primitives);
+                note(&window.stashed_primitives);
+                for snaps in window.symbol_drawings_snapshots.values() {
+                    note(snaps);
+                }
+            }
+            let rewrite = |snaps: &mut Vec<PrimitiveSnapshot>| {
+                for snap in snaps.iter_mut() {
+                    *snap = snap.remap_ids(&identity, &window_id_map);
+                }
+            };
+            for bubble in &mut self.bubbles {
+                rewrite(&mut bubble.primitives);
+            }
+            for window in &mut self.windows {
+                rewrite(&mut window.drawings.primitives);
+                rewrite(&mut window.stashed_primitives);
+                for snaps in window.symbol_drawings_snapshots.values_mut() {
+                    rewrite(snaps);
+                }
+            }
             return HashMap::new();
         }
 
