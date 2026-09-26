@@ -5569,6 +5569,17 @@ impl ChartApp {
 
         // Public share: a signed-out viewer may clone the open chart into
         // a local tab. Creating a share still requires an account.
+        if widget_id == "share_end:close" {
+            if let Some(id) = self.stream_ended.clone() {
+                self.stream_ended = None;
+                self.close_tab(&id);
+            }
+            return;
+        }
+        if widget_id == "share_end:bg" {
+            return;
+        }
+
         if let Some(which) = widget_id.strip_prefix("share_live:") {
             match which {
                 "live" => {

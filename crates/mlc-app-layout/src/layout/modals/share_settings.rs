@@ -34,9 +34,8 @@ fn flags(preset: &str) -> (bool, bool) {
     }
 }
 
-fn content_height(hits: usize, show_people: bool, live_on: bool) -> f64 {
-    let rows = if live_on { 5.0 } else { 4.0 };
-    let mut h = rows * (ROW_H + GAP);
+fn content_height(hits: usize, show_people: bool) -> f64 {
+    let mut h = 3.0 * (ROW_H + GAP);
     if show_people {
         let rows = hits.min(6).max(1) as f64;
         h += LABEL_H + GAP + FIELD_H + GAP + rows * (HIT_H + 4.0);
@@ -71,7 +70,7 @@ pub fn render_share_settings_overlay(
             "share_settings",
             "Share settings",
             MODAL_W,
-            content_height(state.hits.len(), show_people, state.live_on),
+            content_height(state.hits.len(), show_people),
         )
     };
     let mut field: Option<(WidgetRect, Vec<f64>)> = None;

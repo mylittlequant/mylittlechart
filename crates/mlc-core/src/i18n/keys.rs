@@ -3925,10 +3925,14 @@ pub enum ShareViewerKey {
     SharedChartGoneTitle = 0,
     /// Toast body: "This shared chart is no longer available.".
     SharedChartGoneBody = 1,
+    /// Card on a viewer tab after the author turns Live off.
+    StreamEndedTitle = 2,
+    /// Button on that card. Closes the stream tab.
+    StreamEndedAction = 3,
 }
 
 impl ShareViewerKey {
-    pub const COUNT: usize = 2;
+    pub const COUNT: usize = 4;
 
     /// Get translation for this key, with En fallback for empty cells.
     #[inline]

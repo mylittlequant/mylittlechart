@@ -2028,7 +2028,7 @@ pub(super) static CANDLE_PATTERN_SHORT_KEY_TABLE: [[&str; N_LANG]; 21] = [
 // `every_chart_table_is_fully_translated` below. Column order matches
 // `Language::all()` (`lang.rs`): en, ru, es, de, fr, pt, zh, ja, ko, ar, it,
 // tr, pl, uk, hi.
-pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 2] = [
+pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 4] = [
     /* 0 SharedChartGoneTitle */ [
         "Shared chart unavailable",
         "Общий график недоступен",
@@ -2062,6 +2062,40 @@ pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 2] = [
         "Ten udostępniony wykres nie jest już dostępny.",
         "Цей спільний графік більше не доступний.",
         "यह साझा चार्ट अब उपलब्ध नहीं है।",
+    ],
+    /* 2 StreamEndedTitle */ [
+        "The stream has ended",
+        "Стрим закончился",
+        "La transmisión terminó",
+        "Der Stream ist beendet",
+        "Le stream est terminé",
+        "A transmissão terminou",
+        "直播已结束",
+        "配信は終了しました",
+        "스트림이 종료되었습니다",
+        "انتهى البث",
+        "Lo stream è terminato",
+        "Yayın bitti",
+        "Stream się zakończył",
+        "Стрім закінчився",
+        "स्ट्रीम समाप्त हो गया",
+    ],
+    /* 3 StreamEndedAction */ [
+        "Close",
+        "Закрыть",
+        "Cerrar",
+        "Schliessen",
+        "Fermer",
+        "Fechar",
+        "关闭",
+        "閉じる",
+        "닫기",
+        "إغلاق",
+        "Chiudi",
+        "Kapat",
+        "Zamknij",
+        "Закрити",
+        "बंद करें",
     ],
 ];
 

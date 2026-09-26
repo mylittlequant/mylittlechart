@@ -763,6 +763,8 @@ pub struct ChartApp {
     pending_share_live: bool,
     /// Stream button: after the link exists, turn the socket on.
     arm_live_after_share: bool,
+    /// Viewer tab whose live socket the author just closed.
+    stream_ended: Option<String>,
     /// Stream button on a chart that already has a link: shell copies it.
     pending_share_copy: bool,
 
@@ -3544,6 +3546,7 @@ impl ChartApp {
             capturing_screenshot: false,
             pending_share_live: false,
             arm_live_after_share: false,
+            stream_ended: None,
             pending_share_copy: false,
             pending_share_admin: None,
             pending_clipboard_text: None,
@@ -3947,6 +3950,7 @@ impl ChartApp {
             capturing_screenshot: false,
             pending_share_live: false,
             arm_live_after_share: false,
+            stream_ended: None,
             pending_share_copy: false,
             pending_share_admin: None,
             pending_clipboard_text: None,
@@ -4566,6 +4570,7 @@ impl ChartApp {
             capturing_screenshot: false,
             pending_share_live: false,
             arm_live_after_share: false,
+            stream_ended: None,
             pending_share_copy: false,
             pending_share_admin: None,
             pending_clipboard_text: None,
@@ -10439,6 +10444,30 @@ impl ChartApp {
                     live,
                     viewport,
                     cursor_on,
+                    &toolbar_theme,
+                );
+            }
+            if self.stream_ended.as_deref() == Some(active_preset_id.as_str()) {
+                let title = mlc_core::i18n::t_share_viewer(
+                    mlc_core::i18n::ShareViewerKey::StreamEndedTitle,
+                );
+                let action = mlc_core::i18n::t_share_viewer(
+                    mlc_core::i18n::ShareViewerKey::StreamEndedAction,
+                );
+                let mut coord = self.input_coordinator.borrow_mut();
+                let cover = uzor::types::Rect::new(
+                    content_rect.x,
+                    content_rect.y,
+                    content_rect.width,
+                    content_rect.height,
+                );
+                mlc_app_layout::ui::share_viewer_row::draw_stream_ended(
+                    ctx,
+                    &mut coord,
+                    &uzor::input::LayerId::new("toolbar"),
+                    cover,
+                    title,
+                    action,
                     &toolbar_theme,
                 );
             }

@@ -1989,6 +1989,12 @@ pub const ICON_SCREENSHOT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" vi
 <circle cx="12" cy="13" r="4"/>
 </svg>"##;
 
+/// Camcorder: body plus the side lens. Not the photo camera (`ICON_SCREENSHOT`).
+pub const ICON_VIDEO: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="6" width="13" height="12" rx="2"/>
+  <path d="M15 10.2l6.2-3.4a.5.5 0 0 1 .8.4v9.6a.5.5 0 0 1-.8.4L15 13.8z"/>
+</svg>"##;
+
 pub const ICON_CIRCUIT_BOARD: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
   <rect x="3" y="3" width="18" height="18" rx="2"/>
   <path d="M11 9h4a2 2 0 0 0 2-2V3"/>
@@ -3137,6 +3143,7 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "zoom_out" | "zoomout" => Some(ICON_ZOOM_OUT),
         "zoom_reset" | "zoomreset" | "maximize2" => Some(ICON_ZOOM_RESET),
         "screenshot" | "camera" => Some(ICON_SCREENSHOT),
+        "video" | "video_camera" | "videocam" => Some(ICON_VIDEO),
 
         // Actions
         "undo" => Some(ICON_UNDO),

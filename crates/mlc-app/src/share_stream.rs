@@ -429,6 +429,16 @@ impl ChartApp {
             "c" => {
                 self.apply_share_cursor(&value);
             }
+            "end" => {
+                let id = self.panel_app.active_preset_id.clone();
+                if self.shared_chart_meta.contains_key(&id) {
+                    self.stream_ended = Some(id);
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                        window.follow_remote_view = false;
+                        window.crosshair.follow_remote = false;
+                    }
+                }
+            }
             "p" => {
                 self.clear_share_preview(&preset_id, bid);
                 let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("");
@@ -587,12 +597,17 @@ impl ChartApp {
         if can_send {
             self.note_share_can_send(&preset_id, true);
         }
-        {
+        let ended = {
             let stream = self.share_streams.entry(preset_id.clone()).or_insert_with(|| ShareStream::new(token.to_string()));
             if stream.token != token {
                 *stream = ShareStream::new(token.to_string());
             }
+            let was_live = stream.live;
             stream.live = live;
+            was_live && !live
+        };
+        if ended && self.shared_chart_meta.contains_key(&preset_id) {
+            self.stream_ended = Some(preset_id.clone());
         }
         self.panel_app.share_settings_state.live_on = live;
         if !live {
@@ -933,6 +948,7 @@ impl ChartApp {
             vec![
                 "{\"t\":\"c\",\"off\":true}".to_string(),
                 "{\"t\":\"v\",\"off\":true}".to_string(),
+                "{\"t\":\"end\"}".to_string(),
             ],
         ))
     }

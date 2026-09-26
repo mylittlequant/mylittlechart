@@ -299,7 +299,7 @@ pub fn standalone_top_toolbar() -> PanelToolbarDef {
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::icon_button("share_chart", ToolbarIconId::new("Globe"))
                 .with_tooltip(t_toolbar(TK::ShareChart)),
-            ToolbarItemDef::icon_button("share_stream", ToolbarIconId::new("Signal"))
+            ToolbarItemDef::icon_button("share_stream", ToolbarIconId::new("Video"))
                 .with_tooltip(t_toolbar(TK::ShareStream)),
         ]),
     ]).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
@@ -402,7 +402,7 @@ pub fn top_toolbar() -> PanelToolbarDef {
         ToolbarSectionDef::new(vec![
             ToolbarItemDef::icon_button("share_chart", ToolbarIconId::new("Globe"))
                 .with_tooltip(t_toolbar(TK::ShareChart)),
-            ToolbarItemDef::icon_button("share_stream", ToolbarIconId::new("Signal"))
+            ToolbarItemDef::icon_button("share_stream", ToolbarIconId::new("Video"))
                 .with_tooltip(t_toolbar(TK::ShareStream)),
         ]),
     ]).with_size(crate::types::TOP_TOOLBAR_HEIGHT)
