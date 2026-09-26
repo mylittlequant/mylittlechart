@@ -279,7 +279,17 @@ pub fn render_user_settings_modal(
                 content_w - padding * 2.0,
                 scroll_viewport_h,
             );
-            render_friends_tab(ctx, viewport_rect, state, toolbar_theme, input_coordinator, &layer_id);
+            render_friends_tab(
+                ctx,
+                viewport_rect,
+                state,
+                toolbar_theme,
+                frame_theme,
+                current_time_ms,
+                input_coordinator,
+                &layer_id,
+                &mut result,
+            );
         }
         UserSettingsTab::Shares => {
             let viewport_rect = WidgetRect::new(
@@ -941,9 +951,14 @@ fn render_friends_tab(
     viewport: WidgetRect,
     state: &UserSettingsState,
     tt: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    current_time_ms: u64,
     coord: &mut uzor::input::InputCoordinator,
     layer_id: &uzor::input::LayerId,
+    result: &mut crate::layout::render_frame::UserSettingsResult,
 ) {
+    use uzor::WidgetId;
+
     let x = viewport.x;
     let mut y = viewport.y;
     let w = viewport.width;
@@ -965,11 +980,68 @@ fn render_friends_tab(
     ctx.set_fill_color(&tt.item_text_muted);
     ctx.fill_text("Friends still find you when this is off.", x, y + 8.0);
     y += 28.0;
+
+    let glass = WidgetRect::new(x, y, 32.0, 32.0);
+    ctx.set_fill_color(&tt.dropdown_bg);
+    ctx.fill_rounded_rect(glass.x, glass.y, glass.width, glass.height, 6.0);
+    draw_svg_icon(ctx, Icon::Search.svg(), glass.x + 8.0, glass.y + 8.0, 16.0, 16.0, &tt.item_text);
+    coord.register_on_layer("user_settings:friend_nick", glass, Sense::CLICK, layer_id);
+
+    let field_rect = WidgetRect::new(x + 36.0, y, (w - 36.0).max(40.0), 32.0);
+    let wid = WidgetId::from("friends_nick");
+    let text = coord.text_fields().text(&wid).to_string();
+    let cursor = coord.text_fields().cursor(&wid);
+    let (sel_start, sel_end) = match coord.text_fields().selection_range(&wid) {
+        Some((lo, hi)) => (Some(lo), Some(hi)),
+        None => (None, None),
+    };
+    let engaged = coord.text_fields().is_engaged(&wid);
+    let widget_theme = toolbar_to_widget_theme(tt, frame_theme);
+    let config = InputConfig::new(&text)
+        .with_focused(engaged)
+        .with_cursor(cursor)
+        .with_placeholder("Nick")
+        .with_selection(sel_start, sel_end);
+    let drawn = draw_input(ctx, &config, WidgetState::Normal, field_rect, &widget_theme);
+    coord.register_on_layer("user_settings:friend_nick", field_rect, Sense::CLICK | Sense::DRAG, layer_id);
+    result.content_items.push(("friend_nick".to_string(), field_rect));
+    result.input_char_positions.push(("friend_nick".to_string(), drawn.char_x_positions));
+    if engaged && coord.text_fields().cursor_visible(current_time_ms) {
+        draw_input_cursor(ctx, drawn.cursor_x, drawn.cursor_y, drawn.cursor_height, &tt.item_text);
+    }
+    y += 40.0;
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_font("12px sans-serif");
+    if state.friend_hits.is_empty() {
+        if text.trim().chars().count() >= 2 {
+            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.fill_text("No one found.", x, y + 8.0);
+            y += 22.0;
+        }
+    } else {
+        for nick in state.friend_hits.iter().take(6) {
+            let row = WidgetRect::new(x, y, w, 24.0);
+            ctx.set_fill_color(&tt.item_text);
+            ctx.set_text_baseline(TextBaseline::Middle);
+            ctx.fill_text(&format!("@{nick}"), x + 8.0, row.center_y());
+            let hit = format!("user_settings:friend_add:{nick}");
+            coord.register_on_layer(hit.as_str(), row, Sense::CLICK, layer_id);
+            y += 26.0;
+        }
+    }
+    if !state.friend_note.is_empty() {
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text(&state.friend_note, x, y + 8.0);
+        y += 22.0;
+    }
+
     let invite = WidgetRect::new(x, y, w, 32.0);
     ctx.set_fill_color(&tt.dropdown_bg);
     ctx.fill_rounded_rect(invite.x, invite.y, invite.width, invite.height, 6.0);
     ctx.set_fill_color(&tt.item_text);
+    ctx.set_font("13px sans-serif");
     ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text("New friend invite link", invite.center_x(), invite.center_y());
     coord.register_on_layer("user_settings:friend_invite", invite, Sense::CLICK, layer_id);
     y += 40.0;
@@ -977,7 +1049,9 @@ fn render_friends_tab(
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(&tt.item_text_muted);
     if !state.friend_invite.is_empty() {
+        let url_row = WidgetRect::new(x, y, w, 22.0);
         ctx.fill_text(&state.friend_invite, x, y + 8.0);
+        coord.register_on_layer("user_settings:friend_copy", url_row, Sense::CLICK, layer_id);
         y += 22.0;
     }
     ctx.fill_text("Friends", x, y + 8.0);

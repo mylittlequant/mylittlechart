@@ -223,6 +223,7 @@ fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
     // what makes `update_field` / `focus` / `on_char` actually land. A
     // field that is only drawn and never registered cannot take a caret.
     tf.register(text_input::SHARE_SETTINGS_NICK, TextFieldConfig::text().with_max_len(64));
+    tf.register(text_input::FRIENDS_NICK, TextFieldConfig::text().with_max_len(64));
 }
 
 use std::cell::RefCell;
@@ -5690,6 +5691,19 @@ impl ChartApp {
 
     pub fn set_share_lookup_hits(&mut self, hits: Vec<(String, String)>) {
         self.panel_app.share_settings_state.hits = hits;
+    }
+
+    pub fn friends_nick_query(&self) -> Option<String> {
+        let st = &self.panel_app.user_settings_state;
+        if !st.is_open || st.active_tab != mlc_app_layout::ui::modal_settings::UserSettingsTab::Friends {
+            return None;
+        }
+        let wid = uzor::WidgetId::from(crate::text_input::FRIENDS_NICK);
+        Some(self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string())
+    }
+
+    pub fn set_friend_hits(&mut self, hits: Vec<String>) {
+        self.panel_app.user_settings_state.friend_hits = hits;
     }
 
     pub fn set_share_settings_note(&mut self, note: String) {
@@ -11494,6 +11508,7 @@ impl ChartApp {
                     // unprefixed content-item id, see `input/mod.rs`'s
                     // `VAULT_TEXT_FIELDS` comment for why.
                     (text_input::KEY_LABEL_INPUT, "key_label"),
+                    (text_input::FRIENDS_NICK, "friend_nick"),
                 ];
                 for &(store_id, ui_id) in VAULT_FIELDS {
                     if let Some((_, rect)) = us.content_items.iter().find(|(k, _)| k.as_str() == ui_id) {

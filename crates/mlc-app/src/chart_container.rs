@@ -689,6 +689,29 @@ impl ChartContainer {
         &self.price_scale
     }
 
+    /// Follow a remote Live viewport. `price` locks the Y range to manual;
+    /// `None` leaves the local scale mode alone.
+    pub fn apply_shared_view(&mut self, view_start: f64, bar_spacing: f64, price: Option<(f64, f64)>) {
+        if view_start.is_finite() {
+            self.viewport.view_start = view_start;
+        }
+        if bar_spacing.is_finite() && bar_spacing > 0.0 {
+            let min = self.viewport.min_bar_spacing();
+            let mut max = self.viewport.max_bar_spacing();
+            if max < min {
+                max = min;
+            }
+            self.viewport.bar_spacing = bar_spacing.clamp(min, max);
+        }
+        if let Some((lo, hi)) = price {
+            if lo.is_finite() && hi.is_finite() && hi > lo {
+                self.price_scale.price_min = lo;
+                self.price_scale.price_max = hi;
+                self.price_scale.scale_mode = ScaleMode::Manual;
+            }
+        }
+    }
+
     /// Crosshair state for rendering (respects render flag).
     pub fn crosshair_for_render(&self, render_crosshair: bool) -> Crosshair {
         if render_crosshair {

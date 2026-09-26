@@ -310,6 +310,8 @@ pub struct ShareSettingsState {
     /// Channel mode for this chart's share. Off: the link catches up on a
     /// cadence. On: subscribers sync movements as they happen.
     pub live_on: bool,
+    /// Stream pan and zoom with Live. Drawn only while Live is on.
+    pub live_viewport: bool,
     pub position: Option<(f64, f64)>,
     pub is_dragging: bool,
     pub drag_offset: Option<(f64, f64)>,
@@ -3911,7 +3913,10 @@ pub struct UserSettingsState {
     pub discoverable: bool,
     pub friend_nicks: Vec<String>,
     pub friend_invite: String,
-    /// `load` | `discoverable` | `invite`. The shell drains it.
+    /// Nick-search hits in the Friends tab. Nicks only.
+    pub friend_hits: Vec<String>,
+    pub friend_note: String,
+    /// `load` | `discoverable` | `invite` | `add:{nick}`. The shell drains it.
     pub friend_cmd: Option<String>,
     pub share_status: String,
     /// Token of a pinned share whose Revoke click is waiting for Confirm.
@@ -4230,6 +4235,8 @@ impl Default for UserSettingsState {
             discoverable: true,
             friend_nicks: Vec::new(),
             friend_invite: String::new(),
+            friend_hits: Vec::new(),
+            friend_note: String::new(),
             friend_cmd: None,
             share_status: String::new(),
             share_revoke_confirm: None,

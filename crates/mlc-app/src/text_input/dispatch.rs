@@ -129,6 +129,7 @@ impl ChartApp {
                 focused_id.as_str(),
                 FORUM_TITLE | FORUM_BODY | FORUM_REPLY | FORUM_SEARCH | DM_DRAFT | DM_PEER
                     | SHARE_SETTINGS_NICK
+                    | FRIENDS_NICK
             );
         }
         if !is_early_field {
@@ -295,6 +296,7 @@ impl ChartApp {
             DM_CHAT_FILTER                    => self.text_action_dm_chat_filter(ch, action),
             #[cfg(feature = "cloud")]
             SHARE_SETTINGS_NICK               => self.text_action_share_settings_nick(ch, action),
+            FRIENDS_NICK                      => self.text_action_friends_nick(ch, action),
             ALERT_TG_TOKEN                   => self.text_action_alert_token(ch, action),
             CRED_WEBHOOK_URL                 => self.text_action_cred_webhook_url(ch, action),
             CRED_ADD_EXCHANGE                => self.text_action_cred_add_field(crate::input::credentials::CredAddField::Exchange, ch, action),
@@ -1425,6 +1427,23 @@ impl ChartApp {
             chart.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
             chart.input_coordinator.borrow_mut().text_fields_mut().blur();
             chart.panel_app.share_settings_state.hits.clear();
+        };
+        if ch == '\x1b' {
+            cancel(self);
+            return;
+        }
+        if let TextAction::Cancel = action {
+            cancel(self);
+        }
+    }
+
+    /// Friends-tab nick search. Escape clears the box and the hit list.
+    fn text_action_friends_nick(&mut self, ch: char, action: TextAction) {
+        let cancel = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::FRIENDS_NICK);
+            chart.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+            chart.input_coordinator.borrow_mut().text_fields_mut().blur();
+            chart.panel_app.user_settings_state.friend_hits.clear();
         };
         if ch == '\x1b' {
             cancel(self);

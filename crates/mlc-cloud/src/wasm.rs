@@ -436,6 +436,13 @@ impl FetchTransport {
         Ok(value.get("url_path").and_then(|v| v.as_str()).unwrap_or("").to_string())
     }
 
+    pub async fn account_add_friend(&self, nick: &str) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "nick": nick }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.exchange("POST", "/api/account/friends", Some(payload), &[]).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
     pub async fn account_accept_friend(&self, token: &str) -> Result<(), CloudError> {
         let path = format!("/api/account/friend-invites/{token}/accept");
         let (status, body) = self.exchange("POST", &path, Some("{}".to_string()), &[]).await?;

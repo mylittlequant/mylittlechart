@@ -34,8 +34,9 @@ fn flags(preset: &str) -> (bool, bool) {
     }
 }
 
-fn content_height(hits: usize, show_people: bool) -> f64 {
-    let mut h = 4.0 * (ROW_H + GAP);
+fn content_height(hits: usize, show_people: bool, live_on: bool) -> f64 {
+    let rows = if live_on { 5.0 } else { 4.0 };
+    let mut h = rows * (ROW_H + GAP);
     if show_people {
         let rows = hits.min(6).max(1) as f64;
         h += LABEL_H + GAP + FIELD_H + GAP + rows * (HIT_H + 4.0);
@@ -70,7 +71,7 @@ pub fn render_share_settings_overlay(
             "share_settings",
             "Share settings",
             MODAL_W,
-            content_height(state.hits.len(), show_people),
+            content_height(state.hits.len(), show_people, state.live_on),
         )
     };
     let mut field: Option<(WidgetRect, Vec<f64>)> = None;
@@ -126,6 +127,21 @@ fn draw_body(
     y += ROW_H + GAP;
     draw_toggle_row(ctx, coord, layer_id, x, y, w, "share_settings:toggle:live", "Live", state.live_on, tt);
     y += ROW_H + GAP;
+    if state.live_on {
+        draw_toggle_row(
+            ctx,
+            coord,
+            layer_id,
+            x,
+            y,
+            w,
+            "share_settings:toggle:viewport",
+            "Viewport",
+            state.live_viewport,
+            tt,
+        );
+        y += ROW_H + GAP;
+    }
 
     let (field_rect, char_x_positions) = if show_people {
         ctx.set_font("12px sans-serif");

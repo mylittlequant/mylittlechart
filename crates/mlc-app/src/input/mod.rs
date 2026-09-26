@@ -1451,6 +1451,14 @@ impl ChartApp {
         // there is no plain-click case to disambiguate against and no 5px
         // promotion threshold needed, unlike `granularity_drag_pending`'s
         // own two-step below.
+        // The ✕ is a click, but a press that moves a few pixels never becomes
+        // one (the shell only calls on_click under 5px). Dismiss on the press.
+        if let Some(id_str) = live_hover.as_deref().and_then(|h| h.strip_prefix("toast:close:")) {
+            if let Ok(toast_id) = id_str.parse::<u64>() {
+                self.dismiss_toast(toast_id);
+                return true;
+            }
+        }
         if let Some(id_str) = live_hover.as_deref().and_then(|h| h.strip_prefix("toast:drag:")) {
             if let Ok(toast_id) = id_str.parse::<u64>() {
                 self.toast_drag = Some((toast_id, x, y));

@@ -187,6 +187,7 @@ enum FlowResult {
 enum FriendApply {
     List { discoverable: bool, nicks: Vec<String> },
     Invite(String),
+    Note(String),
 }
 
 fn friend_query_token() -> Option<String> {
@@ -292,6 +293,10 @@ struct Inner {
     friend_busy: bool,
     friend_accept_tried: bool,
     friend_result: Option<FriendApply>,
+    friend_lookup_q: String,
+    friend_lookup_at_ms: f64,
+    friend_lookup_busy: bool,
+    friend_hits_in: Option<Vec<String>>,
     /// `(chart_id, token)` from the last successful live publish.
     share_bound: Option<(String, String)>,
     share_lookup_q: String,
@@ -435,6 +440,10 @@ impl CloudSession {
                 friend_busy: false,
                 friend_accept_tried: false,
                 friend_result: None,
+                friend_lookup_q: String::new(),
+                friend_lookup_at_ms: 0.0,
+                friend_lookup_busy: false,
+                friend_hits_in: None,
                 share_bound: None,
                 share_lookup_q: String::new(),
                 share_lookup_at_ms: 0.0,
@@ -909,15 +918,67 @@ impl CloudSession {
         });
     }
 
+    fn poll_friend_lookup(&self, chart: &ChartApp, now_ms: f64) {
+        let Some(q) = chart.friends_nick_query() else {
+            return;
+        };
+        if q.len() < 2 {
+            let mut inner = self.inner.borrow_mut();
+            if !inner.friend_lookup_q.is_empty() {
+                inner.friend_lookup_q.clear();
+                inner.friend_hits_in = Some(Vec::new());
+            }
+            return;
+        }
+        {
+            let mut inner = self.inner.borrow_mut();
+            if inner.friend_lookup_busy || inner.friend_lookup_q == q || now_ms - inner.friend_lookup_at_ms < 300.0 {
+                return;
+            }
+            inner.friend_lookup_q = q.clone();
+            inner.friend_lookup_at_ms = now_ms;
+            inner.friend_lookup_busy = true;
+        }
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        spawn_local(async move {
+            let hits = match transport.share_nick_lookup(&q).await {
+                Ok(users) => users
+                    .into_iter()
+                    .filter_map(|u| {
+                        let nick = u.nick.trim().to_string();
+                        if nick.is_empty() { None } else { Some(nick) }
+                    })
+                    .collect::<Vec<_>>(),
+                Err(_) => Vec::new(),
+            };
+            let mut guard = inner.borrow_mut();
+            guard.friend_lookup_busy = false;
+            guard.friend_hits_in = Some(hits);
+        });
+    }
+
     fn poll_friends(&self, chart: &mut ChartApp) {
+        if let Some(hits) = self.inner.borrow_mut().friend_hits_in.take() {
+            chart.set_friend_hits(hits);
+        }
         if let Some(apply) = self.inner.borrow_mut().friend_result.take() {
             match apply {
                 FriendApply::List { discoverable, nicks } => {
                     chart.panel_app.user_settings_state.discoverable = discoverable;
                     chart.panel_app.user_settings_state.friend_nicks = nicks;
+                    if chart.panel_app.user_settings_state.friend_note != "Copied" {
+                        chart.panel_app.user_settings_state.friend_note.clear();
+                    }
                 }
                 FriendApply::Invite(url) => {
-                    chart.panel_app.user_settings_state.friend_invite = format!("https://chart.example{url}");
+                    let full = format!("https://chart.example{url}");
+                    chart.panel_app.user_settings_state.friend_invite = full.clone();
+                    chart.clipboard_text = Some(full);
+                    chart.panel_app.user_settings_state.friend_note = "Copied".to_string();
+                }
+                FriendApply::Note(note) => {
+                    chart.panel_app.user_settings_state.friend_note = note;
                 }
             }
         }
@@ -949,17 +1010,24 @@ impl CloudSession {
         let inner = self.inner.clone();
         let discoverable = chart.panel_app.user_settings_state.discoverable;
         spawn_local(async move {
-            let result = match cmd.as_str() {
-                "discoverable" => {
-                    let _ = transport.account_set_discoverable(discoverable).await;
-                    transport.account_friends().await.ok().map(|(discoverable, nicks)| {
-                        FriendApply::List { discoverable, nicks }
-                    })
-                }
-                "invite" => transport.account_friend_invite().await.ok().map(FriendApply::Invite),
-                _ => transport.account_friends().await.ok().map(|(discoverable, nicks)| {
+            let result = if cmd == "discoverable" {
+                let _ = transport.account_set_discoverable(discoverable).await;
+                transport.account_friends().await.ok().map(|(discoverable, nicks)| {
                     FriendApply::List { discoverable, nicks }
-                }),
+                })
+            } else if cmd == "invite" {
+                transport.account_friend_invite().await.ok().map(FriendApply::Invite)
+            } else if let Some(nick) = cmd.strip_prefix("add:") {
+                match transport.account_add_friend(nick).await {
+                    Ok(()) => transport.account_friends().await.ok().map(|(discoverable, nicks)| {
+                        FriendApply::List { discoverable, nicks }
+                    }),
+                    Err(e) => Some(FriendApply::Note(e.to_string())),
+                }
+            } else {
+                transport.account_friends().await.ok().map(|(discoverable, nicks)| {
+                    FriendApply::List { discoverable, nicks }
+                })
             };
             let mut guard = inner.borrow_mut();
             guard.friend_result = result;
@@ -1037,6 +1105,7 @@ impl CloudSession {
         }
         self.poll_share_rights(chart, now_ms);
         self.poll_share_nick_search(chart, now_ms);
+        self.poll_friend_lookup(chart, now_ms);
         if let Some((chart_id, token)) = self.inner.borrow_mut().share_bound.take() {
             chart.note_chart_share_token(&chart_id, &token);
         }

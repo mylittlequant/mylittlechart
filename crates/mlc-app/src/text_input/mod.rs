@@ -265,6 +265,9 @@ pub const SHARE_OPEN_INPUT: &str = "share_open_input";
 /// Nick field in the share-settings overlay.
 pub const SHARE_SETTINGS_NICK: &str = "share_settings_nick";
 
+/// Nick search in the Friends tab. Adds the picked account as a friend.
+pub const FRIENDS_NICK: &str = "friends_nick";
+
 /// Inline fast-search text field hosted in the `symbol_selector` toolbar
 /// dropdown (symbol-search-compare-inner arc, Wave 2, кусок 4 — owner spec
 /// 2026-07-16, `ProfileUiSettings::symbol_quick_search`). Mirrors
@@ -334,5 +337,6 @@ pub fn known_field_ids() -> &'static [&'static str] {
         KEY_LABEL_INPUT,
         SHARE_OPEN_INPUT,
         SHARE_SETTINGS_NICK,
+        FRIENDS_NICK,
     ]
 }

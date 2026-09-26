@@ -5446,6 +5446,11 @@ impl ChartApp {
                             self.set_share_live(live);
                             return;
                         }
+                        if which == "viewport" {
+                            let on = !self.panel_app.share_settings_state.live_viewport;
+                            self.set_share_viewport(on);
+                            return;
+                        }
                         let (public_on, clone_on) = match self.panel_app.share_settings_state.rights_preset.as_str() {
                             "view_only" => (true, false),
                             "private" => (false, true),
@@ -6819,6 +6824,30 @@ impl ChartApp {
                 }
                 "friend_invite" => {
                     self.panel_app.user_settings_state.friend_cmd = Some("invite".to_string());
+                }
+                "friend_copy" => {
+                    let url = self.panel_app.user_settings_state.friend_invite.clone();
+                    if !url.is_empty() {
+                        self.clipboard_text = Some(url);
+                        self.panel_app.user_settings_state.friend_note = "Copied".to_string();
+                    }
+                }
+                "friend_nick" => {
+                    let field_id = WidgetId::from(crate::text_input::FRIENDS_NICK);
+                    {
+                        let mut coord = self.input_coordinator.borrow_mut();
+                        let tf = coord.text_fields_mut();
+                        tf.begin_edit(&field_id);
+                        tf.focus(crate::text_input::FRIENDS_NICK);
+                    }
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                }
+                rest if rest.starts_with("friend_add:") => {
+                    let nick = rest["friend_add:".len()..].trim();
+                    if !nick.is_empty() {
+                        self.panel_app.user_settings_state.friend_cmd = Some(format!("add:{nick}"));
+                        self.panel_app.user_settings_state.friend_note.clear();
+                    }
                 }
                 "header" => {
                     // Drag start handled in mouse_down.

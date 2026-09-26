@@ -3152,9 +3152,16 @@ fn render_frame(state: Rc<RefCell<WebAppState>>, timer: &mut perf::FrameTimer) -
     // and registers the ✕/drag hit zones), so this is its own `borrow_mut`
     // scope rather than sharing the chrome block's read-only `borrow()`.
     {
+        use uzor::render::Painter;
         let mut st = state.borrow_mut();
         if !st.chart.is_capturing_screenshot() {
+            // Hit zones are chart-local (dispatch subtracts the chrome
+            // strip). Paint in that same space, or the ✕ sits a chrome-height
+            // above the widget that should receive the click.
+            ctx.save();
+            ctx.translate(0.0, CHROME_HEIGHT);
             st.chart.render_toasts(&mut ctx, now_ms);
+            ctx.restore();
         }
     }
     {

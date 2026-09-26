@@ -1,7 +1,9 @@
 //! Live follow and co-edit on the share token that already names the chart.
 //!
-//! Ops name one primitive or one indicator. Candles, the viewport, and the
-//! full preset are not ops. The author chart and an opened share tab attach
+//! Ops name one primitive or one indicator. Candles and the full preset are
+//! not ops. While Live is on, a gesture op carries selection, an in-progress
+//! drag, and an in-progress draw, and a viewport op carries pan and zoom
+//! when that toggle is on. The author chart and an opened share tab attach
 //! to the same token. A clone does not.
 
 use std::collections::HashMap;
@@ -17,6 +19,8 @@ pub struct ShareStream {
     pub cursor: i64,
     /// Author's Live toggle. Off: cadence. On: the channel.
     pub live: bool,
+    /// Pan/zoom rides the channel. Only meaningful while `live` is on.
+    pub live_viewport: bool,
     pub baseline: bool,
     pub last_push_ms: f64,
     pub last_pull_ms: f64,
@@ -27,6 +31,12 @@ pub struct ShareStream {
     /// Local primitive id → stream object id.
     pub local_to_key: HashMap<u64, String>,
     pub key_to_local: HashMap<String, u64>,
+    /// Last gesture phase that was queued (`idle` / `select` / `drag` / `draw`).
+    pub gesture_phase: String,
+    pub gesture_sent: String,
+    pub viewport_sent: String,
+    /// Local id of the in-progress draw preview. Kept out of the object diff.
+    pub preview_local: Option<u64>,
 }
 
 impl ShareStream {
@@ -35,6 +45,7 @@ impl ShareStream {
             token,
             cursor: 0,
             live: false,
+            live_viewport: false,
             baseline: false,
             last_push_ms: 0.0,
             last_pull_ms: 0.0,
@@ -42,6 +53,10 @@ impl ShareStream {
             pending: None,
             local_to_key: HashMap::new(),
             key_to_local: HashMap::new(),
+            gesture_phase: String::new(),
+            gesture_sent: String::new(),
+            viewport_sent: String::new(),
+            preview_local: None,
         }
     }
 }
@@ -119,17 +134,30 @@ impl ChartApp {
         if stream.token != token {
             *stream = ShareStream::new(token.clone());
         }
-        let gap = if stream.live { 400.0 } else { 8000.0 };
-        if stream.pending.is_some() || (now_ms - stream.last_push_ms < gap && stream.baseline) {
+        self.ensure_share_keys(&preset_id);
+        let gesture = self.share_gesture(&preset_id);
+        let viewport = self.share_viewport_json(&preset_id);
+        let phase_now = gesture.as_ref().map(|g| g.0.as_str()).unwrap_or("");
+        let stream = self.share_streams.get(&preset_id)?;
+        let phase_changed = stream.live && phase_now != stream.gesture_phase.as_str();
+        let hot = stream.live && (phase_now == "drag" || phase_now == "draw");
+        let gap = if !stream.live {
+            8000.0
+        } else if hot {
+            100.0
+        } else {
+            400.0
+        };
+        if stream.pending.is_some() || (!phase_changed && now_ms - stream.last_push_ms < gap && stream.baseline) {
             return None;
         }
-        stream.last_push_ms = now_ms;
-        self.ensure_share_keys(&preset_id);
         let current = self.share_object_json(&preset_id);
         let stream = self.share_streams.get_mut(&preset_id)?;
+        stream.last_push_ms = now_ms;
         if !stream.baseline {
             stream.last = current;
             stream.baseline = true;
+            stream.gesture_phase = phase_now.to_string();
             return None;
         }
         let mut ops = Vec::new();
@@ -153,6 +181,33 @@ impl ChartApp {
                 });
             }
         }
+        if stream.live {
+            if let Some((phase, json)) = &gesture {
+                let send_idle = phase == "idle" && !stream.gesture_phase.is_empty() && stream.gesture_phase != "idle";
+                let send_move = phase != "idle" && stream.gesture_sent != *json;
+                if send_idle || send_move {
+                    ops.push(ShareWireOp {
+                        kind: "gesture".to_string(),
+                        object_id: "gesture".to_string(),
+                        body: json.clone(),
+                    });
+                    stream.gesture_sent = json.clone();
+                    stream.gesture_phase = phase.clone();
+                }
+            }
+            if stream.live_viewport {
+                if let Some(json) = viewport {
+                    if stream.viewport_sent != json {
+                        ops.push(ShareWireOp {
+                            kind: "viewport".to_string(),
+                            object_id: "viewport".to_string(),
+                            body: json.clone(),
+                        });
+                        stream.viewport_sent = json;
+                    }
+                }
+            }
+        }
         if ops.is_empty() {
             return None;
         }
@@ -173,6 +228,9 @@ impl ChartApp {
             }
         } else {
             stream.pending = None;
+            stream.gesture_sent.clear();
+            stream.gesture_phase.clear();
+            stream.viewport_sent.clear();
         }
     }
 
@@ -182,7 +240,7 @@ impl ChartApp {
         if stream.token != follow.token {
             *stream = ShareStream::new(follow.token.clone());
         }
-        let gap = if stream.live { 800.0 } else { 8000.0 };
+        let gap = if stream.live { 250.0 } else { 8000.0 };
         if now_ms - stream.last_pull_ms < gap {
             return None;
         }
@@ -205,6 +263,12 @@ impl ChartApp {
         let active = self.panel_app.active_preset_id.clone();
         if let Some(stream) = self.share_streams.get_mut(&active) {
             stream.live = live;
+            if !live {
+                stream.live_viewport = false;
+            }
+        }
+        if !live {
+            self.panel_app.share_settings_state.live_viewport = false;
         }
         let token = self
             .shared_chart_meta(&active)
@@ -223,6 +287,20 @@ impl ChartApp {
         }
     }
 
+    pub fn set_share_viewport(&mut self, on: bool) {
+        if !self.panel_app.share_settings_state.live_on {
+            return;
+        }
+        self.panel_app.share_settings_state.live_viewport = on;
+        let active = self.panel_app.active_preset_id.clone();
+        if let Some(stream) = self.share_streams.get_mut(&active) {
+            stream.live_viewport = on;
+            if !on {
+                stream.viewport_sent.clear();
+            }
+        }
+    }
+
     pub fn apply_share_ops(&mut self, token: &str, reset: bool, can_send: bool, live: bool, ops: &[ShareInboundOp]) {
         let Some(follow) = self.share_follow_target() else {
             return;
@@ -237,23 +315,22 @@ impl ChartApp {
             stream.live = live;
         }
         self.panel_app.share_settings_state.live_on = live;
+        if !live {
+            self.panel_app.share_settings_state.live_viewport = false;
+        }
         let preset_id = follow.preset_id.clone();
         if reset {
             if let Some(stream) = self.share_streams.get_mut(&preset_id) {
                 stream.cursor = 0;
             }
         }
-        let dragging = self
-            .panel_app
-            .panel_grid
-            .active_container()
-            .map(|w| self.core.drawings().is_dragging(w.current_tag_id))
-            .unwrap_or(false);
-        if dragging {
-            return;
-        }
+        let drag_key = self.local_drag_key(&preset_id);
         for op in ops {
-            self.apply_one_share_op(&preset_id, op);
+            let held = drag_key.as_deref() == Some(op.object_id.as_str())
+                && (op.kind == "primitive_upsert" || op.kind == "primitive_delete");
+            if !held {
+                self.apply_one_share_op(&preset_id, op);
+            }
             if let Some(stream) = self.share_streams.get_mut(&preset_id) {
                 if op.seq > stream.cursor {
                     stream.cursor = op.seq;
@@ -272,10 +349,11 @@ impl ChartApp {
         for (author, local) in &import {
             local_to_author.insert(*local, *author);
         }
+        let preview = self.share_streams.get(preset_id).and_then(|s| s.preview_local);
         let ids: Vec<u64> = self.core.drawings().primitives(bid).iter().map(|p| p.data().id).collect();
         let stream = self.share_streams.entry(preset_id.to_string()).or_insert_with(|| ShareStream::new(String::new()));
         for id in ids {
-            if stream.local_to_key.contains_key(&id) {
+            if preview == Some(id) || stream.local_to_key.contains_key(&id) {
                 continue;
             }
             let key = if let Some(author) = local_to_author.get(&id) {
@@ -298,8 +376,12 @@ impl ChartApp {
             return HashMap::new();
         };
         let bid = window.current_tag_id;
+        let preview = stream.preview_local;
         let mut out = HashMap::new();
         for prim in self.core.drawings().primitives(bid) {
+            if preview == Some(prim.data().id) {
+                continue;
+            }
             let Some(key) = stream.local_to_key.get(&prim.data().id) else {
                 continue;
             };
@@ -388,6 +470,8 @@ impl ChartApp {
                     self.core.indicators_mut().remove(id);
                 }
             }
+            "gesture" => self.apply_share_gesture(preset_id, bid, &op.body),
+            "viewport" => self.apply_share_viewport(&op.body),
             "indicator_upsert" => {
                 let Ok(snap) = serde_json::from_str::<IndicatorSnapshot>(&op.body) else {
                     return;
@@ -407,6 +491,160 @@ impl ChartApp {
         if let Some(stream) = self.share_streams.get_mut(preset_id) {
             stream.last = current;
             stream.baseline = true;
+        }
+    }
+
+    fn local_drag_key(&self, preset_id: &str) -> Option<String> {
+        let bid = self.panel_app.panel_grid.active_container()?.current_tag_id;
+        let local = self.core.drawings().dragging(bid)?;
+        self.share_streams.get(preset_id)?.local_to_key.get(&local).cloned()
+    }
+
+    /// `(phase, json)` for the local hand. `None` when Live is off.
+    fn share_gesture(&mut self, preset_id: &str) -> Option<(String, String)> {
+        let stream = self.share_streams.get(preset_id)?;
+        if !stream.live {
+            return None;
+        }
+        let window = self.panel_app.panel_grid.active_container()?;
+        let bid = window.current_tag_id;
+        let drawings = self.core.drawings();
+        let drawing = drawings.is_drawing(bid);
+        let drag_local = drawings.dragging(bid);
+        let selected_local = drawings.selected(bid);
+        let tool = drawings.drawing_tool_id(bid).unwrap_or_default();
+        let mut points = drawings.drawing_points(bid);
+        drop(drawings);
+        if drawing {
+            if let Some(window) = self.panel_app.panel_grid.active_container() {
+                let cross = window.crosshair;
+                if cross.visible {
+                    let idx = cross.bar_f64.floor().max(0.0) as usize;
+                    let ts = self.core.bubbles().bars(bid).get(idx).map(|bar| bar.timestamp);
+                    if let Some(ts) = ts {
+                        points.push((ts.saturating_mul(1000), cross.price));
+                    }
+                }
+            }
+        }
+        if points.len() > 64 {
+            points.drain(0..points.len() - 64);
+        }
+        let stream = self.share_streams.get(preset_id)?;
+        let key_of = |local: Option<u64>| -> String {
+            local.and_then(|id| stream.local_to_key.get(&id).cloned()).unwrap_or_default()
+        };
+        let phase = if drawing {
+            "draw"
+        } else if drag_local.is_some() {
+            "drag"
+        } else if selected_local.is_some() {
+            "select"
+        } else {
+            "idle"
+        };
+        let body = serde_json::json!({
+            "phase": phase,
+            "tool": tool,
+            "selected": key_of(selected_local),
+            "dragging": key_of(drag_local),
+            "points": points.iter().map(|(ts, price)| serde_json::json!([ts, price])).collect::<Vec<_>>(),
+        });
+        Some((phase.to_string(), body.to_string()))
+    }
+
+    fn share_viewport_json(&self, preset_id: &str) -> Option<String> {
+        let stream = self.share_streams.get(preset_id)?;
+        if !stream.live || !stream.live_viewport {
+            return None;
+        }
+        let window = self.panel_app.panel_grid.active_container()?;
+        let vp = window.viewport();
+        let ps = window.price_scale();
+        let price = if ps.scale_mode.is_auto_y() {
+            serde_json::Value::Null
+        } else {
+            serde_json::json!([ps.price_min, ps.price_max])
+        };
+        Some(
+            serde_json::json!({
+                "view_start": (vp.view_start * 1000.0).round() / 1000.0,
+                "bar_spacing": (vp.bar_spacing * 1000.0).round() / 1000.0,
+                "price": price,
+            })
+            .to_string(),
+        )
+    }
+
+    fn apply_share_gesture(&mut self, preset_id: &str, bid: mlc_core::ids::BubbleId, body: &str) {
+        if self.core.drawings().is_dragging(bid) || self.core.drawings().is_drawing(bid) {
+            return;
+        }
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+            return;
+        };
+        let phase = value.get("phase").and_then(|v| v.as_str()).unwrap_or("idle");
+        let tool = value.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+        let selected = value.get("selected").and_then(|v| v.as_str()).unwrap_or("");
+        let points: Vec<(i64, f64)> = value
+            .get("points")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|p| {
+                        let pair = p.as_array()?;
+                        Some((pair.first()?.as_i64()?, pair.get(1)?.as_f64()?))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        if phase == "draw" && !tool.is_empty() && !points.is_empty() {
+            self.set_share_preview(preset_id, bid, tool, &points);
+        } else {
+            self.clear_share_preview(preset_id, bid);
+        }
+        if selected.is_empty() {
+            if phase == "idle" {
+                self.core.drawings_mut().deselect(bid);
+            }
+        } else if let Some(local) = self.share_streams.get(preset_id).and_then(|s| s.key_to_local.get(selected).copied()) {
+            self.core.drawings_mut().select(bid, local);
+        }
+    }
+
+    fn apply_share_viewport(&mut self, body: &str) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
+            return;
+        };
+        let view_start = value.get("view_start").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let bar_spacing = value.get("bar_spacing").and_then(|v| v.as_f64()).unwrap_or(0.0);
+        let price = value.get("price").and_then(|v| {
+            let pair = v.as_array()?;
+            Some((pair.first()?.as_f64()?, pair.get(1)?.as_f64()?))
+        });
+        let Some(window) = self.panel_app.panel_grid.active_container_mut() else {
+            return;
+        };
+        window.apply_shared_view(view_start, bar_spacing, price);
+    }
+
+    fn clear_share_preview(&mut self, preset_id: &str, bid: mlc_core::ids::BubbleId) {
+        let local = self.share_streams.get_mut(preset_id).and_then(|s| s.preview_local.take());
+        if let Some(local) = local {
+            self.core.drawings_mut().delete(bid, local);
+        }
+    }
+
+    fn set_share_preview(&mut self, preset_id: &str, bid: mlc_core::ids::BubbleId, tool: &str, points: &[(i64, f64)]) {
+        let registry = mlc_core::drawing::primitives_v2::PrimitiveRegistry::global().read().unwrap();
+        let Some(prim) = registry.create(tool, points, None) else {
+            return;
+        };
+        drop(registry);
+        self.clear_share_preview(preset_id, bid);
+        let id = self.core.drawings_mut().add_external(bid, prim);
+        if let Some(stream) = self.share_streams.get_mut(preset_id) {
+            stream.preview_local = Some(id);
         }
     }
 }
