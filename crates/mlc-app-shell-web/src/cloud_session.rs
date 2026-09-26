@@ -782,8 +782,9 @@ impl CloudSession {
         });
     }
 
-    /// Nick search for the share-settings overlay. Same lookup the messenger
-    /// uses. Hits are nicks only — a grant needs a nick.
+    /// Nick search for the share-settings overlay. Account nicks
+    /// (`GET /api/share/lookup`), not the messenger catalog. A grant needs
+    /// a nick, so nickless accounts are not hits.
     fn poll_share_nick_search(&self, chart: &ChartApp, now_ms: f64) {
         let Some(q) = chart.share_settings_nick_query() else {
             return;
@@ -808,12 +809,12 @@ impl CloudSession {
         let transport = self.inner.borrow().transport.snapshot();
         let inner = self.inner.clone();
         spawn_local(async move {
-            let (hits, note) = match transport.dm_lookup(&q).await {
+            let (hits, note) = match transport.share_nick_lookup(&q).await {
                 Ok(users) => {
                     let hits = users
                         .into_iter()
                         .filter_map(|u| {
-                            let nick = u.nick.filter(|n| !n.is_empty()).unwrap_or(u.label.clone());
+                            let nick = u.nick.trim().to_string();
                             if nick.is_empty() {
                                 return None;
                             }

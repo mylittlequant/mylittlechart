@@ -762,6 +762,16 @@ impl FetchTransport {
         Ok(resp.users)
     }
 
+    /// `GET /api/share/lookup?q=` — account nicks for a share grant.
+    /// Distinct from [`Self::dm_lookup`]: no messenger key, no paid gate
+    /// on the target.
+    pub async fn share_nick_lookup(&self, q: &str) -> Result<Vec<ShareNickHit>, CloudError> {
+        let path = format!("/api/share/lookup?q={}", encode_query_component(q));
+        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
+        let resp: ShareNickLookupResponse = self.decode_success(status, &body)?;
+        Ok(resp.users)
+    }
+
     /// `GET /api/dm/conversations` — the caller's own, newest activity first.
     pub async fn dm_conversations(&self) -> Result<Vec<DmConversation>, CloudError> {
         let (status, body) = self.exchange("GET", "/api/dm/conversations", None, &[]).await?;

@@ -898,6 +898,21 @@ pub struct DmLookupResponse {
     pub users: Vec<DmLookupHit>,
 }
 
+/// One row of `GET /api/share/lookup?q=` — an account nick the caller can
+/// grant on a chart. Not a messenger recipient: no DM key is required.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ShareNickHit {
+    pub nick: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+/// Response body from `GET /api/share/lookup?q=`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareNickLookupResponse {
+    pub users: Vec<ShareNickHit>,
+}
+
 /// The other party to a [`DmConversation`].
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct DmConversationPeer {
