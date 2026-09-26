@@ -1572,6 +1572,7 @@ impl CloudSession {
                 self.fire_share_admin(cmd);
             }
         }
+        chart.drain_share_catchup();
         self.poll_share_ops(chart, now_ms);
         self.poll_edge(chart, now_ms);
         self.poll_friends(chart);

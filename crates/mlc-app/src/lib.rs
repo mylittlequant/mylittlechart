@@ -1092,6 +1092,9 @@ pub struct ChartApp {
     /// `fill_shared_placeholder`/`share_reopen_gone`/
     /// `share_reopen_transient`.
     pub(crate) pending_reopen_shares: Vec<share_viewer::PendingReopenShare>,
+    /// Ops fetched with a share open. Applied once the cold load is live,
+    /// so hydration does not wipe them and the poll gap is not the wait.
+    pending_share_catchup: Option<share_stream::ShareCatchup>,
 
     /// `placeholder preset id -> share token` for every boot-time
     /// placeholder still waiting on its re-fetch outcome. `shared_chart_meta`
@@ -3602,6 +3605,7 @@ impl ChartApp {
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
+            pending_share_catchup: None,
             pending_share_tokens: std::collections::HashMap::new(),
             deferred_share_reopens: Vec::new(),
             snapshot_actions: Vec::new(),
@@ -4005,6 +4009,7 @@ impl ChartApp {
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
+            pending_share_catchup: None,
             pending_share_tokens: std::collections::HashMap::new(),
             deferred_share_reopens: Vec::new(),
             snapshot_actions: Vec::new(),
@@ -4615,6 +4620,7 @@ impl ChartApp {
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
+            pending_share_catchup: None,
             pending_share_tokens: std::collections::HashMap::new(),
             deferred_share_reopens: Vec::new(),
             snapshot_actions: Vec::new(),

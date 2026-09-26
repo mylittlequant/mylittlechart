@@ -169,6 +169,7 @@ impl ChartApp {
         // safe again. Future flush_pending_autosave runs will persist the
         // newly materialised state to disk normally.
         self.load_state = crate::persistence::LoadState::Live;
+        self.drain_share_catchup();
     }
 
     /// Process a `ChartOutEvent`  -  route high-level outcomes back to state.

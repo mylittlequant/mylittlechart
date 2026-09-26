@@ -25,6 +25,9 @@ pub struct ShareStream {
     pub cursor_sent: String,
     pub preview_sent: String,
     pub baseline: bool,
+    /// The full chart has been posted once. Until then the gap does not
+    /// apply: a reload has only what the server stored.
+    pub seeded: bool,
     pub last_push_ms: f64,
     pub last_pull_ms: f64,
     /// Stream object id → last JSON applied or acknowledged.
@@ -57,6 +60,7 @@ impl ShareStream {
             cursor_sent: String::new(),
             preview_sent: String::new(),
             baseline: false,
+            seeded: false,
             last_push_ms: 0.0,
             last_pull_ms: 0.0,
             last: HashMap::new(),
@@ -80,7 +84,13 @@ pub struct ShareWireOp {
     pub body: String,
 }
 
-#[derive(Clone, Debug)]
+pub struct ShareCatchup {
+    pub token: String,
+    pub live: bool,
+    pub can_send: bool,
+    pub ops: Vec<ShareInboundOp>,
+}
+
 pub struct ShareFollow {
     pub preset_id: String,
     pub token: String,
@@ -166,21 +176,21 @@ impl ChartApp {
         } else {
             400.0
         };
-        if stream.pending.is_some() || (!phase_changed && now_ms - stream.last_push_ms < gap && stream.baseline) {
+        if stream.pending.is_some() || (stream.seeded && !phase_changed && now_ms - stream.last_push_ms < gap) {
             return None;
         }
         let hot_key = if phase_now == "drag" { self.local_drag_key(&preset_id) } else { None };
         let current = self.share_object_json(&preset_id);
         let stream = self.share_streams.get_mut(&preset_id)?;
         stream.last_push_ms = now_ms;
-        if !stream.baseline {
-            stream.last = current;
-            stream.baseline = true;
-            stream.gesture_phase = phase_now.to_string();
-            return None;
-        }
+        // The first posts are the whole chart. A published preset is the
+        // chart at share time; objects drawn after that exist only here
+        // until they are posted, so a reload never saw them.
         let mut ops = Vec::new();
         for (key, json) in &current {
+            if ops.len() >= 24 {
+                break;
+            }
             if hot_key.as_deref() == Some(key.as_str()) {
                 continue;
             }
@@ -193,29 +203,32 @@ impl ChartApp {
                 });
             }
         }
-        for key in stream.last.keys() {
-            if hot_key.as_deref() == Some(key.as_str()) {
-                continue;
-            }
-            if !current.contains_key(key) {
+        if ops.len() < 24 {
+            let stale: Vec<String> = stream.last.keys().filter(|key| hot_key.as_deref() != Some(key.as_str()) && !current.contains_key(*key)).cloned().collect();
+            for key in stale {
+                if ops.len() >= 24 {
+                    break;
+                }
                 let kind = if key.starts_with('i') { "indicator_delete" } else { "primitive_delete" };
                 ops.push(ShareWireOp {
                     kind: kind.to_string(),
-                    object_id: key.clone(),
+                    object_id: key,
                     body: String::new(),
                 });
             }
         }
         stream.gesture_phase = phase_now.to_string();
         if ops.is_empty() {
+            stream.seeded = true;
+            stream.baseline = true;
             return None;
         }
-        let mut recorded = current;
-        if let Some(hot) = &hot_key {
-            if let Some(prev) = stream.last.get(hot) {
-                recorded.insert(hot.clone(), prev.clone());
+        let mut recorded = stream.last.clone();
+        for op in &ops {
+            if op.kind.ends_with("delete") {
+                recorded.remove(&op.object_id);
             } else {
-                recorded.remove(hot);
+                recorded.insert(op.object_id.clone(), op.body.clone());
             }
         }
         stream.pending = Some(recorded);
@@ -521,6 +534,24 @@ impl ChartApp {
         }
     }
 
+    pub fn queue_share_catchup(&mut self, catch: ShareCatchup) {
+        if self.load_state.is_loading() {
+            self.pending_share_catchup = Some(catch);
+            return;
+        }
+        self.apply_share_ops(&catch.token, false, catch.can_send, catch.live, &catch.ops);
+    }
+
+    pub fn drain_share_catchup(&mut self) {
+        if self.load_state.is_loading() {
+            return;
+        }
+        let Some(catch) = self.pending_share_catchup.take() else {
+            return;
+        };
+        self.apply_share_ops(&catch.token, false, catch.can_send, catch.live, &catch.ops);
+    }
+
     pub fn apply_share_ops(&mut self, token: &str, reset: bool, can_send: bool, live: bool, ops: &[ShareInboundOp]) {
         let Some(follow) = self.share_follow_target() else {
             return;
@@ -528,10 +559,15 @@ impl ChartApp {
         if follow.token != token {
             return;
         }
+        let preset_id = follow.preset_id.clone();
         if can_send {
-            self.note_share_can_send(&follow.preset_id, true);
+            self.note_share_can_send(&preset_id, true);
         }
-        if let Some(stream) = self.share_streams.get_mut(&follow.preset_id) {
+        {
+            let stream = self.share_streams.entry(preset_id.clone()).or_insert_with(|| ShareStream::new(token.to_string()));
+            if stream.token != token {
+                *stream = ShareStream::new(token.to_string());
+            }
             stream.live = live;
         }
         self.panel_app.share_settings_state.live_on = live;
@@ -539,7 +575,6 @@ impl ChartApp {
             self.panel_app.share_settings_state.live_viewport = false;
             self.panel_app.share_settings_state.live_cursor = false;
         }
-        let preset_id = follow.preset_id.clone();
         if reset {
             if let Some(stream) = self.share_streams.get_mut(&preset_id) {
                 stream.cursor = 0;

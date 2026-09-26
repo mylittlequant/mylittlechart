@@ -189,7 +189,11 @@ pub fn start() {
     // `?share=<token>` viewer mode (chart-sharing arc) — parsed next to the
     // other boot-time URL gate; the fetch itself is async and runs at the
     // top of `run()`, before any app state exists.
-    let share_token = share_token_from_url();
+    let share_token = share_token_from_url().or_else(share_token_from_cookie);
+    clear_share_cookie();
+    if share_token.is_some() {
+        forget_share_query();
+    }
 
     spawn_local(async move {
         if let Err(e) = run(share_token).await {
@@ -234,8 +238,62 @@ fn share_token_from_url() -> Option<String> {
         .trim_start_matches('?')
         .split('&')
         .find_map(|p| p.strip_prefix("share="))
-        .filter(|t| !t.is_empty())
+        .filter(|t| share_token_chars(t))
         .map(|t| t.to_string())
+}
+
+/// One-shot cookie the server sets while it redirects `/?share=` to `/`.
+/// The address bar stays clean. The tab holds the token.
+#[cfg(target_arch = "wasm32")]
+fn share_token_from_cookie() -> Option<String> {
+    let doc = web_sys::window()?.document()?;
+    let raw = js_sys::Reflect::get(&doc, &"cookie".into()).ok()?.as_string()?;
+    raw.split(';').find_map(|part| {
+        let part = part.trim();
+        let value = part.strip_prefix("mlc_share=")?;
+        share_token_chars(value).then(|| value.to_string())
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn share_token_chars(token: &str) -> bool {
+    token.len() == 32 && token.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn clear_share_cookie() {
+    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+        let _ = js_sys::Reflect::set(
+            &doc,
+            &"cookie".into(),
+            &"mlc_share=; Max-Age=0; Path=/; Secure; SameSite=Lax".into(),
+        );
+    }
+}
+
+/// Drop `share` from the address bar. The token is already in memory.
+#[cfg(target_arch = "wasm32")]
+fn forget_share_query() {
+    let Some(win) = web_sys::window() else { return };
+    let Ok(search) = win.location().search() else { return };
+    if !search.contains("share=") {
+        return;
+    }
+    let kept: Vec<&str> = search
+        .trim_start_matches('?')
+        .split('&')
+        .filter(|p| !p.is_empty() && !p.starts_with("share=") && !p.starts_with("v="))
+        .collect();
+    let path = win.location().pathname().unwrap_or_else(|_| "/".to_string());
+    let hash = win.location().hash().unwrap_or_default();
+    let next = if kept.is_empty() {
+        format!("{path}{hash}")
+    } else {
+        format!("{path}?{}{hash}", kept.join("&"))
+    };
+    if let Ok(history) = win.history() {
+        let _ = history.replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&next));
+    }
 }
 
 /// Console log level: `?log=trace|debug|info|warn|error` in the page URL,
@@ -281,10 +339,53 @@ enum ShareBoot {
     /// Live share — the frozen preset plus the meta
     /// `ChartApp::open_shared_preset` needs to label the tab and gate the
     /// Clone action: token, title, owner, kind, effective rights, expiry.
-    Live(mlc_core::preset::preset::ChartPreset, mlc_app::SharedChartMeta),
+    Live(
+        mlc_core::preset::preset::ChartPreset,
+        mlc_app::SharedChartMeta,
+        bool,
+        Vec<mlc_app::share_stream::ShareInboundOp>,
+    ),
     /// `?share=` was in the address bar and the link did not open.
     /// The tab stays and says so. The query stays, so a reload asks again.
     Dead(String),
+}
+
+/// Every settled object the server has for this token, in seq order.
+/// Failure leaves the preset as it was published; the poll retries.
+#[cfg(all(target_arch = "wasm32", feature = "cloud"))]
+async fn load_share_ops(
+    transport: &mlc_cloud::FetchTransport,
+    token: &str,
+) -> (bool, Vec<mlc_app::share_stream::ShareInboundOp>) {
+    let mut after = 0i64;
+    let mut live = false;
+    let mut out = Vec::new();
+    for _ in 0..40 {
+        let Ok(resp) = transport.share_get_ops(token, after).await else {
+            break;
+        };
+        live = resp.live;
+        if resp.ops.is_empty() {
+            break;
+        }
+        let mut tail = after;
+        for op in resp.ops {
+            if op.seq > tail {
+                tail = op.seq;
+            }
+            out.push(mlc_app::share_stream::ShareInboundOp {
+                seq: op.seq,
+                kind: op.kind,
+                object_id: op.object_id,
+                body: op.body,
+            });
+        }
+        if tail <= after || out.len() > 4000 {
+            break;
+        }
+        after = tail;
+    }
+    (live, out)
 }
 
 /// Resolve a `?share=<token>` boot BEFORE any chart state exists.
@@ -320,6 +421,7 @@ async fn resolve_share_boot(token: Option<String>) -> ShareBoot {
                     web_sys::console::log_1(
                         &format!("[share] viewer boot on shared preset '{}' ({}), owner {}", title, p.id, owner).into(),
                     );
+                    let (live, ops) = load_share_ops(&transport, &token).await;
                     let meta = mlc_app::SharedChartMeta {
                         token,
                         title,
@@ -329,7 +431,7 @@ async fn resolve_share_boot(token: Option<String>) -> ShareBoot {
                         expires_at,
                         revision,
                     };
-                    ShareBoot::Live(p, meta)
+                    ShareBoot::Live(p, meta, live, ops)
                 }
                 Ok(p) => {
                     web_sys::console::error_1(
@@ -392,9 +494,19 @@ fn spawn_share_reopen_fetches(
                                 expires_at,
                                 revision,
                             };
+                            let (live, ops) = load_share_ops(&transport, &entry.token).await;
+                            let can_send = meta.rights.iter().any(|r| r == "edit");
+                            let token = meta.token.clone();
                             if let Ok(mut st) = state.try_borrow_mut() {
                                 if let Err(e) = st.chart.fill_shared_placeholder(&entry.placeholder_id, meta, p) {
                                     web_sys::console::error_1(&format!("[share] reopen fill failed: {}", e).into());
+                                } else {
+                                    st.chart.queue_share_catchup(mlc_app::share_stream::ShareCatchup {
+                                        token,
+                                        live,
+                                        can_send,
+                                        ops,
+                                    });
                                 }
                             }
                         }
@@ -626,17 +738,24 @@ async fn run(share_token: Option<String>) -> Result<(), JsValue> {
     // visitor's OWN tabs, if any, stay exactly as restored.
     #[cfg(feature = "cloud")]
     match share_boot {
-        ShareBoot::Live(preset, meta) => {
+        ShareBoot::Live(preset, meta, live, ops) => {
             let title = meta.title.clone();
             let token = meta.token.clone();
-            if let Some(id) = app.share_tab_id_for_token(&token) {
+            let can_send = meta.rights.iter().any(|r| r == "edit");
+            let opened = if let Some(id) = app.share_tab_id_for_token(&token) {
                 match app.fill_shared_placeholder(&id, meta, preset) {
-                    Ok(()) => web_sys::console::log_1(
-                        &format!("[share] filled existing tab {} for '{}'", id, title).into(),
-                    ),
-                    Err(e) => web_sys::console::error_1(
-                        &format!("[share] fill of '{}' failed: {}", title, e).into(),
-                    ),
+                    Ok(()) => {
+                        web_sys::console::log_1(
+                            &format!("[share] filled existing tab {} for '{}'", id, title).into(),
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        web_sys::console::error_1(
+                            &format!("[share] fill of '{}' failed: {}", title, e).into(),
+                        );
+                        false
+                    }
                 }
             } else {
                 match app.open_shared_preset(meta, preset) {
@@ -644,14 +763,24 @@ async fn run(share_token: Option<String>) -> Result<(), JsValue> {
                         web_sys::console::log_1(
                             &format!("[share] opened shared preset '{}' ({}) as a read-only tab", title, id).into(),
                         );
+                        true
                     }
                     Err(e) => {
                         web_sys::console::error_1(
                             &format!("[share] failed to open shared preset '{}': {} — link tab stays", title, e).into(),
                         );
                         app.open_dead_share_tab(&token);
+                        false
                     }
                 }
+            };
+            if opened {
+                app.queue_share_catchup(mlc_app::share_stream::ShareCatchup {
+                    token,
+                    live,
+                    can_send,
+                    ops,
+                });
             }
         }
         ShareBoot::Dead(token) => {
