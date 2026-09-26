@@ -5441,6 +5441,11 @@ impl ChartApp {
                                 !self.panel_app.share_settings_state.edit_on;
                             return;
                         }
+                        if which == "live" {
+                            let live = !self.panel_app.share_settings_state.live_on;
+                            self.set_share_live(live);
+                            return;
+                        }
                         let (public_on, clone_on) = match self.panel_app.share_settings_state.rights_preset.as_str() {
                             "view_only" => (true, false),
                             "private" => (false, true),
@@ -6807,6 +6812,14 @@ impl ChartApp {
                     self.panel_app.user_settings_state.profile_rename_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                 }
+                "discoverable" => {
+                    let on = !self.panel_app.user_settings_state.discoverable;
+                    self.panel_app.user_settings_state.discoverable = on;
+                    self.panel_app.user_settings_state.friend_cmd = Some("discoverable".to_string());
+                }
+                "friend_invite" => {
+                    self.panel_app.user_settings_state.friend_cmd = Some("invite".to_string());
+                }
                 "header" => {
                     // Drag start handled in mouse_down.
                 }
@@ -6878,6 +6891,9 @@ impl ChartApp {
                         }
                         if tab == UserSettingsTab::Shares {
                             self.pending_share_admin = Some(crate::ShareAdminCmd::Refresh);
+                        }
+                        if tab == UserSettingsTab::Friends {
+                            self.panel_app.user_settings_state.friend_cmd = Some("load".to_string());
                         }
                         log::debug!("[ChartApp] user_settings tab switched to: {}", tab_id);
                     }

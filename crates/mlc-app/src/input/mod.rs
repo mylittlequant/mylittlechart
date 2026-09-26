@@ -2537,6 +2537,7 @@ impl ChartApp {
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                         UserSettingsTab::Account => &mut self.panel_app.user_settings_state.account_tab_scroll,
                         UserSettingsTab::Shares => &mut self.panel_app.user_settings_state.shares_tab_scroll,
+                        UserSettingsTab::Friends => &mut self.panel_app.user_settings_state.account_tab_scroll,
                     };
                     scroll.start_drag(y);
                     true
@@ -3299,6 +3300,7 @@ impl ChartApp {
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                         UserSettingsTab::Account => &mut self.panel_app.user_settings_state.account_tab_scroll,
                         UserSettingsTab::Shares => &mut self.panel_app.user_settings_state.shares_tab_scroll,
+                        UserSettingsTab::Friends => &mut self.panel_app.user_settings_state.account_tab_scroll,
                     };
 
                     // Track click (jump to position)
@@ -4861,6 +4863,7 @@ impl ChartApp {
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                         UserSettingsTab::Account => &mut self.panel_app.user_settings_state.account_tab_scroll,
                         UserSettingsTab::Shares => &mut self.panel_app.user_settings_state.shares_tab_scroll,
+                        UserSettingsTab::Friends => &mut self.panel_app.user_settings_state.account_tab_scroll,
                     };
 
                     if try_handle_scrollbar_drag(y, &mut [(&info, scroll_state)]) {
@@ -7496,6 +7499,7 @@ impl ChartApp {
                                     UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                                     UserSettingsTab::Account => &mut self.panel_app.user_settings_state.account_tab_scroll,
                         UserSettingsTab::Shares => &mut self.panel_app.user_settings_state.shares_tab_scroll,
+                        UserSettingsTab::Friends => &mut self.panel_app.user_settings_state.account_tab_scroll,
                                 };
                                 let _ = try_handle_wheel(x, y, scroll_step, &mut [(&info, scroll_state)]);
                             }

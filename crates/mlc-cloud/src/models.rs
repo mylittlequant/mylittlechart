@@ -936,6 +936,9 @@ pub struct ShareOpsResponse {
     pub reset: bool,
     #[serde(default)]
     pub can_send: bool,
+    /// Author's Live toggle. False means catch up on a cadence.
+    #[serde(default)]
+    pub live: bool,
     #[serde(default)]
     pub ops: Vec<ShareChartOp>,
 }

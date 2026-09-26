@@ -35,7 +35,7 @@ fn flags(preset: &str) -> (bool, bool) {
 }
 
 fn content_height(hits: usize, show_people: bool) -> f64 {
-    let mut h = 3.0 * (ROW_H + GAP);
+    let mut h = 4.0 * (ROW_H + GAP);
     if show_people {
         let rows = hits.min(6).max(1) as f64;
         h += LABEL_H + GAP + FIELD_H + GAP + rows * (HIT_H + 4.0);
@@ -123,6 +123,8 @@ fn draw_body(
     draw_toggle_row(ctx, coord, layer_id, x, y, w, "share_settings:toggle:clone", "Clone", clone_on, tt);
     y += ROW_H + GAP;
     draw_toggle_row(ctx, coord, layer_id, x, y, w, "share_settings:toggle:edit", "Edit", state.edit_on, tt);
+    y += ROW_H + GAP;
+    draw_toggle_row(ctx, coord, layer_id, x, y, w, "share_settings:toggle:live", "Live", state.live_on, tt);
     y += ROW_H + GAP;
 
     let (field_rect, char_x_positions) = if show_people {

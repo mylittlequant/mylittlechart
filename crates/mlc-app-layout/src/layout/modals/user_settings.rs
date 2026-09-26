@@ -91,6 +91,7 @@ pub fn render_user_settings_modal(
                 UserSettingsTab::Server => Icon::Layers,
                 UserSettingsTab::Account => Icon::User,
                 UserSettingsTab::Shares => Icon::Pin,
+                UserSettingsTab::Friends => Icon::User,
             };
             ModalTab::with_icon(tab.id(), tab.label(), icon)
         })
@@ -270,6 +271,15 @@ pub fn render_user_settings_modal(
                 &layer_id,
                 &mut result,
             );
+        }
+        UserSettingsTab::Friends => {
+            let viewport_rect = WidgetRect::new(
+                content_x + padding,
+                settings_y,
+                content_w - padding * 2.0,
+                scroll_viewport_h,
+            );
+            render_friends_tab(ctx, viewport_rect, state, toolbar_theme, input_coordinator, &layer_id);
         }
         UserSettingsTab::Shares => {
             let viewport_rect = WidgetRect::new(
@@ -924,6 +934,63 @@ fn render_add_key_view(
     }
 
     y
+}
+
+fn render_friends_tab(
+    ctx: &mut dyn RenderContext,
+    viewport: WidgetRect,
+    state: &UserSettingsState,
+    tt: &ToolbarTheme,
+    coord: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+) {
+    let x = viewport.x;
+    let mut y = viewport.y;
+    let w = viewport.width;
+    ctx.set_font("13px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    let findable = if state.discoverable { "Findable in search: on" } else { "Findable in search: off" };
+    ctx.fill_text(findable, x, y + 14.0);
+    let toggle = WidgetRect::new(x + w - 88.0, y, 80.0, 28.0);
+    ctx.set_fill_color(if state.discoverable { &tt.accent } else { &tt.dropdown_bg });
+    ctx.fill_rounded_rect(toggle.x, toggle.y, toggle.width, toggle.height, 6.0);
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.fill_text(if state.discoverable { "On" } else { "Off" }, toggle.center_x(), toggle.center_y());
+    coord.register_on_layer("user_settings:discoverable", toggle, Sense::CLICK, layer_id);
+    y += 40.0;
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.fill_text("Friends still find you when this is off.", x, y + 8.0);
+    y += 28.0;
+    let invite = WidgetRect::new(x, y, w, 32.0);
+    ctx.set_fill_color(&tt.dropdown_bg);
+    ctx.fill_rounded_rect(invite.x, invite.y, invite.width, invite.height, 6.0);
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.fill_text("New friend invite link", invite.center_x(), invite.center_y());
+    coord.register_on_layer("user_settings:friend_invite", invite, Sense::CLICK, layer_id);
+    y += 40.0;
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&tt.item_text_muted);
+    if !state.friend_invite.is_empty() {
+        ctx.fill_text(&state.friend_invite, x, y + 8.0);
+        y += 22.0;
+    }
+    ctx.fill_text("Friends", x, y + 8.0);
+    y += 22.0;
+    ctx.set_fill_color(&tt.item_text);
+    if state.friend_nicks.is_empty() {
+        ctx.fill_text("No one yet.", x, y + 8.0);
+    } else {
+        for nick in state.friend_nicks.iter().take(12) {
+            ctx.fill_text(&format!("@{nick}"), x, y + 8.0);
+            y += 20.0;
+        }
+    }
 }
 
 fn render_shares_tab(

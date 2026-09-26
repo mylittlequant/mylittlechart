@@ -15,6 +15,8 @@ use crate::ChartApp;
 pub struct ShareStream {
     pub token: String,
     pub cursor: i64,
+    /// Author's Live toggle. Off: cadence. On: the channel.
+    pub live: bool,
     pub baseline: bool,
     pub last_push_ms: f64,
     pub last_pull_ms: f64,
@@ -32,6 +34,7 @@ impl ShareStream {
         Self {
             token,
             cursor: 0,
+            live: false,
             baseline: false,
             last_push_ms: 0.0,
             last_pull_ms: 0.0,
@@ -116,7 +119,8 @@ impl ChartApp {
         if stream.token != token {
             *stream = ShareStream::new(token.clone());
         }
-        if stream.pending.is_some() || (now_ms - stream.last_push_ms < 400.0 && stream.baseline) {
+        let gap = if stream.live { 400.0 } else { 8000.0 };
+        if stream.pending.is_some() || (now_ms - stream.last_push_ms < gap && stream.baseline) {
             return None;
         }
         stream.last_push_ms = now_ms;
@@ -178,14 +182,48 @@ impl ChartApp {
         if stream.token != follow.token {
             *stream = ShareStream::new(follow.token.clone());
         }
-        if now_ms - stream.last_pull_ms < 800.0 {
+        let gap = if stream.live { 800.0 } else { 8000.0 };
+        if now_ms - stream.last_pull_ms < gap {
             return None;
         }
         stream.last_pull_ms = now_ms;
         Some((follow.token, stream.cursor))
     }
 
-    pub fn apply_share_ops(&mut self, token: &str, reset: bool, can_send: bool, ops: &[ShareInboundOp]) {
+    pub fn note_share_channel(&mut self, token: &str, live: bool) {
+        self.panel_app.share_settings_state.live_on = live;
+        let preset = self.panel_app.active_preset_id.clone();
+        if let Some(stream) = self.share_streams.get_mut(&preset) {
+            if stream.token == token {
+                stream.live = live;
+            }
+        }
+    }
+
+    pub fn set_share_live(&mut self, live: bool) {
+        self.panel_app.share_settings_state.live_on = live;
+        let active = self.panel_app.active_preset_id.clone();
+        if let Some(stream) = self.share_streams.get_mut(&active) {
+            stream.live = live;
+        }
+        let token = self
+            .shared_chart_meta(&active)
+            .filter(|m| m.has_right("edit"))
+            .map(|m| m.token.clone())
+            .or_else(|| self.panel_app.chart_share_tokens.get(&active).cloned());
+        if let Some(token) = token {
+            self.pending_share_admin = Some(crate::ShareAdminCmd::Patch {
+                token,
+                body: format!(r#"{{"live":{live}}}"#),
+            });
+            self.panel_app.share_settings_state.status = "Saved for this chart".to_string();
+        } else {
+            self.panel_app.share_settings_state.status =
+                "Saved as the default for the next Share".to_string();
+        }
+    }
+
+    pub fn apply_share_ops(&mut self, token: &str, reset: bool, can_send: bool, live: bool, ops: &[ShareInboundOp]) {
         let Some(follow) = self.share_follow_target() else {
             return;
         };
@@ -195,6 +233,10 @@ impl ChartApp {
         if can_send {
             self.note_share_can_send(&follow.preset_id, true);
         }
+        if let Some(stream) = self.share_streams.get_mut(&follow.preset_id) {
+            stream.live = live;
+        }
+        self.panel_app.share_settings_state.live_on = live;
         let preset_id = follow.preset_id.clone();
         if reset {
             if let Some(stream) = self.share_streams.get_mut(&preset_id) {

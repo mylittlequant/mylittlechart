@@ -411,6 +411,37 @@ impl FetchTransport {
         self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
     }
 
+    pub async fn account_friends(&self) -> Result<(bool, Vec<String>), CloudError> {
+        let (status, body) = self.exchange("GET", "/api/account/friends", None, &[]).await?;
+        let value: serde_json::Value = self.decode_success(status, &body)?;
+        let discoverable = value.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(true);
+        let friends = value
+            .get("friends")
+            .and_then(|v| v.as_array())
+            .map(|arr| arr.iter().filter_map(|n| n.as_str().map(|s| s.to_string())).collect())
+            .unwrap_or_default();
+        Ok((discoverable, friends))
+    }
+
+    pub async fn account_set_discoverable(&self, on: bool) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "discoverable": on }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.exchange("PATCH", "/api/account/privacy", Some(payload), &[]).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    pub async fn account_friend_invite(&self) -> Result<String, CloudError> {
+        let (status, body) = self.exchange("POST", "/api/account/friend-invites", Some("{}".to_string()), &[]).await?;
+        let value: serde_json::Value = self.decode_success(status, &body)?;
+        Ok(value.get("url_path").and_then(|v| v.as_str()).unwrap_or("").to_string())
+    }
+
+    pub async fn account_accept_friend(&self, token: &str) -> Result<(), CloudError> {
+        let path = format!("/api/account/friend-invites/{token}/accept");
+        let (status, body) = self.exchange("POST", &path, Some("{}".to_string()), &[]).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
     /// `GET /api/share/{token}/ops?after=`.
     pub async fn share_get_ops(&self, token: &str, after: i64) -> Result<ShareOpsResponse, CloudError> {
         let path = format!("/api/share/{token}/ops?after={after}");

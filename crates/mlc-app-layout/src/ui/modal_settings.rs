@@ -307,6 +307,9 @@ pub struct ShareSettingsState {
     /// Public and Clone. The nick field stays available on a public link
     /// so the author can name an editor.
     pub edit_on: bool,
+    /// Channel mode for this chart's share. Off: the link catches up on a
+    /// cadence. On: subscribers sync movements as they happen.
+    pub live_on: bool,
     pub position: Option<(f64, f64)>,
     pub is_dragging: bool,
     pub drag_offset: Option<(f64, f64)>,
@@ -3523,6 +3526,9 @@ pub enum UserSettingsTab {
     /// The caller's own share links: pin, revoke, and the rights the
     /// server already stores on each token.
     Shares,
+    /// Privacy and friends. Signed-in only. Search visibility, the friend
+    /// list, and an invite link. Not part of share settings.
+    Friends,
 }
 
 impl UserSettingsTab {
@@ -3536,6 +3542,7 @@ impl UserSettingsTab {
             Self::Server => "server",
             Self::Account => "account",
             Self::Shares => "shares",
+            Self::Friends => "friends",
         }
     }
 
@@ -3551,6 +3558,7 @@ impl UserSettingsTab {
             Self::Server => UserSettingsKey::TabServer.get(lang),
             Self::Account => UserSettingsKey::TabAccount.get(lang),
             Self::Shares => "Shares",
+            Self::Friends => "Friends",
         }
     }
 
@@ -3576,6 +3584,7 @@ impl UserSettingsTab {
         let mut tabs = Vec::with_capacity(Self::all().len() + 1);
         if signed_in {
             tabs.push(Self::Account);
+            tabs.push(Self::Friends);
             tabs.push(Self::Shares);
         }
         tabs.extend_from_slice(Self::all());
@@ -3595,6 +3604,7 @@ impl UserSettingsTab {
             "server" => Some(Self::Server),
             "account" => Some(Self::Account),
             "shares" => Some(Self::Shares),
+            "friends" => Some(Self::Friends),
             _ => None,
         }
     }
@@ -3896,6 +3906,13 @@ pub struct UserSettingsState {
     pub shares_tab_scroll: ScrollState,
     /// Rows of `GET /api/share/mine`, filled by the shell.
     pub share_rows: Vec<ShareAdminRow>,
+    /// Whether nick search in messenger and share may find this account.
+    /// Friends can still find a hidden account.
+    pub discoverable: bool,
+    pub friend_nicks: Vec<String>,
+    pub friend_invite: String,
+    /// `load` | `discoverable` | `invite`. The shell drains it.
+    pub friend_cmd: Option<String>,
     pub share_status: String,
     /// Token of a pinned share whose Revoke click is waiting for Confirm.
     /// Unpinned revoke does not arm this.
@@ -4210,6 +4227,10 @@ impl Default for UserSettingsState {
             account_tab_scroll: ScrollState::default(),
             shares_tab_scroll: ScrollState::default(),
             share_rows: Vec::new(),
+            discoverable: true,
+            friend_nicks: Vec::new(),
+            friend_invite: String::new(),
+            friend_cmd: None,
             share_status: String::new(),
             share_revoke_confirm: None,
             show_welcome_wizard: false,

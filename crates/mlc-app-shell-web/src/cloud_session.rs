@@ -184,6 +184,24 @@ enum FlowResult {
     },
 }
 
+enum FriendApply {
+    List { discoverable: bool, nicks: Vec<String> },
+    Invite(String),
+}
+
+fn friend_query_token() -> Option<String> {
+    let window = web_sys::window()?;
+    let search = window.location().search().ok()?;
+    for part in search.trim_start_matches('?').split('&') {
+        if let Some(token) = part.strip_prefix("friend=") {
+            if !token.is_empty() {
+                return Some(token.to_string());
+            }
+        }
+    }
+    None
+}
+
 struct Inner {
     transport: FetchTransport,
     token: Option<StoredToken>,
@@ -271,6 +289,9 @@ struct Inner {
     share_ops_busy: bool,
     share_ops_in: Option<(String, mlc_cloud::ShareOpsResponse)>,
     share_ops_push_ok: Option<bool>,
+    friend_busy: bool,
+    friend_accept_tried: bool,
+    friend_result: Option<FriendApply>,
     /// `(chart_id, token)` from the last successful live publish.
     share_bound: Option<(String, String)>,
     share_lookup_q: String,
@@ -411,6 +432,9 @@ impl CloudSession {
                 share_ops_busy: false,
                 share_ops_in: None,
                 share_ops_push_ok: None,
+                friend_busy: false,
+                friend_accept_tried: false,
+                friend_result: None,
                 share_bound: None,
                 share_lookup_q: String::new(),
                 share_lookup_at_ms: 0.0,
@@ -885,6 +909,64 @@ impl CloudSession {
         });
     }
 
+    fn poll_friends(&self, chart: &mut ChartApp) {
+        if let Some(apply) = self.inner.borrow_mut().friend_result.take() {
+            match apply {
+                FriendApply::List { discoverable, nicks } => {
+                    chart.panel_app.user_settings_state.discoverable = discoverable;
+                    chart.panel_app.user_settings_state.friend_nicks = nicks;
+                }
+                FriendApply::Invite(url) => {
+                    chart.panel_app.user_settings_state.friend_invite = format!("https://chart.example{url}");
+                }
+            }
+        }
+        if self.inner.borrow().friend_busy || !self.is_signed_in() {
+            return;
+        }
+        if !self.inner.borrow().friend_accept_tried {
+            self.inner.borrow_mut().friend_accept_tried = true;
+            if let Some(token) = friend_query_token() {
+                self.inner.borrow_mut().friend_busy = true;
+                let transport = self.inner.borrow().transport.snapshot();
+                let inner = self.inner.clone();
+                spawn_local(async move {
+                    let _ = transport.account_accept_friend(&token).await;
+                    if let Ok((discoverable, nicks)) = transport.account_friends().await {
+                        inner.borrow_mut().friend_result = Some(FriendApply::List { discoverable, nicks });
+                    }
+                    inner.borrow_mut().friend_busy = false;
+                });
+                return;
+            }
+        }
+        let cmd = chart.panel_app.user_settings_state.friend_cmd.take();
+        let Some(cmd) = cmd else {
+            return;
+        };
+        self.inner.borrow_mut().friend_busy = true;
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        let discoverable = chart.panel_app.user_settings_state.discoverable;
+        spawn_local(async move {
+            let result = match cmd.as_str() {
+                "discoverable" => {
+                    let _ = transport.account_set_discoverable(discoverable).await;
+                    transport.account_friends().await.ok().map(|(discoverable, nicks)| {
+                        FriendApply::List { discoverable, nicks }
+                    })
+                }
+                "invite" => transport.account_friend_invite().await.ok().map(FriendApply::Invite),
+                _ => transport.account_friends().await.ok().map(|(discoverable, nicks)| {
+                    FriendApply::List { discoverable, nicks }
+                }),
+            };
+            let mut guard = inner.borrow_mut();
+            guard.friend_result = result;
+            guard.friend_busy = false;
+        });
+    }
+
     fn poll_share_ops(&self, chart: &mut ChartApp, now_ms: f64) {
         if let Some(ok) = self.inner.borrow_mut().share_ops_push_ok.take() {
             chart.ack_share_push(ok);
@@ -900,7 +982,7 @@ impl CloudSession {
                     body: op.body,
                 })
                 .collect();
-            chart.apply_share_ops(&token, resp.reset, resp.can_send, &ops);
+            chart.apply_share_ops(&token, resp.reset, resp.can_send, resp.live, &ops);
         }
         if self.inner.borrow().share_ops_busy {
             return;
@@ -1259,6 +1341,7 @@ impl CloudSession {
             }
         }
         self.poll_share_ops(chart, now_ms);
+        self.poll_friends(chart);
 
         // ── Chart-share clone (shared-viewer arc, 2026-09-06) ──────────────
         // `ChartApp::request_clone_share` is the one-shot mailbox a "Clone to
