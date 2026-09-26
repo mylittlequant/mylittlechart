@@ -162,6 +162,12 @@ impl<'a> mlc_core::drawing::DrawingRenderView for BubbleDrawingView<'a> {
     fn render_bid(&self) -> Option<BubbleId> {
         Some(self.bid)
     }
+    fn remote_highlight(&self) -> Option<u64> {
+        self.mgr.remote_highlight(self.bid)
+    }
+    fn remote_ghost(&self) -> Option<Box<dyn Primitive>> {
+        self.mgr.remote_ghost(self.bid)
+    }
 }
 
 /// Read-only facade over `DrawingManager` + `BubbleStore`.
@@ -446,6 +452,15 @@ impl<'a> DrawingsMut<'a> {
 
     pub fn set_default_color(&mut self, bid: BubbleId, color: &str) {
         self.mgr.set_default_color(bid, color)
+    }
+
+    /// Paint the author's hand. Does not select and does not insert a primitive.
+    pub fn set_remote_overlay(&mut self, bid: BubbleId, highlight: Option<u64>, ghost: Option<Box<dyn Primitive>>) {
+        self.mgr.set_remote_overlay(bid, highlight, ghost)
+    }
+
+    pub fn clear_remote_ghost(&mut self, bid: BubbleId) {
+        self.mgr.clear_remote_ghost(bid)
     }
 
     pub fn set_locked(&mut self, bid: BubbleId, locked: bool) {

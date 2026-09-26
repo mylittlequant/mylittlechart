@@ -2138,7 +2138,11 @@ impl ChartApp {
                     corrected_vp.chart_height = chart_rect.height;
                     let hit_prim_id = active_bid_hit
                         .and_then(|bid| self.core.drawings().hit_test(bid, local_x, local_y, &hit_bars_main[..], &corrected_vp, &window.price_scale()));
-                    if let Some(hit_prim_id) = hit_prim_id {
+                    if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                        if hit_prim_id.is_some() {
+                            return;
+                        }
+                    } else if let Some(hit_prim_id) = hit_prim_id {
                         // Select the primitive, clear indicator selection, and return.
                         self.selected_indicator_id = None;
                         // Deselect all other bubbles first so control points don't accumulate.
@@ -2193,7 +2197,11 @@ impl ChartApp {
                 if let (Some(sub_viewport), Some(_window)) = (sub_viewport, self.panel_app.panel_grid.active_container()) {
                     let sub_hit_prim_id = active_bid_hit
                         .and_then(|bid| self.core.drawings().hit_test_in_pane(bid, plx, ply, instance_id, &hit_bars_sub[..], &sub_viewport, &sub_price_scale));
-                    if let Some(hit_prim_id) = sub_hit_prim_id {
+                    if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+                        if sub_hit_prim_id.is_some() {
+                            return;
+                        }
+                    } else if let Some(hit_prim_id) = sub_hit_prim_id {
                         // Select the primitive, clear indicator selection, and return.
                         self.selected_indicator_id = None;
                         // Deselect all other bubbles.

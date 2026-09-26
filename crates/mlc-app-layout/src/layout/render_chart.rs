@@ -1937,7 +1937,7 @@ pub fn render_sub_pane_primitives(
                 }
             }
 
-            let is_selected = selected_idx == Some(data.id);
+            let is_selected = selected_idx == Some(data.id) || dm.remote_highlight() == Some(data.id);
             // Always arm identity so Fib/Gann level plates can attribute;
             // user-text recording still content-matches against `expected`
             // (empty string when there is no `data.text` — system labels
@@ -2693,7 +2693,7 @@ pub fn render_main_chart_primitives(
                 }
             }
 
-            let is_selected = selected_idx == Some(data.id);
+            let is_selected = selected_idx == Some(data.id) || dm.remote_highlight() == Some(data.id);
             // Always arm identity so Fib/Gann level plates can attribute;
             // user-text recording still content-matches against `expected`
             // (empty string when there is no `data.text` — system labels
@@ -2722,6 +2722,11 @@ pub fn render_main_chart_primitives(
 
     // Render drawing preview — cursor-dependent, delegates to standalone fn.
     draw_main_chart_drawing_preview(ctx, state, dm, chart.height);
+
+    // Author's unfinished drawing. Not a primitive on this chart.
+    if let Some(ghost) = dm.remote_ghost() {
+        ghost.render(ctx, false);
+    }
 
     // Restore context state
     ctx.restore();

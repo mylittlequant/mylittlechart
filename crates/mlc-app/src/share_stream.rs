@@ -41,6 +41,9 @@ pub struct ShareStream {
     pub viewport_sent: String,
     /// Local id of the in-progress draw preview. Kept out of the object diff.
     pub preview_local: Option<u64>,
+    /// Finished-object JSON already handed to the socket. Not `last`:
+    /// `last` is what the control box has acknowledged.
+    pub edge_final: HashMap<String, String>,
 }
 
 impl ShareStream {
@@ -63,6 +66,7 @@ impl ShareStream {
             gesture_sent: String::new(),
             viewport_sent: String::new(),
             preview_local: None,
+            edge_final: HashMap::new(),
         }
     }
 }
@@ -232,6 +236,8 @@ impl ChartApp {
         let current = self.share_object_json(&preset_id);
         let stream = self.share_streams.get_mut(&preset_id)?;
         let mut frames = Vec::new();
+        let phase_now = gesture.as_ref().map(|(phase, _)| phase.as_str()).unwrap_or("");
+        let phase_now = phase_now.to_string();
         if let Some((phase, json)) = gesture {
             let send_idle = phase == "idle" && !stream.gesture_phase.is_empty() && stream.edge_phase != "idle" && stream.edge_phase != phase;
             let send_move = phase != "idle" && stream.gesture_sent != json;
@@ -259,6 +265,27 @@ impl ChartApp {
                     ));
                     stream.edge_point = body.clone();
                 }
+            }
+        }
+        // Mouse-up: one frame of the finished object, same tick as idle.
+        // The control-box post still happens from `share_ops_due`.
+        if phase_now == "idle" {
+            let settled: Vec<(String, String)> = current
+                .iter()
+                .filter(|(key, body)| {
+                    !key.starts_with('i')
+                        && stream.last.get(*key) != Some(*body)
+                        && stream.edge_final.get(*key) != Some(*body)
+                })
+                .map(|(key, body)| (key.clone(), body.clone()))
+                .collect();
+            for (key, body) in settled {
+                frames.push(format!(
+                    "{{\"t\":\"p\",\"id\":{},\"b\":{},\"new\":1}}",
+                    serde_json::to_string(&key).unwrap_or_else(|_| "\"\"".into()),
+                    serde_json::to_string(&body).unwrap_or_else(|_| "\"\"".into())
+                ));
+                stream.edge_final.insert(key, body);
             }
         }
         if frames.is_empty() {
@@ -292,8 +319,25 @@ impl ChartApp {
             "p" => {
                 let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let body = value.get("b").and_then(|v| v.as_str()).unwrap_or("");
+                if id.is_empty() || body.is_empty() {
+                    return;
+                }
                 if self.local_drag_key(&preset_id).as_deref() == Some(id) {
                     return;
+                }
+                self.ensure_share_keys(&preset_id);
+                let known = self
+                    .share_streams
+                    .get(&preset_id)
+                    .is_some_and(|s| s.key_to_local.contains_key(id));
+                let is_new = value.get("new").and_then(|v| v.as_u64()) == Some(1);
+                // A drag frame for an object this chart does not have is not
+                // a create. Creating here was the duplicate line.
+                if !known && !is_new {
+                    return;
+                }
+                if is_new {
+                    self.core.drawings_mut().clear_remote_ghost(bid);
                 }
                 let op = ShareInboundOp {
                     seq: 0,
@@ -548,6 +592,7 @@ impl ChartApp {
                 }
             }
             "primitive_upsert" => {
+                self.ensure_share_keys(preset_id);
                 let Ok(value) = serde_json::from_str::<serde_json::Value>(&op.body) else {
                     return;
                 };
@@ -685,6 +730,7 @@ impl ChartApp {
         let phase = value.get("phase").and_then(|v| v.as_str()).unwrap_or("idle");
         let tool = value.get("tool").and_then(|v| v.as_str()).unwrap_or("");
         let selected = value.get("selected").and_then(|v| v.as_str()).unwrap_or("");
+        let dragging = value.get("dragging").and_then(|v| v.as_str()).unwrap_or("");
         let points: Vec<(i64, f64)> = value
             .get("points")
             .and_then(|v| v.as_array())
@@ -697,18 +743,25 @@ impl ChartApp {
                     .collect()
             })
             .unwrap_or_default();
-        if phase == "draw" && !tool.is_empty() && !points.is_empty() {
-            self.set_share_preview(preset_id, bid, tool, &points);
+        // Old builds inserted the projection as a real primitive. Drop it.
+        self.clear_share_preview(preset_id, bid);
+        self.ensure_share_keys(preset_id);
+        if self.is_readonly_tab(preset_id) {
+            self.core.drawings_mut().deselect(bid);
+        }
+        let hand = if selected.is_empty() { dragging } else { selected };
+        let highlight = if hand.is_empty() {
+            None
         } else {
-            self.clear_share_preview(preset_id, bid);
-        }
-        if selected.is_empty() {
-            if phase == "idle" {
-                self.core.drawings_mut().deselect(bid);
-            }
-        } else if let Some(local) = self.share_streams.get(preset_id).and_then(|s| s.key_to_local.get(selected).copied()) {
-            self.core.drawings_mut().select(bid, local);
-        }
+            self.share_streams.get(preset_id).and_then(|s| s.key_to_local.get(hand).copied())
+        };
+        let ghost = if phase == "draw" && !tool.is_empty() && !points.is_empty() {
+            let registry = mlc_core::drawing::primitives_v2::PrimitiveRegistry::global().read().unwrap();
+            registry.create(tool, &points, None)
+        } else {
+            None
+        };
+        self.core.drawings_mut().set_remote_overlay(bid, highlight, ghost);
     }
 
     fn apply_share_viewport(&mut self, body: &str) {
@@ -734,16 +787,4 @@ impl ChartApp {
         }
     }
 
-    fn set_share_preview(&mut self, preset_id: &str, bid: mlc_core::ids::BubbleId, tool: &str, points: &[(i64, f64)]) {
-        let registry = mlc_core::drawing::primitives_v2::PrimitiveRegistry::global().read().unwrap();
-        let Some(prim) = registry.create(tool, points, None) else {
-            return;
-        };
-        drop(registry);
-        self.clear_share_preview(preset_id, bid);
-        let id = self.core.drawings_mut().add_external(bid, prim);
-        if let Some(stream) = self.share_streams.get_mut(preset_id) {
-            stream.preview_local = Some(id);
-        }
-    }
 }

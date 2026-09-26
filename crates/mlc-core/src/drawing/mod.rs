@@ -150,6 +150,11 @@ pub trait DrawingRenderView {
     fn effective_color(&self) -> String;
     fn create_preview(&self, cursor_ts_ms: i64, cursor_price: f64) -> Option<Box<dyn primitives_v2::Primitive>>;
     fn shift_constrain(&self) -> bool { false }
+    /// Author's selection painted on a viewer. Not `selected()`: that arms
+    /// the local hit-test. Default is no remote hand.
+    fn remote_highlight(&self) -> Option<u64> { None }
+    /// In-progress drawing projection. Not a stored primitive.
+    fn remote_ghost(&self) -> Option<Box<dyn primitives_v2::Primitive>> { None }
     /// Bubble this view renders, when the implementation is bubble-scoped
     /// (the app's `BubbleDrawingView` is). The user-text label registry in
     /// `engine::render::context` tags recorded label rects with it so a
