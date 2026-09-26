@@ -78,3 +78,46 @@ pub fn draw_share_viewer_row(
 
     coord.register_on_layer(widget_id.as_str(), btn_rect, Sense::CLICK | Sense::HOVER, layer_id);
 }
+
+/// Author's live controls, same corner as the viewer's Clone button.
+/// Live is the socket. View and Cursor ride that socket and drop off with it.
+pub fn draw_share_live_controls(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    rect: WidgetRect,
+    live: bool,
+    viewport: bool,
+    cursor: bool,
+    tt: &ToolbarTheme,
+) {
+    let mut buttons = vec![("share_live:live", "Live", live)];
+    if live {
+        buttons.push(("share_live:viewport", "View", viewport));
+        buttons.push(("share_live:cursor", "Cursor", cursor));
+    }
+    ctx.set_font("600 12px sans-serif");
+    let gap = 4.0;
+    let mut right = rect.x + rect.width;
+    for (id, label, on) in buttons.into_iter().rev() {
+        let w = ctx.measure_text(label) + BTN_PAD_X * 2.0;
+        right -= w;
+        let btn = WidgetRect::new(right, rect.y, w, rect.height);
+        right -= gap;
+        let hovered = coord.is_hovered(&WidgetId::from(id));
+        let bg = if on {
+            tt.accent.as_str()
+        } else if hovered {
+            tt.button_bg_hover.as_str()
+        } else {
+            tt.button_bg.as_str()
+        };
+        ctx.set_fill_color(bg);
+        ctx.fill_rounded_rect(btn.x, btn.y, btn.width, btn.height, BTN_RADIUS);
+        ctx.set_fill_color(if on { "#ffffff" } else { tt.item_text.as_str() });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, btn.center_x(), btn.center_y());
+        coord.register_on_layer(id, btn, Sense::CLICK | Sense::HOVER, layer_id);
+    }
+}

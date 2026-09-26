@@ -299,11 +299,23 @@ impl ChartApp {
     /// is one of these frames, not a row in the control-box log.
     pub fn take_edge_frames(&mut self) -> Option<(String, Vec<String>)> {
         let follow = self.share_follow_target()?;
-        let preset_id = follow.preset_id.clone();
-        let stream = self.share_streams.get(&preset_id)?;
-        let ui_live = self.panel_app.share_settings_state.live_on;
-        if (!stream.live && !ui_live) || !follow.can_send {
+        if !follow.can_send {
             return None;
+        }
+        let preset_id = follow.preset_id.clone();
+        let ui_live = self.panel_app.share_settings_state.live_on;
+        let ui_view = self.panel_app.share_settings_state.live_viewport;
+        let ui_cursor = self.panel_app.share_settings_state.live_cursor;
+        let alive = self.share_streams.get(&preset_id).is_some_and(|s| s.live) || ui_live;
+        if !alive {
+            return None;
+        }
+        if let Some(stream) = self.share_streams.get_mut(&preset_id) {
+            if ui_live {
+                stream.live = true;
+            }
+            stream.live_viewport = ui_live && ui_view;
+            stream.live_cursor = ui_live && ui_cursor;
         }
         let token = follow.token.clone();
         let gesture = self.share_gesture(&preset_id);
@@ -327,6 +339,9 @@ impl ChartApp {
                     stream.viewport_sent = json;
                 }
             }
+        } else if !stream.viewport_sent.is_empty() {
+            frames.push("{\"t\":\"v\",\"off\":true}".to_string());
+            stream.viewport_sent.clear();
         }
         if let Some((key, body)) = hand.drag {
             if stream.edge_point != body {
@@ -391,8 +406,17 @@ impl ChartApp {
                 self.apply_share_gesture(&preset_id, bid, &body);
             }
             "v" => {
-                let body = value.get("b").map(|v| v.to_string()).unwrap_or_default();
-                self.apply_share_viewport(&body);
+                if value.get("off").and_then(|v| v.as_bool()).unwrap_or(false) {
+                    if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
+                        window.follow_remote_view = false;
+                    }
+                } else {
+                    let body = match value.get("b") {
+                        Some(v) => v.as_str().map(|s| s.to_string()).unwrap_or_else(|| v.to_string()),
+                        None => String::new(),
+                    };
+                    self.apply_share_viewport(&body, true);
+                }
             }
             "preview" => {
                 let body = value.get("b").and_then(|v| v.as_str()).unwrap_or("");
@@ -746,7 +770,7 @@ impl ChartApp {
                 }
             }
             "gesture" => self.apply_share_gesture(preset_id, bid, &op.body),
-            "viewport" => self.apply_share_viewport(&op.body),
+            "viewport" => self.apply_share_viewport(&op.body, false),
             "indicator_upsert" => {
                 let Ok(snap) = serde_json::from_str::<IndicatorSnapshot>(&op.body) else {
                     return;
@@ -878,7 +902,7 @@ impl ChartApp {
         }
     }
 
-    fn apply_share_viewport(&mut self, body: &str) {
+    fn apply_share_viewport(&mut self, body: &str, lock: bool) {
         let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else {
             return;
         };
@@ -891,7 +915,26 @@ impl ChartApp {
         let Some(window) = self.panel_app.panel_grid.active_container_mut() else {
             return;
         };
+        if lock {
+            window.follow_remote_view = true;
+        }
         window.apply_shared_view(view_start, bar_spacing, price);
+    }
+
+    /// Last socket frames when Live goes off: viewers release the viewport
+    /// and the crosshair. Sent once, then the socket closes.
+    pub fn take_live_stop_frames(&mut self) -> Option<(String, Vec<String>)> {
+        let follow = self.share_follow_target()?;
+        if !follow.can_send {
+            return None;
+        }
+        Some((
+            follow.token,
+            vec![
+                "{\"t\":\"c\",\"off\":true}".to_string(),
+                "{\"t\":\"v\",\"off\":true}".to_string(),
+            ],
+        ))
     }
 
     fn apply_share_cursor(&mut self, value: &serde_json::Value) {

@@ -125,36 +125,6 @@ fn draw_body(
     y += ROW_H + GAP;
     draw_toggle_row(ctx, coord, layer_id, x, y, w, "share_settings:toggle:edit", "Edit", state.edit_on, tt);
     y += ROW_H + GAP;
-    draw_toggle_row(ctx, coord, layer_id, x, y, w, "share_settings:toggle:live", "Live", state.live_on, tt);
-    y += ROW_H + GAP;
-    if state.live_on {
-        draw_toggle_row(
-            ctx,
-            coord,
-            layer_id,
-            x,
-            y,
-            w,
-            "share_settings:toggle:viewport",
-            "Viewport",
-            state.live_viewport,
-            tt,
-        );
-        y += ROW_H + GAP;
-        draw_toggle_row(
-            ctx,
-            coord,
-            layer_id,
-            x,
-            y,
-            w,
-            "share_settings:toggle:cursor",
-            "Cursor",
-            state.live_cursor,
-            tt,
-        );
-        y += ROW_H + GAP;
-    }
 
     let (field_rect, char_x_positions) = if show_people {
         ctx.set_font("12px sans-serif");

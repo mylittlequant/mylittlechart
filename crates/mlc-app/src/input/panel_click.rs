@@ -5557,6 +5557,25 @@ impl ChartApp {
 
         // Public share: a signed-out viewer may clone the open chart into
         // a local tab. Creating a share still requires an account.
+        if let Some(which) = widget_id.strip_prefix("share_live:") {
+            match which {
+                "live" => {
+                    let live = !self.panel_app.share_settings_state.live_on;
+                    self.set_share_live(live);
+                }
+                "viewport" => {
+                    let on = !self.panel_app.share_settings_state.live_viewport;
+                    self.set_share_viewport(on);
+                }
+                "cursor" => {
+                    let on = !self.panel_app.share_settings_state.live_cursor;
+                    self.set_share_cursor(on);
+                }
+                _ => {}
+            }
+            return;
+        }
+
         if let Some(preset_id) = widget_id.strip_prefix("share:clone:") {
             match self.shared_chart_meta(preset_id).map(|m| m.token.clone()) {
                 Some(token) => {

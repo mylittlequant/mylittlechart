@@ -307,6 +307,8 @@ struct Inner {
     edge_ticket_busy: bool,
     edge_ticket_next_ms: f64,
     edge_hello_sent: bool,
+    /// Live just turned off. Off-frames go out before the socket closes.
+    edge_stop_sent: bool,
     /// `(chart_id, token)` from the last successful live publish.
     share_bound: Option<(String, String)>,
     share_lookup_q: String,
@@ -462,6 +464,7 @@ impl CloudSession {
                 edge_ticket_busy: false,
                 edge_ticket_next_ms: 0.0,
                 edge_hello_sent: false,
+                edge_stop_sent: false,
                 share_bound: None,
                 share_lookup_q: String::new(),
                 share_lookup_at_ms: 0.0,
@@ -1062,9 +1065,24 @@ impl CloudSession {
         }
         let token = chart.edge_live_token();
         if token.is_none() {
+            let open = self.inner.borrow().edge_socket.as_ref().map(|ws| ws.ready_state()) == Some(1);
+            let stop_sent = self.inner.borrow().edge_stop_sent;
+            if open && !stop_sent {
+                if let Some((_, frames)) = chart.take_live_stop_frames() {
+                    if let Some(ws) = self.inner.borrow().edge_socket.as_ref() {
+                        for frame in &frames {
+                            let _ = ws.send_with_str(frame);
+                        }
+                    }
+                }
+                self.inner.borrow_mut().edge_stop_sent = true;
+                return;
+            }
             self.close_edge();
+            self.inner.borrow_mut().edge_stop_sent = false;
             return;
         }
+        self.inner.borrow_mut().edge_stop_sent = false;
         let token = token.unwrap();
         let (have_ticket, busy, ticket_for, next_ms) = {
             let guard = self.inner.borrow();

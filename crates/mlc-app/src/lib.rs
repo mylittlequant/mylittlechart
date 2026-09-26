@@ -10373,6 +10373,30 @@ impl ChartApp {
                         &toolbar_theme,
                     );
                 }
+            } else if self.panel_app.chart_share_tokens.contains_key(&active_preset_id) {
+                let row_y = content_rect.y + 2.0;
+                let row_height = mlc_app_layout::layout::panel_overlay::LEAF_TAB_HEIGHT - 4.0;
+                let plot_right_edge = {
+                    let extended = self.build_extended_layout();
+                    extended.main_chart.chart.x + extended.main_chart.chart.width
+                };
+                let row_rect = uzor::types::Rect::new(
+                    content_rect.x, row_y, (plot_right_edge - content_rect.x).max(0.0), row_height,
+                );
+                let live = self.panel_app.share_settings_state.live_on;
+                let viewport = self.panel_app.share_settings_state.live_viewport;
+                let cursor_on = self.panel_app.share_settings_state.live_cursor;
+                let mut coord = self.input_coordinator.borrow_mut();
+                mlc_app_layout::ui::share_viewer_row::draw_share_live_controls(
+                    ctx,
+                    &mut coord,
+                    &uzor::input::LayerId::new("toolbar"),
+                    row_rect,
+                    live,
+                    viewport,
+                    cursor_on,
+                    &toolbar_theme,
+                );
             }
         }
 

@@ -178,6 +178,8 @@ pub struct ChartContainer {
     // === Interaction State ===
     /// Crosshair state (position, visibility)
     pub crosshair: Crosshair,
+    /// Viewer is following the author's viewport. Local pan and zoom wait.
+    pub follow_remote_view: bool,
     /// Kinetic scrolling state
     pub kinetic: KineticState,
     /// Current drag mode
@@ -450,6 +452,7 @@ impl ChartContainer {
             sub_pane_overlay_results: Vec::new(),
             // Interaction
             crosshair: Crosshair::default(),
+            follow_remote_view: false,
             kinetic: KineticState::new(),
             drag_mode: DragMode::None,
             last_mouse_pos: None,
@@ -1243,6 +1246,7 @@ impl ChartContainer {
                 ch.visible = false;
                 ch
             },
+            follow_remote_view: false,
             kinetic: KineticState::new(),
             drag_mode: DragMode::None,
             last_mouse_pos: None,
@@ -2006,6 +2010,9 @@ impl ChartContainer {
     /// Delegates to [`Viewport::zoom_at`] which handles clamping.
     /// `series` is the ActiveSeries the window's chart_type renders (audit D8).
     pub fn zoom_horizontal(&mut self, center_x: f64, factor: f64, series: crate::active_series::ActiveSeries<'_>) {
+        if self.follow_remote_view {
+            return;
+        }
         self.viewport.zoom_at(center_x, factor);
         if self.price_scale.scale_mode.is_auto_y() {
             self.calc_auto_scale(series);
@@ -2018,6 +2025,9 @@ impl ChartContainer {
     /// `chart_width / cap` (never below the global pixel clamp). `None`
     /// behaves exactly like [`Self::zoom_horizontal`].
     pub fn zoom_horizontal_capped(&mut self, center_x: f64, factor: f64, fit_cap_bars: Option<u32>, series: crate::active_series::ActiveSeries<'_>) {
+        if self.follow_remote_view {
+            return;
+        }
         let mut min = self.viewport.min_bar_spacing();
         if let Some(cap) = fit_cap_bars {
             if cap > 0 && self.viewport.chart_width > 0.0 {
@@ -2143,6 +2153,9 @@ impl ChartContainer {
     /// Directly set the price range (manual price-scale drag) and switch
     /// to Manual mode.
     pub fn set_price_range(&mut self, price_min: f64, price_max: f64) {
+        if self.follow_remote_view {
+            return;
+        }
         self.price_scale.scale_mode = ScaleMode::Manual;
         self.price_scale.price_min = price_min;
         self.price_scale.price_max = price_max;
@@ -2153,6 +2166,9 @@ impl ChartContainer {
     /// main-chart auto/manual price adjust are two different follow-ups
     /// depending on drag mode).
     pub fn pan(&mut self, pixel_delta: f64) {
+        if self.follow_remote_view {
+            return;
+        }
         self.viewport.pan(pixel_delta);
     }
 
