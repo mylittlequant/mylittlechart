@@ -478,7 +478,7 @@ impl ChartPreset {
     ///   reset per preset — can.
     /// Returns author primitive id → the id this process assigned.
     /// Callers that only need the remap can ignore the map.
-    pub fn remap_ids_for_import(&mut self) -> std::collections::HashMap<u64, u64> {
+    pub fn remap_ids_for_import(&mut self, keep_primitive_ids: bool) -> std::collections::HashMap<u64, u64> {
         use std::collections::HashMap;
 
         let window_id_map: HashMap<u64, u64> = self
@@ -526,6 +526,12 @@ impl ChartPreset {
         }
         for ind in &mut self.indicators {
             ind.bubble_id = ind.bubble_id.and_then(|bid| bubble_id_map.get(&bid).copied());
+        }
+
+        // A share viewer watches the author's objects. Their numbers stay.
+        // Clone passes false: that chart is new data and gets new numbers.
+        if keep_primitive_ids {
+            return HashMap::new();
         }
 
         // Primitive ids: collect one fresh id per unique old id across

@@ -34,6 +34,7 @@ impl ChartApp {
         lp_clone_us: u128,
     ) {
                     let lp_cold_start = web_time::Instant::now();
+                    let keep_line_ids = self.share_keep_ids.contains(&preset.id);
                     let _t_prep = web_time::Instant::now();
                     // Recovery: preset files written by the startup-autosave bug
                     // carry empty symbol/exchange. Resurrect them with the
@@ -253,10 +254,12 @@ impl ChartApp {
                                             if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                                                 for prim_snap in restore_snap {
                                                     if let Some(mut prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                        let snapshot_id = prim.data().id;
-                                                        let live_id = mlc_core::drawing::alloc_primitive_id();
-                                                        prim.data_mut().id = live_id;
-                                                        id_pairs.push((snapshot_id, live_id));
+                                                        if !keep_line_ids {
+                                                            let snapshot_id = prim.data().id;
+                                                            let live_id = mlc_core::drawing::alloc_primitive_id();
+                                                            prim.data_mut().id = live_id;
+                                                            id_pairs.push((snapshot_id, live_id));
+                                                        }
                                                         auto_bub.primitives.push(prim);
                                                     }
                                                 }

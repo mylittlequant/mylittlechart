@@ -559,7 +559,12 @@ impl ChartApp {
                 if type_id.is_empty() || json.is_empty() {
                     return;
                 }
-                let local = self.share_streams.get(preset_id).and_then(|s| s.key_to_local.get(&op.object_id).copied());
+                let local = self.share_streams.get(preset_id).and_then(|s| s.key_to_local.get(&op.object_id).copied())
+                    .or_else(|| {
+                        let id = op.object_id.strip_prefix("p:").and_then(|s| s.parse::<u64>().ok())?;
+                        let found = self.core.drawings().primitives(bid).iter().any(|p| p.data().id == id);
+                        found.then_some(id)
+                    });
                 if let Some(local) = local {
                     self.core.drawings_mut().replace_primitive_from_json(bid, local, &type_id, &json);
                 } else {

@@ -1065,6 +1065,9 @@ pub struct ChartApp {
     /// Share updates name the snapshot id. The loaded line has the other one.
     pub(crate) hydrate_prim_ids: std::collections::HashMap<u64, u64>,
 
+    /// Share tabs whose primitive numbers are the author's and must survive load.
+    pub(crate) share_keep_ids: std::collections::HashSet<String>,
+
     /// Per-preset op cursor and the last JSON sent or applied, keyed by
     /// the stream's object id (`p:{author_id}` or `n:…`).
     pub(crate) share_streams: std::collections::HashMap<String, share_stream::ShareStream>,
@@ -3594,6 +3597,7 @@ impl ChartApp {
             shared_chart_meta: std::collections::HashMap::new(),
             share_import_prims: std::collections::HashMap::new(),
             hydrate_prim_ids: std::collections::HashMap::new(),
+            share_keep_ids: std::collections::HashSet::new(),
             share_streams: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
@@ -3996,6 +4000,7 @@ impl ChartApp {
             shared_chart_meta: std::collections::HashMap::new(),
             share_import_prims: std::collections::HashMap::new(),
             hydrate_prim_ids: std::collections::HashMap::new(),
+            share_keep_ids: std::collections::HashSet::new(),
             share_streams: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
@@ -4605,6 +4610,7 @@ impl ChartApp {
             shared_chart_meta: std::collections::HashMap::new(),
             share_import_prims: std::collections::HashMap::new(),
             hydrate_prim_ids: std::collections::HashMap::new(),
+            share_keep_ids: std::collections::HashSet::new(),
             share_streams: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,

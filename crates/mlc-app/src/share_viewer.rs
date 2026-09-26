@@ -146,12 +146,12 @@ impl ChartApp {
         // alias/overwrite them (owner report M5: "VOLUME drawn twice").
         // See `ChartPreset::remap_ids_for_import`'s own doc for the exact
         // mechanism and what is/isn't in scope.
-        let prim_map = preset.remap_ids_for_import();
+        preset.remap_ids_for_import(true);
         let id = fresh_preset_id("shared");
         preset.id = id.clone();
         preset.name = format!("{} — {}", meta.title, meta.owner_label);
 
-        self.share_import_prims.insert(id.clone(), prim_map);
+        self.share_keep_ids.insert(id.clone());
         self.readonly_preset_ids.insert(id.clone());
         self.shared_chart_meta.insert(id.clone(), meta);
         self.core.presets_mut().insert(id.clone(), preset);
@@ -246,7 +246,7 @@ impl ChartApp {
         let Some(mut preset) = self.core.presets().get(&id).cloned() else {
             return false;
         };
-        preset.remap_ids_for_import();
+        preset.remap_ids_for_import(false);
         let new_id = fresh_preset_id("preset");
         preset.id = new_id.clone();
         preset.name = format!("{} — {} (clone)", meta.title, meta.owner_label);
@@ -262,7 +262,7 @@ impl ChartApp {
     ) -> PresetId {
         // Same id-collision hazard as `open_shared_preset` — see that
         // method's doc and `ChartPreset::remap_ids_for_import`'s own doc.
-        preset.remap_ids_for_import();
+        preset.remap_ids_for_import(false);
         let id = fresh_preset_id("preset");
         preset.id = id.clone();
         self.core.presets_mut().insert(id.clone(), preset);
@@ -392,8 +392,9 @@ impl ChartApp {
                 preset.version, PRESET_VERSION,
             ));
         }
-        preset.remap_ids_for_import();
+        preset.remap_ids_for_import(true);
         preset.id = placeholder_id.to_string();
+        self.share_keep_ids.insert(placeholder_id.to_string());
         preset.name = format!("{} — {}", meta.title, meta.owner_label);
 
         // A boot-time re-fetch (`UpdaterCommand::ReopenShare`) doesn't
