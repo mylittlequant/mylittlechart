@@ -310,7 +310,11 @@ impl ChartApp {
         match kind {
             "g" => {
                 let body = value.get("b").map(|v| v.to_string()).unwrap_or_default();
-                self.apply_share_gesture(&preset_id, bid, &body);
+                if self.share_link_prims.contains_key(&preset_id) {
+                    self.link_gesture(&preset_id, &body);
+                } else {
+                    self.apply_share_gesture(&preset_id, bid, &body);
+                }
             }
             "v" => {
                 let body = value.get("b").map(|v| v.to_string()).unwrap_or_default();
@@ -320,6 +324,10 @@ impl ChartApp {
                 let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("");
                 let body = value.get("b").and_then(|v| v.as_str()).unwrap_or("");
                 if id.is_empty() || body.is_empty() {
+                    return;
+                }
+                if self.share_link_prims.contains_key(&preset_id) {
+                    self.link_upsert(&preset_id, body);
                     return;
                 }
                 if self.local_drag_key(&preset_id).as_deref() == Some(id) {
@@ -575,6 +583,23 @@ impl ChartApp {
     }
 
     fn apply_one_share_op(&mut self, preset_id: &str, op: &ShareInboundOp) {
+        if self.share_link_prims.contains_key(preset_id) {
+            match op.kind.as_str() {
+                "primitive_upsert" => {
+                    self.link_upsert(preset_id, &op.body);
+                    return;
+                }
+                "primitive_delete" => {
+                    self.link_delete(preset_id, &op.object_id);
+                    return;
+                }
+                "gesture" => {
+                    self.link_gesture(preset_id, &op.body);
+                    return;
+                }
+                _ => {}
+            }
+        }
         let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else {
             return;
         };

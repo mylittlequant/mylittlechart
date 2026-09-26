@@ -114,6 +114,86 @@ fn fresh_preset_id(prefix: &str) -> String {
     format!("{prefix}_{created_at}_{suffix}")
 }
 
+const LINK_HAND: u64 = u64::MAX;
+
+/// Picture of a share link. The chart renders this instead of the viewer's own primitives.
+pub(crate) struct ShareLinkDraw<'a> {
+    pub prims: &'a [Box<dyn mlc_core::drawing::primitives_v2::Primitive>],
+}
+
+impl mlc_core::drawing::DrawingRenderView for ShareLinkDraw<'_> {
+    fn primitives(&self) -> &[Box<dyn mlc_core::drawing::primitives_v2::Primitive>] {
+        self.prims
+    }
+    fn primitives_sorted_by_z_order(&self) -> Vec<usize> {
+        let mut idx: Vec<usize> = (0..self.prims.len()).collect();
+        idx.sort_by_key(|&i| (self.prims[i].data().z_order, self.prims[i].data().id));
+        idx
+    }
+    fn selected(&self) -> Option<u64> { None }
+    fn is_visible(&self) -> bool { true }
+    fn is_drawing(&self) -> bool { false }
+    fn is_drawing_freehand(&self) -> bool { false }
+    fn current_pane(&self) -> Option<u64> { None }
+    fn drawing_points(&self) -> Vec<(i64, f64)> { Vec::new() }
+    fn drawing_tool_id(&self) -> Option<String> { None }
+    fn effective_color(&self) -> String { "#2962ff".to_string() }
+    fn create_preview(&self, _: i64, _: f64) -> Option<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> { None }
+}
+
+fn push_snap(
+    out: &mut Vec<mlc_core::drawing::PrimitiveSnapshot>,
+    seen: &mut std::collections::HashSet<u64>,
+    snap: &mlc_core::drawing::PrimitiveSnapshot,
+) {
+    match snap.id() {
+        Some(id) if !seen.insert(id) => {}
+        _ => out.push(snap.clone()),
+    }
+}
+
+fn collect_share_snaps(preset: &ChartPreset) -> Vec<mlc_core::drawing::PrimitiveSnapshot> {
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for window in &preset.windows {
+        for snap in &window.drawings.primitives {
+            push_snap(&mut out, &mut seen, snap);
+        }
+        for snap in &window.stashed_primitives {
+            push_snap(&mut out, &mut seen, snap);
+        }
+        for snaps in window.symbol_drawings_snapshots.values() {
+            for snap in snaps {
+                push_snap(&mut out, &mut seen, snap);
+            }
+        }
+    }
+    for bubble in &preset.bubbles {
+        for snap in &bubble.primitives {
+            push_snap(&mut out, &mut seen, snap);
+        }
+    }
+    out
+}
+
+fn realize_snaps(snaps: &[mlc_core::drawing::PrimitiveSnapshot]) -> Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>> {
+    let registry = mlc_core::drawing::primitives_v2::PrimitiveRegistry::global().read().unwrap();
+    snaps.iter().filter_map(|snap| registry.from_json(&snap.type_id, &snap.json)).collect()
+}
+
+fn strip_share_drawings(preset: &mut ChartPreset) {
+    for bubble in &mut preset.bubbles {
+        bubble.primitives.clear();
+    }
+    for window in &mut preset.windows {
+        window.drawings.primitives.clear();
+        window.stashed_primitives.clear();
+        for snaps in window.symbol_drawings_snapshots.values_mut() {
+            snaps.clear();
+        }
+    }
+}
+
 impl ChartApp {
     /// Open a shared preset as a new, read-only tab.
     ///
@@ -146,17 +226,92 @@ impl ChartApp {
         // alias/overwrite them (owner report M5: "VOLUME drawn twice").
         // See `ChartPreset::remap_ids_for_import`'s own doc for the exact
         // mechanism and what is/isn't in scope.
-        let prim_map = preset.remap_ids_for_import();
+        let frame = realize_snaps(&collect_share_snaps(&preset));
+        strip_share_drawings(&mut preset);
+        preset.remap_ids_for_import();
         let id = fresh_preset_id("shared");
         preset.id = id.clone();
         preset.name = format!("{} — {}", meta.title, meta.owner_label);
 
-        self.share_import_prims.insert(id.clone(), prim_map);
+        self.share_link_prims.insert(id.clone(), frame);
         self.readonly_preset_ids.insert(id.clone());
         self.shared_chart_meta.insert(id.clone(), meta);
         self.core.presets_mut().insert(id.clone(), preset);
         self.load_preset(&id);
         Ok(id)
+    }
+
+    pub(crate) fn cloned_share_link_frame(&self) -> Option<Vec<Box<dyn mlc_core::drawing::primitives_v2::Primitive>>> {
+        self.share_link_prims
+            .get(&self.panel_app.active_preset_id)
+            .map(|v| v.iter().map(|p| p.clone_box()).collect())
+    }
+
+    pub(crate) fn link_upsert(&mut self, preset_id: &str, body: &str) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else { return };
+        let type_id = value.get("type_id").and_then(|v| v.as_str()).unwrap_or("");
+        let json = value.get("json").and_then(|v| v.as_str()).unwrap_or("");
+        if type_id.is_empty() || json.is_empty() {
+            return;
+        }
+        let registry = mlc_core::drawing::primitives_v2::PrimitiveRegistry::global().read().unwrap();
+        let Some(prim) = registry.from_json(type_id, json) else { return };
+        drop(registry);
+        let id = prim.data().id;
+        let Some(list) = self.share_link_prims.get_mut(preset_id) else { return };
+        list.retain(|p| p.data().id != LINK_HAND);
+        if let Some(slot) = list.iter_mut().find(|p| p.data().id == id) {
+            *slot = prim;
+        } else {
+            list.push(prim);
+        }
+    }
+
+    pub(crate) fn link_delete(&mut self, preset_id: &str, object_id: &str) {
+        let Some(id) = object_id.strip_prefix("p:").and_then(|s| s.parse::<u64>().ok()) else { return };
+        let Some(list) = self.share_link_prims.get_mut(preset_id) else { return };
+        list.retain(|p| p.data().id != id);
+    }
+
+    pub(crate) fn link_gesture(&mut self, preset_id: &str, body: &str) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(body) else { return };
+        let phase = value.get("phase").and_then(|v| v.as_str()).unwrap_or("idle");
+        let tool = value.get("tool").and_then(|v| v.as_str()).unwrap_or("");
+        let points: Vec<(i64, f64)> = value
+            .get("points")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|p| {
+                        let pair = p.as_array()?;
+                        Some((pair.first()?.as_i64()?, pair.get(1)?.as_f64()?))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        let Some(list) = self.share_link_prims.get_mut(preset_id) else { return };
+        list.retain(|p| p.data().id != LINK_HAND);
+        if phase == "draw" && !tool.is_empty() && !points.is_empty() {
+            let registry = mlc_core::drawing::primitives_v2::PrimitiveRegistry::global().read().unwrap();
+            if let Some(mut prim) = registry.create(tool, &points, None) {
+                prim.data_mut().id = LINK_HAND;
+                list.push(prim);
+            }
+        }
+    }
+
+    fn bake_link_into_preset(&mut self, preset_id: &str) {
+        let Some(prims) = self.share_link_prims.get(preset_id) else { return };
+        let snaps: Vec<mlc_core::drawing::PrimitiveSnapshot> = prims
+            .iter()
+            .filter(|p| p.data().id != LINK_HAND)
+            .map(|p| mlc_core::drawing::PrimitiveSnapshot::from_primitive(p.as_ref()))
+            .collect();
+        let mut presets = self.core.presets_mut();
+        let Some(preset) = presets.get_mut(preset_id) else { return };
+        if let Some(window) = preset.windows.first_mut() {
+            window.drawings.primitives = snaps;
+        }
     }
 
     /// Whether `preset_id` is a read-only shared tab — the check every
@@ -233,6 +388,7 @@ impl ChartApp {
                 .unwrap_or_default();
             self.collect_state_into_preset(&id, &name);
         }
+        self.bake_link_into_preset(&id);
         {
             let mut presets = self.core.presets_mut();
             if let Some(preset) = presets.get_mut(&id) {
@@ -392,9 +548,12 @@ impl ChartApp {
                 preset.version, PRESET_VERSION,
             ));
         }
+        let frame = realize_snaps(&collect_share_snaps(&preset));
+        strip_share_drawings(&mut preset);
         preset.remap_ids_for_import();
         preset.id = placeholder_id.to_string();
         preset.name = format!("{} — {}", meta.title, meta.owner_label);
+        self.share_link_prims.insert(placeholder_id.to_string(), frame);
 
         // A boot-time re-fetch (`UpdaterCommand::ReopenShare`) doesn't
         // round-trip the token through its outcome (it would be redundant —
