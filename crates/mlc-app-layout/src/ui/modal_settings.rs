@@ -301,8 +301,12 @@ pub struct ShareSettingsState {
     pub is_open: bool,
     pub status: String,
     pub hits: Vec<(String, String)>,
-    /// `public_clone` | `view_only` | `private`.
+    /// `public_clone` | `view_only` | `private` | `private_view`.
     pub rights_preset: String,
+    /// When on, a picked nick also receives an edit grant. Independent of
+    /// Public and Clone. The nick field stays available on a public link
+    /// so the author can name an editor.
+    pub edit_on: bool,
     pub position: Option<(f64, f64)>,
     pub is_dragging: bool,
     pub drag_offset: Option<(f64, f64)>,

@@ -146,11 +146,12 @@ impl ChartApp {
         // alias/overwrite them (owner report M5: "VOLUME drawn twice").
         // See `ChartPreset::remap_ids_for_import`'s own doc for the exact
         // mechanism and what is/isn't in scope.
-        preset.remap_ids_for_import();
+        let prim_map = preset.remap_ids_for_import();
         let id = fresh_preset_id("shared");
         preset.id = id.clone();
         preset.name = format!("{} — {}", meta.title, meta.owner_label);
 
+        self.share_import_prims.insert(id.clone(), prim_map);
         self.readonly_preset_ids.insert(id.clone());
         self.shared_chart_meta.insert(id.clone(), meta);
         self.core.presets_mut().insert(id.clone(), preset);

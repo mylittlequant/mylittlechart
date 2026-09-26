@@ -334,6 +334,11 @@ pub enum SharePublicResponse {
         /// `"clone"` for them even when this is false.
         #[serde(default)]
         clone_allowed: bool,
+        /// Op-log head at the moment this preset was served. `0` on an
+        /// older server. Subscribers still read `GET /ops?after=` from
+        /// their own cursor; this is the head, not the cursor.
+        #[serde(default)]
+        op_seq: u64,
     },
     Screenshot {
         title: String,
@@ -911,6 +916,28 @@ pub struct ShareNickHit {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShareNickLookupResponse {
     pub users: Vec<ShareNickHit>,
+}
+
+/// One chart op on `POST /api/share/{token}/ops` and the GET reply.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareChartOp {
+    pub kind: String,
+    pub object_id: String,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub seq: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareOpsResponse {
+    pub head: i64,
+    #[serde(default)]
+    pub reset: bool,
+    #[serde(default)]
+    pub can_send: bool,
+    #[serde(default)]
+    pub ops: Vec<ShareChartOp>,
 }
 
 /// The other party to a [`DmConversation`].

@@ -268,6 +268,9 @@ struct Inner {
     share_rights: Option<(String, bool)>,
     share_admin_rows: Option<Result<Vec<mlc_cloud::ShareListEntry>, String>>,
     share_admin_busy: bool,
+    share_ops_busy: bool,
+    share_ops_in: Option<(String, mlc_cloud::ShareOpsResponse)>,
+    share_ops_push_ok: Option<bool>,
     /// `(chart_id, token)` from the last successful live publish.
     share_bound: Option<(String, String)>,
     share_lookup_q: String,
@@ -405,6 +408,9 @@ impl CloudSession {
                 share_rights: None,
                 share_admin_rows: None,
                 share_admin_busy: false,
+                share_ops_busy: false,
+                share_ops_in: None,
+                share_ops_push_ok: None,
                 share_bound: None,
                 share_lookup_q: String::new(),
                 share_lookup_at_ms: 0.0,
@@ -631,11 +637,17 @@ impl CloudSession {
                     .await
                     .map_err(|e| e.to_string())
                     .and(transport.share_list().await.map_err(|e| e.to_string())),
-                mlc_app::ShareAdminCmd::Grant { token, nick, tier } => {
-                    let note = match transport.share_grant(&token, &nick, &tier).await {
-                        Ok(()) => format!("Added {nick}"),
-                        Err(e) => e.to_string(),
-                    };
+                mlc_app::ShareAdminCmd::Grant { token, nick, tiers } => {
+                    let mut note = format!("Added {nick}");
+                    for tier in &tiers {
+                        if let Err(e) = transport.share_grant(&token, &nick, tier).await {
+                            note = e.to_string();
+                            break;
+                        }
+                        if tier == "edit" {
+                            note = format!("{nick} can edit");
+                        }
+                    }
                     let mut guard = inner.borrow_mut();
                     guard.share_admin_busy = false;
                     guard.share_settings_note = Some(note);
@@ -871,6 +883,70 @@ impl CloudSession {
                 guard.share_rights = Some((token, allowed));
             }
         });
+    }
+
+    fn poll_share_ops(&self, chart: &mut ChartApp, now_ms: f64) {
+        if let Some(ok) = self.inner.borrow_mut().share_ops_push_ok.take() {
+            chart.ack_share_push(ok);
+        }
+        if let Some((token, resp)) = self.inner.borrow_mut().share_ops_in.take() {
+            let ops: Vec<mlc_app::share_stream::ShareInboundOp> = resp
+                .ops
+                .into_iter()
+                .map(|op| mlc_app::share_stream::ShareInboundOp {
+                    seq: op.seq,
+                    kind: op.kind,
+                    object_id: op.object_id,
+                    body: op.body,
+                })
+                .collect();
+            chart.apply_share_ops(&token, resp.reset, resp.can_send, &ops);
+        }
+        if self.inner.borrow().share_ops_busy {
+            return;
+        }
+        if let Some((token, ops)) = chart.share_ops_due(now_ms) {
+            self.inner.borrow_mut().share_ops_busy = true;
+            let transport = self.inner.borrow().transport.snapshot();
+            let inner = self.inner.clone();
+            let wire: Vec<mlc_cloud::ShareChartOp> = ops
+                .into_iter()
+                .map(|op| mlc_cloud::ShareChartOp {
+                    kind: op.kind,
+                    object_id: op.object_id,
+                    body: op.body,
+                    seq: 0,
+                })
+                .collect();
+            spawn_local(async move {
+                let ok = match transport.share_post_ops(&token, &wire).await {
+                    Ok(()) => true,
+                    Err(e) => {
+                        web_sys::console::warn_1(&format!("[share] op post failed: {e}").into());
+                        false
+                    }
+                };
+                inner.borrow_mut().share_ops_push_ok = Some(ok);
+                inner.borrow_mut().share_ops_busy = false;
+            });
+            return;
+        }
+        if let Some((token, after)) = chart.share_pull_due(now_ms) {
+            self.inner.borrow_mut().share_ops_busy = true;
+            let transport = self.inner.borrow().transport.snapshot();
+            let inner = self.inner.clone();
+            spawn_local(async move {
+                match transport.share_get_ops(&token, after).await {
+                    Ok(resp) => {
+                        inner.borrow_mut().share_ops_in = Some((token, resp));
+                    }
+                    Err(e) => {
+                        web_sys::console::warn_1(&format!("[share] op pull failed: {e}").into());
+                    }
+                }
+                inner.borrow_mut().share_ops_busy = false;
+            });
+        }
     }
 
     pub fn drive(&self, chart: &mut ChartApp, now_ms: f64) {
@@ -1182,6 +1258,7 @@ impl CloudSession {
                 self.fire_share_admin(cmd);
             }
         }
+        self.poll_share_ops(chart, now_ms);
 
         // ── Chart-share clone (shared-viewer arc, 2026-09-06) ──────────────
         // `ChartApp::request_clone_share` is the one-shot mailbox a "Clone to

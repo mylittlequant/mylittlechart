@@ -35,7 +35,7 @@ fn flags(preset: &str) -> (bool, bool) {
 }
 
 fn content_height(hits: usize, show_people: bool) -> f64 {
-    let mut h = 2.0 * (ROW_H + GAP);
+    let mut h = 3.0 * (ROW_H + GAP);
     if show_people {
         let rows = hits.min(6).max(1) as f64;
         h += LABEL_H + GAP + FIELD_H + GAP + rows * (HIT_H + 4.0);
@@ -62,7 +62,7 @@ pub fn render_share_settings_overlay(
 ) -> ShareSettingsResult {
     let theme = ModalTheme::from_toolbar(&frame_theme.modal_bg, &toolbar_theme.separator, toolbar_theme);
     let (public_on, _) = flags(&state.rights_preset);
-    let show_people = !public_on;
+    let show_people = !public_on || state.edit_on;
     let spec = ModalShellSpec {
         placement: ModalPlacement::At(state.position),
         footer: ModalFooter::None,
@@ -122,13 +122,22 @@ fn draw_body(
     y += ROW_H + GAP;
     draw_toggle_row(ctx, coord, layer_id, x, y, w, "share_settings:toggle:clone", "Clone", clone_on, tt);
     y += ROW_H + GAP;
+    draw_toggle_row(ctx, coord, layer_id, x, y, w, "share_settings:toggle:edit", "Edit", state.edit_on, tt);
+    y += ROW_H + GAP;
 
     let (field_rect, char_x_positions) = if show_people {
         ctx.set_font("12px sans-serif");
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Top);
         ctx.set_fill_color(&tt.item_text_muted);
-        ctx.fill_text("Who can open this private link.", x, y);
+        let caption = if public_on {
+            "Who can edit."
+        } else if state.edit_on {
+            "Who can open. Edit is on, so they can also write."
+        } else {
+            "Who can open this private link."
+        };
+        ctx.fill_text(caption, x, y);
         y += LABEL_H + GAP;
 
         let field_rect = WidgetRect::new(x, y, w, FIELD_H);

@@ -5436,6 +5436,11 @@ impl ChartApp {
                 "modal_bg" => {}
                 other => {
                     if let Some(which) = other.strip_prefix("toggle:") {
+                        if which == "edit" {
+                            self.panel_app.share_settings_state.edit_on =
+                                !self.panel_app.share_settings_state.edit_on;
+                            return;
+                        }
                         let (public_on, clone_on) = match self.panel_app.share_settings_state.rights_preset.as_str() {
                             "view_only" => (true, false),
                             "private" => (false, true),
@@ -5465,11 +5470,22 @@ impl ChartApp {
                                 tf.begin_edit(&field_id);
                                 tf.focus(crate::text_input::SHARE_SETTINGS_NICK);
                             }
+                            let public_on = !matches!(
+                                self.panel_app.share_settings_state.rights_preset.as_str(),
+                                "private" | "private_view"
+                            );
                             let clone_on = !matches!(
                                 self.panel_app.share_settings_state.rights_preset.as_str(),
                                 "view_only" | "private_view"
                             );
-                            self.grant_share_nick(&nick, if clone_on { "clone" } else { "view" });
+                            let mut tiers: Vec<&str> = Vec::new();
+                            if !public_on {
+                                tiers.push(if clone_on { "clone" } else { "view" });
+                            }
+                            if self.panel_app.share_settings_state.edit_on {
+                                tiers.push("edit");
+                            }
+                            self.grant_share_nick(&nick, &tiers);
                         }
                     } else if let Some(tier) = other.strip_prefix("grantfield:") {
                         let field_id = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
@@ -5477,14 +5493,14 @@ impl ChartApp {
                         if nick.is_empty() {
                             self.panel_app.share_settings_state.status = "Type or pick a nick".to_string();
                         } else {
-                            self.grant_share_nick(&nick, tier);
+                            self.grant_share_nick(&nick, &[tier]);
                         }
                     } else if let Some(rest) = other.strip_prefix("grant:") {
                         let mut parts = rest.split(':');
                         let idx: usize = parts.next().unwrap_or("").parse().unwrap_or(usize::MAX);
                         let tier = parts.next().unwrap_or("clone");
                         if let Some((nick, _)) = self.panel_app.share_settings_state.hits.get(idx).cloned() {
-                            self.grant_share_nick(&nick, tier);
+                            self.grant_share_nick(&nick, &[tier]);
                         }
                     }
                 }

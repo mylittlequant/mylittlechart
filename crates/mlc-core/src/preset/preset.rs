@@ -476,7 +476,9 @@ impl ChartPreset {
     ///   collision with a DIFFERENT preset's own ids there cannot alias a
     ///   live value the way window/bubble/primitive ids — which are NOT
     ///   reset per preset — can.
-    pub fn remap_ids_for_import(&mut self) {
+    /// Returns author primitive id → the id this process assigned.
+    /// Callers that only need the remap can ignore the map.
+    pub fn remap_ids_for_import(&mut self) -> std::collections::HashMap<u64, u64> {
         use std::collections::HashMap;
 
         let window_id_map: HashMap<u64, u64> = self
@@ -566,6 +568,8 @@ impl ChartPreset {
                 remap_snaps(snaps);
             }
         }
+        let _ = remap_snaps;
+        primitive_id_map
     }
 }
 

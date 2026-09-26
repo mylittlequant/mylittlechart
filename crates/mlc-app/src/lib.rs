@@ -37,6 +37,7 @@ pub mod panel_grid;
 pub mod panels_render;
 pub mod panels_store;
 pub mod scroll_dispatch;
+pub mod share_stream;
 pub mod share_viewer;
 pub mod standalone_panel;
 pub mod system_events;
@@ -574,8 +575,8 @@ pub enum ShareAdminCmd {
     Revoke { token: String },
     /// JSON body for `PATCH /api/share/{token}`.
     Patch { token: String, body: String },
-    /// Grant `nick` view or clone on this link. Does not give edit.
-    Grant { token: String, nick: String, tier: String },
+    /// Grant `nick` one or more rights. `edit` is separate from view/clone.
+    Grant { token: String, nick: String, tiers: Vec<String> },
 }
 
 pub struct ChartApp {
@@ -1054,6 +1055,14 @@ pub struct ChartApp {
     /// `is_readonly_tab` is a hot-path check (autosave, edit recording) and
     /// this metadata is cold, chrome-render-only.
     pub(crate) shared_chart_meta: std::collections::HashMap<String, share_viewer::SharedChartMeta>,
+
+    /// Author primitive id → local id, captured when a share tab remaps
+    /// ids on import. The op stream speaks author ids.
+    pub(crate) share_import_prims: std::collections::HashMap<String, std::collections::HashMap<u64, u64>>,
+
+    /// Per-preset op cursor and the last JSON sent or applied, keyed by
+    /// the stream's object id (`p:{author_id}` or `n:…`).
+    pub(crate) share_streams: std::collections::HashMap<String, share_stream::ShareStream>,
 
     /// Pending "open this share" request — set by
     /// `share_viewer::ChartApp::request_open_share`, drained by the shell,
@@ -3578,6 +3587,8 @@ impl ChartApp {
             pending_autosave: None,
             readonly_preset_ids: std::collections::HashSet::new(),
             shared_chart_meta: std::collections::HashMap::new(),
+            share_import_prims: std::collections::HashMap::new(),
+            share_streams: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
@@ -3977,6 +3988,8 @@ impl ChartApp {
             pending_autosave: None,
             readonly_preset_ids: std::collections::HashSet::new(),
             shared_chart_meta: std::collections::HashMap::new(),
+            share_import_prims: std::collections::HashMap::new(),
+            share_streams: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
@@ -4583,6 +4596,8 @@ impl ChartApp {
             pending_autosave: None,
             readonly_preset_ids: std::collections::HashSet::new(),
             shared_chart_meta: std::collections::HashMap::new(),
+            share_import_prims: std::collections::HashMap::new(),
+            share_streams: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
@@ -5681,8 +5696,20 @@ impl ChartApp {
         self.panel_app.share_settings_state.status = note;
     }
 
-    pub fn grant_share_nick(&mut self, nick: &str, tier: &str) {
-        let tier = if tier == "view" { "view" } else { "clone" };
+    pub fn grant_share_nick(&mut self, nick: &str, tiers: &[&str]) {
+        let tiers: Vec<String> = tiers
+            .iter()
+            .map(|tier| {
+                if *tier == "view" || *tier == "edit" {
+                    (*tier).to_string()
+                } else {
+                    "clone".to_string()
+                }
+            })
+            .collect();
+        if tiers.is_empty() {
+            return;
+        }
         let active = self.panel_app.active_preset_id.clone();
         let token = self
             .shared_chart_meta(&active)
@@ -5697,7 +5724,7 @@ impl ChartApp {
             self.pending_share_admin = Some(ShareAdminCmd::Grant {
                 token,
                 nick: nick.to_string(),
-                tier: tier.to_string(),
+                tiers,
             });
             self.panel_app.share_settings_state.status = format!("Adding {nick}");
         }

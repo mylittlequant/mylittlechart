@@ -401,6 +401,23 @@ impl FetchTransport {
         self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
     }
 
+    /// `POST /api/share/{token}/ops` — append primitive and indicator ops.
+    pub async fn share_post_ops(&self, token: &str, ops: &[ShareChartOp]) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "ops": ops }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", &format!("/api/share/{token}/ops"), Some(payload), &[])
+            .await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    /// `GET /api/share/{token}/ops?after=`.
+    pub async fn share_get_ops(&self, token: &str, after: i64) -> Result<ShareOpsResponse, CloudError> {
+        let path = format!("/api/share/{token}/ops?after={after}");
+        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
     /// `POST /api/share/screenshot` — multipart upload, one `png` field
     /// plus an optional `title`. Same response shape as
     /// [`Self::share_create_live`]; ceiling free 10 / paid 100.
