@@ -4805,10 +4805,12 @@ impl ChartApp {
 
         // If restoring a saved window, apply its tab/preset state.
         if let Some(ws) = restore {
+            let shared_was_active = ws.open_shared_tabs.iter().any(|s| s.was_active);
             let valid_tabs: Vec<String> = {
                 let presets_guard = app.core.presets();
                 ws.open_tabs.iter()
                     .filter(|id| presets_guard.contains_key(*id))
+                    .filter(|id| !(shared_was_active && *id == &ws.active_preset_id))
                     .cloned()
                     .collect()
             };
@@ -4823,7 +4825,9 @@ impl ChartApp {
                 // matching (and, for this restore path, deliberately
                 // skipped) block in the legacy top-level seed above.
                 let active_shared = app.install_shared_tab_placeholders(&ws.open_shared_tabs);
-                let saved_active_alive = !ws.active_preset_id.is_empty()
+                let shared_was_active = ws.open_shared_tabs.iter().any(|s| s.was_active);
+                let saved_active_alive = !shared_was_active
+                    && !ws.active_preset_id.is_empty()
                     && app.core.presets().contains_key(&ws.active_preset_id);
                 if saved_active_alive {
                     app.panel_app.active_preset_id = ws.active_preset_id.clone();
@@ -4834,7 +4838,9 @@ impl ChartApp {
                     app.panel_app.active_preset_id = id;
                 }
             }
-            if !ws.active_preset_id.is_empty()
+            let shared_was_active = ws.open_shared_tabs.iter().any(|s| s.was_active);
+            if !shared_was_active
+                && !ws.active_preset_id.is_empty()
                 && app.core.presets().contains_key(&ws.active_preset_id)
                 && app.panel_app.active_preset_id != ws.active_preset_id
             {

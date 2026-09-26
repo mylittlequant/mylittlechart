@@ -163,6 +163,15 @@ impl ChartApp {
     /// mutation site (autosave, drawing/indicator edits, sync-push preset
     /// enumeration) runs before writing. Per-preset, not a shell-global
     /// flag: see the module doc.
+    /// A tab that is a link to someone else's chart. Never a local preset,
+    /// even after a hard reload and even if an edit grant is on.
+    pub fn is_share_link(&self, preset_id: &str) -> bool {
+        self.is_readonly_tab(preset_id)
+            || self.shared_chart_meta.contains_key(preset_id)
+            || self.pending_share_tokens.contains_key(preset_id)
+            || self.share_keep_ids.contains(preset_id)
+    }
+
     pub fn is_readonly_tab(&self, preset_id: &str) -> bool {
         self.readonly_preset_ids.contains(preset_id)
     }

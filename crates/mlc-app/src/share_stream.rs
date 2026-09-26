@@ -225,8 +225,13 @@ impl ChartApp {
     /// Token whose live socket should be open. Viewers included.
     pub fn edge_live_token(&self) -> Option<String> {
         let follow = self.share_follow_target()?;
-        let stream = self.share_streams.get(&follow.preset_id)?;
-        if stream.live { Some(follow.token) } else { None }
+        let stream_live = self.share_streams.get(&follow.preset_id).is_some_and(|s| s.live);
+        let ui_live = self.panel_app.share_settings_state.live_on && follow.can_send;
+        if stream_live || ui_live {
+            Some(follow.token)
+        } else {
+            None
+        }
     }
 
     /// Drag, control-point move, in-progress drawing, and the cursor.
@@ -283,7 +288,8 @@ impl ChartApp {
         let follow = self.share_follow_target()?;
         let preset_id = follow.preset_id.clone();
         let stream = self.share_streams.get(&preset_id)?;
-        if !stream.live || !follow.can_send {
+        let ui_live = self.panel_app.share_settings_state.live_on;
+        if (!stream.live && !ui_live) || !follow.can_send {
             return None;
         }
         let token = follow.token.clone();

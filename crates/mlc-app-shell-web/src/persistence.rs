@@ -299,7 +299,7 @@ pub fn save_persistent_state(chart: &mut ChartApp, perf: &mut PerfMeter) {
         // every fresh `ChartApp::new_window`), silently losing its
         // read-only status. `apply_cloned_preset` never marks its id
         // readonly, so a clone saves normally like any other preset.
-        if chart.is_readonly_tab(&preset.id) {
+        if chart.is_share_link(&preset.id) {
             continue;
         }
         match mlc_core::preset::storage::save_preset(preset) {
