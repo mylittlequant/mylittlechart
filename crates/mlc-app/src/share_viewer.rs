@@ -233,28 +233,29 @@ impl ChartApp {
         if !meta.has_right("clone") {
             return false;
         }
-        if self.panel_app.active_preset_id == id {
-            let name = self
-                .core
-                .presets()
-                .get(&id)
-                .map(|p| p.name.clone())
-                .unwrap_or_default();
-            self.collect_state_into_preset(&id, &name);
-        }
-        {
-            let mut presets = self.core.presets_mut();
-            if let Some(preset) = presets.get_mut(&id) {
-                for window in &mut preset.windows {
-                    window.bars.clear();
-                    window.command_history = None;
-                    window.stashed_command_history = None;
-                }
-            }
-        }
-        let Some(mut preset) = self.core.presets().get(&id).cloned() else {
-            return false;
+        // The link tab stays the author's chart. The clone is a separate
+        // snapshot. Collecting into the link id, or clearing its bars,
+        // replaces the link with the snapshot.
+        let mut preset = if self.panel_app.active_preset_id == id {
+            let scratch = fresh_preset_id("preset");
+            self.collect_state_into_preset(&scratch, &meta.title);
+            let snap = self.core.presets().get(&scratch).cloned();
+            self.core.presets_mut().remove(&scratch);
+            let Some(snap) = snap else {
+                return false;
+            };
+            snap
+        } else {
+            let Some(snap) = self.core.presets().get(&id).cloned() else {
+                return false;
+            };
+            snap
         };
+        for window in &mut preset.windows {
+            window.bars.clear();
+            window.command_history = None;
+            window.stashed_command_history = None;
+        }
         preset.remap_ids_for_import(false);
         let new_id = fresh_preset_id("preset");
         preset.id = new_id.clone();
