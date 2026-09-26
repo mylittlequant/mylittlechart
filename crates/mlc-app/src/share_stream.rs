@@ -31,6 +31,10 @@ pub struct ShareStream {
     /// Local primitive id → stream object id.
     pub local_to_key: HashMap<u64, String>,
     pub key_to_local: HashMap<String, u64>,
+    /// Last gesture phase sent on the edge socket.
+    pub edge_phase: String,
+    /// Last primitive JSON sent on the edge socket for the object under the hand.
+    pub edge_point: String,
     /// Last gesture phase that was queued (`idle` / `select` / `drag` / `draw`).
     pub gesture_phase: String,
     pub gesture_sent: String,
@@ -53,6 +57,8 @@ impl ShareStream {
             pending: None,
             local_to_key: HashMap::new(),
             key_to_local: HashMap::new(),
+            edge_phase: String::new(),
+            edge_point: String::new(),
             gesture_phase: String::new(),
             gesture_sent: String::new(),
             viewport_sent: String::new(),
@@ -136,7 +142,6 @@ impl ChartApp {
         }
         self.ensure_share_keys(&preset_id);
         let gesture = self.share_gesture(&preset_id);
-        let viewport = self.share_viewport_json(&preset_id);
         let phase_now = gesture.as_ref().map(|g| g.0.as_str()).unwrap_or("");
         let stream = self.share_streams.get(&preset_id)?;
         let phase_changed = stream.live && phase_now != stream.gesture_phase.as_str();
@@ -151,6 +156,7 @@ impl ChartApp {
         if stream.pending.is_some() || (!phase_changed && now_ms - stream.last_push_ms < gap && stream.baseline) {
             return None;
         }
+        let hot_key = if phase_now == "drag" { self.local_drag_key(&preset_id) } else { None };
         let current = self.share_object_json(&preset_id);
         let stream = self.share_streams.get_mut(&preset_id)?;
         stream.last_push_ms = now_ms;
@@ -162,6 +168,9 @@ impl ChartApp {
         }
         let mut ops = Vec::new();
         for (key, json) in &current {
+            if hot_key.as_deref() == Some(key.as_str()) {
+                continue;
+            }
             if stream.last.get(key) != Some(json) {
                 let kind = if key.starts_with('i') { "indicator_upsert" } else { "primitive_upsert" };
                 ops.push(ShareWireOp {
@@ -172,6 +181,9 @@ impl ChartApp {
             }
         }
         for key in stream.last.keys() {
+            if hot_key.as_deref() == Some(key.as_str()) {
+                continue;
+            }
             if !current.contains_key(key) {
                 let kind = if key.starts_with('i') { "indicator_delete" } else { "primitive_delete" };
                 ops.push(ShareWireOp {
@@ -181,38 +193,121 @@ impl ChartApp {
                 });
             }
         }
-        if stream.live {
-            if let Some((phase, json)) = &gesture {
-                let send_idle = phase == "idle" && !stream.gesture_phase.is_empty() && stream.gesture_phase != "idle";
-                let send_move = phase != "idle" && stream.gesture_sent != *json;
-                if send_idle || send_move {
-                    ops.push(ShareWireOp {
-                        kind: "gesture".to_string(),
-                        object_id: "gesture".to_string(),
-                        body: json.clone(),
-                    });
-                    stream.gesture_sent = json.clone();
-                    stream.gesture_phase = phase.clone();
-                }
-            }
-            if stream.live_viewport {
-                if let Some(json) = viewport {
-                    if stream.viewport_sent != json {
-                        ops.push(ShareWireOp {
-                            kind: "viewport".to_string(),
-                            object_id: "viewport".to_string(),
-                            body: json.clone(),
-                        });
-                        stream.viewport_sent = json;
-                    }
-                }
-            }
-        }
+        stream.gesture_phase = phase_now.to_string();
         if ops.is_empty() {
             return None;
         }
-        stream.pending = Some(current);
+        let mut recorded = current;
+        if let Some(hot) = &hot_key {
+            if let Some(prev) = stream.last.get(hot) {
+                recorded.insert(hot.clone(), prev.clone());
+            } else {
+                recorded.remove(hot);
+            }
+        }
+        stream.pending = Some(recorded);
         Some((token, ops))
+    }
+
+    /// Token whose live socket should be open. Viewers included.
+    pub fn edge_live_token(&self) -> Option<String> {
+        let follow = self.share_follow_target()?;
+        let stream = self.share_streams.get(&follow.preset_id)?;
+        if stream.live { Some(follow.token) } else { None }
+    }
+
+    /// Frames for the edge socket. Empty when Live is off. The moving line
+    /// is one of these frames, not a row in the control-box log.
+    pub fn take_edge_frames(&mut self) -> Option<(String, Vec<String>)> {
+        let follow = self.share_follow_target()?;
+        let preset_id = follow.preset_id.clone();
+        let stream = self.share_streams.get(&preset_id)?;
+        if !stream.live || !follow.can_send {
+            return None;
+        }
+        let token = follow.token.clone();
+        let gesture = self.share_gesture(&preset_id);
+        let viewport = self.share_viewport_json(&preset_id);
+        let hot = self.local_drag_key(&preset_id);
+        let current = self.share_object_json(&preset_id);
+        let stream = self.share_streams.get_mut(&preset_id)?;
+        let mut frames = Vec::new();
+        if let Some((phase, json)) = gesture {
+            let send_idle = phase == "idle" && !stream.gesture_phase.is_empty() && stream.edge_phase != "idle" && stream.edge_phase != phase;
+            let send_move = phase != "idle" && stream.gesture_sent != json;
+            if send_idle || send_move {
+                frames.push(format!("{{\"t\":\"g\",\"b\":{json}}}"));
+                stream.gesture_sent = json;
+                stream.edge_phase = phase;
+            }
+        }
+        if stream.live_viewport {
+            if let Some(json) = viewport {
+                if stream.viewport_sent != json {
+                    frames.push(format!("{{\"t\":\"v\",\"b\":{json}}}"));
+                    stream.viewport_sent = json;
+                }
+            }
+        }
+        if let Some(hot) = hot {
+            if let Some(body) = current.get(&hot) {
+                if stream.edge_point != *body {
+                    frames.push(format!(
+                        "{{\"t\":\"p\",\"id\":{},\"b\":{}}}",
+                        serde_json::to_string(&hot).unwrap_or_else(|_| "\"\"".into()),
+                        serde_json::to_string(body).unwrap_or_else(|_| "\"\"".into())
+                    ));
+                    stream.edge_point = body.clone();
+                }
+            }
+        }
+        if frames.is_empty() {
+            None
+        } else {
+            Some((token, frames))
+        }
+    }
+
+    pub fn apply_edge_frame(&mut self, text: &str) {
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(text) else {
+            return;
+        };
+        let kind = value.get("t").and_then(|v| v.as_str()).unwrap_or("");
+        let Some(follow) = self.share_follow_target() else {
+            return;
+        };
+        let preset_id = follow.preset_id.clone();
+        let Some(bid) = self.panel_app.panel_grid.active_container().map(|w| w.current_tag_id) else {
+            return;
+        };
+        match kind {
+            "g" => {
+                let body = value.get("b").map(|v| v.to_string()).unwrap_or_default();
+                self.apply_share_gesture(&preset_id, bid, &body);
+            }
+            "v" => {
+                let body = value.get("b").map(|v| v.to_string()).unwrap_or_default();
+                self.apply_share_viewport(&body);
+            }
+            "p" => {
+                let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                let body = value.get("b").and_then(|v| v.as_str()).unwrap_or("");
+                if self.local_drag_key(&preset_id).as_deref() == Some(id) {
+                    return;
+                }
+                let op = ShareInboundOp {
+                    seq: 0,
+                    kind: "primitive_upsert".to_string(),
+                    object_id: id.to_string(),
+                    body: body.to_string(),
+                };
+                self.apply_one_share_op(&preset_id, &op);
+                if let Some(stream) = self.share_streams.get_mut(&preset_id) {
+                    stream.last.insert(id.to_string(), body.to_string());
+                }
+            }
+            _ => {}
+        }
     }
 
     pub fn ack_share_push(&mut self, ok: bool) {

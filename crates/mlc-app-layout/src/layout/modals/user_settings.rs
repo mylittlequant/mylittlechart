@@ -1020,13 +1020,7 @@ fn render_friends_tab(
         }
     } else {
         for nick in state.friend_hits.iter().take(6) {
-            let row = WidgetRect::new(x, y, w, 24.0);
-            ctx.set_fill_color(&tt.item_text);
-            ctx.set_text_baseline(TextBaseline::Middle);
-            ctx.fill_text(&format!("@{nick}"), x + 8.0, row.center_y());
-            let hit = format!("user_settings:friend_add:{nick}");
-            coord.register_on_layer(hit.as_str(), row, Sense::CLICK, layer_id);
-            y += 26.0;
+            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Request", "add"), ("Subscribe", "sub")]);
         }
     }
     if !state.friend_note.is_empty() {
@@ -1054,17 +1048,90 @@ fn render_friends_tab(
         coord.register_on_layer("user_settings:friend_copy", url_row, Sense::CLICK, layer_id);
         y += 22.0;
     }
-    ctx.fill_text("Friends", x, y + 8.0);
-    y += 22.0;
     ctx.set_fill_color(&tt.item_text);
-    if state.friend_nicks.is_empty() {
-        ctx.fill_text("No one yet.", x, y + 8.0);
+    ctx.fill_text("Requests", x, y + 8.0);
+    y += 22.0;
+    if state.friend_incoming.is_empty() && state.friend_outgoing.is_empty() {
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text("No requests.", x, y + 8.0);
+        y += 22.0;
     } else {
-        for nick in state.friend_nicks.iter().take(12) {
-            ctx.fill_text(&format!("@{nick}"), x, y + 8.0);
-            y += 20.0;
+        for nick in state.friend_incoming.iter().take(8) {
+            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Approve", "approve")]);
+        }
+        for nick in state.friend_outgoing.iter().take(8) {
+            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.fill_text(&format!("@{nick}  pending"), x, y + 8.0);
+            y += 22.0;
         }
     }
+    ctx.set_fill_color(&tt.item_text);
+    ctx.fill_text("Friends", x, y + 8.0);
+    y += 22.0;
+    if state.friend_nicks.is_empty() {
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text("No one yet.", x, y + 8.0);
+        y += 22.0;
+    } else {
+        for nick in state.friend_nicks.iter().take(12) {
+            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Remove", "remove"), ("Block", "block")]);
+        }
+    }
+    ctx.set_fill_color(&tt.item_text);
+    ctx.fill_text("Subscriptions", x, y + 8.0);
+    y += 22.0;
+    if state.friend_subscriptions.is_empty() {
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text("No subscriptions.", x, y + 8.0);
+        y += 22.0;
+    } else {
+        for nick in state.friend_subscriptions.iter().take(8) {
+            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Unsubscribe", "unsub")]);
+        }
+    }
+    ctx.set_fill_color(&tt.item_text);
+    ctx.fill_text("Blocked", x, y + 8.0);
+    y += 22.0;
+    if state.friend_blocked.is_empty() {
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text("No one blocked.", x, y + 8.0);
+    } else {
+        for nick in state.friend_blocked.iter().take(8) {
+            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Unblock", "unblock")]);
+        }
+    }
+}
+
+fn friend_person_row(
+    ctx: &mut dyn RenderContext,
+    coord: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    tt: &ToolbarTheme,
+    x: f64,
+    y: f64,
+    w: f64,
+    nick: &str,
+    actions: &[(&str, &str)],
+) -> f64 {
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_font("12px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(&format!("@{nick}"), x, y + 12.0);
+    let mut bx = x + w;
+    for (label, action) in actions.iter().rev() {
+        let bw = 78.0;
+        bx -= bw + 4.0;
+        let r = WidgetRect::new(bx, y, bw, 22.0);
+        ctx.set_fill_color(&tt.dropdown_bg);
+        ctx.fill_rounded_rect(r.x, r.y, r.width, r.height, 4.0);
+        ctx.set_fill_color(&tt.item_text);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.fill_text(label, r.center_x(), r.center_y());
+        let hit = format!("user_settings:friend_{action}:{nick}");
+        coord.register_on_layer(hit.as_str(), r, Sense::CLICK, layer_id);
+    }
+    y + 26.0
 }
 
 fn render_shares_tab(

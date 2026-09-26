@@ -3912,6 +3912,10 @@ pub struct UserSettingsState {
     /// Friends can still find a hidden account.
     pub discoverable: bool,
     pub friend_nicks: Vec<String>,
+    pub friend_incoming: Vec<String>,
+    pub friend_outgoing: Vec<String>,
+    pub friend_subscriptions: Vec<String>,
+    pub friend_blocked: Vec<String>,
     pub friend_invite: String,
     /// Nick-search hits in the Friends tab. Nicks only.
     pub friend_hits: Vec<String>,
@@ -4234,6 +4238,10 @@ impl Default for UserSettingsState {
             share_rows: Vec::new(),
             discoverable: true,
             friend_nicks: Vec::new(),
+            friend_incoming: Vec::new(),
+            friend_outgoing: Vec::new(),
+            friend_subscriptions: Vec::new(),
+            friend_blocked: Vec::new(),
             friend_invite: String::new(),
             friend_hits: Vec::new(),
             friend_note: String::new(),

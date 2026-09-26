@@ -6842,10 +6842,34 @@ impl ChartApp {
                     }
                     self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                 }
-                rest if rest.starts_with("friend_add:") => {
-                    let nick = rest["friend_add:".len()..].trim();
+                rest if rest.starts_with("friend_add:")
+                    || rest.starts_with("friend_sub:")
+                    || rest.starts_with("friend_approve:")
+                    || rest.starts_with("friend_remove:")
+                    || rest.starts_with("friend_block:")
+                    || rest.starts_with("friend_unblock:")
+                    || rest.starts_with("friend_unsub:") =>
+                {
+                    let (action, nick) = if let Some(nick) = rest.strip_prefix("friend_add:") {
+                        ("request", nick)
+                    } else if let Some(nick) = rest.strip_prefix("friend_sub:") {
+                        ("subscribe", nick)
+                    } else if let Some(nick) = rest.strip_prefix("friend_approve:") {
+                        ("approve", nick)
+                    } else if let Some(nick) = rest.strip_prefix("friend_remove:") {
+                        ("remove", nick)
+                    } else if let Some(nick) = rest.strip_prefix("friend_block:") {
+                        ("block", nick)
+                    } else if let Some(nick) = rest.strip_prefix("friend_unblock:") {
+                        ("unblock", nick)
+                    } else if let Some(nick) = rest.strip_prefix("friend_unsub:") {
+                        ("unsubscribe", nick)
+                    } else {
+                        ("", "")
+                    };
+                    let nick = nick.trim();
                     if !nick.is_empty() {
-                        self.panel_app.user_settings_state.friend_cmd = Some(format!("add:{nick}"));
+                        self.panel_app.user_settings_state.friend_cmd = Some(format!("{action}:{nick}"));
                         self.panel_app.user_settings_state.friend_note.clear();
                     }
                 }

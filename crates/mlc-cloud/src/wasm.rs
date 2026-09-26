@@ -15,6 +15,16 @@ use crate::models::*;
 use crate::{BuildAttestation, CloudConfig, CloudError};
 
 /// Wasm32 cloud transport: one `fetch` per call, no connection state.
+#[derive(Clone, Debug, Default)]
+pub struct FriendRoster {
+    pub discoverable: bool,
+    pub friends: Vec<String>,
+    pub incoming: Vec<String>,
+    pub outgoing: Vec<String>,
+    pub subscriptions: Vec<String>,
+    pub blocked: Vec<String>,
+}
+
 pub struct FetchTransport {
     config: CloudConfig,
 }
@@ -411,16 +421,31 @@ impl FetchTransport {
         self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
     }
 
-    pub async fn account_friends(&self) -> Result<(bool, Vec<String>), CloudError> {
+    pub async fn account_friends(&self) -> Result<FriendRoster, CloudError> {
         let (status, body) = self.exchange("GET", "/api/account/friends", None, &[]).await?;
         let value: serde_json::Value = self.decode_success(status, &body)?;
-        let discoverable = value.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(true);
-        let friends = value
-            .get("friends")
-            .and_then(|v| v.as_array())
-            .map(|arr| arr.iter().filter_map(|n| n.as_str().map(|s| s.to_string())).collect())
-            .unwrap_or_default();
-        Ok((discoverable, friends))
+        let names = |key: &str| -> Vec<String> {
+            value
+                .get(key)
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|n| n.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default()
+        };
+        Ok(FriendRoster {
+            discoverable: value.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(true),
+            friends: names("friends"),
+            incoming: names("incoming"),
+            outgoing: names("outgoing"),
+            subscriptions: names("subscriptions"),
+            blocked: names("blocked"),
+        })
+    }
+
+    pub async fn account_friend_act(&self, nick: &str, action: &str) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "nick": nick, "action": action }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.exchange("POST", "/api/account/friends", Some(payload), &[]).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
     }
 
     pub async fn account_set_discoverable(&self, on: bool) -> Result<(), CloudError> {

@@ -185,7 +185,7 @@ enum FlowResult {
 }
 
 enum FriendApply {
-    List { discoverable: bool, nicks: Vec<String> },
+    List(mlc_cloud::FriendRoster),
     Invite(String),
     Note(String),
 }
@@ -297,6 +297,9 @@ struct Inner {
     friend_lookup_at_ms: f64,
     friend_lookup_busy: bool,
     friend_hits_in: Option<Vec<String>>,
+    edge_socket: Option<web_sys::WebSocket>,
+    edge_token: String,
+    edge_in: Vec<String>,
     /// `(chart_id, token)` from the last successful live publish.
     share_bound: Option<(String, String)>,
     share_lookup_q: String,
@@ -444,6 +447,9 @@ impl CloudSession {
                 friend_lookup_at_ms: 0.0,
                 friend_lookup_busy: false,
                 friend_hits_in: None,
+                edge_socket: None,
+                edge_token: String::new(),
+                edge_in: Vec::new(),
                 share_bound: None,
                 share_lookup_q: String::new(),
                 share_lookup_at_ms: 0.0,
@@ -964,11 +970,16 @@ impl CloudSession {
         }
         if let Some(apply) = self.inner.borrow_mut().friend_result.take() {
             match apply {
-                FriendApply::List { discoverable, nicks } => {
-                    chart.panel_app.user_settings_state.discoverable = discoverable;
-                    chart.panel_app.user_settings_state.friend_nicks = nicks;
-                    if chart.panel_app.user_settings_state.friend_note != "Copied" {
-                        chart.panel_app.user_settings_state.friend_note.clear();
+                FriendApply::List(roster) => {
+                    let uss = &mut chart.panel_app.user_settings_state;
+                    uss.discoverable = roster.discoverable;
+                    uss.friend_nicks = roster.friends;
+                    uss.friend_incoming = roster.incoming;
+                    uss.friend_outgoing = roster.outgoing;
+                    uss.friend_subscriptions = roster.subscriptions;
+                    uss.friend_blocked = roster.blocked;
+                    if uss.friend_note != "Copied" {
+                        uss.friend_note.clear();
                     }
                 }
                 FriendApply::Invite(url) => {
@@ -993,8 +1004,8 @@ impl CloudSession {
                 let inner = self.inner.clone();
                 spawn_local(async move {
                     let _ = transport.account_accept_friend(&token).await;
-                    if let Ok((discoverable, nicks)) = transport.account_friends().await {
-                        inner.borrow_mut().friend_result = Some(FriendApply::List { discoverable, nicks });
+                    if let Ok(roster) = transport.account_friends().await {
+                        inner.borrow_mut().friend_result = Some(FriendApply::List(roster));
                     }
                     inner.borrow_mut().friend_busy = false;
                 });
@@ -1010,29 +1021,88 @@ impl CloudSession {
         let inner = self.inner.clone();
         let discoverable = chart.panel_app.user_settings_state.discoverable;
         spawn_local(async move {
+            let act = ["request", "approve", "remove", "block", "unblock", "subscribe", "unsubscribe"]
+                .iter()
+                .find_map(|action| cmd.strip_prefix(&format!("{action}:")).map(|nick| (*action, nick.to_string())));
             let result = if cmd == "discoverable" {
                 let _ = transport.account_set_discoverable(discoverable).await;
-                transport.account_friends().await.ok().map(|(discoverable, nicks)| {
-                    FriendApply::List { discoverable, nicks }
-                })
+                transport.account_friends().await.ok().map(FriendApply::List)
             } else if cmd == "invite" {
                 transport.account_friend_invite().await.ok().map(FriendApply::Invite)
-            } else if let Some(nick) = cmd.strip_prefix("add:") {
-                match transport.account_add_friend(nick).await {
-                    Ok(()) => transport.account_friends().await.ok().map(|(discoverable, nicks)| {
-                        FriendApply::List { discoverable, nicks }
-                    }),
+            } else if let Some((action, nick)) = act {
+                match transport.account_friend_act(&nick, action).await {
+                    Ok(()) => transport.account_friends().await.ok().map(FriendApply::List),
                     Err(e) => Some(FriendApply::Note(e.to_string())),
                 }
             } else {
-                transport.account_friends().await.ok().map(|(discoverable, nicks)| {
-                    FriendApply::List { discoverable, nicks }
-                })
+                transport.account_friends().await.ok().map(FriendApply::List)
             };
             let mut guard = inner.borrow_mut();
             guard.friend_result = result;
             guard.friend_busy = false;
         });
+    }
+
+    fn poll_edge(&self, chart: &mut ChartApp) {
+        let incoming = std::mem::take(&mut self.inner.borrow_mut().edge_in);
+        for frame in incoming {
+            chart.apply_edge_frame(&frame);
+        }
+        let token = chart.edge_live_token();
+        if token.is_none() {
+            self.close_edge();
+            return;
+        }
+        let token = token.unwrap();
+        self.ensure_edge(&token);
+        let Some((_, frames)) = chart.take_edge_frames() else {
+            return;
+        };
+        let guard = self.inner.borrow();
+        let Some(ws) = guard.edge_socket.as_ref() else {
+            return;
+        };
+        if ws.ready_state() != 1 {
+            return;
+        }
+        for frame in frames {
+            let _ = ws.send_with_str(&frame);
+        }
+    }
+
+    fn close_edge(&self) {
+        let mut guard = self.inner.borrow_mut();
+        if let Some(ws) = guard.edge_socket.take() {
+            let _ = ws.close();
+        }
+        guard.edge_token.clear();
+    }
+
+    fn ensure_edge(&self, token: &str) {
+        {
+            let guard = self.inner.borrow();
+            if guard.edge_token == token && guard.edge_socket.is_some() {
+                return;
+            }
+        }
+        self.close_edge();
+        let Some(win) = web_sys::window() else { return };
+        let loc = win.location();
+        let proto = loc.protocol().ok().map(|p| if p.starts_with("https") { "wss" } else { "ws" }).unwrap_or("wss");
+        let Ok(host) = loc.host() else { return };
+        let url = format!("{proto}://{host}/api/share-live/{token}");
+        let Ok(ws) = web_sys::WebSocket::new(&url) else { return };
+        let inner = self.inner.clone();
+        let on_msg = wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::MessageEvent| {
+            if let Some(text) = ev.data().as_string() {
+                inner.borrow_mut().edge_in.push(text);
+            }
+        }) as Box<dyn FnMut(web_sys::MessageEvent)>);
+        ws.set_onmessage(Some(on_msg.as_ref().unchecked_ref()));
+        on_msg.forget();
+        let mut guard = self.inner.borrow_mut();
+        guard.edge_socket = Some(ws);
+        guard.edge_token = token.to_string();
     }
 
     fn poll_share_ops(&self, chart: &mut ChartApp, now_ms: f64) {
@@ -1410,6 +1480,7 @@ impl CloudSession {
             }
         }
         self.poll_share_ops(chart, now_ms);
+        self.poll_edge(chart);
         self.poll_friends(chart);
 
         // ── Chart-share clone (shared-viewer arc, 2026-09-06) ──────────────
