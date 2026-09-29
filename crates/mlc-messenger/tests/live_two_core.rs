@@ -8,10 +8,9 @@
 //!     -- --ignored --test-threads=1 --nocapture
 //! ```
 //!
-//! The stand's URL, bearer tokens and account ids are read from the env file
-//! named by `MLC_LIVE_STAND_ENV` (default
-//! `E:\Data\mylittlechart\live-run\stand.env`); no credential is ever
-//! printed, logged or committed.
+//! The stand's URL, data dir and ports are read from the env file named by
+//! `MLC_LIVE_STAND_ENV` (default `E:\Data\mylittlechart\live-run\stand.env`);
+//! no credential is ever printed, logged or committed.
 //!
 //! # Pump
 //!
@@ -29,21 +28,23 @@
 //! trusted by the server's per-IP rate limiter) so no two cores share a
 //! bucket.
 //!
-//! # Devices
+//! # Accounts and devices
 //!
-//! The server refuses to let a device's identity keys change once published
-//! (`keys.rs` `decide_device_keys_upload`), and a stand token is one device
-//! for good. So each account's long-lived device (`Stand::core`) keeps its
-//! record log on disk between tests and runs, like a real shell, and resumes
-//! the same Olm account every time. A "second device" scenario needs a device
-//! the server has never seen, so `Stand::fresh_core` mints a throwaway token
-//! straight into the stand's identity DB (`mlc-dbadmin exec`, the documented
-//! seeding path) and logs that device out again when the core is dropped.
+//! Every scenario seeds its OWN fresh accounts ([`Stand::load`]): unique
+//! `provider_user_id`, nick and public id (a per-run nonce), paid, with the
+//! mandatory `user_providers` self-mirror row, inserted straight into the
+//! stand's identity DB (`mlc-dbadmin exec`, the documented seeding path). The
+//! server dedupes DMs per user pair (`dm_pair_key`), so accounts shared with an
+//! earlier run would get that run's DM room back from `createRoom` and no scenario
+//! would start from a clean slate. A fresh account also means a fresh device
+//! and a fresh Olm account, so the record log lives in memory only (S7 restarts
+//! a core over the bytes [`LiveCore::shutdown`] returns; no per-frame disk
+//! `fsync` pollutes the timings). [`Stand::fresh_core`] mints one more token for
+//! an existing account: a second device the server has never seen, logged out
+//! again when the core is dropped.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::fs::{self, File, OpenOptions};
 use std::hash::{BuildHasher, Hasher};
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -79,12 +80,10 @@ const THUMBS_UP: &str = "\u{1F44D}";
 // Stand env + identities
 // ---------------------------------------------------------------------
 
-/// The three stand accounts. Each has one long-lived device (its stand
-/// token, with a record log persisted on disk exactly like a real shell's:
-/// the server refuses to let a device's identity keys change, so a device
-/// must resume its Olm account on every run) and can mint throwaway extra
-/// devices ([`Stand::fresh_core`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The three accounts of a scenario run. Each is seeded fresh by
+/// [`Stand::load`] and owns one device (its seed token); more devices come
+/// from [`Stand::fresh_core`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Who {
     Alice,
     Bob,
@@ -92,28 +91,13 @@ enum Who {
 }
 
 impl Who {
+    const ALL: [Who; 3] = [Who::Alice, Who::Bob, Who::Carol];
+
     fn label(self) -> &'static str {
         match self {
             Who::Alice => "alice",
             Who::Bob => "bob",
             Who::Carol => "carol",
-        }
-    }
-
-    /// The stand token of the account's long-lived device.
-    fn token_var(self) -> &'static str {
-        match self {
-            Who::Alice => "MLC_LIVE_ALICE1_TOKEN",
-            Who::Bob => "MLC_LIVE_BOB_TOKEN",
-            Who::Carol => "MLC_LIVE_CAROL_TOKEN",
-        }
-    }
-
-    fn account_prefix(self) -> &'static str {
-        match self {
-            Who::Alice => "MLC_LIVE_ALICE",
-            Who::Bob => "MLC_LIVE_BOB",
-            Who::Carol => "MLC_LIVE_CAROL",
         }
     }
 
@@ -128,15 +112,38 @@ impl Who {
     }
 }
 
-/// The parsed stand env file. Deliberately no `Debug`: it holds tokens.
-struct Stand {
-    /// The stand env file; its directory also holds `bin/`, `data/` and the
-    /// key copy `mlc-dbadmin` needs.
-    env_path: PathBuf,
-    vars: BTreeMap<String, String>,
+/// One account seeded for this scenario run. Deliberately no `Debug`: it
+/// holds a bearer token.
+struct Account {
+    /// `users.provider_user_id`, unique per run.
+    provider_user_id: String,
+    /// `users.public_id`: the mxid localpart.
+    public_id: String,
+    /// The raw bearer token of the account's first device.
+    token: String,
 }
 
+/// The parsed stand env file plus this run's freshly seeded accounts.
+/// Deliberately no `Debug`: it holds tokens.
+struct Stand {
+    /// The stand env file; its directory also holds the key copy `mlc-dbadmin`
+    /// needs (the data and executable dirs are named inside it).
+    env_path: PathBuf,
+    vars: BTreeMap<String, String>,
+    accounts: BTreeMap<Who, Account>,
+}
+
+/// The first `len` bytes of an ASCII (hex) string, or all of it if shorter.
+fn head(text: &str, len: usize) -> &str {
+    text.get(..len).unwrap_or(text)
+}
+
+const SEED_TIME: &str = "2026-09-29T00:00:00+00:00";
+const PAID_UNTIL: &str = "2099-01-01T00:00:00+00:00";
+
 impl Stand {
+    /// Reads the stand env file, checks the server answers, and seeds three
+    /// fresh paid accounts (alice, bob, carol) that no earlier run ever used.
     fn load() -> Self {
         let path = std::env::var("MLC_LIVE_STAND_ENV").unwrap_or_else(|_| DEFAULT_STAND_ENV.to_string());
         let text = std::fs::read_to_string(&path).unwrap_or_else(|error| panic!("cannot read the stand env file {path}: {error}"));
@@ -147,8 +154,9 @@ impl Stand {
             .filter_map(|line| line.split_once('='))
             .map(|(key, value)| (key.trim().to_string(), value.trim().to_string()))
             .collect();
-        let stand = Self { env_path: PathBuf::from(path), vars };
+        let mut stand = Self { env_path: PathBuf::from(path), vars, accounts: BTreeMap::new() };
         stand.assert_server_up();
+        stand.seed_accounts();
         stand
     }
 
@@ -165,90 +173,130 @@ impl Stand {
         self.var("MLC_LIVE_BASE_URL").trim_end_matches('/').to_string()
     }
 
+    fn account(&self, who: Who) -> &Account {
+        self.accounts.get(&who).unwrap_or_else(|| panic!("no seeded account for {}", who.label()))
+    }
+
     fn public_id(&self, who: Who) -> String {
-        self.var(&format!("{}_PUBLIC_ID", who.account_prefix())).to_string()
+        self.account(who).public_id.clone()
     }
 
     fn mxid(&self, who: Who) -> UserId {
-        UserId::from(self.var(&format!("{}_MXID", who.account_prefix())))
+        UserId::from(format!("@{}:chart.example", self.account(who).public_id))
     }
 
+    /// Waits (at most 30 s: the host may be busy) for the versions probe to
+    /// answer, then prints a small latency sample so a reader can judge how
+    /// noisy the machine was while this scenario ran.
     fn assert_server_up(&self) {
         let url = format!("{}/_matrix/client/versions", self.base_url());
-        let up = reqwest::blocking::Client::new().get(&url).timeout(Duration::from_secs(5)).send().map(|r| r.status().is_success()).unwrap_or(false);
-        assert!(up, "the stand server is not answering {url}; run: bash E:/Data/mylittlechart/live-run/start-server.sh");
+        let client = reqwest::blocking::Client::new();
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let up = client.get(&url).timeout(Duration::from_secs(5)).send().map(|r| r.status().is_success()).unwrap_or(false);
+            if up {
+                break;
+            }
+            assert!(Instant::now() < deadline, "the stand server is not answering {url}; run: bash E:/Data/mylittlechart/live-run/start-server.sh");
+            std::thread::sleep(Duration::from_millis(500));
+        }
+        let mut samples: Vec<u128> = (0..7)
+            .map(|_| {
+                let started = Instant::now();
+                let _ = client.get(&url).timeout(Duration::from_secs(5)).send();
+                started.elapsed().as_millis()
+            })
+            .collect();
+        samples.sort_unstable();
+        println!(
+            "LIVE stand | GET /versions x7: min {} ms, median {} ms, max {} ms",
+            samples.first().copied().unwrap_or_default(),
+            samples.get(samples.len() / 2).copied().unwrap_or_default(),
+            samples.last().copied().unwrap_or_default()
+        );
     }
 
-    /// Where each long-lived device keeps its record log between tests and
-    /// runs (`MLC_LIVE_LOG_DIR`, default `<stand dir>/core-logs`).
-    fn log_path(&self, who: Who) -> PathBuf {
-        let dir = std::env::var("MLC_LIVE_LOG_DIR").map(PathBuf::from).unwrap_or_else(|_| self.stand_dir().join("core-logs"));
-        fs::create_dir_all(&dir).unwrap_or_else(|error| panic!("cannot create the core log dir {}: {error}", dir.display()));
-        dir.join(format!("{}.log", who.label()))
+    /// Seeds one fresh account per [`Who`] in a single `mlc-dbadmin exec`:
+    /// unique provider id, nick and public id, paid, with the mandatory
+    /// `user_providers` self-mirror row (the server's boot cleanup deletes a
+    /// user without one) and one bearer-token row.
+    fn seed_accounts(&mut self) {
+        let run = random_token();
+        let mut sql = String::new();
+        let mut accounts = BTreeMap::new();
+        for who in Who::ALL {
+            let seed = sha256_hex(&format!("{run}/{}", who.label()));
+            let account = Account { provider_user_id: format!("{}-{}", who.label(), head(&run, 12)), public_id: head(&seed, 32).to_string(), token: random_token() };
+            let nick = format!("{}_{}", who.label(), seed.get(32..40).unwrap_or_default());
+            sql.push_str(&format!(
+                "INSERT INTO users (provider, provider_user_id, display_name, created_at, public_id, nick, paid_until) \
+                 VALUES ('dev', '{puid}', '{label}', '{SEED_TIME}', '{pid}', '{nick}', '{PAID_UNTIL}'); \
+                 INSERT INTO user_providers (user_id, provider, provider_user_id, display_name, linked_at) \
+                 SELECT id, provider, provider_user_id, display_name, created_at FROM users WHERE provider = 'dev' AND provider_user_id = '{puid}'; ",
+                puid = account.provider_user_id,
+                label = who.label(),
+                pid = account.public_id,
+            ));
+            sql.push_str(&token_sql(&account.provider_user_id, &account.token));
+            accounts.insert(who, account);
+        }
+        self.exec_sql(&sql);
+        self.accounts = accounts;
     }
 
-    /// Boots `who`'s long-lived device, resuming its persisted record log
-    /// (empty on the very first run). Every acked batch is mirrored to the
-    /// file, so a later test -- or run -- resumes the same Olm account.
+    /// Runs `sql` against the stand's identity DB with `mlc-dbadmin exec`
+    /// (the stand's data dir lives on the NVMe: `MLC_LIVE_DATA_DIR`).
+    fn exec_sql(&self, sql: &str) {
+        let dir = self.stand_dir();
+        let key_copy = ["dbkey.seedcopy", "dbkey.keep"].iter().map(|name| dir.join(name)).find(|path| path.exists()).unwrap_or_else(|| panic!("no dbkey copy in {}", dir.display()));
+        let output = Command::new(Path::new(self.var("MLC_LIVE_BIN_DIR")).join("mlc-dbadmin.exe"))
+            .arg("exec")
+            .arg(Path::new(self.var("MLC_LIVE_DATA_DIR")).join("mylittlechart.db"))
+            .arg(sql)
+            .env("MLC_DBKEY_PATH", key_copy)
+            .output()
+            .unwrap_or_else(|error| panic!("cannot run mlc-dbadmin: {error}"));
+        assert!(output.status.success(), "mlc-dbadmin exec failed: {}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    /// Boots `who`'s first device with an empty record log.
     fn core(&self, who: Who) -> LiveCore {
-        let path = self.log_path(who);
-        let bytes = fs::read(&path).unwrap_or_default();
-        self.core_with_log(who, bytes)
+        self.core_with_log(who, Vec::new())
     }
 
-    /// Boots `who`'s long-lived device over `log` (its current record log,
-    /// e.g. what `LiveCore::shutdown` returned): a restart.
+    /// Boots `who`'s first device over `log` (its current record log, e.g.
+    /// what `LiveCore::shutdown` returned): a restart.
     fn core_with_log(&self, who: Who, log: Vec<u8>) -> LiveCore {
-        let path = self.log_path(who);
-        let (_, valid_len) = persist_log::replay(&log);
-        let file = OpenOptions::new().create(true).write(true).truncate(false).open(&path).unwrap_or_else(|error| panic!("cannot open {}: {error}", path.display()));
-        // Cut a torn tail (a crash mid-write) exactly as a real shell does at boot.
-        file.set_len(valid_len as u64).unwrap_or_else(|error| panic!("cannot trim {}: {error}", path.display()));
-        drop(file);
-        let file = OpenOptions::new().append(true).open(&path).unwrap_or_else(|error| panic!("cannot open {} for append: {error}", path.display()));
-        let mut core = LiveCore::new(who.label(), self.base_url(), self.var(who.token_var()).to_string(), who.vault_key(), log[..valid_len].to_vec());
-        core.log_file = Some(file);
-        core
+        LiveCore::new(who.label(), self.base_url(), self.account(who).token.clone(), who.vault_key(), log)
     }
 
-    /// Boots a brand-new device of `who`'s account: a throwaway bearer token
-    /// is minted straight into the stand's identity DB (`mlc-dbadmin`, the
-    /// documented seeding path), so the server sees a never-before-seen
-    /// device. The device is logged out again when the core is dropped.
+    /// Boots a brand-new device of `who`'s account: one more bearer token is
+    /// minted straight into the stand's identity DB, so the server sees a
+    /// never-before-seen device. The device is logged out again when the core
+    /// is dropped.
     fn fresh_core(&self, who: Who, name: &'static str) -> LiveCore {
-        let token = self.mint_token(who);
+        let token = random_token();
+        self.exec_sql(&token_sql(&self.account(who).provider_user_id, &token));
         let mut core = LiveCore::new(name, self.base_url(), token.clone(), who.vault_key(), Vec::new());
         core.revoke_on_drop = Some(RevokeOnDrop { base_url: self.base_url(), token });
         core
     }
 
-    /// Inserts a new bearer-token row for `who`'s account and returns the raw
-    /// token (only its SHA-256 goes into the DB). Never printed.
-    fn mint_token(&self, who: Who) -> String {
-        let raw = random_token();
-        let hash = sha256_hex(&raw);
-        let sql = format!(
-            "INSERT INTO auth_tokens (token_hash, user_id, created_at, expires_at)              SELECT '{hash}', id, '2026-09-29T00:00:00+00:00', '2099-01-01T00:00:00+00:00'              FROM users WHERE provider = 'dev' AND provider_user_id = '{}';",
-            who.label()
-        );
-        let dir = self.stand_dir();
-        let key_copy = ["dbkey.seedcopy", "dbkey.keep"].iter().map(|name| dir.join(name)).find(|path| path.exists()).unwrap_or_else(|| panic!("no dbkey copy in {}", dir.display()));
-        let output = Command::new(dir.join("bin").join("mlc-dbadmin.exe"))
-            .arg("exec")
-            .arg(dir.join("data").join("mylittlechart.db"))
-            .arg(&sql)
-            .env("MLC_DBKEY_PATH", key_copy)
-            .output()
-            .unwrap_or_else(|error| panic!("cannot run mlc-dbadmin: {error}"));
-        assert!(output.status.success(), "mlc-dbadmin exec failed: {}", String::from_utf8_lossy(&output.stderr));
-        raw
-    }
-
     /// A plain authenticated HTTP handle for `who` (the legacy `/api/dm/*`
     /// calls).
     fn api(&self, who: Who) -> Api {
-        Api { client: reqwest::blocking::Client::new(), base_url: self.base_url(), token: self.var(who.token_var()).to_string(), forwarded_for: next_forwarded_for() }
+        Api { client: reqwest::blocking::Client::new(), base_url: self.base_url(), token: self.account(who).token.clone(), forwarded_for: next_forwarded_for() }
     }
+}
+
+/// The SQL that gives the seeded user `provider_user_id` one bearer-token
+/// row (only the SHA-256 of `raw` goes into the DB).
+fn token_sql(provider_user_id: &str, raw: &str) -> String {
+    format!(
+        "INSERT INTO auth_tokens (token_hash, user_id, created_at, expires_at) \
+         SELECT '{}', id, '{SEED_TIME}', '{PAID_UNTIL}' FROM users WHERE provider = 'dev' AND provider_user_id = '{provider_user_id}'; ",
+        sha256_hex(raw)
+    )
 }
 
 /// A throwaway bearer token: SHA-256 over OS-seeded hasher output, the clock
@@ -353,6 +401,11 @@ impl RequestLog {
         self.with(|entries| entries.len())
     }
 
+    /// The JSON request body of entry `index` (empty if none), for the verbose trace.
+    fn body_text(&self, index: usize) -> String {
+        self.with(|entries| entries.get(index).and_then(|entry| entry.body.as_ref()).map(ToString::to_string).unwrap_or_default())
+    }
+
     /// `METHOD path?query` of entry `index`, for the trace.
     fn describe(&self, index: usize) -> String {
         self.with(|entries| entries.get(index).map(|entry| format!("{} {}?{}", entry.method, entry.path, entry.query)).unwrap_or_default())
@@ -422,6 +475,17 @@ fn trace_enabled() -> bool {
     std::env::var_os("MLC_LIVE_TRACE").is_some()
 }
 
+/// `MLC_LIVE_TRACE=verbose` also prints each call's request body and the
+/// start of its response body (no credential travels in either).
+fn trace_verbose() -> bool {
+    std::env::var("MLC_LIVE_TRACE").is_ok_and(|value| value == "verbose")
+}
+
+/// The first `limit` characters of `text`, for the verbose trace.
+fn clip(text: &str, limit: usize) -> String {
+    text.chars().take(limit).collect()
+}
+
 /// A `MessengerDriver` plus its blocking HTTP pump and in-memory record log.
 /// Deliberately no `Debug`: it holds a bearer token.
 struct LiveCore {
@@ -433,8 +497,6 @@ struct LiveCore {
     driver: MessengerDriver,
     provider: SnapshotProvider,
     log: Vec<u8>,
-    /// The on-disk mirror of `log` (long-lived devices only).
-    log_file: Option<File>,
     /// Whether this core resumed a non-empty record log (its Olm account
     /// already exists, so it will not publish device keys again).
     resumed: bool,
@@ -482,7 +544,6 @@ impl LiveCore {
             driver,
             provider,
             log,
-            log_file: None,
             resumed,
             revoke_on_drop: None,
             tx,
@@ -506,6 +567,10 @@ impl LiveCore {
         while let Ok(done) = self.rx.try_recv() {
             if trace_enabled() {
                 println!("TRACE [{}] {} -> {}", self.name, self.requests.describe(done.index), done.summary());
+            }
+            if trace_verbose() {
+                let response = done.result.as_ref().map(|(_, body)| String::from_utf8_lossy(body).into_owned()).unwrap_or_default();
+                println!("TRACE-BODY [{}] request={} response={}", self.name, clip(&self.requests.body_text(done.index), 900), clip(&response, 9000));
             }
             match done.result {
                 Ok((status, body)) => {
@@ -535,10 +600,10 @@ impl LiveCore {
         }
     }
 
-    /// Appends one record-log frame to the in-memory log and its file mirror
-    /// (before the batch is acked, as the flush-before-send barrier requires).
+    /// Appends one record-log frame to the in-memory log (before the batch is
+    /// acked, as the flush-before-send barrier requires).
     fn append(&mut self, frame: &[u8]) {
-        write_frame(self.name, &mut self.log, &mut self.log_file, frame);
+        self.log.extend_from_slice(frame);
     }
 
     fn spawn(&self, request: DriverRequest) {
@@ -580,9 +645,9 @@ impl LiveCore {
     /// A restart-style shutdown: drains the driver's unflushed batches into
     /// the log and returns the log bytes.
     fn shutdown(self) -> Vec<u8> {
-        let LiveCore { name, driver, mut log, mut log_file, .. } = self;
+        let LiveCore { driver, mut log, .. } = self;
         for batch in driver.shutdown() {
-            write_frame(name, &mut log, &mut log_file, &persist_log::encode_batch(&batch));
+            log.extend_from_slice(&persist_log::encode_batch(&batch));
         }
         log
     }
@@ -616,14 +681,6 @@ impl LiveCore {
         out.push_str(&format!("  last requests: {}\n", self.requests.tail(6).join(" | ")));
         out.push_str(&format!("  failures (newest first): {}\n", self.requests.failures().join(" | ")));
         out
-    }
-}
-
-/// Appends `frame` to the in-memory log and, if there is one, its file mirror.
-fn write_frame(name: &str, log: &mut Vec<u8>, file: &mut Option<File>, frame: &[u8]) {
-    log.extend_from_slice(frame);
-    if let Some(file) = file {
-        file.write_all(frame).and_then(|()| file.sync_data()).unwrap_or_else(|error| panic!("[{name}] cannot persist the record log: {error}"));
     }
 }
 
@@ -770,8 +827,7 @@ fn create_request(kind: RoomKind, title: Option<String>, members: Vec<UserId>, v
     MessengerIntent::CreateRoom(CreateRoomRequest { kind, title, description: None, member_ids: members, members_can_add: false, visibility })
 }
 
-/// alice creates a DM with bob, bob joins, and both cores know each other's
-/// devices (so the next message can be encrypted for the peer).
+/// alice creates a DM with bob and bob joins.
 fn establish_dm(scenario: &str, alice: &mut LiveCore, bob: &mut LiveCore, stand: &Stand) -> RoomId {
     let (ap, bp) = (alice.provider(), bob.provider());
     let (alice_user, bob_user) = (stand.mxid(Who::Alice), stand.mxid(Who::Bob));
@@ -787,10 +843,9 @@ fn establish_dm(scenario: &str, alice: &mut LiveCore, bob: &mut LiveCore, stand:
     let took = wait_until(&mut [&mut *alice, &mut *bob], "bob's JoinRoom completes (can_post)", || bp.room(&room).is_some_and(|summary| summary.can_post));
     report(scenario, "bob JoinRoom -> joined", took);
 
-    let took = wait_until(&mut [&mut *alice, &mut *bob], "both cores track each other's devices", || {
-        member_has_key(&ap, &room, &bob_user) && member_has_key(&bp, &room, &alice_user)
-    });
-    report(scenario, "bob joined -> both sides hold the peer's device keys", took);
+    // The core tracks a peer's devices lazily: `MessengerCore::begin_key_pipeline`
+    // mints the `/keys/query` on the first encrypted send, not on the join.
+    note(scenario, &format!("after the join: alice tracks bob's devices={} bob tracks alice's devices={}", member_has_key(&ap, &room, &bob_user), member_has_key(&bp, &room, &alice_user)));
     room
 }
 
@@ -863,7 +918,7 @@ fn s2_group_with_leave() {
     let mut bob = stand.core(Who::Bob);
     let mut carol = stand.core(Who::Carol);
     let (ap, bp, cp) = (alice.provider(), bob.provider(), carol.provider());
-    let (alice_user, bob_user, carol_user) = (stand.mxid(Who::Alice), stand.mxid(Who::Bob), stand.mxid(Who::Carol));
+    let (bob_user, carol_user) = (stand.mxid(Who::Bob), stand.mxid(Who::Carol));
 
     let took = boot_all(&mut [&mut alice, &mut bob, &mut carol]);
     report("S2", "boot three cores", took);
@@ -883,15 +938,8 @@ fn s2_group_with_leave() {
         bp.room(&room).is_some_and(|s| s.can_post) && cp.room(&room).is_some_and(|s| s.can_post)
     });
     report("S2", "both JoinRoom -> joined", took);
-    let took = wait_until(&mut [&mut alice, &mut bob, &mut carol], "every member tracks every other member's devices", || {
-        member_has_key(&ap, &room, &bob_user)
-            && member_has_key(&ap, &room, &carol_user)
-            && member_has_key(&bp, &room, &alice_user)
-            && member_has_key(&bp, &room, &carol_user)
-            && member_has_key(&cp, &room, &alice_user)
-            && member_has_key(&cp, &room, &bob_user)
-    });
-    report("S2", "joined -> all six device-key views populated", took);
+    // Devices are tracked lazily (see `establish_dm`): the first encrypted send does the `/keys/query`.
+    note("S2", &format!("after both joins: alice tracks bob={} carol={}", member_has_key(&ap, &room, &bob_user), member_has_key(&ap, &room, &carol_user)));
 
     send_text(&bp, &room, "hello group (from bob)");
     let started = Instant::now();
@@ -1126,19 +1174,13 @@ fn legacy_send(api: &Api, conv_id: i64, sender: &mlc_vault::dm::DmIdentity, peer
     assert!((200..300).contains(&status), "POST /api/dm/conversations/{conv_id}/messages -> {status} {response}");
 }
 
-#[test]
-#[ignore = "live: needs the local stand server (MLC_LIVE_STAND_ENV)"]
-fn s6_legacy_dm_bridges_into_a_matrix_room() {
-    let stand = Stand::load();
-    let mut alice = stand.core(Who::Alice);
-    let mut bob = stand.core(Who::Bob);
+/// Runs the legacy `/api/dm` flow between alice and bob (both cores booted):
+/// each publishes a DM identity, alice opens a conversation and sends two
+/// sealed messages, bob replies. Waits until both providers show all three as
+/// decrypted `Legacy(Text)` and returns the room the server bridged them into
+/// (both providers agree on it and both of alice's messages share it).
+fn legacy_dm_round(scenario: &str, stand: &Stand, alice: &mut LiveCore, bob: &mut LiveCore) -> RoomId {
     let (ap, bp) = (alice.provider(), bob.provider());
-
-    let took = boot_all(&mut [&mut alice, &mut bob]);
-    report("S6", "boot both cores", took);
-    // A native DM between the same two accounts, to answer "same room or not".
-    let native_room = establish_dm("S6", &mut alice, &mut bob, &stand);
-
     let alice_identity = mlc_vault::dm::DmIdentity::from_vault_key(&Who::Alice.vault_key());
     let bob_identity = mlc_vault::dm::DmIdentity::from_vault_key(&Who::Bob.vault_key());
     let (alice_api, bob_api) = (stand.api(Who::Alice), stand.api(Who::Bob));
@@ -1150,7 +1192,7 @@ fn s6_legacy_dm_bridges_into_a_matrix_room() {
     let (status, body) = alice_api.call(reqwest::Method::POST, "/api/dm/conversations", Some(serde_json::json!({ "with": stand.public_id(Who::Bob) })));
     assert!((200..300).contains(&status), "POST /api/dm/conversations -> {status} {body}");
     let conv_id = body.get("id").and_then(serde_json::Value::as_i64).unwrap_or_else(|| panic!("no numeric id in the conversation response: {body}"));
-    note("S6", &format!("legacy conversation id {conv_id}"));
+    note(scenario, &format!("legacy conversation id {conv_id}"));
 
     let tag = nonce();
     let (one, two, reply) = (format!("legacy one {tag}"), format!("legacy two {tag}"), format!("legacy reply from bob {tag}"));
@@ -1158,7 +1200,7 @@ fn s6_legacy_dm_bridges_into_a_matrix_room() {
     legacy_send(&alice_api, conv_id, &alice_identity, &bob_identity.public, &two);
     let started = Instant::now();
     let (mut alice_at, mut bob_at) = (None, None);
-    wait_until(&mut [&mut alice, &mut bob], "both providers show both legacy messages as Legacy(Text)", || {
+    wait_until(&mut [&mut *alice, &mut *bob], "both providers show both legacy messages as Legacy(Text)", || {
         if alice_at.is_none() && legacy_room(&ap, &one).is_some() && legacy_room(&ap, &two).is_some() {
             alice_at = Some(started.elapsed());
         }
@@ -1167,25 +1209,119 @@ fn s6_legacy_dm_bridges_into_a_matrix_room() {
         }
         alice_at.is_some() && bob_at.is_some()
     });
-    report("S6", "legacy POST (alice) -> alice's provider shows Legacy(Text)", alice_at.unwrap_or_default());
-    report("S6", "legacy POST (alice) -> bob's provider shows Legacy(Text)", bob_at.unwrap_or_default());
-    let alice_room = legacy_room(&ap, &one).expect("alice shows the legacy room");
-    assert_eq!(Some(alice_room.clone()), legacy_room(&bp, &one), "alice and bob see the same bridged room");
-    assert_eq!(Some(alice_room.clone()), legacy_room(&ap, &two), "both legacy messages land in one room");
+    report(scenario, "legacy POST (alice) -> alice's provider shows Legacy(Text)", alice_at.unwrap_or_default());
+    report(scenario, "legacy POST (alice) -> bob's provider shows Legacy(Text)", bob_at.unwrap_or_default());
+    let bridged = legacy_room(&ap, &one).expect("alice shows the legacy room");
+    assert_eq!(Some(bridged.clone()), legacy_room(&bp, &one), "alice and bob see the same bridged room");
+    assert_eq!(Some(bridged.clone()), legacy_room(&ap, &two), "both legacy messages land in one room");
 
     legacy_send(&bob_api, conv_id, &bob_identity, &alice_identity.public, &reply);
-    let took = wait_until(&mut [&mut alice, &mut bob], "the reply sealed by bob shows as Legacy(Text) on both", || {
-        legacy_room(&ap, &reply) == Some(alice_room.clone()) && legacy_room(&bp, &reply) == Some(alice_room.clone())
+    let took = wait_until(&mut [&mut *alice, &mut *bob], "the reply sealed by bob shows as Legacy(Text) on both", || {
+        legacy_room(&ap, &reply) == Some(bridged.clone()) && legacy_room(&bp, &reply) == Some(bridged.clone())
     });
-    report("S6", "legacy POST (bob's reply, bob's fingerprint in the AAD) -> visible on both", took);
+    report(scenario, "legacy POST (bob's reply, bob's fingerprint in the AAD) -> visible on both", took);
+    bridged
+}
 
-    let bridged = ap.room(&alice_room).expect("alice holds the bridged room");
-    let native = ap.room(&native_room).expect("alice holds the native DM");
-    note("S6", &format!("bridged room same as the native DM room: {}", alice_room == native_room));
-    note("S6", &format!("bridged room in the UI: kind={:?} name={:?} encrypted={} can_post={} last_event={:?}", bridged.kind, bridged.name, bridged.is_encrypted, bridged.can_post, bridged.last_event.as_ref().map(|e| &e.content)));
-    note("S6", &format!("native DM in the UI:    kind={:?} name={:?} encrypted={} can_post={}", native.kind, native.name, native.is_encrypted, native.can_post));
-    let direct_with_bob = ap.rooms().iter().filter(|room| room.kind == RoomKind::Direct && room.name == bridged.name).count();
-    note("S6", &format!("alice's chat list holds {direct_with_bob} Direct room(s) named {:?} in total", bridged.name));
+#[test]
+#[ignore = "live: needs the local stand server (MLC_LIVE_STAND_ENV)"]
+fn s6_legacy_dm_bridges_into_a_matrix_room() {
+    let stand = Stand::load();
+    let mut alice = stand.core(Who::Alice);
+    let mut bob = stand.core(Who::Bob);
+    let (ap, bp) = (alice.provider(), bob.provider());
+
+    let took = boot_all(&mut [&mut alice, &mut bob]);
+    report("S6", "boot both cores", took);
+    let bridged = legacy_dm_round("S6", &stand, &mut alice, &mut bob);
+
+    let room = ap.room(&bridged).expect("alice holds the bridged room");
+    note("S6", &format!("bridged room in the UI: kind={:?} name={:?} encrypted={} can_post={} last_event={:?}", room.kind, room.name, room.is_encrypted, room.can_post, room.last_event.as_ref().map(|e| &e.content)));
+    let bob_room = bp.room(&bridged).expect("bob holds the bridged room");
+    note("S6", &format!("bridged room on bob: kind={:?} name={:?} can_post={}", bob_room.kind, bob_room.name, bob_room.can_post));
+
+    // A native DM opened AFTER the bridge should land in the same room (the server reuses a live DM per pair).
+    let before = room_ids(&ap);
+    enqueue(&ap, create_request(RoomKind::Direct, None, vec![stand.mxid(Who::Bob)], RoomVisibility::Private));
+    let settled = try_wait_until(&mut [&mut alice, &mut bob], Duration::from_secs(3), || room_ids(&ap) != before);
+    note("S6", &format!("native CreateRoom(Direct) after the bridge: alice holds {} room(s) (was {}), a new room appeared={}", ap.rooms().len(), before.len(), settled.is_some()));
+}
+
+// ---------------------------------------------------------------------
+// S8 -- legacy DM bridged while a native DM already exists for the pair
+// ---------------------------------------------------------------------
+
+#[test]
+#[ignore = "live: needs the local stand server (MLC_LIVE_STAND_ENV)"]
+fn s8_legacy_dm_bridge_next_to_an_existing_native_dm() {
+    let stand = Stand::load();
+    let mut alice = stand.core(Who::Alice);
+    let mut bob = stand.core(Who::Bob);
+    let (ap, _bp) = (alice.provider(), bob.provider());
+
+    let took = boot_all(&mut [&mut alice, &mut bob]);
+    report("S8", "boot both cores", took);
+    let native_room = establish_dm("S8", &mut alice, &mut bob, &stand);
+
+    let bridged = legacy_dm_round("S8", &stand, &mut alice, &mut bob);
+    note("S8", &format!("bridged room is the native DM room: {} (alice holds {} room(s))", bridged == native_room, ap.rooms().len()));
+}
+
+// ---------------------------------------------------------------------
+// S9 -- the first message is sent before the invitee has joined
+// ---------------------------------------------------------------------
+
+/// What `provider` shows for the timeline item at `event_id`, for a finding line.
+fn describe_item(provider: &SnapshotProvider, room: &RoomId, event_id: &mlc_messenger_model::EventId) -> String {
+    provider
+        .timeline(room)
+        .iter()
+        .find(|item| &item.event_id == event_id)
+        .map_or_else(|| "absent from the timeline".to_string(), |item| format!("{:?}", item.content))
+}
+
+#[test]
+#[ignore = "live: needs the local stand server (MLC_LIVE_STAND_ENV)"]
+fn s9_message_sent_before_the_invitee_joins() {
+    let stand = Stand::load();
+    let mut alice = stand.core(Who::Alice);
+    let mut bob = stand.core(Who::Bob);
+    let (ap, bp) = (alice.provider(), bob.provider());
+
+    let took = boot_all(&mut [&mut alice, &mut bob]);
+    report("S9", "boot both cores", took);
+
+    // The natural flow: open a DM and type at once, before the peer accepts.
+    let before = room_ids(&ap);
+    enqueue(&ap, create_request(RoomKind::Direct, None, vec![stand.mxid(Who::Bob)], RoomVisibility::Private));
+    wait_until(&mut [&mut alice, &mut bob], "alice's provider shows the DM room she created", || new_room(&ap, &before).is_some());
+    let room = new_room(&ap, &before).map(|summary| summary.id).expect("the wait above proved the room exists");
+    send_text(&ap, &room, "sent before bob joined");
+    let took = wait_until(&mut [&mut alice, &mut bob], "alice's first message is Sent (readable to herself)", || {
+        text_item(&ap, &room, "sent before bob joined").is_some_and(|item| item.send_state == SendState::Sent)
+    });
+    report("S9", "alice send before the join -> her own item Sent", took);
+    let first_id = text_item(&ap, &room, "sent before bob joined").map(|item| item.event_id).expect("alice's item exists");
+
+    wait_until(&mut [&mut alice, &mut bob], "bob's provider shows the DM invite", || bp.room(&room).is_some());
+    enqueue(&bp, MessengerIntent::JoinRoom { room: room.clone() });
+    let took = wait_until(&mut [&mut alice, &mut bob], "bob's JoinRoom completes (can_post)", || bp.room(&room).is_some_and(|summary| summary.can_post));
+    report("S9", "bob JoinRoom -> joined", took);
+
+    let mut problems: Vec<String> = Vec::new();
+    match try_wait_until(&mut [&mut alice, &mut bob], Duration::from_secs(5), || text_item(&bp, &room, "sent before bob joined").is_some()) {
+        Some(took) => report("S9", "bob joined -> the pre-join message reads as Text", took),
+        None => {
+            let seen = describe_item(&bp, &room, &first_id);
+            note("S9", &format!("bob never reads the message sent before he joined: {seen}"));
+            problems.push(format!("the message sent before the invitee joined stays unreadable to them ({seen})"));
+        }
+    }
+
+    send_text(&ap, &room, "sent after bob joined");
+    let took = wait_until(&mut [&mut alice, &mut bob], "bob decrypts the message sent after he joined", || text_item(&bp, &room, "sent after bob joined").is_some());
+    report("S9", "alice send after the join -> bob decrypts", took);
+    assert!(problems.is_empty(), "S9 findings: {}", problems.join("; "));
 }
 
 // ---------------------------------------------------------------------
