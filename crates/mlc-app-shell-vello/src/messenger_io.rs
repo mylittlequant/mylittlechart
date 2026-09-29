@@ -33,7 +33,12 @@
 //!   order they were produced, appends each as one
 //!   [`mlc_messenger::driver::persist_log::encode_batch`] frame to
 //!   `records.log`, `sync_data`s, and reports back
-//!   (`flush_done`) through the same completion channel.
+//!   (`flush_done`) through the same completion channel. A failed write cuts
+//!   the torn frame and retries once ([`persist_log::append_frame`]); a
+//!   second failure puts the writer in a failed state (nothing more acked or
+//!   written, `Completion::StorageFailed` -> `MessengerDriver::
+//!   storage_failed`), so the messenger stalls instead of writing frames
+//!   behind a torn one.
 //!
 //! # Wiring
 //!
@@ -43,7 +48,7 @@
 
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::Arc;
@@ -51,7 +56,8 @@ use std::thread::JoinHandle;
 
 use zeroize::Zeroizing;
 
-use mlc_messenger::driver::{persist_log, DriverRequest, DriverRequestId, MessengerDriver};
+use mlc_messenger::driver::persist_log::{self, LogSink};
+use mlc_messenger::driver::{DriverRequest, DriverRequestId, MessengerDriver};
 use mlc_messenger::persist::{FlushBatch, RecordKey, SealedRecord};
 use mlc_messenger::provider::SnapshotProvider;
 use mlc_messenger::wire::HttpMethod;
@@ -106,6 +112,36 @@ enum Completion {
     Http { id: DriverRequestId, result: Result<(u16, Vec<u8>), String> },
     FlushDone(u64),
     RecordsLoaded(Vec<SealedRecord>),
+    /// The writer could not persist a batch even after cutting the torn
+    /// frame and retrying once; it acks nothing further (module doc).
+    StorageFailed(String),
+}
+
+/// `records.log` opened for `persist_log::append_frame`. Deliberately NOT
+/// `OpenOptions::append`: on Windows an append-only handle lacks the write
+/// access `set_len` needs to cut a torn frame, so the file is opened for
+/// plain write and every append seeks to the end first.
+struct LogFile(File);
+
+impl LogSink for LogFile {
+    fn byte_len(&mut self) -> std::io::Result<u64> {
+        self.0.metadata().map(|metadata| metadata.len())
+    }
+
+    fn append_synced(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        self.0.seek(SeekFrom::End(0))?;
+        self.0.write_all(bytes)?;
+        self.0.sync_data()
+    }
+
+    fn truncate(&mut self, len: u64) -> std::io::Result<()> {
+        self.0.set_len(len)?;
+        self.0.seek(SeekFrom::End(0)).map(|_| ())
+    }
+}
+
+fn open_log(path: &Path) -> std::io::Result<File> {
+    OpenOptions::new().create(true).write(true).truncate(false).open(path)
 }
 
 /// One job the writer thread executes, in the order it receives them.
@@ -152,7 +188,7 @@ fn boot_load(device_dir: &Path) -> (Vec<SealedRecord>, Option<File>) {
     }
 
     let records: Vec<SealedRecord> = map.into_iter().map(|(key, bytes)| SealedRecord { key, bytes }).collect();
-    let log_file = OpenOptions::new().create(true).append(true).open(&log_path).ok();
+    let log_file = open_log(&log_path).ok();
     (records, log_file)
 }
 
@@ -183,21 +219,42 @@ fn compact(device_dir: &Path, map: &BTreeMap<RecordKey, Vec<u8>>) {
 /// The writer thread's own body: loads records once at start, reports them
 /// back, then services [`WriterJob`]s until its channel closes.
 fn writer_thread_main(device_dir: PathBuf, jobs_rx: mpsc::Receiver<WriterJob>, completions_tx: mpsc::Sender<Completion>, wake: Arc<dyn Fn() + Send + Sync>) {
-    let (records, mut log_file) = boot_load(&device_dir);
+    let (records, log_file) = boot_load(&device_dir);
     let _ = completions_tx.send(Completion::RecordsLoaded(records));
     wake();
 
+    let mut log = log_file.map(LogFile);
+    // Once storage has failed this thread acks nothing more and drops every
+    // later job unwritten: a frame written behind a possibly-torn one would
+    // be lost on the next boot (`persist_log::append_frame`'s own doc), and
+    // its ratchet state is what already-sent ciphertext depends on. The
+    // unacked batches keep the core from releasing any request that
+    // depends on them, so the messenger stalls instead of diverging.
+    let mut failed = false;
+    let fail = |reason: String| {
+        let _ = completions_tx.send(Completion::StorageFailed(reason));
+        wake();
+    };
+    if log.is_none() {
+        failed = true;
+        fail("cannot open records.log for writing".to_string());
+    }
+
     while let Ok(WriterJob::Flush(batch)) = jobs_rx.recv() {
-        let id = batch.id;
-        let Some(file) = log_file.as_mut() else { continue };
-        let frame = persist_log::encode_batch(&batch);
-        if file.write_all(&frame).is_ok() && file.sync_data().is_ok() {
-            let _ = completions_tx.send(Completion::FlushDone(id));
-            wake();
+        if failed {
+            continue;
         }
-        // A write/sync failure leaves this batch unacked; the driver keeps
-        // it pending, and `MessengerIo::stop`'s own final synchronous write
-        // is the last-resort re-attempt.
+        let Some(sink) = log.as_mut() else { continue };
+        match persist_log::append_frame(sink, &persist_log::encode_batch(&batch)) {
+            Ok(()) => {
+                let _ = completions_tx.send(Completion::FlushDone(batch.id));
+                wake();
+            }
+            Err(error) => {
+                failed = true;
+                fail(error.to_string());
+            }
+        }
     }
 }
 
@@ -210,13 +267,19 @@ fn write_batches_sync(device_dir: &Path, batches: &[FlushBatch]) {
         return;
     }
     let log_path = device_dir.join("records.log");
-    let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) else { return };
+    let Ok(file) = open_log(&log_path) else {
+        tracing::warn!("messenger stop: cannot open records.log; {} final batch(es) not written", batches.len());
+        return;
+    };
+    let mut log = LogFile(file);
+    // Same rule as the writer thread: cut and retry once, and on the first
+    // failure stop -- never write a later batch behind a failed one.
     for batch in batches {
-        if file.write_all(&persist_log::encode_batch(batch)).is_err() {
+        if let Err(error) = persist_log::append_frame(&mut log, &persist_log::encode_batch(batch)) {
+            tracing::warn!("messenger stop: final write failed at batch {}: {error}", batch.id);
             return;
         }
     }
-    let _ = file.sync_data();
 }
 
 /// See the module doc.
@@ -236,6 +299,9 @@ pub struct MessengerIo {
     /// Set once this driver's `whoami` resolved a device and this module
     /// spawned the writer for it — guards against spawning it twice.
     writer_spawned: bool,
+    /// Set once the writer reported `Completion::StorageFailed`: no more
+    /// batches are sent to it, and `stop` writes nothing further.
+    storage_failed: bool,
 }
 
 impl MessengerIo {
@@ -260,6 +326,7 @@ impl MessengerIo {
             writer_join: None,
             device_dir: None,
             writer_spawned: false,
+            storage_failed: false,
         }
     }
 
@@ -337,6 +404,10 @@ impl MessengerIo {
                 },
                 Completion::FlushDone(id) => self.driver.flush_done(id),
                 Completion::RecordsLoaded(records) => self.driver.records_loaded(records, now_ms),
+                Completion::StorageFailed(reason) => {
+                    self.storage_failed = true;
+                    self.driver.storage_failed(&reason);
+                }
             }
         }
 
@@ -352,9 +423,11 @@ impl MessengerIo {
         for request in output.requests {
             self.spawn_http(request);
         }
-        if let Some(writer) = &self.writer {
-            for batch in output.flush {
-                let _ = writer.send(WriterJob::Flush(batch));
+        if !self.storage_failed {
+            if let Some(writer) = &self.writer {
+                for batch in output.flush {
+                    let _ = writer.send(WriterJob::Flush(batch));
+                }
             }
         }
     }
@@ -375,6 +448,18 @@ impl MessengerIo {
         self.writer = None;
         if let Some(join) = self.writer_join.take() {
             let _ = join.join();
+        }
+
+        // The writer may have failed after the last `tick` drained its
+        // completions; a leftover batch written behind a dropped one would
+        // leave a gap, so a failed store gets no final write at all.
+        while let Ok(completion) = self.completions_rx.try_recv() {
+            if matches!(completion, Completion::StorageFailed(_)) {
+                self.storage_failed = true;
+            }
+        }
+        if self.storage_failed {
+            return;
         }
 
         if let Some(device_dir) = device_dir {

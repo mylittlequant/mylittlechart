@@ -497,6 +497,17 @@ impl MessengerDriver {
         }
     }
 
+    /// A shell's durable write failed and could not be recovered (for the
+    /// native shell: `persist_log::append_frame` gave up after its one
+    /// retry). Surfaces through the error slot this driver owns. The shell
+    /// must ack nothing further after this: unacked batches keep the core
+    /// from releasing any request that depends on them, so the messenger
+    /// stalls instead of sending ciphertext whose ratchet state never
+    /// reached disk.
+    pub fn storage_failed(&mut self, reason: &str) {
+        self.provider.set_last_error(Some(format!("messenger storage write failed: {reason}")));
+    }
+
     /// Acknowledges that batch `batch_id` has been durably written.
     pub fn flush_done(&mut self, batch_id: u64) {
         if let Some(core) = self.core.as_mut() {
@@ -674,6 +685,16 @@ mod tests {
 
         driver.tick(0);
         assert_eq!(provider.change_counter(), after_bootstrap + 1, "ticking again with nothing new does not republish");
+    }
+
+    #[test]
+    fn storage_failed_reports_through_the_error_slot() {
+        let mut driver = boot_to_running();
+        assert!(driver.provider().last_error().is_none());
+        driver.storage_failed("disk full");
+        let error = driver.provider().last_error().expect("error set");
+        assert!(error.contains("messenger storage write failed"));
+        assert!(error.contains("disk full"));
     }
 
     #[test]

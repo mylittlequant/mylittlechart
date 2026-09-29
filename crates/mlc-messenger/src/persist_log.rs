@@ -126,6 +126,49 @@ fn read_bytes(bytes: &[u8], at: usize) -> Option<(&[u8], usize)> {
     Some((slice, end))
 }
 
+/// The append-only file a shell writes [`encode_batch`] frames to, reduced
+/// to the three operations [`append_frame`]'s no-torn-frame rule needs.
+/// This crate performs no I/O itself (crate doc): a shell implements this
+/// over its own `records.log` handle, and tests implement it over memory
+/// with injected faults.
+pub trait LogSink {
+    /// The log's current length in bytes.
+    fn byte_len(&mut self) -> std::io::Result<u64>;
+    /// Appends `bytes` at the end of the log and makes them durable
+    /// (write plus `sync_data` or the platform equivalent). May fail after
+    /// writing only part of `bytes`.
+    fn append_synced(&mut self, bytes: &[u8]) -> std::io::Result<()>;
+    /// Cuts the log back to `len` bytes.
+    fn truncate(&mut self, len: u64) -> std::io::Result<()>;
+}
+
+/// Appends one frame so that a failed write can never leave a torn frame
+/// in front of later frames. [`replay`] stops at the first torn frame, so
+/// any frame written after one is silently lost on the next boot — and
+/// those later batches were already acked, i.e. the ciphertext that
+/// depended on their ratchet state has left the process, so losing them
+/// would reuse a ratchet key after the restart.
+///
+/// The rule: record the length first; on a write/sync failure, cut the log
+/// back to that length and retry the same frame once; if the retry also
+/// fails, cut back again (best effort) and return the error. The caller
+/// must then treat storage as failed: ack nothing more and write nothing
+/// more, so no frame ever lands behind a possibly-torn one.
+pub fn append_frame<S: LogSink>(sink: &mut S, frame: &[u8]) -> std::io::Result<()> {
+    let prev_len = sink.byte_len()?;
+    if sink.append_synced(frame).is_ok() {
+        return Ok(());
+    }
+    sink.truncate(prev_len)?;
+    match sink.append_synced(frame) {
+        Ok(()) => Ok(()),
+        Err(error) => {
+            let _ = sink.truncate(prev_len);
+            Err(error)
+        }
+    }
+}
+
 /// One payload's own decoded writes and deletes, in the order they appear.
 type DecodedFrame = (Vec<(String, Vec<u8>)>, Vec<String>);
 
@@ -260,6 +303,97 @@ mod tests {
         let (records, valid_len) = replay(&[]);
         assert!(records.is_empty());
         assert_eq!(valid_len, 0);
+    }
+
+    /// In-memory sink whose next `append_synced` calls can be made to fail
+    /// after writing only part of the frame (a torn write).
+    struct FaultySink {
+        bytes: Vec<u8>,
+        /// One entry per upcoming `append_synced`: `Some(n)` = write `n`
+        /// bytes then fail, `None` = succeed.
+        script: std::collections::VecDeque<Option<usize>>,
+        fail_truncate: bool,
+    }
+
+    impl FaultySink {
+        fn new(bytes: Vec<u8>, script: &[Option<usize>]) -> Self {
+            Self { bytes, script: script.iter().copied().collect(), fail_truncate: false }
+        }
+    }
+
+    impl LogSink for FaultySink {
+        fn byte_len(&mut self) -> std::io::Result<u64> {
+            Ok(self.bytes.len() as u64)
+        }
+
+        fn append_synced(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+            match self.script.pop_front().flatten() {
+                None => {
+                    self.bytes.extend_from_slice(bytes);
+                    Ok(())
+                }
+                Some(partial) => {
+                    self.bytes.extend_from_slice(&bytes[..partial.min(bytes.len())]);
+                    Err(std::io::Error::other("injected write failure"))
+                }
+            }
+        }
+
+        fn truncate(&mut self, len: u64) -> std::io::Result<()> {
+            if self.fail_truncate {
+                return Err(std::io::Error::other("injected truncate failure"));
+            }
+            self.bytes.truncate(len as usize);
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn append_frame_cuts_a_torn_frame_and_retries_once() {
+        let first = encode_batch(&batch(0, &[("a", b"1")], &[]));
+        let second = encode_batch(&batch(1, &[("b", b"2")], &[]));
+        // The first attempt at `second` writes 10 bytes and fails.
+        let mut sink = FaultySink::new(first.clone(), &[Some(10), None]);
+
+        append_frame(&mut sink, &second).expect("the retry succeeds");
+
+        let mut expected = first;
+        expected.extend_from_slice(&second);
+        assert_eq!(sink.bytes, expected, "no partial frame left in front of the retried one");
+        let (records, valid_len) = replay(&sink.bytes);
+        assert_eq!(valid_len, sink.bytes.len());
+        assert_eq!(records.len(), 2);
+    }
+
+    #[test]
+    fn append_frame_gives_up_after_a_second_failure_and_leaves_no_torn_frame() {
+        let first = encode_batch(&batch(0, &[("a", b"1")], &[]));
+        let second = encode_batch(&batch(1, &[("b", b"2")], &[]));
+        let mut sink = FaultySink::new(first.clone(), &[Some(10), Some(20)]);
+
+        assert!(append_frame(&mut sink, &second).is_err());
+
+        assert_eq!(sink.bytes, first, "both partial writes were cut back");
+        let (_, valid_len) = replay(&sink.bytes);
+        assert_eq!(valid_len, sink.bytes.len());
+    }
+
+    #[test]
+    fn append_frame_reports_failure_when_the_cut_itself_fails() {
+        let first = encode_batch(&batch(0, &[("a", b"1")], &[]));
+        let second = encode_batch(&batch(1, &[("b", b"2")], &[]));
+        let mut sink = FaultySink::new(first, &[Some(10), None]);
+        sink.fail_truncate = true;
+
+        assert!(append_frame(&mut sink, &second).is_err(), "a torn frame that cannot be cut must never look like success");
+    }
+
+    #[test]
+    fn append_frame_appends_a_clean_write_untouched() {
+        let first = encode_batch(&batch(0, &[("a", b"1")], &[]));
+        let mut sink = FaultySink::new(Vec::new(), &[None]);
+        append_frame(&mut sink, &first).expect("clean write");
+        assert_eq!(sink.bytes, first);
     }
 
     #[test]
