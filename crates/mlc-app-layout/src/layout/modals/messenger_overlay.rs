@@ -1840,6 +1840,7 @@ fn draw_timeline(
     result: &mut CloudOverlayResult,
 ) -> f64 {
     let groups = group_timeline(timeline);
+    let env = BubbleEnv { members };
     let unread_from = unread_start(timeline, room.notification_count);
     let mut sy = y;
     let top = y;
@@ -1876,13 +1877,19 @@ fn draw_timeline(
         let show_header = !mine && !is_direct;
         let group_h = draw_message_group(
             ctx, coord, layer_id, x, sy, w, msg_idx, group, mine, show_header, sender_display, sender_rank,
-            vault_state, caps, selection, tt, result,
+            vault_state, caps, selection, &env, tt, result,
         );
         sy += group_h;
         consumed += group.items.len();
         msg_idx += group.items.len() as u16;
     }
     sy - y
+}
+
+/// What every bubble in one timeline pass reads besides its own item: the
+/// room's members, to resolve a reply quote's sender to a display name.
+struct BubbleEnv<'a> {
+    members: &'a [mlc_messenger_model::Member],
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1902,6 +1909,7 @@ fn draw_message_group(
     vault_state: VaultState,
     caps: mlc_messenger_model::Capabilities,
     selection: Option<Selection>,
+    env: &BubbleEnv,
     tt: &ToolbarTheme,
     result: &mut CloudOverlayResult,
 ) -> f64 {
@@ -1913,7 +1921,7 @@ fn draw_message_group(
         let h = draw_bubble(
             ctx, coord, layer_id, x, cy, w, start_idx + i as u16, item, mine, is_first, is_last,
             show_name_header && is_first, sender_display, sender_rank.filter(|_| show_name_header && is_first),
-            vault_state, caps, selection, tt, result,
+            vault_state, caps, selection, env, tt, result,
         );
         cy += h;
         if !is_last {
@@ -2482,6 +2490,7 @@ fn draw_bubble(
     vault_state: VaultState,
     caps: mlc_messenger_model::Capabilities,
     selection: Option<Selection>,
+    env: &BubbleEnv,
     tt: &ToolbarTheme,
     result: &mut CloudOverlayResult,
 ) -> f64 {
@@ -2549,7 +2558,7 @@ fn draw_bubble(
     }
 
     if let Some(q) = quote {
-        draw_quote(ctx, text_left, cy, text_right - text_left, q, tt);
+        draw_quote(ctx, text_left, cy, text_right - text_left, q, quote_sender_label(q, env.members), tt);
         cy += QUOTE_H;
     }
 
@@ -2661,7 +2670,7 @@ fn draw_bubble(
         let bubble_rect = WidgetRect::new(bx, y, bubble_w, bubble_h);
         let bubble_id = format!("cloud_overlay:dm:bubble:{}", item.event_id.as_str());
         if coord.is_hovered(&WidgetId::from(bubble_id.as_str())) {
-            let can_forward = card.map(|c| c.allow_forward).unwrap_or(true);
+            let can_forward = caps.forward && card.map(|c| c.allow_forward).unwrap_or(true);
             draw_quick_action_bar(ctx, coord, layer_id, bx, y, bubble_w, item.event_id.as_str(), can_forward, tt);
         }
         coord.register_on_layer(bubble_id.as_str(), bubble_rect, Sense::HOVER, layer_id);
@@ -2676,10 +2685,10 @@ fn draw_bubble(
 /// [`draw_header_icons`]'s own doc uses) — a reaction picker is its own
 /// slice (U3), and "more" has no defined action set in the concept beyond
 /// what the row/header context menu already covers. Forward is omitted
-/// entirely (not just disabled) when `can_forward` is false — a share
-/// link's own `allow_forward == false` means there is no forward action to
-/// show at all, matching [`crate::SharedChartCard::allow_forward`]'s own
-/// doc.
+/// entirely (not just disabled) when `can_forward` is false — the provider
+/// not carrying forwards (`Capabilities::forward`), or a share link's own
+/// `allow_forward == false`, means there is no forward action to show at
+/// all, matching [`crate::SharedChartCard::allow_forward`]'s own doc.
 #[allow(clippy::too_many_arguments)]
 fn draw_quick_action_bar(
     ctx: &mut dyn RenderContext,
@@ -2725,10 +2734,40 @@ fn draw_quick_action_bar(
     }
 }
 
+/// The display name a reply quote shows for its target's sender. `None` for
+/// an empty sender id (the reply target is not loaded, so the provider has
+/// nothing to name) and for a sender who is not in `members` — a raw id is
+/// never shown in its place.
+fn quote_sender_label<'a>(quote: &ReplyPreview, members: &'a [mlc_messenger_model::Member]) -> Option<&'a str> {
+    if quote.sender.as_str().is_empty() {
+        return None;
+    }
+    members.iter().find(|m| m.user_id == quote.sender).map(|m| m.display_name.as_str())
+}
+
+/// The quote's one preview line: "…" when the target is not loaded (empty
+/// sender id) or carries no text.
+fn quote_preview_text(quote: &ReplyPreview) -> &str {
+    if quote.sender.as_str().is_empty() || quote.preview.trim().is_empty() {
+        "…"
+    } else {
+        &quote.preview
+    }
+}
+
 /// A reply-quote block inside a bubble (concept `.quote`) — the quoted
-/// sender's own display name (resolved by the caller; a raw opaque id when
-/// no matching member exists) and its preview text, single line, elided.
-fn draw_quote(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, quote: &ReplyPreview, tt: &ToolbarTheme) -> f64 {
+/// sender's display name (`sender`, already resolved by
+/// [`quote_sender_label`]; no name line at all when `None`) and its preview
+/// text, single line, elided.
+fn draw_quote(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    w: f64,
+    quote: &ReplyPreview,
+    sender: Option<&str>,
+    tt: &ToolbarTheme,
+) -> f64 {
     ctx.set_fill_color(&tt.item_bg_hover);
     ctx.fill_rounded_rect(x, y, w, QUOTE_H - 4.0, 4.0);
     ctx.set_fill_color(&tt.accent);
@@ -2736,17 +2775,24 @@ fn draw_quote(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, quote: &Reply
 
     let text_x = x + QUOTE_BAR_W + QUOTE_PAD_H;
     let text_w = (w - QUOTE_BAR_W - QUOTE_PAD_H * 2.0).max(0.0);
-    ctx.set_font("600 11.5px sans-serif");
-    ctx.set_fill_color(&tt.accent);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    let fit_sender = crate::ui::widgets::fit_text_to_width(ctx, quote.sender.as_str(), text_w);
-    ctx.fill_text(&fit_sender, text_x, y + QUOTE_PAD_V);
+    let preview_y = match sender {
+        Some(name) => {
+            ctx.set_font("600 11.5px sans-serif");
+            ctx.set_fill_color(&tt.accent);
+            let fit_sender = crate::ui::widgets::fit_text_to_width(ctx, name, text_w);
+            ctx.fill_text(&fit_sender, text_x, y + QUOTE_PAD_V);
+            y + QUOTE_PAD_V + 13.0
+        }
+        // No name line: the lone preview line centres in the block.
+        None => y + (QUOTE_H - 4.0 - 14.0) / 2.0,
+    };
 
     ctx.set_font("12px sans-serif");
     ctx.set_fill_color(&tt.item_text_muted);
-    let fit_preview = crate::ui::widgets::fit_text_to_width(ctx, &quote.preview, text_w);
-    ctx.fill_text(&fit_preview, text_x, y + QUOTE_PAD_V + 13.0);
+    let fit_preview = crate::ui::widgets::fit_text_to_width(ctx, quote_preview_text(quote), text_w);
+    ctx.fill_text(&fit_preview, text_x, preview_y);
 
     QUOTE_H
 }
@@ -3471,5 +3517,49 @@ mod tests {
         }
         assert_eq!(MessengerFolderSel::from_widget_key("folders"), None);
         assert_eq!(MessengerFolderSel::from_widget_key("tag:"), None);
+    }
+
+    fn test_quote(sender: &str, preview: &str) -> ReplyPreview {
+        use mlc_messenger_model::{EventId, UserId};
+        ReplyPreview { event_id: EventId::from("q"), sender: UserId::from(sender), preview: preview.to_string() }
+    }
+
+    fn test_member(id: &str, name: &str) -> mlc_messenger_model::Member {
+        use mlc_messenger_model::{MemberRole, PowerLevel, UserId};
+        mlc_messenger_model::Member {
+            user_id: UserId::from(id),
+            display_name: name.to_string(),
+            initials: "X".to_string(),
+            rank: None,
+            role: MemberRole::Member,
+            power_level: PowerLevel(0),
+            online: false,
+            last_active: None,
+            has_messaging_key: true,
+        }
+    }
+
+    #[test]
+    fn a_quote_with_an_empty_sender_shows_an_ellipsis_and_no_name() {
+        let members = vec![test_member("u1", "Kvant")];
+        let quote = test_quote("", "stale preview text");
+        assert_eq!(quote_sender_label(&quote, &members), None);
+        assert_eq!(quote_preview_text(&quote), "…");
+    }
+
+    #[test]
+    fn a_quote_never_falls_back_to_the_raw_sender_id() {
+        let members = vec![test_member("u1", "Kvant")];
+        let known = test_quote("u1", "levels");
+        assert_eq!(quote_sender_label(&known, &members), Some("Kvant"));
+        assert_eq!(quote_preview_text(&known), "levels");
+        let unknown = test_quote("@ghost:server", "hello");
+        assert_eq!(quote_sender_label(&unknown, &members), None);
+        assert_eq!(quote_preview_text(&unknown), "hello");
+    }
+
+    #[test]
+    fn a_quote_with_a_blank_preview_shows_an_ellipsis() {
+        assert_eq!(quote_preview_text(&test_quote("u1", "  ")), "…");
     }
 }
