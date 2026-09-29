@@ -156,6 +156,33 @@ mod session_revoked_401_tests {
     }
 }
 
+#[cfg(test)]
+mod stream_open_wire_tests {
+    use super::models::ShareStreamOpen;
+
+    #[test]
+    fn decodes_the_hub_answer() {
+        let body = r#"{"ticket":"abc123","publish":true,"expires_in_s":30}"#;
+        let open: ShareStreamOpen = serde_json::from_str(body).expect("hub answer decodes");
+        assert_eq!(open.ticket, "abc123");
+        assert!(open.publish);
+        assert_eq!(open.expires_in_s, 30);
+    }
+
+    #[test]
+    fn a_viewer_answer_and_an_old_edge_answer_both_decode() {
+        let viewer: ShareStreamOpen =
+            serde_json::from_str(r#"{"ticket":"t","publish":false,"expires_in_s":30}"#).expect("viewer answer");
+        assert!(!viewer.publish);
+        // The edge fields are gone from the contract; a stray one is ignored.
+        let old: ShareStreamOpen =
+            serde_json::from_str(r#"{"ticket":"t","publish":true,"owner":"utah","origin":"x","edge":"ams"}"#)
+                .expect("unknown fields are ignored");
+        assert_eq!(old.ticket, "t");
+        assert_eq!(old.expires_in_s, 0);
+    }
+}
+
 impl std::fmt::Display for CloudError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
