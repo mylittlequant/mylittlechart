@@ -49,6 +49,9 @@ mod perf;
 mod persistence;
 #[cfg(all(target_arch = "wasm32", feature = "cloud"))]
 mod cloud_session;
+// wired by the MLC coordinator
+#[cfg(all(target_arch = "wasm32", feature = "cloud"))]
+pub mod messenger_io;
 
 /// Counting global allocator (wasm-leak differential, 2026-07-26).
 ///

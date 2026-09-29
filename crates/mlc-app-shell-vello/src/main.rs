@@ -14,6 +14,9 @@ mod agent;
 mod app_state;
 mod chrome;
 pub mod keychain;
+// wired by the MLC coordinator
+#[allow(dead_code)]
+pub mod messenger_io;
 mod platform;
 mod render;
 mod screenshot;
