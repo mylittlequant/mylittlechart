@@ -872,6 +872,11 @@ fn s1_direct_message_lifecycle() {
     let summary = bp.room(&room).expect("bob holds the DM room");
     assert!(summary.is_encrypted, "the DM room must be encrypted");
     note("S1", &format!("bob's DM room: kind={:?} name={:?} encrypted={} can_post={}", summary.kind, summary.name, summary.is_encrypted, summary.can_post));
+    // Asserted at the end so the rest of the lifecycle still runs.
+    let mut problems: Vec<String> = Vec::new();
+    if summary.kind != RoomKind::Direct {
+        problems.push(format!("the invitee's DM room is {:?}, not Direct (the invite's member event carries no `is_direct`)", summary.kind));
+    }
 
     let took = wait_until(&mut [&mut alice, &mut bob], "alice's item is Sent with a server event id", || {
         text_item(&ap, &room, "hello").is_some_and(|item| item.send_state == SendState::Sent && item.event_id.as_str().starts_with('$'))
@@ -904,6 +909,7 @@ fn s1_direct_message_lifecycle() {
         bp.timeline(&room).iter().any(|item| item.event_id == bob_item.event_id && item.redacted)
     });
     report("S1", "alice Redact -> bob sees redacted", took);
+    assert!(problems.is_empty(), "S1 findings: {}", problems.join("; "));
 }
 
 // ---------------------------------------------------------------------
@@ -1363,9 +1369,7 @@ fn s7_restart_resumes_from_the_log() {
     report("S7", "restart -> Ready (whoami + records replay)", took);
     let visible_at_boot = history.iter().filter(|text| text_item(&bp2, &room, text).is_some()).count();
     note("S7", &format!("at Ready, before any /sync answer: room known={} timeline items={} history messages visible={visible_at_boot}/3", bp2.room(&room).is_some(), bp2.timeline(&room).len()));
-    if visible_at_boot != history.len() {
-        problems.push(format!("only {visible_at_boot}/3 history messages are visible right after boot"));
-    }
+    note("S7", "timelines are never persisted (crate doctrine): an empty timeline right after a restart is expected");
 
     let after_sync = try_wait_until(&mut [&mut alice, &mut bob2], Duration::from_secs(5), || history.iter().all(|text| text_item(&bp2, &room, text).is_some()));
     match after_sync {
@@ -1375,7 +1379,7 @@ fn s7_restart_resumes_from_the_log() {
             enqueue(&bp2, MessengerIntent::LoadOlder { room: room.clone() });
             match try_wait_until(&mut [&mut alice, &mut bob2], WAIT_TIMEOUT, || history.iter().all(|text| text_item(&bp2, &room, text).is_some())) {
                 Some(took) => report("S7", "LoadOlder -> full history visible", took),
-                None => problems.push("history never came back, not even after LoadOlder".to_string()),
+                None => problems.push(format!("history never came back after a restart, not even after LoadOlder; failed requests: {}", bob2_log.failures().join(" | "))),
             }
         }
     }
