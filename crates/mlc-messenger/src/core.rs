@@ -69,21 +69,14 @@
 //! [`crate::crypto::group_sessions::GroupSessionManager`], drop a
 //! replayed/otherwise-unrecoverable decrypt silently, keep an
 //! [`crate::crypto::olm_sessions::OlmDecryptError::UnknownSenderDevice`] in
-//! a small bounded retry list re-tried after the next `/keys/query`. That
-//! retry has a real ceiling worth naming: [`crate::crypto::olm_sessions::
-//! OlmSessionManager::decrypt_to_device`]'s landed (M6) shape already
-//! advances and persists the Olm ratchet -- consuming a pre-key message's
-//! one-time key in the process -- before it ever reaches the sender-device
-//! check that can raise `UnknownSenderDevice`. Retrying that SAME queued
-//! event later is therefore a genuine second decrypt of already-consumed
-//! ratchet state, which Olm's own forward-secrecy guarantee rejects as a
-//! replay (`crypto::olm_sessions`'s own module doc) -- the retry drains the
-//! queue entry either way (resolved, or dropped as unrecoverable), but it
-//! only actually resolves the message for a sender whose device becomes
-//! known before this exact event is retried, not after. Closing that gap
-//! would need `decrypt_to_device` to return validated plaintext pending a
-//! sender check instead of an error carrying no plaintext at all -- a
-//! shape change to that landed piece, out of scope here.
+//! a small bounded retry list re-tried after the next `/keys/query`.
+//! [`crate::crypto::olm_sessions::OlmSessionManager::decrypt_to_device`]
+//! checks the sender's device BEFORE it creates or advances any session, so
+//! a refused event has consumed nothing (no one-time key, no ratchet step) and
+//! the retry decrypts it from scratch -- the room key inside the very first
+//! message from a peer whose device this account has not queried yet (the
+//! usual case: the to-device share arrives before any `/keys/query` for
+//! them) is not lost.
 //! `m.room_key.withheld`/`m.room_key_request`/`m.forwarded_room_key` are a
 //! no-op hook for `crypto::withheld` (M8); (2) `device_lists.changed`/
 //! `left` → [`crate::crypto::device_tracker::DeviceTracker`]; (3) OTK
@@ -3237,42 +3230,34 @@ mod tests {
         core.store = bob_store;
         core.account = bob_account;
 
-        // Bob does not know alice's device yet -- the decrypt succeeds
-        // (bob has a session), but payload validation fails with
-        // `UnknownSenderDevice` since `DeviceTracker` has never seen
-        // alice's device.
+        // Bob does not know alice's device yet: the decrypt is refused with
+        // `UnknownSenderDevice` before any session is created, and the event
+        // is queued for a retry.
         let mut sessions = Vec::new();
         core.process_to_device_event(&to_device_event, &mut sessions).expect("queues for retry, does not error");
         assert_eq!(core.unknown_sender_retry.len(), 1, "queued for a retry after the next keys/query");
+        let alice_curve = alice_account.identity_keys().curve25519.to_base64();
+        assert!(
+            core.store.olm_sessions_for_device(&alice_curve).expect("no error").is_empty(),
+            "the refused attempt created no Olm session (it would have consumed the one-time key)"
+        );
 
         // Bob learns alice's device via a `/keys/query` response --
         // `MessengerCore::handle_terminal_success`'s own `KeysQuery` arm
         // calls `retry_unknown_sender_queue` exactly once, right after
-        // applying the response (never speculatively before it): retrying
-        // any earlier would re-decrypt the same PreKey message a second
-        // time, which is a replay of the session bob's first attempt
-        // already established (`crypto::olm_sessions`'s own module doc) --
-        // rejected and dropped, not something a second query application
-        // could ever resolve.
+        // applying the response.
         let query_body = serde_json::to_vec(&serde_json::json!({
             "device_keys": { alice_user.as_str(): { alice_device.as_str(): alice_device_keys } }
         }))
         .expect("valid JSON");
         DeviceTracker::on_keys_query_response(&mut core.store, &query_body).expect("bob learns alice's device");
-        // The retry attempt itself is a genuine replay by now (the first
-        // attempt already consumed the pre-key message's one-time key and
-        // saved the resulting session before ever reaching the
-        // `UnknownSenderDevice` check) -- Olm's own forward-secrecy
-        // guarantee makes that message permanently undecryptable a second
-        // time, in exactly the same "dropped silently, not a bug" sense
-        // `redelivered_to_device_after_restart_is_dropped_silently` covers.
-        // What this test actually proves is the bounded queue's own
-        // lifecycle: an entry is added on `UnknownSenderDevice`, and the
-        // very next retry attempt clears it -- whether that attempt
-        // resolves the message or (as here) finds it already
-        // unrecoverable, it never lingers or grows the queue further.
         core.retry_unknown_sender_queue().expect("no error");
-        assert!(core.unknown_sender_retry.is_empty(), "the queued entry is drained by the retry attempt, either way");
+        assert!(core.unknown_sender_retry.is_empty(), "the queued entry is drained by the retry attempt");
+        assert_eq!(
+            core.store.olm_sessions_for_device(&alice_curve).expect("no error").len(),
+            1,
+            "the retry decrypted the very same pre-key message and established the inbound session"
+        );
     }
 
     #[test]
