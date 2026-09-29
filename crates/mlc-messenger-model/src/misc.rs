@@ -24,6 +24,8 @@ pub struct PowerLevel(pub i64);
 /// Matrix-backed provider reports them all true. The UI reads this once per
 /// frame to decide which concept screens/buttons even apply, rather than
 /// hardcoding "does this feature exist" against one specific provider.
+/// A flag that is `false` HIDES its control — the UI never draws a button
+/// the provider would only refuse.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Capabilities {
     pub groups: bool,
@@ -34,6 +36,16 @@ pub struct Capabilities {
     pub replies: bool,
     pub typing: bool,
     pub receipts: bool,
+    /// [`MessengerIntent::Forward`] is carried — gates the bubble's Forward
+    /// action and the forward chat picker.
+    pub forward: bool,
+    /// `m.sticker` events are sent and received ([`crate::MessageContent::Sticker`],
+    /// [`MessengerIntent::SendSticker`]) — gates the composer's sticker tab
+    /// and the sticker picker.
+    pub stickers: bool,
+    /// A chart can be sent into this room as a shared-chart card — gates the
+    /// chart's "Send to chat" entry and the card attach action.
+    pub chart_card_send: bool,
 }
 
 /// This account's own end-to-end device/vault state — gates which timeline
@@ -105,6 +117,10 @@ pub enum MessengerIntent {
     Forward { from_room: RoomId, event_id: EventId, to_room: RoomId },
     React { room: RoomId, event_id: EventId, key: String },
     Unreact { room: RoomId, event_id: EventId },
+    /// Send one sticker from a bundled pack (`m.sticker`, `url mlc-sticker://
+    /// <pack>/<id>`) — the provider fills the event's `alt` from the pack's
+    /// own table; the UI names the sticker by `(pack, id)` only.
+    SendSticker { room: RoomId, pack: String, id: String },
     MarkRead { room: RoomId, event_id: EventId },
     SetTyping { room: RoomId, typing: bool },
     SetMuted { room: RoomId, muted: bool },

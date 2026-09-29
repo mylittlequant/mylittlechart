@@ -120,6 +120,9 @@ mod reads {
             replies: false,
             typing: false,
             receipts: true,
+            forward: false,
+            stickers: false,
+            chart_card_send: false,
         }
     }
 

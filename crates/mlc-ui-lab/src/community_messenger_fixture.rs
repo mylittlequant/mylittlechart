@@ -591,6 +591,9 @@ impl MessengerProvider for MessengerFixture {
             replies: true,
             typing: true,
             receipts: true,
+            forward: true,
+            stickers: true,
+            chart_card_send: true,
         }
     }
 

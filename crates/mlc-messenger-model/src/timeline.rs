@@ -60,6 +60,11 @@ pub enum MessageContent {
     Encrypted { ciphertext_b64: String },
     /// Structurally cannot be opened — see [`UtdReason`].
     Undecryptable(UtdReason),
+    /// A sticker from a bundled pack (Matrix `m.sticker`, `info {pack, id}`,
+    /// `url mlc-sticker://<pack>/<id>`) — resolved against the client's own
+    /// bundled assets and never fetched. `alt` is the event body: what a
+    /// client without the pack (or a chat-list preview) shows instead.
+    Sticker { pack: String, id: String, alt: String },
     Notice(String),
     Membership(MembershipEvent),
     /// A device/session-key rotation notice inline in the timeline —

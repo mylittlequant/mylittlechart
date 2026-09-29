@@ -2341,6 +2341,9 @@ fn content_visual(content: &MessageContent, vault_state: VaultState) -> MessageV
             }
         }
         MessageContent::Undecryptable(reason) => MessageVisual { lines: vec![undecryptable_text(*reason)], mono: false },
+        // The alt text is what a sticker whose pack this client does not
+        // bundle falls back to.
+        MessageContent::Sticker { alt, .. } => MessageVisual { lines: wrap_text(alt, BUBBLE_WRAP_COLS), mono: false },
         // System-notice content never reaches this function — see
         // `system_notice_text`, checked by every caller first.
         MessageContent::Notice(_) | MessageContent::Membership(_) | MessageContent::KeyChanged => {

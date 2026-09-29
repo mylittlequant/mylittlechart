@@ -650,6 +650,9 @@ fn draw_messages_menu_overlay(
         replies: true,
         typing: true,
         receipts: true,
+        forward: true,
+        stickers: true,
+        chart_card_send: true,
     };
     let folders = vec![
         Folder {
