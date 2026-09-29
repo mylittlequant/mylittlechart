@@ -69,28 +69,22 @@
 //! [`crate::crypto::group_sessions::GroupSessionManager`], drop a
 //! replayed/otherwise-unrecoverable decrypt silently, keep an
 //! [`crate::crypto::olm_sessions::OlmDecryptError::UnknownSenderDevice`] in
-//! a small bounded retry list re-tried after the next `/keys/query`. That
-//! retry has a real ceiling worth naming: [`crate::crypto::olm_sessions::
-//! OlmSessionManager::decrypt_to_device`]'s landed (M6) shape already
-//! advances and persists the Olm ratchet -- consuming a pre-key message's
-//! one-time key in the process -- before it ever reaches the sender-device
-//! check that can raise `UnknownSenderDevice`. Retrying that SAME queued
-//! event later is therefore a genuine second decrypt of already-consumed
-//! ratchet state, which Olm's own forward-secrecy guarantee rejects as a
-//! replay (`crypto::olm_sessions`'s own module doc) -- the retry drains the
-//! queue entry either way (resolved, or dropped as unrecoverable), but it
-//! only actually resolves the message for a sender whose device becomes
-//! known before this exact event is retried, not after. Closing that gap
-//! would need `decrypt_to_device` to return validated plaintext pending a
-//! sender check instead of an error carrying no plaintext at all -- a
-//! shape change to that landed piece, out of scope here.
+//! a small bounded retry list re-tried after the next `/keys/query`.
+//! [`crate::crypto::olm_sessions::OlmSessionManager::decrypt_to_device`]
+//! checks the sender's device BEFORE it creates or advances any session, so
+//! a refused event has consumed nothing (no one-time key, no ratchet step) and
+//! the retry decrypts it from scratch -- the room key inside the very first
+//! message from a peer whose device this account has not queried yet (the
+//! usual case: the to-device share arrives before any `/keys/query` for
+//! them) is not lost.
 //! `m.room_key.withheld`/`m.room_key_request`/`m.forwarded_room_key` are a
 //! no-op hook for `crypto::withheld` (M8); (2) `device_lists.changed`/
 //! `left` → [`crate::crypto::device_tracker::DeviceTracker`]; (3) OTK
 //! counts / unused fallback types →
 //! [`crate::crypto::account::OlmAccountState::on_sync_counts`], may enqueue
 //! `/keys/upload`; (4) any outdated tracked user → one `/keys/query`; (5)
-//! rooms join/invite/leave — state → [`crate::room::state::RoomState`],
+//! rooms join/invite/leave (a member seen joining an encrypted room is marked
+//! outdated and queried right after, step 5b) — state → [`crate::room::state::RoomState`],
 //! timeline → [`crate::room::timeline::Timeline::apply_timeline_batch`],
 //! Megolm events decrypted via
 //! [`crate::crypto::group_sessions::GroupSessionManager::decrypt_event`] →
@@ -1482,6 +1476,15 @@ impl<C: RecordCodec> MessengerCore<C> {
             &known_devices,
             now_ms,
         )?;
+        let own_keys = self.account.identity_keys();
+        GroupSessionManager::adopt_own_outbound_session(
+            &mut self.store,
+            room_id,
+            &self.config.user_id,
+            own_keys.curve25519,
+            own_keys.ed25519,
+            &update,
+        )?;
 
         if let Some(room_key_content) = update.room_key_content.clone() {
             let missing_ids: BTreeSet<(UserId, DeviceId)> = OlmSessionManager::sessions_missing_for(&self.store, &update.new_recipients)?
@@ -2252,12 +2255,27 @@ impl<C: RecordCodec> MessengerCore<C> {
                 }
             }
             MessengerCommand::LoadOlder { room_id } => {
-                let from = self.timelines.get(&room_id).and_then(|timeline| {
-                    timeline
-                        .older_token()
-                        .map(str::to_string)
-                        .or_else(|| timeline.gap().and_then(|gap| gap.prev_batch.clone()))
-                });
+                let from = self
+                    .timelines
+                    .get(&room_id)
+                    .and_then(|timeline| {
+                        timeline
+                            .older_token()
+                            .map(str::to_string)
+                            .or_else(|| timeline.gap().and_then(|gap| gap.prev_batch.clone()))
+                    })
+                    // A known room with no pagination token yet -- a resumed
+                    // session, whose timelines are not persisted and whose
+                    // first `/sync` carries only what is new -- pages back
+                    // from its own sync position (a `/sync` `next_batch` token
+                    // is a valid `/messages` `from`).
+                    .or_else(|| {
+                        if self.rooms.contains_key(&room_id) {
+                            self.store.sync_token().ok().flatten().map(str::to_string)
+                        } else {
+                            None
+                        }
+                    });
                 let Some(from) = from else { return Ok(()) };
                 let request_id = self.next_request_id()?;
                 let request =
@@ -2491,12 +2509,9 @@ impl<C: RecordCodec> MessengerCore<C> {
         }
 
         // 4. any outdated tracked user -> one keys/query.
-        let any_outdated = self.store.tracked_users()?.into_iter().any(|(_, outdated)| outdated);
-        if any_outdated {
-            let keys_query_request_id = self.next_request_id()?;
-            if let Some(request) = DeviceTracker::keys_query_request(&self.store, keys_query_request_id)? {
-                self.enqueue_request(request, Lane::Other)?;
-            }
+        let outdated_before_rooms = self.outdated_tracked_users()?;
+        if !outdated_before_rooms.is_empty() {
+            self.enqueue_keys_query()?;
         }
 
         // 5. rooms.
@@ -2513,6 +2528,12 @@ impl<C: RecordCodec> MessengerCore<C> {
         }
         if rooms_touched {
             self.emit(MessengerEvent::RoomsChanged);
+        }
+        // 5b. A member who joined an encrypted room was marked outdated while
+        // the room was ingested (`track_joined_members`): query them now, not
+        // at the next sync or send.
+        if !self.outdated_tracked_users()?.is_subset(&outdated_before_rooms) {
+            self.enqueue_keys_query()?;
         }
 
         // 6. global account data.
@@ -2605,6 +2626,44 @@ impl<C: RecordCodec> MessengerCore<C> {
         Ok(())
     }
 
+    /// Every tracked user whose device list is currently outdated.
+    fn outdated_tracked_users(&self) -> Result<BTreeSet<UserId>, MessengerError> {
+        Ok(self.store.tracked_users()?.into_iter().filter_map(|(user_id, outdated)| outdated.then_some(user_id)).collect())
+    }
+
+    /// Enqueues one `/keys/query` for every outdated tracked user (nothing if none is).
+    fn enqueue_keys_query(&mut self) -> Result<(), MessengerError> {
+        let request_id = self.next_request_id()?;
+        if let Some(request) = DeviceTracker::keys_query_request(&self.store, request_id)? {
+            self.enqueue_request(request, Lane::Other)?;
+        }
+        Ok(())
+    }
+
+    /// Marks every other member that `events` show joining `room_id` (an
+    /// encrypted room) as a tracked user with an outdated device list. The
+    /// server answers `/keys/query` only for users who share a JOINED room with
+    /// the caller and reports a device list in `device_lists.changed` only when
+    /// it changes -- never when a user merely starts sharing a room. So a peer
+    /// asked about while still only invited comes back with no devices and
+    /// would otherwise stay "up to date" with none after joining, and no later
+    /// message would ever be shared with them.
+    fn track_joined_members<'a>(&mut self, room_id: &RoomId, events: impl Iterator<Item = &'a RawEvent>) -> Result<(), MessengerError> {
+        if self.rooms.get(room_id).is_none_or(|room| room.encryption.is_none()) {
+            return Ok(());
+        }
+        let joined: Vec<UserId> = events
+            .filter(|event| event.event_type == "m.room.member")
+            .filter(|event| event.content.get("membership").and_then(serde_json::Value::as_str) == Some("join"))
+            .filter_map(|event| event.state_key.as_deref().and_then(|state_key| UserId::parse(state_key).ok()))
+            .filter(|user_id| *user_id != self.config.user_id)
+            .collect();
+        if joined.is_empty() {
+            return Ok(());
+        }
+        DeviceTracker::on_device_lists(&mut self.store, &joined, &[])
+    }
+
     fn ingest_joined_room(&mut self, room_id: &RoomId, joined: &JoinedRoom) -> Result<(), MessengerError> {
         // Snapshot BEFORE folding this batch's own state events -- compared
         // below against the post-fold value so a `legacy_dm_key` state
@@ -2616,6 +2675,8 @@ impl<C: RecordCodec> MessengerCore<C> {
         for event in joined.state.events.iter().chain(joined.timeline.events.iter()) {
             self.rooms.entry(room_id.clone()).or_default().apply_state_event(event)?;
         }
+
+        self.track_joined_members(room_id, joined.state.events.iter().chain(joined.timeline.events.iter()))?;
 
         let unread_before = self.rooms.get(room_id).map(RoomState::unread_count);
         self.rooms.entry(room_id.clone()).or_default().apply_summary(&joined.summary, &joined.unread_notifications);
@@ -3440,42 +3501,34 @@ mod tests {
         core.store = bob_store;
         core.account = bob_account;
 
-        // Bob does not know alice's device yet -- the decrypt succeeds
-        // (bob has a session), but payload validation fails with
-        // `UnknownSenderDevice` since `DeviceTracker` has never seen
-        // alice's device.
+        // Bob does not know alice's device yet: the decrypt is refused with
+        // `UnknownSenderDevice` before any session is created, and the event
+        // is queued for a retry.
         let mut sessions = Vec::new();
         core.process_to_device_event(&to_device_event, &mut sessions).expect("queues for retry, does not error");
         assert_eq!(core.unknown_sender_retry.len(), 1, "queued for a retry after the next keys/query");
+        let alice_curve = alice_account.identity_keys().curve25519.to_base64();
+        assert!(
+            core.store.olm_sessions_for_device(&alice_curve).expect("no error").is_empty(),
+            "the refused attempt created no Olm session (it would have consumed the one-time key)"
+        );
 
         // Bob learns alice's device via a `/keys/query` response --
         // `MessengerCore::handle_terminal_success`'s own `KeysQuery` arm
         // calls `retry_unknown_sender_queue` exactly once, right after
-        // applying the response (never speculatively before it): retrying
-        // any earlier would re-decrypt the same PreKey message a second
-        // time, which is a replay of the session bob's first attempt
-        // already established (`crypto::olm_sessions`'s own module doc) --
-        // rejected and dropped, not something a second query application
-        // could ever resolve.
+        // applying the response.
         let query_body = serde_json::to_vec(&serde_json::json!({
             "device_keys": { alice_user.as_str(): { alice_device.as_str(): alice_device_keys } }
         }))
         .expect("valid JSON");
         DeviceTracker::on_keys_query_response(&mut core.store, &query_body).expect("bob learns alice's device");
-        // The retry attempt itself is a genuine replay by now (the first
-        // attempt already consumed the pre-key message's one-time key and
-        // saved the resulting session before ever reaching the
-        // `UnknownSenderDevice` check) -- Olm's own forward-secrecy
-        // guarantee makes that message permanently undecryptable a second
-        // time, in exactly the same "dropped silently, not a bug" sense
-        // `redelivered_to_device_after_restart_is_dropped_silently` covers.
-        // What this test actually proves is the bounded queue's own
-        // lifecycle: an entry is added on `UnknownSenderDevice`, and the
-        // very next retry attempt clears it -- whether that attempt
-        // resolves the message or (as here) finds it already
-        // unrecoverable, it never lingers or grows the queue further.
         core.retry_unknown_sender_queue().expect("no error");
-        assert!(core.unknown_sender_retry.is_empty(), "the queued entry is drained by the retry attempt, either way");
+        assert!(core.unknown_sender_retry.is_empty(), "the queued entry is drained by the retry attempt");
+        assert_eq!(
+            core.store.olm_sessions_for_device(&alice_curve).expect("no error").len(),
+            1,
+            "the retry decrypted the very same pre-key message and established the inbound session"
+        );
     }
 
     #[test]
@@ -3500,6 +3553,72 @@ mod tests {
         let requests = core.releasable_requests(0);
         let load_older = requests.iter().find(|r| r.kind == OutgoingRequestKind::RoomMessages);
         assert!(load_older.is_some(), "a RoomMessages request was enqueued using the room's own gap token");
+    }
+
+    #[test]
+    fn load_older_on_a_resumed_room_pages_back_from_the_sync_token() {
+        let mut core = open_fresh_core();
+        let room_id = RoomId::parse("!r:example.org").expect("valid room id");
+        core.store.save_sync_token("s42_7".to_string()).expect("save the sync token");
+        flush_and_ack(&mut core);
+
+        // Unknown room and no timeline: nothing to page.
+        core.dispatch(MessengerCommand::LoadOlder { room_id: room_id.clone() }, 0).expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+        assert!(core.releasable_requests(0).iter().all(|r| r.kind != OutgoingRequestKind::RoomMessages));
+
+        // The room is known (its state record was replayed) but its timeline is empty.
+        core.rooms.insert(room_id.clone(), RoomState::default());
+        core.dispatch(MessengerCommand::LoadOlder { room_id: room_id.clone() }, 0).expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+        let requests = core.releasable_requests(0);
+        let load_older = requests.iter().find(|r| r.kind == OutgoingRequestKind::RoomMessages).expect("a RoomMessages request was enqueued");
+        assert!(load_older.query.contains(&("from".to_string(), "s42_7".to_string())), "pages back from the sync token: {:?}", load_older.query);
+    }
+
+    /// A `/sync` body: `!r:example.org` where bob is seen joining, with an
+    /// `m.room.encryption` state event only if `encrypted`.
+    fn bob_joins_room_body(encrypted: bool) -> serde_json::Value {
+        let mut state = Vec::new();
+        if encrypted {
+            state.push(serde_json::json!({
+                "event_id": "$enc:example.org", "type": "m.room.encryption", "sender": "@alice:example.org",
+                "origin_server_ts": 1, "state_key": "", "content": { "algorithm": "m.megolm.v1.aes-sha2" }
+            }));
+        }
+        serde_json::json!({
+            "next_batch": "s1",
+            "rooms": { "join": { "!r:example.org": {
+                "state": { "events": state },
+                "timeline": { "events": [{
+                    "event_id": "$join:example.org", "type": "m.room.member", "sender": "@bob:example.org",
+                    "origin_server_ts": 2, "state_key": "@bob:example.org", "content": { "membership": "join" }
+                }] }
+            } } }
+        })
+    }
+
+    #[test]
+    fn a_member_joining_an_encrypted_room_is_tracked_and_queried_right_away() {
+        let mut core = open_fresh_core();
+        let bob = UserId::parse("@bob:example.org").expect("valid user id");
+        deliver_sync(&mut core, bob_joins_room_body(true));
+        let tracked = core.store.tracked_users().expect("no error");
+        assert!(tracked.iter().any(|(user_id, outdated)| *user_id == bob && *outdated), "bob is tracked with an outdated device list: {tracked:?}");
+
+        flush_and_ack(&mut core);
+        let requests = core.releasable_requests(0);
+        let query = requests.iter().find(|r| r.kind == OutgoingRequestKind::KeysQuery).expect("a /keys/query was enqueued for the new member");
+        assert!(query.body.as_ref().is_some_and(|body| body["device_keys"].get(bob.as_str()).is_some()), "the query names bob: {:?}", query.body);
+    }
+
+    #[test]
+    fn a_member_joining_a_plaintext_room_is_not_tracked() {
+        let mut core = open_fresh_core();
+        deliver_sync(&mut core, bob_joins_room_body(false));
+        assert!(core.store.tracked_users().expect("no error").is_empty());
+        flush_and_ack(&mut core);
+        assert!(core.releasable_requests(0).iter().all(|r| r.kind != OutgoingRequestKind::KeysQuery));
     }
 
     #[test]

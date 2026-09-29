@@ -201,11 +201,18 @@ pub struct OutgoingRequest {
     pub kind: OutgoingRequestKind,
 }
 
+/// The inline `/sync` filter every sync request carries: `room.include_leave`,
+/// so a room this account left (or was kicked or banned from) arrives in
+/// `rooms.leave` -- the server sends that section only when asked.
+const SYNC_FILTER: &str = r#"{"room":{"include_leave":true}}"#;
+
 impl OutgoingRequest {
-    /// `GET /_matrix/client/v3/sync`.
+    /// `GET /_matrix/client/v3/sync`. Always carries [`SYNC_FILTER`]: the
+    /// server reports a room this account left, or was kicked or banned from,
+    /// in `rooms.leave` only when the filter asks for it.
     pub fn sync(id: RequestId, since: Option<&str>, timeout_ms: Option<u64>) -> Self {
         const PATH_TEMPLATE: &str = "/_matrix/client/v3/sync";
-        let mut query = Vec::new();
+        let mut query = vec![("filter".to_string(), SYNC_FILTER.to_string())];
         if let Some(since) = since {
             query.push(("since".to_string(), since.to_string()));
         }
@@ -806,17 +813,21 @@ mod tests {
 
     #[test]
     fn sync_carries_since_and_timeout_as_query_params_only_when_present() {
+        let filter = ("filter".to_string(), SYNC_FILTER.to_string());
         let bare = OutgoingRequest::sync(id(), None, None);
-        assert!(bare.query.is_empty());
+        assert_eq!(bare.query, vec![filter.clone()]);
 
         let full = OutgoingRequest::sync(id(), Some("s123"), Some(30_000));
         assert_eq!(
             full.query,
-            vec![
-                ("since".to_string(), "s123".to_string()),
-                ("timeout".to_string(), "30000".to_string()),
-            ]
+            vec![filter, ("since".to_string(), "s123".to_string()), ("timeout".to_string(), "30000".to_string())]
         );
+    }
+
+    #[test]
+    fn sync_filter_asks_for_left_rooms() {
+        let parsed: serde_json::Value = serde_json::from_str(SYNC_FILTER).expect("the filter is JSON");
+        assert_eq!(parsed["room"]["include_leave"], serde_json::Value::Bool(true));
     }
 
     #[test]
