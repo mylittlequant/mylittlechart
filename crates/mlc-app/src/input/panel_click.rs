@@ -6462,6 +6462,17 @@ impl ChartApp {
                             }
                             return;
                         }
+                        // A folder-rail row (`messenger_overlay.rs`'s
+                        // `draw_rail_row`): selects which folder the chat
+                        // list shows. The rail's "Folders" settings row is
+                        // not a folder key and selects nothing.
+                        rest2 if rest2.starts_with("folder:") => {
+                            use mlc_app_layout::ui::modal_settings::MessengerFolderSel;
+                            if let Some(sel) = MessengerFolderSel::from_widget_key(&rest2["folder:".len()..]) {
+                                st.messenger_folder = sel;
+                            }
+                            return;
+                        }
                         "back" => {
                             st.dm.reset_to_list();
                             self.input_coordinator.borrow_mut().text_fields_mut().blur();
@@ -6590,6 +6601,94 @@ impl ChartApp {
                         // Claimed on mousedown by the store — same "nothing
                         // to do here" idiom the v1/forum2 arms above use.
                         "peer_input" | "draft_input" => { /* claimed on mousedown */ }
+                        // The chat header's own ⋮ button — opens the SAME
+                        // chat-row context menu a right-click on the row
+                        // would (`ChartApp::open_dm_chat_row_menu`'s own
+                        // doc), for the currently open room, anchored at
+                        // this click's own position (this button has no
+                        // row rect of its own to right-click).
+                        "header_more" => {
+                            let room_id = match &st.dm.view {
+                                DmView::Conversation { id, .. } => id.to_string(),
+                                _ => return,
+                            };
+                            let w = self.width as f64;
+                            let h = self.height as f64;
+                            self.open_dm_chat_row_menu(&room_id, x, y, w, h);
+                        }
+                        // A channel subscriber's own Mute/Unmute footer
+                        // (`messenger_overlay.rs`'s `draw_channel_cta`) —
+                        // the same toggle the row menu's Mute item runs.
+                        "channel_mute" => {
+                            let room_id = match &st.dm.view {
+                                DmView::Conversation { id, .. } => id.to_string(),
+                                _ => return,
+                            };
+                            mlc_app_layout::ui::dm_messenger_provider::room_action(
+                                &mut st.dm, &room_id, mlc_app_layout::ui::dm_messenger_provider::RoomAction::ToggleMute,
+                            );
+                        }
+                        // The hovered-bubble quick-action bar's own Reply
+                        // icon (messenger UI-2b `qbar`) — mirrors the
+                        // pre-existing `"dm_msg:reply"` context-menu action
+                        // (`modals.rs`'s `on_context_menu_action`): today's
+                        // DM provider reports `capabilities().replies ==
+                        // false`, so a real reply-composer UI has nothing to
+                        // arm yet; kept wired for whichever provider sets
+                        // that flag.
+                        rest2 if rest2.starts_with("reply:") => {
+                            let event_id = &rest2["reply:".len()..];
+                            log::debug!(
+                                "[ChartApp] DM message reply requested for event {event_id}, no reply-composer UI yet"
+                            );
+                        }
+                        // The hovered-bubble quick-action bar's own Forward
+                        // icon — opens the forward flow's own chat picker
+                        // (concept: "bubble action → chat picker →
+                        // `MessengerIntent::Forward`"), targeting the
+                        // currently open room as the source.
+                        rest2 if rest2.starts_with("forward:") => {
+                            let event_id = rest2["forward:".len()..].to_string();
+                            let from_room = match &st.dm.view {
+                                DmView::Conversation { id, .. } => id.to_string(),
+                                _ => return,
+                            };
+                            st.forward_target_picker =
+                                Some(mlc_app_layout::ui::modal_settings::ForwardTargetPicker { from_room, event_id });
+                        }
+                        "forward_cancel" => {
+                            st.forward_target_picker = None;
+                        }
+                        // A row in the forward picker itself — the picked
+                        // target room. Enqueues through the SAME
+                        // `MessengerProvider::enqueue` mailbox every other
+                        // messenger mutation uses (`dm_messenger_provider::
+                        // forward`'s own doc); today's DM adapter refuses it
+                        // (`DmMessengerProvider::enqueue`'s own catch-all),
+                        // same "kept wired, unreachable today" convention as
+                        // `"dm_msg:reply"` above.
+                        rest2 if rest2.starts_with("forward_to:") => {
+                            let to_room = rest2["forward_to:".len()..].to_string();
+                            if let Some(picker) = st.forward_target_picker.take() {
+                                mlc_app_layout::ui::dm_messenger_provider::forward(
+                                    &mut st.dm, &picker.from_room, &picker.event_id, &to_room,
+                                );
+                            }
+                        }
+                        // A `$SYMBOL` cashtag pill inline in a message's own
+                        // text (messenger UI-2b `text_tokens`) — the SAME
+                        // "programmatic symbol change, bypassing the
+                        // symbol-search modal" path a watchlist/quick-search
+                        // row click already uses (`ChartApp::apply_symbol`).
+                        // The id carries `msg_idx:line_idx:SYMBOL` for widget
+                        // uniqueness only — the symbol itself is always the
+                        // trailing segment (a ticker never contains `:`).
+                        rest2 if rest2.starts_with("symbol:") => {
+                            let Some(symbol) = rest2.rsplit(':').next().filter(|s| !s.is_empty()) else { return };
+                            let Some(chart_id) = self.panel_app.panel_grid.active_container_id() else { return };
+                            let exchange = self.active_exchange.as_str().to_string();
+                            self.apply_symbol(chart_id, symbol, &exchange, "S");
+                        }
                         _ => {}
                     }
                 }
@@ -7969,6 +8068,15 @@ impl ChartApp {
                     .map(|item| item.enabled)
                     .unwrap_or(true);
                 if !enabled {
+                    return;
+                }
+                // A row that owns a submenu (e.g. the chat-row menu's own
+                // "Add to folder ▸") is a toggle for that panel, not an
+                // action: the menu stays open and the submenu flips.
+                if let Some(parent) = self.panel_app.context_menu_state.items.iter_mut()
+                    .find(|item| item.action == action && !item.submenu.is_empty())
+                {
+                    parent.submenu_open = !parent.submenu_open;
                     return;
                 }
                 log::debug!("[ChartApp] Context menu action: {}", action);

@@ -40,6 +40,6 @@ pub use misc::{
 pub use provider::MessengerProvider;
 pub use room::{LastEventPreview, PreviewContent, RoomKind, RoomSummary, Tag};
 pub use timeline::{
-    LegacyContent, MembershipChange, MembershipEvent, MessageContent, ReactionSummary,
+    ForwardedFrom, LegacyContent, MembershipChange, MembershipEvent, MessageContent, ReactionSummary,
     ReplyPreview, SendState, SharedChartCard, TimelineItem, UtdReason,
 };

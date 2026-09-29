@@ -288,6 +288,7 @@ impl MessengerFixture {
                 pinned: true,
                 shared_chart: None,
                 mentions_me: false,
+                forwarded: None,
             },
             TimelineItem {
                 event_id: event("e1"),
@@ -304,13 +305,19 @@ impl MessengerFixture {
                 pinned: false,
                 shared_chart: None,
                 mentions_me: false,
+                forwarded: None,
             },
             TimelineItem {
                 event_id: event("e2"),
                 sender: user("kvant_42"),
                 sender_rank: Some(RankBadge::Paid),
                 ts: ts(now, 41.0 * MINUTE_MS),
-                content: MessageContent::Text("на 4h ордерблок BTCUSDT 64 150–64 420".to_string()),
+                // `$BTCUSDT` — the messenger UI-2b cashtag pill
+                // (`messenger_overlay.rs`'s own `text_tokens`): a `$`
+                // immediately followed by an uppercase letter renders as a
+                // clickable ticker pill (concept `.sym`), never a dollar
+                // amount (those start with a digit).
+                content: MessageContent::Text("на 4h ордерблок $BTCUSDT 64 150–64 420".to_string()),
                 reply_to: None,
                 edited: false,
                 reactions: Vec::new(),
@@ -320,6 +327,7 @@ impl MessengerFixture {
                 pinned: false,
                 shared_chart: None,
                 mentions_me: false,
+                forwarded: None,
             },
             TimelineItem {
                 event_id: event("e3"),
@@ -342,8 +350,10 @@ impl MessengerFixture {
                     timeframe: "4H".to_string(),
                     venue: "BINANCE".to_string(),
                     note: "SMC scan · 2 order blocks · shared chart".to_string(),
+                    allow_forward: true,
                 }),
                 mentions_me: false,
+                forwarded: None,
             },
             TimelineItem {
                 event_id: event("e4"),
@@ -354,7 +364,7 @@ impl MessengerFixture {
                 reply_to: Some(ReplyPreview {
                     event_id: event("e2"),
                     sender: user("kvant_42"),
-                    preview: "на 4h ордерблок BTCUSDT 64 150–64 420".to_string(),
+                    preview: "на 4h ордерблок $BTCUSDT 64 150–64 420".to_string(),
                 }),
                 edited: true,
                 reactions: Vec::new(),
@@ -364,6 +374,7 @@ impl MessengerFixture {
                 pinned: false,
                 shared_chart: None,
                 mentions_me: false,
+                forwarded: None,
             },
             TimelineItem {
                 event_id: event("e5"),
@@ -380,6 +391,7 @@ impl MessengerFixture {
                 pinned: false,
                 shared_chart: None,
                 mentions_me: true,
+                forwarded: None,
             },
         ]
     }
@@ -464,6 +476,94 @@ impl MessengerFixture {
         ]
     }
 
+    /// "BTC levels" channel's own post feed (concept screen "2 · Канал") —
+    /// a Monday post with reactions/read receipts and a today post, plus
+    /// ONE forwarded post (this fixture's own addition, not in the concept
+    /// screenshot — the concept never shows a forward inside a channel;
+    /// added here only so the forward attribution rule
+    /// ([`mlc_messenger_model::ForwardedFrom`]) has something to grade).
+    fn btc_levels_timeline(&self) -> Vec<TimelineItem> {
+        let now = self.now_ms;
+        vec![
+            TimelineItem {
+                event_id: event("c0"),
+                sender: user("kvant_42"),
+                sender_rank: None,
+                ts: ts(now, DAY_MS + HOUR_MS + 47.0 * MINUTE_MS),
+                content: MessageContent::Text(
+                    "Weekly levels. Support 62 800 (weekly OB), resistance 66 400 (last month's high). \
+                     Invalidation — a daily close under 61 900."
+                        .to_string(),
+                ),
+                reply_to: None,
+                edited: false,
+                reactions: vec![
+                    ReactionSummary { key: "👍".to_string(), count: 41, by_me: false },
+                    ReactionSummary { key: "🔥".to_string(), count: 12, by_me: true },
+                    ReactionSummary { key: "🤔".to_string(), count: 3, by_me: false },
+                ],
+                redacted: false,
+                send_state: SendState::Sent,
+                read_by: Vec::new(),
+                pinned: false,
+                shared_chart: None,
+                mentions_me: false,
+                forwarded: None,
+            },
+            TimelineItem {
+                event_id: event("c1"),
+                sender: user("kvant_42"),
+                sender_rank: None,
+                ts: ts(now, 50.0 * MINUTE_MS),
+                content: MessageContent::Text(
+                    "Price is back inside the weekly range; no new trade until one of the edges is tested."
+                        .to_string(),
+                ),
+                reply_to: None,
+                edited: false,
+                reactions: Vec::new(),
+                redacted: false,
+                send_state: SendState::Sent,
+                read_by: Vec::new(),
+                pinned: false,
+                shared_chart: None,
+                mentions_me: false,
+                forwarded: None,
+            },
+            TimelineItem {
+                event_id: event("c2"),
+                sender: user("kvant_42"),
+                sender_rank: None,
+                ts: ts(now, 12.0 * MINUTE_MS),
+                content: MessageContent::Text("$BTCUSDT holding the weekly OB — no change to the plan above.".to_string()),
+                reply_to: None,
+                edited: false,
+                reactions: Vec::new(),
+                redacted: false,
+                send_state: SendState::Sent,
+                read_by: Vec::new(),
+                pinned: false,
+                shared_chart: None,
+                mentions_me: false,
+                forwarded: Some(mlc_messenger_model::ForwardedFrom::Channel { room_name: "ETH flows".to_string() }),
+            },
+        ]
+    }
+
+    fn btc_levels_members(&self) -> Vec<Member> {
+        vec![Member {
+            user_id: user("kvant_42"),
+            display_name: "kvant_42".to_string(),
+            initials: "K".to_string(),
+            rank: Some(RankBadge::Paid),
+            role: MemberRole::Admin,
+            power_level: PowerLevel(100),
+            online: false,
+            last_active: None,
+            has_messaging_key: true,
+        }]
+    }
+
     fn folders_data(&self) -> Vec<Folder> {
         vec![Folder {
             id: Some(TagName::from("u.trading-desk")),
@@ -511,10 +611,10 @@ impl MessengerProvider for MessengerFixture {
     }
 
     fn timeline(&self, room_id: &RoomId) -> Vec<TimelineItem> {
-        if room_id.as_str() == "1" {
-            self.trading_desk_timeline()
-        } else {
-            Vec::new()
+        match room_id.as_str() {
+            "1" => self.trading_desk_timeline(),
+            "3" => self.btc_levels_timeline(),
+            _ => Vec::new(),
         }
     }
 
@@ -530,6 +630,7 @@ impl MessengerProvider for MessengerFixture {
         match room_id.as_str() {
             "1" => self.trading_desk_members(),
             "2" => Self::direct_members("zeng3ld", "zeng3ld", None),
+            "3" => self.btc_levels_members(),
             "4" => Self::direct_members("moderator", "moderator", Some(RankBadge::Moderator)),
             "8" => Self::direct_members("kvant_42", "kvant_42", None),
             _ => Vec::new(),

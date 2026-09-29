@@ -91,6 +91,19 @@ enum PageState {
     MessagesLocked,
     MessagesChat,
     MessagesGroup,
+    /// Concept v1 screen "2 · Канал" — the "BTC levels" channel open,
+    /// subscriber footer (Mute/Unmute). Same `MessengerFixture`-backed
+    /// shell as [`Self::MessagesGroup`] (see that variant's own doc).
+    MessagesChannel,
+    /// Concept v1 screen "2 · меню чата" — the chat-list row context menu
+    /// open (right-click on "ETH flows") with its own "Add to folder"
+    /// submenu open beside it. Same shell as [`Self::MessagesGroup`], plus
+    /// a static [`mlc_app_layout::ui::context_menu::ContextMenuState`]
+    /// this page renders on top with [`mlc_app_layout::layout::modals::
+    /// context_menu::render_context_menu`] directly — no click dispatch
+    /// exists in this crate (this module's own top doc), so the menu is
+    /// simply always open for this state.
+    MessagesMenu,
 }
 
 impl PageState {
@@ -100,8 +113,17 @@ impl PageState {
             Some("messages-locked") => Self::MessagesLocked,
             Some("messages-chat") => Self::MessagesChat,
             Some("messages-group") => Self::MessagesGroup,
+            Some("messages-channel") => Self::MessagesChannel,
+            Some("messages-menu") => Self::MessagesMenu,
             _ => Self::ForumIndex,
         }
+    }
+
+    /// Whether this state hosts its room/timeline data from
+    /// [`crate::community_messenger_fixture::MessengerFixture`] rather than
+    /// `DmState` — see [`Self::MessagesGroup`]'s own doc.
+    fn uses_messenger_fixture(self) -> bool {
+        matches!(self, Self::MessagesGroup | Self::MessagesChannel | Self::MessagesMenu)
     }
 }
 
@@ -439,15 +461,20 @@ fn community_state_for(page: PageState, now_ms: f64) -> CommunityState {
             };
             CommunityTab::Messages
         }
-        PageState::MessagesGroup => {
+        PageState::MessagesGroup | PageState::MessagesChannel | PageState::MessagesMenu => {
             // The messenger data itself comes from `MessengerFixture`, not
             // `DmState` — this shell only carries what `messenger_overlay.
             // rs` reads straight off `CommunityState.dm` for UI-side facts
             // no `MessengerProvider` read covers (which room is open, the
-            // draft field id; see that file's own top doc).
+            // draft field id; see that file's own top doc). `MessagesMenu`
+            // opens the SAME "Trading desk" room as `MessagesGroup` — the
+            // context menu it draws on top targets the CHAT-LIST ROW
+            // ("ETH flows"), not the open conversation, so which room is
+            // open does not matter for that state.
+            let open_room_id = if page == PageState::MessagesChannel { 3 } else { 1 };
             dm = DmState {
                 view: DmView::Conversation {
-                    id: 1,
+                    id: open_room_id,
                     messages: Vec::new(),
                     draft_field_id: "dm_draft".to_string(),
                     has_older: false,
@@ -476,10 +503,11 @@ struct CommunityLabState {
     theme_manager: ThemeManager,
     coordinator: InputCoordinator,
     community: CommunityState,
-    /// `Some` only for `PageState::MessagesGroup` — see [`community_state_
-    /// for`]'s own doc for why that state's `CommunityState.dm` carries no
-    /// real room data at all.
+    /// `Some` for every [`PageState::uses_messenger_fixture`] state — see
+    /// [`PageState::MessagesGroup`]'s own doc for why those states'
+    /// `CommunityState.dm` carries no real room data at all.
     messenger_fixture: Option<crate::community_messenger_fixture::MessengerFixture>,
+    page: PageState,
 }
 
 /// Boot this page in place of the primitive lab — see this module's own top
@@ -494,13 +522,15 @@ pub fn start() -> Result<(), JsValue> {
 
     let page = PageState::from_query();
     let community = community_state_for(page, now_ms);
-    let messenger_fixture = matches!(page, PageState::MessagesGroup)
+    let messenger_fixture = page
+        .uses_messenger_fixture()
         .then(|| crate::community_messenger_fixture::MessengerFixture::new(now_ms));
     let lab = CommunityLabState {
         theme_manager,
         coordinator: InputCoordinator::new(),
         community,
         messenger_fixture,
+        page,
     };
     run_render_loop(lab)
 }
@@ -583,7 +613,74 @@ fn render_one_frame(state: &Rc<RefCell<CommunityLabState>>) -> Result<(), JsValu
         false,
         provider,
     );
+
+    // Concept v1 screen "2 · меню чата" — a static context-menu overlay
+    // (this crate hosts no click dispatch at all, this module's own top
+    // doc) reproducing the row menu open on "ETH flows" plus its own
+    // "Add to folder" submenu, both at once, matching the concept's own
+    // screenshot.
+    if lab.page == PageState::MessagesMenu {
+        draw_messages_menu_overlay(&mut ctx, &toolbar_theme, &mut lab.coordinator);
+    }
+
     let _ = lab.coordinator.end_frame();
 
     Ok(())
+}
+
+/// Build and draw the chat-row context menu + its own open "Add to folder"
+/// submenu for [`PageState::MessagesMenu`] — see [`render_one_frame`]'s own
+/// call site doc.
+fn draw_messages_menu_overlay(
+    ctx: &mut LabRenderContext,
+    toolbar_theme: &mlc_app_layout::ui::toolbar_theme::ToolbarTheme,
+    coordinator: &mut InputCoordinator,
+) {
+    use mlc_app_layout::layout::modals::context_menu::render_context_menu;
+    use mlc_app_layout::ui::context_menu::{build_dm_chat_row_context_menu, ContextMenuState, ContextMenuTarget};
+    use mlc_app_layout::ui::dropdown::DropdownTheme;
+    use mlc_messenger_model::{Capabilities, Folder, FolderExclude, FolderIcon, FolderInclude, RoomKind, TagName};
+
+    let caps = Capabilities {
+        groups: true,
+        channels: true,
+        folders: true,
+        reactions: true,
+        edits: true,
+        replies: true,
+        typing: true,
+        receipts: true,
+    };
+    let folders = vec![
+        Folder {
+            id: Some(TagName::from("u.trading-desk")),
+            name: "Trading desk".to_string(),
+            icon: FolderIcon::Candles,
+            include: FolderInclude::default(),
+            exclude: FolderExclude::default(),
+            order: 1.0,
+        },
+        Folder {
+            id: Some(TagName::from("u.research")),
+            name: "Research".to_string(),
+            icon: FolderIcon::Folder,
+            include: FolderInclude::default(),
+            exclude: FolderExclude::default(),
+            order: 2.0,
+        },
+    ];
+    let room_tags = vec![TagName::from("u.trading-desk")];
+    let mut items = build_dm_chat_row_context_menu(caps, true, RoomKind::Channel, false, false, &folders, &room_tags);
+    // The concept's own screenshot shows the row menu AND its "Add to
+    // folder" submenu open at once — flip that one item's own
+    // `submenu_open` for this static page (a later click-dispatch piece
+    // sets this from a real hover, not a hardcoded page fixture).
+    if let Some(add_folder) = items.iter_mut().find(|i| i.action == "dm_chat_row:add_folder") {
+        add_folder.submenu_open = true;
+    }
+
+    let mut menu_state = ContextMenuState::new();
+    menu_state.open(118.0, 190.0, ContextMenuTarget::DmChatRow("3".to_string()), items);
+    let dropdown_theme = DropdownTheme::from_toolbar(toolbar_theme);
+    render_context_menu(ctx, &menu_state, &dropdown_theme, None, coordinator);
 }

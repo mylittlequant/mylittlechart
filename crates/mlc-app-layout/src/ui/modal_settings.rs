@@ -6755,6 +6755,66 @@ pub struct MessengerReplyPreview {
     pub preview: String,
 }
 
+/// The forward flow's own chat-picker overlay (concept "bubble action →
+/// chat picker → `MessengerIntent::Forward`") — opened by the hovered-
+/// bubble quick-action bar's own Forward icon, closed by picking a target
+/// room, cancelling, or sending the forward. Every id here is an OPAQUE
+/// room/event-id STRING, never `mlc_messenger_model::RoomId`/`EventId`
+/// themselves — `mlc-app` (this struct's own writer) is not a direct
+/// dependency of that crate (see `dm_messenger_provider::
+/// DmMessengerProviderView::capabilities`'s own doc for why).
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForwardTargetPicker {
+    pub from_room: String,
+    pub event_id: String,
+}
+
+/// Which folder the messenger's left rail has selected — UI-side state, the
+/// provider has no notion of it. A custom folder is identified by its tag
+/// name as an opaque string (never `mlc_messenger_model::TagName`, for the
+/// reason [`ForwardTargetPicker`]'s own doc gives). The archived rooms are
+/// shown ONLY under [`Self::Archive`]; every other selection hides them.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum MessengerFolderSel {
+    #[default]
+    All,
+    Personal,
+    Groups,
+    Channels,
+    Archive,
+    Custom(String),
+}
+
+#[cfg(feature = "cloud")]
+impl MessengerFolderSel {
+    /// The rail row's widget-id suffix (`cloud_overlay:dm:folder:{key}`).
+    pub fn widget_key(&self) -> String {
+        match self {
+            Self::All => "all".to_string(),
+            Self::Personal => "personal".to_string(),
+            Self::Groups => "groups".to_string(),
+            Self::Channels => "channels".to_string(),
+            Self::Archive => "archive".to_string(),
+            Self::Custom(tag) => format!("tag:{tag}"),
+        }
+    }
+
+    /// Inverse of [`Self::widget_key`]; `None` for a key that is not a
+    /// selectable folder (e.g. the rail's own "Folders" settings row).
+    pub fn from_widget_key(key: &str) -> Option<Self> {
+        match key {
+            "all" => Some(Self::All),
+            "personal" => Some(Self::Personal),
+            "groups" => Some(Self::Groups),
+            "channels" => Some(Self::Channels),
+            "archive" => Some(Self::Archive),
+            _ => key.strip_prefix("tag:").filter(|t| !t.is_empty()).map(|t| Self::Custom(t.to_string())),
+        }
+    }
+}
+
 /// State for the Community modal (Forum + Messages). Pure UI state + the
 /// forum-v2/DM state it now owns — effects live in the shell driver, same
 /// mailbox contract as [`CloudOverlayState`].
@@ -6816,6 +6876,11 @@ pub struct CommunityState {
     /// [`MessengerReplyPreview`]'s own doc. `None` while nothing is queued
     /// as a reply target.
     pub messenger_reply_preview: Option<MessengerReplyPreview>,
+    /// The forward flow's own open chat picker — see
+    /// [`ForwardTargetPicker`]'s own doc. `None` while closed.
+    pub forward_target_picker: Option<ForwardTargetPicker>,
+    /// The rail's selected folder — see [`MessengerFolderSel`]'s own doc.
+    pub messenger_folder: MessengerFolderSel,
 }
 
 #[cfg(feature = "cloud")]
@@ -6836,6 +6901,8 @@ impl Default for CommunityState {
             dm: DmState::default(),
             focus_seq: 0,
             messenger_reply_preview: None,
+            forward_target_picker: None,
+            messenger_folder: MessengerFolderSel::default(),
         }
     }
 }

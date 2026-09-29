@@ -75,6 +75,22 @@ pub enum MessageContent {
     Legacy(LegacyContent),
 }
 
+/// Who a forwarded item's ATTRIBUTION shows — owner ruling: the ORIGINAL
+/// sender/room is never exposed for an item forwarded out of an encrypted
+/// room (only the bare fact that it was forwarded at all), while a public
+/// channel's own name is not a secret and shows plainly. Enforced by the
+/// provider/engine that builds this value, not by the UI — the UI only ever
+/// reflects whichever variant it is handed.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ForwardedFrom {
+    /// Forwarded out of an encrypted room — shows only "Forwarded", never
+    /// the original sender or room name.
+    Hidden,
+    /// Forwarded from a public channel — shows "Forwarded from
+    /// `room_name`".
+    Channel { room_name: String },
+}
+
 /// A pre-migration message's own content — decrypted, or still sealed
 /// under the OLD (pre-Matrix) DM key scheme (`mlc-vault`'s `dm::
 /// seal_message`, unrelated to Megolm). Never [`UtdReason`]: a legacy
@@ -118,6 +134,11 @@ pub struct SharedChartCard {
     /// shared chart") — free text the sender wrote, not derived from the
     /// symbol/timeframe/venue above.
     pub note: String,
+    /// Whether this card's own share link permits forwarding at all — the
+    /// share policy's own flag (server-enforced), read here only to hide
+    /// the bubble's Forward action; `false` never redacts the card itself,
+    /// only that one action.
+    pub allow_forward: bool,
 }
 
 /// Where one item sits in its own send lifecycle. `Sent` is a durable,
@@ -167,4 +188,10 @@ pub struct TimelineItem {
     /// message text (a plain "@word" token elsewhere in the text is styled
     /// on its own, independent of whether it is actually THIS viewer).
     pub mentions_me: bool,
+    /// `Some(_)` when this item was forwarded — see [`ForwardedFrom`]'s own
+    /// doc for the attribution rule this UI must never weaken (e.g. never
+    /// showing the original sender for [`ForwardedFrom::Hidden`], even if
+    /// [`Self::sender`] or [`Self::reply_to`] happens to carry that
+    /// information some other way).
+    pub forwarded: Option<ForwardedFrom>,
 }

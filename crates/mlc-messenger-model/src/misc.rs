@@ -95,6 +95,14 @@ pub enum MessengerIntent {
     SendText { room: RoomId, text: String, reply_to: Option<EventId> },
     Edit { room: RoomId, event_id: EventId, text: String },
     Redact { room: RoomId, event_id: EventId },
+    /// Forward one event to another room — the provider re-sends the
+    /// content with its own `org.mylittlechart.forwarded_from` attribution
+    /// (event shape agreed with `messenger-proto`), NOT a redaction/move of
+    /// the original; `from_room` is carried so a Matrix-shaped provider can
+    /// resolve whether the source room was encrypted (→ [`crate::
+    /// ForwardedFrom::Hidden`]) or a public channel (→ [`crate::
+    /// ForwardedFrom::Channel`]) without a second round trip.
+    Forward { from_room: RoomId, event_id: EventId, to_room: RoomId },
     React { room: RoomId, event_id: EventId, key: String },
     Unreact { room: RoomId, event_id: EventId },
     MarkRead { room: RoomId, event_id: EventId },
@@ -102,6 +110,11 @@ pub enum MessengerIntent {
     SetMuted { room: RoomId, muted: bool },
     SetPinned { room: RoomId, pinned: bool },
     SetArchived { room: RoomId, archived: bool },
+    /// Leave a group/channel, or delete a 1:1 conversation — the provider
+    /// decides which of the two "leaving" means for this room's own kind
+    /// (concept row menu's own "Leave channel" / "Leave group" / "Delete
+    /// chat", one action underneath).
+    LeaveRoom { room: RoomId },
     LoadOlder { room: RoomId },
     CreateFolder(Folder),
     UpdateFolder(Folder),

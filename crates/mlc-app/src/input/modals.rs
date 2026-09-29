@@ -2894,6 +2894,23 @@ impl ChartApp {
                             }
                         }
                     }
+                    "dm_chat_row:toggle_pin" | "dm_chat_row:toggle_mute" | "dm_chat_row:archive" | "dm_chat_row:leave" => {
+                        use mlc_app_layout::ui::dm_messenger_provider::{room_action, RoomAction};
+                        let which = match action {
+                            "dm_chat_row:toggle_pin" => RoomAction::TogglePin,
+                            "dm_chat_row:toggle_mute" => RoomAction::ToggleMute,
+                            "dm_chat_row:archive" => RoomAction::ToggleArchive,
+                            _ => RoomAction::Leave,
+                        };
+                        room_action(&mut self.panel_app.community_state.dm, &room_id, which);
+                    }
+                    // The per-folder checklist and "New folder…" have no
+                    // `MessengerIntent` to carry them yet (the model has no
+                    // "tag this room" intent — folders editor slice), so a
+                    // click closes the menu and does nothing.
+                    a if a.starts_with("dm_chat_row:add_folder:") || a == "dm_chat_row:new_folder" => {
+                        log::debug!("[ChartApp] DM chat-row folder action {} has no provider intent yet", a);
+                    }
                     _ => {
                         log::warn!("[ChartApp] Unhandled DM chat-row context action: {}", action);
                     }

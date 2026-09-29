@@ -1068,7 +1068,7 @@ impl ChartApp {
     /// closed, the Forum tab active, or a click on the modal's own chrome.
     #[cfg(feature = "cloud")]
     fn try_messenger_right_click(&mut self, x: f64, y: f64) -> bool {
-        use mlc_app_layout::ui::context_menu::{build_dm_chat_row_context_menu, build_dm_message_context_menu};
+        use mlc_app_layout::ui::context_menu::build_dm_message_context_menu;
         use mlc_app_layout::ui::dm_messenger_provider::DmMessengerProviderView;
         use mlc_app_layout::ui::modal_settings::CommunityTab;
         use mlc_app_layout::ui::selectable_text::hit_test;
@@ -1110,13 +1110,29 @@ impl ChartApp {
         else {
             return false;
         };
-        let caps = DmMessengerProviderView::new(&self.panel_app.community_state.dm).capabilities();
+        self.open_dm_chat_row_menu(room_id, x, y, w, h)
+    }
+
+    /// Build and open the chat-row context menu (concept screen "2 · Канал
+    /// + меню чата") for `room_id` at `(x, y)` — shared by
+    /// [`Self::try_messenger_right_click`]'s own row branch and the chat
+    /// header's own ⋮ button (`panel_click.rs`'s `"header_more"` arm),
+    /// which has no row rect of its own to right-click and passes its own
+    /// click position instead. Returns `false` (opens nothing) when
+    /// [`mlc_app_layout::ui::dm_messenger_provider::dm_chat_row_menu_items`]
+    /// resolves `room_id` to no menu at all (an unknown room, today, since
+    /// that function's own Pin/Mute/Archive/Leave rows are otherwise
+    /// unconditional).
+    #[cfg(feature = "cloud")]
+    pub(crate) fn open_dm_chat_row_menu(&mut self, room_id: &str, x: f64, y: f64, w: f64, h: f64) -> bool {
+        use mlc_app_layout::ui::dm_messenger_provider::dm_chat_row_menu_items;
+
         let can_mark_read = room_id
             .parse::<i64>()
             .ok()
             .and_then(|id| self.panel_app.community_state.dm.open_conversation_last_message_id(id))
             .is_some();
-        let items = build_dm_chat_row_context_menu(caps, can_mark_read);
+        let items = dm_chat_row_menu_items(&self.panel_app.community_state.dm, room_id, can_mark_read);
         if items.is_empty() {
             return false;
         }

@@ -52,7 +52,7 @@
 use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::i18n::{current_language, UserSettingsKey};
 use mlc_messenger_model::{
-    FolderIcon, MembershipChange, MembershipEvent, MessageContent, MessengerProvider, PreviewContent,
+    Folder, FolderIcon, MembershipChange, MembershipEvent, MessageContent, MessengerProvider, PreviewContent,
     RankBadge, ReactionSummary, ReplyPreview, RoomId, RoomKind, RoomSummary, SendState, SharedChartCard,
     Timestamp, UtdReason, VaultState,
 };
@@ -63,7 +63,7 @@ use uzor::WidgetId;
 use crate::layout::render_chart::FrameTheme;
 use crate::ui::avatar_widget::{draw_avatar, AvatarColors, AvatarShape, CornerMarker};
 use crate::ui::count_badge::{badge_width, draw_count_badge, BadgeColors, BadgeContent};
-use crate::ui::modal_settings::CommunityState;
+use crate::ui::modal_settings::{CommunityState, MessengerFolderSel};
 use crate::ui::scroll_widget::{jump_button_visible, ScrollableContainer};
 use crate::ui::selectable_text::{highlight_rect, LineHit, Selection};
 use crate::ui::toolbar_theme::ToolbarTheme;
@@ -227,12 +227,61 @@ const PINBAR_H: f64 = 40.0;
 /// The round jump-to-latest button's own diameter — concept `.jump{width:
 /// 38px;height:38px;border-radius:50%}`.
 const JUMP_D: f64 = 38.0;
+/// The composer's own attach/emoji icon buttons — concept `.ib{width:30px;
+/// height:30px}` either side of the draft field (`.cin`'s own clip/smile
+/// icons). Inert this pass (registered for hover only, same convention
+/// [`draw_header_icons`]'s own doc already uses) — attach/emoji pickers are
+/// their own slice (U3, sticker/emoji picker).
+const COMPOSER_ICON_D: f64 = 30.0;
+
+/// A `$SYMBOL` cashtag pill inline in message text (concept `.sym`) —
+/// `padding:0 5px;border-radius:4px;font:12px mono`.
+const SYMBOL_PILL_FONT: &str = "12px monospace";
+const SYMBOL_PILL_PAD_H: f64 = 5.0;
+const SYMBOL_PILL_RADIUS: f64 = 4.0;
+
+/// The hovered-bubble quick-action bar (concept `.qbar`): four 26×24
+/// buttons (Reply/React/Forward/More), floating at the bubble's own
+/// top-right corner.
+const QBAR_BTN_W: f64 = 26.0;
+const QBAR_BTN_H: f64 = 24.0;
+const QBAR_PAD: f64 = 2.0;
+const QBAR_GAP: f64 = 1.0;
+/// concept `.qbar{right:-6px;top:-14px}` — offsets past the bubble's own
+/// top-right corner.
+const QBAR_OFFSET_RIGHT: f64 = -6.0;
+const QBAR_OFFSET_TOP: f64 = -14.0;
+
+/// A Channel room's own composer gate — `None` for every non-channel room
+/// (Direct/Group keep the normal locked/no-key/nick-gated dock below).
+/// `Some` for a Channel room: `can_post == true` (an admin) still falls
+/// through to the normal composer; `can_post == false` (a subscriber)
+/// replaces the WHOLE dock with the concept's own wide Mute/Unmute row
+/// (concept: "Подписчик не пишет: вместо поля — Mute/Unmute"). "Join
+/// channel" (a channel not yet in this account's own room list) has no
+/// reachable case here — [`MessengerProvider::rooms`] only ever returns
+/// rooms this account already holds.
+#[derive(Clone, Copy)]
+struct ChannelGate {
+    can_post: bool,
+    muted: bool,
+}
+
+/// The wide, borderless Mute/Unmute row a Channel subscriber's own dock
+/// shows in place of a draft field — concept `.cta{min-height:38px}`
+/// `.btn.wide`.
+const CHANNEL_CTA_H: f64 = 38.0;
 
 /// The docked composer's own footprint for the CURRENT dock state — see
 /// [`COMPOSER_H`]'s own doc. Read by both `draw_chat_pane` (to size the
 /// feed above the dock) and `draw_composer` (to anchor the dock's own top),
 /// so the two can never disagree about where the dock starts.
-fn dock_h(state: &CommunityState) -> f64 {
+fn dock_h(state: &CommunityState, channel_gate: Option<ChannelGate>) -> f64 {
+    if let Some(gate) = channel_gate {
+        if !gate.can_post {
+            return CHANNEL_CTA_H;
+        }
+    }
     if state.forum2.nick_required() {
         NICK_REQUIRED_DOCK_H
     } else if state.messenger_reply_preview.is_some() {
@@ -291,7 +340,7 @@ pub(crate) fn draw(
     let pane_x = list_x + list_w + COL_GAP;
     let pane_w = (w - RAIL_W - list_w - COL_GAP).max(0.0);
 
-    draw_folder_rail(ctx, coord, layer_id, x, y, RAIL_W, viewport_h, provider, tt);
+    draw_folder_rail(ctx, coord, layer_id, x, y, RAIL_W, viewport_h, provider, &state.messenger_folder, tt);
     draw_soft_divider_v(ctx, x + RAIL_W, y, viewport_h, tt);
     draw_soft_divider_v(ctx, pane_x - COL_GAP / 2.0, y, viewport_h, tt);
 
@@ -339,10 +388,12 @@ fn draw_soft_divider_h(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, tt: 
 // computed client-side from `RoomKind` — folder.rs's own doc) plus every
 // CUSTOM folder the provider reports (`id: Some(_)`), with real
 // `Folder::matches`-derived counts; Archive and Folders (a settings action,
-// not a real folder) are pinned to the rail's own bottom. Purely
-// informational this pass: switching which folder is active needs UI-side
-// selection state this piece does not add (no new dispatch arm) — "All
-// chats" always reads as the active one, same gap the previous pass named.
+// not a real folder) are pinned to the rail's own bottom. The active folder
+// is UI-side state (`CommunityState::messenger_folder`). The built-in Archive
+// folder carries no include/exclude rule that could express "archived only"
+// (`Folder::matches` cannot), so [`folder_includes`] filters it on
+// `RoomSummary::archived` directly and keeps archived rooms out of EVERY
+// other folder the same way.
 // =============================================================================
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -371,6 +422,9 @@ fn rail_icon_for(icon: FolderIcon) -> RailIcon {
 
 struct RailRow {
     icon: RailIcon,
+    /// Widget-id suffix — [`MessengerFolderSel::widget_key`] for a selectable
+    /// folder, `"folders"` for the settings row.
+    key: String,
     label: String,
     /// `None` draws no badge at all (Archive/Folders never show a count,
     /// same as the concept).
@@ -381,61 +435,68 @@ struct RailRow {
     active: bool,
 }
 
+/// Whether `room` is listed under the `sel` folder. Archived rooms are listed
+/// ONLY under [`MessengerFolderSel::Archive`]; the built-in kind folders and
+/// every custom folder skip them even when their own rules would match.
+fn folder_includes(sel: &MessengerFolderSel, folders: &[Folder], room: &RoomSummary) -> bool {
+    match sel {
+        MessengerFolderSel::Archive => room.archived,
+        _ if room.archived => false,
+        MessengerFolderSel::All => true,
+        MessengerFolderSel::Personal => room.kind == RoomKind::Direct,
+        MessengerFolderSel::Groups => room.kind == RoomKind::Group,
+        MessengerFolderSel::Channels => room.kind == RoomKind::Channel,
+        MessengerFolderSel::Custom(tag) => folders
+            .iter()
+            .any(|f| f.id.as_ref().is_some_and(|id| id.as_str() == tag.as_str()) && f.matches(room)),
+    }
+}
+
 /// Every rail row, split into the top (scrollable-in-spirit, but never
 /// actually taller than the rail today) group and the bottom-pinned group —
 /// see this section's own top doc.
-fn rail_rows(provider: &dyn MessengerProvider) -> (Vec<RailRow>, Vec<RailRow>) {
+fn rail_rows(provider: &dyn MessengerProvider, active: &MessengerFolderSel) -> (Vec<RailRow>, Vec<RailRow>) {
     let rooms = provider.rooms();
-    let count_kind = |k: RoomKind| rooms.iter().filter(|r| r.kind == k).count();
+    let folders = provider.folders();
+    let count = |sel: &MessengerFolderSel| rooms.iter().filter(|r| folder_includes(sel, &folders, r)).count();
+    let row = |sel: MessengerFolderSel, icon: RailIcon, label: &str, muted_badge: bool| RailRow {
+        icon,
+        key: sel.widget_key(),
+        label: label.to_string(),
+        count: Some(count(&sel).to_string()),
+        muted_badge,
+        active: &sel == active,
+    };
     let mut top = vec![
-        RailRow {
-            icon: RailIcon::All,
-            label: "All chats".to_string(),
-            count: Some(rooms.len().to_string()),
-            muted_badge: false,
-            active: true,
-        },
-        RailRow {
-            icon: RailIcon::Person,
-            label: "Personal".to_string(),
-            count: Some(count_kind(RoomKind::Direct).to_string()),
-            muted_badge: false,
-            active: false,
-        },
-        RailRow {
-            icon: RailIcon::Group,
-            label: "Groups".to_string(),
-            count: Some(count_kind(RoomKind::Group).to_string()),
-            muted_badge: false,
-            active: false,
-        },
-        RailRow {
-            icon: RailIcon::Channel,
-            label: "Channels".to_string(),
-            count: Some(count_kind(RoomKind::Channel).to_string()),
-            muted_badge: true,
-            active: false,
-        },
+        row(MessengerFolderSel::All, RailIcon::All, "All chats", false),
+        row(MessengerFolderSel::Personal, RailIcon::Person, "Personal", false),
+        row(MessengerFolderSel::Groups, RailIcon::Group, "Groups", false),
+        row(MessengerFolderSel::Channels, RailIcon::Channel, "Channels", true),
     ];
-    for folder in provider.folders() {
+    for folder in &folders {
         // Built-ins are computed above, never round-tripped through this
         // method (folder.rs's own top doc) — only a genuinely custom folder
         // (its own tag identity) adds a row here.
-        if folder.id.is_none() {
-            continue;
-        }
-        let n = rooms.iter().filter(|r| folder.matches(r)).count();
-        top.push(RailRow {
-            icon: rail_icon_for(folder.icon),
-            label: folder.name.clone(),
-            count: Some(n.to_string()),
-            muted_badge: false,
-            active: false,
-        });
+        let Some(tag) = &folder.id else { continue };
+        top.push(row(MessengerFolderSel::Custom(tag.as_str().to_string()), rail_icon_for(folder.icon), &folder.name, false));
     }
     let bottom = vec![
-        RailRow { icon: RailIcon::Archive, label: "Archive".to_string(), count: None, muted_badge: false, active: false },
-        RailRow { icon: RailIcon::Edit, label: "Folders".to_string(), count: None, muted_badge: false, active: false },
+        RailRow {
+            icon: RailIcon::Archive,
+            key: MessengerFolderSel::Archive.widget_key(),
+            label: "Archive".to_string(),
+            count: None,
+            muted_badge: false,
+            active: *active == MessengerFolderSel::Archive,
+        },
+        RailRow {
+            icon: RailIcon::Edit,
+            key: "folders".to_string(),
+            label: "Folders".to_string(),
+            count: None,
+            muted_badge: false,
+            active: false,
+        },
     ];
     (top, bottom)
 }
@@ -449,12 +510,13 @@ fn draw_folder_rail(
     w: f64,
     h: f64,
     provider: &dyn MessengerProvider,
+    active: &MessengerFolderSel,
     tt: &ToolbarTheme,
 ) {
     ctx.set_fill_color(&tt.dropdown_bg);
     ctx.fill_rect(x, y, w, h);
 
-    let (top, bottom) = rail_rows(provider);
+    let (top, bottom) = rail_rows(provider, active);
 
     let mut ry = y + RAIL_BOTTOM_PAD;
     for row in &top {
@@ -480,7 +542,7 @@ fn draw_rail_row(
     tt: &ToolbarTheme,
 ) {
     let rect = WidgetRect::new(x + (w - RAIL_ITEM_W) / 2.0, y, RAIL_ITEM_W, RAIL_ITEM_H);
-    let id = format!("cloud_overlay:dm:folder:{}", row.label.to_lowercase().replace(' ', "_"));
+    let id = format!("cloud_overlay:dm:folder:{}", row.key);
     let hovered = coord.is_hovered(&WidgetId::from(id.as_str()));
 
     if row.active {
@@ -840,6 +902,8 @@ fn draw_chat_list(
     list_result: &mut CommunityListPaneResult,
 ) {
     let mut rooms = provider.rooms();
+    let folders = provider.folders();
+    rooms.retain(|r| folder_includes(&state.messenger_folder, &folders, r));
     let had_any_room = !rooms.is_empty();
     let filter_query = coord.text_fields().text(&WidgetId::from(DM_CHAT_FILTER_FIELD)).trim().to_lowercase();
     if !filter_query.is_empty() {
@@ -866,7 +930,15 @@ fn draw_chat_list(
     }
 
     if rooms.is_empty() {
-        let msg = if had_any_room { "No matches." } else { "No conversations yet." };
+        let msg = if had_any_room {
+            "No matches."
+        } else {
+            match state.messenger_folder {
+                MessengerFolderSel::All => "No conversations yet.",
+                MessengerFolderSel::Archive => "No archived chats.",
+                _ => "No chats in this folder.",
+            }
+        };
         draw_status(ctx, tt, lx, ly, lw, msg, None);
     } else {
         for r in &rooms {
@@ -1448,7 +1520,9 @@ fn draw_chat_pane(
     }
 
     let feed_y = feed_top;
-    let feed_h = (body_viewport_h - (feed_top - body_y) - dock_h(state)).max(0.0);
+    let channel_gate = matches!(room.kind, RoomKind::Channel)
+        .then(|| ChannelGate { can_post: room.can_post, muted: room.muted });
+    let feed_h = (body_viewport_h - (feed_top - body_y) - dock_h(state, channel_gate)).max(0.0);
     let viewport_rect = WidgetRect::new(x, feed_y, w, feed_h);
     coord.register_on_layer("cloud_overlay:scroll_viewport", viewport_rect, Sense::SCROLL, layer_id);
     let scrollable = ScrollableContainer::new(viewport_rect, &state.scroll, Some(scroll_config()));
@@ -1477,8 +1551,13 @@ fn draw_chat_pane(
 
     if timeline.is_empty() {
         draw_status(ctx, tt, sx, sy, sw, "No messages yet.", None);
+    } else if matches!(room.kind, RoomKind::Channel) {
+        sy += draw_channel_feed(ctx, sx, sy, sw, &timeline, &members, current_time_ms, tt);
     } else {
-        sy += draw_timeline(ctx, sx, sy, sw, &timeline, &room, &members, is_direct, provider.vault_state(), caps, current_time_ms, state.dm.selection, tt, result);
+        sy += draw_timeline(
+            ctx, coord, layer_id, sx, sy, sw, &timeline, &room, &members, is_direct, provider.vault_state(), caps,
+            current_time_ms, state.dm.selection, tt, result,
+        );
     }
     let content_h = sy - content_top;
 
@@ -1501,9 +1580,186 @@ fn draw_chat_pane(
     }
 
     draw_composer(
-        ctx, coord, layer_id, x, body_y, w, body_viewport_h, state, locked, has_key, tt, ft, current_time_ms,
-        result,
+        ctx, coord, layer_id, x, body_y, w, body_viewport_h, state, locked, has_key, channel_gate, tt, ft,
+        current_time_ms, result,
     );
+
+    // The forward flow's own chat picker (concept: "bubble action → chat
+    // picker → `MessengerIntent::Forward`") — floats above the whole pane,
+    // drawn LAST so it paints over the composer/feed underneath it.
+    if let Some(picker) = &state.forward_target_picker {
+        draw_forward_picker(ctx, coord, layer_id, x, body_y, w, body_viewport_h, provider, &picker.from_room, tt);
+    }
+}
+
+/// The forward flow's own chat picker — a centred panel listing every
+/// OTHER room `provider.rooms()` reports, click-to-forward. Cancel closes
+/// it without enqueuing anything.
+#[allow(clippy::too_many_arguments)]
+fn draw_forward_picker(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    provider: &dyn MessengerProvider,
+    from_room: &str,
+    tt: &ToolbarTheme,
+) {
+    let targets: Vec<RoomSummary> = provider.rooms().into_iter().filter(|r| r.id.as_str() != from_room).collect();
+    let panel_w = 280.0f64.min(w - 24.0);
+    let row_h = 44.0;
+    let header_h = 34.0;
+    let panel_h = (header_h + targets.len() as f64 * row_h + 8.0).min(h - 24.0).max(header_h + 8.0);
+    let panel_x = x + (w - panel_w) / 2.0;
+    let panel_y = y + (h - panel_h) / 2.0;
+
+    ctx.set_global_alpha(0.45);
+    ctx.set_fill_color("#000000");
+    ctx.fill_rect(x, y, w, h);
+    ctx.set_global_alpha(1.0);
+
+    ctx.set_fill_color(&tt.dropdown_bg);
+    ctx.fill_rounded_rect(panel_x, panel_y, panel_w, panel_h, 8.0);
+    ctx.set_stroke_color(&tt.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(panel_x, panel_y, panel_w, panel_h, 8.0);
+
+    ctx.set_font("600 12.5px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("Forward to…", panel_x + 12.0, panel_y + header_h / 2.0);
+
+    let close_rect = WidgetRect::new(panel_x + panel_w - 28.0, panel_y + 4.0, 24.0, 24.0);
+    let close_hovered = coord.is_hovered(&WidgetId::from("cloud_overlay:dm:forward_cancel"));
+    ctx.set_fill_color(if close_hovered { &tt.item_text } else { &tt.item_text_muted });
+    ctx.set_text_align(TextAlign::Center);
+    ctx.fill_text("\u{2715}", close_rect.center_x(), close_rect.center_y());
+    coord.register_on_layer("cloud_overlay:dm:forward_cancel", close_rect, Sense::CLICK | Sense::HOVER, layer_id);
+
+    let mut ry = panel_y + header_h;
+    for room in &targets {
+        let rect = WidgetRect::new(panel_x + 4.0, ry, panel_w - 8.0, row_h - 2.0);
+        let id = format!("cloud_overlay:dm:forward_to:{}", room.id.as_str());
+        let hovered = coord.is_hovered(&WidgetId::from(id.as_str()));
+        if hovered {
+            ctx.set_fill_color(&tt.item_bg_hover);
+            ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 6.0);
+        }
+        ctx.set_font("500 12.5px sans-serif");
+        ctx.set_fill_color(&tt.item_text);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        let fit = crate::ui::widgets::fit_text_to_width(ctx, &room.name, rect.width - 16.0);
+        ctx.fill_text(&fit, rect.x + 8.0, rect.center_y());
+        coord.register_on_layer(id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
+        ry += row_h;
+    }
+}
+
+/// A Channel room's own post feed (concept screen "2 · Канал") — each
+/// timeline item draws as a standalone, full-width post (no avatar, no
+/// author-grouping: the concept's own channel post markup carries neither),
+/// author-signed at its own bottom, day-separated the same way the group/
+/// direct feed is. Views/comment-thread rows are NOT drawn — the model
+/// carries no view-count or comment-thread concept yet (a gap for a later
+/// pass with its own [`mlc_messenger_model`] additions, not invented here).
+fn draw_channel_feed(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    w: f64,
+    timeline: &[mlc_messenger_model::TimelineItem],
+    members: &[mlc_messenger_model::Member],
+    current_time_ms: u64,
+    tt: &ToolbarTheme,
+) -> f64 {
+    let top = y;
+    let mut sy = y;
+    let mut prev_day: Option<i64> = None;
+    for item in timeline {
+        let day = day_key(item.ts);
+        if prev_day != Some(day) {
+            let label = day_label(Timestamp(day * 86_400_000), current_time_ms);
+            if sy > top {
+                sy += BUBBLE_GAP;
+            }
+            sy += draw_day_separator(ctx, x, sy, w, &label, tt);
+            prev_day = Some(day);
+        } else {
+            sy += BUBBLE_GAP;
+        }
+        let sender_display = members.iter().find(|m| m.user_id == item.sender).map(|m| m.display_name.as_str()).unwrap_or(item.sender.as_str());
+        sy += draw_channel_post(ctx, x, sy, w, item, sender_display, tt);
+    }
+    sy - y
+}
+
+/// One channel post (concept `.b.peer{max-width:88%}`, no avatar/name
+/// header — the author signs at the post's own bottom instead, alongside
+/// the timestamp).
+fn draw_channel_post(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    w: f64,
+    item: &mlc_messenger_model::TimelineItem,
+    sender_display: &str,
+    tt: &ToolbarTheme,
+) -> f64 {
+    let visual = content_visual(&item.content, VaultState::Ready);
+    let line_count = visual.lines.len().max(1);
+    let signature_h = 16.0;
+    let forwarded_h = if item.forwarded.is_some() { FORWARDED_LABEL_H } else { 0.0 };
+    let reactions_h = if item.reactions.is_empty() { 0.0 } else { REACTIONS_ROW_H };
+    let bubble_w = (w * 0.88).max(BUBBLE_MIN_W).min(w);
+    let inner_h = forwarded_h + line_count as f64 * BUBBLE_LINE_H + signature_h + reactions_h;
+    let bubble_h = inner_h + BUBBLE_PAD_V * 2.0;
+
+    ctx.set_fill_color(&tt.button_bg);
+    fill_rect_corners(ctx, x, y, bubble_w, bubble_h, BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_RADIUS, BUBBLE_TAIL_RADIUS);
+
+    let text_left = x + BUBBLE_PAD_H;
+    let text_right = x + bubble_w - BUBBLE_PAD_H;
+    let mut cy = y + BUBBLE_PAD_V;
+
+    if let Some(f) = &item.forwarded {
+        ctx.set_font("italic 11px sans-serif");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        let label = forwarded_label(f);
+        let fit = crate::ui::widgets::fit_text_to_width(ctx, &label, (text_right - text_left).max(0.0));
+        ctx.fill_text(&fit, text_left, cy);
+        cy += FORWARDED_LABEL_H;
+    }
+
+    ctx.set_font("12px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    for (i, line) in visual.lines.iter().enumerate() {
+        let line_y = cy + i as f64 * BUBBLE_LINE_H;
+        ctx.set_fill_color(tt.item_text.as_str());
+        ctx.fill_text(line, text_left, line_y);
+    }
+    cy += line_count as f64 * BUBBLE_LINE_H;
+
+    ctx.set_font("11px monospace");
+    ctx.set_fill_color(&tt.muted_ink);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.fill_text(&format!("— {sender_display}"), text_left, cy);
+    ctx.set_text_align(TextAlign::Right);
+    ctx.fill_text(&clock_hm(item.ts), text_right, cy);
+
+    if !item.reactions.is_empty() {
+        draw_reactions_row(ctx, text_left, cy + signature_h, &item.reactions, tt);
+    }
+
+    bubble_h + BUBBLE_GAP
 }
 
 /// One contiguous run of same-sender, same-day, non-system-notice timeline
@@ -1537,15 +1793,38 @@ fn group_timeline(timeline: &[mlc_messenger_model::TimelineItem]) -> Vec<BubbleG
     groups
 }
 
+/// Position in `timeline` where the unread run starts: the `unread` newest
+/// items that are real messages. System notices (membership, key change,
+/// notices) never count toward a notification total, and the timeline is not
+/// gapless (name/topic changes and unknown events produce no item at all),
+/// so the run is counted over message items only, never as
+/// `len - unread`.
+fn unread_start(timeline: &[mlc_messenger_model::TimelineItem], unread: u64) -> usize {
+    let mut remaining = unread;
+    let mut start = timeline.len();
+    for (i, item) in timeline.iter().enumerate().rev() {
+        if remaining == 0 {
+            break;
+        }
+        if system_notice_text(&item.content).is_none() {
+            remaining -= 1;
+            start = i;
+        }
+    }
+    start
+}
+
 /// Draw the whole feed body: day separators, an unread separator derived
-/// from `RoomSummary::notification_count` (the last N items read as
-/// "unread", the same backward-counting convention most chat clients use —
-/// no per-item read-receipt field exists to place it more precisely), and
-/// one call to [`draw_message_group`] per [`BubbleGroup`]. Returns the
-/// total height drawn.
+/// from `RoomSummary::notification_count` (the newest N message items read
+/// as "unread" — see [`unread_start`]; no per-item read-receipt field
+/// exists to place it more precisely), and one call to
+/// [`draw_message_group`] per [`BubbleGroup`]. Returns the total height
+/// drawn.
 #[allow(clippy::too_many_arguments)]
 fn draw_timeline(
     ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
     x: f64,
     y: f64,
     w: f64,
@@ -1561,7 +1840,7 @@ fn draw_timeline(
     result: &mut CloudOverlayResult,
 ) -> f64 {
     let groups = group_timeline(timeline);
-    let unread_from = timeline.len().saturating_sub(room.notification_count as usize);
+    let unread_from = unread_start(timeline, room.notification_count);
     let mut sy = y;
     let top = y;
     let mut prev_day: Option<i64> = None;
@@ -1596,8 +1875,8 @@ fn draw_timeline(
         let sender_rank = member.and_then(|m| m.rank);
         let show_header = !mine && !is_direct;
         let group_h = draw_message_group(
-            ctx, x, sy, w, msg_idx, group, mine, show_header, sender_display, sender_rank, vault_state, caps,
-            selection, tt, result,
+            ctx, coord, layer_id, x, sy, w, msg_idx, group, mine, show_header, sender_display, sender_rank,
+            vault_state, caps, selection, tt, result,
         );
         sy += group_h;
         consumed += group.items.len();
@@ -1609,6 +1888,8 @@ fn draw_timeline(
 #[allow(clippy::too_many_arguments)]
 fn draw_message_group(
     ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
     x: f64,
     y: f64,
     w: f64,
@@ -1630,7 +1911,7 @@ fn draw_message_group(
         let is_first = i == 0;
         let is_last = i == n - 1;
         let h = draw_bubble(
-            ctx, x, cy, w, start_idx + i as u16, item, mine, is_first, is_last,
+            ctx, coord, layer_id, x, cy, w, start_idx + i as u16, item, mine, is_first, is_last,
             show_name_header && is_first, sender_display, sender_rank.filter(|_| show_name_header && is_first),
             vault_state, caps, selection, tt, result,
         );
@@ -1697,6 +1978,35 @@ fn draw_jump_to_latest(
     coord.register_on_layer("cloud_overlay:dm:jump_latest", rect, Sense::CLICK | Sense::HOVER, layer_id);
 }
 
+/// A Channel subscriber's own dock (concept `.cta` `.btn.wide`) — a
+/// full-width, borderless Mute/Unmute row replacing the WHOLE composer
+/// (this room's `RoomSummary::can_post` is `false`, so there is no draft
+/// field to show at all).
+fn draw_channel_cta(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    x: f64,
+    y: f64,
+    w: f64,
+    muted: bool,
+    tt: &ToolbarTheme,
+) {
+    let rect = WidgetRect::new(x, y, w, CHANNEL_CTA_H);
+    let id = "cloud_overlay:dm:channel_mute";
+    let hovered = coord.is_hovered(&WidgetId::from(id));
+    if hovered {
+        ctx.set_fill_color(&tt.item_bg_hover);
+        ctx.fill_rect(rect.x, rect.y, rect.width, rect.height);
+    }
+    ctx.set_font("600 12px sans-serif");
+    ctx.set_fill_color(&tt.accent);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(if muted { "Unmute" } else { "Mute" }, rect.center_x(), rect.center_y());
+    coord.register_on_layer(id, rect, Sense::CLICK | Sense::HOVER, layer_id);
+}
+
 /// The dock — the ONE place every reason the composer cannot send yet
 /// shows up (owner spec): a nick-required hint keeps its own pre-existing
 /// hint+button shape (a ladder-mandate gate, orthogonal to messaging
@@ -1716,12 +2026,19 @@ fn draw_composer(
     state: &CommunityState,
     locked: bool,
     has_key: bool,
+    channel_gate: Option<ChannelGate>,
     tt: &ToolbarTheme,
     ft: &FrameTheme,
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
 ) {
-    let composer_y = y + (viewport_h - dock_h(state)).max(0.0);
+    let composer_y = y + (viewport_h - dock_h(state, channel_gate)).max(0.0);
+    if let Some(gate) = channel_gate {
+        if !gate.can_post {
+            draw_channel_cta(ctx, coord, layer_id, x, composer_y, w, gate.muted, tt);
+            return;
+        }
+    }
     if state.forum2.nick_required() {
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(&tt.item_text_muted);
@@ -1784,11 +2101,18 @@ fn draw_composer(
         ctx.fill_text(&hint, x, row_cy);
         return;
     }
-    // Normal — one row: a fully-rounded draft field plus a round accent
-    // send button (concept `.cin`: `.field` + `.send`, `gap:4px`).
+    // Normal — one row: attach + a fully-rounded draft field + emoji + a
+    // round accent send button (concept `.cin`: `.ib` + `.field` + `.ib` +
+    // `.send`, `gap:4px`). Attach/emoji are inert this pass — see
+    // [`COMPOSER_ICON_D`]'s own doc.
     let crate::ui::modal_settings::DmView::Conversation { draft_field_id, .. } = &state.dm.view else { return };
-    let field_w = (w - COMPOSER_SEND_D - COMPOSER_GAP).max(60.0);
-    let field_rect = WidgetRect::new(x, row_y, field_w, COMPOSER_FIELD_H);
+    let icon_y = row_y + (COMPOSER_FIELD_H - COMPOSER_ICON_D) / 2.0;
+    let attach_rect = WidgetRect::new(x, icon_y, COMPOSER_ICON_D, COMPOSER_ICON_D);
+    draw_composer_icon_button(ctx, coord, layer_id, "cloud_overlay:dm:attach", attach_rect, ComposerIcon::Attach, tt);
+
+    let field_x = x + COMPOSER_ICON_D + COMPOSER_GAP;
+    let field_w = (w - COMPOSER_ICON_D * 2.0 - COMPOSER_GAP * 3.0 - COMPOSER_SEND_D).max(60.0);
+    let field_rect = WidgetRect::new(field_x, row_y, field_w, COMPOSER_FIELD_H);
     let (rect, chars) = draw_field_shaped(
         ctx, coord, layer_id, "cloud_overlay:dm:draft_input", draft_field_id, field_rect,
         "Write a message…", ft, tt, current_time_ms, COMPOSER_FIELD_RADIUS, 14.0,
@@ -1796,8 +2120,109 @@ fn draw_composer(
     result.dm_draft_rect = Some(rect);
     result.dm_draft_char_positions = chars;
 
-    let send_rect = WidgetRect::new(x + field_w + COMPOSER_GAP, row_y, COMPOSER_SEND_D, COMPOSER_SEND_D);
+    let emoji_rect = WidgetRect::new(field_x + field_w + COMPOSER_GAP, icon_y, COMPOSER_ICON_D, COMPOSER_ICON_D);
+    draw_composer_icon_button(ctx, coord, layer_id, "cloud_overlay:dm:emoji", emoji_rect, ComposerIcon::Emoji, tt);
+
+    let send_rect = WidgetRect::new(emoji_rect.x + COMPOSER_ICON_D + COMPOSER_GAP, row_y, COMPOSER_SEND_D, COMPOSER_SEND_D);
     draw_send_button(ctx, coord, layer_id, send_rect, tt);
+}
+
+/// The composer's own attach/emoji icon (concept `.ib`) — inert (hover
+/// only), same convention [`draw_header_icons`]'s own doc uses.
+enum ComposerIcon {
+    Attach,
+    Emoji,
+}
+
+fn draw_composer_icon_button(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    id: &str,
+    rect: WidgetRect,
+    icon: ComposerIcon,
+    tt: &ToolbarTheme,
+) {
+    let hovered = coord.is_hovered(&WidgetId::from(id));
+    if hovered {
+        ctx.set_fill_color(&tt.item_bg_hover);
+        ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+    }
+    let color = &tt.item_text_muted;
+    match icon {
+        ComposerIcon::Attach => draw_icon_clip(ctx, rect.center_x(), rect.center_y(), 8.0, color),
+        ComposerIcon::Emoji => draw_icon_smile(ctx, rect.center_x(), rect.center_y(), 8.0, color),
+    }
+    coord.register_on_layer(id, rect, Sense::CLICK | Sense::HOVER, layer_id);
+}
+
+/// A paperclip glyph — the composer's own attach button (concept `#i-clip`).
+fn draw_icon_clip(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(1.4);
+    ctx.set_line_cap("round");
+    ctx.begin_path();
+    ctx.move_to(cx + r * 0.5, cy - r * 0.6);
+    ctx.quadratic_curve_to(cx + r * 0.9, cy - r * 0.2, cx + r * 0.1, cy + r * 0.6);
+    ctx.quadratic_curve_to(cx - r * 0.6, cy + r * 1.0, cx - r * 0.7, cy + r * 0.2);
+    ctx.quadratic_curve_to(cx - r * 0.8, cy - r * 0.5, cx - r * 0.1, cy - r * 0.5);
+    ctx.line_to(cx + r * 0.3, cy + r * 0.35);
+    ctx.stroke();
+}
+
+/// A round smiley glyph — the composer's own emoji button and the hovered-
+/// bubble quick-action bar's own React icon (concept `#i-smile`).
+fn draw_icon_smile(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(1.4);
+    ctx.set_line_cap("round");
+    ctx.begin_path();
+    ctx.arc(cx, cy, r, 0.0, TAU);
+    ctx.stroke();
+    ctx.begin_path();
+    ctx.arc(cx, cy + r * 0.05, r * 0.55, 0.25, std::f64::consts::PI - 0.25);
+    ctx.stroke();
+    ctx.set_fill_color(color);
+    ctx.begin_path();
+    ctx.arc(cx - r * 0.32, cy - r * 0.25, r * 0.1, 0.0, TAU);
+    ctx.fill();
+    ctx.begin_path();
+    ctx.arc(cx + r * 0.32, cy - r * 0.25, r * 0.1, 0.0, TAU);
+    ctx.fill();
+}
+
+/// A reply arrow (bent, pointing left) — the hovered-bubble quick-action
+/// bar's own Reply icon (concept `#i-reply`).
+fn draw_icon_reply(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(1.4);
+    ctx.set_line_cap("round");
+    ctx.set_line_join("round");
+    ctx.begin_path();
+    ctx.move_to(cx + r * 0.15, cy - r * 0.55);
+    ctx.line_to(cx - r * 0.55, cy);
+    ctx.line_to(cx + r * 0.15, cy + r * 0.55);
+    ctx.move_to(cx - r * 0.55, cy);
+    ctx.line_to(cx + r * 0.35, cy);
+    ctx.quadratic_curve_to(cx + r * 0.7, cy, cx + r * 0.7, cy + r * 0.5);
+    ctx.stroke();
+}
+
+/// A forward arrow (bent, pointing right) — the hovered-bubble quick-action
+/// bar's own Forward icon (concept `#i-fwd`).
+fn draw_icon_forward(ctx: &mut dyn RenderContext, cx: f64, cy: f64, r: f64, color: &str) {
+    ctx.set_stroke_color(color);
+    ctx.set_stroke_width(1.4);
+    ctx.set_line_cap("round");
+    ctx.set_line_join("round");
+    ctx.begin_path();
+    ctx.move_to(cx - r * 0.15, cy - r * 0.55);
+    ctx.line_to(cx + r * 0.55, cy);
+    ctx.line_to(cx - r * 0.15, cy + r * 0.55);
+    ctx.move_to(cx + r * 0.55, cy);
+    ctx.line_to(cx - r * 0.35, cy);
+    ctx.quadratic_curve_to(cx - r * 0.7, cy, cx - r * 0.7, cy + r * 0.5);
+    ctx.stroke();
 }
 
 /// The composer's own "replying to" banner (concept `.cbar`) — see
@@ -1995,12 +2420,29 @@ fn draw_unread_separator(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, tt
     UNREAD_SEP_H
 }
 
+/// A forwarded item's own attribution line (concept's own forward marker —
+/// no dedicated CSS class in v1, drawn the same small-muted-line idiom the
+/// day separator/system notice already use) — see [`crate::
+/// ForwardedFrom`]'s own doc for the attribution rule this string must
+/// never weaken.
+const FORWARDED_LABEL_H: f64 = 15.0;
+
+fn forwarded_label(f: &mlc_messenger_model::ForwardedFrom) -> String {
+    match f {
+        mlc_messenger_model::ForwardedFrom::Hidden => "Forwarded".to_string(),
+        mlc_messenger_model::ForwardedFrom::Channel { room_name } => format!("Forwarded from {room_name}"),
+    }
+}
+
 /// A bubble's own content-block heights, BEFORE the trailing meta row —
-/// name/rank header, reply quote, shared-chart card, and the wrapped text
-/// itself — shared by the caller's height math and [`draw_bubble`]'s own
-/// drawing pass so the two can never disagree.
-fn bubble_content_h(line_count: usize, has_header: bool, has_quote: bool, has_card: bool) -> f64 {
+/// the forwarded marker, name/rank header, reply quote, shared-chart card,
+/// and the wrapped text itself — shared by the caller's height math and
+/// [`draw_bubble`]'s own drawing pass so the two can never disagree.
+fn bubble_content_h(line_count: usize, has_forwarded: bool, has_header: bool, has_quote: bool, has_card: bool) -> f64 {
     let mut h = 0.0;
+    if has_forwarded {
+        h += FORWARDED_LABEL_H;
+    }
     if has_header {
         h += NAME_HEADER_H;
     }
@@ -2021,6 +2463,8 @@ fn chart_card_height() -> f64 {
 #[allow(clippy::too_many_arguments)]
 fn draw_bubble(
     ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
     x: f64,
     y: f64,
     w: f64,
@@ -2043,7 +2487,7 @@ fn draw_bubble(
     let quote = item.reply_to.as_ref();
     let card = item.shared_chart.as_ref();
 
-    let content_h = bubble_content_h(line_count, show_header, quote.is_some(), card.is_some());
+    let content_h = bubble_content_h(line_count, item.forwarded.is_some(), show_header, quote.is_some(), card.is_some());
     let reactions_h = if item.reactions.is_empty() { 0.0 } else { REACTIONS_ROW_H };
     let bubble_inner_h = content_h + BUBBLE_TIME_H + reactions_h;
     let bubble_h = bubble_inner_h + BUBBLE_PAD_V * 2.0;
@@ -2075,6 +2519,17 @@ fn draw_bubble(
     let text_left = bx + BUBBLE_PAD_H;
     let text_right = bx + bubble_w - BUBBLE_PAD_H;
     let mut cy = y + BUBBLE_PAD_V;
+
+    if let Some(f) = &item.forwarded {
+        ctx.set_font("italic 11px sans-serif");
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_text_align(TextAlign::Left);
+        ctx.set_text_baseline(TextBaseline::Top);
+        let label = forwarded_label(f);
+        let fit = crate::ui::widgets::fit_text_to_width(ctx, &label, (text_right - text_left).max(0.0));
+        ctx.fill_text(&fit, text_left, cy);
+        cy += FORWARDED_LABEL_H;
+    }
 
     if show_header {
         ctx.set_font("600 12px sans-serif");
@@ -2118,7 +2573,9 @@ fn draw_bubble(
             ctx.set_fill_color(body_color);
             ctx.fill_text(line, text_left, line_y);
         } else {
-            draw_line_with_mentions(ctx, line, text_left, line_y, body_color, &tt.accent);
+            draw_line_with_tokens(
+                ctx, coord, layer_id, line, text_left, line_y, msg_idx, i as u16, body_font, body_color, &tt.accent, tt,
+            );
         }
         result.dm_message_line_rects.push(LineHit {
             block,
@@ -2189,7 +2646,80 @@ fn draw_bubble(
         draw_reactions_row(ctx, text_left, time_y + BUBBLE_TIME_H, &item.reactions, tt);
     }
 
+    // Hovered-bubble quick-action bar (concept `.qbar`) — same "read
+    // `is_hovered` against last frame, THEN register this frame's own
+    // rect" order every other hoverable row in this file already uses
+    // (e.g. `draw_rail_row`). `redacted`/`Legacy` items (own "nothing left
+    // to act on" content — the concept never draws hover chrome over a
+    // deleted/pre-migration message) never get one, same "system content,
+    // not a live message" rule the day/unread separators already draw
+    // from.
+    if !item.redacted && !matches!(item.content, MessageContent::Legacy(_)) {
+        let bubble_rect = WidgetRect::new(bx, y, bubble_w, bubble_h);
+        let bubble_id = format!("cloud_overlay:dm:bubble:{}", item.event_id.as_str());
+        if coord.is_hovered(&WidgetId::from(bubble_id.as_str())) {
+            let can_forward = card.map(|c| c.allow_forward).unwrap_or(true);
+            draw_quick_action_bar(ctx, coord, layer_id, bx, y, bubble_w, item.event_id.as_str(), can_forward, tt);
+        }
+        coord.register_on_layer(bubble_id.as_str(), bubble_rect, Sense::HOVER, layer_id);
+    }
+
     bubble_h + BUBBLE_GAP
+}
+
+/// The hovered-bubble quick-action bar (concept `.qbar`) — Reply/React/
+/// Forward/More, floating at the bubble's own top-right corner. React and
+/// More are inert this pass (registered for hover only, same convention
+/// [`draw_header_icons`]'s own doc uses) — a reaction picker is its own
+/// slice (U3), and "more" has no defined action set in the concept beyond
+/// what the row/header context menu already covers. Forward is omitted
+/// entirely (not just disabled) when `can_forward` is false — a share
+/// link's own `allow_forward == false` means there is no forward action to
+/// show at all, matching [`crate::SharedChartCard::allow_forward`]'s own
+/// doc.
+#[allow(clippy::too_many_arguments)]
+fn draw_quick_action_bar(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    bubble_x: f64,
+    bubble_y: f64,
+    bubble_w: f64,
+    event_id: &str,
+    can_forward: bool,
+    tt: &ToolbarTheme,
+) {
+    let buttons: &[&str] = if can_forward { &["reply", "react", "forward", "more"] } else { &["reply", "react", "more"] };
+    let bar_w = buttons.len() as f64 * QBAR_BTN_W + (buttons.len().saturating_sub(1)) as f64 * QBAR_GAP + QBAR_PAD * 2.0;
+    let bar_h = QBAR_BTN_H + QBAR_PAD * 2.0;
+    let bar_x = bubble_x + bubble_w - bar_w + QBAR_OFFSET_RIGHT;
+    let bar_y = bubble_y + QBAR_OFFSET_TOP;
+
+    ctx.set_fill_color(&tt.dropdown_bg);
+    ctx.fill_rounded_rect(bar_x, bar_y, bar_w, bar_h, 6.0);
+    ctx.set_stroke_color(&tt.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(bar_x, bar_y, bar_w, bar_h, 6.0);
+
+    let mut bx = bar_x + QBAR_PAD;
+    for name in buttons {
+        let rect = WidgetRect::new(bx, bar_y + QBAR_PAD, QBAR_BTN_W, QBAR_BTN_H);
+        let id = format!("cloud_overlay:dm:{name}:{event_id}");
+        let hovered = coord.is_hovered(&WidgetId::from(id.as_str()));
+        if hovered {
+            ctx.set_fill_color(&tt.item_bg_hover);
+            ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, 4.0);
+        }
+        let color = &tt.item_text_muted;
+        match *name {
+            "reply" => draw_icon_reply(ctx, rect.center_x(), rect.center_y(), 8.0, color),
+            "react" => draw_icon_smile(ctx, rect.center_x(), rect.center_y(), 7.5, color),
+            "forward" => draw_icon_forward(ctx, rect.center_x(), rect.center_y(), 8.0, color),
+            _ => draw_icon_more(ctx, rect.center_x(), rect.center_y(), 7.0, color),
+        }
+        coord.register_on_layer(id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
+        bx += QBAR_BTN_W + QBAR_GAP;
+    }
 }
 
 /// A reply-quote block inside a bubble (concept `.quote`) — the quoted
@@ -2339,48 +2869,158 @@ fn draw_reactions_row(ctx: &mut dyn RenderContext, x: f64, y: f64, reactions: &[
     h + 4.0
 }
 
-/// Split `line` into alternating (text, is_mention) segments, preserving
-/// the original text exactly when concatenated back together — a token
-/// counts as a mention when it starts with `@` at a word boundary (start of
-/// line, or right after whitespace) and runs to the next whitespace. Pure,
-/// so [`draw_line_with_mentions`] and its own unit tests share one
-/// definition of "what counts as a mention token".
-fn mention_segments(line: &str) -> Vec<(String, bool)> {
-    let mut segments = Vec::new();
-    let mut current = String::new();
-    let mut in_mention = false;
-    let mut at_word_start = true;
-    for c in line.chars() {
-        if at_word_start && c == '@' && !in_mention {
-            if !current.is_empty() {
-                segments.push((std::mem::take(&mut current), false));
-            }
-            in_mention = true;
+/// One classified run of `line`'s own text — a plain span, an `@mention`
+/// token, or a `$SYMBOL` cashtag token (concept `.sym`'s own inline ticker
+/// pill, owner order 2026-09-25: "the ticker is a clickable pill") — each
+/// carrying its EXACT source text (including the leading `@`/`$`), so
+/// re-joining every token's own text reproduces `line` verbatim.
+#[derive(Clone, Debug, PartialEq)]
+enum TextToken {
+    Plain(String),
+    Mention(String),
+    /// A `$SYMBOL` cashtag — only a `$` immediately followed by an ASCII
+    /// UPPERCASE letter starts one, so a dollar amount like `$64,150`
+    /// (always digits right after the `$`) is never mistaken for a ticker.
+    Symbol(String),
+}
+
+impl TextToken {
+    fn text(&self) -> &str {
+        match self {
+            TextToken::Plain(s) | TextToken::Mention(s) | TextToken::Symbol(s) => s,
         }
-        if c.is_whitespace() && in_mention {
-            segments.push((std::mem::take(&mut current), true));
-            in_mention = false;
+    }
+}
+
+/// Split `line` into [`TextToken`]s — a generalisation of the old
+/// `mention_segments` (same round-trip guarantee, same word-boundary rule)
+/// that also recognises `$SYMBOL` cashtags. Pure, so [`draw_line_with_tokens`]
+/// and its own unit tests share one definition of "what counts as a token".
+fn text_tokens(line: &str) -> Vec<TextToken> {
+    #[derive(Clone, Copy, PartialEq)]
+    enum Mode {
+        Plain,
+        Mention,
+        Symbol,
+    }
+    let chars: Vec<char> = line.chars().collect();
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut mode = Mode::Plain;
+    let mut at_word_start = true;
+    for (i, &c) in chars.iter().enumerate() {
+        if mode == Mode::Plain && at_word_start && c == '@' {
+            if !current.is_empty() {
+                tokens.push(TextToken::Plain(std::mem::take(&mut current)));
+            }
+            mode = Mode::Mention;
+        } else if mode == Mode::Plain
+            && at_word_start
+            && c == '$'
+            && chars.get(i + 1).is_some_and(|n| n.is_ascii_uppercase())
+        {
+            if !current.is_empty() {
+                tokens.push(TextToken::Plain(std::mem::take(&mut current)));
+            }
+            mode = Mode::Symbol;
+        } else if c.is_whitespace() && mode != Mode::Plain {
+            let finished = std::mem::take(&mut current);
+            tokens.push(match mode {
+                Mode::Mention => TextToken::Mention(finished),
+                Mode::Symbol => TextToken::Symbol(finished),
+                Mode::Plain => unreachable!(),
+            });
+            mode = Mode::Plain;
         }
         current.push(c);
         at_word_start = c.is_whitespace();
     }
     if !current.is_empty() {
-        segments.push((current, in_mention));
+        tokens.push(match mode {
+            Mode::Plain => TextToken::Plain(current),
+            Mode::Mention => TextToken::Mention(current),
+            Mode::Symbol => TextToken::Symbol(current),
+        });
     }
-    segments
+    tokens
+}
+
+/// A `$SYMBOL` token's own display/click text — the source text with its
+/// leading `$` stripped (the pill shows `BTCUSDT`, never `$BTCUSDT`, same
+/// as the concept's own `.sym` span content).
+fn symbol_display(token_text: &str) -> &str {
+    token_text.strip_prefix('$').unwrap_or(token_text)
 }
 
 /// Draw `line` left-aligned at `(x, y)`, colouring `@mention` tokens in
-/// `accent_color` and everything else in `normal_color` — plain-text bubble
-/// lines only (mono/ciphertext lines never call this).
-fn draw_line_with_mentions(ctx: &mut dyn RenderContext, line: &str, x: f64, y: f64, normal_color: &str, accent_color: &str) {
+/// `accent_color` and rendering `$SYMBOL` tokens as a clickable pill
+/// (concept `.sym`) — plain-text bubble lines only (mono/ciphertext lines
+/// never call this; own messages never call this either — see this
+/// function's own call site in `draw_bubble`). `msg_idx`/`line_idx`
+/// disambiguate the SAME symbol appearing more than once on screen — the
+/// symbol itself is always the registered widget id's own trailing
+/// segment, parsed back by `mlc-app`'s `panel_click.rs` `"symbol:"` arm.
+#[allow(clippy::too_many_arguments)]
+fn draw_line_with_tokens(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    line: &str,
+    x: f64,
+    y: f64,
+    msg_idx: u16,
+    line_idx: u16,
+    body_font: &str,
+    normal_color: &str,
+    accent_color: &str,
+    tt: &ToolbarTheme,
+) {
     let mut cx = x;
+    ctx.set_font(body_font);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    for (seg, is_mention) in mention_segments(line) {
-        ctx.set_fill_color(if is_mention { accent_color } else { normal_color });
-        ctx.fill_text(&seg, cx, y);
-        cx += ctx.measure_text(&seg);
+    for tok in text_tokens(line) {
+        match tok {
+            TextToken::Plain(_) => {
+                ctx.set_font(body_font);
+                ctx.set_fill_color(normal_color);
+                ctx.fill_text(tok.text(), cx, y);
+                cx += ctx.measure_text(tok.text());
+            }
+            TextToken::Mention(_) => {
+                ctx.set_font(body_font);
+                ctx.set_fill_color(accent_color);
+                ctx.fill_text(tok.text(), cx, y);
+                cx += ctx.measure_text(tok.text());
+            }
+            TextToken::Symbol(_) => {
+                let symbol = symbol_display(tok.text());
+                ctx.set_font(SYMBOL_PILL_FONT);
+                let text_w = ctx.measure_text(symbol);
+                let pill_w = text_w + SYMBOL_PILL_PAD_H * 2.0;
+                let pill_h = BUBBLE_LINE_H - 2.0;
+                let pill_y = y + 1.0;
+                let widget_id = format!("cloud_overlay:dm:symbol:{msg_idx}:{line_idx}:{symbol}");
+                let hovered = coord.is_hovered(&WidgetId::from(widget_id.as_str()));
+                ctx.set_fill_color(&tt.item_bg_hover);
+                ctx.fill_rounded_rect(cx, pill_y, pill_w, pill_h, SYMBOL_PILL_RADIUS);
+                if hovered {
+                    ctx.set_stroke_color(&tt.accent);
+                    ctx.set_stroke_width(1.0);
+                    ctx.stroke_rounded_rect(cx, pill_y, pill_w, pill_h, SYMBOL_PILL_RADIUS);
+                }
+                ctx.set_fill_color(&tt.item_text);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Top);
+                ctx.fill_text(symbol, cx + SYMBOL_PILL_PAD_H, y);
+                let rect = WidgetRect::new(cx, pill_y, pill_w, pill_h);
+                coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
+                cx += pill_w;
+                ctx.set_font(body_font);
+                ctx.set_text_align(TextAlign::Left);
+                ctx.set_text_baseline(TextBaseline::Top);
+            }
+        }
     }
 }
 
@@ -2628,7 +3268,21 @@ mod tests {
     #[test]
     fn dock_h_uses_the_compact_row_footprint_when_no_nick_gate_applies() {
         let state = CommunityState::default();
-        assert_eq!(dock_h(&state), COMPOSER_H);
+        assert_eq!(dock_h(&state, None), COMPOSER_H);
+    }
+
+    #[test]
+    fn dock_h_is_the_channel_cta_row_when_the_viewer_cannot_post() {
+        let state = CommunityState::default();
+        let gate = ChannelGate { can_post: false, muted: false };
+        assert_eq!(dock_h(&state, Some(gate)), CHANNEL_CTA_H);
+    }
+
+    #[test]
+    fn dock_h_falls_through_to_the_normal_composer_when_a_channel_admin_can_post() {
+        let state = CommunityState::default();
+        let gate = ChannelGate { can_post: true, muted: false };
+        assert_eq!(dock_h(&state, Some(gate)), COMPOSER_H);
     }
 
     #[test]
@@ -2637,22 +3291,42 @@ mod tests {
     }
 
     #[test]
-    fn mention_segments_round_trip_to_the_original_line() {
+    fn text_tokens_round_trip_to_the_original_line() {
         let line = "@admin закрепил правила — глянь";
-        let segments = mention_segments(line);
-        let rebuilt: String = segments.iter().map(|(s, _)| s.as_str()).collect();
+        let tokens = text_tokens(line);
+        let rebuilt: String = tokens.iter().map(TextToken::text).collect();
         assert_eq!(rebuilt, line);
-        assert!(segments[0].1, "first segment must be the @mention token");
+        assert!(matches!(tokens[0], TextToken::Mention(_)), "first token must be the @mention token");
     }
 
     #[test]
-    fn mention_segments_ignores_an_email_like_token_mid_word() {
+    fn text_tokens_ignores_an_email_like_token_mid_word() {
         // "@" only starts a mention at a WORD boundary — mid-word it is just
         // a literal character, same as the concept's own `.mention` rule
         // (only ever applied to a leading `@handle`).
         let line = "user@name text";
-        let segments = mention_segments(line);
-        assert!(segments.iter().all(|(_, is_mention)| !is_mention));
+        let tokens = text_tokens(line);
+        assert!(tokens.iter().all(|t| !matches!(t, TextToken::Mention(_))));
+    }
+
+    #[test]
+    fn text_tokens_recognises_a_cashtag_but_not_a_dollar_amount() {
+        let line = "на 4h ордерблок $BTCUSDT 64 150–64 420";
+        let tokens = text_tokens(line);
+        let rebuilt: String = tokens.iter().map(TextToken::text).collect();
+        assert_eq!(rebuilt, line);
+        assert!(tokens.iter().any(|t| matches!(t, TextToken::Symbol(s) if s == "$BTCUSDT")));
+
+        // A dollar AMOUNT (digit right after `$`) is never a cashtag.
+        let price_line = "target $64,150 today";
+        let price_tokens = text_tokens(price_line);
+        assert!(price_tokens.iter().all(|t| !matches!(t, TextToken::Symbol(_))));
+    }
+
+    #[test]
+    fn symbol_display_strips_the_leading_dollar_sign() {
+        assert_eq!(symbol_display("$BTCUSDT"), "BTCUSDT");
+        assert_eq!(symbol_display("BTCUSDT"), "BTCUSDT");
     }
 
     #[test]
@@ -2701,5 +3375,98 @@ mod tests {
             my_power_level: PowerLevel(0),
             can_post: true,
         }
+    }
+
+    fn test_item(id: &str, content: MessageContent) -> mlc_messenger_model::TimelineItem {
+        use mlc_messenger_model::{EventId, UserId};
+        mlc_messenger_model::TimelineItem {
+            event_id: EventId::from(id),
+            sender: UserId::from("u"),
+            sender_rank: None,
+            ts: Timestamp(0),
+            content,
+            reply_to: None,
+            edited: false,
+            reactions: Vec::new(),
+            redacted: false,
+            send_state: SendState::Sent,
+            read_by: Vec::new(),
+            pinned: false,
+            shared_chart: None,
+            mentions_me: false,
+            forwarded: None,
+        }
+    }
+
+    #[test]
+    fn unread_start_counts_message_items_only_and_skips_system_notices() {
+        let timeline = vec![
+            test_item("a", MessageContent::Text("old".to_string())),
+            test_item("b", MessageContent::Text("unread 1".to_string())),
+            test_item("c", MessageContent::KeyChanged),
+            test_item("d", MessageContent::Text("unread 2".to_string())),
+        ];
+        // Two unread messages: the run starts at "b", the notice between the
+        // two messages is inside the run and does not eat into the count.
+        assert_eq!(unread_start(&timeline, 2), 1);
+        assert_eq!(unread_start(&timeline, 1), 3);
+        assert_eq!(unread_start(&timeline, 0), timeline.len());
+        // More unread than items held: the run starts at the top.
+        assert_eq!(unread_start(&timeline, 99), 0);
+    }
+
+    #[test]
+    fn archived_rooms_are_listed_only_under_the_archive_folder() {
+        let mut archived = test_room(RoomKind::Group, false, 0);
+        archived.archived = true;
+        let live = test_room(RoomKind::Group, false, 0);
+        for sel in [
+            MessengerFolderSel::All,
+            MessengerFolderSel::Personal,
+            MessengerFolderSel::Groups,
+            MessengerFolderSel::Channels,
+            MessengerFolderSel::Custom("u.trading-desk".to_string()),
+        ] {
+            assert!(!folder_includes(&sel, &[], &archived), "{sel:?} must hide an archived room");
+        }
+        assert!(folder_includes(&MessengerFolderSel::Archive, &[], &archived));
+        assert!(!folder_includes(&MessengerFolderSel::Archive, &[], &live));
+        assert!(folder_includes(&MessengerFolderSel::All, &[], &live));
+        assert!(folder_includes(&MessengerFolderSel::Groups, &[], &live));
+        assert!(!folder_includes(&MessengerFolderSel::Channels, &[], &live));
+    }
+
+    #[test]
+    fn a_custom_folder_lists_a_room_through_its_own_tag_rule() {
+        use mlc_messenger_model::{FolderExclude, FolderInclude, Tag, TagName};
+        let folder = Folder {
+            id: Some(TagName::from("u.trading-desk")),
+            name: "Trading desk".to_string(),
+            icon: FolderIcon::Candles,
+            include: FolderInclude::default(),
+            exclude: FolderExclude::default(),
+            order: 1.0,
+        };
+        let sel = MessengerFolderSel::Custom("u.trading-desk".to_string());
+        let mut room = test_room(RoomKind::Direct, false, 0);
+        assert!(!folder_includes(&sel, std::slice::from_ref(&folder), &room));
+        room.tags.push(Tag { name: TagName::from("u.trading-desk"), order: 1.0 });
+        assert!(folder_includes(&sel, std::slice::from_ref(&folder), &room));
+    }
+
+    #[test]
+    fn folder_selection_round_trips_through_its_widget_key() {
+        for sel in [
+            MessengerFolderSel::All,
+            MessengerFolderSel::Personal,
+            MessengerFolderSel::Groups,
+            MessengerFolderSel::Channels,
+            MessengerFolderSel::Archive,
+            MessengerFolderSel::Custom("u.research".to_string()),
+        ] {
+            assert_eq!(MessengerFolderSel::from_widget_key(&sel.widget_key()), Some(sel));
+        }
+        assert_eq!(MessengerFolderSel::from_widget_key("folders"), None);
+        assert_eq!(MessengerFolderSel::from_widget_key("tag:"), None);
     }
 }
