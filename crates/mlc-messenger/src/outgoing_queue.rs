@@ -299,6 +299,18 @@ impl OutgoingQueue {
         Ok(queue)
     }
 
+    /// Drops every pending request of `kind` (from the queue and from
+    /// `store`). For a kind whose request carries no side effect a restart
+    /// could lose -- `/sync` -- so a core can mint a fresh one from current
+    /// state instead of replaying a stale one.
+    pub fn discard_kind<S: StateStore>(&mut self, store: &mut S, kind: OutgoingRequestKind) -> Result<(), StoreError> {
+        let ids: Vec<RequestId> = self.pending.iter().filter(|(_, record)| record.request.kind == kind).map(|(id, _)| id.clone()).collect();
+        for id in ids {
+            self.complete(store, &id)?;
+        }
+        Ok(())
+    }
+
     /// Enqueues `request` on `lane`, persisting it via
     /// [`crate::store::StateStore::save_pending_request`] so it survives a
     /// crash before ever being acknowledged. Idempotent on `request.id`:
@@ -531,6 +543,25 @@ mod tests {
 
         let mut restored = OutgoingQueue::load(&reloaded).expect("queue reloads");
         assert_eq!(restored.releasable(&reloaded, 0), vec![request]);
+    }
+
+    #[test]
+    fn discard_kind_drops_the_restored_sync_but_keeps_other_requests() {
+        let mut store = Store::new(device_id(), InsecurePlainCodecForTests);
+        let mut queue = OutgoingQueue::new();
+        let sync = OutgoingRequest::sync(RequestId::next(0), Some("s1"), Some(30_000));
+        let join = OutgoingRequest::join_room(RequestId::next(1), room_id().as_str());
+        queue.enqueue(&mut store, sync, Lane::Sync).expect("enqueue sync");
+        queue.enqueue(&mut store, join.clone(), Lane::Other).expect("enqueue join");
+        let batch = store.take_flush_batch().expect("pending requests dirtied records");
+        let mut reloaded = Store::load(batch.records, InsecurePlainCodecForTests, device_id()).expect("load succeeds");
+
+        let mut restored = OutgoingQueue::load(&reloaded).expect("queue reloads");
+        restored.discard_kind(&mut reloaded, OutgoingRequestKind::Sync).expect("discard succeeds");
+
+        assert_eq!(restored.releasable(&reloaded, 0), vec![join], "only the non-sync request is left");
+        let stored: Vec<OutgoingRequestKind> = reloaded.pending_requests().expect("no error").iter().map(|record| record.request.kind).collect();
+        assert_eq!(stored, vec![OutgoingRequestKind::JoinRoom], "the sync record is gone from the store too");
     }
 
     #[test]

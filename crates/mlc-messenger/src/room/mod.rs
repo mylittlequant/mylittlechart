@@ -29,5 +29,5 @@ pub mod timeline;
 pub use relations::{aggregate_relation, recompute_bundle, EditRecord, RelatingEvent, RelationsBundle};
 pub use state::{MemberRole, MemberState, RoomKind, RoomState};
 pub use timeline::{
-    highlight, last_preview, GapMarker, ItemContent, SendState, StateChangeSummary, Timeline, TimelineItem,
+    highlight, last_preview, Forwarded, GapMarker, ItemContent, SendState, StateChangeSummary, Timeline, TimelineItem,
 };

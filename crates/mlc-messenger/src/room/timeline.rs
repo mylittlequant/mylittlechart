@@ -34,7 +34,7 @@
 //! matching every other bounded-cache-with-FIFO-eviction shape in this
 //! codebase.
 
-use crate::ids::{EventId, TxnId, UserId};
+use crate::ids::{EventId, RoomId, TxnId, UserId};
 use crate::legacy_dm::LegacyDmDecryptReason;
 use crate::room::relations::{aggregate_relation, recompute_bundle, RelatingEvent, RelationsBundle};
 use crate::wire::events::{
@@ -49,6 +49,7 @@ use std::collections::{BTreeMap, VecDeque};
 const PENDING_CAPACITY: usize = 5_000;
 
 const EVENT_ROOM_MESSAGE: &str = "m.room.message";
+pub(crate) const EVENT_STICKER: &str = "m.sticker";
 const EVENT_ROOM_ENCRYPTED: &str = "m.room.encrypted";
 const EVENT_ROOM_REDACTION: &str = "m.room.redaction";
 const EVENT_LEGACY_DM: &str = "org.mylittlechart.legacy_dm";
@@ -58,6 +59,17 @@ const EVENT_ROOM_TOPIC: &str = "m.room.topic";
 const EVENT_ROOM_POWER_LEVELS: &str = "m.room.power_levels";
 const EVENT_ROOM_HISTORY_VISIBILITY: &str = "m.room.history_visibility";
 const EVENT_ROOM_CREATE: &str = "m.room.create";
+
+/// The `msgtype` of a shared chart card (`m.room.message`).
+pub(crate) const MSGTYPE_CHART_CARD: &str = "org.mylittlechart.chart";
+/// The `url` scheme of a bundled sticker: `mlc-sticker://<pack>/<id>`.
+pub(crate) const STICKER_URL_SCHEME: &str = "mlc-sticker://";
+/// Content key marking a message forwarded out of an ENCRYPTED room: a bare
+/// `true`, carrying nothing about where it came from.
+pub(crate) const KEY_FORWARDED: &str = "org.mylittlechart.forwarded";
+/// Content key marking a message forwarded out of an unencrypted (public)
+/// room: `{ "room_id": .., "room_name": .. }`.
+pub(crate) const KEY_FORWARDED_FROM: &str = "org.mylittlechart.forwarded_from";
 
 /// One item's send lifecycle (plan §3: `LocalEcho|Sending|Sent|Failed`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -113,6 +125,30 @@ pub enum ItemContent {
     Notice(TextLikeMessageContent),
     /// `m.room.message`, `msgtype: "m.emote"`.
     Emote(TextLikeMessageContent),
+    /// `m.sticker` -- a sticker from a bundled pack, named by `(pack, id)`
+    /// (`info.pack`/`info.id`, falling back to `url:
+    /// mlc-sticker://<pack>/<id>`); never fetched. `alt` is the event's
+    /// `body`: what a client without the pack shows instead.
+    Sticker {
+        /// The bundled pack the sticker belongs to.
+        pack: String,
+        /// The sticker's id within its pack.
+        id: String,
+        /// The event body -- the fallback text for a client without the
+        /// pack.
+        alt: String,
+    },
+    /// `m.room.message`, `msgtype: "org.mylittlechart.chart"` -- a shared
+    /// chart card. `content` is the whole event content, exactly as sent
+    /// (the card's own fields live in it; this crate does not interpret
+    /// them), and `body` is its plain-text fallback line.
+    ChartCard {
+        /// The card's plain-text fallback (`content["body"]`, empty if the
+        /// sender left it out).
+        body: String,
+        /// The event's full content object.
+        content: serde_json::Value,
+    },
     /// `m.room.encrypted` (Megolm), not yet decrypted -- the crypto layer
     /// (a later piece) resolves this via [`Timeline::set_decrypted`] once
     /// it can.
@@ -185,6 +221,96 @@ pub enum ItemContent {
     Unknown,
 }
 
+/// Where a forwarded item says it came from. Read from the two marker keys
+/// a forward carries (`org.mylittlechart.forwarded`,
+/// `org.mylittlechart.forwarded_from`) -- the marker is asserted by the
+/// forwarding sender and is not authenticated by anything here. A missing or
+/// malformed marker is simply `None` on the item, never a decode failure of
+/// the event.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Forwarded {
+    /// Forwarded out of an encrypted room: the bare fact only -- never the
+    /// original sender, room id or room name.
+    Hidden,
+    /// Forwarded out of an unencrypted (public) room, which is named.
+    Channel {
+        /// The source room.
+        room_id: RoomId,
+        /// The source room's display name at the time of forwarding.
+        room_name: String,
+    },
+}
+
+/// Reads the forward marker off an event's content: a well-formed
+/// `forwarded_from` wins, otherwise `forwarded: true` gives
+/// [`Forwarded::Hidden`], otherwise `None`. Only `m.room.message` and
+/// `m.sticker` carry the marker -- an `m.room.encrypted` envelope's own
+/// cleartext content never does, whatever a sender put there.
+fn parse_forwarded(event_type: &str, content: &serde_json::Value) -> Option<Forwarded> {
+    if event_type != EVENT_ROOM_MESSAGE && event_type != EVENT_STICKER {
+        return None;
+    }
+    let channel = content.get(KEY_FORWARDED_FROM).and_then(|from| {
+        let room_id = RoomId::parse(from.get("room_id")?.as_str()?).ok()?;
+        let room_name = from.get("room_name")?.as_str()?.to_string();
+        Some(Forwarded::Channel { room_id, room_name })
+    });
+    channel.or_else(|| {
+        (content.get(KEY_FORWARDED).and_then(serde_json::Value::as_bool) == Some(true)).then_some(Forwarded::Hidden)
+    })
+}
+
+/// A decrypted Megolm plaintext, kept next to the still-ciphertext wire
+/// content so a forward can read what was actually said.
+#[derive(Clone, Debug, PartialEq)]
+struct DecryptedEvent {
+    event_type: String,
+    content: serde_json::Value,
+}
+
+/// Why [`Timeline::forward_source`] refused an item.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum ForwardRefusal {
+    /// No such item in this timeline (or a local echo the server has not
+    /// confirmed yet).
+    Missing,
+    /// The item was redacted.
+    Redacted,
+    /// The item is still sealed: undecryptable, or not decrypted yet.
+    Sealed,
+    /// A pre-Matrix legacy DM item.
+    Legacy,
+    /// Not an `m.room.message` / `m.sticker` (or carries no content
+    /// object).
+    NotForwardable {
+        /// The event's own type.
+        event_type: String,
+    },
+}
+
+impl std::fmt::Display for ForwardRefusal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ForwardRefusal::Missing => f.write_str("no such event in that room"),
+            ForwardRefusal::Redacted => f.write_str("the event was redacted"),
+            ForwardRefusal::Sealed => f.write_str("the event is still sealed (undecryptable or not decrypted yet)"),
+            ForwardRefusal::Legacy => f.write_str("a legacy DM item cannot be forwarded"),
+            ForwardRefusal::NotForwardable { event_type } => write!(f, "{event_type} events cannot be forwarded"),
+        }
+    }
+}
+
+/// What [`Timeline::forward_source`] found: the event type and the CURRENT
+/// (latest-edit, decrypted) content of a forwardable item, still carrying
+/// whatever relation/mention keys the original had.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ForwardSource {
+    /// `m.room.message` or `m.sticker`.
+    pub(crate) event_type: String,
+    /// The content object.
+    pub(crate) content: serde_json::Value,
+}
+
 /// Records that a `limited: true` `/sync` window (research doc §1.4) left
 /// a gap between what this timeline holds and the room's full history.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -233,9 +359,14 @@ pub struct TimelineItem {
     /// The original wire `content` this item was built from, kept so
     /// [`Timeline::apply_redaction`] can rebuild [`TimelineItem::content`]
     /// from the v11 allow-list without needing the original
-    /// [`RawEvent`] again. `Null` for a local echo (nothing has been sent
-    /// yet).
+    /// [`RawEvent`] again. For a local echo, the plaintext content being
+    /// sent.
     raw_content: serde_json::Value,
+    /// Where this item says it was forwarded from, if it was -- read from
+    /// the (decrypted) content's forward marker ([`Forwarded`]).
+    pub forwarded: Option<Forwarded>,
+    /// The decrypted plaintext of a Megolm item, once decrypted.
+    decrypted: Option<DecryptedEvent>,
 }
 
 /// Interprets a plain `(event_type, content)` pair into an [`ItemContent`].
@@ -255,7 +386,20 @@ pub(crate) fn interpret_content(event_type: &str, state_key: Option<&str>, conte
             Ok(RoomMessageContent::Text(inner)) => ItemContent::Text(inner),
             Ok(RoomMessageContent::Notice(inner)) => ItemContent::Notice(inner),
             Ok(RoomMessageContent::Emote(inner)) => ItemContent::Emote(inner),
+            Ok(RoomMessageContent::Unknown(value))
+                if value.get("msgtype").and_then(serde_json::Value::as_str) == Some(MSGTYPE_CHART_CARD) =>
+            {
+                let body = value.get("body").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+                ItemContent::ChartCard { body, content: value }
+            }
             _ => ItemContent::Unknown,
+        },
+        EVENT_STICKER => match parse_sticker(content) {
+            Some((pack, id)) => {
+                let alt = content.get("body").and_then(serde_json::Value::as_str).unwrap_or_default().to_string();
+                ItemContent::Sticker { pack, id, alt }
+            }
+            None => ItemContent::Unknown,
         },
         EVENT_ROOM_ENCRYPTED => match serde_json::from_value::<RoomEncryptedContent>(content.clone()) {
             Ok(RoomEncryptedContent::Megolm(inner)) => {
@@ -276,6 +420,23 @@ pub(crate) fn interpret_content(event_type: &str, state_key: Option<&str>, conte
         },
         _ => ItemContent::Unknown,
     }
+}
+
+/// The `(pack, id)` an `m.sticker` content names: `info.pack`/`info.id`
+/// when both are present, otherwise parsed out of
+/// `url: mlc-sticker://<pack>/<id>`. `None` when neither names a non-empty
+/// pair (a sticker from outside the bundled packs).
+fn parse_sticker(content: &serde_json::Value) -> Option<(String, String)> {
+    let info_field = |key: &str| content.get("info")?.get(key)?.as_str().filter(|value| !value.is_empty());
+    if let (Some(pack), Some(id)) = (info_field("pack"), info_field("id")) {
+        return Some((pack.to_string(), id.to_string()));
+    }
+    let rest = content.get("url")?.as_str()?.strip_prefix(STICKER_URL_SCHEME)?;
+    let (pack, id) = rest.split_once('/')?;
+    if pack.is_empty() || id.is_empty() {
+        return None;
+    }
+    Some((pack.to_string(), id.to_string()))
 }
 
 fn interpret_state_change(event_type: &str, state_key: &str, content: &serde_json::Value) -> ItemContent {
@@ -358,6 +519,11 @@ fn build_item(event: &RawEvent) -> TimelineItem {
     } else {
         interpret_content(&event.event_type, event.state_key.as_deref(), &event.content)
     };
+    let forwarded = if already_redacted || event.state_key.is_some() {
+        None
+    } else {
+        parse_forwarded(&event.event_type, &event.content)
+    };
     TimelineItem {
         event_id: Some(event.event_id.clone()),
         txn_id: event.unsigned.transaction_id.clone().map(TxnId::from),
@@ -370,7 +536,19 @@ fn build_item(event: &RawEvent) -> TimelineItem {
         send_state: SendState::Sent,
         redacted: already_redacted,
         raw_content: event.content.clone(),
+        forwarded,
+        decrypted: None,
     }
+}
+
+/// Strips `item` down to what survives a redaction: the v11 allow-list
+/// content ([`content_after_redaction`]), and nothing of a forward marker or
+/// a decrypted plaintext.
+fn redact_item(item: &mut TimelineItem) {
+    item.content = content_after_redaction(&item.event_type, item.state_key.as_deref(), &item.raw_content);
+    item.redacted = true;
+    item.forwarded = None;
+    item.decrypted = None;
 }
 
 /// A room's timeline: ordered items in server order, assembled from
@@ -612,10 +790,7 @@ impl Timeline {
     /// and [`Timeline::prepend_back_page`] for every item they add.
     fn resolve_pending_for(&mut self, event_id: &EventId, idx: usize) {
         if self.pending_redactions.remove(event_id).is_some() {
-            let item = &mut self.items[idx];
-            let stripped = content_after_redaction(&item.event_type, item.state_key.as_deref(), &item.raw_content);
-            item.content = stripped;
-            item.redacted = true;
+            redact_item(&mut self.items[idx]);
         }
 
         if let Some(pending) = self.pending_relations.remove(event_id) {
@@ -661,10 +836,7 @@ impl Timeline {
     ///   ([`Timeline::resolve_pending_for`]).
     fn apply_or_queue_redaction(&mut self, redaction_event_id: &EventId, target: &EventId) {
         if let Some(&idx) = self.by_event_id.get(target) {
-            let item = &mut self.items[idx];
-            let stripped = content_after_redaction(&item.event_type, item.state_key.as_deref(), &item.raw_content);
-            item.content = stripped;
-            item.redacted = true;
+            redact_item(&mut self.items[idx]);
             return;
         }
 
@@ -716,19 +888,35 @@ impl Timeline {
     /// /rooms/{roomId}/send/...` call uses, so a later
     /// [`Timeline::apply_timeline_batch`] call reconciles this row via
     /// `unsigned.transaction_id` instead of appending a duplicate.
-    pub fn push_local_echo(&mut self, txn_id: TxnId, sender: UserId, origin_server_ts: i64, content: ItemContent) {
+    ///
+    /// `event_type` and `wire_content` are the PLAINTEXT event being sent
+    /// (even in an encrypted room: the echo lives only in this device's own
+    /// memory) -- kept so the row can be forwarded, and its forward marker
+    /// shown, before the server has echoed it back. `content` is how the row
+    /// renders in the meantime.
+    pub fn push_local_echo(
+        &mut self,
+        txn_id: TxnId,
+        sender: UserId,
+        origin_server_ts: i64,
+        event_type: &str,
+        content: ItemContent,
+        wire_content: serde_json::Value,
+    ) {
         let item = TimelineItem {
             event_id: None,
             txn_id: Some(txn_id),
             sender,
             origin_server_ts,
-            event_type: EVENT_ROOM_MESSAGE.to_string(),
+            event_type: event_type.to_string(),
             state_key: None,
             content,
             relations: RelationsBundle::default(),
             send_state: SendState::LocalEcho,
             redacted: false,
-            raw_content: serde_json::Value::Null,
+            forwarded: parse_forwarded(event_type, &wire_content),
+            raw_content: wire_content,
+            decrypted: None,
         };
         self.insert_new_item(item);
     }
@@ -814,6 +1002,65 @@ impl Timeline {
         if let Some(&idx) = self.by_event_id.get(event_id) {
             self.items[idx].content = content;
         }
+    }
+
+    /// Like [`Timeline::set_decrypted`], for a successfully decrypted Megolm
+    /// plaintext `{event_type, content}`: the item renders as
+    /// [`interpret_content`] says, reads its forward marker off the
+    /// plaintext, and keeps the plaintext so it can be forwarded. A no-op if
+    /// this timeline holds no item for `event_id`.
+    pub(crate) fn set_decrypted_event(&mut self, event_id: &EventId, event_type: &str, content: &serde_json::Value) {
+        let Some(&idx) = self.by_event_id.get(event_id) else { return };
+        let item = &mut self.items[idx];
+        item.content = interpret_content(event_type, None, content);
+        item.forwarded = parse_forwarded(event_type, content);
+        item.decrypted = Some(DecryptedEvent { event_type: event_type.to_string(), content: content.clone() });
+    }
+
+    /// The content of `event_id` a forward would re-send: its event type
+    /// and its CURRENT content -- the decrypted plaintext for an encrypted
+    /// item, with the latest accepted edit's `m.new_content` in place of the
+    /// original for an edited one. Everything the original content carried
+    /// (relations, mentions) is still in it; stripping and marking are the
+    /// caller's policy.
+    ///
+    /// Refuses ([`ForwardRefusal`]) an item this timeline does not hold, a
+    /// redacted one, one still sealed (undecryptable or not decrypted yet),
+    /// a legacy DM item, and anything that is not an `m.room.message` /
+    /// `m.sticker`.
+    pub(crate) fn forward_source(&self, event_id: &EventId) -> Result<ForwardSource, ForwardRefusal> {
+        let item = self.item_by_event_id(event_id).ok_or(ForwardRefusal::Missing)?;
+        if item.redacted || item.content == ItemContent::Redacted {
+            return Err(ForwardRefusal::Redacted);
+        }
+        match &item.content {
+            ItemContent::Encrypted { .. } | ItemContent::Undecryptable { .. } => return Err(ForwardRefusal::Sealed),
+            ItemContent::LegacyDm { .. } | ItemContent::LegacyDmUndecryptable { .. } | ItemContent::LegacyPlain(_) => {
+                return Err(ForwardRefusal::Legacy);
+            }
+            _ => {}
+        }
+        let (event_type, original) = match &item.decrypted {
+            Some(decrypted) => (decrypted.event_type.as_str(), &decrypted.content),
+            None => (item.event_type.as_str(), &item.raw_content),
+        };
+        let not_forwardable = || ForwardRefusal::NotForwardable { event_type: event_type.to_string() };
+        if item.state_key.is_some() || (event_type != EVENT_ROOM_MESSAGE && event_type != EVENT_STICKER) {
+            return Err(not_forwardable());
+        }
+        let mut content = match &item.relations.latest_edit {
+            Some(edit) => serde_json::to_value(&edit.content).map_err(|_| not_forwardable())?,
+            None => original.clone(),
+        };
+        // An item that IS an edit event (a local echo of one) carries its
+        // replacement under `m.new_content`.
+        if let Some(replacement) = content.get("m.new_content").filter(|value| value.is_object()).cloned() {
+            content = replacement;
+        }
+        if !content.is_object() {
+            return Err(not_forwardable());
+        }
+        Ok(ForwardSource { event_type: event_type.to_string(), content })
     }
 
     /// Resolves a Megolm-encrypted event that, once decrypted, turns out to
@@ -971,6 +1218,8 @@ mod tests {
             send_state: SendState::Sent,
             redacted: false,
             raw_content: serde_json::Value::Null,
+            forwarded: None,
+            decrypted: None,
         }
     }
 
@@ -983,7 +1232,9 @@ mod tests {
             txn_id.clone(),
             alice,
             100,
+            EVENT_ROOM_MESSAGE,
             ItemContent::Text(TextLikeMessageContent { body: "hi".to_string(), format: None, formatted_body: None }),
+            text_content("hi"),
         );
         assert_eq!(timeline.items().len(), 1);
         assert_eq!(timeline.items()[0].send_state, SendState::LocalEcho);
@@ -1197,6 +1448,245 @@ mod tests {
         let item = timeline.item_by_event_id(&target_id).expect("target now loaded");
         assert!(item.redacted, "the pending redaction applied once its target loaded");
         assert_eq!(item.content, ItemContent::Redacted);
+    }
+
+    fn encrypted_placeholder(event_id: &str, sender: &str, extra: serde_json::Value) -> RawEvent {
+        let mut content = serde_json::json!({
+            "algorithm": "m.megolm.v1.aes-sha2",
+            "ciphertext": "AAAA",
+            "session_id": "session-1",
+        });
+        if let (Some(target), Some(extra)) = (content.as_object_mut(), extra.as_object()) {
+            target.extend(extra.clone());
+        }
+        raw_event(event_id, "m.room.encrypted", sender, 1, content)
+    }
+
+    fn event_id(value: &str) -> EventId {
+        EventId::parse(value).expect("valid event id")
+    }
+
+    fn content_of(timeline: &Timeline, id: &str) -> ItemContent {
+        timeline.item_by_event_id(&event_id(id)).expect("present").content.clone()
+    }
+
+    fn forwarded_of(timeline: &Timeline, id: &str) -> Option<Forwarded> {
+        timeline.item_by_event_id(&event_id(id)).expect("present").forwarded.clone()
+    }
+
+    #[test]
+    fn sticker_event_parses_into_sticker_item() {
+        let mut timeline = Timeline::new();
+        let by_info = raw_event(
+            "$info:example.org",
+            "m.sticker",
+            "@alice:example.org",
+            1,
+            serde_json::json!({ "body": "Bull", "url": "mlc-sticker://trader/bull", "info": { "pack": "trader", "id": "bull" } }),
+        );
+        let info_beats_url = raw_event(
+            "$both:example.org",
+            "m.sticker",
+            "@alice:example.org",
+            2,
+            serde_json::json!({ "body": "Bear", "url": "mlc-sticker://other/x", "info": { "pack": "trader", "id": "bear" } }),
+        );
+        let by_url = raw_event(
+            "$url:example.org",
+            "m.sticker",
+            "@alice:example.org",
+            3,
+            serde_json::json!({ "body": "Whale", "url": "mlc-sticker://trader/whale" }),
+        );
+        let foreign = raw_event(
+            "$foreign:example.org",
+            "m.sticker",
+            "@alice:example.org",
+            4,
+            serde_json::json!({ "body": "cat", "url": "mxc://example.org/abc" }),
+        );
+        timeline.apply_timeline_batch(&[by_info, info_beats_url, by_url, foreign], false, None);
+
+        let sticker = |pack: &str, id: &str, alt: &str| ItemContent::Sticker {
+            pack: pack.to_string(),
+            id: id.to_string(),
+            alt: alt.to_string(),
+        };
+        assert_eq!(content_of(&timeline, "$info:example.org"), sticker("trader", "bull", "Bull"));
+        assert_eq!(content_of(&timeline, "$both:example.org"), sticker("trader", "bear", "Bear"), "info.pack/info.id win over the url");
+        assert_eq!(content_of(&timeline, "$url:example.org"), sticker("trader", "whale", "Whale"), "the url is the fallback");
+        assert_eq!(content_of(&timeline, "$foreign:example.org"), ItemContent::Unknown, "a sticker outside the bundled packs is not ours");
+
+        // A sticker inside a Megolm envelope becomes a sticker item once
+        // decrypted; the outer event type stays m.room.encrypted.
+        let sealed = encrypted_placeholder("$sealed:example.org", "@bob:example.org", serde_json::json!({}));
+        timeline.apply_timeline_batch(&[sealed], false, None);
+        assert!(matches!(content_of(&timeline, "$sealed:example.org"), ItemContent::Encrypted { .. }));
+        timeline.set_decrypted_event(
+            &event_id("$sealed:example.org"),
+            "m.sticker",
+            &serde_json::json!({ "body": "Bull", "url": "mlc-sticker://trader/bull", "info": { "pack": "trader", "id": "bull" } }),
+        );
+        let item = timeline.item_by_event_id(&event_id("$sealed:example.org")).expect("present");
+        assert_eq!(item.content, sticker("trader", "bull", "Bull"));
+        assert_eq!(item.event_type, "m.room.encrypted");
+    }
+
+    #[test]
+    fn chart_card_content_is_kept_on_the_item() {
+        let card = serde_json::json!({
+            "msgtype": "org.mylittlechart.chart",
+            "body": "BTCUSDT 1h",
+            "symbol": "BTCUSDT",
+            "timeframe": "1h",
+            "allow_forward": true,
+        });
+        match interpret_content(EVENT_ROOM_MESSAGE, None, &card) {
+            ItemContent::ChartCard { body, content } => {
+                assert_eq!(body, "BTCUSDT 1h");
+                assert_eq!(content, card, "every field of the card reaches the item untouched");
+            }
+            other => panic!("expected a chart card, got {other:?}"),
+        }
+        let image = serde_json::json!({ "msgtype": "m.image", "body": "x.png", "url": "mxc://example.org/a" });
+        assert_eq!(interpret_content(EVENT_ROOM_MESSAGE, None, &image), ItemContent::Unknown);
+    }
+
+    #[test]
+    fn forwarded_markers_parse_to_hidden_and_channel() {
+        let mut timeline = Timeline::new();
+        let hidden = raw_event(
+            "$hidden:example.org",
+            "m.room.message",
+            "@alice:example.org",
+            1,
+            serde_json::json!({ "msgtype": "m.text", "body": "fwd", "org.mylittlechart.forwarded": true }),
+        );
+        let channel = raw_event(
+            "$channel:example.org",
+            "m.room.message",
+            "@alice:example.org",
+            2,
+            serde_json::json!({
+                "msgtype": "m.text",
+                "body": "fwd",
+                "org.mylittlechart.forwarded_from": { "room_id": "!chan:example.org", "room_name": "Announcements" },
+            }),
+        );
+        let sticker = raw_event(
+            "$sticker:example.org",
+            "m.sticker",
+            "@alice:example.org",
+            3,
+            serde_json::json!({
+                "body": "Bull",
+                "url": "mlc-sticker://trader/bull",
+                "info": { "pack": "trader", "id": "bull" },
+                "org.mylittlechart.forwarded": true,
+            }),
+        );
+        let plain = raw_event("$plain:example.org", "m.room.message", "@alice:example.org", 4, text_content("plain"));
+        let denied = raw_event(
+            "$denied:example.org",
+            "m.room.message",
+            "@alice:example.org",
+            5,
+            serde_json::json!({ "msgtype": "m.text", "body": "x", "org.mylittlechart.forwarded": false }),
+        );
+        timeline.apply_timeline_batch(&[hidden, channel, sticker, plain, denied], false, None);
+
+        assert_eq!(forwarded_of(&timeline, "$hidden:example.org"), Some(Forwarded::Hidden));
+        assert_eq!(
+            forwarded_of(&timeline, "$channel:example.org"),
+            Some(Forwarded::Channel {
+                room_id: RoomId::parse("!chan:example.org").expect("valid room id"),
+                room_name: "Announcements".to_string(),
+            })
+        );
+        assert_eq!(forwarded_of(&timeline, "$sticker:example.org"), Some(Forwarded::Hidden));
+        assert_eq!(forwarded_of(&timeline, "$plain:example.org"), None);
+        assert_eq!(forwarded_of(&timeline, "$denied:example.org"), None, "only `true` marks a forward");
+
+        // The marker of an encrypted event lives in the plaintext only: a
+        // marker in the cleartext envelope is ignored, the one inside the
+        // decrypted content counts.
+        let sealed = encrypted_placeholder(
+            "$sealed:example.org",
+            "@bob:example.org",
+            serde_json::json!({ "org.mylittlechart.forwarded": true }),
+        );
+        timeline.apply_timeline_batch(&[sealed], false, None);
+        assert_eq!(forwarded_of(&timeline, "$sealed:example.org"), None);
+        timeline.set_decrypted_event(
+            &event_id("$sealed:example.org"),
+            "m.room.message",
+            &serde_json::json!({ "msgtype": "m.text", "body": "fwd", "org.mylittlechart.forwarded": true }),
+        );
+        assert_eq!(forwarded_of(&timeline, "$sealed:example.org"), Some(Forwarded::Hidden));
+
+        // A local echo shows its own marker before the server echoes it.
+        timeline.push_local_echo(
+            TxnId::new(7),
+            UserId::parse("@alice:example.org").expect("valid user id"),
+            10,
+            EVENT_ROOM_MESSAGE,
+            ItemContent::Unknown,
+            serde_json::json!({ "msgtype": "m.text", "body": "fwd", "org.mylittlechart.forwarded": true }),
+        );
+        let echo = timeline.items().last().expect("echo pushed");
+        assert_eq!(echo.forwarded, Some(Forwarded::Hidden));
+
+        // Redaction strips the marker with the content.
+        timeline.apply_redaction(&event_id("$hidden:example.org"));
+        assert_eq!(forwarded_of(&timeline, "$hidden:example.org"), None);
+        timeline.apply_redaction(&event_id("$sealed:example.org"));
+        assert_eq!(forwarded_of(&timeline, "$sealed:example.org"), None);
+    }
+
+    #[test]
+    fn malformed_forwarded_from_is_ignored() {
+        let bad_markers = [
+            serde_json::json!("a string"),
+            serde_json::json!(42),
+            serde_json::json!({}),
+            serde_json::json!({ "room_id": "!chan:example.org" }),
+            serde_json::json!({ "room_name": "Announcements" }),
+            serde_json::json!({ "room_id": 5, "room_name": "Announcements" }),
+            serde_json::json!({ "room_id": "not a room id", "room_name": "Announcements" }),
+            serde_json::json!({ "room_id": "!chan:example.org", "room_name": null }),
+        ];
+        let mut timeline = Timeline::new();
+        for (n, marker) in bad_markers.iter().enumerate() {
+            let id = format!("$bad{n}:example.org");
+            let event = raw_event(
+                &id,
+                "m.room.message",
+                "@alice:example.org",
+                n as i64,
+                serde_json::json!({ "msgtype": "m.text", "body": "still readable", "org.mylittlechart.forwarded_from": marker }),
+            );
+            timeline.apply_timeline_batch(&[event], false, None);
+            let item = timeline.item_by_event_id(&event_id(&id)).expect("the event still decodes");
+            assert_eq!(item.forwarded, None, "malformed marker {marker} is ignored");
+            assert!(matches!(item.content, ItemContent::Text(_)), "the message itself is untouched by a bad marker");
+        }
+
+        // A bad `forwarded_from` does not mask a well-formed `forwarded: true`
+        // next to it: the safe reading (no origin shown) still applies.
+        let both = raw_event(
+            "$both:example.org",
+            "m.room.message",
+            "@alice:example.org",
+            99,
+            serde_json::json!({
+                "msgtype": "m.text",
+                "body": "x",
+                "org.mylittlechart.forwarded": true,
+                "org.mylittlechart.forwarded_from": "garbage",
+            }),
+        );
+        timeline.apply_timeline_batch(&[both], false, None);
+        assert_eq!(timeline.item_by_event_id(&event_id("$both:example.org")).expect("present").forwarded, Some(Forwarded::Hidden));
     }
 
     #[test]

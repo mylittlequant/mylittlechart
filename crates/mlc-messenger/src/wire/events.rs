@@ -335,12 +335,15 @@ fn default_rotation_period_msgs() -> i64 {
     100
 }
 
-/// `m.room.create` content (room version 11: the creator is listed here
-/// rather than implicit — research doc §1.2).
+/// `m.room.create` content. Room version 11 dropped the `creator` field (the
+/// creator is the event's own sender), and `mylittlechart-server` creates
+/// version-11 rooms, so `creator` is optional: a required field made every
+/// `/sync` that carried a create event fail to decode (live run, 2026-09-29).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RoomCreateContent {
-    /// The room's creator.
-    pub creator: UserId,
+    /// The room's creator, only present on pre-v11 rooms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creator: Option<UserId>,
     /// The room version this room was created with.
     #[serde(default = "default_room_version")]
     pub room_version: String,
@@ -1033,6 +1036,18 @@ pub struct ReceiptContent(pub BTreeMap<EventId, BTreeMap<String, BTreeMap<UserId
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn room_create_content_decodes_without_a_creator_field() {
+        // Room version 11 (what `mylittlechart-server` creates) has no
+        // `creator`; the pre-v11 shape still decodes too.
+        let v11: RoomCreateContent = serde_json::from_value(serde_json::json!({ "room_version": "11" })).expect("v11 create content decodes");
+        assert_eq!(v11.creator, None);
+        assert_eq!(v11.room_version, "11");
+        let v10: RoomCreateContent =
+            serde_json::from_value(serde_json::json!({ "creator": "@a:example.org", "room_version": "10" })).expect("v10 create content decodes");
+        assert_eq!(v10.creator.as_ref().map(UserId::as_str), Some("@a:example.org"));
+    }
 
     #[test]
     fn parses_relates_to_annotation_replace_thread() {

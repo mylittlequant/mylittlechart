@@ -30,9 +30,9 @@ mod support;
 use mlc_messenger::store::InsecurePlainCodecForTests;
 use mlc_messenger::wire::{Membership, RoomMessageContent, TagContent};
 use mlc_messenger::{
-    CoreConfig, CoreSecrets, CreateRoomKind, DeviceId, EditRecord, ItemContent, Jitter, MessageKind, MessengerCommand,
-    MessengerCore, MessengerEvent, OutgoingMessage, OutgoingRequestKind, RecordKey, RoomId, SealedRecord, SendState,
-    TimelineItem, TxnId, UserId,
+    CoreConfig, CoreSecrets, CreateRoomKind, DeviceId, EditRecord, Forwarded, ItemContent, Jitter, MessageKind,
+    MessengerCommand, MessengerCore, MessengerEvent, OutgoingMessage, OutgoingRequestKind, RecordKey, RoomId,
+    SealedRecord, SendState, TimelineItem, TxnId, UserId,
 };
 use std::collections::BTreeMap;
 use support::fake_server::FakeServer;
@@ -628,4 +628,161 @@ fn e2e_restart_between_encrypt_and_send_resends_the_same_ciphertext() {
         resent_body, original_body,
         "a restart resends byte-identical ciphertext -- the flush-before-send barrier already made it durable before the crash"
     );
+}
+
+/// Has `a` create a private group inviting `b`, and drives both until `b` has
+/// joined. Returns the group's id (the one room `a` did not know before).
+fn create_group(a: &mut Device, b: &mut Device, server: &mut FakeServer, name: &str) -> RoomId {
+    let known: Vec<RoomId> = a.core.room_ids().cloned().collect();
+    let kind = CreateRoomKind::Group { name: name.to_string(), invite: vec![b.user_id.clone()], members_can_invite: true };
+    a.core.dispatch(MessengerCommand::CreateRoom { kind }, 0).expect("dispatch create_room");
+    a.drive_until(server, 0, "create_group: alice's own group appears", |core| core.room_ids().any(|id| !known.contains(id)));
+    let room_id = a.core.room_ids().find(|id| !known.contains(id)).cloned().expect("the new group is present");
+
+    b.drive_until(server, 0, "create_group: bob sees the invite", |core| core.room_ids().any(|id| id == &room_id));
+    b.core.dispatch(MessengerCommand::JoinRoom { room_id: room_id.clone() }, 0).expect("dispatch join_room");
+    let b_user_id = b.user_id.clone();
+    b.drive_until(server, 0, "create_group: bob's own join lands", |core| is_joined(core, &room_id, &b_user_id));
+    room_id
+}
+
+fn sticker_item<'a>(core: &'a TestCore, room_id: &RoomId) -> Option<&'a TimelineItem> {
+    core.timeline(room_id)?.items().iter().find(|item| matches!(item.content, ItemContent::Sticker { .. }))
+}
+
+#[test]
+fn e2e_send_sticker_in_encrypted_room_encrypts_inner_m_sticker() {
+    let mut server = FakeServer::new();
+    let mut alice = Device::new("alice", "ALICE1");
+    let mut bob = Device::new("bob", "BOB1");
+    let room_id = create_dm(&mut alice, &mut bob, &mut server);
+
+    alice
+        .core
+        .dispatch(
+            MessengerCommand::SendSticker {
+                room_id: room_id.clone(),
+                pack: "trader".to_string(),
+                id: "bull".to_string(),
+                alt: "Bull market".to_string(),
+                txn_id: None,
+            },
+            0,
+        )
+        .expect("dispatch send_sticker");
+    alice.drive_until(&mut server, 0, "alice's sticker reaches Sent", |core| {
+        sticker_item(core, &room_id).is_some_and(|item| item.send_state == SendState::Sent)
+    });
+
+    // On the wire: an ordinary Megolm envelope -- neither the inner type nor
+    // any sticker field is in the clear.
+    let (path, body) = server.last_room_send().expect("the sticker's own RoomSend was captured");
+    assert!(path.contains("/send/m.room.encrypted/"), "the outer type is m.room.encrypted: {path}");
+    let wire = body.to_string();
+    assert!(body.get("ciphertext").is_some(), "the body is a Megolm envelope: {wire}");
+    for clear in ["m.sticker", "mlc-sticker", "Bull market", "trader"] {
+        assert!(!wire.contains(clear), "{clear:?} must not be readable on the wire: {wire}");
+    }
+
+    // Bob decrypts the inner m.sticker into a sticker item.
+    bob.drive_until(&mut server, 0, "bob receives the sticker", |core| sticker_item(core, &room_id).is_some());
+    let item = sticker_item(&bob.core, &room_id).expect("sticker present");
+    assert_eq!(
+        item.content,
+        ItemContent::Sticker { pack: "trader".to_string(), id: "bull".to_string(), alt: "Bull market".to_string() }
+    );
+    assert_eq!(item.event_type, "m.room.encrypted", "the envelope stays m.room.encrypted; the sticker type was inside");
+    assert_eq!(item.sender, alice.user_id);
+}
+
+#[test]
+fn e2e_forward_from_encrypted_dm_into_group_arrives_decrypted_with_hidden_marker() {
+    let mut server = FakeServer::new();
+    let mut alice = Device::new("alice", "ALICE1");
+    let mut bob = Device::new("bob", "BOB1");
+    let dm = create_dm(&mut alice, &mut bob, &mut server);
+    let group = create_group(&mut alice, &mut bob, &mut server, "trio");
+    assert!(alice.core.room_state(&group).expect("group present").encryption.is_some(), "a group is encrypted");
+
+    // Bob says something private to alice in the DM; alice forwards it on.
+    bob.core
+        .dispatch(MessengerCommand::SendMessage { room_id: dm.clone(), message: text_message("meet at noon"), txn_id: None }, 0)
+        .expect("dispatch send_message");
+    bob.drive_until(&mut server, 0, "bob's DM message reaches Sent", |core| {
+        find_by_body(core, &dm, "meet at noon").send_state == SendState::Sent
+    });
+    alice.drive_until(&mut server, 0, "alice decrypts bob's DM message", |core| has_body(core, &dm, "meet at noon"));
+    let source = find_by_body(&alice.core, &dm, "meet at noon").event_id.clone().expect("a received event has an id");
+
+    alice
+        .core
+        .dispatch(
+            MessengerCommand::Forward { from_room: dm.clone(), event_id: source, to_room: group.clone(), txn_id: None },
+            0,
+        )
+        .expect("dispatch forward");
+    alice.drive_until(&mut server, 0, "alice's forward reaches Sent", |core| {
+        core.timeline(&group).is_some_and(|timeline| {
+            timeline.items().iter().any(|item| item.forwarded == Some(Forwarded::Hidden) && item.send_state == SendState::Sent)
+        })
+    });
+
+    // The group event on the server is ciphertext only: no text, no marker.
+    let (path, body) = server.last_room_send().expect("the forward's own RoomSend was captured");
+    assert!(path.contains("/send/m.room.encrypted/"), "a forward into an encrypted room is encrypted: {path}");
+    let wire = body.to_string();
+    for clear in ["meet at noon", "org.mylittlechart", "forwarded"] {
+        assert!(!wire.contains(clear), "{clear:?} must not be readable on the wire: {wire}");
+    }
+
+    // Bob opens it in the group: the text, marked as forwarded, sent by the
+    // forwarder -- and nothing about where it came from.
+    bob.drive_until(&mut server, 0, "bob receives the forward in the group", |core| has_body(core, &group, "meet at noon"));
+    let item = find_by_body(&bob.core, &group, "meet at noon");
+    assert_eq!(item.forwarded, Some(Forwarded::Hidden));
+    assert_eq!(item.sender, alice.user_id, "the group sees the forwarder as the sender");
+    assert_eq!(item_body(item), Some("meet at noon"));
+}
+
+#[test]
+fn e2e_forward_from_public_channel_names_the_channel_for_the_recipient() {
+    let mut server = FakeServer::new();
+    let mut alice = Device::new("alice", "ALICE1");
+    let mut bob = Device::new("bob", "BOB1");
+    alice.bootstrap(&mut server);
+    bob.bootstrap(&mut server);
+
+    let kind = CreateRoomKind::Channel { name: "announcements".to_string(), topic: None };
+    alice.core.dispatch(MessengerCommand::CreateRoom { kind }, 0).expect("dispatch create_room");
+    alice.drive_until(&mut server, 0, "alice's own channel appears", |core| core.room_ids().next().is_some());
+    let channel = alice.core.room_ids().next().cloned().expect("channel present");
+    alice
+        .core
+        .dispatch(MessengerCommand::SendMessage { room_id: channel.clone(), message: text_message("big news"), txn_id: None }, 0)
+        .expect("dispatch send_message");
+    alice.drive_until(&mut server, 0, "alice's channel post reaches Sent", |core| {
+        find_by_body(core, &channel, "big news").send_state == SendState::Sent
+    });
+    let source = find_by_body(&alice.core, &channel, "big news").event_id.clone().expect("event id assigned on Sent");
+
+    let group = create_group(&mut alice, &mut bob, &mut server, "trio");
+    alice
+        .core
+        .dispatch(
+            MessengerCommand::Forward { from_room: channel.clone(), event_id: source, to_room: group.clone(), txn_id: None },
+            0,
+        )
+        .expect("dispatch forward");
+    alice.drive_until(&mut server, 0, "alice's forward reaches Sent", |core| {
+        find_by_body(core, &group, "big news").send_state == SendState::Sent
+    });
+    bob.drive_until(&mut server, 0, "bob receives the forward in the group", |core| has_body(core, &group, "big news"));
+
+    let item = find_by_body(&bob.core, &group, "big news");
+    assert_eq!(
+        item.forwarded,
+        Some(Forwarded::Channel { room_id: channel, room_name: "announcements".to_string() }),
+        "a public channel's own name is shown, taken from the source room's current state"
+    );
+    assert_eq!(item.sender, alice.user_id);
 }

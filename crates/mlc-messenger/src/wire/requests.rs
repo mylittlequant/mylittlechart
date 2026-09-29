@@ -142,7 +142,7 @@ pub enum OutgoingRequestKind {
     RoomMembers,
     /// `POST /createRoom` — create a room.
     CreateRoom,
-    /// `POST /join/{roomIdOrAlias}` — join a room.
+    /// `POST /rooms/{roomId}/join` — join a room by id.
     JoinRoom,
     /// `POST /rooms/{roomId}/leave` — leave a room.
     LeaveRoom,
@@ -458,10 +458,13 @@ impl OutgoingRequest {
         }
     }
 
-    /// `POST /_matrix/client/v3/join/{roomIdOrAlias}`.
-    pub fn join_room(id: RequestId, room_id_or_alias: &str) -> Self {
-        const PATH_TEMPLATE: &str = "/_matrix/client/v3/join/{room_id_or_alias}";
-        let path = substitute(PATH_TEMPLATE, &[("{room_id_or_alias}", room_id_or_alias)]);
+    /// `POST /_matrix/client/v3/rooms/{roomId}/join`. This crate only ever
+    /// joins by room id, and `mylittlechart-server` mounts exactly this form
+    /// (it has no room aliases, so no `/join/{roomIdOrAlias}` -- a live run
+    /// on 2026-09-29 got `404 M_UNRECOGNIZED` from that one).
+    pub fn join_room(id: RequestId, room_id: &str) -> Self {
+        const PATH_TEMPLATE: &str = "/_matrix/client/v3/rooms/{room_id}/join";
+        let path = substitute(PATH_TEMPLATE, &[("{room_id}", room_id)]);
         Self {
             id,
             method: HttpMethod::Post,
