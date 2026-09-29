@@ -192,6 +192,10 @@ pub struct OutboundSessionUpdate {
     /// `true` iff this call created a brand-new session (either none
     /// existed yet, or a rotation trigger fired).
     pub rotated: bool,
+    /// The session's key at its current message index (base64
+    /// `SessionKey`): what [`GroupSessionManager::adopt_own_outbound_session`]
+    /// turns into this device's own inbound copy of a just-created session.
+    pub session_key: String,
     /// Recipients that have never been shared this session
     /// (`shared_with`, before this call) and must now receive
     /// `room_key_content` over Olm to-device. Empty when nothing changed.
@@ -570,6 +574,7 @@ impl GroupSessionManager {
             .collect();
 
         let session_id = group_session.session_id();
+        let session_key = group_session.session_key().to_base64();
         let room_key_content = if new_recipients.is_empty() {
             None
         } else {
@@ -580,7 +585,7 @@ impl GroupSessionManager {
                 algorithm: MEGOLM_ALGORITHM.to_string(),
                 room_id: room_id.clone(),
                 session_id: session_id.clone(),
-                session_key: group_session.session_key().to_base64(),
+                session_key: session_key.clone(),
             })
         };
 
@@ -592,7 +597,35 @@ impl GroupSessionManager {
             store.save_outbound_group_session(room_id, bytes)?;
         }
 
-        Ok(OutboundSessionUpdate { session_id, rotated, new_recipients, room_key_content })
+        Ok(OutboundSessionUpdate { session_id, rotated, session_key, new_recipients, room_key_content })
+    }
+
+    /// Registers a session [`GroupSessionManager::ensure_outbound_session`]
+    /// just created (`update.rotated`) as an INBOUND session of this device
+    /// itself, bound to `our_user_id`/`our_curve25519`/`our_ed25519`. The
+    /// room's echo of a message this device sent is ciphertext like any
+    /// other event, and no session key is ever Olm-shared to its own creator,
+    /// so without this copy every message's author would see their own
+    /// message come back as [`UtdReason::MissingSession`]. A no-op when the
+    /// update did not rotate (the copy already exists from the rotation).
+    pub fn adopt_own_outbound_session<S: CryptoStore>(
+        store: &mut S,
+        room_id: &RoomId,
+        our_user_id: &UserId,
+        our_curve25519: Curve25519PublicKey,
+        our_ed25519: Ed25519PublicKey,
+        update: &OutboundSessionUpdate,
+    ) -> Result<(), MessengerError> {
+        if !update.rotated {
+            return Ok(());
+        }
+        let content = RoomKeyContent {
+            algorithm: MEGOLM_ALGORITHM.to_string(),
+            room_id: room_id.clone(),
+            session_id: update.session_id.clone(),
+            session_key: update.session_key.clone(),
+        };
+        Self::receive_room_key(store, our_user_id, our_curve25519, our_ed25519, &content)
     }
 
     /// Encrypts one room event under `room_id`'s current outbound Megolm
@@ -1371,5 +1404,50 @@ mod tests {
             serde_json::from_slice(&old_bytes).expect("a record without `backed_up` at all still deserializes");
         assert_eq!(record.backed_up, None);
         assert_eq!(record.bound_user_id, alice);
+    }
+
+    #[test]
+    fn the_author_decrypts_their_own_message_only_through_the_adopted_outbound_session() {
+        let mut store = new_store();
+        let room_id = room("r");
+        let alice = user("alice");
+        let alice_dev = device("ALICEDEV");
+        let members: BTreeSet<UserId> = [alice.clone()].into_iter().collect();
+        let identity = Account::new().identity_keys();
+        let event_id = EventId::parse("$own:example.org").expect("valid event id");
+
+        let update =
+            GroupSessionManager::ensure_outbound_session(&mut store, &room_id, &alice, &alice_dev, &default_encryption(), &members, &[], 0)
+                .expect("create session");
+        assert!(update.rotated);
+        let encrypted = GroupSessionManager::encrypt_event(
+            &mut store,
+            &room_id,
+            &identity.curve25519.to_base64(),
+            &alice_dev,
+            "m.room.message",
+            serde_json::json!({ "body": "mine" }),
+            None,
+        )
+        .expect("encrypt");
+
+        // The server echoes the ciphertext back; nothing ever shared the
+        // session key to its own creator, so it is undecryptable until adopted.
+        let before = GroupSessionManager::decrypt_event(&mut store, &room_id, &event_id, 1, &alice, &encrypted);
+        assert!(matches!(before, Err(GroupDecryptError::MissingSession { .. })), "got {before:?}");
+
+        GroupSessionManager::adopt_own_outbound_session(&mut store, &room_id, &alice, identity.curve25519, identity.ed25519, &update)
+            .expect("adopt");
+        let plaintext = GroupSessionManager::decrypt_event(&mut store, &room_id, &event_id, 1, &alice, &encrypted).expect("the author decrypts");
+        assert_eq!(plaintext.content, serde_json::json!({ "body": "mine" }));
+
+        // A later call that did not rotate must not touch the adopted copy.
+        let again =
+            GroupSessionManager::ensure_outbound_session(&mut store, &room_id, &alice, &alice_dev, &default_encryption(), &members, &[], 1)
+                .expect("re-check");
+        assert!(!again.rotated);
+        GroupSessionManager::adopt_own_outbound_session(&mut store, &room_id, &alice, identity.curve25519, identity.ed25519, &again)
+            .expect("no-op");
+        GroupSessionManager::decrypt_event(&mut store, &room_id, &event_id, 1, &alice, &encrypted).expect("still decrypts");
     }
 }

@@ -1363,6 +1363,15 @@ impl<C: RecordCodec> MessengerCore<C> {
             &known_devices,
             now_ms,
         )?;
+        let own_keys = self.account.identity_keys();
+        GroupSessionManager::adopt_own_outbound_session(
+            &mut self.store,
+            room_id,
+            &self.config.user_id,
+            own_keys.curve25519,
+            own_keys.ed25519,
+            &update,
+        )?;
 
         if let Some(room_key_content) = update.room_key_content.clone() {
             let missing_ids: BTreeSet<(UserId, DeviceId)> = OlmSessionManager::sessions_missing_for(&self.store, &update.new_recipients)?
