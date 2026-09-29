@@ -115,7 +115,7 @@ use crate::crypto::olm_sessions::{OlmDecryptError, OlmSessionManager};
 use crate::error::MessengerError;
 use crate::ids::{DeviceId, EventId, RequestId, RoomId, TxnId, UserId};
 use crate::legacy_dm::{self, LegacyDmOutcome};
-use crate::outgoing_queue::{Jitter, Lane, OutgoingQueue, ResponseOutcome};
+use crate::outgoing_queue::{Jitter, Lane, OutgoingQueue, PendingRequest, ResponseOutcome};
 use crate::persist::{FlushBatch, SealedRecord};
 use crate::room::state::RoomState;
 use crate::room::timeline::{interpret_content, ItemContent, SendState, Timeline};
@@ -128,7 +128,7 @@ use crate::wire::events::{
     ToDeviceEvent, TypingContent, Unsigned,
 };
 use crate::wire::sync::{parse_sync_response, InvitedRoom, JoinedRoom, LeftRoom};
-use crate::wire::{HttpResponseDescriptor, OutgoingRequest, OutgoingRequestKind};
+use crate::wire::{percent_decode_segment, HttpResponseDescriptor, OutgoingRequest, OutgoingRequestKind};
 use mlc_vault::dm::DmIdentity;
 use mlc_vault::messenger::MessengerSecrets;
 use mlc_vault::VaultKey;
@@ -491,6 +491,51 @@ pub enum MessengerCommand {
         /// The room to page further back into.
         room_id: RoomId,
     },
+    /// Sets one piece of this account's own global account data (`PUT
+    /// /user/{userId}/account_data/{type}`) -- optimistically applied to
+    /// [`MessengerCore::global_account_data`] in the same call (this
+    /// module's own doc: the account-data endpoint replaces the whole
+    /// value, so there is nothing to merge).
+    SetAccountData {
+        /// The account-data type being set (e.g.
+        /// `"org.mylittlechart.folders"`).
+        event_type: String,
+        /// The full new value.
+        content: serde_json::Value,
+    },
+    /// Sets one piece of `room_id`'s own room-scoped account data (`PUT
+    /// /user/{userId}/rooms/{roomId}/account_data/{type}`) -- optimistically
+    /// applied to [`MessengerCore::room_account_data`] in the same call.
+    /// [`MessengerCommand::SetTag`]/`RemoveTag` are the `"m.tag"`-specific
+    /// counterpart to this general command and behave the same way. Every
+    /// account-data write travels on [`crate::outgoing_queue::Lane::
+    /// AccountData`]: strictly FIFO, one in flight, so two writes to the
+    /// same key can neither race nor land out of order.
+    SetRoomAccountData {
+        /// The room the account data is scoped to.
+        room_id: RoomId,
+        /// The account-data type being set (e.g.
+        /// `"org.mylittlechart.muted"`).
+        event_type: String,
+        /// The full new value.
+        content: serde_json::Value,
+    },
+    /// Searches the public-room directory (`POST /publicRooms`). The
+    /// latest result set is read back through
+    /// [`MessengerCore::public_rooms_result`]; a response to a search
+    /// superseded by a later one is dropped (this module's own doc).
+    SearchPublicRooms {
+        /// The search term.
+        term: String,
+    },
+    /// Searches the user directory (`POST /user_directory/search`). The
+    /// latest result set is read back through
+    /// [`MessengerCore::user_search_result`]; same supersession rule as
+    /// [`MessengerCommand::SearchPublicRooms`].
+    SearchUsers {
+        /// The search term.
+        term: String,
+    },
 }
 
 /// One user-visible change a shell/adapter should re-read from a snapshot
@@ -532,6 +577,14 @@ pub enum MessengerEvent {
         /// The device whose keys changed.
         device_id: DeviceId,
     },
+    /// [`MessengerCore::public_rooms_result`] changed (a
+    /// [`MessengerCommand::SearchPublicRooms`] response landed and was not
+    /// superseded).
+    PublicRoomsChanged,
+    /// [`MessengerCore::user_search_result`] changed (a
+    /// [`MessengerCommand::SearchUsers`] response landed and was not
+    /// superseded).
+    UserSearchChanged,
 }
 
 /// One Megolm room event this core could not decrypt yet, kept so a later
@@ -583,6 +636,63 @@ struct SendResponseBody {
 #[derive(Deserialize)]
 struct CreateRoomResponseBody {
     room_id: RoomId,
+}
+
+/// One row of a `POST /publicRooms` result -- read back through
+/// [`MessengerCore::public_rooms_result`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct PublicRoomsResultEntry {
+    /// The room's own id.
+    pub room_id: RoomId,
+    /// The room's display name, if it set one.
+    pub name: Option<String>,
+    /// The room's topic, if it set one.
+    pub topic: Option<String>,
+    /// The room's own joined-member count.
+    pub num_joined_members: u64,
+}
+
+/// `POST /publicRooms`'s own response shape — the parts this module reads.
+#[derive(Deserialize)]
+struct PublicRoomsResponseBody {
+    #[serde(default)]
+    chunk: Vec<PublicRoomsChunkEntry>,
+}
+
+#[derive(Deserialize)]
+struct PublicRoomsChunkEntry {
+    room_id: RoomId,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    topic: Option<String>,
+    #[serde(default)]
+    num_joined_members: u64,
+}
+
+/// One row of a `POST /user_directory/search` result -- read back through
+/// [`MessengerCore::user_search_result`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserDirectoryResultEntry {
+    /// The user's own id.
+    pub user_id: UserId,
+    /// The user's display name, if they set one.
+    pub display_name: Option<String>,
+}
+
+/// `POST /user_directory/search`'s own response shape — the parts this
+/// module reads.
+#[derive(Deserialize)]
+struct UserDirectorySearchResponseBody {
+    #[serde(default)]
+    results: Vec<UserDirectorySearchResultEntry>,
+}
+
+#[derive(Deserialize)]
+struct UserDirectorySearchResultEntry {
+    user_id: UserId,
+    #[serde(default)]
+    display_name: Option<String>,
 }
 
 /// One room-scoped send's own content, before it is turned into wire bytes
@@ -696,6 +806,49 @@ struct PendingSend {
     wire: Option<WireSend>,
 }
 
+/// One account-data slot: `(room, event type)`; `None` is this account's own
+/// global account data.
+type AccountDataKey = (Option<RoomId>, String);
+
+/// Bookkeeping for one [`AccountDataKey`] that has account-data writes
+/// queued or in flight (an entry exists only while `pending > 0`).
+///
+/// A write updates the cached value optimistically. Without this guard a
+/// `/sync` that echoes an OLDER write of the same key would overwrite that
+/// optimistic value, and the next edit would build on the stale copy and
+/// silently drop a change. While writes are outstanding, `/sync` only
+/// records what the server reports (`server_value`); the optimistic cache
+/// stays authoritative. When the last write settles: a success keeps the
+/// optimistic value (it is what the server now holds; the next sync
+/// confirms it), a terminal failure restores `server_value`.
+struct AccountDataGuard {
+    /// Writes for this key queued or in flight.
+    pending: u32,
+    /// The last value the server is known to hold for the key: whatever
+    /// the cache held when the first outstanding write was made, then
+    /// whatever `/sync` reported since. `None`: nothing known (never seen).
+    server_value: Option<serde_json::Value>,
+}
+
+/// The `(room, event type)` an account-data PUT `path` writes, or `None` if
+/// `path` is not an account-data path.
+fn account_data_key_from_path(path: &str) -> Option<AccountDataKey> {
+    let segments: Vec<&str> = path.split('/').collect();
+    let n = segments.len();
+    if n < 4 || segments[n - 2] != "account_data" {
+        return None;
+    }
+    let event_type = percent_decode_segment(segments[n - 1])?;
+    if segments[n - 4] == "user" {
+        return Some((None, event_type));
+    }
+    if n >= 6 && segments[n - 4] == "rooms" && segments[n - 6] == "user" {
+        let room_id = RoomId::parse(percent_decode_segment(segments[n - 3])?).ok()?;
+        return Some((Some(room_id), event_type));
+    }
+    None
+}
+
 /// The single-writer kernel — see this module's own doc.
 pub struct MessengerCore<C: RecordCodec> {
     config: CoreConfig,
@@ -713,6 +866,28 @@ pub struct MessengerCore<C: RecordCodec> {
     room_account_data: BTreeMap<RoomId, BTreeMap<String, serde_json::Value>>,
     typing: BTreeMap<RoomId, Vec<UserId>>,
     receipts: BTreeMap<RoomId, ReceiptContent>,
+
+    /// The latest [`MessengerCommand::SearchPublicRooms`] result set, read
+    /// back through [`MessengerCore::public_rooms_result`].
+    public_rooms_result: Vec<PublicRoomsResultEntry>,
+    /// The [`RequestId`] of the most recently dispatched
+    /// [`MessengerCommand::SearchPublicRooms`] -- a response naming any
+    /// other id is a superseded search and is dropped (this module's own
+    /// doc).
+    latest_public_rooms_request: Option<RequestId>,
+    /// The latest [`MessengerCommand::SearchUsers`] result set, read back
+    /// through [`MessengerCore::user_search_result`].
+    user_search_result: Vec<UserDirectoryResultEntry>,
+    /// Same supersession tracking as `latest_public_rooms_request`, for
+    /// [`MessengerCommand::SearchUsers`].
+    latest_user_search_request: Option<RequestId>,
+
+    /// Keys with account-data writes outstanding -- see
+    /// [`AccountDataGuard`]. In-memory only: rebuilt at
+    /// [`MessengerCore::open`] from the persisted request queue.
+    account_data_guard: BTreeMap<AccountDataKey, AccountDataGuard>,
+    /// Which key each outstanding account-data write belongs to.
+    account_data_write_keys: BTreeMap<RequestId, AccountDataKey>,
 
     pending_decrypt: BTreeMap<RoomId, BTreeMap<EventId, PendingDecryptItem>>,
     /// Every `org.mylittlechart.legacy_dm` item currently waiting on a
@@ -821,7 +996,7 @@ impl<C: RecordCodec> MessengerCore<C> {
             store.save_counters(counters)?;
         }
 
-        Ok(Self {
+        let mut core = Self {
             config,
             secrets,
             store,
@@ -836,6 +1011,12 @@ impl<C: RecordCodec> MessengerCore<C> {
             room_account_data: BTreeMap::new(),
             typing: BTreeMap::new(),
             receipts: BTreeMap::new(),
+            public_rooms_result: Vec::new(),
+            latest_public_rooms_request: None,
+            user_search_result: Vec::new(),
+            latest_user_search_request: None,
+            account_data_guard: BTreeMap::new(),
+            account_data_write_keys: BTreeMap::new(),
             pending_decrypt: BTreeMap::new(),
             pending_legacy_dm: BTreeMap::new(),
             unknown_sender_retry: VecDeque::new(),
@@ -850,7 +1031,32 @@ impl<C: RecordCodec> MessengerCore<C> {
             pending_flush_batches: VecDeque::new(),
             events: Vec::new(),
             change_counter: 0,
-        })
+        };
+        core.rebuild_account_data_guard(&pending_requests);
+        Ok(core)
+    }
+
+    /// Rebuilds [`MessengerCore::account_data_guard`] (and the optimistic
+    /// cache it protects) from account-data writes that were still pending
+    /// when the core last stopped: each persisted request counts as one
+    /// outstanding write for its key, and the newest request's body -- the
+    /// value the server will hold once the queue drains -- is the cached
+    /// value again. The server's own current value is unknown until
+    /// `/sync` reports it.
+    fn rebuild_account_data_guard(&mut self, pending_requests: &[PendingRequest]) {
+        let mut writes: Vec<&PendingRequest> = pending_requests
+            .iter()
+            .filter(|record| matches!(record.request.kind, OutgoingRequestKind::AccountData | OutgoingRequestKind::RoomAccountData))
+            .collect();
+        writes.sort_by(|a, b| a.request.id.cmp(&b.request.id));
+        for record in writes {
+            let Some(key) = account_data_key_from_path(&record.request.path) else { continue };
+            let Some(body) = record.request.body.clone() else { continue };
+            let guard = self.account_data_guard.entry(key.clone()).or_insert(AccountDataGuard { pending: 0, server_value: None });
+            guard.pending += 1;
+            self.store_account_data_cache(&key, Some(body));
+            self.account_data_write_keys.insert(record.request.id.clone(), key);
+        }
     }
 
     /// Mints the next [`RequestId`], persisting the advanced [`Counters`]
@@ -1429,6 +1635,9 @@ impl<C: RecordCodec> MessengerCore<C> {
             }
             self.pending_create_room.remove(&request_id);
             self.send_request_owner.remove(&request_id);
+            if let Some(key) = self.account_data_write_keys.remove(&request_id) {
+                self.settle_account_data_write(&key, terminal_response.is_some());
+            }
         }
 
         if let Some(response) = &terminal_response {
@@ -1438,7 +1647,7 @@ impl<C: RecordCodec> MessengerCore<C> {
             // never advancing past a partially-applied `/sync` -- already
             // holds structurally, since `ingest_sync` only persists the
             // new sync token as its very last step.
-            let _ = self.handle_terminal_success(kind, room_messages_room, create_room_kind, response);
+            let _ = self.handle_terminal_success(&request_id, kind, room_messages_room, create_room_kind, response);
         }
 
         if let Some(txn_id) = send_owner {
@@ -1462,6 +1671,7 @@ impl<C: RecordCodec> MessengerCore<C> {
 
     fn handle_terminal_success(
         &mut self,
+        request_id: &RequestId,
         kind: Option<OutgoingRequestKind>,
         room_messages_room: Option<RoomId>,
         create_room_kind: Option<CreateRoomKind>,
@@ -1492,6 +1702,34 @@ impl<C: RecordCodec> MessengerCore<C> {
                     self.on_create_room_response(kind, response)?;
                 }
             }
+            // A response to a search this account has already moved past (a
+            // later `SearchPublicRooms` was dispatched since) fails the
+            // guard and is dropped -- only the LATEST search's own result
+            // set is ever visible (this module's own doc).
+            Some(OutgoingRequestKind::PublicRooms) if self.latest_public_rooms_request.as_ref() == Some(request_id) => {
+                let body: PublicRoomsResponseBody = serde_json::from_slice(&response.body)?;
+                self.public_rooms_result = body
+                    .chunk
+                    .into_iter()
+                    .map(|entry| PublicRoomsResultEntry {
+                        room_id: entry.room_id,
+                        name: entry.name,
+                        topic: entry.topic,
+                        num_joined_members: entry.num_joined_members,
+                    })
+                    .collect();
+                self.emit(MessengerEvent::PublicRoomsChanged);
+            }
+            // Same supersession rule as `PublicRooms` above.
+            Some(OutgoingRequestKind::UserDirectorySearch) if self.latest_user_search_request.as_ref() == Some(request_id) => {
+                let body: UserDirectorySearchResponseBody = serde_json::from_slice(&response.body)?;
+                self.user_search_result = body
+                    .results
+                    .into_iter()
+                    .map(|entry| UserDirectoryResultEntry { user_id: entry.user_id, display_name: entry.display_name })
+                    .collect();
+                self.emit(MessengerEvent::UserSearchChanged);
+            }
             _ => {}
         }
         Ok(())
@@ -1505,19 +1743,116 @@ impl<C: RecordCodec> MessengerCore<C> {
     fn on_create_room_response(&mut self, kind: CreateRoomKind, response: &HttpResponseDescriptor) -> Result<(), MessengerError> {
         let CreateRoomKind::Dm { peer } = kind else { return Ok(()) };
         let body: CreateRoomResponseBody = serde_json::from_slice(&response.body)?;
+        self.merge_direct_account_data(body.room_id, peer)
+    }
 
+    /// Merges `room_id` into this account's own `m.direct` account data
+    /// under `peer`, optimistically, then sends the full updated value
+    /// (the account-data endpoint replaces the whole value, same as
+    /// [`MessengerCore::enqueue_tag_update`]'s own doc). Shared by
+    /// [`MessengerCore::on_create_room_response`] (the CREATOR side of a
+    /// [`CreateRoomKind::Dm`]) and [`MessengerCommand::JoinRoom`]'s own
+    /// dispatch arm (the INVITEE side, this module's own doc: a DM
+    /// invite's `is_direct` flag is not carried forward once THIS
+    /// account's own join overwrites that membership event, so `m.direct`
+    /// is the only durable "this is a DM" signal this account keeps of
+    /// its own past that point).
+    fn merge_direct_account_data(&mut self, room_id: RoomId, peer: UserId) -> Result<(), MessengerError> {
         let mut direct = self.direct_account_data.clone().unwrap_or_default();
         let rooms_for_peer = direct.0.entry(peer).or_default();
-        if !rooms_for_peer.contains(&body.room_id) {
-            rooms_for_peer.push(body.room_id);
+        if !rooms_for_peer.contains(&room_id) {
+            rooms_for_peer.push(room_id);
         }
-        self.direct_account_data = Some(direct.clone());
-
-        let request_id = self.next_request_id()?;
         let value = serde_json::to_value(&direct)?;
-        let request = OutgoingRequest::account_data(request_id, &self.config.user_id, "m.direct", value);
-        self.enqueue_request(request, Lane::Other)?;
-        Ok(())
+        self.write_account_data(None, "m.direct".to_string(), value)
+    }
+
+    fn cached_account_data(&self, key: &AccountDataKey) -> Option<&serde_json::Value> {
+        match &key.0 {
+            Some(room_id) => self.room_account_data(room_id, &key.1),
+            None => self.global_account_data(&key.1),
+        }
+    }
+
+    /// Sets (`Some`) or removes (`None`) the cached value for `key`,
+    /// keeping the typed `m.direct` view in step with it.
+    fn store_account_data_cache(&mut self, key: &AccountDataKey, value: Option<serde_json::Value>) {
+        if key.0.is_none() && key.1 == "m.direct" {
+            self.direct_account_data = value.as_ref().and_then(|v| serde_json::from_value::<DirectContent>(v.clone()).ok());
+        }
+        match (&key.0, value) {
+            (None, Some(v)) => {
+                self.global_account_data.insert(key.1.clone(), v);
+            }
+            (None, None) => {
+                self.global_account_data.remove(&key.1);
+            }
+            (Some(room_id), Some(v)) => {
+                self.room_account_data.entry(room_id.clone()).or_default().insert(key.1.clone(), v);
+            }
+            (Some(room_id), None) => {
+                if let Some(by_type) = self.room_account_data.get_mut(room_id) {
+                    by_type.remove(&key.1);
+                }
+            }
+        }
+    }
+
+    /// The one path every account-data write takes: builds the PUT, applies
+    /// `value` to the cache optimistically (the next edit builds on it),
+    /// guards the key against stale `/sync` echoes for as long as the
+    /// write is outstanding ([`AccountDataGuard`]), and queues it on the
+    /// strictly ordered [`Lane::AccountData`].
+    fn write_account_data(&mut self, room_id: Option<RoomId>, event_type: String, value: serde_json::Value) -> Result<(), MessengerError> {
+        let request_id = self.next_request_id()?;
+        let request = match &room_id {
+            Some(room_id) => OutgoingRequest::room_account_data(request_id.clone(), &self.config.user_id, room_id, &event_type, value.clone()),
+            None => OutgoingRequest::account_data(request_id.clone(), &self.config.user_id, &event_type, value.clone()),
+        };
+        let key: AccountDataKey = (room_id, event_type);
+        let known = self.cached_account_data(&key).cloned();
+        let guard = self.account_data_guard.entry(key.clone()).or_insert(AccountDataGuard { pending: 0, server_value: known });
+        guard.pending += 1;
+        self.store_account_data_cache(&key, Some(value));
+        match self.enqueue_request(request, Lane::AccountData) {
+            Ok(()) => {
+                self.account_data_write_keys.insert(request_id, key);
+                Ok(())
+            }
+            Err(error) => {
+                self.settle_account_data_write(&key, false);
+                Err(error)
+            }
+        }
+    }
+
+    /// One outstanding write for `key` reached its end (`succeeded`: a 2xx;
+    /// otherwise a terminal failure). Once the last one settles, a failure
+    /// restores the server's value over the now-wrong optimistic cache and
+    /// tells the UI to re-render; a success keeps the optimistic value.
+    fn settle_account_data_write(&mut self, key: &AccountDataKey, succeeded: bool) {
+        let Some(guard) = self.account_data_guard.get_mut(key) else { return };
+        guard.pending = guard.pending.saturating_sub(1);
+        if guard.pending > 0 {
+            return;
+        }
+        let Some(guard) = self.account_data_guard.remove(key) else { return };
+        if !succeeded {
+            self.store_account_data_cache(key, guard.server_value);
+            self.emit(MessengerEvent::RoomsChanged);
+        }
+    }
+
+    /// Folds one account-data event `/sync` reported into the cache -- or,
+    /// while writes for the same key are outstanding, only into that key's
+    /// [`AccountDataGuard::server_value`].
+    fn apply_synced_account_data(&mut self, room_id: Option<&RoomId>, event_type: &str, content: serde_json::Value) {
+        let key: AccountDataKey = (room_id.cloned(), event_type.to_string());
+        if let Some(guard) = self.account_data_guard.get_mut(&key) {
+            guard.server_value = Some(content);
+            return;
+        }
+        self.store_account_data_cache(&key, Some(content));
     }
 
     /// Drains everything dirtied since the previous call into one
@@ -1588,6 +1923,41 @@ impl<C: RecordCodec> MessengerCore<C> {
         self.room_account_data.get(room_id).and_then(|by_type| by_type.get(event_type))
     }
 
+    /// One piece of this account's own global account data (e.g.
+    /// `"org.mylittlechart.folders"`), if this core has seen one.
+    pub fn global_account_data(&self, event_type: &str) -> Option<&serde_json::Value> {
+        self.global_account_data.get(event_type)
+    }
+
+    /// This account's own user id, exactly as configured at
+    /// [`MessengerCore::open`] -- a UI-facing adapter needs this to tell
+    /// its own account apart from every other room member (a DM's peer, a
+    /// reaction's `by_me`, a typing-user list minus self, ...).
+    pub fn user_id(&self) -> &UserId {
+        &self.config.user_id
+    }
+
+    /// Whether this core currently has at least one verified device on
+    /// file for `user_id` (`/keys/query` results already persisted by
+    /// [`crate::crypto::device_tracker::DeviceTracker`]) -- a UI-facing
+    /// adapter's own "has a messaging key" check for a member list, without
+    /// duplicating that module's storage format.
+    pub fn has_tracked_device(&self, user_id: &UserId) -> bool {
+        DeviceTracker::devices_for_user(&self.store, user_id).map(|devices| !devices.is_empty()).unwrap_or(false)
+    }
+
+    /// The latest [`MessengerCommand::SearchPublicRooms`] result set, empty
+    /// until one has landed.
+    pub fn public_rooms_result(&self) -> &[PublicRoomsResultEntry] {
+        &self.public_rooms_result
+    }
+
+    /// The latest [`MessengerCommand::SearchUsers`] result set, empty until
+    /// one has landed.
+    pub fn user_search_result(&self) -> &[UserDirectoryResultEntry] {
+        &self.user_search_result
+    }
+
     /// The Matrix `errcode` a failed send (`txn_id`) ended with, if
     /// `txn_id` currently names a [`crate::room::timeline::SendState::Failed`]
     /// send this core is still tracking — `None` for a send that never
@@ -1636,6 +2006,23 @@ impl<C: RecordCodec> MessengerCore<C> {
                 let request_id = self.next_request_id()?;
                 let request = OutgoingRequest::join_room(request_id, room_id.as_str());
                 self.enqueue_request(request, Lane::Other)?;
+
+                // A DM invite's `is_direct` flag lives on this account's own
+                // invite membership event and is overwritten by the join
+                // itself, so accepting it records the room in this account's
+                // own `m.direct` (same as the creator side does on
+                // `/createRoom`) -- otherwise the invitee's room kind falls
+                // back to Group once the join lands.
+                let dm_peer = self.rooms.get(&room_id).and_then(|room| {
+                    let invited_as_direct = room.members.get(&self.config.user_id).is_some_and(|member| member.is_direct);
+                    if !invited_as_direct {
+                        return None;
+                    }
+                    room.members.keys().find(|user_id| **user_id != self.config.user_id).cloned()
+                });
+                if let Some(peer) = dm_peer {
+                    self.merge_direct_account_data(room_id, peer)?;
+                }
             }
             MessengerCommand::LeaveRoom { room_id } => {
                 let request_id = self.next_request_id()?;
@@ -1705,6 +2092,26 @@ impl<C: RecordCodec> MessengerCore<C> {
                 self.enqueue_request(request, Lane::Room(room_id.clone()))?;
                 self.pending_room_messages.insert(request_id, room_id);
             }
+            MessengerCommand::SetAccountData { event_type, content } => {
+                self.write_account_data(None, event_type, content)?;
+            }
+            MessengerCommand::SetRoomAccountData { room_id, event_type, content } => {
+                self.write_account_data(Some(room_id), event_type, content)?;
+            }
+            MessengerCommand::SearchPublicRooms { term } => {
+                let request_id = self.next_request_id()?;
+                let body = serde_json::json!({ "filter": { "generic_search_term": term }, "limit": 50 });
+                let request = OutgoingRequest::public_rooms(request_id.clone(), body);
+                self.latest_public_rooms_request = Some(request_id);
+                self.enqueue_request(request, Lane::Other)?;
+            }
+            MessengerCommand::SearchUsers { term } => {
+                let request_id = self.next_request_id()?;
+                let body = serde_json::json!({ "search_term": term, "limit": 20 });
+                let request = OutgoingRequest::user_directory_search(request_id.clone(), body);
+                self.latest_user_search_request = Some(request_id);
+                self.enqueue_request(request, Lane::Other)?;
+            }
         }
         Ok(())
     }
@@ -1755,12 +2162,14 @@ impl<C: RecordCodec> MessengerCore<C> {
             .unwrap_or_default()
     }
 
+    /// Optimistic and guarded like every account-data write
+    /// ([`MessengerCore::write_account_data`]): the very next tag edit must
+    /// build on THIS content, not on whatever `/sync` last echoed, or two
+    /// back-to-back edits would each start from the same stale copy and the
+    /// later PUT would drop the earlier one's change.
     fn enqueue_tag_update(&mut self, room_id: RoomId, content: TagContent) -> Result<(), MessengerError> {
-        let request_id = self.next_request_id()?;
         let value = serde_json::to_value(&content)?;
-        let request = OutgoingRequest::room_account_data(request_id, &self.config.user_id, &room_id, "m.tag", value);
-        self.enqueue_request(request, Lane::Other)?;
-        Ok(())
+        self.write_account_data(Some(room_id), "m.tag".to_string(), value)
     }
 
     /// Re-attempts decrypting one currently-pending Megolm item, applying
@@ -1879,12 +2288,7 @@ impl<C: RecordCodec> MessengerCore<C> {
 
         // 6. global account data.
         for event in &response.account_data.events {
-            if event.event_type == "m.direct" {
-                if let Ok(direct) = serde_json::from_value::<DirectContent>(event.content.clone()) {
-                    self.direct_account_data = Some(direct);
-                }
-            }
-            self.global_account_data.insert(event.event_type.clone(), event.content.clone());
+            self.apply_synced_account_data(None, &event.event_type, event.content.clone());
         }
 
         for (room_id, session_id) in &newly_received_sessions {
@@ -1992,7 +2396,7 @@ impl<C: RecordCodec> MessengerCore<C> {
         }
 
         for event in &joined.account_data.events {
-            self.room_account_data.entry(room_id.clone()).or_default().insert(event.event_type.clone(), event.content.clone());
+            self.apply_synced_account_data(Some(room_id), &event.event_type, event.content.clone());
         }
 
         if let Some(typing_event) = joined.ephemeral.events.iter().find(|event| event.event_type == "m.typing") {
@@ -2040,7 +2444,7 @@ impl<C: RecordCodec> MessengerCore<C> {
             self.rooms.entry(room_id.clone()).or_default().apply_state_event(event)?;
         }
         for event in &left.account_data.events {
-            self.room_account_data.entry(room_id.clone()).or_default().insert(event.event_type.clone(), event.content.clone());
+            self.apply_synced_account_data(Some(room_id), &event.event_type, event.content.clone());
         }
         if !left.timeline.events.is_empty() {
             self.timelines.entry(room_id.clone()).or_default().apply_timeline_batch(
@@ -2097,7 +2501,15 @@ impl<C: RecordCodec> MessengerCore<C> {
                     }
                 }
                 Err(err) => {
-                    let reason = err.to_string();
+                    // Stored as the coarse `UtdReason` variant's own name
+                    // (never the full, per-error-variant `Display` message)
+                    // -- this is the only place a UI-facing adapter can
+                    // recover which of the crate's own [`crate::crypto::
+                    // group_sessions::UtdReason`] variants this failure
+                    // maps to (`GroupDecryptError::utd_reason`'s own doc),
+                    // since [`ItemContent::Undecryptable`] carries a plain
+                    // `String`, not the enum itself.
+                    let reason = format!("{:?}", err.utd_reason());
                     if let Some(timeline) = self.timelines.get_mut(room_id) {
                         timeline.set_decrypted(&event.event_id, ItemContent::Undecryptable { reason });
                     }
@@ -2358,6 +2770,7 @@ fn message_relates_to(message: &OutgoingMessage) -> Option<RelatesTo> {
 mod tests {
     use super::*;
     use crate::store::InsecurePlainCodecForTests;
+    use crate::wire::HttpMethod;
 
     struct FixedJitter(f64);
 
@@ -2875,5 +3288,372 @@ mod tests {
         // `events()`/`on_response`'s own inline return share one queue --
         // nothing left to drain right after.
         assert!(core.events().is_empty());
+    }
+
+    #[test]
+    fn dispatch_set_account_data_updates_optimistically_and_sends_a_put() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        let content = serde_json::json!({ "folders": [] });
+        core.dispatch(
+            MessengerCommand::SetAccountData { event_type: "org.mylittlechart.folders".to_string(), content: content.clone() },
+            0,
+        )
+        .expect("dispatch succeeds");
+
+        assert_eq!(
+            core.global_account_data("org.mylittlechart.folders"),
+            Some(&content),
+            "SetAccountData updates the core's own cache before any round trip"
+        );
+
+        flush_and_ack(&mut core);
+        let requests = core.releasable_requests(0);
+        let request = requests.iter().find(|r| r.kind == OutgoingRequestKind::AccountData).expect("an AccountData request was enqueued");
+        assert_eq!(request.method, HttpMethod::Put);
+        assert_eq!(request.path, "/_matrix/client/v3/user/%40alice%3Aexample.org/account_data/org.mylittlechart.folders");
+        assert_eq!(request.body.as_ref(), Some(&content));
+    }
+
+    #[test]
+    fn dispatch_set_room_account_data_updates_optimistically_and_sends_a_put() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        let room_id = RoomId::parse("!r:example.org").expect("valid room id");
+        let content = serde_json::json!({ "muted": true });
+        core.dispatch(
+            MessengerCommand::SetRoomAccountData {
+                room_id: room_id.clone(),
+                event_type: "org.mylittlechart.muted".to_string(),
+                content: content.clone(),
+            },
+            0,
+        )
+        .expect("dispatch succeeds");
+
+        assert_eq!(
+            core.room_account_data(&room_id, "org.mylittlechart.muted"),
+            Some(&content),
+            "SetRoomAccountData updates the core's own cache before any round trip"
+        );
+
+        flush_and_ack(&mut core);
+        let requests = core.releasable_requests(0);
+        let request =
+            requests.iter().find(|r| r.kind == OutgoingRequestKind::RoomAccountData).expect("a RoomAccountData request was enqueued");
+        assert_eq!(request.method, HttpMethod::Put);
+        assert_eq!(
+            request.path,
+            "/_matrix/client/v3/user/%40alice%3Aexample.org/rooms/%21r%3Aexample.org/account_data/org.mylittlechart.muted"
+        );
+        assert_eq!(request.body.as_ref(), Some(&content));
+    }
+
+    #[test]
+    fn dispatch_search_public_rooms_sends_the_expected_request() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        core.dispatch(MessengerCommand::SearchPublicRooms { term: "trading".to_string() }, 0).expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+        let requests = core.releasable_requests(0);
+        let request = requests.iter().find(|r| r.kind == OutgoingRequestKind::PublicRooms).expect("a PublicRooms request was enqueued");
+        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(request.path, "/_matrix/client/v3/publicRooms");
+        assert_eq!(request.body, Some(serde_json::json!({ "filter": { "generic_search_term": "trading" }, "limit": 50 })));
+    }
+
+    #[test]
+    fn dispatch_search_users_sends_the_expected_request() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        core.dispatch(MessengerCommand::SearchUsers { term: "bob".to_string() }, 0).expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+        let requests = core.releasable_requests(0);
+        let request =
+            requests.iter().find(|r| r.kind == OutgoingRequestKind::UserDirectorySearch).expect("a UserDirectorySearch request was enqueued");
+        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(request.path, "/_matrix/client/v3/user_directory/search");
+        assert_eq!(request.body, Some(serde_json::json!({ "search_term": "bob", "limit": 20 })));
+    }
+
+    #[test]
+    fn public_rooms_response_superseded_by_a_later_search_is_dropped() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        core.dispatch(MessengerCommand::SearchPublicRooms { term: "first".to_string() }, 0).expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+        let first_request = core
+            .releasable_requests(0)
+            .into_iter()
+            .find(|r| r.kind == OutgoingRequestKind::PublicRooms)
+            .expect("the first search's own request");
+
+        // A second search supersedes the first before the first's response
+        // ever lands.
+        core.dispatch(MessengerCommand::SearchPublicRooms { term: "second".to_string() }, 0).expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+        let second_request = core
+            .releasable_requests(0)
+            .into_iter()
+            .find(|r| r.kind == OutgoingRequestKind::PublicRooms)
+            .expect("the second search's own request");
+
+        // The stale response (naming the FIRST request id) is dropped.
+        let stale_body = serde_json::json!({ "chunk": [{ "room_id": "!stale:example.org", "num_joined_members": 1 }] });
+        core.on_response(first_request.id, HttpResponseDescriptor { status: 200, body: serde_json::to_vec(&stale_body).expect("json") }, 0);
+        assert!(core.public_rooms_result().is_empty(), "a response to a superseded search is dropped");
+
+        // The current response is applied.
+        let fresh_body = serde_json::json!({ "chunk": [{ "room_id": "!fresh:example.org", "num_joined_members": 2 }] });
+        core.on_response(second_request.id, HttpResponseDescriptor { status: 200, body: serde_json::to_vec(&fresh_body).expect("json") }, 0);
+        assert_eq!(core.public_rooms_result().len(), 1);
+        assert_eq!(core.public_rooms_result()[0].room_id, RoomId::parse("!fresh:example.org").expect("valid room id"));
+    }
+
+    fn is_account_data_write(request: &OutgoingRequest) -> bool {
+        matches!(request.kind, OutgoingRequestKind::AccountData | OutgoingRequestKind::RoomAccountData)
+    }
+
+    #[test]
+    fn pin_then_archive_back_to_back_keeps_both_tags() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        let room_id = RoomId::parse("!r:example.org").expect("valid room id");
+        for tag in ["m.favourite", "u.mlc.archived"] {
+            core.dispatch(MessengerCommand::SetTag { room_id: room_id.clone(), tag: tag.to_string(), order: None }, 0)
+                .expect("dispatch succeeds");
+        }
+
+        // Optimistic: the cache already holds both tags, before any round trip.
+        let cached = core.room_account_data(&room_id, "m.tag").expect("m.tag cached");
+        assert!(cached["tags"].get("m.favourite").is_some());
+        assert!(cached["tags"].get("u.mlc.archived").is_some());
+
+        flush_and_ack(&mut core);
+        let first_release = core.releasable_requests(0);
+        let first_writes: Vec<&OutgoingRequest> = first_release.iter().filter(|r| is_account_data_write(r)).collect();
+        assert_eq!(first_writes.len(), 1, "the second PUT is not released while the first is in flight");
+        let first_body = first_writes[0].body.clone().expect("a body");
+        assert!(first_body["tags"].get("m.favourite").is_some());
+        assert!(first_body["tags"].get("u.mlc.archived").is_none(), "the first PUT carries only what existed when it was built");
+
+        core.on_response(first_writes[0].id.clone(), HttpResponseDescriptor { status: 200, body: b"{}".to_vec() }, 0);
+        flush_and_ack(&mut core);
+        let second_release = core.releasable_requests(0);
+        let second = second_release.iter().find(|r| is_account_data_write(r)).expect("the second PUT is released after the first completed");
+        let second_body = second.body.clone().expect("a body");
+        assert!(second_body["tags"].get("m.favourite").is_some(), "the later PUT still carries the earlier tag");
+        assert!(second_body["tags"].get("u.mlc.archived").is_some());
+    }
+
+    #[test]
+    fn account_data_lane_is_fifo_single_flight() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        let room_id = RoomId::parse("!r:example.org").expect("valid room id");
+        core.dispatch(MessengerCommand::SetAccountData { event_type: "org.t.one".to_string(), content: serde_json::json!({}) }, 0)
+            .expect("dispatch succeeds");
+        core.dispatch(
+            MessengerCommand::SetRoomAccountData {
+                room_id: room_id.clone(),
+                event_type: "org.t.two".to_string(),
+                content: serde_json::json!({}),
+            },
+            0,
+        )
+        .expect("dispatch succeeds");
+        core.dispatch(MessengerCommand::SetAccountData { event_type: "org.t.three".to_string(), content: serde_json::json!({}) }, 0)
+            .expect("dispatch succeeds");
+        core.dispatch(MessengerCommand::RemoveTag { room_id: room_id.clone(), tag: "m.favourite".to_string() }, 0)
+            .expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+
+        let mut released_paths = Vec::new();
+        for _ in 0..4 {
+            let release = core.releasable_requests(0);
+            let writes: Vec<&OutgoingRequest> = release.iter().filter(|r| is_account_data_write(r)).collect();
+            assert_eq!(writes.len(), 1, "exactly one account-data write in flight at a time");
+            released_paths.push(writes[0].path.clone());
+            core.on_response(writes[0].id.clone(), HttpResponseDescriptor { status: 200, body: b"{}".to_vec() }, 0);
+            flush_and_ack(&mut core);
+        }
+        assert!(released_paths[0].ends_with("/account_data/org.t.one"));
+        assert!(released_paths[1].ends_with("/account_data/org.t.two"));
+        assert!(released_paths[2].ends_with("/account_data/org.t.three"));
+        assert!(released_paths[3].ends_with("/account_data/m.tag"));
+        assert!(core.releasable_requests(0).iter().all(|r| !is_account_data_write(r)), "the lane is drained");
+    }
+
+    /// Answers the outstanding `/sync` request with `body` (minting and
+    /// flushing it first if needed) and returns every OTHER request the
+    /// rounds released, unanswered -- the tests below keep account-data
+    /// writes pending on purpose.
+    fn deliver_sync(core: &mut MessengerCore<InsecurePlainCodecForTests>, body: serde_json::Value) -> Vec<OutgoingRequest> {
+        let mut others = Vec::new();
+        for _ in 0..3 {
+            flush_and_ack(core);
+            let mut sync_request = None;
+            for request in core.releasable_requests(0) {
+                if request.kind == OutgoingRequestKind::Sync && sync_request.is_none() {
+                    sync_request = Some(request);
+                } else {
+                    others.push(request);
+                }
+            }
+            if let Some(sync_request) = sync_request {
+                let body = serde_json::to_vec(&body).expect("valid JSON");
+                core.on_response(sync_request.id, HttpResponseDescriptor { status: 200, body }, 0);
+                return others;
+            }
+        }
+        panic!("no sync request became releasable");
+    }
+
+    fn tag_sync_body(room_id: &str, tags: serde_json::Value, next_batch: &str) -> serde_json::Value {
+        let mut join = serde_json::Map::new();
+        join.insert(
+            room_id.to_string(),
+            serde_json::json!({ "account_data": { "events": [{ "type": "m.tag", "content": { "tags": tags } }] } }),
+        );
+        serde_json::json!({ "next_batch": next_batch, "rooms": { "join": serde_json::Value::Object(join) } })
+    }
+
+    fn ok_response() -> HttpResponseDescriptor {
+        HttpResponseDescriptor { status: 200, body: b"{}".to_vec() }
+    }
+
+    #[test]
+    fn sync_echo_of_an_older_tag_write_does_not_clobber_a_newer_optimistic_value() {
+        let mut core = open_fresh_core();
+        let room_id = RoomId::parse("!r:example.org").expect("valid room id");
+        for tag in ["m.favourite", "u.mlc.archived"] {
+            core.dispatch(MessengerCommand::SetTag { room_id: room_id.clone(), tag: tag.to_string(), order: None }, 0)
+                .expect("dispatch succeeds");
+        }
+
+        // The server echoes the FIRST write only, while both are outstanding.
+        let released = deliver_sync(&mut core, tag_sync_body("!r:example.org", serde_json::json!({ "m.favourite": {} }), "s1"));
+        let cached = core.room_account_data(&room_id, "m.tag").expect("m.tag cached");
+        assert!(cached["tags"].get("u.mlc.archived").is_some(), "the older echo must not clobber the newer optimistic value");
+        assert!(cached["tags"].get("m.favourite").is_some());
+        let key = (Some(room_id.clone()), "m.tag".to_string());
+        assert_eq!(
+            core.account_data_guard.get(&key).expect("writes are outstanding").server_value,
+            Some(serde_json::json!({ "tags": { "m.favourite": {} } })),
+            "the echo is remembered as the server's value"
+        );
+
+        // Both writes settle; the optimistic value survives (it is what the
+        // server holds now) and the guard is gone.
+        let first = released.iter().find(|r| r.kind == OutgoingRequestKind::RoomAccountData).expect("first write released");
+        core.on_response(first.id.clone(), ok_response(), 0);
+        flush_and_ack(&mut core);
+        let second = core
+            .releasable_requests(0)
+            .into_iter()
+            .find(|r| r.kind == OutgoingRequestKind::RoomAccountData)
+            .expect("second write released after the first");
+        core.on_response(second.id, ok_response(), 0);
+        assert!(core.account_data_guard.is_empty());
+        let cached = core.room_account_data(&room_id, "m.tag").expect("m.tag cached");
+        assert!(cached["tags"].get("m.favourite").is_some() && cached["tags"].get("u.mlc.archived").is_some());
+
+        // With nothing outstanding, sync applies normally again.
+        deliver_sync(
+            &mut core,
+            tag_sync_body("!r:example.org", serde_json::json!({ "m.favourite": {}, "u.mlc.archived": {} }), "s2"),
+        );
+        let cached = core.room_account_data(&room_id, "m.tag").expect("m.tag cached");
+        assert!(cached["tags"].get("u.mlc.archived").is_some());
+    }
+
+    #[test]
+    fn terminal_account_data_failure_restores_the_server_value() {
+        let mut core = open_fresh_core();
+        let room_id = RoomId::parse("!r:example.org").expect("valid room id");
+        deliver_sync(&mut core, tag_sync_body("!r:example.org", serde_json::json!({ "m.favourite": {} }), "s1"));
+
+        core.dispatch(MessengerCommand::SetTag { room_id: room_id.clone(), tag: "u.mlc.archived".to_string(), order: None }, 0)
+            .expect("dispatch succeeds");
+        assert!(core.room_account_data(&room_id, "m.tag").expect("cached")["tags"].get("u.mlc.archived").is_some());
+        flush_and_ack(&mut core);
+        let write = core
+            .releasable_requests(0)
+            .into_iter()
+            .find(|r| r.kind == OutgoingRequestKind::RoomAccountData)
+            .expect("the write is released");
+
+        let counter_before = core.change_counter();
+        let forbidden =
+            HttpResponseDescriptor { status: 403, body: br#"{"errcode":"M_FORBIDDEN","error":"nope"}"#.to_vec() };
+        let events = core.on_response(write.id, forbidden, 0);
+        assert!(core.account_data_guard.is_empty());
+        let restored = core.room_account_data(&room_id, "m.tag").expect("the server's value is back");
+        assert!(restored["tags"].get("u.mlc.archived").is_none(), "the failed write's optimistic value is gone");
+        assert!(restored["tags"].get("m.favourite").is_some());
+        assert!(events.contains(&MessengerEvent::RoomsChanged));
+        assert!(core.change_counter() > counter_before, "the UI is told to re-render");
+
+        // A failure while a later write is still outstanding leaves the cache
+        // alone (the later write carries the full content anyway); once that
+        // one succeeds its value stands.
+        for tag in ["u.a", "u.b"] {
+            core.dispatch(MessengerCommand::SetTag { room_id: room_id.clone(), tag: tag.to_string(), order: None }, 0)
+                .expect("dispatch succeeds");
+        }
+        flush_and_ack(&mut core);
+        let first = core
+            .releasable_requests(0)
+            .into_iter()
+            .find(|r| r.kind == OutgoingRequestKind::RoomAccountData)
+            .expect("first write released");
+        let forbidden =
+            HttpResponseDescriptor { status: 403, body: br#"{"errcode":"M_FORBIDDEN","error":"nope"}"#.to_vec() };
+        core.on_response(first.id, forbidden, 0);
+        let cached = core.room_account_data(&room_id, "m.tag").expect("cached");
+        assert!(cached["tags"].get("u.a").is_some() && cached["tags"].get("u.b").is_some(), "cache untouched while a write is pending");
+        flush_and_ack(&mut core);
+        let second = core
+            .releasable_requests(0)
+            .into_iter()
+            .find(|r| r.kind == OutgoingRequestKind::RoomAccountData)
+            .expect("second write released");
+        core.on_response(second.id, ok_response(), 0);
+        let cached = core.room_account_data(&room_id, "m.tag").expect("cached");
+        assert!(cached["tags"].get("u.b").is_some(), "the last write succeeded: its optimistic value stands");
+    }
+
+    #[test]
+    fn pending_account_data_writes_rebuild_their_guard_after_a_restart() {
+        let mut core = open_fresh_core();
+        let room_id = RoomId::parse("!r:example.org").expect("valid room id");
+        core.dispatch(MessengerCommand::SetTag { room_id: room_id.clone(), tag: "m.favourite".to_string(), order: None }, 0)
+            .expect("dispatch succeeds");
+        core.dispatch(
+            MessengerCommand::SetAccountData { event_type: "org.t.one".to_string(), content: serde_json::json!({ "n": 1 }) },
+            0,
+        )
+        .expect("dispatch succeeds");
+
+        // Everything dirtied so far, including both pending PUT records.
+        let mut records = Vec::new();
+        while let Some(batch) = core.take_flush_batch() {
+            records.extend(batch.records.clone());
+            core.ack_flush(batch.id);
+        }
+        let reopened = MessengerCore::open(
+            records,
+            InsecurePlainCodecForTests,
+            test_config(),
+            CoreSecrets::default(),
+            0,
+            Box::new(FixedJitter(0.0)),
+        )
+        .expect("reopen succeeds");
+
+        assert_eq!(reopened.account_data_guard.len(), 2, "one guard per key with a pending write");
+        assert!(reopened.account_data_guard.values().all(|guard| guard.pending == 1 && guard.server_value.is_none()));
+        assert_eq!(reopened.global_account_data("org.t.one"), Some(&serde_json::json!({ "n": 1 })));
+        assert!(reopened.room_account_data(&room_id, "m.tag").expect("cached")["tags"].get("m.favourite").is_some());
     }
 }

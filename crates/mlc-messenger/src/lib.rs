@@ -149,7 +149,7 @@ pub mod wire;
 pub use canonical_json::{sign_json, verify_json_signature, CanonicalJsonError};
 pub use core::{
     CoreConfig, CoreSecrets, Counters, CreateRoomKind, MessageKind, MessengerCommand, MessengerCore, MessengerEvent,
-    OutgoingMessage,
+    OutgoingMessage, PublicRoomsResultEntry, UserDirectoryResultEntry,
 };
 pub use crypto::account::OlmAccountState;
 pub use crypto::device_tracker::{DeviceKeyChanged, DeviceTracker, DroppedDevice, KeysQueryOutcome, StoredDevice};
