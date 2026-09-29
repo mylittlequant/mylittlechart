@@ -2020,7 +2020,7 @@ pub(super) static CANDLE_PATTERN_SHORT_KEY_TABLE: [[&str; N_LANG]; 21] = [
 ];
 
 // =============================================================================
-// ShareViewerKey table  (2 variants x N_LANG)
+// ShareViewerKey table  (8 variants x N_LANG)
 // =============================================================================
 //
 // Every column filled (shared-tab-reload-anchor arc, 2026-09-23) — unlike
@@ -2028,7 +2028,7 @@ pub(super) static CANDLE_PATTERN_SHORT_KEY_TABLE: [[&str; N_LANG]; 21] = [
 // `every_chart_table_is_fully_translated` below. Column order matches
 // `Language::all()` (`lang.rs`): en, ru, es, de, fr, pt, zh, ja, ko, ar, it,
 // tr, pl, uk, hi.
-pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 4] = [
+pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 8] = [
     /* 0 SharedChartGoneTitle */ [
         "Shared chart unavailable",
         "Общий график недоступен",
@@ -2096,6 +2096,74 @@ pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 4] = [
         "Zamknij",
         "Закрити",
         "बंद करें",
+    ],
+    /* 4 StreamStateConnecting */ [
+        "Connecting to the stream…",
+        "Подключение к стриму…",
+        "Conectando al stream…",
+        "Verbindung zum Stream wird hergestellt…",
+        "Connexion au stream…",
+        "Conectando ao stream…",
+        "正在连接直播…",
+        "配信に接続中…",
+        "스트림에 연결 중…",
+        "جارٍ الاتصال بالبث…",
+        "Connessione allo stream…",
+        "Yayına bağlanılıyor…",
+        "Łączenie ze streamem…",
+        "Підключення до стріму…",
+        "स्ट्रीम से कनेक्ट हो रहा है…",
+    ],
+    /* 5 StreamStateLive */ [
+        "Streaming. Click to stop",
+        "Идёт стрим. Нажмите, чтобы остановить",
+        "En directo. Haz clic para detener",
+        "Stream läuft. Klicken zum Beenden",
+        "Stream en cours. Cliquez pour arrêter",
+        "Transmitindo. Clique para parar",
+        "直播中，点击停止",
+        "配信中。クリックで停止",
+        "스트리밍 중. 클릭하여 중지",
+        "البث جارٍ. انقر للإيقاف",
+        "In diretta. Clicca per fermare",
+        "Yayın açık. Durdurmak için tıklayın",
+        "Stream trwa. Kliknij, aby zatrzymać",
+        "Триває стрім. Натисніть, щоб зупинити",
+        "स्ट्रीम चालू है। रोकने के लिए क्लिक करें",
+    ],
+    /* 6 StreamStateViewing */ [
+        "Watching a live stream",
+        "Просмотр стрима",
+        "Viendo un stream en directo",
+        "Du siehst einen Live-Stream",
+        "Vous suivez un stream en direct",
+        "Assistindo a um stream ao vivo",
+        "正在观看直播",
+        "ライブ配信を視聴中",
+        "라이브 스트림 시청 중",
+        "تشاهد بثًا مباشرًا",
+        "Stai guardando uno stream in diretta",
+        "Canlı yayın izleniyor",
+        "Oglądasz stream na żywo",
+        "Перегляд стріму",
+        "लाइव स्ट्रीम देख रहे हैं",
+    ],
+    /* 7 StreamStateError */ [
+        "Stream connection lost. Retrying…",
+        "Связь со стримом потеряна. Повтор…",
+        "Conexión perdida. Reintentando…",
+        "Verbindung verloren. Neuer Versuch…",
+        "Connexion perdue. Nouvel essai…",
+        "Conexão perdida. Tentando novamente…",
+        "直播连接中断，正在重试…",
+        "接続が切れました。再試行中…",
+        "연결이 끊겼습니다. 재시도 중…",
+        "انقطع الاتصال. إعادة المحاولة…",
+        "Connessione persa. Nuovo tentativo…",
+        "Bağlantı koptu. Yeniden deneniyor…",
+        "Utracono połączenie. Ponawianie…",
+        "Зв'язок зі стрімом втрачено. Повтор…",
+        "कनेक्शन टूट गया। फिर कोशिश हो रही है…",
     ],
 ];
 

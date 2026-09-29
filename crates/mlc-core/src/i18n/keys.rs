@@ -3929,10 +3929,18 @@ pub enum ShareViewerKey {
     StreamEndedTitle = 2,
     /// Button on that card. Closes the stream tab.
     StreamEndedAction = 3,
+    /// Camcorder tooltip while the live socket is being opened.
+    StreamStateConnecting = 4,
+    /// Camcorder tooltip while this tab publishes. A click stops the stream.
+    StreamStateLive = 5,
+    /// Camcorder tooltip while this tab only receives the stream.
+    StreamStateViewing = 6,
+    /// Camcorder tooltip while the live socket keeps failing.
+    StreamStateError = 7,
 }
 
 impl ShareViewerKey {
-    pub const COUNT: usize = 4;
+    pub const COUNT: usize = 8;
 
     /// Get translation for this key, with En fallback for empty cells.
     #[inline]

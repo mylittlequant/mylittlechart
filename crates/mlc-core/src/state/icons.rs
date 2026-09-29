@@ -1995,6 +1995,36 @@ pub const ICON_VIDEO: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox
   <path d="M15 10.2l6.2-3.4a.5.5 0 0 1 .8.4v9.6a.5.5 0 0 1-.8.4L15 13.8z"/>
 </svg>"##;
 
+/// Camcorder while the live socket is being opened: three dots in the body.
+pub const ICON_VIDEO_CONNECTING: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="6" width="13" height="12" rx="2"/>
+  <path d="M15 10.2l6.2-3.4a.5.5 0 0 1 .8.4v9.6a.5.5 0 0 1-.8.4L15 13.8z"/>
+  <circle cx="5.6" cy="12" r="0.9" fill="currentColor" stroke="none"/>
+  <circle cx="8.5" cy="12" r="0.9" fill="currentColor" stroke="none"/>
+  <circle cx="11.4" cy="12" r="0.9" fill="currentColor" stroke="none"/>
+</svg>"##;
+
+/// Camcorder while this tab publishes: a filled record dot in the body.
+pub const ICON_VIDEO_LIVE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="6" width="13" height="12" rx="2"/>
+  <path d="M15 10.2l6.2-3.4a.5.5 0 0 1 .8.4v9.6a.5.5 0 0 1-.8.4L15 13.8z"/>
+  <circle cx="8.5" cy="12" r="2.4" fill="currentColor" stroke="none"/>
+</svg>"##;
+
+/// Camcorder while this tab only receives: a play triangle in the body.
+pub const ICON_VIDEO_VIEWING: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="6" width="13" height="12" rx="2"/>
+  <path d="M15 10.2l6.2-3.4a.5.5 0 0 1 .8.4v9.6a.5.5 0 0 1-.8.4L15 13.8z"/>
+  <path d="M7 9.4v5.2l4.4-2.6z" fill="currentColor" stroke="none"/>
+</svg>"##;
+
+/// Camcorder with a slash: the live socket keeps failing.
+pub const ICON_VIDEO_ERROR: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="6" width="13" height="12" rx="2"/>
+  <path d="M15 10.2l6.2-3.4a.5.5 0 0 1 .8.4v9.6a.5.5 0 0 1-.8.4L15 13.8z"/>
+  <path d="M3 3l18 18"/>
+</svg>"##;
+
 pub const ICON_CIRCUIT_BOARD: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
   <rect x="3" y="3" width="18" height="18" rx="2"/>
   <path d="M11 9h4a2 2 0 0 0 2-2V3"/>
@@ -3144,6 +3174,10 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "zoom_reset" | "zoomreset" | "maximize2" => Some(ICON_ZOOM_RESET),
         "screenshot" | "camera" => Some(ICON_SCREENSHOT),
         "video" | "video_camera" | "videocam" => Some(ICON_VIDEO),
+        "video_connecting" | "videoconnecting" => Some(ICON_VIDEO_CONNECTING),
+        "video_live" | "videolive" => Some(ICON_VIDEO_LIVE),
+        "video_viewing" | "videoviewing" => Some(ICON_VIDEO_VIEWING),
+        "video_error" | "videoerror" => Some(ICON_VIDEO_ERROR),
 
         // Actions
         "undo" => Some(ICON_UNDO),

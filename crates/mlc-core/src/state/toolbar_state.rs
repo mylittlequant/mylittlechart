@@ -662,6 +662,42 @@ pub enum ScreenshotDestination {
     ShareLink,
 }
 
+/// What the camcorder ("share_stream") button shows for the active tab.
+/// Written each frame by `ChartApp` from the tab's live channel; the toolbar
+/// only reads it (icon + pressed highlight, both from the theme).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ShareStreamButtonState {
+    /// No live channel on this tab.
+    #[default]
+    Off,
+    /// Live is on and the socket is being opened.
+    Connecting,
+    /// Socket is open and this tab publishes.
+    Live,
+    /// Socket is open and this tab only receives.
+    Viewing,
+    /// Live is on but the socket keeps failing.
+    Error,
+}
+
+impl ShareStreamButtonState {
+    /// Icon name for this state, `None` for the button's own icon.
+    pub fn icon_name(self) -> Option<&'static str> {
+        match self {
+            Self::Off => None,
+            Self::Connecting => Some("VideoConnecting"),
+            Self::Live => Some("VideoLive"),
+            Self::Viewing => Some("VideoViewing"),
+            Self::Error => Some("VideoError"),
+        }
+    }
+
+    /// Whether the button paints its pressed highlight.
+    pub fn is_pressed(self) -> bool {
+        matches!(self, Self::Live | Self::Viewing)
+    }
+}
+
 /// Which one-shot magic-hat motion is running (owner ruling 2026-09-10:
 /// the hat animates once on tab open, differently once on tab close —
 /// nothing loops, nothing redraws while idle). `mlc-app-layout::ui::
@@ -810,6 +846,9 @@ pub struct ChartToolbarState {
     /// Set by the camera button's destination dropdown; read by the shells
     /// when draining the pending-screenshot flag.
     pub screenshot_destination: ScreenshotDestination,
+    /// State of the camcorder button for the active tab. Read by the control
+    /// strip render; written by `ChartApp` (never persisted).
+    pub share_stream: ShareStreamButtonState,
     /// Timestamp of the last `share_chart` (globe) button click — same
     /// double-click-opens-dropdown detection as `last_screenshot_click_time`
     /// (native-share-viewer arc, 2026-09-06). `mlc-app`'s account-signed-in
@@ -948,6 +987,7 @@ impl Default for ChartToolbarState {
             last_magnet_click_time: None,
             last_screenshot_click_time: None,
             screenshot_destination: ScreenshotDestination::default(),
+            share_stream: ShareStreamButtonState::default(),
             last_share_click_time: None,
             floating_inline_bar: FloatingInlineBar::default(),
             favorites_bar: FloatingInlineBar::default(),
