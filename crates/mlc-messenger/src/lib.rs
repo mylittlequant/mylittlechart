@@ -167,9 +167,9 @@ pub use outgoing_queue::{Jitter, Lane, OutgoingQueue, PendingRequest, ResponseOu
 pub use persist::{FlushBatch, FlushEpoch, FlushGate, RecordKey, RequiredSeq, SealedRecord};
 pub use provider::{ProviderView, SnapshotProvider, SLICE_CAPABILITIES};
 pub use room::{
-    aggregate_relation, highlight, last_preview, recompute_bundle, EditRecord, GapMarker, ItemContent, MemberRole,
-    MemberState, RelatingEvent, RelationsBundle, RoomKind, RoomState, SendState, StateChangeSummary, Timeline,
-    TimelineItem,
+    aggregate_relation, highlight, last_preview, recompute_bundle, EditRecord, Forwarded, GapMarker, ItemContent,
+    MemberRole, MemberState, RelatingEvent, RelationsBundle, RoomKind, RoomState, SendState, StateChangeSummary,
+    Timeline, TimelineItem,
 };
 pub use store::sealed::SealedRecordCodec;
 pub use store::{CryptoStore, RecordCodec, StateStore, Store, StoreError};

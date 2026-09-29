@@ -425,6 +425,8 @@ fn message_preview_content(content: &ItemContent) -> Option<PreviewContent> {
         ItemContent::Text(inner) => Some(PreviewContent::Text(inner.body.clone())),
         ItemContent::Notice(inner) => Some(PreviewContent::Notice(inner.body.clone())),
         ItemContent::Emote(inner) => Some(PreviewContent::Text(format!("/me {}", inner.body))),
+        ItemContent::Sticker { alt, .. } => Some(PreviewContent::Text(alt.clone())),
+        ItemContent::ChartCard { body, .. } => Some(PreviewContent::Text(body.clone())),
         ItemContent::LegacyPlain(text) => Some(PreviewContent::Text(text.clone())),
         ItemContent::Encrypted { .. }
         | ItemContent::Undecryptable { .. }
@@ -607,6 +609,10 @@ fn item_content_to_model(content: &ItemContent) -> Option<MessageContent> {
         ItemContent::Text(inner) => Some(MessageContent::Text(inner.body.clone())),
         ItemContent::Notice(inner) => Some(MessageContent::Notice(inner.body.clone())),
         ItemContent::Emote(inner) => Some(MessageContent::Text(format!("/me {}", inner.body))),
+        ItemContent::Sticker { pack, id, alt } => {
+            Some(MessageContent::Sticker { pack: pack.clone(), id: id.clone(), alt: alt.clone() })
+        }
+        ItemContent::ChartCard { body, .. } => Some(MessageContent::Text(body.clone())),
         ItemContent::Encrypted { ciphertext_b64, .. } => Some(MessageContent::Encrypted { ciphertext_b64: ciphertext_b64.clone() }),
         ItemContent::Undecryptable { reason } => Some(MessageContent::Undecryptable(map_utd_reason(reason))),
         ItemContent::LegacyDm { ciphertext_b64, .. } | ItemContent::LegacyDmUndecryptable { ciphertext_b64, .. } => {

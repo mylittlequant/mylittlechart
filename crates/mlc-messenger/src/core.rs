@@ -118,7 +118,10 @@ use crate::legacy_dm::{self, LegacyDmOutcome};
 use crate::outgoing_queue::{Jitter, Lane, OutgoingQueue, PendingRequest, ResponseOutcome};
 use crate::persist::{FlushBatch, SealedRecord};
 use crate::room::state::RoomState;
-use crate::room::timeline::{interpret_content, ItemContent, SendState, Timeline};
+use crate::room::timeline::{
+    interpret_content, ForwardRefusal, ItemContent, SendState, Timeline, EVENT_STICKER, KEY_FORWARDED,
+    KEY_FORWARDED_FROM, STICKER_URL_SCHEME,
+};
 use crate::room::RoomKind;
 use crate::store::sealed::SealedRecordCodec;
 use crate::store::{CryptoStore, RecordCodec, StateStore, Store};
@@ -372,6 +375,62 @@ pub enum MessengerCommand {
         message: OutgoingMessage,
         /// A caller-supplied transaction id (deterministic tests); `None`
         /// mints a fresh one from this device's own counter.
+        txn_id: Option<TxnId>,
+    },
+    /// Sends one sticker (`m.sticker`, `body: alt`, `url:
+    /// mlc-sticker://<pack>/<id>`, `info: {pack, id}`) through the SAME
+    /// per-room send pipeline as [`MessengerCommand::SendMessage`]: local
+    /// echo, room-key share, Megolm encryption in an encrypted room (outer
+    /// `m.room.encrypted`, inner type `m.sticker`), byte-identical retry.
+    /// Refused ([`MessengerError::IntentRefused`]) when `pack` or `id` is
+    /// empty or contains a `/`.
+    SendSticker {
+        /// The room to send into.
+        room_id: RoomId,
+        /// The bundled pack the sticker belongs to.
+        pack: String,
+        /// The sticker's id within its pack.
+        id: String,
+        /// The event `body`: the fallback text for a client without the
+        /// pack.
+        alt: String,
+        /// A caller-supplied transaction id; `None` mints a fresh one.
+        txn_id: Option<TxnId>,
+    },
+    /// Forwards one event of `from_room` into `to_room`, through the same
+    /// per-room send pipeline as [`MessengerCommand::SendMessage`] (so it is
+    /// Megolm-encrypted when `to_room` is encrypted).
+    ///
+    /// The forward rules live HERE, in the engine. The content is read from
+    /// the source timeline item's DECRYPTED content -- for an edited item the
+    /// latest edit's `m.new_content` -- with `m.relates_to`, `m.mentions`
+    /// and `m.new_content` removed and any earlier forward marker replaced
+    /// by this hop's own:
+    ///
+    /// - source room encrypted: `"org.mylittlechart.forwarded": true` and
+    ///   nothing else -- no original sender, no room id, no room name;
+    /// - source room unencrypted (a public channel):
+    ///   `"org.mylittlechart.forwarded_from": {"room_id", "room_name"}` --
+    ///   no sender.
+    ///
+    /// The event type (`m.room.message` or `m.sticker`) is kept, and a chart
+    /// card passes through unchanged plus the marker (whether the card MAY
+    /// be forwarded is the provider's call, not checked here).
+    ///
+    /// Refused with [`MessengerError::IntentRefused`], naming the event,
+    /// when the source item is missing, redacted, still sealed
+    /// (undecryptable or not decrypted yet), a legacy DM item, or not an
+    /// `m.room.message` / `m.sticker`; and when `to_room` is unknown to this
+    /// core (its encryption state cannot be known, and a plaintext send into
+    /// it could leak an encrypted room's content).
+    Forward {
+        /// The room the event is taken from.
+        from_room: RoomId,
+        /// The event being forwarded.
+        event_id: EventId,
+        /// The room it is sent into.
+        to_room: RoomId,
+        /// A caller-supplied transaction id; `None` mints a fresh one.
         txn_id: Option<TxnId>,
     },
     /// Sends a plaintext `m.reaction` — never Megolm-encrypted, even in an
@@ -697,13 +756,22 @@ struct UserDirectorySearchResultEntry {
 
 /// One room-scoped send's own content, before it is turned into wire bytes
 /// (M13b send pipeline). A reaction/redaction never enters the key-sharing
-/// half of the pipeline at all — only [`SendPayload::Message`] can be
-/// Megolm-encrypted.
+/// half of the pipeline at all — only a room event ([`SendPayload::Message`],
+/// [`SendPayload::Event`]) can be Megolm-encrypted.
 #[derive(Clone)]
 enum SendPayload {
-    /// A composed message — the only variant that goes through the
-    /// key-query/claim/share phases when its room is encrypted.
+    /// A composed message — goes through the key-query/claim/share phases
+    /// when its room is encrypted.
     Message(OutgoingMessage),
+    /// Any other room event whose wire type and plaintext content are
+    /// already final (a sticker, a forward) — walks the same phases as
+    /// [`SendPayload::Message`].
+    Event {
+        /// The wire event type (`m.sticker`, `m.room.message`).
+        event_type: String,
+        /// The event's plaintext content.
+        content: serde_json::Value,
+    },
     /// A plaintext `m.reaction` — sent as-is, in any room.
     Reaction {
         /// The event being reacted to.
@@ -718,6 +786,39 @@ enum SendPayload {
         /// Why, if given.
         reason: Option<String>,
     },
+}
+
+/// A room event as it goes on the wire before any encryption — what
+/// [`SendPayload::room_event`] derives from a [`SendPayload::Message`] or a
+/// [`SendPayload::Event`].
+struct RoomEventWire {
+    event_type: String,
+    content: serde_json::Value,
+    /// The cleartext `m.relates_to` an encrypted envelope must copy
+    /// ([`message_relates_to`]).
+    relates_to: Option<RelatesTo>,
+}
+
+impl SendPayload {
+    /// The room-event shape of this payload; `None` for a reaction or a
+    /// redaction (never encrypted, never echoed into the timeline).
+    fn room_event(&self) -> Option<RoomEventWire> {
+        match self {
+            SendPayload::Message(message) => Some(RoomEventWire {
+                event_type: "m.room.message".to_string(),
+                content: message_wire_content(message),
+                relates_to: message_relates_to(message),
+            }),
+            SendPayload::Event { event_type, content } => {
+                Some(RoomEventWire { event_type: event_type.clone(), content: content.clone(), relates_to: None })
+            }
+            SendPayload::Reaction { .. } | SendPayload::Redaction { .. } => None,
+        }
+    }
+
+    fn is_room_event(&self) -> bool {
+        matches!(self, SendPayload::Message(_) | SendPayload::Event { .. })
+    }
 }
 
 /// The exact wire request a [`PendingSend`] will make once it reaches
@@ -1137,8 +1238,9 @@ impl<C: RecordCodec> MessengerCore<C> {
     // ---------------------------------------------------------------
 
     /// Starts (or queues) one room-scoped send — the shared entry point
-    /// for [`MessengerCommand::SendMessage`]/`React`/`Redact`. Only a
-    /// [`SendPayload::Message`] gets an immediate timeline local echo (this
+    /// for [`MessengerCommand::SendMessage`]/`SendSticker`/`Forward`/`React`/
+    /// `Redact`. Only a room event ([`SendPayload::Message`],
+    /// [`SendPayload::Event`]) gets an immediate timeline local echo (this
     /// module's own doc): appended as [`SendState::LocalEcho`] then
     /// immediately moved to [`SendState::Sending`], matching the plan's
     /// own wording ("local echo in the timeline with `SendState::Sending`
@@ -1158,16 +1260,26 @@ impl<C: RecordCodec> MessengerCore<C> {
             None => self.next_txn_id()?,
         };
 
-        if let SendPayload::Message(message) = &payload {
+        if let Some(wire) = payload.room_event() {
             if self.typing_debounce.remove(&room_id).is_some() {
                 if let Ok(request_id) = self.next_request_id() {
                     let request = OutgoingRequest::typing(request_id, &room_id, &self.config.user_id, false, None);
                     let _ = self.enqueue_request(request, Lane::Other);
                 }
             }
-            let content = message_local_echo_content(message);
+            let content = match &payload {
+                SendPayload::Message(message) => message_local_echo_content(message),
+                _ => interpret_content(&wire.event_type, None, &wire.content),
+            };
             let timeline = self.timelines.entry(room_id.clone()).or_default();
-            timeline.push_local_echo(txn_id.clone(), self.config.user_id.clone(), now_ms, content);
+            timeline.push_local_echo(
+                txn_id.clone(),
+                self.config.user_id.clone(),
+                now_ms,
+                &wire.event_type,
+                content,
+                wire.content,
+            );
             timeline.mark_send_state(&txn_id, SendState::Sending);
             self.emit(MessengerEvent::TimelineChanged { room_id: room_id.clone() });
         }
@@ -1212,9 +1324,9 @@ impl<C: RecordCodec> MessengerCore<C> {
     /// already computed (a retry, or any send re-entering this function
     /// after an earlier step completed), it goes straight to
     /// [`MessengerCore::begin_awaiting_send`] — never re-derived. Otherwise:
-    /// a [`SendPayload::Message`] in a currently-encrypted room enters the
-    /// key pipeline; everything else builds its plaintext wire body
-    /// directly.
+    /// a room event ([`SendPayload::Message`]/[`SendPayload::Event`]) in a
+    /// currently-encrypted room enters the key pipeline; everything else
+    /// builds its plaintext wire body directly.
     fn start_send_pipeline(&mut self, txn_id: &TxnId, now_ms: i64) -> Result<(), MessengerError> {
         let Some(pending) = self.send_state.get(txn_id) else { return Ok(()) };
         let room_id = pending.room_id.clone();
@@ -1223,10 +1335,10 @@ impl<C: RecordCodec> MessengerCore<C> {
             return self.begin_awaiting_send(txn_id, &room_id);
         }
 
-        let is_message = matches!(pending.payload, SendPayload::Message(_));
+        let is_room_event = pending.payload.is_room_event();
         let encrypted_room = self.rooms.get(&room_id).is_some_and(|room| room.encryption.is_some());
 
-        if is_message && encrypted_room {
+        if is_room_event && encrypted_room {
             self.begin_key_pipeline(txn_id, &room_id, now_ms)
         } else {
             self.build_plaintext_wire_body(txn_id);
@@ -1409,25 +1521,25 @@ impl<C: RecordCodec> MessengerCore<C> {
         self.begin_awaiting_send(txn_id, room_id)
     }
 
-    /// Step 4: Megolm-encrypts a [`SendPayload::Message`] under `room_id`'s
-    /// (now current) outbound session and caches the resulting
-    /// [`WireSend::Event`] — a no-op for any other payload kind (never
-    /// reached for one, since only a `Message` in an encrypted room enters
-    /// the key pipeline at all).
+    /// Step 4: Megolm-encrypts a room event under `room_id`'s (now current)
+    /// outbound session — the inner type is the event's own (`m.room.message`,
+    /// `m.sticker`), the outer is always `m.room.encrypted` — and caches the
+    /// resulting [`WireSend::Event`]. A no-op for any other payload kind
+    /// (never reached for one, since only a room event in an encrypted room
+    /// enters the key pipeline at all).
     fn finish_encrypt_and_send(&mut self, txn_id: &TxnId, room_id: &RoomId) -> Result<(), MessengerError> {
-        let Some(pending) = self.send_state.get(txn_id) else { return Ok(()) };
-        let SendPayload::Message(message) = pending.payload.clone() else { return Ok(()) };
-        let content = message_wire_content(&message);
-        let relates_to = message_relates_to(&message);
+        let Some(wire) = self.send_state.get(txn_id).and_then(|pending| pending.payload.room_event()) else {
+            return Ok(());
+        };
         let sender_curve = self.account.identity_keys().curve25519.to_base64();
         let encrypted = GroupSessionManager::encrypt_event(
             &mut self.store,
             room_id,
             &sender_curve,
             &self.config.device_id,
-            "m.room.message",
-            content,
-            relates_to,
+            &wire.event_type,
+            wire.content,
+            wire.relates_to,
         )?;
         let wire_content = serde_json::to_value(RoomEncryptedContent::Megolm(encrypted))?;
         if let Some(entry) = self.send_state.get_mut(txn_id) {
@@ -1436,16 +1548,18 @@ impl<C: RecordCodec> MessengerCore<C> {
         Ok(())
     }
 
-    /// Builds the plaintext [`WireSend`] for a [`SendPayload::Message`] in
-    /// an unencrypted room, a [`SendPayload::Reaction`] (any room), or a
-    /// [`SendPayload::Redaction`] (any room) — the three cases that never
-    /// touch the key pipeline at all.
+    /// Builds the plaintext [`WireSend`] for a room event
+    /// ([`SendPayload::Message`]/[`SendPayload::Event`]) in an unencrypted
+    /// room, a [`SendPayload::Reaction`] (any room), or a
+    /// [`SendPayload::Redaction`] (any room) — the cases that never touch the
+    /// key pipeline at all.
     fn build_plaintext_wire_body(&mut self, txn_id: &TxnId) {
         let Some(pending) = self.send_state.get(txn_id) else { return };
         let wire = match &pending.payload {
-            SendPayload::Message(message) => {
-                WireSend::Event { event_type: "m.room.message".to_string(), content: message_wire_content(message) }
-            }
+            SendPayload::Message(_) | SendPayload::Event { .. } => match pending.payload.room_event() {
+                Some(room_event) => WireSend::Event { event_type: room_event.event_type, content: room_event.content },
+                None => return,
+            },
             SendPayload::Reaction { target, key } => WireSend::Event {
                 event_type: "m.reaction".to_string(),
                 content: serde_json::json!({
@@ -1533,15 +1647,15 @@ impl<C: RecordCodec> MessengerCore<C> {
         }
     }
 
-    /// The room event/redaction itself succeeded: for a
-    /// [`SendPayload::Message`], attaches the server-confirmed event id to
-    /// its echo (module doc: "200 -> store `event_id` on the echo
+    /// The room event/redaction itself succeeded: for a room event
+    /// ([`SendPayload::Message`]/[`SendPayload::Event`]), attaches the
+    /// server-confirmed event id to its echo (module doc: "200 -> store `event_id` on the echo
     /// (`SendState::Sent`)"); either way, removes this send's own
     /// bookkeeping and starts the room's next queued send, if any.
     fn complete_send_success(&mut self, txn_id: &TxnId, response: &HttpResponseDescriptor, now_ms: i64) {
         let Some(pending) = self.send_state.get(txn_id) else { return };
         let room_id = pending.room_id.clone();
-        if matches!(pending.payload, SendPayload::Message(_)) {
+        if pending.payload.is_room_event() {
             if let Ok(body) = serde_json::from_slice::<SendResponseBody>(&response.body) {
                 if let Some(timeline) = self.timelines.get_mut(&room_id) {
                     timeline.set_echo_event_id(txn_id, body.event_id);
@@ -1554,14 +1668,14 @@ impl<C: RecordCodec> MessengerCore<C> {
     }
 
     /// A step in `txn_id`'s own pipeline failed outright (a non-retryable
-    /// 4xx anywhere along it): marks a [`SendPayload::Message`]'s echo
+    /// 4xx anywhere along it): marks a room event's echo
     /// [`SendState::Failed`], moves this send to the terminal
     /// [`SendPhase::Failed`] (kept, not removed — [`MessengerCommand::RetrySend`]
     /// needs it), and starts the room's next queued send, if any.
     fn fail_send(&mut self, txn_id: &TxnId, errcode: String, now_ms: i64) {
         let Some(pending) = self.send_state.get(txn_id) else { return };
         let room_id = pending.room_id.clone();
-        if matches!(pending.payload, SendPayload::Message(_)) {
+        if pending.payload.is_room_event() {
             if let Some(timeline) = self.timelines.get_mut(&room_id) {
                 timeline.mark_send_state(txn_id, SendState::Failed { reason: errcode.clone() });
             }
@@ -2033,6 +2147,22 @@ impl<C: RecordCodec> MessengerCore<C> {
                 }
                 self.start_new_send(room_id, SendPayload::Message(message), txn_id, now_ms)?;
             }
+            MessengerCommand::SendSticker { room_id, pack, id, alt, txn_id } => {
+                if pack.is_empty() || id.is_empty() || pack.contains('/') || id.contains('/') {
+                    return Err(MessengerError::IntentRefused(format!("invalid sticker {pack:?}/{id:?}")));
+                }
+                let content = serde_json::json!({
+                    "body": alt,
+                    "url": format!("{STICKER_URL_SCHEME}{pack}/{id}"),
+                    "info": { "pack": pack, "id": id },
+                });
+                let payload = SendPayload::Event { event_type: EVENT_STICKER.to_string(), content };
+                self.start_new_send(room_id, payload, txn_id, now_ms)?;
+            }
+            MessengerCommand::Forward { from_room, event_id, to_room, txn_id } => {
+                let payload = self.build_forward_payload(&from_room, &event_id, &to_room)?;
+                self.start_new_send(to_room, payload, txn_id, now_ms)?;
+            }
             MessengerCommand::React { room_id, target, key } => {
                 self.start_new_send(room_id, SendPayload::Reaction { target, key }, None, now_ms)?;
             }
@@ -2215,6 +2345,63 @@ impl<C: RecordCodec> MessengerCore<C> {
         self.write_account_data(Some(room_id), "m.tag".to_string(), value)
     }
 
+    /// The [`SendPayload::Event`] a [`MessengerCommand::Forward`] sends: the
+    /// source item's current decrypted content, stripped and marked
+    /// ([`forwardable_content`]) per that command's own rules, or the
+    /// refusal naming `event_id`.
+    fn build_forward_payload(
+        &self,
+        from_room: &RoomId,
+        event_id: &EventId,
+        to_room: &RoomId,
+    ) -> Result<SendPayload, MessengerError> {
+        let refuse = |reason: &dyn std::fmt::Display| {
+            MessengerError::IntentRefused(format!("cannot forward {event_id} from {from_room}: {reason}"))
+        };
+        if !self.rooms.contains_key(to_room) {
+            return Err(refuse(&format!("the target room {to_room} is unknown")));
+        }
+        let source = match self.timelines.get(from_room) {
+            Some(timeline) => timeline.forward_source(event_id),
+            None => Err(ForwardRefusal::Missing),
+        }
+        .map_err(|reason| refuse(&reason))?;
+        let (marker_key, marker) = self.forward_marker(from_room);
+        Ok(SendPayload::Event {
+            event_type: source.event_type,
+            content: forwardable_content(source.content, marker_key, marker),
+        })
+    }
+
+    /// The marker a forward out of `from_room` carries: the bare `forwarded:
+    /// true` unless that room is positively known to be unencrypted, in which
+    /// case `forwarded_from` names it. An unknown room is treated as
+    /// encrypted -- the fail-safe direction.
+    fn forward_marker(&self, from_room: &RoomId) -> (&'static str, serde_json::Value) {
+        let public = self.rooms.get(from_room).is_some_and(|room| room.encryption.is_none());
+        if public {
+            let room_name = self.forward_room_name(from_room);
+            (KEY_FORWARDED_FROM, serde_json::json!({ "room_id": from_room.as_str(), "room_name": room_name }))
+        } else {
+            (KEY_FORWARDED, serde_json::Value::Bool(true))
+        }
+    }
+
+    /// `room_id`'s name as a forward attribution: its `m.room.name`, or a
+    /// generic label by kind. Never the members' names an unnamed room's
+    /// chat-list row would list -- an attribution goes to third parties.
+    fn forward_room_name(&self, room_id: &RoomId) -> String {
+        if let Some(name) = self.rooms.get(room_id).and_then(|room| room.name.clone()) {
+            return name;
+        }
+        match self.room_kind(room_id) {
+            Some(RoomKind::Dm) => "Direct",
+            Some(RoomKind::Channel) => "Channel",
+            Some(RoomKind::Group) | None => "Group",
+        }
+        .to_string()
+    }
+
     /// Re-attempts decrypting one currently-pending Megolm item, applying
     /// the result to its timeline on success. Returns `true` iff the item
     /// was found and successfully decrypted (i.e. something a caller should
@@ -2264,8 +2451,7 @@ impl<C: RecordCodec> MessengerCore<C> {
                 return;
             }
         }
-        let content = interpret_content(&plaintext.event_type, None, &plaintext.content);
-        timeline.set_decrypted(event_id, content);
+        timeline.set_decrypted_event(event_id, &plaintext.event_type, &plaintext.content);
     }
 
     fn retry_pending_for_session(&mut self, room_id: &RoomId, session_id: &str) {
@@ -2759,6 +2945,22 @@ fn stripped_state_to_raw_event(stripped: &StrippedStateEvent) -> RawEvent {
     }
 }
 
+/// `content` as a forward re-sends it: `m.relates_to` (a reply or edit
+/// pointer into the source room), `m.mentions` and `m.new_content` removed,
+/// any forward marker the source itself carried replaced by this hop's own
+/// (`marker_key: marker`) -- so an earlier hop's origin never travels on.
+/// Everything else (a chart card's fields, a sticker's `url`/`info`) passes
+/// through untouched.
+fn forwardable_content(mut content: serde_json::Value, marker_key: &str, marker: serde_json::Value) -> serde_json::Value {
+    if let Some(object) = content.as_object_mut() {
+        for key in ["m.relates_to", "m.mentions", "m.new_content", KEY_FORWARDED, KEY_FORWARDED_FROM] {
+            object.remove(key);
+        }
+        object.insert(marker_key.to_string(), marker);
+    }
+    content
+}
+
 /// The local-echo [`ItemContent`] for a not-yet-sent [`OutgoingMessage`] —
 /// always the plain new body, regardless of `reply_to`/`edit_of` (this
 /// crate's timeline has no dedicated "echo of an edit" rendering; the
@@ -2812,6 +3014,7 @@ fn message_relates_to(message: &OutgoingMessage) -> Option<RelatesTo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::room::timeline::Forwarded;
     use crate::store::InsecurePlainCodecForTests;
     use crate::wire::HttpMethod;
 
@@ -3728,5 +3931,427 @@ mod tests {
         assert!(reopened.account_data_guard.values().all(|guard| guard.pending == 1 && guard.server_value.is_none()));
         assert_eq!(reopened.global_account_data("org.t.one"), Some(&serde_json::json!({ "n": 1 })));
         assert!(reopened.room_account_data(&room_id, "m.tag").expect("cached")["tags"].get("m.favourite").is_some());
+    }
+
+    // -----------------------------------------------------------------
+    // Stickers and forwarding
+    // -----------------------------------------------------------------
+
+    type TestCore = MessengerCore<InsecurePlainCodecForTests>;
+
+    fn room(id: &str) -> RoomId {
+        RoomId::parse(id).expect("valid room id")
+    }
+
+    fn event(id: &str) -> EventId {
+        EventId::parse(id).expect("valid event id")
+    }
+
+    /// Registers `room_id` in `core`: Megolm-encrypted or not, optionally
+    /// named, with an (empty) timeline.
+    fn add_room(core: &mut TestCore, room_id: &RoomId, encrypted: bool, name: Option<&str>) {
+        let mut state = RoomState::new();
+        if encrypted {
+            state.encryption = Some(crate::wire::events::RoomEncryptionContent {
+                algorithm: "m.megolm.v1.aes-sha2".to_string(),
+                rotation_period_ms: 604_800_000,
+                rotation_period_msgs: 100,
+            });
+        }
+        state.name = name.map(str::to_string);
+        core.rooms.insert(room_id.clone(), state);
+        core.timelines.entry(room_id.clone()).or_default();
+    }
+
+    fn raw_event(event_id: &str, event_type: &str, sender: &str, content: serde_json::Value) -> RawEvent {
+        serde_json::from_value(serde_json::json!({
+            "event_id": event_id,
+            "type": event_type,
+            "sender": sender,
+            "origin_server_ts": 1,
+            "content": content,
+        }))
+        .expect("valid raw event")
+    }
+
+    /// An event that arrived in `room_id` as plaintext.
+    fn seed_plain(core: &mut TestCore, room_id: &RoomId, event_id: &str, sender: &str, event_type: &str, content: serde_json::Value) {
+        let raw = raw_event(event_id, event_type, sender, content);
+        core.timelines.entry(room_id.clone()).or_default().apply_timeline_batch(&[raw], false, None);
+    }
+
+    /// A Megolm envelope that arrived in `room_id` and has not been opened.
+    fn seed_sealed(core: &mut TestCore, room_id: &RoomId, event_id: &str, sender: &str) {
+        let content = serde_json::json!({ "algorithm": "m.megolm.v1.aes-sha2", "ciphertext": "AAAA", "session_id": "s1" });
+        seed_plain(core, room_id, event_id, sender, "m.room.encrypted", content);
+    }
+
+    /// A Megolm envelope that arrived in `room_id` and decrypted to
+    /// `{event_type, content}`.
+    fn seed_decrypted(
+        core: &mut TestCore,
+        room_id: &RoomId,
+        event_id_str: &str,
+        sender: &str,
+        event_type: &str,
+        content: serde_json::Value,
+    ) {
+        seed_sealed(core, room_id, event_id_str, sender);
+        if let Some(timeline) = core.timelines.get_mut(room_id) {
+            timeline.set_decrypted_event(&event(event_id_str), event_type, &content);
+        }
+    }
+
+    /// Flushes, releases, and returns the `(path, body)` of the one
+    /// `RoomSend` the core just queued -- after answering it with a fresh
+    /// event id, so the room's next send is free to start.
+    fn sent_room_event(core: &mut TestCore) -> (String, serde_json::Value) {
+        flush_and_ack(core);
+        let request = core
+            .releasable_requests(0)
+            .into_iter()
+            .find(|request| request.kind == OutgoingRequestKind::RoomSend)
+            .expect("a room send is releasable");
+        let confirmed = format!("$sent{}:example.org", core.counters.next_request_id);
+        let body = serde_json::json!({ "event_id": confirmed }).to_string().into_bytes();
+        core.on_response(request.id.clone(), HttpResponseDescriptor { status: 200, body }, 0);
+        (request.path, request.body.expect("a room send has a body"))
+    }
+
+    fn forward(core: &mut TestCore, from: &RoomId, event_id: &str, to: &RoomId) -> Result<(), MessengerError> {
+        core.dispatch(
+            MessengerCommand::Forward { from_room: from.clone(), event_id: event(event_id), to_room: to.clone(), txn_id: None },
+            0,
+        )
+    }
+
+    fn last_item(core: &TestCore, room_id: &RoomId) -> crate::room::timeline::TimelineItem {
+        core.timeline(room_id).and_then(|timeline| timeline.items().last()).expect("the room has an item").clone()
+    }
+
+    #[test]
+    fn send_sticker_sends_an_m_sticker_event_with_the_pack_url_and_info() {
+        let mut core = open_fresh_core();
+        let target = room("!target:example.org");
+        add_room(&mut core, &target, false, None);
+
+        core.dispatch(
+            MessengerCommand::SendSticker {
+                room_id: target.clone(),
+                pack: "trader".to_string(),
+                id: "bull".to_string(),
+                alt: "Bull market".to_string(),
+                txn_id: None,
+            },
+            0,
+        )
+        .expect("dispatch succeeds");
+
+        let (path, body) = sent_room_event(&mut core);
+        assert!(path.contains("/send/m.sticker/"), "the wire type is m.sticker: {path}");
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "body": "Bull market",
+                "url": "mlc-sticker://trader/bull",
+                "info": { "pack": "trader", "id": "bull" },
+            })
+        );
+        let echo = last_item(&core, &target);
+        assert_eq!(echo.content, ItemContent::Sticker { pack: "trader".into(), id: "bull".into(), alt: "Bull market".into() });
+        assert_eq!(echo.event_type, "m.sticker");
+        assert_eq!(echo.forwarded, None);
+
+        for (pack, id) in [("", "bull"), ("trader", ""), ("tra/der", "bull"), ("trader", "bu/ll")] {
+            let refused = core.dispatch(
+                MessengerCommand::SendSticker {
+                    room_id: target.clone(),
+                    pack: pack.to_string(),
+                    id: id.to_string(),
+                    alt: String::new(),
+                    txn_id: None,
+                },
+                0,
+            );
+            assert!(matches!(refused, Err(MessengerError::IntentRefused(_))), "{pack:?}/{id:?} is not a sticker name");
+        }
+    }
+
+    #[test]
+    fn forward_from_encrypted_room_carries_only_the_forwarded_flag() {
+        let mut core = open_fresh_core();
+        let dm = room("!dm:example.org");
+        let target = room("!target:example.org");
+        add_room(&mut core, &dm, true, Some("Secret DM name"));
+        add_room(&mut core, &target, false, None);
+        seed_decrypted(
+            &mut core,
+            &dm,
+            "$src:example.org",
+            "@bob:example.org",
+            "m.room.message",
+            serde_json::json!({
+                "msgtype": "m.text",
+                "body": "quarterly numbers",
+                "m.relates_to": { "m.in_reply_to": { "event_id": "$parent:example.org" } },
+                "m.mentions": { "user_ids": ["@carol:example.org"] },
+            }),
+        );
+
+        forward(&mut core, &dm, "$src:example.org", &target).expect("a decrypted message is forwardable");
+
+        let (path, body) = sent_room_event(&mut core);
+        assert!(path.contains("/send/m.room.message/"), "the event type is kept: {path}");
+        assert_eq!(
+            body,
+            serde_json::json!({ "msgtype": "m.text", "body": "quarterly numbers", "org.mylittlechart.forwarded": true }),
+            "the text plus the bare flag; the reply pointer and the mentions are stripped"
+        );
+        let wire = body.to_string();
+        for leaked in ["bob", "carol", "!dm", "Secret DM name", "$parent"] {
+            assert!(!wire.contains(leaked), "{leaked:?} must not travel with a forward out of an encrypted room: {wire}");
+        }
+        let echo = last_item(&core, &target);
+        assert_eq!(echo.forwarded, Some(Forwarded::Hidden), "the forwarder's own echo shows the same marker");
+    }
+
+    #[test]
+    fn forward_from_public_channel_carries_room_id_and_name_no_sender() {
+        let mut core = open_fresh_core();
+        let channel = room("!chan:example.org");
+        let target = room("!target:example.org");
+        add_room(&mut core, &channel, false, Some("Announcements"));
+        add_room(&mut core, &target, false, None);
+        seed_plain(
+            &mut core,
+            &channel,
+            "$post:example.org",
+            "@dave:example.org",
+            "m.room.message",
+            serde_json::json!({
+                "msgtype": "m.text",
+                "body": "BTC breaks out",
+                "m.mentions": { "room": true },
+                "m.relates_to": { "m.in_reply_to": { "event_id": "$older:example.org" } },
+            }),
+        );
+
+        forward(&mut core, &channel, "$post:example.org", &target).expect("a channel post is forwardable");
+
+        let (_, body) = sent_room_event(&mut core);
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "msgtype": "m.text",
+                "body": "BTC breaks out",
+                "org.mylittlechart.forwarded_from": { "room_id": "!chan:example.org", "room_name": "Announcements" },
+            })
+        );
+        assert!(!body.to_string().contains("dave"), "the original sender never travels");
+        assert_eq!(
+            last_item(&core, &target).forwarded,
+            Some(Forwarded::Channel { room_id: channel.clone(), room_name: "Announcements".to_string() })
+        );
+    }
+
+    #[test]
+    fn forward_from_an_unnamed_room_never_lists_member_names() {
+        let mut core = open_fresh_core();
+        let channel = room("!chan:example.org");
+        let target = room("!target:example.org");
+        add_room(&mut core, &channel, false, None);
+        if let Some(state) = core.rooms.get_mut(&channel) {
+            state.members.insert(
+                UserId::parse("@erin:example.org").expect("valid user id"),
+                crate::room::state::MemberState {
+                    membership: Membership::Join,
+                    displayname: Some("Erin Private".to_string()),
+                    is_direct: false,
+                },
+            );
+        }
+        add_room(&mut core, &target, false, None);
+        seed_plain(&mut core, &channel, "$post:example.org", "@erin:example.org", "m.room.message", serde_json::json!({ "msgtype": "m.text", "body": "hi" }));
+
+        forward(&mut core, &channel, "$post:example.org", &target).expect("forwardable");
+
+        let (_, body) = sent_room_event(&mut core);
+        let name = body["org.mylittlechart.forwarded_from"]["room_name"].as_str().expect("a name is sent");
+        assert!(!name.contains("Erin"), "an unnamed room is attributed by a generic label, not by its members: {name}");
+    }
+
+    #[test]
+    fn forward_replaces_the_sources_own_forward_marker() {
+        let mut core = open_fresh_core();
+        let dm = room("!dm:example.org");
+        let target = room("!target:example.org");
+        add_room(&mut core, &dm, true, None);
+        add_room(&mut core, &target, false, None);
+        seed_decrypted(
+            &mut core,
+            &dm,
+            "$src:example.org",
+            "@bob:example.org",
+            "m.room.message",
+            serde_json::json!({
+                "msgtype": "m.text",
+                "body": "second hop",
+                "org.mylittlechart.forwarded_from": { "room_id": "!older:example.org", "room_name": "Older channel" },
+            }),
+        );
+
+        forward(&mut core, &dm, "$src:example.org", &target).expect("forwardable");
+
+        let (_, body) = sent_room_event(&mut core);
+        assert_eq!(body, serde_json::json!({ "msgtype": "m.text", "body": "second hop", "org.mylittlechart.forwarded": true }));
+    }
+
+    #[test]
+    fn forward_of_edited_item_sends_the_latest_text() {
+        let mut core = open_fresh_core();
+        let channel = room("!chan:example.org");
+        let dm = room("!dm:example.org");
+        let target = room("!target:example.org");
+        add_room(&mut core, &channel, false, Some("Announcements"));
+        add_room(&mut core, &dm, true, None);
+        add_room(&mut core, &target, false, None);
+
+        // Plaintext room: the edit is an ordinary event folded onto its target.
+        seed_plain(&mut core, &channel, "$orig:example.org", "@dave:example.org", "m.room.message", serde_json::json!({ "msgtype": "m.text", "body": "typo text" }));
+        seed_plain(
+            &mut core,
+            &channel,
+            "$edit:example.org",
+            "@dave:example.org",
+            "m.room.message",
+            serde_json::json!({
+                "msgtype": "m.text",
+                "body": "* fixed text",
+                "m.new_content": { "msgtype": "m.text", "body": "fixed text" },
+                "m.relates_to": { "rel_type": "m.replace", "event_id": "$orig:example.org" },
+            }),
+        );
+        forward(&mut core, &channel, "$orig:example.org", &target).expect("forwardable");
+        let (_, body) = sent_room_event(&mut core);
+        assert_eq!(body["body"], "fixed text", "the latest edit's text, not the original and not the `* ` fallback");
+        assert!(body.get("m.new_content").is_none() && body.get("m.relates_to").is_none());
+
+        // Encrypted room: the edit is only recognised once decrypted.
+        seed_decrypted(&mut core, &dm, "$secret:example.org", "@bob:example.org", "m.room.message", serde_json::json!({ "msgtype": "m.text", "body": "typo secret" }));
+        seed_sealed(&mut core, &dm, "$secret-edit:example.org", "@bob:example.org");
+        let applied = core.timelines.get_mut(&dm).expect("timeline").apply_decrypted_relation(
+            &event("$secret-edit:example.org"),
+            UserId::parse("@bob:example.org").expect("valid user id"),
+            2,
+            RelatesTo::Replace { event_id: event("$secret:example.org") },
+            Some(serde_json::json!({ "msgtype": "m.text", "body": "fixed secret" })),
+        );
+        assert!(applied, "the decrypted edit folds onto its target");
+        forward(&mut core, &dm, "$secret:example.org", &target).expect("forwardable");
+        let (_, body) = sent_room_event(&mut core);
+        assert_eq!(body, serde_json::json!({ "msgtype": "m.text", "body": "fixed secret", "org.mylittlechart.forwarded": true }));
+    }
+
+    #[test]
+    fn forward_of_chart_card_keeps_its_fields() {
+        let mut core = open_fresh_core();
+        let dm = room("!dm:example.org");
+        let target = room("!target:example.org");
+        add_room(&mut core, &dm, true, None);
+        add_room(&mut core, &target, false, None);
+        let card = serde_json::json!({
+            "msgtype": "org.mylittlechart.chart",
+            "body": "BTCUSDT 1h",
+            "symbol": "BTCUSDT",
+            "timeframe": "1h",
+            "venue": "binance",
+            "note": "SMC scan",
+            "share": { "link": "mlc://share/abc", "allow_forward": true },
+        });
+        seed_decrypted(&mut core, &dm, "$card:example.org", "@bob:example.org", "m.room.message", card.clone());
+
+        forward(&mut core, &dm, "$card:example.org", &target).expect("a chart card is forwardable here; allow_forward is the provider's check");
+
+        let (path, body) = sent_room_event(&mut core);
+        assert!(path.contains("/send/m.room.message/"));
+        let mut expected = card;
+        expected["org.mylittlechart.forwarded"] = serde_json::Value::Bool(true);
+        assert_eq!(body, expected, "the card passes through unchanged plus the marker");
+        assert!(matches!(last_item(&core, &target).content, ItemContent::ChartCard { .. }), "and the echo still shows a card");
+    }
+
+    #[test]
+    fn forward_of_a_sticker_keeps_the_event_type_and_pack() {
+        let mut core = open_fresh_core();
+        let dm = room("!dm:example.org");
+        let target = room("!target:example.org");
+        add_room(&mut core, &dm, true, None);
+        add_room(&mut core, &target, false, None);
+        let sticker = serde_json::json!({
+            "body": "Bull",
+            "url": "mlc-sticker://trader/bull",
+            "info": { "pack": "trader", "id": "bull" },
+        });
+        seed_decrypted(&mut core, &dm, "$st:example.org", "@bob:example.org", "m.sticker", sticker.clone());
+
+        forward(&mut core, &dm, "$st:example.org", &target).expect("a sticker is forwardable");
+
+        let (path, body) = sent_room_event(&mut core);
+        assert!(path.contains("/send/m.sticker/"), "the sticker stays an m.sticker: {path}");
+        let mut expected = sticker;
+        expected["org.mylittlechart.forwarded"] = serde_json::Value::Bool(true);
+        assert_eq!(body, expected);
+    }
+
+    #[test]
+    fn forward_refuses_redacted_sealed_legacy_and_missing() {
+        let mut core = open_fresh_core();
+        let dm = room("!dm:example.org");
+        let target = room("!target:example.org");
+        add_room(&mut core, &dm, true, None);
+        add_room(&mut core, &target, false, None);
+
+        seed_decrypted(&mut core, &dm, "$redacted:example.org", "@bob:example.org", "m.room.message", serde_json::json!({ "msgtype": "m.text", "body": "gone" }));
+        core.timelines.get_mut(&dm).expect("timeline").apply_redaction(&event("$redacted:example.org"));
+        seed_sealed(&mut core, &dm, "$sealed:example.org", "@bob:example.org");
+        seed_sealed(&mut core, &dm, "$utd:example.org", "@bob:example.org");
+        core.timelines
+            .get_mut(&dm)
+            .expect("timeline")
+            .set_decrypted(&event("$utd:example.org"), ItemContent::Undecryptable { reason: "MissingSession".to_string() });
+        seed_plain(
+            &mut core,
+            &dm,
+            "$legacy:example.org",
+            "@bob:example.org",
+            "org.mylittlechart.legacy_dm",
+            serde_json::json!({ "legacy_message_id": "m1", "legacy_conversation_id": 1, "nonce_b64": "AAAA", "ciphertext_b64": "AAAA" }),
+        );
+        seed_plain(&mut core, &dm, "$legacy-plain:example.org", "@bob:example.org", "m.room.message", serde_json::json!({ "msgtype": "m.text", "body": "x" }));
+        core.timelines
+            .get_mut(&dm)
+            .expect("timeline")
+            .set_decrypted(&event("$legacy-plain:example.org"), ItemContent::LegacyPlain("old text".to_string()));
+        seed_plain(&mut core, &dm, "$call:example.org", "@bob:example.org", "m.call.invite", serde_json::json!({ "call_id": "c1" }));
+
+        for id in ["$redacted:example.org", "$sealed:example.org", "$utd:example.org", "$legacy:example.org", "$legacy-plain:example.org", "$call:example.org", "$missing:example.org"] {
+            match forward(&mut core, &dm, id, &target) {
+                Err(MessengerError::IntentRefused(reason)) => {
+                    assert!(reason.contains(id), "the refusal names the event {id}: {reason}");
+                }
+                other => panic!("forwarding {id} must be refused, got {other:?}"),
+            }
+        }
+        match forward(&mut core, &room("!nowhere:example.org"), "$redacted:example.org", &target) {
+            Err(MessengerError::IntentRefused(reason)) => assert!(reason.contains("$redacted:example.org"), "{reason}"),
+            other => panic!("an unknown source room means a missing event, got {other:?}"),
+        }
+        match forward(&mut core, &dm, "$sealed:example.org", &room("!nowhere:example.org")) {
+            Err(MessengerError::IntentRefused(reason)) => assert!(reason.contains("unknown"), "{reason}"),
+            other => panic!("an unknown target room is refused, got {other:?}"),
+        }
+
+        assert!(core.send_state.is_empty(), "a refused forward queues nothing");
+        assert!(core.timeline(&target).is_some_and(|timeline| timeline.items().is_empty()), "and leaves no echo");
     }
 }
