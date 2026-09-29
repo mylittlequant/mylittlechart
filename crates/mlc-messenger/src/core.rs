@@ -1620,37 +1620,33 @@ impl<C: RecordCodec> MessengerCore<C> {
                     self.on_create_room_response(kind, response)?;
                 }
             }
-            Some(OutgoingRequestKind::PublicRooms) => {
-                // A response to a search this account has already moved
-                // past (a later `SearchPublicRooms` was dispatched since)
-                // is dropped -- only the LATEST search's own result set is
-                // ever visible (this module's own doc).
-                if self.latest_public_rooms_request.as_ref() == Some(request_id) {
-                    let body: PublicRoomsResponseBody = serde_json::from_slice(&response.body)?;
-                    self.public_rooms_result = body
-                        .chunk
-                        .into_iter()
-                        .map(|entry| PublicRoomsResultEntry {
-                            room_id: entry.room_id,
-                            name: entry.name,
-                            topic: entry.topic,
-                            num_joined_members: entry.num_joined_members,
-                        })
-                        .collect();
-                    self.emit(MessengerEvent::PublicRoomsChanged);
-                }
+            // A response to a search this account has already moved past (a
+            // later `SearchPublicRooms` was dispatched since) fails the
+            // guard and is dropped -- only the LATEST search's own result
+            // set is ever visible (this module's own doc).
+            Some(OutgoingRequestKind::PublicRooms) if self.latest_public_rooms_request.as_ref() == Some(request_id) => {
+                let body: PublicRoomsResponseBody = serde_json::from_slice(&response.body)?;
+                self.public_rooms_result = body
+                    .chunk
+                    .into_iter()
+                    .map(|entry| PublicRoomsResultEntry {
+                        room_id: entry.room_id,
+                        name: entry.name,
+                        topic: entry.topic,
+                        num_joined_members: entry.num_joined_members,
+                    })
+                    .collect();
+                self.emit(MessengerEvent::PublicRoomsChanged);
             }
-            Some(OutgoingRequestKind::UserDirectorySearch) => {
-                // Same supersession rule as `PublicRooms` above.
-                if self.latest_user_search_request.as_ref() == Some(request_id) {
-                    let body: UserDirectorySearchResponseBody = serde_json::from_slice(&response.body)?;
-                    self.user_search_result = body
-                        .results
-                        .into_iter()
-                        .map(|entry| UserDirectoryResultEntry { user_id: entry.user_id, display_name: entry.display_name })
-                        .collect();
-                    self.emit(MessengerEvent::UserSearchChanged);
-                }
+            // Same supersession rule as `PublicRooms` above.
+            Some(OutgoingRequestKind::UserDirectorySearch) if self.latest_user_search_request.as_ref() == Some(request_id) => {
+                let body: UserDirectorySearchResponseBody = serde_json::from_slice(&response.body)?;
+                self.user_search_result = body
+                    .results
+                    .into_iter()
+                    .map(|entry| UserDirectoryResultEntry { user_id: entry.user_id, display_name: entry.display_name })
+                    .collect();
+                self.emit(MessengerEvent::UserSearchChanged);
             }
             _ => {}
         }
