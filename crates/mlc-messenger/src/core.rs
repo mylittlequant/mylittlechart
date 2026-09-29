@@ -1845,6 +1845,23 @@ impl<C: RecordCodec> MessengerCore<C> {
                 let request_id = self.next_request_id()?;
                 let request = OutgoingRequest::join_room(request_id, room_id.as_str());
                 self.enqueue_request(request, Lane::Other)?;
+
+                // A DM invite's `is_direct` flag lives on this account's own
+                // invite membership event and is overwritten by the join
+                // itself, so accepting it records the room in this account's
+                // own `m.direct` (same as the creator side does on
+                // `/createRoom`) -- otherwise the invitee's room kind falls
+                // back to Group once the join lands.
+                let dm_peer = self.rooms.get(&room_id).and_then(|room| {
+                    let invited_as_direct = room.members.get(&self.config.user_id).is_some_and(|member| member.is_direct);
+                    if !invited_as_direct {
+                        return None;
+                    }
+                    room.members.keys().find(|user_id| **user_id != self.config.user_id).cloned()
+                });
+                if let Some(peer) = dm_peer {
+                    self.merge_direct_account_data(room_id, peer)?;
+                }
             }
             MessengerCommand::LeaveRoom { room_id } => {
                 let request_id = self.next_request_id()?;

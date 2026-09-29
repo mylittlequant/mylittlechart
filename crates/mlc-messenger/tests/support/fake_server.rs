@@ -275,6 +275,14 @@ pub struct FakeServer {
     /// Room-scoped account data, same "always redeliver current value"
     /// convention as `global_account_data`.
     room_account_data: BTreeMap<(UserId, RoomId), BTreeMap<String, Value>>,
+    /// One room's own `m.receipt` content (`event_id -> receipt_type ->
+    /// user_id -> {ts}`), built up by every `POST .../read_markers` this
+    /// fake receives for it (a real server's own read-marker endpoint also
+    /// broadcasts an `m.read` receipt when `m.read` is present in the
+    /// body) -- always redelivered in full on every `/sync` this room
+    /// appears in, same convention as `global_account_data`/
+    /// `room_account_data` above.
+    room_receipts: BTreeMap<RoomId, Value>,
 
     /// Every request's own [`OutgoingRequestKind`] this fake has ever
     /// dispatched, in call order -- lets a test assert cross-request
@@ -338,7 +346,7 @@ impl FakeServer {
             OutgoingRequestKind::Invite => self.handle_invite(as_user, request),
             OutgoingRequestKind::Kick => self.handle_kick(as_user, request),
             OutgoingRequestKind::Typing => json_response(200, &serde_json::json!({})),
-            OutgoingRequestKind::ReadMarkers => json_response(200, &serde_json::json!({})),
+            OutgoingRequestKind::ReadMarkers => self.handle_read_markers(as_user, request),
             OutgoingRequestKind::AccountData => self.handle_account_data(as_user, request),
             OutgoingRequestKind::RoomAccountData => self.handle_room_account_data(as_user, request),
             _ => json_response(
@@ -761,6 +769,29 @@ impl FakeServer {
         json_response(200, &serde_json::json!({}))
     }
 
+    /// `POST /rooms/{roomId}/read_markers` -- a real server's own
+    /// read-marker endpoint also broadcasts an `m.read` receipt when the
+    /// body carries an `m.read` event id (module doc's own
+    /// `room_receipts` note); `m.fully_read` itself is not modeled (this
+    /// fake never round-trips it, matching every other "spec-shaped, not
+    /// spec-complete" endpoint here).
+    fn handle_read_markers(&mut self, as_user: &UserId, request: &OutgoingRequest) -> HttpResponseDescriptor {
+        let Some(room_id) = parse_room_action_path(&request.path) else {
+            return json_response(400, &serde_json::json!({ "errcode": "M_UNKNOWN", "error": "fake server: malformed read_markers path" }));
+        };
+        let body = request.body.clone().unwrap_or_else(|| Value::Object(Map::new()));
+        if let Some(event_id) = body.get("m.read").and_then(Value::as_str).map(str::to_string) {
+            let receipts = self.room_receipts.entry(room_id).or_insert_with(|| Value::Object(Map::new()));
+            let receipts_obj = receipts.as_object_mut().expect("room_receipts entries are always objects");
+            let per_event = receipts_obj.entry(event_id).or_insert_with(|| serde_json::json!({ "m.read": {} }));
+            let per_event_obj = per_event.as_object_mut().expect("per-event receipts are always objects");
+            let read_map = per_event_obj.entry("m.read".to_string()).or_insert_with(|| Value::Object(Map::new()));
+            let read_map_obj = read_map.as_object_mut().expect("m.read is always an object");
+            read_map_obj.insert(as_user.as_str().to_string(), serde_json::json!({ "ts": 0 }));
+        }
+        json_response(200, &serde_json::json!({}))
+    }
+
     /// `PUT /user/{userId}/rooms/{roomId}/account_data/{type}`.
     fn handle_room_account_data(&mut self, as_user: &UserId, request: &OutgoingRequest) -> HttpResponseDescriptor {
         let Some((room_id, event_type)) = parse_room_account_data_path(&request.path) else {
@@ -887,6 +918,15 @@ impl FakeServer {
                         .get(&(as_user.clone(), room_id.clone()))
                         .map(|by_type| by_type.iter().map(|(t, c)| serde_json::json!({ "type": t, "content": c })).collect())
                         .unwrap_or_default();
+                    // Same "always redeliver the current full value"
+                    // convention as `room_account_events` above (module
+                    // doc's own `room_receipts` note) -- harmless given
+                    // this crate's own idempotent ephemeral folding.
+                    let receipt_events: Vec<Value> = self
+                        .room_receipts
+                        .get(&room_id)
+                        .map(|content| vec![serde_json::json!({ "type": "m.receipt", "content": content })])
+                        .unwrap_or_default();
                     let cursor =
                         self.room_cursors.entry(key.clone()).or_default().entry(room_id.clone()).or_default();
                     let room = self.rooms.get(&room_id).expect("just matched Some(Join) above");
@@ -894,13 +934,18 @@ impl FakeServer {
                     let timeline_events = room.timeline_log[cursor.timeline_seen..].to_vec();
                     cursor.state_seen = room.state_log.len();
                     cursor.timeline_seen = room.timeline_log.len();
-                    if !state_events.is_empty() || !timeline_events.is_empty() || !room_account_events.is_empty() {
+                    if !state_events.is_empty()
+                        || !timeline_events.is_empty()
+                        || !room_account_events.is_empty()
+                        || !receipt_events.is_empty()
+                    {
                         join.insert(
                             room_id.as_str().to_string(),
                             serde_json::json!({
                                 "state": { "events": state_events },
                                 "timeline": { "events": timeline_events },
                                 "account_data": { "events": room_account_events },
+                                "ephemeral": { "events": receipt_events },
                             }),
                         );
                     }
