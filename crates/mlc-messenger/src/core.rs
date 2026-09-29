@@ -2124,12 +2124,27 @@ impl<C: RecordCodec> MessengerCore<C> {
                 }
             }
             MessengerCommand::LoadOlder { room_id } => {
-                let from = self.timelines.get(&room_id).and_then(|timeline| {
-                    timeline
-                        .older_token()
-                        .map(str::to_string)
-                        .or_else(|| timeline.gap().and_then(|gap| gap.prev_batch.clone()))
-                });
+                let from = self
+                    .timelines
+                    .get(&room_id)
+                    .and_then(|timeline| {
+                        timeline
+                            .older_token()
+                            .map(str::to_string)
+                            .or_else(|| timeline.gap().and_then(|gap| gap.prev_batch.clone()))
+                    })
+                    // A known room with no pagination token yet -- a resumed
+                    // session, whose timelines are not persisted and whose
+                    // first `/sync` carries only what is new -- pages back
+                    // from its own sync position (a `/sync` `next_batch` token
+                    // is a valid `/messages` `from`).
+                    .or_else(|| {
+                        if self.rooms.contains_key(&room_id) {
+                            self.store.sync_token().ok().flatten().map(str::to_string)
+                        } else {
+                            None
+                        }
+                    });
                 let Some(from) = from else { return Ok(()) };
                 let request_id = self.next_request_id()?;
                 let request =
@@ -3291,6 +3306,27 @@ mod tests {
         let requests = core.releasable_requests(0);
         let load_older = requests.iter().find(|r| r.kind == OutgoingRequestKind::RoomMessages);
         assert!(load_older.is_some(), "a RoomMessages request was enqueued using the room's own gap token");
+    }
+
+    #[test]
+    fn load_older_on_a_resumed_room_pages_back_from_the_sync_token() {
+        let mut core = open_fresh_core();
+        let room_id = RoomId::parse("!r:example.org").expect("valid room id");
+        core.store.save_sync_token("s42_7".to_string()).expect("save the sync token");
+        flush_and_ack(&mut core);
+
+        // Unknown room and no timeline: nothing to page.
+        core.dispatch(MessengerCommand::LoadOlder { room_id: room_id.clone() }, 0).expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+        assert!(core.releasable_requests(0).iter().all(|r| r.kind != OutgoingRequestKind::RoomMessages));
+
+        // The room is known (its state record was replayed) but its timeline is empty.
+        core.rooms.insert(room_id.clone(), RoomState::default());
+        core.dispatch(MessengerCommand::LoadOlder { room_id: room_id.clone() }, 0).expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+        let requests = core.releasable_requests(0);
+        let load_older = requests.iter().find(|r| r.kind == OutgoingRequestKind::RoomMessages).expect("a RoomMessages request was enqueued");
+        assert!(load_older.query.contains(&("from".to_string(), "s42_7".to_string())), "pages back from the sync token: {:?}", load_older.query);
     }
 
     #[test]
