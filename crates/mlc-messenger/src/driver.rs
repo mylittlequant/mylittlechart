@@ -289,6 +289,9 @@ pub struct MessengerDriver {
     /// `None` means either never failed yet, or a probe is already
     /// in flight awaiting its response.
     whoami_next_attempt_at: Option<i64>,
+    /// The core's `change_counter` at the last publish. `u64::MAX` until the
+    /// first running tick, so a resumed session publishes the rooms its store
+    /// restored even though nothing has changed yet.
     last_published_change_counter: u64,
 }
 
@@ -306,7 +309,7 @@ impl MessengerDriver {
             whoami_sent: false,
             whoami_attempt: 0,
             whoami_next_attempt_at: None,
-            last_published_change_counter: 0,
+            last_published_change_counter: u64::MAX,
         }
     }
 
@@ -375,6 +378,13 @@ impl MessengerDriver {
 
     fn tick_running(&mut self, now_ms: i64) -> DriverOutput {
         let Some(core) = self.core.as_mut() else { return DriverOutput::default() };
+
+        // A response the core could not ingest is otherwise invisible (the
+        // `/sync` loop just never advances): surface it through the one error
+        // slot.
+        if let Some(error) = core.take_ingest_error() {
+            self.provider.set_last_error(Some(error));
+        }
 
         let intents = self.provider.take_intents();
         if !intents.is_empty() {
@@ -654,11 +664,13 @@ mod tests {
         let mut driver = boot_to_running();
         let provider = driver.provider();
 
-        // The fresh account's own bootstrap dirtied records but emitted no
-        // `MessengerEvent` -- `change_counter` did not move, so this tick
-        // must not publish a new view.
+        // The first running tick publishes once (a resumed session must show
+        // the rooms its store restored); the fresh account's own bootstrap
+        // dirtied records but emitted no `MessengerEvent`, so nothing after
+        // that first tick may publish again.
         driver.tick(0);
         let after_bootstrap = provider.change_counter();
+        assert!(after_bootstrap > 0, "the first running tick published the (empty) view and flipped the vault state");
         driver.tick(0);
         assert_eq!(provider.change_counter(), after_bootstrap, "nothing moved -- no republish");
 
@@ -685,6 +697,29 @@ mod tests {
 
         driver.tick(0);
         assert_eq!(provider.change_counter(), after_bootstrap + 1, "ticking again with nothing new does not republish");
+    }
+
+    #[test]
+    fn an_undecodable_sync_response_reaches_the_error_slot() {
+        let mut driver = boot_to_running();
+        let mut sync_id = None;
+        for _ in 0..4 {
+            let output = driver.tick(0);
+            for batch in &output.flush {
+                driver.flush_done(batch.id);
+            }
+            if let Some(request) = output.requests.iter().find(|request| request.kind == Some(OutgoingRequestKind::Sync)) {
+                sync_id = Some(request.id.clone());
+                break;
+            }
+        }
+        let sync_id = sync_id.expect("a sync request was released");
+        assert!(driver.provider().last_error().is_none());
+
+        driver.on_response(sync_id, 200, b"{ not a sync response".to_vec(), 0);
+        driver.tick(0);
+        let error = driver.provider().last_error().expect("the ingest failure was surfaced");
+        assert!(error.contains("not ingested"), "unexpected error text: {error}");
     }
 
     #[test]

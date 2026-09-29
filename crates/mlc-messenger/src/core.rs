@@ -933,6 +933,11 @@ pub struct MessengerCore<C: RecordCodec> {
     /// The currently outstanding `/sync` request's id, if any — this
     /// core's own single-flight tracking (this module's own doc).
     sync_request_id: Option<RequestId>,
+    /// Whether a `/sync` request has completed successfully in THIS core's
+    /// lifetime. Until then the next `/sync` is minted with `timeout=0` (an
+    /// immediate catch-up answer, the matrix-js-sdk convention); only after
+    /// it does the core long-poll.
+    sync_caught_up: bool,
     /// [`FlushBatch`]es [`crate::outgoing_queue::OutgoingQueue::enqueue`]
     /// already drained from the store's own pending set (to seal a new
     /// request's [`crate::persist::RequiredSeq`]) but that a shell has not
@@ -943,6 +948,11 @@ pub struct MessengerCore<C: RecordCodec> {
 
     events: Vec<MessengerEvent>,
     change_counter: u64,
+    /// The last response this core could not ingest (a wire shape it does
+    /// not decode, say), for [`MessengerCore::take_ingest_error`]. The
+    /// response is otherwise dropped, so without this a shell would see
+    /// nothing but a `/sync` loop that never advances.
+    ingest_error: Option<String>,
 }
 
 impl<C: RecordCodec> MessengerCore<C> {
@@ -966,7 +976,7 @@ impl<C: RecordCodec> MessengerCore<C> {
         jitter: Box<dyn Jitter>,
     ) -> Result<Self, MessengerError> {
         let mut store = Store::load(records, codec, config.device_id.clone())?;
-        let outgoing = OutgoingQueue::load(&store)?;
+        let mut outgoing = OutgoingQueue::load(&store)?;
         let account = OlmAccountState::load_or_create(&mut store)?;
 
         let mut rooms = BTreeMap::new();
@@ -982,6 +992,13 @@ impl<C: RecordCodec> MessengerCore<C> {
 
         let pending_requests = store.pending_requests()?;
         let max_pending_request_seed = pending_requests.iter().filter_map(|req| req.request.id.as_seed()).max();
+        // A `/sync` restored from the store carries the timeout it was minted
+        // with (a 30 s long-poll): replaying it would stall a resumed session
+        // for that long before anything is known. It has no side effect to
+        // lose, so drop it (its id already counted toward the seed above);
+        // `ensure_sync_enqueued` mints a fresh catch-up sync from the
+        // persisted token.
+        outgoing.discard_kind(&mut store, OutgoingRequestKind::Sync)?;
         let persisted_counters = store.counters()?.unwrap_or_default();
         let counters = Counters {
             next_request_id: restore_counter(persisted_counters.next_request_id, max_pending_request_seed),
@@ -1028,9 +1045,11 @@ impl<C: RecordCodec> MessengerCore<C> {
             pending_kinds: BTreeMap::new(),
             pending_room_messages: BTreeMap::new(),
             sync_request_id: None,
+            sync_caught_up: false,
             pending_flush_batches: VecDeque::new(),
             events: Vec::new(),
             change_counter: 0,
+            ingest_error: None,
         };
         core.rebuild_account_data_guard(&pending_requests);
         Ok(core)
@@ -1601,7 +1620,17 @@ impl<C: RecordCodec> MessengerCore<C> {
         }
         let Ok(request_id) = self.next_request_id() else { return };
         let since = self.store.sync_token().ok().flatten().map(str::to_string);
-        let request = OutgoingRequest::sync(request_id.clone(), since.as_deref(), Some(SYNC_TIMEOUT_MS));
+        // The first `/sync` of a session must never long-poll. An initial
+        // sync (no `since`) is answered at once by Synapse whatever `timeout`
+        // says, but a server that treats a brand-new, still-empty account's
+        // initial view as "nothing new" holds it for the full timeout -- and
+        // this core publishes its device keys only once that first response
+        // has landed. A resumed session (persisted `since`) has the same
+        // need: the catch-up answer must not wait for news that may never
+        // come. Live run, 2026-09-29: fresh accounts sat 30 s before their
+        // keys went up.
+        let timeout_ms = if since.is_some() && self.sync_caught_up { SYNC_TIMEOUT_MS } else { 0 };
+        let request = OutgoingRequest::sync(request_id.clone(), since.as_deref(), Some(timeout_ms));
         if self.enqueue_request(request, Lane::Sync).is_ok() {
             self.sync_request_id = Some(request_id);
         }
@@ -1629,6 +1658,9 @@ impl<C: RecordCodec> MessengerCore<C> {
             self.pending_kinds.remove(&request_id);
             if matches!(kind, Some(OutgoingRequestKind::Sync)) {
                 self.sync_request_id = None;
+                if terminal_response.is_some() {
+                    self.sync_caught_up = true;
+                }
             }
             if room_messages_room.is_some() {
                 self.pending_room_messages.remove(&request_id);
@@ -1642,12 +1674,17 @@ impl<C: RecordCodec> MessengerCore<C> {
 
         if let Some(response) = &terminal_response {
             // A parse/logic failure against an otherwise-successful HTTP
-            // response is dropped rather than surfaced: this crate has no
-            // logging dependency, and the one invariant that matters --
-            // never advancing past a partially-applied `/sync` -- already
-            // holds structurally, since `ingest_sync` only persists the
-            // new sync token as its very last step.
-            let _ = self.handle_terminal_success(&request_id, kind, room_messages_room, create_room_kind, response);
+            // response is dropped, not applied: the one invariant that
+            // matters -- never advancing past a partially-applied `/sync` --
+            // holds structurally, since `ingest_sync` only persists the new
+            // sync token as its very last step. The failure is kept for
+            // [`MessengerCore::take_ingest_error`] so a shell can show it.
+            if let Err(error) = self.handle_terminal_success(&request_id, kind, room_messages_room, create_room_kind, response) {
+                self.ingest_error = Some(match kind {
+                    Some(kind) => format!("{kind:?} response not ingested: {error}"),
+                    None => format!("response not ingested: {error}"),
+                });
+            }
         }
 
         if let Some(txn_id) = send_owner {
@@ -1873,6 +1910,12 @@ impl<C: RecordCodec> MessengerCore<C> {
     /// method or to [`MessengerCore::on_response`].
     pub fn events(&mut self) -> Vec<MessengerEvent> {
         self.drain_events()
+    }
+
+    /// The last response this core failed to ingest, once (cleared by
+    /// reading it) -- see the `ingest_error` field's own doc.
+    pub fn take_ingest_error(&mut self) -> Option<String> {
+        self.ingest_error.take()
     }
 
     /// Monotonically increasing count of visible changes — a cheap
@@ -2899,6 +2942,36 @@ mod tests {
         // `sync_request_id` tracking prevents a duplicate enqueue too.
         let second = core.releasable_requests(0);
         assert!(second.iter().all(|r| r.kind != OutgoingRequestKind::Sync), "no second sync request released");
+    }
+
+    #[test]
+    fn first_sync_of_a_session_never_long_polls_then_the_loop_does() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        core.releasable_requests(0);
+        flush_and_ack(&mut core);
+        let first = core.releasable_requests(0);
+        let first_sync = first.iter().find(|r| r.kind == OutgoingRequestKind::Sync).expect("a sync request was enqueued");
+        assert!(first_sync.query.contains(&("timeout".to_string(), "0".to_string())), "the initial sync must answer at once");
+        assert!(first_sync.query.iter().all(|(key, _)| key != "since"), "a fresh device has no since token");
+
+        let body = serde_json::json!({
+            "next_batch": "s1",
+            "device_one_time_keys_count": { "signed_curve25519": 0 },
+            "device_unused_fallback_key_types": []
+        })
+        .to_string();
+        core.on_response(first_sync.id.clone(), HttpResponseDescriptor { status: 200, body: body.into_bytes() }, 0);
+        flush_and_ack(&mut core);
+
+        // The next `/sync` is minted lazily (then needs its own flush round
+        // before it is releasable) -- and only now does it long-poll.
+        core.releasable_requests(0);
+        flush_and_ack(&mut core);
+        let second = core.releasable_requests(0);
+        let second_sync = second.iter().find(|r| r.kind == OutgoingRequestKind::Sync).expect("the follow-up sync was enqueued");
+        assert!(second_sync.query.contains(&("since".to_string(), "s1".to_string())));
+        assert!(second_sync.query.contains(&("timeout".to_string(), SYNC_TIMEOUT_MS.to_string())), "once caught up the loop long-polls");
     }
 
     #[test]
