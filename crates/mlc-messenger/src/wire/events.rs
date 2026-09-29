@@ -777,6 +777,20 @@ pub struct RedactionContent {
     pub reason: Option<String>,
 }
 
+/// Deserializes an id sent as a JSON number or a JSON string into its text.
+fn number_or_string_as_text<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<String, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum NumberOrString {
+        Number(i64),
+        Text(String),
+    }
+    Ok(match NumberOrString::deserialize(deserializer)? {
+        NumberOrString::Number(number) => number.to_string(),
+        NumberOrString::Text(text) => text,
+    })
+}
+
 /// `org.mylittlechart.legacy_dm` content (server plan manager decision #5,
 /// §7 migration): one pre-Matrix DM message, migrated into a room's
 /// timeline verbatim (still encrypted under the legacy X25519+HKDF+AES-GCM
@@ -784,7 +798,10 @@ pub struct RedactionContent {
 /// migration, using [`LegacyDmKeyContent`]'s peer key).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacyDmContent {
-    /// The message's id in the pre-migration legacy DM store.
+    /// The message's id in the pre-migration legacy DM store. The server
+    /// writes the store's integer row id as a JSON number; it is kept as
+    /// text here, and a string on the wire is accepted too.
+    #[serde(deserialize_with = "number_or_string_as_text")]
     pub legacy_message_id: String,
     /// The pre-Matrix legacy DM conversation id this message belongs to --
     /// matches one of this room's own [`LegacyDmKeyContent::legacy_conversation_id`]
@@ -1303,5 +1320,20 @@ mod tests {
         .expect("valid withheld content");
         assert_eq!(content.code, WithheldCode::Unverified);
         assert_eq!(content.reason.as_deref(), Some("device not verified"));
+    }
+
+    #[test]
+    fn legacy_dm_content_accepts_the_message_id_as_a_number_or_a_string() {
+        for id in [serde_json::json!(11), serde_json::json!("11")] {
+            let content: LegacyDmContent = serde_json::from_value(serde_json::json!({
+                "legacy_message_id": id,
+                "legacy_conversation_id": 6,
+                "nonce_b64": "bm9uY2U=",
+                "ciphertext_b64": "Y2lwaGVy"
+            }))
+            .expect("the id is a number on the server's wire and a string in older fixtures");
+            assert_eq!(content.legacy_message_id, "11");
+            assert_eq!(content.legacy_conversation_id, 6);
+        }
     }
 }
