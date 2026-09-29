@@ -1825,6 +1825,22 @@ pub enum PropertyGroup {
     /// `icon_tabs()`'s own show/text/size/side group for the label next to
     /// the icon (`ConceptKey::LabelNextToIcon`).
     LabelNextToIcon,
+
+    // ---- Scan (elliott_scan / harmonic_scan / fib_scan) ----------------------
+    /// `ElliottScan`/`HarmonicScan`/`FibScan`'s own per-drawing "What to
+    /// detect" group (kinds table for Elliott/Harmonic, levels table for
+    /// Fib) — reuses the SAME `ConceptKey::MarkupTabWhatToDetect` text the
+    /// A0 `markup_engine_settings.rs` modal's own tab already uses, in a
+    /// new context (a `style_properties()` group header, not a modal tab):
+    /// per the autodetectors brief's own "Architecture decision", these
+    /// three scans carry their thresholds as ordinary per-drawing
+    /// properties, never a second `MarkupSettingsFamily` variant.
+    ScanWhatToDetect,
+    /// `ElliottScan`/`HarmonicScan`/`FibScan`'s own per-drawing "Thresholds"
+    /// group (`swing_n`/`min_score`/`tolerance`/`swing_mode`/… pills) —
+    /// reuses `ConceptKey::MarkupTabThresholds`, same reasoning as
+    /// [`Self::ScanWhatToDetect`].
+    ScanThresholds,
 }
 
 impl PropertyGroup {
@@ -1895,6 +1911,9 @@ impl PropertyGroup {
             PropertyGroup::IconGlyph => SettingsKey::CompareInfoSymbol.get(lang),
             PropertyGroup::Rendering => ConceptKey::Rendering.get(lang),
             PropertyGroup::LabelNextToIcon => ConceptKey::LabelNextToIcon.get(lang),
+
+            PropertyGroup::ScanWhatToDetect => ConceptKey::MarkupTabWhatToDetect.get(lang),
+            PropertyGroup::ScanThresholds => ConceptKey::MarkupTabThresholds.get(lang),
         }
     }
 }

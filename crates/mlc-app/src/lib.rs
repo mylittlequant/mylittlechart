@@ -37,6 +37,7 @@ pub mod panel_grid;
 pub mod panels_render;
 pub mod panels_store;
 pub mod scroll_dispatch;
+pub mod share_stream;
 pub mod share_viewer;
 pub mod standalone_panel;
 pub mod system_events;
@@ -218,6 +219,11 @@ fn register_all_text_fields(coord: &mut uzor::input::InputCoordinator) {
     // Chat-list name filter (messenger UI-2b) — same registration gap
     // `FORUM_SEARCH`/`DM_DRAFT`/`DM_PEER`'s own comment above documents.
     tf.register(text_input::DM_CHAT_FILTER, TextFieldConfig::text().with_max_len(64));
+    // Share settings nick box. Same contract as `DM_PEER`: `register` is
+    // what makes `update_field` / `focus` / `on_char` actually land. A
+    // field that is only drawn and never registered cannot take a caret.
+    tf.register(text_input::SHARE_SETTINGS_NICK, TextFieldConfig::text().with_max_len(64));
+    tf.register(text_input::FRIENDS_NICK, TextFieldConfig::text().with_max_len(64));
 }
 
 use std::cell::RefCell;
@@ -563,6 +569,17 @@ impl WarmupBudget {
     }
 }
 
+/// One Shares-tab action the shell performs against the existing share API.
+#[derive(Clone, Debug)]
+pub enum ShareAdminCmd {
+    Refresh,
+    Revoke { token: String },
+    /// JSON body for `PATCH /api/share/{token}`.
+    Patch { token: String, body: String },
+    /// Grant `nick` one or more rights. `edit` is separate from view/clone.
+    Grant { token: String, nick: String, tiers: Vec<String> },
+}
+
 pub struct ChartApp {
     /// Live feeds each bubble currently holds on behalf of its indicators
     /// (see `ensure_bubble_indicator_feeds`). RAM-only bookkeeping: the
@@ -744,6 +761,16 @@ pub struct ChartApp {
     /// (via `ChartOutEvent::ShareLiveChart`), drained by the shell, which
     /// owns the cloud session/token. Mirror of `pending_screenshot`.
     pending_share_live: bool,
+    /// Stream button: after the link exists, turn the socket on.
+    arm_live_after_share: bool,
+    /// Viewer tab whose live socket the author just closed.
+    stream_ended: Option<String>,
+    /// Stream button on a chart that already has a link: shell copies it.
+    pending_share_copy: bool,
+
+    /// Shares-tab command for the shell: list, pin, revoke, or patch the
+    /// policy the server already stores on the token.
+    pub(crate) pending_share_admin: Option<ShareAdminCmd>,
 
     /// Pending clipboard write — set by a context-menu "Copy" action
     /// (`ChartApp` itself has no clipboard access; only the shell's own
@@ -1036,6 +1063,21 @@ pub struct ChartApp {
     /// this metadata is cold, chrome-render-only.
     pub(crate) shared_chart_meta: std::collections::HashMap<String, share_viewer::SharedChartMeta>,
 
+    /// Author primitive id → local id, captured when a share tab remaps
+    /// ids on import. The op stream speaks author ids.
+    pub(crate) share_import_prims: std::collections::HashMap<String, std::collections::HashMap<u64, u64>>,
+
+    /// Snapshot primitive id → the id hydration actually stored.
+    /// Share updates name the snapshot id. The loaded line has the other one.
+    pub(crate) hydrate_prim_ids: std::collections::HashMap<u64, u64>,
+
+    /// Share tabs whose primitive numbers are the author's and must survive load.
+    pub(crate) share_keep_ids: std::collections::HashSet<String>,
+
+    /// Per-preset op cursor and the last JSON sent or applied, keyed by
+    /// the stream's object id (`p:{author_id}` or `n:…`).
+    pub(crate) share_streams: std::collections::HashMap<String, share_stream::ShareStream>,
+
     /// Pending "open this share" request — set by
     /// `share_viewer::ChartApp::request_open_share`, drained by the shell,
     /// which owns the HTTP fetch (`ChartApp` does no network IO — SWC crate
@@ -1056,6 +1098,9 @@ pub struct ChartApp {
     /// `fill_shared_placeholder`/`share_reopen_gone`/
     /// `share_reopen_transient`.
     pub(crate) pending_reopen_shares: Vec<share_viewer::PendingReopenShare>,
+    /// Ops fetched with a share open. Applied once the cold load is live,
+    /// so hydration does not wipe them and the poll gap is not the wait.
+    pending_share_catchup: Option<share_stream::ShareCatchup>,
 
     /// `placeholder preset id -> share token` for every boot-time
     /// placeholder still waiting on its re-fetch outcome. `shared_chart_meta`
@@ -1222,9 +1267,29 @@ pub struct ChartApp {
     /// watchlist refreshes ~4 Hz instead of once per per-symbol tick.
     pub sidebar_ticker_mark: Option<web_time::Instant>,
 
-    /// Tracks the last active leaf so we can detect leaf switches and
+    /// Tracks the last active chart so we can detect a pane/tab switch and
     /// mark sidebar_data_dirty automatically.
-    last_active_leaf: Option<mlc_core::LeafId>,
+    ///
+    /// Keyed by `ChartId`, NOT `LeafId` (2026-09-24 fix): `LeafId` counters
+    /// are scoped to a single docking tree and reset per preset (every
+    /// fresh single-window preset — including any shared/read-only tab,
+    /// which always goes through `ChartPreset::remap_ids_for_import` —
+    /// lands its lone leaf on the same small id, typically 0). Comparing on
+    /// `LeafId` alone made a genuine cross-preset active-window change
+    /// silently look like a no-op whenever the two presets' active leaves
+    /// happened to share a numeric id, which skipped
+    /// `apply_key_to_panels_in_group`/`reassign_synced_panels` entirely —
+    /// every "Synced"/`BoundToChart` sidebar panel (DOM, Trade Tape, L2,
+    /// Big Trades) then kept pointing at a tag group `apply_preset_cold`'s
+    /// `tags_mut().clear()` had already discarded, so it could never
+    /// resolve an instrument to subscribe to (owner repro: shared-chart
+    /// tab's panels never connect to data; switching to another tab and
+    /// back "heals" it only because that second switch finally produces a
+    /// `ChartId` inequality). `ChartId` is allocated from a
+    /// process-global, never-reset counter (`generate_chart_id`/
+    /// `bump_chart_id_past`, bumped past every restored window id on every
+    /// cold load), so two DIFFERENT presets' active windows never collide.
+    last_active_chart_id: Option<mlc_core::ChartId>,
 
     /// Last render timing breakdown in microseconds (for PERF diagnostics).
     /// Tuple: (chart_us, toolbar_us, sidebar_us, setup_us)
@@ -3480,6 +3545,10 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            arm_live_after_share: false,
+            stream_ended: None,
+            pending_share_copy: false,
+            pending_share_admin: None,
             pending_clipboard_text: None,
             pending_reset_cache: false,
             pending_reset_storage: false,
@@ -3538,9 +3607,14 @@ impl ChartApp {
             pending_autosave: None,
             readonly_preset_ids: std::collections::HashSet::new(),
             shared_chart_meta: std::collections::HashMap::new(),
+            share_import_prims: std::collections::HashMap::new(),
+            hydrate_prim_ids: std::collections::HashMap::new(),
+            share_keep_ids: std::collections::HashSet::new(),
+            share_streams: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
+            pending_share_catchup: None,
             pending_share_tokens: std::collections::HashMap::new(),
             deferred_share_reopens: Vec::new(),
             snapshot_actions: Vec::new(),
@@ -3570,7 +3644,7 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             sidebar_ticker_mark: None,
-            last_active_leaf: None,
+            last_active_chart_id: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             indicator_heal_attempted: std::collections::HashSet::new(),
@@ -3875,6 +3949,10 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            arm_live_after_share: false,
+            stream_ended: None,
+            pending_share_copy: false,
+            pending_share_admin: None,
             pending_clipboard_text: None,
             pending_reset_cache: false,
             pending_reset_storage: false,
@@ -3936,9 +4014,14 @@ impl ChartApp {
             pending_autosave: None,
             readonly_preset_ids: std::collections::HashSet::new(),
             shared_chart_meta: std::collections::HashMap::new(),
+            share_import_prims: std::collections::HashMap::new(),
+            hydrate_prim_ids: std::collections::HashMap::new(),
+            share_keep_ids: std::collections::HashSet::new(),
+            share_streams: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
+            pending_share_catchup: None,
             pending_share_tokens: std::collections::HashMap::new(),
             deferred_share_reopens: Vec::new(),
             snapshot_actions: Vec::new(),
@@ -3968,7 +4051,7 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             sidebar_ticker_mark: None,
-            last_active_leaf: None,
+            last_active_chart_id: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             indicator_heal_attempted: std::collections::HashSet::new(),
@@ -4486,6 +4569,10 @@ impl ChartApp {
             pending_screenshot: false,
             capturing_screenshot: false,
             pending_share_live: false,
+            arm_live_after_share: false,
+            stream_ended: None,
+            pending_share_copy: false,
+            pending_share_admin: None,
             pending_clipboard_text: None,
             pending_reset_cache: false,
             pending_reset_storage: false,
@@ -4541,9 +4628,14 @@ impl ChartApp {
             pending_autosave: None,
             readonly_preset_ids: std::collections::HashSet::new(),
             shared_chart_meta: std::collections::HashMap::new(),
+            share_import_prims: std::collections::HashMap::new(),
+            hydrate_prim_ids: std::collections::HashMap::new(),
+            share_keep_ids: std::collections::HashSet::new(),
+            share_streams: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
+            pending_share_catchup: None,
             pending_share_tokens: std::collections::HashMap::new(),
             deferred_share_reopens: Vec::new(),
             snapshot_actions: Vec::new(),
@@ -4573,7 +4665,7 @@ impl ChartApp {
             diagnostics_enabled: false,
             sidebar_data_dirty: true,
             sidebar_ticker_mark: None,
-            last_active_leaf: None,
+            last_active_chart_id: None,
             render_timing_us: (0, 0, 0, 0),
             pending_sub_pane_ratios: std::collections::HashMap::new(),
             indicator_heal_attempted: std::collections::HashSet::new(),
@@ -4652,6 +4744,21 @@ impl ChartApp {
         app.core.templates_mut().replace_all(user_manager.template_manager.clone());
         app.core.presets_mut().replace_all(user_manager.presets.clone());
 
+        // A link tab is not a chart this profile owns. Copies written by
+        // older builds used a `shared_` id; drop them so a reload cannot
+        // open that file as a writable tab.
+        let leaked: Vec<String> = app
+            .core
+            .presets()
+            .keys()
+            .filter(|id| id.starts_with("shared_"))
+            .cloned()
+            .collect();
+        for id in leaked {
+            app.core.presets_mut().remove(&id);
+            let _ = mlc_core::preset::storage::delete_preset(&id);
+        }
+
         // Always restore active_preset_id from profile (not just on restore).
         // This prevents skeleton launches from creating spurious new Untitled presets.
         if !user_manager.profile.ui.active_preset_id.is_empty()
@@ -4681,7 +4788,9 @@ impl ChartApp {
                 // the legacy top-level list AND the per-window one.
                 if restore.is_none() {
                     let shared = user_manager.profile.ui.open_shared_tabs.clone();
-                    app.install_shared_tab_placeholders(&shared);
+                    if let Some(id) = app.install_shared_tab_placeholders(&shared) {
+                        app.panel_app.active_preset_id = id;
+                    }
                 }
 
                 let presets_guard = app.core.presets();
@@ -4732,10 +4841,12 @@ impl ChartApp {
 
         // If restoring a saved window, apply its tab/preset state.
         if let Some(ws) = restore {
+            let shared_was_active = ws.open_shared_tabs.iter().any(|s| s.was_active);
             let valid_tabs: Vec<String> = {
                 let presets_guard = app.core.presets();
                 ws.open_tabs.iter()
                     .filter(|id| presets_guard.contains_key(*id))
+                    .filter(|id| !(shared_was_active && *id == &ws.active_preset_id))
                     .cloned()
                     .collect()
             };
@@ -4749,10 +4860,25 @@ impl ChartApp {
                 // Re-anchor this window's own shared tabs — see the
                 // matching (and, for this restore path, deliberately
                 // skipped) block in the legacy top-level seed above.
-                app.install_shared_tab_placeholders(&ws.open_shared_tabs);
+                let active_shared = app.install_shared_tab_placeholders(&ws.open_shared_tabs);
+                let shared_was_active = ws.open_shared_tabs.iter().any(|s| s.was_active);
+                let saved_active_alive = !shared_was_active
+                    && !ws.active_preset_id.is_empty()
+                    && app.core.presets().contains_key(&ws.active_preset_id);
+                if saved_active_alive {
+                    app.panel_app.active_preset_id = ws.active_preset_id.clone();
+                } else if let Some(id) = active_shared {
+                    // The active tab was a shared one. Its placeholder id
+                    // is new this boot; `was_active` on the token is what
+                    // still names it.
+                    app.panel_app.active_preset_id = id;
+                }
             }
-            if !ws.active_preset_id.is_empty()
+            let shared_was_active = ws.open_shared_tabs.iter().any(|s| s.was_active);
+            if !shared_was_active
+                && !ws.active_preset_id.is_empty()
                 && app.core.presets().contains_key(&ws.active_preset_id)
+                && app.panel_app.active_preset_id != ws.active_preset_id
             {
                 app.panel_app.active_preset_id = ws.active_preset_id.clone();
             }
@@ -5301,6 +5427,10 @@ impl ChartApp {
         }
         self.panel_app.toolbar_state.favorites_bar_visible = profile.ui.favorites_bar_visible;
         self.panel_app.toolbar_state.screenshot_destination = profile.ui.screenshot_destination;
+        // Collapsed flyout sub-sections (toolbar-flyout-collapse arc,
+        // owner order 2026-09-25) — a plain UI preference, same load shape
+        // as `favorites_bar_visible` just above.
+        self.panel_app.toolbar_state.collapsed_flyout_sections = profile.ui.collapsed_flyout_sections.clone();
 
         // Community modal per-tab size (community-modal chrome arc, cloud
         // builds only) — flat profile field, no per-window mirror, same
@@ -5519,7 +5649,9 @@ impl ChartApp {
     /// becomes the captured frame — see `capturing_screenshot`'s doc for why
     /// vello needs the explicit form).
     pub fn is_capturing_screenshot(&self) -> bool {
-        self.pending_screenshot || self.capturing_screenshot
+        // Live share uploads the same chart crop. The hover menu is open
+        // on that click; without this the dropdown is in the card.
+        self.pending_screenshot || self.pending_share_live || self.capturing_screenshot
     }
 
     /// Explicitly mark whether the render pass about to run is capturing a
@@ -5539,9 +5671,173 @@ impl ChartApp {
     /// The shell drains this flag via `drain_pending_share_live()` and POSTs
     /// the serialized preset to `/api/share/live` — the cloud session and
     /// its token live in the shell, not here.
+    pub fn take_share_admin(&mut self) -> Option<ShareAdminCmd> {
+        self.pending_share_admin.take()
+    }
+
+    /// `(clone_allowed, interaction, visibility)` for the next live share.
+    /// Default is public, clone on, view only — no edit right.
+    pub fn share_publish_flags(&self) -> (bool, &'static str, &'static str) {
+        match self.core.user().profile().ui.share_rights_preset.as_str() {
+            "view_only" => (false, "view", "public"),
+            "private" => (true, "view", "private"),
+            "private_view" => (false, "view", "private"),
+            _ => (true, "view", "public"),
+        }
+    }
+
+    pub fn set_share_rights_preset(&mut self, preset: &str) {
+        let preset = match preset {
+            "view_only" | "private" | "private_view" => preset,
+            _ => "public_clone",
+        };
+        self.panel_app.share_settings_state.rights_preset = preset.to_string();
+        self.core.user_mut().profile_mut().ui.share_rights_preset = preset.to_string();
+        self.profile_dirty = true;
+        let active = self.panel_app.active_preset_id.clone();
+        let token = self
+            .shared_chart_meta(&active)
+            .filter(|m| m.has_right("edit"))
+            .map(|m| m.token.clone())
+            .or_else(|| self.panel_app.chart_share_tokens.get(&active).cloned());
+        let body = match preset {
+            "view_only" => r#"{"visibility":"public","clone_allowed":false,"interaction":"view"}"#,
+            "private" => r#"{"visibility":"private","clone_allowed":true,"interaction":"view"}"#,
+            "private_view" => r#"{"visibility":"private","clone_allowed":false,"interaction":"view"}"#,
+            _ => r#"{"visibility":"public","clone_allowed":true,"interaction":"view"}"#,
+        };
+        if let Some(token) = token {
+            // Latest click wins. A private save still in flight must not
+            // swallow the public click that follows it.
+            self.pending_share_admin = Some(ShareAdminCmd::Patch {
+                token,
+                body: body.to_string(),
+            });
+            self.panel_app.share_settings_state.status = "Saved for this chart".to_string();
+        } else {
+            self.panel_app.share_settings_state.status =
+                "Saved as the default for the next Share".to_string();
+        }
+    }
+
+    pub fn note_chart_share_token(&mut self, chart_id: &str, token: &str) {
+        if chart_id.is_empty() || token.is_empty() {
+            return;
+        }
+        self.panel_app
+            .chart_share_tokens
+            .insert(chart_id.to_string(), token.to_string());
+    }
+
+    pub fn share_settings_nick_query(&self) -> Option<String> {
+        if !self.panel_app.share_settings_state.is_open {
+            return None;
+        }
+        let wid = uzor::WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
+        Some(
+            self.input_coordinator
+                .borrow()
+                .text_fields()
+                .text(&wid)
+                .trim()
+                .to_string(),
+        )
+    }
+
+    pub fn set_share_lookup_hits(&mut self, hits: Vec<(String, String)>) {
+        self.panel_app.share_settings_state.hits = hits;
+    }
+
+    pub fn friends_nick_query(&self) -> Option<String> {
+        let st = &self.panel_app.user_settings_state;
+        if !st.is_open || st.active_tab != mlc_app_layout::ui::modal_settings::UserSettingsTab::Friends {
+            return None;
+        }
+        let wid = uzor::WidgetId::from(crate::text_input::FRIENDS_NICK);
+        Some(self.input_coordinator.borrow().text_fields().text(&wid).trim().to_string())
+    }
+
+    pub fn set_friend_hits(&mut self, hits: Vec<String>) {
+        self.panel_app.user_settings_state.friend_hits = hits;
+    }
+
+    pub fn set_share_settings_note(&mut self, note: String) {
+        self.panel_app.share_settings_state.status = note;
+    }
+
+    pub fn grant_share_nick(&mut self, nick: &str, tiers: &[&str]) {
+        let tiers: Vec<String> = tiers
+            .iter()
+            .map(|tier| {
+                if *tier == "view" || *tier == "edit" {
+                    (*tier).to_string()
+                } else {
+                    "clone".to_string()
+                }
+            })
+            .collect();
+        if tiers.is_empty() {
+            return;
+        }
+        let active = self.panel_app.active_preset_id.clone();
+        let token = self
+            .shared_chart_meta(&active)
+            .filter(|m| m.has_right("edit"))
+            .map(|m| m.token.clone())
+            .or_else(|| self.panel_app.chart_share_tokens.get(&active).cloned());
+        let Some(token) = token else {
+            self.panel_app.share_settings_state.status = "Share this chart first".to_string();
+            return;
+        };
+        if self.pending_share_admin.is_none() {
+            self.pending_share_admin = Some(ShareAdminCmd::Grant {
+                token,
+                nick: nick.to_string(),
+                tiers,
+            });
+            self.panel_app.share_settings_state.status = format!("Adding {nick}");
+        }
+    }
+
     pub fn request_share_live(&mut self) {
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            dlog!("[Share] refused: this tab is bound to an existing share");
+            return;
+        }
         self.pending_share_live = true;
         dlog!("[Share] Live-share link requested");
+    }
+
+    /// Bolt next to Share. Copies the link and turns the socket on.
+    /// The corner overlay is the live controls. No settings modal.
+    pub fn request_share_stream(&mut self) {
+        if self.is_readonly_tab(&self.panel_app.active_preset_id) {
+            return;
+        }
+        let id = self.panel_app.active_preset_id.clone();
+        if self.panel_app.chart_share_tokens.contains_key(&id) {
+            self.pending_share_copy = true;
+            self.set_share_live(true);
+            return;
+        }
+        self.arm_live_after_share = true;
+        self.pending_share_live = true;
+    }
+
+    pub fn take_pending_share_copy(&mut self) -> bool {
+        let pending = self.pending_share_copy;
+        self.pending_share_copy = false;
+        pending
+    }
+
+    pub fn take_arm_live(&mut self) -> bool {
+        let arm = self.arm_live_after_share;
+        self.arm_live_after_share = false;
+        arm
+    }
+
+    pub fn clear_arm_live(&mut self) {
+        self.arm_live_after_share = false;
     }
 
     // -------------------------------------------------------------------------
@@ -7020,10 +7316,14 @@ impl ChartApp {
                     color_tag,
                     &leaf_tab_toolbar_theme,
                     None, // static text — inline editing is Trading-tab only
+                    self.shared_chart_meta(&self.panel_app.active_preset_id)
+                        .map(|m| m.has_right("clone"))
+                        .unwrap_or(false),
                 );
                 let tab_rect = hit_zones.tab_rect;
                 let dots_rect = hit_zones.dots_rect;
                 let color_tag_rect = hit_zones.color_tag_rect;
+                let clone_rect = hit_zones.clone_rect;
                 out_leaf_tab_hit_zones.insert(leaf_id, hit_zones);
 
                 // Register overlay tab sub-zones so crosshair hides, cursor is default,
@@ -7053,6 +7353,14 @@ impl ChartApp {
                         coord.register(
                             format!("leaf_tab:{}:color_tag", leaf_id.0),
                             uzor::Rect::new(cx, cy, cw, ch),
+                            Sense::CLICK,
+                        );
+                    }
+                    let [kx, ky, kw, kh] = clone_rect;
+                    if kw > 0.0 && kh > 0.0 {
+                        coord.register(
+                            format!("leaf_tab:{}:clone", leaf_id.0),
+                            uzor::Rect::new(kx, ky, kw, kh),
                             Sense::CLICK,
                         );
                     }
@@ -7698,10 +8006,14 @@ impl ChartApp {
                     single_color_tag,
                     &leaf_tab_toolbar_theme,
                     None, // static text — inline editing is Trading-tab only
+                    self.shared_chart_meta(&self.panel_app.active_preset_id)
+                        .map(|m| m.has_right("clone"))
+                        .unwrap_or(false),
                 );
                 let tab_rect = hit_zones.tab_rect;
                 let dots_rect = hit_zones.dots_rect;
                 let color_tag_rect = hit_zones.color_tag_rect;
+                let clone_rect = hit_zones.clone_rect;
                 out_leaf_tab_hit_zones.insert(single_leaf_id, hit_zones);
 
                 // Register overlay tab sub-zones so crosshair hides, cursor is default,
@@ -7731,6 +8043,14 @@ impl ChartApp {
                         coord.register(
                             format!("leaf_tab:{}:color_tag", single_leaf_id.0),
                             uzor::Rect::new(cx, cy, cw, ch),
+                            Sense::CLICK,
+                        );
+                    }
+                    let [kx, ky, kw, kh] = clone_rect;
+                    if kw > 0.0 && kh > 0.0 {
+                        coord.register(
+                            format!("leaf_tab:{}:clone", single_leaf_id.0),
+                            uzor::Rect::new(kx, ky, kw, kh),
                             Sense::CLICK,
                         );
                     }
@@ -8032,6 +8352,17 @@ impl ChartApp {
             let symbol_quick_search = self.core.user().profile().ui.symbol_quick_search;
             let clock_glitch_enabled = self.core.user().profile().ui.clock_glitch_enabled;
             let is_capturing_screenshot = self.is_capturing_screenshot();
+            // A freshly opened dropdown always starts scrolled to its own
+            // top (toolbar-flyout-collapse arc) — reset `dropdown_scroll`
+            // the frame `open_dropdown_id` changes, rather than carrying
+            // over whatever a PREVIOUS (possibly taller, possibly shorter)
+            // flyout left it at.
+            let last_open_dropdown_id = self.last_toolbar_result.as_ref()
+                .and_then(|r| r.dropdown_result.as_ref())
+                .map(|dd| dd.dropdown_id.as_str());
+            if self.panel_app.toolbar_state.open_dropdown_id.as_deref() != last_open_dropdown_id {
+                self.panel_app.toolbar_state.dropdown_scroll.reset();
+            }
             let toolbar_result = self.panel_app.render_toolbars_with_theme(
                 ctx,
                 &panel_layout,
@@ -8261,6 +8592,24 @@ impl ChartApp {
                         format!("dropdown:{}:{}", dd.dropdown_id, item_id),
                         uzor::Rect::new(rect.x, rect.y, rect.width, rect.height),
                         Sense::CLICK,
+                        &dd_layer,
+                    );
+                }
+
+                // Wheel-scrollable viewport (toolbar-flyout-collapse arc,
+                // owner order 2026-09-25) — `dd.menu_rect` is already the
+                // CLAMPED frame (`chart_toolbar_render_dropdown`'s vertical
+                // clamp-and-scroll block), so registering the scroll sense
+                // over the whole menu rect is correct without any further
+                // geometry. Only registered while there is actually
+                // something to scroll to, same gate `ChartApp::on_scroll`'s
+                // `"dropdown:__scroll__"` handler re-checks before moving
+                // `dropdown_scroll`.
+                if dd.content_height > dd.viewport_height {
+                    self.input_coordinator.borrow_mut().register_on_layer(
+                        "dropdown:__scroll__",
+                        uzor::Rect::new(dd.menu_rect.x, dd.menu_rect.y, dd.menu_rect.width, dd.menu_rect.height),
+                        Sense::SCROLL,
                         &dd_layer,
                     );
                 }
@@ -9286,6 +9635,16 @@ impl ChartApp {
             .map(|d| d.as_secs_f64())
             .unwrap_or(0.0);
         let is_capturing_screenshot = self.is_capturing_screenshot();
+        // See the twin reset in `render_to_scene` for the rationale — same
+        // "a freshly opened dropdown starts scrolled to its own top" rule,
+        // needed here too since `render_toolbar_only` is the OTHER path
+        // that can observe `open_dropdown_id` change.
+        let last_open_dropdown_id = self.last_toolbar_result.as_ref()
+            .and_then(|r| r.dropdown_result.as_ref())
+            .map(|dd| dd.dropdown_id.as_str());
+        if self.panel_app.toolbar_state.open_dropdown_id.as_deref() != last_open_dropdown_id {
+            self.panel_app.toolbar_state.dropdown_scroll.reset();
+        }
         let toolbar_result = self.panel_app.render_toolbars_with_theme(
             ctx,
             &panel_layout,
@@ -10061,6 +10420,58 @@ impl ChartApp {
                         &toolbar_theme,
                     );
                 }
+            } else if self.panel_app.share_settings_state.live_on
+                && self.panel_app.chart_share_tokens.contains_key(&active_preset_id)
+            {
+                let row_y = content_rect.y + 2.0;
+                let row_height = mlc_app_layout::layout::panel_overlay::LEAF_TAB_HEIGHT - 4.0;
+                let plot_right_edge = {
+                    let extended = self.build_extended_layout();
+                    extended.main_chart.chart.x + extended.main_chart.chart.width
+                };
+                let row_rect = uzor::types::Rect::new(
+                    content_rect.x, row_y, (plot_right_edge - content_rect.x).max(0.0), row_height,
+                );
+                let live = self.panel_app.share_settings_state.live_on;
+                let viewport = self.panel_app.share_settings_state.live_viewport;
+                let cursor_on = self.panel_app.share_settings_state.live_cursor;
+                let mut coord = self.input_coordinator.borrow_mut();
+                mlc_app_layout::ui::share_viewer_row::draw_share_live_controls(
+                    ctx,
+                    &mut coord,
+                    &uzor::input::LayerId::new("toolbar"),
+                    row_rect,
+                    live,
+                    viewport,
+                    cursor_on,
+                    &toolbar_theme,
+                );
+            }
+            if self.stream_ended.as_deref() == Some(active_preset_id.as_str()) {
+                let title = mlc_core::i18n::t_share_viewer(
+                    mlc_core::i18n::ShareViewerKey::StreamEndedTitle,
+                );
+                let action = mlc_core::i18n::t_share_viewer(
+                    mlc_core::i18n::ShareViewerKey::StreamEndedAction,
+                );
+                let chart_bg = self.panel_app.theme_manager.current().chart.background.clone();
+                let mut coord = self.input_coordinator.borrow_mut();
+                let cover = uzor::types::Rect::new(
+                    content_rect.x,
+                    content_rect.y,
+                    content_rect.width,
+                    content_rect.height,
+                );
+                mlc_app_layout::ui::share_viewer_row::draw_stream_ended(
+                    ctx,
+                    &mut coord,
+                    &uzor::input::LayerId::new("toolbar"),
+                    cover,
+                    title,
+                    action,
+                    &chart_bg,
+                    &toolbar_theme,
+                );
             }
         }
 
@@ -11236,6 +11647,7 @@ impl ChartApp {
                     // unprefixed content-item id, see `input/mod.rs`'s
                     // `VAULT_TEXT_FIELDS` comment for why.
                     (text_input::KEY_LABEL_INPUT, "key_label"),
+                    (text_input::FRIENDS_NICK, "friend_nick"),
                 ];
                 for &(store_id, ui_id) in VAULT_FIELDS {
                     if let Some((_, rect)) = us.content_items.iter().find(|(k, _)| k.as_str() == ui_id) {
@@ -11342,6 +11754,14 @@ impl ChartApp {
                     &wid,
                     (so.input_rect.x, so.input_rect.y, so.input_rect.width, so.input_rect.height),
                     so.char_x_positions.clone(),
+                );
+            }
+            if let Some(ref ss) = fr.share_settings {
+                let wid = WidgetId::from(text_input::SHARE_SETTINGS_NICK);
+                self.input_coordinator.borrow_mut().text_fields_mut().update_field(
+                    &wid,
+                    (ss.input_rect.x, ss.input_rect.y, ss.input_rect.width, ss.input_rect.height),
+                    ss.char_x_positions.clone(),
                 );
             }
             // Template name overlay modal (save-as dialog) — one instance per

@@ -14,6 +14,7 @@ pub mod spiral;
 pub mod arcs;
 pub mod wedge;
 pub mod fan;
+pub mod fib_scan;
 
 pub use retracement::FibRetracement;
 pub use trend_extension::FibTrendExtension;
@@ -26,3 +27,4 @@ pub use spiral::FibSpiral;
 pub use arcs::FibArcs;
 pub use wedge::FibWedge;
 pub use fan::FibFan;
+pub use fib_scan::FibScan;

@@ -155,6 +155,8 @@ pub struct Crosshair {
     /// True when crosshair position was set via sync (not local mouse).
     /// Renderer should skip horizontal line since Y is not meaningful.
     pub synced: bool,
+    /// Author's cursor is driving this crosshair. Local mouse must not move it.
+    pub follow_remote: bool,
 }
 
 impl Default for Crosshair {
@@ -173,6 +175,7 @@ impl Default for Crosshair {
             pane_index: None,
             pane_instance_id: None,
             synced: false,
+            follow_remote: false,
         }
     }
 }

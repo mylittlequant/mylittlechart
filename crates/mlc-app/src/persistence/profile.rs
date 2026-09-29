@@ -220,6 +220,14 @@ impl ChartApp {
                 system_events: self.system_events.clone(),
                 community_forum_size,
                 community_messages_size,
+                // Collapsed flyout sub-sections (toolbar-flyout-collapse
+                // arc): mutated in-place via `ChartToolbarState::
+                // toggle_flyout_section_collapsed` at double-click time
+                // (`mlc-app`'s `on_double_click`), not via this snapshot
+                // builder — preserve-live-value pattern, same as
+                // `favorite_primitives` above.
+                collapsed_flyout_sections: self.panel_app.toolbar_state.collapsed_flyout_sections.clone(),
+                share_rights_preset: existing.ui.share_rights_preset.clone(),
             },
         }
     }

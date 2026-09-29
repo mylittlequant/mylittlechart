@@ -5320,6 +5320,7 @@ fn render_slot_panel(
             color_tag,
             theme,
             None, // static text — inline editing is Trading-tab only
+            false,
         );
 
         // Store hit zones for chart-app click dispatch.

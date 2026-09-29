@@ -476,7 +476,9 @@ impl ChartPreset {
     ///   collision with a DIFFERENT preset's own ids there cannot alias a
     ///   live value the way window/bubble/primitive ids — which are NOT
     ///   reset per preset — can.
-    pub fn remap_ids_for_import(&mut self) {
+    /// Returns author primitive id → the id this process assigned.
+    /// Callers that only need the remap can ignore the map.
+    pub fn remap_ids_for_import(&mut self, keep_primitive_ids: bool) -> std::collections::HashMap<u64, u64> {
         use std::collections::HashMap;
 
         let window_id_map: HashMap<u64, u64> = self
@@ -526,6 +528,47 @@ impl ChartPreset {
             ind.bubble_id = ind.bubble_id.and_then(|bid| bubble_id_map.get(&bid).copied());
         }
 
+        // A share viewer watches the author's objects. Their numbers stay.
+        // Window ids inside each primitive still follow the remapped window,
+        // or the drawings name a window that no longer exists and the reload
+        // drops them. Clone passes false: that chart is new data.
+        if keep_primitive_ids {
+            let mut identity: HashMap<u64, u64> = HashMap::new();
+            let mut note = |snaps: &[PrimitiveSnapshot]| {
+                for snap in snaps {
+                    if let Some(old_id) = snap.id() {
+                        identity.insert(old_id, old_id);
+                    }
+                }
+            };
+            for bubble in &self.bubbles {
+                note(&bubble.primitives);
+            }
+            for window in &self.windows {
+                note(&window.drawings.primitives);
+                note(&window.stashed_primitives);
+                for snaps in window.symbol_drawings_snapshots.values() {
+                    note(snaps);
+                }
+            }
+            let rewrite = |snaps: &mut Vec<PrimitiveSnapshot>| {
+                for snap in snaps.iter_mut() {
+                    *snap = snap.remap_ids(&identity, &window_id_map);
+                }
+            };
+            for bubble in &mut self.bubbles {
+                rewrite(&mut bubble.primitives);
+            }
+            for window in &mut self.windows {
+                rewrite(&mut window.drawings.primitives);
+                rewrite(&mut window.stashed_primitives);
+                for snaps in window.symbol_drawings_snapshots.values_mut() {
+                    rewrite(snaps);
+                }
+            }
+            return HashMap::new();
+        }
+
         // Primitive ids: collect one fresh id per unique old id across
         // every collection that carries `PrimitiveSnapshot`s, then rewrite
         // every snapshot + every internal reference in a second pass.
@@ -566,6 +609,8 @@ impl ChartPreset {
                 remap_snaps(snaps);
             }
         }
+        let _ = remap_snaps;
+        primitive_id_map
     }
 }
 

@@ -4,6 +4,7 @@
 
 use crate::folder::Folder;
 use crate::ids::{EventId, PaginationToken, RoomId, TagName, UserId};
+use crate::member::RankBadge;
 use crate::room::RoomKind;
 
 /// Milliseconds since the Unix epoch — Matrix's own `origin_server_ts`
@@ -126,11 +127,6 @@ pub enum MessengerIntent {
     SetMuted { room: RoomId, muted: bool },
     SetPinned { room: RoomId, pinned: bool },
     SetArchived { room: RoomId, archived: bool },
-    /// Leave a group/channel, or delete a 1:1 conversation — the provider
-    /// decides which of the two "leaving" means for this room's own kind
-    /// (concept row menu's own "Leave channel" / "Leave group" / "Delete
-    /// chat", one action underneath).
-    LeaveRoom { room: RoomId },
     LoadOlder { room: RoomId },
     CreateFolder(Folder),
     UpdateFolder(Folder),
@@ -141,4 +137,43 @@ pub enum MessengerIntent {
     /// reorder is just new order values, never a rewritten list).
     ReorderFolders(Vec<(TagName, f64)>),
     CreateRoom(CreateRoomRequest),
+    /// Join a room — a public channel picked from
+    /// [`crate::MessengerProvider::public_rooms`], or an invite accepted.
+    JoinRoom { room: RoomId },
+    /// Leave a group/channel, or delete a 1:1 conversation — the provider
+    /// decides which of the two "leaving" means for this room's own kind
+    /// (concept row menu's own "Leave channel" / "Leave group" / "Delete
+    /// chat", one action underneath).
+    LeaveRoom { room: RoomId },
+    Invite { room: RoomId, user: UserId },
+    Kick { room: RoomId, user: UserId },
+    /// Re-send a `SendState::Failed` item. `local_id` is the id the item
+    /// carries in the timeline (its transaction id while no server event id
+    /// exists); the provider re-sends the identical bytes.
+    RetrySend { room: RoomId, local_id: EventId },
+    /// Search the public-room directory; the latest result set is read back
+    /// through [`crate::MessengerProvider::public_rooms`].
+    SearchPublicRooms { term: String },
+    /// Search the user directory; the latest result set is read back through
+    /// [`crate::MessengerProvider::user_search`].
+    SearchUsers { term: String },
+}
+
+/// One public-room directory hit — a row of the "Join a channel" list.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PublicRoomEntry {
+    pub room_id: RoomId,
+    pub name: String,
+    pub topic: Option<String>,
+    pub member_count: u64,
+    /// Whether this account is already a member.
+    pub joined: bool,
+}
+
+/// One user-directory hit — a row of the "New message" / "Invite" pickers.
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserEntry {
+    pub user_id: UserId,
+    pub display_name: String,
+    pub rank: Option<RankBadge>,
 }

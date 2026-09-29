@@ -15,6 +15,16 @@ use crate::models::*;
 use crate::{BuildAttestation, CloudConfig, CloudError};
 
 /// Wasm32 cloud transport: one `fetch` per call, no connection state.
+#[derive(Clone, Debug, Default)]
+pub struct FriendRoster {
+    pub discoverable: bool,
+    pub friends: Vec<String>,
+    pub incoming: Vec<String>,
+    pub outgoing: Vec<String>,
+    pub subscriptions: Vec<String>,
+    pub blocked: Vec<String>,
+}
+
 pub struct FetchTransport {
     config: CloudConfig,
 }
@@ -366,15 +376,108 @@ impl FetchTransport {
         &self,
         title: &str,
         preset: serde_json::Value,
+        chart_id: &str,
+        clone_allowed: bool,
+        interaction: &str,
+        visibility: &str,
     ) -> Result<ShareCreateResponse, CloudError> {
         let payload = serde_json::to_string(&ShareCreateLiveRequest {
             title: title.to_string(),
             preset,
+            chart_id: chart_id.to_string(),
+            clone_allowed,
+            interaction: interaction.to_string(),
+            visibility: visibility.to_string(),
         })
         .map_err(|e| CloudError::Decode(e.to_string()))?;
         let (status, body) = self
             .exchange("POST", "/api/share/live", Some(payload), &[])
             .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/share/{token}/grants` — owner grants one nick a tier on
+    /// this link. The tier is view or clone. It does not let them write
+    /// the author's chart.
+    pub async fn share_grant(&self, token: &str, nick: &str, tier: &str) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({
+            "grantee_nick": nick,
+            "tier": tier,
+        }))
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", &format!("/api/share/{token}/grants"), Some(payload), &[])
+            .await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    /// `POST /api/share/{token}/ops` — append primitive and indicator ops.
+    pub async fn share_post_ops(&self, token: &str, ops: &[ShareChartOp]) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "ops": ops }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", &format!("/api/share/{token}/ops"), Some(payload), &[])
+            .await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    pub async fn account_friends(&self) -> Result<FriendRoster, CloudError> {
+        let (status, body) = self.exchange("GET", "/api/account/friends", None, &[]).await?;
+        let value: serde_json::Value = self.decode_success(status, &body)?;
+        let names = |key: &str| -> Vec<String> {
+            value
+                .get(key)
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|n| n.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default()
+        };
+        Ok(FriendRoster {
+            discoverable: value.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(true),
+            friends: names("friends"),
+            incoming: names("incoming"),
+            outgoing: names("outgoing"),
+            subscriptions: names("subscriptions"),
+            blocked: names("blocked"),
+        })
+    }
+
+    pub async fn account_friend_act(&self, nick: &str, action: &str) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "nick": nick, "action": action }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.exchange("POST", "/api/account/friends", Some(payload), &[]).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    pub async fn account_set_discoverable(&self, on: bool) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "discoverable": on }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.exchange("PATCH", "/api/account/privacy", Some(payload), &[]).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    pub async fn account_friend_invite(&self) -> Result<String, CloudError> {
+        let (status, body) = self.exchange("POST", "/api/account/friend-invites", Some("{}".to_string()), &[]).await?;
+        let value: serde_json::Value = self.decode_success(status, &body)?;
+        Ok(value.get("url_path").and_then(|v| v.as_str()).unwrap_or("").to_string())
+    }
+
+    pub async fn account_add_friend(&self, nick: &str) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "nick": nick }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.exchange("POST", "/api/account/friends", Some(payload), &[]).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    pub async fn account_accept_friend(&self, token: &str) -> Result<(), CloudError> {
+        let path = format!("/api/account/friend-invites/{token}/accept");
+        let (status, body) = self.exchange("POST", &path, Some("{}".to_string()), &[]).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    /// `GET /api/share/{token}/ops?after=`.
+    pub async fn share_get_ops(&self, token: &str, after: i64) -> Result<ShareOpsResponse, CloudError> {
+        let path = format!("/api/share/{token}/ops?after={after}");
+        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
         self.decode_success(status, &body)
     }
 
@@ -398,6 +501,26 @@ impl FetchTransport {
         self.decode_success(status, &body)
     }
 
+    /// `POST /api/share/{token}/preview` — raw PNG body. The server
+    /// re-encodes it into the link-preview card. Owner of `token` only.
+    pub async fn share_upload_preview(
+        &self,
+        token: &str,
+        png: web_sys::Blob,
+    ) -> Result<(), CloudError> {
+        let path = format!("/api/share/{token}/preview");
+        let req = self.build_request(
+            "POST",
+            &path,
+            Some(png.into()),
+            false,
+            true,
+            &[("Content-Type", "image/png")],
+        )?;
+        let (status, body) = self.perform(&req).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
     /// `GET /api/share/mine` — the caller's own active shares.
     pub async fn share_list(&self) -> Result<Vec<ShareListEntry>, CloudError> {
         let (status, body) = self.exchange("GET", "/api/share/mine", None, &[]).await?;
@@ -406,6 +529,16 @@ impl FetchTransport {
     }
 
     /// `DELETE /api/share/{token}` — owner revoke.
+    /// `PATCH /api/share/{token}` — owner policy. Absent JSON fields are
+    /// left unchanged by the server.
+    pub async fn share_patch(&self, token: &str, body: serde_json::Value) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&body).map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, resp) = self
+            .exchange("PATCH", &format!("/api/share/{}", token), Some(payload), &[])
+            .await?;
+        self.decode_success(status, &resp).map(|_: serde_json::Value| ())
+    }
+
     pub async fn share_revoke(&self, token: &str) -> Result<(), CloudError> {
         let (status, body) = self
             .exchange("DELETE", &format!("/api/share/{}", token), None, &[])
@@ -421,6 +554,16 @@ impl FetchTransport {
     pub async fn share_get_public(&self, token: &str) -> Result<SharePublicResponse, CloudError> {
         let req = self.build_request("GET", &format!("/api/share/{}", token), None, false, false, &[])?;
         let (status, body) = self.perform(&req).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/share/{token}/stream-open` — same credential as the ops
+    /// calls. The returned ticket is what the live socket sends first; the
+    /// relay cannot see this request's cookie.
+    pub async fn share_stream_open(&self, token: &str) -> Result<ShareStreamOpen, CloudError> {
+        let (status, body) = self
+            .exchange("GET", &format!("/api/share/{token}/stream-open"), None, &[])
+            .await?;
         self.decode_success(status, &body)
     }
 
@@ -706,6 +849,16 @@ impl FetchTransport {
         let path = format!("/api/dm/lookup?q={}", encode_query_component(q));
         let (status, body) = self.exchange("GET", &path, None, &[]).await?;
         let resp: DmLookupResponse = self.decode_success(status, &body)?;
+        Ok(resp.users)
+    }
+
+    /// `GET /api/share/lookup?q=` — account nicks for a share grant.
+    /// Distinct from [`Self::dm_lookup`]: no messenger key, no paid gate
+    /// on the target.
+    pub async fn share_nick_lookup(&self, q: &str) -> Result<Vec<ShareNickHit>, CloudError> {
+        let path = format!("/api/share/lookup?q={}", encode_query_component(q));
+        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
+        let resp: ShareNickLookupResponse = self.decode_success(status, &body)?;
         Ok(resp.users)
     }
 

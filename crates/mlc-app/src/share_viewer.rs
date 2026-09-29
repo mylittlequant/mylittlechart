@@ -49,6 +49,8 @@ pub struct SharedChartMeta {
     pub rights: Vec<String>,
     /// RFC 3339 instant after which the share stops resolving.
     pub expires_at: String,
+    /// Author publish generation last applied to this tab. `0` if unknown.
+    pub revision: u64,
 }
 
 impl SharedChartMeta {
@@ -56,6 +58,22 @@ impl SharedChartMeta {
     /// gates the chrome's "Clone" button.
     pub fn has_right(&self, right: &str) -> bool {
         self.rights.iter().any(|r| r == right)
+    }
+}
+
+impl ChartApp {
+    /// Flip the clone right on every open tab bound to `token`.
+    /// Does not touch the preset. A policy change must not reload the chart.
+    pub fn set_share_clone_allowed(&mut self, token: &str, allowed: bool) {
+        for meta in self.shared_chart_meta.values_mut() {
+            if meta.token != token {
+                continue;
+            }
+            meta.rights.retain(|r| r != "clone");
+            if allowed {
+                meta.rights.push("clone".to_string());
+            }
+        }
     }
 }
 
@@ -128,11 +146,12 @@ impl ChartApp {
         // alias/overwrite them (owner report M5: "VOLUME drawn twice").
         // See `ChartPreset::remap_ids_for_import`'s own doc for the exact
         // mechanism and what is/isn't in scope.
-        preset.remap_ids_for_import();
+        preset.remap_ids_for_import(true);
         let id = fresh_preset_id("shared");
         preset.id = id.clone();
         preset.name = format!("{} — {}", meta.title, meta.owner_label);
 
+        self.share_keep_ids.insert(id.clone());
         self.readonly_preset_ids.insert(id.clone());
         self.shared_chart_meta.insert(id.clone(), meta);
         self.core.presets_mut().insert(id.clone(), preset);
@@ -144,6 +163,15 @@ impl ChartApp {
     /// mutation site (autosave, drawing/indicator edits, sync-push preset
     /// enumeration) runs before writing. Per-preset, not a shell-global
     /// flag: see the module doc.
+    /// A tab that is a link to someone else's chart. Never a local preset,
+    /// even after a hard reload and even if an edit grant is on.
+    pub fn is_share_link(&self, preset_id: &str) -> bool {
+        self.is_readonly_tab(preset_id)
+            || self.shared_chart_meta.contains_key(preset_id)
+            || self.pending_share_tokens.contains_key(preset_id)
+            || self.share_keep_ids.contains(preset_id)
+    }
+
     pub fn is_readonly_tab(&self, preset_id: &str) -> bool {
         self.readonly_preset_ids.contains(preset_id)
     }
@@ -189,6 +217,54 @@ impl ChartApp {
     /// stripped for a missing license (plan §3), so the recipient sees what
     /// changed instead of silently getting fewer indicators than the
     /// original. Returns the new preset id.
+    /// Fork the shared tab that is already open. Copies symbols, primitive
+    /// points, indicators and layout into a new writable tab named
+    /// `{title} — {owner} (clone)`. Does not fetch the preset again and
+    /// does not keep bar series — those reload from the exchange when the
+    /// new tab materialises. Returns false when `token` is not an open
+    /// shared tab or the caller has no clone right.
+    pub fn clone_open_share_locally(&mut self, token: &str) -> bool {
+        let Some(id) = self.share_tab_id_for_token(token) else {
+            return false;
+        };
+        let Some(meta) = self.shared_chart_meta(&id).cloned() else {
+            return false;
+        };
+        if !meta.has_right("clone") {
+            return false;
+        }
+        // The link tab stays the author's chart. The clone is a separate
+        // snapshot. Collecting into the link id, or clearing its bars,
+        // replaces the link with the snapshot.
+        let mut preset = if self.panel_app.active_preset_id == id {
+            let scratch = fresh_preset_id("preset");
+            self.collect_state_into_preset(&scratch, &meta.title);
+            let snap = self.core.presets().get(&scratch).cloned();
+            self.core.presets_mut().remove(&scratch);
+            let Some(snap) = snap else {
+                return false;
+            };
+            snap
+        } else {
+            let Some(snap) = self.core.presets().get(&id).cloned() else {
+                return false;
+            };
+            snap
+        };
+        for window in &mut preset.windows {
+            window.bars.clear();
+            window.command_history = None;
+            window.stashed_command_history = None;
+        }
+        preset.remap_ids_for_import(false);
+        let new_id = fresh_preset_id("preset");
+        preset.id = new_id.clone();
+        preset.name = format!("{} — {} (clone)", meta.title, meta.owner_label);
+        self.core.presets_mut().insert(new_id.clone(), preset);
+        self.load_preset(&new_id);
+        true
+    }
+
     pub fn apply_cloned_preset(
         &mut self,
         mut preset: ChartPreset,
@@ -196,7 +272,7 @@ impl ChartApp {
     ) -> PresetId {
         // Same id-collision hazard as `open_shared_preset` — see that
         // method's doc and `ChartPreset::remap_ids_for_import`'s own doc.
-        preset.remap_ids_for_import();
+        preset.remap_ids_for_import(false);
         let id = fresh_preset_id("preset");
         preset.id = id.clone();
         self.core.presets_mut().insert(id.clone(), preset);
@@ -265,12 +341,36 @@ impl ChartApp {
     pub(crate) fn install_shared_tab_placeholders(
         &mut self,
         shared: &[mlc_core::user_profile::profile::PersistedSharedTab],
-    ) {
+    ) -> Option<PresetId> {
+        let mut active: Option<PresetId> = None;
         let entries: Vec<(usize, PresetId)> = shared
             .iter()
-            .map(|entry| (entry.index, self.queue_shared_tab_placeholder(&entry.token)))
+            .map(|entry| {
+                let id = self.queue_shared_tab_placeholder(&entry.token);
+                if entry.was_active {
+                    active = Some(id.clone());
+                }
+                (entry.index, id)
+            })
             .collect();
         reinsert_at_saved_indices(&mut self.panel_app.open_tabs, &entries);
+        active
+    }
+
+    /// Id of the tab already bound to `token`, if this window has one.
+    /// The token lives on the tab (`shared_chart_meta` once filled,
+    /// `pending_share_tokens` while it is still the boot placeholder).
+    pub fn share_tab_id_for_token(&self, token: &str) -> Option<String> {
+        self.shared_chart_meta
+            .iter()
+            .find(|(_, meta)| meta.token == token)
+            .map(|(id, _)| id.clone())
+            .or_else(|| {
+                self.pending_share_tokens
+                    .iter()
+                    .find(|(_, t)| t.as_str() == token)
+                    .map(|(id, _)| id.clone())
+            })
     }
 
     /// One-shot drain of the boot-time reopen queue — see
@@ -302,8 +402,9 @@ impl ChartApp {
                 preset.version, PRESET_VERSION,
             ));
         }
-        preset.remap_ids_for_import();
+        preset.remap_ids_for_import(true);
         preset.id = placeholder_id.to_string();
+        self.share_keep_ids.insert(placeholder_id.to_string());
         preset.name = format!("{} — {}", meta.title, meta.owner_label);
 
         // A boot-time re-fetch (`UpdaterCommand::ReopenShare`) doesn't
@@ -348,23 +449,37 @@ impl ChartApp {
         self.persist_profile();
     }
 
-    /// The re-fetch for `placeholder_id` came back GONE — 404/410/403
-    /// (unknown, expired, or revoked token, or access withdrawn — the
-    /// server bundles all three into one bare 404 by design, see
-    /// `mlc-updater/src/share.rs::error_message`'s own doc). Drops the
-    /// placeholder for good: no reorder of the remaining tabs beyond
-    /// closing that one slot, one toast through the existing system-event/
-    /// toast path, and the entry never comes back in `open_shared_tabs` on
-    /// the next save (it is no longer in `open_tabs` for
-    /// `collect_open_shared_tabs` to find).
+    /// The re-fetch came back gone (404/403/410). The tab stays — it is the
+    /// link — and its name says the link does not work.
     pub fn share_reopen_gone(&mut self, placeholder_id: &str) {
-        self.remove_shared_placeholder_tab(placeholder_id);
+        let title = mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneTitle).to_string();
+        if let Some(preset) = self.core.presets_mut().get_mut(placeholder_id) {
+            preset.name = title;
+        }
         self.push_system_event(
             SystemEventKind::Share,
             mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneTitle),
             mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneBody),
             true,
         );
+    }
+
+    /// The address bar had `?share=` and the fetch said the link is gone.
+    /// The tab stays. It is still the link, and it says the link does not work.
+    pub fn open_dead_share_tab(&mut self, token: &str) {
+        let id = fresh_preset_id("shared");
+        let title = mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneTitle).to_string();
+        let mut placeholder = ChartPreset::new(title);
+        placeholder.id = id.clone();
+        self.readonly_preset_ids.insert(id.clone());
+        self.share_keep_ids.insert(id.clone());
+        self.pending_share_tokens.insert(id.clone(), token.to_string());
+        self.core.presets_mut().insert(id.clone(), placeholder);
+        if !self.panel_app.open_tabs.iter().any(|t| t == &id) {
+            self.panel_app.open_tabs.push(id.clone());
+        }
+        self.load_preset(&id);
+        self.share_reopen_gone(&id);
     }
 
     /// The re-fetch for `placeholder_id` failed TRANSIENTLY — offline or a
@@ -381,6 +496,7 @@ impl ChartApp {
                 token: token.to_string(),
                 window_id: self.window_id.clone(),
                 index,
+                was_active: false,
             });
         }
         self.remove_shared_placeholder_tab(placeholder_id);
@@ -415,7 +531,7 @@ impl ChartApp {
             .open_tabs
             .iter()
             .enumerate()
-            .filter(|(_, id)| self.is_readonly_tab(id))
+            .filter(|(_, id)| self.is_share_link(id))
             .filter_map(|(index, id)| {
                 let token = self
                     .shared_chart_meta
@@ -426,6 +542,7 @@ impl ChartApp {
                     token,
                     window_id: self.window_id.clone(),
                     index,
+                    was_active: id == &self.panel_app.active_preset_id,
                 })
             })
             .collect();

@@ -26,7 +26,7 @@ use mlc_app_layout::ui::modal_settings::{
     PrimitiveSettingsState, IndicatorSettingsState, ChartSettingsState,
     IndicatorOverlayState, OverlaySettingsState, TagsTabsState,
     PresetNameInputState, ChartBrowserState, AlertSettingsState,
-    CompareSettingsState, CredentialsState, ShareOpenState,
+    CompareSettingsState, CredentialsState, ShareOpenState, ShareSettingsState,
 };
 use mlc_app_layout::ui::context_menu::ContextMenuState;
 use mlc_app_layout::layout::render_frame::{ChartModalRenderResult, ChartModalLayout};
@@ -139,6 +139,9 @@ pub struct ChartPanelApp {
     /// 2026-09-06). Not `cfg(feature = "cloud")` — reading a share is
     /// public, so signed-out sessions open it too.
     pub share_open_state: ShareOpenState,
+    pub share_settings_state: ShareSettingsState,
+    /// chart preset id -> live share token, filled when this chart is shared.
+    pub chart_share_tokens: std::collections::HashMap<String, String>,
     /// Chart browser modal state (Open Chart).
     pub chart_browser: ChartBrowserState,
     /// Whether autosave is enabled for presets.
@@ -185,6 +188,8 @@ impl ChartPanelApp {
             open_tabs: Vec::new(),
             preset_name_input: PresetNameInputState::default(),
             share_open_state: ShareOpenState::default(),
+            share_settings_state: ShareSettingsState::default(),
+            chart_share_tokens: std::collections::HashMap::new(),
             chart_browser: ChartBrowserState::default(),
             autosave_enabled: true,
         }
@@ -855,6 +860,19 @@ impl ChartPanelApp {
                 ctx,
                 modal_layout.prim_screen_w,
                 modal_layout.prim_screen_h,
+                frame_theme,
+                toolbar_theme,
+                current_time_ms,
+                input_coordinator,
+            ));
+        }
+        if self.share_settings_state.is_open {
+            use mlc_app_layout::layout::modals::share_settings::render_share_settings_overlay;
+            result.share_settings = Some(render_share_settings_overlay(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                &self.share_settings_state,
                 frame_theme,
                 toolbar_theme,
                 current_time_ms,

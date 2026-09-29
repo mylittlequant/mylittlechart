@@ -328,7 +328,7 @@ pub(super) static LABEL_POSITION_KEY_TABLE: [[&str; N_LANG]; 9] = [
 //
 //  Col:  0=En                             1=Ru                                2..14=""
 
-pub(super) static TOOLBAR_TOOLTIP_KEY_TABLE: [[&str; N_LANG]; 51] = [
+pub(super) static TOOLBAR_TOOLTIP_KEY_TABLE: [[&str; N_LANG]; 52] = [
     /* 0  Crosshair          */ [ "Crosshair",                    "Перекрестие",                      "Retícula",              "Fadenkreuz",             "Réticule",               "Mira",                   "十字线",        "クロスヘア",     "크로스헤어",     "المؤشر",          "Crosshair",               "Çapraz çizgi",           "Celownik",              "Перехрестя",              "क्रॉसहेयर"          ],
     /* 1  TrendLine          */ [ "Trend Line",                   "Трендовая линия",                  "Línea de tendencia",    "Trendlinie",             "Ligne de tendance",      "Linha de tendência",     "趋势线",        "トレンドライン",  "추세선",         "خط الاتجاه",      "Linea di tendenza",       "Trend çizgisi",          "Linia trendu",          "Трендова лінія",          "ट्रेंड लाइन"        ],
     /* 2  HorizontalLine     */ [ "Horizontal Line",              "Горизонтальная линия",             "Línea horizontal",      "Horizontale Linie",      "Ligne horizontale",      "Linha horizontal",       "水平线",        "水平線",         "수평선",         "خط أفقي",         "Linea orizzontale",       "Yatay çizgi",            "Linia pozioma",         "Горизонтальна лінія",     "क्षैतिज रेखा"       ],
@@ -380,6 +380,7 @@ pub(super) static TOOLBAR_TOOLTIP_KEY_TABLE: [[&str; N_LANG]; 51] = [
     /* 48 ShareChart         */ [ "Share Chart",                  "Поделиться графиком",              "Compartir gráfico",     "Chart teilen",           "Partager le graphique",  "Compartilhar gráfico",   "分享图表",      "チャートを共有",  "차트 공유",      "مشاركة الرسم",   "Condividi grafico",       "Grafiği paylaş",         "Udostępnij wykres",     "Поділитися графіком",     "चार्ट साझा करें"      ],
     /* 49 Events             */ [ "Events",                       "Системные события",                "Eventos del sistema",   "Systemereignisse",       "Événements système",     "Eventos do sistema",     "系统事件",      "システムイベント","시스템 이벤트",   "أحداث النظام",    "Eventi di sistema",       "Sistem olayları",        "Zdarzenia systemowe",   "Системні події",          "सिस्टम इवेंट"        ],
     /* 50 Community          */ [ "Forum & Messages",             "Форум и сообщения",                "Foro y mensajes",       "Forum & Nachrichten",    "Forum et messages",       "Fórum e mensagens",      "论坛与消息",    "フォーラムとメッセージ","포럼 및 메시지",  "المنتدى والرسائل", "Forum e messaggi",        "Forum ve Mesajlar",      "Forum i wiadomości",    "Форум і повідомлення",    "फोरम और संदेश"       ],
+    /* 51 ShareStream        */ [ "Start stream",                 "Начать стрим",                     "Iniciar stream",        "Stream starten",         "Démarrer le stream",      "Iniciar stream",         "开始直播",      "配信を開始",     "스트림 시작",    "بدء البث",        "Avvia stream",            "Yayını başlat",          "Rozpocznij stream",     "Почати стрім",            "स्ट्रीम शुरू करें"   ],
 ];
 
 // =============================================================================
@@ -933,7 +934,7 @@ pub(super) static SIDEBAR_KEY_TABLE: [[&str; N_LANG]; 51] = [
 //
 //  Col:  0=En (registry display_name)              1=Ru                                          2..14=""
 
-pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 101] = [
+pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 105] = [
     /* 0  TrendLine           */ [ "Trend Line",                 "Линия тренда",                           "Línea de tendencia",          "Trendlinie",                    "Ligne de tendance",              "Linha de tendência",          "趋势线",        "トレンドライン",    "추세선",          "خط الاتجاه",         "Linea di tendenza",       "Trend Çizgisi",           "Linia trendu",            "Лінія тренду",              "ट्रेंड लाइन"           ],
     /* 1  HorizontalLine      */ [ "Horizontal Line",            "Горизонтальная линия",                   "Línea horizontal",            "Horizontale Linie",             "Ligne horizontale",              "Linha horizontal",            "水平线",        "水平線",            "수평선",          "خط أفقي",            "Linea orizzontale",       "Yatay Çizgi",             "Linia pozioma",           "Горизонтальна лінія",       "क्षैतिज रेखा"          ],
     /* 2  VerticalLine        */ [ "Vertical Line",              "Вертикальная линия",                     "Línea vertical",              "Vertikale Linie",               "Ligne verticale",                "Linha vertical",              "垂直线",        "垂直線",            "수직선",          "خط عمودي",           "Linea verticale",         "Dikey Çizgi",             "Linia pionowa",           "Вертикальна лінія",         "लंबवत रेखा"            ],
@@ -1035,6 +1036,33 @@ pub(super) static PRIMITIVE_NAME_TABLE: [[&str; N_LANG]; 101] = [
     /* 98 OrderFlowScan       */ [ "Order Flow Scan", "Скан потока ордеров", "Escáner de flujo de órdenes", "Order-Flow-Scan", "Scan du flux d'ordres", "Varredura de fluxo de ordens", "订单流扫描", "オーダーフロー検出", "오더 플로우 스캔", "مسح تدفق الأوامر", "Scansione order flow", "Emir Akışı Taraması", "Skan przepływu zleceń", "Скан потоку ордерів", "ऑर्डर फ्लो स्कैन" ],
     /* 99 RayLeft             */ [ "Ray Left", "Луч влево", "Rayo izquierdo", "Strahl links", "Rayon gauche", "Raio esquerdo", "向左射线", "左レイ", "왼쪽 레이", "شعاع يسار", "Raggio sinistro", "Sol Işın", "Promień w lewo", "Промінь ліворуч", "बाएं किरण" ],
     /* 100 HorizontalRayLeft  */ [ "Horizontal Ray Left", "Горизонтальный луч влево", "Rayo horizontal izquierdo", "Horizontaler Strahl links", "Rayon horizontal gauche", "Raio horizontal esquerdo", "向左水平射线", "左水平レイ", "왼쪽 수평 레이", "شعاع أفقي يسار", "Raggio orizzontale sinistro", "Sol Yatay Işın", "Promień poziomy w lewo", "Горизонтальний промінь ліворуч", "बाएं क्षैतिज किरण" ],
+    // 101 ElliottScan: SCAN naming arc (owner order 2026-09-25) — En/Ru
+    // owner-approved verbatim "Elliott Scan" / "Скан Эллиотта", replacing
+    // this row's former "Elliott autodetector" / "Автодетектор Эллиотта"
+    // (autodetectors A2-A4 brief, 2026-09-24). The remaining 13 columns
+    // carried the same "Autodetector"/"Автодетектор" wording and got the
+    // matching per-language swap to each language's own "Scan" word,
+    // mirroring `CandlePatternScan`'s (row 87) already-shipped convention.
+    /* 101 ElliottScan        */ [ "Elliott Scan", "Скан Эллиотта", "Escáner de Elliott", "Elliott-Scan", "Scan d'Elliott", "Varredura de Elliott", "艾略特扫描", "エリオット検出", "엘리엇 스캔", "مسح إليوت", "Scansione di Elliott", "Elliott Taraması", "Skan Elliotta", "Скан Елліотта", "इलियट स्कैन" ],
+    // 102 FiveZeroPattern: "5-0" is a numeral pattern name (Duddella), owner
+    // pre-approved verbatim (autodetectors A3 brief, 2026-09-24) — kept in
+    // the SAME Latin/numeral spelling in every language column, matching
+    // `HarmonicKindGartley`'s own proper-noun convention (`xabcd_pattern.rs`'s
+    // own doc: harmonic pattern names are proper nouns, never translated).
+    /* 102 FiveZeroPattern    */ [ "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0", "5-0" ],
+    // 103 HarmonicScan: SCAN naming arc (owner order 2026-09-25) — En/Ru
+    // owner-approved verbatim "Harmonic Scan" / "Скан гармоник", replacing
+    // this row's former "Harmonics autodetector" / "Автодетектор гармоник"
+    // (autodetectors A2-A4 brief, 2026-09-24). Remaining columns: same
+    // per-language "Scan" swap as `ElliottScan`'s own row above.
+    /* 103 HarmonicScan       */ [ "Harmonic Scan", "Скан гармоник", "Escáner de armónicos", "Harmonics-Scan", "Scan harmonique", "Varredura de harmônicos", "谐波扫描", "ハーモニクス検出", "하모닉 스캔", "مسح التوافقيات", "Scansione armonica", "Harmonik Taraması", "Skan harmoniczny", "Скан гармонік", "हार्मोनिक्स स्कैन" ],
+    // 104 FibScan: SCAN naming arc (owner order 2026-09-25) — En/Ru
+    // owner-approved verbatim "Fib Scan" / "Скан Фибоначчи", replacing this
+    // row's former "Fib autodetector" / "Автодетектор Фибоначчи"
+    // (autodetectors A2-A4 brief, 2026-09-24). Remaining columns: same
+    // per-language "Scan" swap as `ElliottScan`'s/`HarmonicScan`'s own rows
+    // above.
+    /* 104 FibScan            */ [ "Fib Scan", "Скан Фибоначчи", "Escáner de Fibonacci", "Fibonacci-Scan", "Scan de Fibonacci", "Varredura de Fibonacci", "斐波那契扫描", "フィボナッチ検出", "피보나치 스캔", "مسح فيبوناتشي", "Scansione di Fibonacci", "Fibonacci Taraması", "Skan Fibonacciego", "Скан Фібоначчі", "फिबोनाची स्कैन" ],
 ];
 
 // =============================================================================
@@ -1384,7 +1412,7 @@ pub(super) static SHELL_KEY_TABLE: [[&str; N_LANG]; 35] = [
 // of `every_chart_table_is_fully_translated` below, for the same reason
 // as `SHELL_KEY_TABLE` — see `ConceptKey`'s own doc in keys.rs.
 
-pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 468] = [
+pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 492] = [
     /* 0   SecondsRangeCap                  */ [ "1s–30s", "1с–30с", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 1   MinutesRangeCap                  */ [ "1m–45m", "1м–45м", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 2   HoursRangeCap                    */ [ "1H–12H", "1Ч–12Ч", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
@@ -1868,6 +1896,33 @@ pub(super) static CONCEPT_KEY_TABLE: [[&str; N_LANG]; 468] = [
     /* 465 MarkupThresholdDisplacementAtrMultLabel */ [ "Displacement ATR mult", "Множитель ATR смещения", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 466 MarkupThresholdEqualLevelAtrTolLabel */ [ "Equal level ATR tolerance", "Допуск ATR равных уровней", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
     /* 467 MarkupThresholdDeltaDivergenceSwingNLabel */ [ "Delta divergence swing N", "Свинг N дельта-дивергенции", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 468 WaveKindLeadingDiagonalContracting */ [ "Leading Diagonal (Contracting)", "Начальная диагональ (сходящаяся)", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 469 WaveKindLeadingDiagonalExpanding   */ [ "Leading Diagonal (Expanding)", "Начальная диагональ (расходящаяся)", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 470 WaveKindEndingDiagonalContracting  */ [ "Ending Diagonal (Contracting)", "Конечная диагональ (сходящаяся)", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 471 WaveKindEndingDiagonalExpanding    */ [ "Ending Diagonal (Expanding)", "Конечная диагональ (расходящаяся)", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 472 ScanMinScoreLabel                  */ [ "Minimum score", "Минимальная оценка", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 473 ScanMinScoreAny                    */ [ "Any", "Любая", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 474 ScanMinScoreMedium                 */ [ "Medium", "Средняя", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 475 ScanMinScoreHigh                   */ [ "High", "Высокая", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 476 ScanMinScoreExact                  */ [ "Exact", "Точная", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 477 ScanHitKindColumnHeader            */ [ "Kind", "Тип", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 478 ScanHitPivotsColumnHeader          */ [ "Pivots", "Пивоты", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 479 ScanHitScoreColumnHeader           */ [ "Score", "Оценка", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 480 ScanHitPlaceColumnHeader           */ [ "Place", "Разместить", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 481 ScanKindsTableLabel                */ [ "Wave kinds", "Виды волн", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+
+    // Autodetector A4, Fib (2026-09-24) — En/Ru only, same convention as
+    // every other Scan* row above.
+    /* 482 FibScanSwingModeLabel              */ [ "Swing selection", "Выбор свинга", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 483 FibScanSwingModeLargest            */ [ "Largest swing", "Наибольший свинг", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 484 FibScanSwingModeLastN              */ [ "Last N swings", "Последние N свингов", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 485 FibScanLastSwingsNLabel            */ [ "Swings to show", "Свингов показать", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 486 FibScanDirectionLabel              */ [ "Direction", "Направление", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 487 FibScanDirectionAuto               */ [ "Auto", "Авто", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 488 FibScanLevelsTableLabel            */ [ "Fibonacci levels", "Уровни Фибоначчи", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 489 FibScanHitRangeColumnHeader        */ [ "Range", "Диапазон", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 490 ScanClusterPatternsSuffix         */ [ "patterns", "паттернов", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
+    /* 491 RuleOrderFlowRangeNoData          */ [ "No trade data for this range", "Нет данных о сделках для этого диапазона", "", "", "", "", "", "", "", "", "", "", "", "", "" ],
 ];
 
 // =============================================================================
@@ -1936,6 +1991,35 @@ pub(super) static CANDLE_PATTERN_KEY_TABLE: [[&str; N_LANG]; 39] = [
 ];
 
 // =============================================================================
+// CandlePatternShortKey table  (21 variants x N_LANG) — see `CandlePatternShortKey`'s
+// own doc in keys.rs for why only 21 of the 39 wire ids get a row here, and
+// why (unlike `CANDLE_PATTERN_KEY_TABLE` above) every column is filled.
+// =============================================================================
+pub(super) static CANDLE_PATTERN_SHORT_KEY_TABLE: [[&str; N_LANG]; 21] = [
+    /*  0 GravestoneDoji          */ [ "Grave Doji",         "Дожи-надгробие",     "Doji Lápida",         "Grabstein-Doji",       "Doji Tombale",         "Doji Lápide",        "墓碑十字星",    "墓石ドジ",       "비석형 도지",   "دوجي الشاهد",       "Doji Lapide",        "Mezar Taşı Doji",    "Doji Nagrobek",         "Дожі-надгробок",     "समाधि दोजी"        ],
+    /*  1 LongLeggedDoji         */ [ "Long-Leg Doji",      "Длинноног. дожи",    "Doji Largo",          "Doji Langbein",        "Doji Long",            "Doji Longo",         "长腿十字星",    "足長ドジ",       "긴다리 도지",   "دوجي الأرجل",       "Doji Lungo",         "Uzun Bacaklı Doji",  "Doji Długonogi",       "Довгоног. дожі",     "लंबी टांग दोजी"    ],
+    /*  2 InvertedHammer         */ [ "Inv Hammer",         "Перев. молот",       "Martillo Inv.",       "Inv. Hammer",          "Marteau Inv.",         "Martelo Inv.",       "倒锤线",        "逆ハンマー",     "역망치형",      "مطرقة مقلوبة",      "Martello Inv.",      "Ters Çekiç",         "Młotek Odw.",          "Перев. молот",       "उल्टा हैमर"        ],
+    /*  3 BullishEngulfing       */ [ "Bull Engulfing",     "Бычье поглощ.",      "Envolvente Alcista",  "Hausse Engulfing",     "Envelop. Hausse",      "Engolfo Altista",    "看涨吞没",      "陽の包み線",     "상승 장악형",   "ابتلاع صعودي",      "Inglobante Rialzo",  "Boğa Yutan",         "Pochłon. Wzrost.",     "Бичаче поглин.",     "बुलिश एंगल्फिंग"   ],
+    /*  4 BearishEngulfing       */ [ "Bear Engulfing",     "Медв. поглощ.",      "Envolvente Bajista",  "Baisse Engulfing",     "Envelop. Baisse",      "Engolfo Baixista",   "看跌吞没",      "陰の包み線",     "하락 장악형",   "ابتلاع هبوطي",      "Inglobante Ribasso", "Ayı Yutan",          "Pochłon. Spadk.",      "Ведмеже поглин.",    "बेयरिश एंगल्फिंग"  ],
+    /*  5 BullishHarami          */ [ "Bull Harami",        "Бычья харами",       "Harami Alcista",      "Hausse Harami",        "Harami Haussier",      "Harami Altista",     "看涨孕线",      "陽のはらみ線",   "상승 하라미",   "هارامي صعودي",      "Harami Rialzista",   "Boğa Harami",        "Harami Wzrost.",       "Бичача харамі",      "बुलिश हरामी"       ],
+    /*  6 BearishHarami          */ [ "Bear Harami",        "Медв. харами",       "Harami Bajista",      "Baisse Harami",        "Harami Baissier",      "Harami Baixista",    "看跌孕线",      "陰のはらみ線",   "하락 하라미",   "هارامي هبوطي",      "Harami Ribassista",  "Ayı Harami",         "Harami Spadk.",        "Ведмежа харамі",     "बेयरिश हरामी"      ],
+    /*  7 PiercingPattern        */ [ "Piercing",           "Просвет",            "Penetrante",          "Durchdringung",        "Pénétrante",           "Penetração",         "刺透线",        "切り込み線",     "관통형",        "الاختراق",          "Penetrante",         "Nüfuz Eden",         "Przenikająca",         "Проникнення",        "पियर्सिंग"          ],
+    /*  8 DarkCloudCover         */ [ "Dark Cloud",         "Тёмное облако",      "Nube Oscura",         "Dunkle Wolke",         "Nuage Sombre",         "Nuvem Escura",       "乌云盖顶",      "かぶせ線",       "흑운형",        "الغيمة السوداء",    "Nuvola Scura",       "Kara Bulut",         "Ciemna Chmura",        "Темна хмара",        "डार्क क्लाउड"       ],
+    /*  9 MorningDojiStar        */ [ "Morning Doji",       "Утр. дожи-звезда",   "Doji Mañana",         "Morgen-Doji",          "Doji Matin",           "Doji Manhã",         "早晨十字星",    "明けの明星ドジ", "모닝 도지",     "دوجي الصباح",       "Doji Mattutina",     "Sabah Doji",         "Doji Poranne",         "Ранк. дожі-зірка",   "मॉर्निंग दोजी"     ],
+    /* 10 EveningDojiStar        */ [ "Evening Doji",       "Веч. дожи-звезда",   "Doji Noche",          "Abend-Doji",           "Doji Soir",            "Doji Noite",         "黄昏十字星",    "宵の明星ドジ",   "이브닝 도지",   "دوجي المساء",       "Doji Serale",        "Akşam Doji",         "Doji Wieczorne",       "Веч. дожі-зірка",    "इवनिंग दोजी"       ],
+    /* 11 ThreeWhiteSoldiers     */ [ "3 White Soldiers",   "3 белых солдата",    "3 Soldados Blancos",  "3 Weiße Soldaten",     "3 Soldats Blancs",     "3 Soldados Brancos", "三白兵",        "赤三兵",         "적삼병",        "3 جنود بيض",        "3 Soldati Bianchi",  "3 Beyaz Asker",      "3 Białe Żołnierze",    "3 білих солдати",    "3 व्हाइट सोल्जर्स" ],
+    /* 12 ThreeBlackCrows        */ [ "3 Black Crows",      "3 чёрные вороны",    "3 Cuervos Negros",    "3 Schwarze Krähen",    "3 Corbeaux Noirs",     "3 Corvos Pretos",    "三黑乌鸦",      "三羽烏",         "흑삼조",        "3 غربان سود",       "3 Corvi Neri",       "3 Kara Karga",       "3 Czarne Wrony",       "3 чорні ворони",     "3 ब्लैक क्रोज़"    ],
+    /* 13 ThreeInsideUp          */ [ "3 Inside Up",        "3 внутри вверх",     "3 Interior Alza",     "3 Innen Aufwärts",     "3 Intérieur Hausse",   "3 Interior Alta",    "三内涨",        "3内上昇",        "3내부 상승",    "3 داخلي صعود",      "3 Interno Rialzo",   "3 İçe Yukarı",       "3 Wewn. Wzrost",       "3 всередині вгору",  "3 इनसाइड अप"       ],
+    /* 14 ThreeInsideDown        */ [ "3 Inside Down",      "3 внутри вниз",      "3 Interior Baja",     "3 Innen Abwärts",      "3 Intérieur Baisse",   "3 Interior Baixa",   "三内跌",        "3内下降",        "3내부 하락",    "3 داخلي هبوط",      "3 Interno Ribasso",  "3 İçe Aşağı",        "3 Wewn. Spadek",       "3 всередині вниз",   "3 इनसाइड डाउन"     ],
+    /* 15 ThreeOutsideUp         */ [ "3 Outside Up",       "3 снаружи вверх",    "3 Exterior Alza",     "3 Außen Aufwärts",     "3 Extérieur Hausse",   "3 Exterior Alta",    "三外涨",        "3外上昇",        "3외부 상승",    "3 خارجي صعود",      "3 Esterno Rialzo",   "3 Dışa Yukarı",      "3 Zewn. Wzrost",       "3 назовні вгору",    "3 आउटसाइड अप"      ],
+    /* 16 ThreeOutsideDown       */ [ "3 Outside Down",     "3 снаружи вниз",     "3 Exterior Baja",     "3 Außen Abwärts",      "3 Extérieur Baisse",   "3 Exterior Baixa",   "三外跌",        "3外下降",        "3외부 하락",    "3 خارجي هبوط",      "3 Esterno Ribasso",  "3 Dışa Aşağı",       "3 Zewn. Spadek",       "3 назовні вниз",     "3 आउटसाइड डाउन"    ],
+    /* 17 RisingThreeMethods     */ [ "Rising 3 Methods",   "Метод 3 восход.",    "3 Métodos Alcistas",  "3 Methoden Steigend",  "3 Méthodes Hausse",    "3 Métodos Alta",     "上升三法",      "上げ三法",       "상승 3법",      "3 طرق صاعدة",       "3 Metodi Rialzo",    "Yükselen 3 Yöntem",  "3 Metody Rosnące",     "Метод 3 зростаючих", "राइजिंग 3 मेथड्स"  ],
+    /* 18 FallingThreeMethods    */ [ "Falling 3 Methods",  "Метод 3 нисход.",    "3 Métodos Bajistas",  "3 Methoden Fallend",   "3 Méthodes Baisse",    "3 Métodos Baixa",    "下降三法",      "下げ三法",       "하락 3법",      "3 طرق هابطة",       "3 Metodi Ribasso",   "Düşen 3 Yöntem",     "3 Metody Malejące",    "Метод 3 спадаючих",  "फॉलिंग 3 मेथड्स"   ],
+    /* 19 UpsideGapTwoCrows      */ [ "Up Gap 2 Crows",     "Гэп 2 вороны вверх", "Gap 2 Cuervos Alza",  "Lücke 2 Krähen Auf",   "Gap 2 Corbeaux Hausse","Gap 2 Corvos Alta",  "跳空两乌鸦",    "上放れ二羽烏",   "상승갭 까마귀2","فجوة غربان صعود",   "Gap 2 Corvi Rialzo", "Boşluk 2 Karga Yukarı","Luka 2 Wrony Wzrost", "Геп 2 ворони вгору", "गैप 2 क्रोज़ अप"   ],
+    /* 20 DownsideGapThreeMethods*/ [ "Down Gap 3 Methods", "Гэп 3 метода вниз",  "Gap 3 Métodos Baja",  "Lücke 3 Method. Ab",   "Gap 3 Méthodes Baisse","Gap 3 Métodos Baixa","下跳空三法",    "下放れ三法",     "하락갭 3법",    "فجوة 3 طرق هبوط",   "Gap 3 Metodi Ribasso","Boşluk 3 Yöntem Aşağı","Luka 3 Metody Spadek", "Геп 3 методи вниз",  "गैप 3 मेथड्स डाउन" ],
+];
+
+// =============================================================================
 // ShareViewerKey table  (2 variants x N_LANG)
 // =============================================================================
 //
@@ -1944,7 +2028,7 @@ pub(super) static CANDLE_PATTERN_KEY_TABLE: [[&str; N_LANG]; 39] = [
 // `every_chart_table_is_fully_translated` below. Column order matches
 // `Language::all()` (`lang.rs`): en, ru, es, de, fr, pt, zh, ja, ko, ar, it,
 // tr, pl, uk, hi.
-pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 2] = [
+pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 4] = [
     /* 0 SharedChartGoneTitle */ [
         "Shared chart unavailable",
         "Общий график недоступен",
@@ -1978,6 +2062,40 @@ pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 2] = [
         "Ten udostępniony wykres nie jest już dostępny.",
         "Цей спільний графік більше не доступний.",
         "यह साझा चार्ट अब उपलब्ध नहीं है।",
+    ],
+    /* 2 StreamEndedTitle */ [
+        "The stream has ended",
+        "Стрим закончился",
+        "La transmisión terminó",
+        "Der Stream ist beendet",
+        "Le stream est terminé",
+        "A transmissão terminou",
+        "直播已结束",
+        "配信は終了しました",
+        "스트림이 종료되었습니다",
+        "انتهى البث",
+        "Lo stream è terminato",
+        "Yayın bitti",
+        "Stream się zakończył",
+        "Стрім закінчився",
+        "स्ट्रीम समाप्त हो गया",
+    ],
+    /* 3 StreamEndedAction */ [
+        "Close",
+        "Закрыть",
+        "Cerrar",
+        "Schliessen",
+        "Fermer",
+        "Fechar",
+        "关闭",
+        "閉じる",
+        "닫기",
+        "إغلاق",
+        "Chiudi",
+        "Kapat",
+        "Zamknij",
+        "Закрити",
+        "बंद करें",
     ],
 ];
 
@@ -2094,5 +2212,61 @@ mod completeness {
         assert_full("POSITION_POINT_KEY_TABLE", &POSITION_POINT_KEY_TABLE);
         assert_full("SHARE_VIEWER_KEY_TABLE", &SHARE_VIEWER_KEY_TABLE);
         assert_full("FORUM_KEY_TABLE", &FORUM_KEY_TABLE);
+        assert_full("CANDLE_PATTERN_SHORT_KEY_TABLE", &CANDLE_PATTERN_SHORT_KEY_TABLE);
+    }
+
+    /// SCAN-naming arc (owner order 2026-09-25): "Elliott autodetector" /
+    /// "Harmonics autodetector" / "Fib autodetector" and their Ru
+    /// "Автодетектор …" counterparts (`TOOLBAR_MENU_KEY_TABLE` rows 101/103/
+    /// 104) became "Elliott Scan" / "Harmonic Scan" / "Fib Scan" and "Скан
+    /// Эллиотта" / "Скан гармоник" / "Скан Фибоначчи". Every OTHER language
+    /// column in those same 3 rows carried the same En "Autodetector"/Ru
+    /// "Автодетектор" wording too (Es/Pt/De/Uk all borrow the literal word)
+    /// and got the matching per-language "Scan" swap. This is a real data
+    /// scan, not a raw-text grep — it reads every cell of every production
+    /// i18n table this file owns, so a NEW row (any table, any future arc)
+    /// that reintroduces either word trips it too.
+    fn assert_no_autodetector_wording(name: &str, rows: &[[&str; N_LANG]]) {
+        for (r, row) in rows.iter().enumerate() {
+            for (c, cell) in row.iter().enumerate() {
+                let lower = cell.to_lowercase();
+                assert!(
+                    !lower.contains("autodetector") && !lower.contains("автодетектор"),
+                    "{name}: row {r}, language column {c} still reads {cell:?} — SCAN naming arc \
+                     (owner order 2026-09-25) renamed every autodetector/автодетектор string",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_autodetector_wording_remains_in_any_table() {
+        assert_no_autodetector_wording("MENU_KEY_TABLE", &MENU_KEY_TABLE);
+        assert_no_autodetector_wording("CONFIG_KEY_TABLE", &CONFIG_KEY_TABLE);
+        assert_no_autodetector_wording("WAVE_DEGREE_KEY_TABLE", &WAVE_DEGREE_KEY_TABLE);
+        assert_no_autodetector_wording("STYLE_KEY_TABLE", &STYLE_KEY_TABLE);
+        assert_no_autodetector_wording("LABEL_POSITION_KEY_TABLE", &LABEL_POSITION_KEY_TABLE);
+        assert_no_autodetector_wording("TOOLBAR_TOOLTIP_KEY_TABLE", &TOOLBAR_TOOLTIP_KEY_TABLE);
+        assert_no_autodetector_wording("WIZARD_KEY_TABLE", &WIZARD_KEY_TABLE);
+        assert_no_autodetector_wording("CLOCK_KEY_TABLE", &CLOCK_KEY_TABLE);
+        assert_no_autodetector_wording("SETTINGS_KEY_TABLE", &SETTINGS_KEY_TABLE);
+        assert_no_autodetector_wording("USER_SETTINGS_KEY_TABLE", &USER_SETTINGS_KEY_TABLE);
+        assert_no_autodetector_wording("PROFILE_KEY_TABLE", &PROFILE_KEY_TABLE);
+        assert_no_autodetector_wording("MODAL_KEY_TABLE", &MODAL_KEY_TABLE);
+        assert_no_autodetector_wording("INDICATOR_MODAL_KEY_TABLE", &INDICATOR_MODAL_KEY_TABLE);
+        assert_no_autodetector_wording("SIDEBAR_KEY_TABLE", &SIDEBAR_KEY_TABLE);
+        assert_no_autodetector_wording("PRIMITIVE_NAME_TABLE", &PRIMITIVE_NAME_TABLE);
+        assert_no_autodetector_wording("PRIMITIVE_TOOLTIP_TABLE", &PRIMITIVE_TOOLTIP_TABLE);
+        assert_no_autodetector_wording("TRADING_KEY_TABLE", &TRADING_KEY_TABLE);
+        assert_no_autodetector_wording("TOOLBAR_MENU_KEY_TABLE", &TOOLBAR_MENU_KEY_TABLE);
+        assert_no_autodetector_wording("CITY_KEY_TABLE", &CITY_KEY_TABLE);
+        assert_no_autodetector_wording("HEAD_SHOULDERS_KEY_TABLE", &HEAD_SHOULDERS_KEY_TABLE);
+        assert_no_autodetector_wording("POSITION_POINT_KEY_TABLE", &POSITION_POINT_KEY_TABLE);
+        assert_no_autodetector_wording("SHELL_KEY_TABLE", &SHELL_KEY_TABLE);
+        assert_no_autodetector_wording("CONCEPT_KEY_TABLE", &CONCEPT_KEY_TABLE);
+        assert_no_autodetector_wording("CANDLE_PATTERN_KEY_TABLE", &CANDLE_PATTERN_KEY_TABLE);
+        assert_no_autodetector_wording("CANDLE_PATTERN_SHORT_KEY_TABLE", &CANDLE_PATTERN_SHORT_KEY_TABLE);
+        assert_no_autodetector_wording("SHARE_VIEWER_KEY_TABLE", &SHARE_VIEWER_KEY_TABLE);
+        assert_no_autodetector_wording("FORUM_KEY_TABLE", &FORUM_KEY_TABLE);
     }
 }

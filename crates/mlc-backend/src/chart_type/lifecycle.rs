@@ -405,6 +405,94 @@ impl BackendCore {
         event
     }
 
+    /// Order-flow shadow footprint feed (owner bug report, prod 0.5.617,
+    /// 2026-09-25: "Order Flow scan doesn't work"). Root cause — every
+    /// primitive in `MarkupFamily::OrderFlow` (`order_flow_scan`,
+    /// `imbalance_zone`, `absorption_mark`, `delta_divergence`) reads
+    /// `DataBubble::footprint_bars`, and that slot is populated ONLY by the
+    /// `"footprint"` chart_type's own trade-fold install (the `"footprint"`
+    /// arm of [`Self::apply_trade_fold_reseed_outputs`]) — a bubble on any
+    /// OTHER chart_type never subscribes to it at all (these four tools sit
+    /// in the same flyout as `smc_scan`/`candle_pattern_scan`, which read
+    /// `bars`/OHLC and need no such switch), so `footprint_bars` stays
+    /// `None` forever and every one of the four keeps reporting
+    /// `order_flow_data_missing` even when the venue holds real trades for
+    /// the dragged range.
+    ///
+    /// Called once per frame (`ChartApp::react_to_events`) — cheap and
+    /// self-limiting, not via a tracked flag but because the subscribe this
+    /// triggers ([`Self::subscribe_trade_fold_chart_type`]) stamps
+    /// `footprint_bars = Some(_)` SYNCHRONOUSLY (even before any network
+    /// round trip lands — `reseed_trade_fold` folds whatever the shared
+    /// trade store already holds), so the very next call already finds the
+    /// bubble's `footprint_bars` no longer `None` and skips it.
+    ///
+    /// Deliberately the HYBRID shape (mirrors
+    /// `clear_slot_footprint_hybrid_aware`'s `hybrid == true` branch):
+    /// `bubble.chart_type`/`bars_source` are left completely untouched, so
+    /// `apply_trade_fold_reseed_outputs`'s footprint arm never takes its
+    /// `bars_source == FootprintOhlc` branch — the visible chart (whatever
+    /// it was already drawing) is unaffected; only `footprint_bars` starts
+    /// filling in behind it, purely for these four primitives' own
+    /// `refresh_footprint_derived_cache` to read.
+    ///
+    /// Three sequential, non-overlapping facade reads (never two guards on
+    /// the same `RwLock` held at once — see `BackendCore::bubbles`/
+    /// `BackendCore::drawings`'s own "LOCK ORDER" notes) before the write:
+    /// every bubble id, then the subset carrying an OrderFlow-family
+    /// primitive, then — of those — the subset with no footprint feed yet,
+    /// resolved together with the instrument fields the subscribe below
+    /// needs.
+    pub fn ensure_order_flow_footprint_feeds(&self) {
+        use mlc_core::drawing::primitives_v2::markup::MarkupFamily;
+
+        let all_ids: Vec<BubbleId> = self.bubbles().bubble_ids().collect();
+
+        let with_order_flow: Vec<BubbleId> = {
+            let drawings = self.drawings();
+            all_ids
+                .into_iter()
+                .filter(|&bid| {
+                    drawings
+                        .primitives(bid)
+                        .iter()
+                        .any(|p| p.markup_family() == Some(MarkupFamily::OrderFlow))
+                })
+                .collect()
+        };
+        if with_order_flow.is_empty() {
+            return;
+        }
+
+        let candidates: Vec<(BubbleId, String, String, mlc_core::instrument::AccountType)> = {
+            let bubbles = self.bubbles();
+            with_order_flow
+                .into_iter()
+                .filter(|&bid| bubbles.footprint_bars(bid).is_none())
+                .filter_map(|bid| {
+                    let symbol = bubbles.symbol(bid)?.to_string();
+                    let exchange = bubbles.exchange(bid)?.to_string();
+                    let at = bubbles.account_type_typed(bid)?;
+                    Some((bid, symbol, exchange, at))
+                })
+                .collect()
+        };
+
+        for (bid, symbol, exchange, address_at) in candidates {
+            let Some(eid) = ExchangeId::from_str(&exchange) else { continue };
+            let dig3_at = mlc_backend_data_bridge::account_type_to_dig3(address_at);
+            // Bucket size is this shadow feed's own business, not the
+            // visible chart's — `"1m"`, the same default
+            // `chart_type_interval` ships with, since none of the four
+            // family primitives surface a bucket-size control of their own.
+            let fold_params = crate::bubble::FoldParams { interval_ms: 60_000, ..Default::default() };
+            let _ = self.subscribe_trade_fold_chart_type(
+                bid, "footprint", fold_params, super::engine::DEFAULT_TPO_SOURCE,
+                eid, &symbol, dig3_at, None,
+            );
+        }
+    }
+
     /// Re-seed `bid`'s existing (or freshly-installed) trade-fold runtime
     /// from the shared per-instrument trade store (and, for TPO Kline1m,
     /// "1m" kline-layer) snapshot, replace the output slot wholesale, and

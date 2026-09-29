@@ -1841,6 +1841,10 @@ impl ChartPanelGrid {
     ) -> Option<(i64, f64, bool, Option<usize>)> {
         use mlc_core::engine::input::DragMode;
 
+        if self.active_container().is_some_and(|w| w.crosshair.follow_remote) {
+            return None;
+        }
+
         if drawing_active {
             // Unclamped crosshair — preview must extend beyond chart area.
             let current_pane = active_dm.current_pane();

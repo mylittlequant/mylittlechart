@@ -625,3 +625,508 @@ async fn toolbar_dropdown_open_closes_the_open_settings_modal() {
          repro 2026-09-23, RSI settings modal)"
     );
 }
+
+// ─── Test 5: Synced sidebar panels must resync across a preset switch ──────
+//
+// Owner repro 2026-09-24: opening a shared chart renders the chart itself
+// fine, but every "Synced" right-sidebar panel (DOM, Trade Tape, L2, Big
+// Trades) that is supposed to always track the ACTIVE chart's instrument
+// stays empty — it never connects to any data. Switching to the user's own
+// normal tab and back "heals" it.
+//
+// Root cause: `ChartApp::prepare_frame`'s "active chart changed" detector
+// (`frame_lifecycle/prepare.rs`) compared `LeafId`s from
+// `panel_grid.docking().active_leaf()` — but `LeafId` counters are scoped to
+// ONE docking tree and restart per preset (`apply_preset_cold`'s
+// `replace_docking` installs a brand new tree deserialized from that
+// preset's own `layout` JSON). Two different, simple single-window presets
+// routinely land their sole leaf on the exact same small id (typically 0/1),
+// which made a genuine tab switch look like a no-op and skipped
+// `TagManager::reassign_synced_panels` / `ChartApp::apply_key_to_panels_in_group`
+// entirely — every Synced panel kept pointing at a tag group
+// `apply_preset_cold`'s `tags_mut().clear()` had already discarded, so it
+// could never resolve an instrument to subscribe to.
+//
+// Fix: key the detector on `ChartId` (`panel_grid.active_container_id()`)
+// instead — `ChartId` is a process-global, never-reset counter
+// (`generate_chart_id`/`bump_chart_id_past`), so two different presets'
+// active windows never collide.
+//
+// This test reproduces the exact collision shape without needing real
+// preset JSON: `ChartPanelGrid::new` always builds a fresh single-leaf
+// `DockingManager`, so two independently constructed panel grids (standing
+// in for "preset A" then "preset B", the same wholesale swap
+// `apply_preset_cold` performs via `replace_docking`) land their one leaf on
+// the same `LeafId` while their `ChartId`s (global counter) differ.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test(flavor = "multi_thread", worker_threads = 2))]
+async fn synced_sidebar_panel_resyncs_across_a_preset_switch_with_colliding_leaf_ids() {
+    let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new().await;
+    let bridge = Arc::new(bridge);
+    let core = mlc_backend::BackendCore::new(bridge, None);
+    let mut app = ChartApp::new_empty(core);
+
+    // Window A ("preset A"): a fresh single-leaf panel grid, instrument AAA.
+    let container_a = mlc_app::chart_container::ChartContainer::new("AAAUSDT", tf_h1());
+    let cid_a = container_a.id;
+    let bid_a = app.create_auto_bubble([0.0, 0.0, 0.0, 0.0], "AAAUSDT".to_string(), tf_h1());
+    app.core.bubbles_mut().set_bid_instrument_full(
+        bid_a, "AAAUSDT".to_string(), "binance".to_string(), "S".to_string(), tf_h1(),
+    );
+    app.panel_app.panel_grid = mlc_app::panel_grid::ChartPanelGrid::new(container_a);
+    {
+        let win = app.panel_app.panel_grid.containers_mut().get_mut(&cid_a).expect("window A");
+        win.auto_tag_id = bid_a;
+        win.current_tag_id = bid_a;
+    }
+    app.attach_chart_to_tag(cid_a, bid_a);
+    let leaf_a = app.panel_app.panel_grid.docking().active_leaf()
+        .expect("window A's fresh grid has an active leaf");
+
+    // A "Synced" DOM panel: the class of sidebar panel (DOM/Trade Tape/L2/
+    // Big Trades) that always mirrors whichever chart is active — exactly
+    // the family the owner reported empty on a shared/read-only tab.
+    let pid = mlc_core::state::PanelId(90_001);
+    app.panels_store.dom.insert(
+        pid,
+        mlc_app_panels::trading::order_flow::dom::DomState::new(String::new(), 0.01),
+    );
+    app.set_panel_synced(mlc_core::ids::SyncMemberId::Panel(pid.0), bid_a);
+
+    // Frame 1: `last_active_chart_id` starts `None`, so the detector always
+    // fires on the very first frame and resolves the Synced panel onto A.
+    app.prepare_frame(1000.0, 800.0);
+    let sym_after_a = app.panels_store.dom.get(&pid).map(|s| s.symbol.clone()).unwrap_or_default();
+    assert_eq!(
+        sym_after_a, "AAAUSDT",
+        "setup: Synced DOM panel did not resolve window A's instrument on the first frame"
+    );
+
+    // Window B ("preset B"): a SECOND, independently constructed panel grid
+    // — the same wholesale `panel_grid` replace `apply_preset_cold` performs
+    // on every cold preset/share load — instrument BBB.
+    let container_b = mlc_app::chart_container::ChartContainer::new("BBBUSDT", tf_h1());
+    let cid_b = container_b.id;
+    assert_ne!(cid_a, cid_b, "ChartId is a global counter — must differ across containers");
+    let bid_b = app.create_auto_bubble([0.0, 0.0, 0.0, 0.0], "BBBUSDT".to_string(), tf_h1());
+    app.core.bubbles_mut().set_bid_instrument_full(
+        bid_b, "BBBUSDT".to_string(), "binance".to_string(), "S".to_string(), tf_h1(),
+    );
+    app.panel_app.panel_grid = mlc_app::panel_grid::ChartPanelGrid::new(container_b);
+    {
+        let win = app.panel_app.panel_grid.containers_mut().get_mut(&cid_b).expect("window B");
+        win.auto_tag_id = bid_b;
+        win.current_tag_id = bid_b;
+    }
+    app.attach_chart_to_tag(cid_b, bid_b);
+    let leaf_b = app.panel_app.panel_grid.docking().active_leaf()
+        .expect("window B's fresh grid has an active leaf");
+
+    // Prove the premise the bug depended on: two independently built,
+    // simple single-window grids DO land on the same `LeafId` (their
+    // `ChartId`s differ regardless — asserted above). If uzor ever changes
+    // its leaf-id allocation scheme this stops holding and the assertion
+    // below would need a different repro shape, not a silently-wrong pass.
+    assert_eq!(
+        leaf_a, leaf_b,
+        "test premise: two fresh single-leaf panel grids must collide on \
+         LeafId for this to reproduce the pre-fix bug"
+    );
+
+    // Frame 2 (the "tab switch"): with the fix, `active_container_id()`
+    // (ChartId) correctly differs and resyncs the Synced panel onto B.
+    // Pre-fix, the LeafId comparison saw no change and left it on A.
+    app.prepare_frame(1000.0, 800.0);
+    let sym_after_b = app.panels_store.dom.get(&pid).map(|s| s.symbol.clone()).unwrap_or_default();
+    assert_eq!(
+        sym_after_b, "BBBUSDT",
+        "[owner repro 2026-09-24] Synced DOM panel did not resync after the \
+         active chart switched to a different preset whose leaf id collided \
+         with the previous one — this is why shared-chart sidebar panels \
+         never connected to data"
+    );
+}
+
+// ─── Test 6: a shared/read-only chart's viewport snaps to the right edge ──
+//
+// Owner repro 2026-09-24: a chart opened from a share link showed roughly
+// HALF the chart width as empty future space to the right of the last bar,
+// instead of the standard small margin every other hydration path lands on
+// (`DEFAULT_SNAP_MARGIN` = 5 bars out of the ~100-bar default view —
+// `ChartContainer::consume_cold_snap` / `Viewport::fit_default_view`).
+//
+// Drives the REAL share-open path end to end — `ChartApp::open_shared_preset`
+// (`mlc-app/src/share_viewer.rs`) -> `ChartApp::load_preset` ->
+// `ChartOutEvent::LoadPreset` -> stashed `pending_cold_apply` ->
+// `ChartApp::drain_pending_cold_apply` -> `apply_preset_cold`
+// (`persistence/hydration_impl.rs`) — the exact sequence both shells run one
+// frame after a share link resolves, then feeds bars through the real
+// reactor (same two-stage cache-then-backfill sequence as Test 3) to prove
+// the shared window's viewport lands on the right edge like any other cold
+// hydration, not stuck at some other position.
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test(flavor = "multi_thread", worker_threads = 2))]
+async fn shared_chart_viewport_snaps_to_right_edge_like_any_other_hydration() {
+    let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new().await;
+    let bridge = Arc::new(bridge);
+    let core = mlc_backend::BackendCore::new(bridge, None);
+    let mut app = ChartApp::new_empty(core);
+    let tf_name = tf_h1().name.clone();
+
+    // Set up + fully hydrate the visitor's OWN chart first — reproduces the
+    // realistic starting point ("I already have the app open on my own
+    // chart") the owner's report switches away FROM to look at the share.
+    let own_cid = app.panel_app.panel_grid.active_container_id()
+        .expect("new_empty seeds one active window");
+    let own_bid = app.create_auto_bubble([0.0, 0.0, 0.0, 0.0], "AAAUSDT".to_string(), tf_h1());
+    app.attach_chart_to_tag(own_cid, own_bid);
+    {
+        let win = app.panel_app.panel_grid.containers_mut().get_mut(&own_cid)
+            .expect("own window");
+        win.auto_tag_id = own_bid;
+        win.current_tag_id = own_bid;
+        win.pending_symbol_load = true;
+        win.needs_snap_after_backfill = true;
+        win.force_viewport_for_test(1000.0, 10.0, 0.0);
+    }
+    app.core.bubbles_mut().set_bid_instrument_full(
+        own_bid, "AAAUSDT".to_string(), "binance".to_string(), "S".to_string(), tf_h1(),
+    );
+    let own_base_ts: i64 = 1_699_999_200;
+    let own_bars: Vec<mlc_core::Bar> = (0..500i64)
+        .map(|i| mlc_core::Bar::new(own_base_ts + i * 3600, 100.0, 101.0, 99.0, 100.5))
+        .collect();
+    app.core.bubbles_mut().replace_bars(own_bid, own_bars.clone());
+    app.react_to_events(&[BubbleEvent::BarsLoaded {
+        bid: own_bid,
+        exchange_id: ExchangeId::Binance,
+        symbol: "AAAUSDT".to_string(),
+        account_type: "S".to_string(),
+        timeframe: tf_name.clone(),
+        bars: own_bars.clone(),
+        prev_bars: Vec::new(),
+    }], now_ms());
+    assert_eq!(
+        read_active_viewport_bar_count(&app), 500,
+        "setup: own chart did not hydrate before the share-open under test"
+    );
+
+    // Real save — `collect_state_into_preset` is the exact same call both
+    // shells' "share_chart" click handler relies on for the POST body
+    // (`mlc-app-shell-web/src/lib.rs`'s "Drain pending live-share requests").
+    let own_id = "own_preset".to_string();
+    app.collect_state_into_preset(&own_id, "Own");
+
+    // Build "the sharer's preset" from a real, structurally valid snapshot
+    // (same `windows`/`bubbles`/`layout` shape a genuine share upload
+    // carries) but a DIFFERENT instrument, so a stale/leftover viewport
+    // would be observable.
+    let mut shared_preset = app.core.presets().get(&own_id).cloned()
+        .expect("collect_state_into_preset must have saved the own preset");
+    for w in shared_preset.windows.iter_mut() {
+        w.symbol = "BBBUSDT".to_string();
+        w.exchange = "binance".to_string();
+    }
+    for b in shared_preset.bubbles.iter_mut() {
+        b.symbol = "BBBUSDT".to_string();
+        b.exchange = "binance".to_string();
+    }
+
+    let meta = mlc_app::SharedChartMeta {
+        token: "tok123".to_string(),
+        title: "Shared BBB chart".to_string(),
+        owner_label: "some_owner".to_string(),
+        kind: "live".to_string(),
+        rights: vec!["read".to_string()],
+        expires_at: "2099-01-01T00:00:00Z".to_string(),
+        revision: 0,
+    };
+    let shared_id = app.open_shared_preset(meta, shared_preset)
+        .expect("open_shared_preset must accept a freshly-collected, same-version preset");
+    // The shell's render loop drains this one frame after `LoadPreset`
+    // stashed it — see `drain_pending_cold_apply`'s own doc.
+    app.drain_pending_cold_apply();
+
+    assert_eq!(
+        app.panel_app.active_preset_id, shared_id,
+        "setup: the shared preset did not become the active tab"
+    );
+    let shared_cid = app.panel_app.panel_grid.active_container_id()
+        .expect("shared window must be materialized after drain_pending_cold_apply");
+    let shared_bid = app.bubble_for_chart(shared_cid)
+        .expect("shared window must have a live bubble after apply_preset_cold");
+
+    // Production reality (same rationale as Test 3): by the time bars
+    // arrive, wasm's settled-dimensions resize has already run at least
+    // once. `force_viewport_for_test` only seeds a field that is still
+    // <= 0.0 — it does NOT touch `needs_snap_after_backfill`, so this does
+    // not bypass the fix under test, only supplies the geometry a real
+    // layout pass would already have provided.
+    if let Some(win) = app.panel_app.panel_grid.containers_mut().get_mut(&shared_cid) {
+        win.force_viewport_for_test(1000.0, 10.0, 0.0);
+    }
+
+    let chart_width: f64 = 1000.0;
+    let bar_spacing: f64 = 10.0;
+    let visible_f: f64 = chart_width / bar_spacing;
+    let expected_right_edge = |bar_count: usize| -> f64 {
+        let progressive = (0.05 * visible_f).ceil().max(0.0);
+        let margin = mlc_app::chart_container::DEFAULT_SNAP_MARGIN.min(progressive);
+        bar_count as f64 + margin - visible_f
+    };
+
+    // Stage 1: cache-served batch (same two-stage sequence as Test 3).
+    let shared_base_ts: i64 = 1_699_999_200;
+    let cache_bars: Vec<mlc_core::Bar> = (0..100i64)
+        .map(|i| mlc_core::Bar::new(shared_base_ts + i * 3600, 200.0, 201.0, 199.0, 200.5))
+        .collect();
+    app.core.bubbles_mut().replace_bars(shared_bid, cache_bars.clone());
+    app.react_to_events(&[BubbleEvent::BarsLoaded {
+        bid: shared_bid,
+        exchange_id: ExchangeId::Binance,
+        symbol: "BBBUSDT".to_string(),
+        account_type: "S".to_string(),
+        timeframe: tf_name.clone(),
+        bars: cache_bars.clone(),
+        prev_bars: Vec::new(),
+    }], now_ms());
+
+    let vs_after_cache = read_active_view_start(&app);
+    let edge_after_cache = expected_right_edge(cache_bars.len());
+    assert!(
+        (vs_after_cache - edge_after_cache).abs() < 1.0,
+        "[shared, stage 1] cache batch did not snap to its own right edge: \
+         view_start={vs_after_cache} expected~{edge_after_cache} bars={}",
+        cache_bars.len()
+    );
+
+    // Stage 2: real backfill prepends older bars — the owner-repro shape.
+    let full_bars: Vec<mlc_core::Bar> = (0..2001i64)
+        .map(|i| mlc_core::Bar::new(shared_base_ts + (i - 1901) * 3600, 190.0, 191.0, 189.0, 190.5))
+        .collect();
+    app.core.bubbles_mut().replace_bars(shared_bid, full_bars.clone());
+    app.react_to_events(&[BubbleEvent::BackfillCompleted {
+        bid: shared_bid,
+        exchange_id: ExchangeId::Binance,
+        symbol: "BBBUSDT".to_string(),
+        account_type: "S".to_string(),
+        timeframe: tf_name.clone(),
+        bars: full_bars.clone(),
+        prev_bars: cache_bars,
+    }], now_ms());
+
+    let vs_after_backfill = read_active_view_start(&app);
+    let bc_after_backfill = read_active_viewport_bar_count(&app);
+    let edge_after_backfill = expected_right_edge(full_bars.len());
+    assert_eq!(bc_after_backfill, 2001, "viewport.bar_count must track the full 2001-bar shared history");
+    assert!(
+        (vs_after_backfill - edge_after_backfill).abs() < 5.0,
+        "[owner repro 2026-09-24 — shared chart viewport] history prepend \
+         left the shared window's viewport off the right edge: \
+         view_start={vs_after_backfill} (expected ~{edge_after_backfill}, \
+         bar_count={bc_after_backfill}, total=2001, chart_width={chart_width}, \
+         bar_spacing={bar_spacing}) — this is the 'half the chart is empty \
+         future space' symptom",
+    );
+}
+
+// ─── Test 5+6: Order Flow Scan — owner bug, prod 0.5.617, 2026-09-25 ─────────
+//
+// "Order Flow scan doesn't work." Root cause (see
+// `mlc-backend::chart_type::lifecycle::BackendCore::ensure_order_flow_footprint_feeds`'s
+// own doc): every primitive in `MarkupFamily::OrderFlow` reads
+// `DataBubble::footprint_bars`, populated ONLY by the `"footprint"`
+// chart_type's own trade-fold install — a bubble on any OTHER chart_type
+// (the ordinary case: `order_flow_scan` sits in the same flyout as
+// `smc_scan`, which needs no such switch) never got the feed at all.
+//
+// Both tests drive the SAME path the flyout tool click and the pixel-click
+// placement gesture do: `dispatch_panel_click("dropdown:price_action_tools:
+// order_flow_scan", ...)` is the exact widget id `handle_canvas_click`'s own
+// `"dropdown:{dropdown_id}:{item_id}"` format produces for that flyout row
+// (`mlc_core::toolbar::price_action_section`'s own `DropdownItemDef::action`),
+// and `DrawingsMut::on_canvas_click` is the exact call
+// `handle_canvas_click` makes once it has resolved a pixel click to data
+// coordinates — this test supplies those coordinates directly instead of a
+// pixel/viewport round trip, since the ClickBehavior::TwoPoint contract
+// under test starts there.
+
+/// `mlc_core::drawing::primitives_v2::orderflow::delta_divergence`'s own
+/// `regular_bearish_fixture` (two confirmed swing highs, rising, while
+/// `cumulative_delta` falls between them — `delta_divergence_swing_n = 1`),
+/// with one bar's own `is_absorption` flag set so the SAME footprint also
+/// carries an absorption hit. Timestamps are already milliseconds
+/// (`FootprintBar::open_time`'s own unit) — 0/1000/2000/3000/4000.
+fn order_flow_scan_test_footprint() -> Vec<mlc_core::types::FootprintBar> {
+    let bar = |open_time: i64, o: f64, h: f64, l: f64, c: f64, delta: f64, absorption: bool| {
+        mlc_core::types::FootprintBar {
+            open_time, open: o, high: h, low: l, close: c, volume: 1.0,
+            cumulative_delta: delta, is_absorption: absorption,
+            ..Default::default()
+        }
+    };
+    vec![
+        bar(0, 10.0, 10.0, 8.0, 9.0, 0.0, false),
+        bar(1_000, 15.0, 20.0, 15.0, 18.0, 100.0, true),
+        bar(2_000, 8.0, 10.0, 5.0, 7.0, 0.0, false),
+        bar(3_000, 15.0, 25.0, 15.0, 20.0, 50.0, false),
+        bar(4_000, 10.0, 10.0, 8.0, 9.0, 0.0, false),
+    ]
+}
+
+/// Guards `set_orderflow_engine_config` against the two Order Flow tests
+/// below racing each other's global engine-config write — the SAME
+/// discipline `mlc-core`'s own `orderflow_judge`/`order_flow_scan` test
+/// modules already keep for this exact process-global (`ENGINE_CONFIG_LOCK`
+/// there); a second, file-local lock here since that one is `pub(crate)` to
+/// `mlc-core` and unreachable from this crate's own test binary. No OTHER
+/// test in this file touches the order-flow engine config, so only these
+/// two need to coordinate.
+static ORDERFLOW_ENGINE_CONFIG_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Find the `order_flow_scan_structures` table's own row for `label` (the
+/// SAME `OrderFlowStructure::label` text the settings modal shows) and
+/// return its own Hits column, parsed — `None` if the property/row/cell
+/// shape does not match (the table format `OrderFlowScan::style_properties`
+/// itself owns; this reads it, never re-derives it).
+fn order_flow_scan_table_hit_count(
+    props: &[mlc_core::drawing::primitives_v2::config::ConfigProperty],
+    label: &str,
+) -> Option<usize> {
+    use mlc_core::drawing::primitives_v2::config::{PropertyType, TableCell};
+    props.iter().find_map(|p| {
+        if p.id != "order_flow_scan_structures" {
+            return None;
+        }
+        let PropertyType::Table { rows, .. } = &p.prop_type else { return None };
+        rows.iter().find_map(|row| {
+            let TableCell::Text(row_label) = row.get(1)? else { return None };
+            if row_label != label {
+                return None;
+            }
+            let TableCell::Text(count) = row.get(2)? else { return None };
+            count.parse::<usize>().ok()
+        })
+    })
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test(flavor = "multi_thread", worker_threads = 2))]
+async fn order_flow_scan_activated_via_flyout_finds_divergence_and_absorption() {
+    let _guard = ORDERFLOW_ENGINE_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let previous_cfg = mlc_core::state::orderflow_engine::orderflow_engine_config();
+    mlc_core::state::orderflow_engine::set_orderflow_engine_config(
+        mlc_core::state::orderflow_engine::OrderFlowEngineConfig {
+            delta_divergence_swing_n: 1,
+            ..Default::default()
+        },
+    );
+
+    let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new().await;
+    let bridge = Arc::new(bridge);
+    let core = mlc_backend::BackendCore::new(bridge.clone(), None);
+    let mut app = ChartApp::new_empty(core);
+    app.seed_default_chart(ExchangeId::Binance, "OFSCANTEST", tf_m1(), AccountType::Spot, 10);
+
+    let active_cid = app.panel_app.panel_grid.active_container_id()
+        .expect("seed_default_chart must materialize an active container");
+    let bid = app.bubble_for_chart(active_cid)
+        .expect("seed_default_chart must attach a bubble to the active chart");
+
+    // Synthetic OHLC — content is irrelevant (the survey itself reads
+    // footprint bars, not these); only their PRESENCE matters, so the
+    // scan's own control points resolve to a real bar index.
+    let bars: Vec<mlc_core::Bar> = (0..5i64).map(|i| mlc_core::Bar::new(i, 10.0, 20.0, 5.0, 15.0)).collect();
+    app.core.bubbles_mut().replace_bars(bid, bars);
+
+    let footprint = order_flow_scan_test_footprint();
+    app.core.bubbles_mut().with_bubble_mut(bid, |b| {
+        b.footprint_bars = Some(footprint);
+    });
+
+    // 1. Activate the tool through the EXACT action id the flyout sends.
+    app.dispatch_panel_click("dropdown:price_action_tools:order_flow_scan", 0.0, 0.0);
+    assert_eq!(
+        app.core.drawings().current_tool(bid), Some("order_flow_scan"),
+        "the flyout action id did not arm order_flow_scan as the active tool"
+    );
+
+    // 2. ClickBehavior::TwoPoint's own click accumulator — first click arms
+    //    the drag, second completes it. Covers the whole synthetic
+    //    footprint (ts 0..4000).
+    let armed = app.core.drawings_mut().on_canvas_click(bid, 0, 0.0);
+    assert!(!armed, "first click only arms a TwoPoint drag, no primitive yet");
+    let placed = app.core.drawings_mut().on_canvas_click(bid, 4_000, 0.0);
+    assert!(placed, "second click must complete the TwoPoint placement");
+
+    // 3. This bubble's `footprint_bars` was written directly (not through a
+    //    trade-fold install), so the footprint-derived cache needs an
+    //    explicit refresh — see `DrawingsMut::refresh_footprint_derived`'s
+    //    own doc for why production writes never need this call.
+    app.core.drawings_mut().refresh_footprint_derived(bid);
+
+    let violations_and_props = {
+        let drawings = app.core.drawings();
+        let prims = drawings.primitives(bid);
+        let scan = prims.iter().rev().find(|p| p.type_id() == "order_flow_scan")
+            .expect("the completed TwoPoint placement must have pushed an order_flow_scan primitive");
+        (scan.context_violations().to_vec(), scan.style_properties())
+    };
+    let (violations, props) = violations_and_props;
+    assert!(
+        violations.is_empty(),
+        "a scan over a real footprint feed must report neither \
+         'order_flow_data_missing' nor 'order_flow_range_no_data': {violations:?}"
+    );
+
+    let absorption_hits = order_flow_scan_table_hit_count(&props, "Absorption").unwrap_or(0);
+    let divergence_hits = order_flow_scan_table_hit_count(&props, "Delta Divergence").unwrap_or(0);
+    assert!(absorption_hits > 0, "the synthetic footprint's own is_absorption bar must surface as a hit");
+    assert!(divergence_hits > 0, "the synthetic footprint's own regular-bearish shape must surface as a hit");
+
+    mlc_core::state::orderflow_engine::set_orderflow_engine_config(previous_cfg);
+}
+
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen_test::wasm_bindgen_test)]
+#[cfg_attr(not(target_arch = "wasm32"), tokio::test(flavor = "multi_thread", worker_threads = 2))]
+async fn order_flow_scan_with_no_footprint_feed_reports_the_missing_data_message() {
+    let _guard = ORDERFLOW_ENGINE_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+    let (bridge, _live_rx, _connector_ready_rx) = DataBridge::new().await;
+    let bridge = Arc::new(bridge);
+    let core = mlc_backend::BackendCore::new(bridge.clone(), None);
+    let mut app = ChartApp::new_empty(core);
+    app.seed_default_chart(ExchangeId::Binance, "OFSCANTEST2", tf_m1(), AccountType::Spot, 10);
+
+    let active_cid = app.panel_app.panel_grid.active_container_id()
+        .expect("seed_default_chart must materialize an active container");
+    let bid = app.bubble_for_chart(active_cid)
+        .expect("seed_default_chart must attach a bubble to the active chart");
+
+    // Ordinary candle bars, deliberately NO footprint_bars — the exact
+    // owner repro: a plain chart, no chart_type switch to "footprint" ever
+    // made.
+    let bars: Vec<mlc_core::Bar> = (0..5i64).map(|i| mlc_core::Bar::new(i, 10.0, 20.0, 5.0, 15.0)).collect();
+    app.core.bubbles_mut().replace_bars(bid, bars);
+    assert!(app.core.bubbles().footprint_bars(bid).is_none(), "setup: this bubble must start with no footprint feed");
+
+    app.dispatch_panel_click("dropdown:price_action_tools:order_flow_scan", 0.0, 0.0);
+    assert!(!app.core.drawings_mut().on_canvas_click(bid, 0, 0.0));
+    assert!(app.core.drawings_mut().on_canvas_click(bid, 4_000, 0.0));
+
+    let violations = {
+        let drawings = app.core.drawings();
+        let prims = drawings.primitives(bid);
+        let scan = prims.iter().rev().find(|p| p.type_id() == "order_flow_scan")
+            .expect("the completed TwoPoint placement must have pushed an order_flow_scan primitive");
+        scan.context_violations().to_vec()
+    };
+    assert_eq!(
+        violations.len(), 1,
+        "the scan must report exactly one rule, never silence, when it has no footprint feed at all: {violations:?}"
+    );
+    assert_eq!(
+        violations[0].rule_id, "order_flow_data_missing",
+        "a chart that never subscribed to footprint at all reports the MISSING rule, not the range-uncovered one"
+    );
+}

@@ -132,6 +132,7 @@ pub fn any_modal_scroll_animating(chart: &ChartApp) -> bool {
         || chart.panel_app.user_settings_state.server_tab_scroll.is_animating()
         || chart.panel_app.user_settings_state.performance_tab_scroll.is_animating()
         || chart.panel_app.user_settings_state.account_tab_scroll.is_animating()
+        || chart.panel_app.user_settings_state.shares_tab_scroll.is_animating()
         || chart.standalone_panels.watchlist_modal.scroll.is_animating()
         || chart.panel_app.chart_browser.scroll.is_animating()
         || chart.panel_app.tags_tabs_state.tabs_scroll.is_animating()

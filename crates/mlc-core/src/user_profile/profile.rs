@@ -141,6 +141,11 @@ pub struct PersistedSharedTab {
     pub window_id: String,
     /// Index in that window's `open_tabs` at save time.
     pub index: usize,
+    /// This shared tab was the window's active tab at save time. The
+    /// placeholder id is minted fresh on the next boot, so the saved
+    /// `active_preset_id` cannot name it. The token can.
+    #[serde(default)]
+    pub was_active: bool,
 }
 
 // =============================================================================
@@ -897,6 +902,32 @@ pub struct ProfileUiSettings {
     /// own 1000×640 default.
     #[serde(default)]
     pub community_messages_size: Option<(f64, f64)>,
+
+    /// Collapsed state of drawing-tool flyout sub-sections (toolbar-flyout-
+    /// collapse arc, owner order 2026-09-25) — a UI preference, not viewport
+    /// state, same class as `sidebar_width`/`active_ui_style` above. Keyed
+    /// by the stable, positional id `mlc_core::toolbar::flyout_section_id`
+    /// mints (`"{dropdown_id}#{header_ordinal}"`), never the localized
+    /// header text — present means collapsed, absent means expanded (every
+    /// profile saved before this field existed loads with every section
+    /// expanded, today's behaviour). Mutated in-place via
+    /// `ChartToolbarState::toggle_flyout_section_collapsed` at
+    /// double-click time (`mlc-app`'s `on_double_click`), not by this
+    /// snapshot builder — preserve-live-value pattern, same as
+    /// `favorite_primitives` above.
+    #[serde(default)]
+    pub collapsed_flyout_sections: std::collections::BTreeSet<String>,
+
+    /// Default rights for the next live share.
+    /// `public_clone` (default) | `view_only` | `private`.
+    /// Public + clone + view is the product default: anyone with the link
+    /// can look and clone, nobody but the author can edit.
+    #[serde(default = "default_share_rights_preset")]
+    pub share_rights_preset: String,
+}
+
+fn default_share_rights_preset() -> String {
+    "public_clone".to_string()
 }
 
 fn default_true() -> bool {
@@ -958,6 +989,8 @@ impl ProfileUiSettings {
             header_account_display: HeaderAccountDisplay::default(),
             community_forum_size: None,
             community_messages_size: None,
+            collapsed_flyout_sections: std::collections::BTreeSet::new(),
+            share_rights_preset: default_share_rights_preset(),
         }
     }
 }

@@ -293,6 +293,50 @@ impl ShareOpenState {
     }
 }
 
+/// Share-settings overlay. Presets pick the default rights for the next
+/// Share and, when this chart already has a link, patch that link.
+/// `hits` is `(nick, label)` from the nick search.
+#[derive(Clone, Debug, Default)]
+pub struct ShareSettingsState {
+    pub is_open: bool,
+    pub status: String,
+    pub hits: Vec<(String, String)>,
+    /// `public_clone` | `view_only` | `private` | `private_view`.
+    pub rights_preset: String,
+    /// When on, a picked nick also receives an edit grant. Independent of
+    /// Public and Clone. The nick field stays available on a public link
+    /// so the author can name an editor.
+    pub edit_on: bool,
+    /// Channel mode for this chart's share. Off: the link catches up on a
+    /// cadence. On: subscribers sync movements as they happen.
+    pub live_on: bool,
+    /// Stream pan and zoom with Live. Drawn only while Live is on.
+    pub live_viewport: bool,
+    /// Stream the author's crosshair and hide the viewer's. Drawn only while Live is on.
+    pub live_cursor: bool,
+    pub position: Option<(f64, f64)>,
+    pub is_dragging: bool,
+    pub drag_offset: Option<(f64, f64)>,
+}
+
+impl ShareSettingsState {
+    pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {
+        self.is_dragging = true;
+        self.drag_offset = Some((mouse_x - modal_x, mouse_y - modal_y));
+    }
+
+    pub fn update_drag(&mut self, mouse_x: f64, mouse_y: f64) {
+        if let Some((offset_x, offset_y)) = self.drag_offset {
+            self.position = Some((mouse_x - offset_x, mouse_y - offset_y));
+        }
+    }
+
+    pub fn end_drag(&mut self) {
+        self.is_dragging = false;
+        self.drag_offset = None;
+    }
+}
+
 // =============================================================================
 // Slider Drag State
 // =============================================================================
@@ -3483,6 +3527,12 @@ pub enum UserSettingsTab {
     /// signed-in caller, so [`Self::visible`] prepends it instead of
     /// filtering it out, the mirror image of `Server`'s own gate below.
     Account,
+    /// The caller's own share links: pin, revoke, and the rights the
+    /// server already stores on each token.
+    Shares,
+    /// Privacy and friends. Signed-in only. Search visibility, the friend
+    /// list, and an invite link. Not part of share settings.
+    Friends,
 }
 
 impl UserSettingsTab {
@@ -3495,6 +3545,8 @@ impl UserSettingsTab {
             Self::Performance => "performance",
             Self::Server => "server",
             Self::Account => "account",
+            Self::Shares => "shares",
+            Self::Friends => "friends",
         }
     }
 
@@ -3509,6 +3561,8 @@ impl UserSettingsTab {
             Self::Performance => UserSettingsKey::TabPerformance.get(lang),
             Self::Server => UserSettingsKey::TabServer.get(lang),
             Self::Account => UserSettingsKey::TabAccount.get(lang),
+            Self::Shares => "Shares",
+            Self::Friends => "Friends",
         }
     }
 
@@ -3534,6 +3588,8 @@ impl UserSettingsTab {
         let mut tabs = Vec::with_capacity(Self::all().len() + 1);
         if signed_in {
             tabs.push(Self::Account);
+            tabs.push(Self::Friends);
+            tabs.push(Self::Shares);
         }
         tabs.extend_from_slice(Self::all());
         if !signed_in {
@@ -3551,6 +3607,8 @@ impl UserSettingsTab {
             "performance" => Some(Self::Performance),
             "server" => Some(Self::Server),
             "account" => Some(Self::Account),
+            "shares" => Some(Self::Shares),
+            "friends" => Some(Self::Friends),
             _ => None,
         }
     }
@@ -3681,6 +3739,22 @@ pub fn validate_forum_body(body: &str) -> Result<(), String> {
         return Err("Body is too long (max 8192 bytes)".to_string());
     }
     Ok(())
+}
+
+/// One owned share link, as the Shares tab draws it.
+#[derive(Clone, Debug, Default)]
+pub struct ShareAdminRow {
+    pub token: String,
+    pub title: String,
+    pub kind: String,
+    pub pinned: bool,
+    pub clone_allowed: bool,
+    pub interaction: String,
+    pub visibility: String,
+    pub allow_forward: bool,
+    pub expires_at: String,
+    /// Author chart this row is bound to. Empty when the server omitted it.
+    pub chart_id: String,
 }
 
 /// State for the User Settings modal.
@@ -3833,6 +3907,27 @@ pub struct UserSettingsState {
     pub performance_tab_scroll: ScrollState,
     /// Scroll state for the Account tab content.
     pub account_tab_scroll: ScrollState,
+    pub shares_tab_scroll: ScrollState,
+    /// Rows of `GET /api/share/mine`, filled by the shell.
+    pub share_rows: Vec<ShareAdminRow>,
+    /// Whether nick search in messenger and share may find this account.
+    /// Friends can still find a hidden account.
+    pub discoverable: bool,
+    pub friend_nicks: Vec<String>,
+    pub friend_incoming: Vec<String>,
+    pub friend_outgoing: Vec<String>,
+    pub friend_subscriptions: Vec<String>,
+    pub friend_blocked: Vec<String>,
+    pub friend_invite: String,
+    /// Nick-search hits in the Friends tab. Nicks only.
+    pub friend_hits: Vec<String>,
+    pub friend_note: String,
+    /// `load` | `discoverable` | `invite` | `add:{nick}`. The shell drains it.
+    pub friend_cmd: Option<String>,
+    pub share_status: String,
+    /// Token of a pinned share whose Revoke click is waiting for Confirm.
+    /// Unpinned revoke does not arm this.
+    pub share_revoke_confirm: Option<String>,
 
     // ── WELCOME WIZARD ──────────────────────────────────────────────────
     /// True when the first-run welcome wizard should be shown (no profile.json on first launch).
@@ -4141,6 +4236,20 @@ impl Default for UserSettingsState {
             server_tab_scroll: ScrollState::default(),
             performance_tab_scroll: ScrollState::default(),
             account_tab_scroll: ScrollState::default(),
+            shares_tab_scroll: ScrollState::default(),
+            share_rows: Vec::new(),
+            discoverable: true,
+            friend_nicks: Vec::new(),
+            friend_incoming: Vec::new(),
+            friend_outgoing: Vec::new(),
+            friend_subscriptions: Vec::new(),
+            friend_blocked: Vec::new(),
+            friend_invite: String::new(),
+            friend_hits: Vec::new(),
+            friend_note: String::new(),
+            friend_cmd: None,
+            share_status: String::new(),
+            share_revoke_confirm: None,
             show_welcome_wizard: false,
             needs_vault_unlock: false,
             vault_unlock_error: None,

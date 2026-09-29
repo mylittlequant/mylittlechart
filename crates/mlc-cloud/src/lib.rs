@@ -42,7 +42,7 @@ pub const NICK_REQUIRED_SENTINEL: &str = "__mlc_nick_required__";
 mod wasm;
 
 #[cfg(target_arch = "wasm32")]
-pub use wasm::FetchTransport;
+pub use wasm::{FetchTransport, FriendRoster};
 
 pub use models::*;
 

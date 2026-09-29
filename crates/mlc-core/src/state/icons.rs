@@ -1462,6 +1462,64 @@ pub const ICON_AMD_CYCLE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" vie
   <path d="M17.5 4h3.5v3.5"/>
 </svg>"##;
 
+/// A 5-wave impulse leg under the bracket scan-motif, five dotted pivots
+/// marking each wave's own endpoint — `icons_v4.json` batch B's own
+/// `elliott_scan` body (2026-09-23 toolbar icons, drawn ahead of A2, wired
+/// here), sharing `ICON_SMC_SCAN`'s own bracket wrapper so every autodetector
+/// reads as one family.
+pub const ICON_ELLIOTT_SCAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4.5 4H3v16h1.5"/>
+  <path d="M19.5 4H21v16h-1.5"/>
+  <path d="M6 17l2.5-4.5 2 2 3-6 2 3 2.5-4"/>
+  <circle cx="8.5" cy="12.5" r="1.2" fill="currentColor"/>
+  <circle cx="10.5" cy="14.5" r="1.2" fill="currentColor"/>
+  <circle cx="13.5" cy="8.5" r="1.2" fill="currentColor"/>
+  <circle cx="15.5" cy="11.5" r="1.2" fill="currentColor"/>
+  <circle cx="18" cy="7.5" r="1.2" fill="currentColor"/>
+</svg>"##;
+
+/// The 6-point `0-X-A-B-C-D` zigzag Duddella's own "5-0" names, with the
+/// pattern's own completion triangle tinted — `icons_v4.json` batch B's own
+/// `harmonic_five_o` body (2026-09-23 toolbar icons, drawn ahead of A3,
+/// wired here), the manual counterpart to `ICON_HARMONIC_SCAN` (A3.5).
+pub const ICON_HARMONIC_FIVE_O: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M2.5 6L6 17l4-6 4 8 4-13 3.5 7"/>
+  <path d="M10 11L18 6L21.5 13z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <circle cx="2.5" cy="6" r="1.2" fill="currentColor"/>
+  <circle cx="6" cy="17" r="1.2" fill="currentColor"/>
+  <circle cx="10" cy="11" r="1.2" fill="currentColor"/>
+  <circle cx="14" cy="19" r="1.2" fill="currentColor"/>
+  <circle cx="18" cy="6" r="1.2" fill="currentColor"/>
+  <circle cx="21.5" cy="13" r="1.2" fill="currentColor"/>
+</svg>"##;
+
+/// The bracket scan-motif around a 5-0-shaped leg, tinted — `icons_v4.json`
+/// batch B's own `harmonic_scan` body, sharing `ICON_SMC_SCAN`'s/
+/// `ICON_ELLIOTT_SCAN`'s own bracket wrapper so every autodetector reads as
+/// one family.
+pub const ICON_HARMONIC_SCAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4.5 4H3v16h1.5"/>
+  <path d="M19.5 4H21v16h-1.5"/>
+  <path d="M6 17L9 7l2.5 5 2.5-3.5L18 17z" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M6 17L9 7l2.5 5 2.5-3.5L18 17"/>
+</svg>"##;
+
+/// The bracket scan-motif around a stack of tinted horizontal Fib-level
+/// bands — `icons_v4.json` batch B's own `fib_scan` body (2026-09-23
+/// toolbar icons, drawn ahead of A4, wired here), sharing `ICON_SMC_SCAN`'s/
+/// `ICON_ELLIOTT_SCAN`'s/`ICON_HARMONIC_SCAN`'s own bracket wrapper so every
+/// autodetector reads as one family.
+pub const ICON_FIB_SCAN: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <path d="M4.5 4H3v16h1.5"/>
+  <path d="M19.5 4H21v16h-1.5"/>
+  <rect x="6" y="6" width="12" height="3.5" fill="currentColor" opacity="0.18" stroke="none"/>
+  <rect x="6" y="14.5" width="12" height="3.5" fill="currentColor" opacity="0.18" stroke="none"/>
+  <path d="M6 6h12"/>
+  <path d="M6 9.5h12"/>
+  <path d="M6 14.5h12"/>
+  <path d="M6 18h12"/>
+</svg>"##;
+
 /// Two columns of unequal cells facing each other across a bar's centre —
 /// the bid-versus-ask reading a footprint cell carries.
 pub const ICON_IMBALANCE_ZONE: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
@@ -1929,6 +1987,12 @@ pub const ICON_ZOOM_RESET: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" vi
 pub const ICON_SCREENSHOT: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
 <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
 <circle cx="12" cy="13" r="4"/>
+</svg>"##;
+
+/// Camcorder: body plus the side lens. Not the photo camera (`ICON_SCREENSHOT`).
+pub const ICON_VIDEO: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
+  <rect x="2" y="6" width="13" height="12" rx="2"/>
+  <path d="M15 10.2l6.2-3.4a.5.5 0 0 1 .8.4v9.6a.5.5 0 0 1-.8.4L15 13.8z"/>
 </svg>"##;
 
 pub const ICON_CIRCUIT_BOARD: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">
@@ -2891,6 +2955,7 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "abcd_pattern" | "abcdpattern" => Some(ICON_ABCD_PATTERN),
         "triangle_pattern" | "trianglepattern" => Some(ICON_TRIANGLE_PATTERN),
         "three_drives" | "threedrives" => Some(ICON_THREE_DRIVES),
+        "harmonic_five_o" | "harmonicfiveo" => Some(ICON_HARMONIC_FIVE_O),
 
         // Elliott waves
         "elliott_impulse" | "elliottimpulse" => Some(ICON_ELLIOTT_IMPULSE),
@@ -2978,6 +3043,15 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "absorption_mark" | "absorptionmark" => Some(ICON_ABSORPTION_MARK),
         "delta_divergence" | "deltadivergence" => Some(ICON_DELTA_DIVERGENCE),
         "order_flow_scan" | "orderflowscan" => Some(ICON_ORDER_FLOW_SCAN),
+
+        // Autodetector A2, Elliott (2026-09-24)
+        "elliott_scan" | "elliottscan" => Some(ICON_ELLIOTT_SCAN),
+
+        // Autodetector A3, Harmonics (2026-09-24)
+        "harmonic_scan" | "harmonicscan" => Some(ICON_HARMONIC_SCAN),
+
+        // Autodetector A4, Fib (2026-09-24)
+        "fib_scan" | "fibscan" => Some(ICON_FIB_SCAN),
 
         // Autodetector rail families (2026-09-23, registered ahead of the rail UI)
         "family_ewa" => Some(ICON_FAMILY_EWA),
@@ -3069,6 +3143,7 @@ pub fn icon_svg(name: &str) -> Option<&'static str> {
         "zoom_out" | "zoomout" => Some(ICON_ZOOM_OUT),
         "zoom_reset" | "zoomreset" | "maximize2" => Some(ICON_ZOOM_RESET),
         "screenshot" | "camera" => Some(ICON_SCREENSHOT),
+        "video" | "video_camera" | "videocam" => Some(ICON_VIDEO),
 
         // Actions
         "undo" => Some(ICON_UNDO),
@@ -3491,6 +3566,10 @@ mod icon_stroke_width_guard {
         ("ICON_ABSORPTION_MARK", ICON_ABSORPTION_MARK),
         ("ICON_DELTA_DIVERGENCE", ICON_DELTA_DIVERGENCE),
         ("ICON_ORDER_FLOW_SCAN", ICON_ORDER_FLOW_SCAN),
+        ("ICON_ELLIOTT_SCAN", ICON_ELLIOTT_SCAN),
+        ("ICON_HARMONIC_FIVE_O", ICON_HARMONIC_FIVE_O),
+        ("ICON_HARMONIC_SCAN", ICON_HARMONIC_SCAN),
+        ("ICON_FIB_SCAN", ICON_FIB_SCAN),
         ("ICON_CROSSHAIR", ICON_CROSSHAIR),
         ("ICON_AGENT_TERMINAL", ICON_AGENT_TERMINAL),
         ("ICON_AGENT_CHAT", ICON_AGENT_CHAT),

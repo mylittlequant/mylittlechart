@@ -90,6 +90,8 @@ pub fn render_user_settings_modal(
                 UserSettingsTab::Performance => Icon::Grid,
                 UserSettingsTab::Server => Icon::Layers,
                 UserSettingsTab::Account => Icon::User,
+                UserSettingsTab::Shares => Icon::Pin,
+                UserSettingsTab::Friends => Icon::User,
             };
             ModalTab::with_icon(tab.id(), tab.label(), icon)
         })
@@ -264,6 +266,43 @@ pub fn render_user_settings_modal(
                 state,
                 toolbar_theme,
                 frame_theme,
+                &scroll_widget_theme,
+                input_coordinator,
+                &layer_id,
+                &mut result,
+            );
+        }
+        UserSettingsTab::Friends => {
+            let viewport_rect = WidgetRect::new(
+                content_x + padding,
+                settings_y,
+                content_w - padding * 2.0,
+                scroll_viewport_h,
+            );
+            render_friends_tab(
+                ctx,
+                viewport_rect,
+                state,
+                toolbar_theme,
+                frame_theme,
+                current_time_ms,
+                input_coordinator,
+                &layer_id,
+                &mut result,
+            );
+        }
+        UserSettingsTab::Shares => {
+            let viewport_rect = WidgetRect::new(
+                content_x + padding,
+                settings_y,
+                content_w - padding * 2.0,
+                scroll_viewport_h,
+            );
+            render_shares_tab(
+                ctx,
+                viewport_rect,
+                state,
+                toolbar_theme,
                 &scroll_widget_theme,
                 input_coordinator,
                 &layer_id,
@@ -905,6 +944,343 @@ fn render_add_key_view(
     }
 
     y
+}
+
+fn render_friends_tab(
+    ctx: &mut dyn RenderContext,
+    viewport: WidgetRect,
+    state: &UserSettingsState,
+    tt: &ToolbarTheme,
+    frame_theme: &FrameTheme,
+    current_time_ms: u64,
+    coord: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut crate::layout::render_frame::UserSettingsResult,
+) {
+    use uzor::WidgetId;
+
+    let x = viewport.x;
+    let mut y = viewport.y;
+    let w = viewport.width;
+    ctx.set_font("13px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    let findable = if state.discoverable { "Findable in search: on" } else { "Findable in search: off" };
+    ctx.fill_text(findable, x, y + 14.0);
+    let toggle = WidgetRect::new(x + w - 88.0, y, 80.0, 28.0);
+    ctx.set_fill_color(if state.discoverable { &tt.accent } else { &tt.dropdown_bg });
+    ctx.fill_rounded_rect(toggle.x, toggle.y, toggle.width, toggle.height, 6.0);
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.fill_text(if state.discoverable { "On" } else { "Off" }, toggle.center_x(), toggle.center_y());
+    coord.register_on_layer("user_settings:discoverable", toggle, Sense::CLICK, layer_id);
+    y += 40.0;
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.fill_text("Friends still find you when this is off.", x, y + 8.0);
+    y += 28.0;
+
+    let glass = WidgetRect::new(x, y, 32.0, 32.0);
+    ctx.set_fill_color(&tt.dropdown_bg);
+    ctx.fill_rounded_rect(glass.x, glass.y, glass.width, glass.height, 6.0);
+    draw_svg_icon(ctx, Icon::Search.svg(), glass.x + 8.0, glass.y + 8.0, 16.0, 16.0, &tt.item_text);
+    coord.register_on_layer("user_settings:friend_nick", glass, Sense::CLICK, layer_id);
+
+    let field_rect = WidgetRect::new(x + 36.0, y, (w - 36.0).max(40.0), 32.0);
+    let wid = WidgetId::from("friends_nick");
+    let text = coord.text_fields().text(&wid).to_string();
+    let cursor = coord.text_fields().cursor(&wid);
+    let (sel_start, sel_end) = match coord.text_fields().selection_range(&wid) {
+        Some((lo, hi)) => (Some(lo), Some(hi)),
+        None => (None, None),
+    };
+    let engaged = coord.text_fields().is_engaged(&wid);
+    let widget_theme = toolbar_to_widget_theme(tt, frame_theme);
+    let config = InputConfig::new(&text)
+        .with_focused(engaged)
+        .with_cursor(cursor)
+        .with_placeholder("Nick")
+        .with_selection(sel_start, sel_end);
+    let drawn = draw_input(ctx, &config, WidgetState::Normal, field_rect, &widget_theme);
+    coord.register_on_layer("user_settings:friend_nick", field_rect, Sense::CLICK | Sense::DRAG, layer_id);
+    result.content_items.push(("friend_nick".to_string(), field_rect));
+    result.input_char_positions.push(("friend_nick".to_string(), drawn.char_x_positions));
+    if engaged && coord.text_fields().cursor_visible(current_time_ms) {
+        draw_input_cursor(ctx, drawn.cursor_x, drawn.cursor_y, drawn.cursor_height, &tt.item_text);
+    }
+    y += 40.0;
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_font("12px sans-serif");
+    if state.friend_hits.is_empty() {
+        if text.trim().chars().count() >= 2 {
+            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.fill_text("No one found.", x, y + 8.0);
+            y += 22.0;
+        }
+    } else {
+        for nick in state.friend_hits.iter().take(6) {
+            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Request", "add"), ("Subscribe", "sub")]);
+        }
+    }
+    if !state.friend_note.is_empty() {
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text(&state.friend_note, x, y + 8.0);
+        y += 22.0;
+    }
+
+    let invite = WidgetRect::new(x, y, w, 32.0);
+    ctx.set_fill_color(&tt.dropdown_bg);
+    ctx.fill_rounded_rect(invite.x, invite.y, invite.width, invite.height, 6.0);
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_font("13px sans-serif");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text("New friend invite link", invite.center_x(), invite.center_y());
+    coord.register_on_layer("user_settings:friend_invite", invite, Sense::CLICK, layer_id);
+    y += 40.0;
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_font("12px sans-serif");
+    ctx.set_fill_color(&tt.item_text_muted);
+    if !state.friend_invite.is_empty() {
+        let url_row = WidgetRect::new(x, y, w, 22.0);
+        ctx.fill_text(&state.friend_invite, x, y + 8.0);
+        coord.register_on_layer("user_settings:friend_copy", url_row, Sense::CLICK, layer_id);
+        y += 22.0;
+    }
+    ctx.set_fill_color(&tt.item_text);
+    ctx.fill_text("Requests", x, y + 8.0);
+    y += 22.0;
+    if state.friend_incoming.is_empty() && state.friend_outgoing.is_empty() {
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text("No requests.", x, y + 8.0);
+        y += 22.0;
+    } else {
+        for nick in state.friend_incoming.iter().take(8) {
+            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Approve", "approve")]);
+        }
+        for nick in state.friend_outgoing.iter().take(8) {
+            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.fill_text(&format!("@{nick}  pending"), x, y + 8.0);
+            y += 22.0;
+        }
+    }
+    ctx.set_fill_color(&tt.item_text);
+    ctx.fill_text("Friends", x, y + 8.0);
+    y += 22.0;
+    if state.friend_nicks.is_empty() {
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text("No one yet.", x, y + 8.0);
+        y += 22.0;
+    } else {
+        for nick in state.friend_nicks.iter().take(12) {
+            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Remove", "remove"), ("Block", "block")]);
+        }
+    }
+    ctx.set_fill_color(&tt.item_text);
+    ctx.fill_text("Subscriptions", x, y + 8.0);
+    y += 22.0;
+    if state.friend_subscriptions.is_empty() {
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text("No subscriptions.", x, y + 8.0);
+        y += 22.0;
+    } else {
+        for nick in state.friend_subscriptions.iter().take(8) {
+            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Unsubscribe", "unsub")]);
+        }
+    }
+    ctx.set_fill_color(&tt.item_text);
+    ctx.fill_text("Blocked", x, y + 8.0);
+    y += 22.0;
+    if state.friend_blocked.is_empty() {
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text("No one blocked.", x, y + 8.0);
+    } else {
+        for nick in state.friend_blocked.iter().take(8) {
+            y = friend_person_row(ctx, coord, layer_id, tt, x, y, w, nick, &[("Unblock", "unblock")]);
+        }
+    }
+}
+
+fn friend_person_row(
+    ctx: &mut dyn RenderContext,
+    coord: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    tt: &ToolbarTheme,
+    x: f64,
+    y: f64,
+    w: f64,
+    nick: &str,
+    actions: &[(&str, &str)],
+) -> f64 {
+    ctx.set_font("12px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    let mut buttons: Vec<(f64, String, String)> = Vec::new();
+    let mut used = 0.0;
+    for (label, action) in actions.iter().rev() {
+        let bw = (label.len() as f64) * 7.2 + 18.0;
+        used += bw + 6.0;
+        buttons.push((bw, (*label).to_string(), (*action).to_string()));
+    }
+    let nick_chars = ((w - used - 8.0) / 7.0).floor().max(4.0) as usize;
+    let shown = {
+        let raw = format!("@{nick}");
+        if raw.chars().count() > nick_chars {
+            raw.chars().take(nick_chars).collect()
+        } else {
+            raw
+        }
+    };
+    ctx.set_fill_color(&tt.item_text);
+    ctx.fill_text(&shown, x, y + 13.0);
+    let mut bx = x + w;
+    for (bw, label, action) in buttons {
+        bx -= bw + 6.0;
+        let r = WidgetRect::new(bx, y + 1.0, bw, 24.0);
+        let hit = format!("user_settings:friend_{action}:{nick}");
+        let hovered = coord.is_hovered(&uzor::WidgetId::from(hit.as_str()));
+        ctx.set_fill_color(if hovered { &tt.item_bg_hover } else { &tt.dropdown_bg });
+        ctx.fill_rounded_rect(r.x, r.y, r.width, r.height, 4.0);
+        ctx.set_fill_color(&tt.item_text);
+        ctx.set_text_align(TextAlign::Center);
+        ctx.fill_text(&label, r.center_x(), r.center_y());
+        coord.register_on_layer(hit.as_str(), r, Sense::CLICK | Sense::HOVER, layer_id);
+        ctx.set_text_align(TextAlign::Left);
+    }
+    y + 30.0
+}
+
+fn render_shares_tab(
+    ctx: &mut dyn RenderContext,
+    viewport_rect: WidgetRect,
+    state: &UserSettingsState,
+    toolbar_theme: &ToolbarTheme,
+    scroll_widget_theme: &WidgetTheme,
+    input_coordinator: &mut uzor::input::InputCoordinator,
+    layer_id: &uzor::input::LayerId,
+    result: &mut UserSettingsResult,
+) {
+    let container = ScrollableContainer::new(viewport_rect, &state.shares_tab_scroll, None);
+    container.begin(ctx);
+    let x = viewport_rect.x;
+    let w = container.content_width();
+    let mut cy = container.content_y();
+    ctx.set_font("13px sans-serif");
+    ctx.set_text_align(TextAlign::Left);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.set_fill_color(&toolbar_theme.item_text);
+    let status = if state.share_status.is_empty() {
+        "Your share links. Unpinned links past the cap are burned, oldest first."
+    } else {
+        state.share_status.as_str()
+    };
+    ctx.fill_text(status, x, cy + 10.0);
+    cy += 28.0;
+    if state.share_rows.is_empty() {
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.fill_text("No active share links.", x, cy + 10.0);
+        cy += 28.0;
+    }
+    for row in &state.share_rows {
+        let title = if row.title.is_empty() { row.token.as_str() } else { row.title.as_str() };
+        ctx.set_fill_color(&toolbar_theme.item_text);
+        ctx.fill_text(
+            &format!("{}  {}  {}", title, row.kind, row.expires_at),
+            x,
+            cy + 12.0,
+        );
+        cy += 22.0;
+        ctx.set_fill_color(&toolbar_theme.item_text_muted);
+        ctx.fill_text(
+            &format!(
+                "{}  clone {}  {}  forward {}",
+                row.visibility,
+                if row.clone_allowed { "on" } else { "off" },
+                if row.interaction.is_empty() { "view" } else { row.interaction.as_str() },
+                if row.allow_forward { "on" } else { "off" },
+            ),
+            x,
+            cy + 10.0,
+        );
+        cy += 22.0;
+        let mut bx = x;
+        let armed = state.share_revoke_confirm.as_deref() == Some(row.token.as_str());
+        let pin_label = if row.pinned { "Unpin" } else { "Pin" };
+        let clone_label = if row.clone_allowed { "Clone off" } else { "Clone on" };
+        let vis_label = if row.visibility == "private" {
+            "Make public"
+        } else {
+            "Make private"
+        };
+        let actions: Vec<(&str, &str)> = if armed {
+            vec![
+                (pin_label, "pin"),
+                ("Confirm", "revoke_yes"),
+                ("Cancel", "keep"),
+            ]
+        } else {
+            vec![
+                (pin_label, "pin"),
+                ("Revoke", "revoke"),
+                (clone_label, "clone"),
+                (vis_label, "vis"),
+            ]
+        };
+        for (label, id_suffix) in actions {
+            let bw = 88.0;
+            let r = WidgetRect::new(bx, cy, bw, 22.0);
+            ctx.set_fill_color(&toolbar_theme.item_bg_hover);
+            ctx.fill_rounded_rect(r.x, r.y, r.width, r.height, 3.0);
+            ctx.set_fill_color(&toolbar_theme.item_text);
+            ctx.set_text_align(TextAlign::Center);
+            ctx.fill_text(label, r.center_x(), r.center_y());
+            ctx.set_text_align(TextAlign::Left);
+            let hit_id = format!("user_settings:shareadm:{id_suffix}:{}", row.token);
+            input_coordinator.register_on_layer(
+                hit_id.as_str(),
+                r,
+                Sense::CLICK,
+                layer_id,
+            );
+            bx += bw + 6.0;
+        }
+        cy += 32.0;
+        let _ = w;
+    }
+    let total_content_h = cy - container.content_y();
+    let scroll_result = container.end(ctx, total_content_h, scroll_widget_theme);
+    result.scroll_viewport_rect = Some(viewport_rect);
+    result.scroll_content_height = scroll_result.content_height;
+    result.scrollbar_handle_rect = scroll_result.handle_rect;
+    result.scrollbar_track_rect = scroll_result.track_rect;
+    result.scroll_viewport_height = scroll_result.viewport_height;
+
+    if let Some(ref hr) = result.scrollbar_handle_rect {
+        let inflated = uzor::types::Rect::new(hr.x - 5.0, hr.y, hr.width + 10.0, hr.height);
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_handle",
+            inflated,
+            uzor::input::Sense::DRAG,
+            layer_id,
+        );
+    }
+    if let Some(ref tr) = result.scrollbar_track_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scrollbar_track",
+            uzor::types::Rect::new(tr.x, tr.y, tr.width, tr.height),
+            uzor::input::Sense::CLICK,
+            layer_id,
+        );
+    }
+    if let Some(ref vp) = result.scroll_viewport_rect {
+        input_coordinator.register_on_layer(
+            "user_settings:scroll_viewport",
+            uzor::types::Rect::new(vp.x, vp.y, vp.width, vp.height),
+            uzor::input::Sense::SCROLL,
+            layer_id,
+        );
+    }
 }
 
 fn render_persistence_tab(

@@ -2448,6 +2448,11 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     log::debug!("[ChartApp] close_topmost_modal_layer: share_open closed");
                 }
+                "share_settings" => {
+                    self.panel_app.share_settings_state.is_open = false;
+                    self.panel_app.share_settings_state.hits.clear();
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                }
                 // Watchlist group name input L2 modal — close only this layer.
                 "wl_group_name_input" => {
                     self.standalone_panels.wl_group_name_input.close();

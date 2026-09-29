@@ -348,6 +348,10 @@ pub enum ChartOutEvent {
     /// which owns the cloud session and its token.
     ShareLiveChart,
 
+    /// Toolbar bolt: copy the share link and turn the socket on.
+    /// The chart overlay with View and Cursor appears. No settings modal.
+    ShareStreamChart,
+
     // === Consumed (chart handled it internally) ===
     /// The chart fully handled this action. No app-level work needed.
     Consumed,
