@@ -212,13 +212,6 @@ fn parse_room_action_path(path: &str) -> Option<RoomId> {
     RoomId::parse(percent_decode_minimal(segments.get(rooms_idx + 1)?)).ok()
 }
 
-/// Extracts `room_id_or_alias` from `/_matrix/client/v3/join/{room_id_or_alias}`.
-fn parse_join_path(path: &str) -> Option<RoomId> {
-    let segments: Vec<&str> = path.split('/').collect();
-    let join_idx = segments.iter().position(|segment| *segment == "join")?;
-    RoomId::parse(percent_decode_minimal(segments.get(join_idx + 1)?)).ok()
-}
-
 /// Extracts `(room_id, event_type)` from
 /// `/_matrix/client/v3/user/{user_id}/rooms/{room_id}/account_data/{event_type}`.
 fn parse_room_account_data_path(path: &str) -> Option<(RoomId, String)> {
@@ -700,11 +693,11 @@ impl FakeServer {
         json_response(200, &serde_json::json!({ "room_id": room_id.as_str() }))
     }
 
-    /// `POST /join/{roomIdOrAlias}` -- this fake never checks a join rule
+    /// `POST /rooms/{roomId}/join` -- this fake never checks a join rule
     /// (module doc: spec-shaped, not spec-complete); joining a room that
     /// does not exist in `self.rooms` is a `404`.
     fn handle_join_room(&mut self, as_user: &UserId, request: &OutgoingRequest) -> HttpResponseDescriptor {
-        let Some(room_id) = parse_join_path(&request.path) else {
+        let Some(room_id) = parse_room_action_path(&request.path) else {
             return json_response(400, &serde_json::json!({ "errcode": "M_UNKNOWN", "error": "fake server: malformed join path" }));
         };
         let Some(room) = self.rooms.get_mut(&room_id) else {
