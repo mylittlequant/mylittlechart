@@ -74,6 +74,9 @@ const FOLDERS_ACCOUNT_DATA_TYPE: &str = "org.mylittlechart.folders";
 /// [`build_view`] and swapped in whole by [`SnapshotProvider::publish`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ProviderView {
+    /// This account's own Matrix user id -- what [`MessengerProvider::
+    /// my_user_id`] returns, so the UI can tell its own bubbles apart.
+    pub my_user_id: UserId,
     /// Every room this account holds, in no particular order (chat-list
     /// order is the UI's job).
     pub rooms: Vec<RoomSummary>,
@@ -181,6 +184,10 @@ impl MessengerProvider for SnapshotProvider {
         self.lock().capabilities
     }
 
+    fn my_user_id(&self) -> UserId {
+        self.view().my_user_id.clone()
+    }
+
     fn vault_state(&self) -> VaultState {
         self.lock().vault_state
     }
@@ -256,6 +263,7 @@ pub fn build_view<C: RecordCodec>(core: &MessengerCore<C>, _now_ms: i64) -> Prov
     }
 
     ProviderView {
+        my_user_id: UserId::from(self_user_id.as_str()),
         rooms,
         timelines,
         back_pagination,
@@ -1708,5 +1716,20 @@ mod tests {
         assert_eq!(reply.event_id.as_str(), "$gone:example.org");
         assert_eq!(reply.preview, "…");
         assert_eq!(reply.sender.as_str(), "", "the model requires a UserId; an unloaded target's sender is unknown, so it is empty");
+    }
+
+    #[test]
+    fn the_provider_reports_the_accounts_own_matrix_id_only_once_a_snapshot_is_published() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        sync_with_body(&mut core, &group_sync_body("@alice:example.org", "!r:example.org", "s1"));
+
+        let provider = SnapshotProvider::new(SLICE_CAPABILITIES);
+        assert_eq!(provider.my_user_id().as_str(), "", "before the first snapshot nothing is 'mine'");
+
+        provider.publish(build_view(&core, 0));
+        assert_eq!(provider.my_user_id().as_str(), "@alice:example.org");
+        // The id the UI compares against is the id the account's own items carry.
+        let view = provider.view();
+        assert_eq!(view.my_user_id, UserId::from("@alice:example.org"));
     }
 }

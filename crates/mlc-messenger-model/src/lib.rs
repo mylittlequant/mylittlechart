@@ -37,7 +37,7 @@ pub use misc::{
     BackPagination, Capabilities, CreateRoomRequest, MessengerIntent, PowerLevel,
     PublicRoomEntry, RoomVisibility, Timestamp, UserEntry, VaultState,
 };
-pub use provider::MessengerProvider;
+pub use provider::{MessengerProvider, OWN_USER_ID};
 pub use room::{LastEventPreview, PreviewContent, RoomKind, RoomSummary, Tag};
 pub use timeline::{
     ForwardedFrom, LegacyContent, MembershipChange, MembershipEvent, MessageContent, ReactionSummary,

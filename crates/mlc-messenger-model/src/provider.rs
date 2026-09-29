@@ -1,13 +1,17 @@
 //! The messenger UI's whole data contract.
 
 use crate::folder::Folder;
-use crate::ids::RoomId;
+use crate::ids::{RoomId, UserId};
 use crate::member::Member;
 use crate::misc::{
     BackPagination, Capabilities, MessengerIntent, PublicRoomEntry, UserEntry, VaultState,
 };
 use crate::room::RoomSummary;
 use crate::timeline::TimelineItem;
+
+/// The fixed "this is me" marker id the 1:1 DM adapter and lab fixtures stamp
+/// on the caller's own messages — [`MessengerProvider::my_user_id`]'s default.
+pub const OWN_USER_ID: &str = "me";
 
 /// Implemented once per backend — today's 1:1 DM adapter
 /// (`mlc-app-layout`'s `DmMessengerProvider`), later the Matrix-shaped
@@ -27,6 +31,17 @@ pub trait MessengerProvider {
     fn change_counter(&self) -> u64;
 
     fn capabilities(&self) -> Capabilities;
+    /// The id the signed-in account's OWN messages carry as
+    /// `TimelineItem::sender` / `Member::user_id` / a room preview's
+    /// sender — the UI compares against this to decide which bubbles are
+    /// "mine". Today's DM adapter stamps the fixed marker [`OWN_USER_ID`]
+    /// (its server resolves the caller from the session, so it has no real
+    /// id to show); a Matrix-shaped provider returns the account's own
+    /// Matrix user id. Empty while the provider does not know it yet
+    /// (before its first published snapshot) — nothing is "mine" then.
+    fn my_user_id(&self) -> UserId {
+        UserId::from(OWN_USER_ID)
+    }
     fn vault_state(&self) -> VaultState;
     /// The provider's own last fetch/send failure, if any — one slot, the
     /// same "one mailbox, one error slot" shape `DmState::last_error`
