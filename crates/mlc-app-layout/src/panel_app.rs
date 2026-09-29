@@ -558,6 +558,8 @@ pub fn chart_toolbar_render_toolbars(
                     // own doc); `is_active` never consults it.
                     "screenshot" => tb.is_active(id)
                         || tb.screenshot_destination != mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard,
+                    // Camcorder: pressed while this tab publishes or watches.
+                    "share_stream" => tb.is_active(id) || tb.share_stream.is_pressed(),
                     _ => tb.is_active(id),
                 }
             });
@@ -569,6 +571,7 @@ pub fn chart_toolbar_render_toolbars(
                 control_sections,
                 |id| match id {
                     "screenshot" => tb.screenshot_destination != mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard,
+                    "share_stream" => tb.share_stream.icon_name().is_some(),
                     _ => false,
                 },
                 |id| match id {
@@ -577,6 +580,7 @@ pub fn chart_toolbar_render_toolbars(
                         mlc_core::state::toolbar_state::ScreenshotDestination::ShareLink => Some("NewWindow"),
                         mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard => None,
                     },
+                    "share_stream" => tb.share_stream.icon_name(),
                     _ => None,
                 },
             );

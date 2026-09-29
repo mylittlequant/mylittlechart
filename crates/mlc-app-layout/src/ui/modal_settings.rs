@@ -307,13 +307,6 @@ pub struct ShareSettingsState {
     /// Public and Clone. The nick field stays available on a public link
     /// so the author can name an editor.
     pub edit_on: bool,
-    /// Channel mode for this chart's share. Off: the link catches up on a
-    /// cadence. On: subscribers sync movements as they happen.
-    pub live_on: bool,
-    /// Stream pan and zoom with Live. Drawn only while Live is on.
-    pub live_viewport: bool,
-    /// Stream the author's crosshair and hide the viewer's. Drawn only while Live is on.
-    pub live_cursor: bool,
     pub position: Option<(f64, f64)>,
     pub is_dragging: bool,
     pub drag_offset: Option<(f64, f64)>,
@@ -3755,6 +3748,9 @@ pub struct ShareAdminRow {
     pub expires_at: String,
     /// Author chart this row is bound to. Empty when the server omitted it.
     pub chart_id: String,
+    /// RFC 3339 creation instant. The newest live row of a chart is the one a
+    /// republish reuses, so it is the one the author's channel binds to.
+    pub created_at: String,
 }
 
 /// State for the User Settings modal.

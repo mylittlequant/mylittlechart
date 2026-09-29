@@ -5453,21 +5453,6 @@ impl ChartApp {
                                 !self.panel_app.share_settings_state.edit_on;
                             return;
                         }
-                        if which == "live" {
-                            let live = !self.panel_app.share_settings_state.live_on;
-                            self.set_share_live(live);
-                            return;
-                        }
-                        if which == "viewport" {
-                            let on = !self.panel_app.share_settings_state.live_viewport;
-                            self.set_share_viewport(on);
-                            return;
-                        }
-                        if which == "cursor" {
-                            let on = !self.panel_app.share_settings_state.live_cursor;
-                            self.set_share_cursor(on);
-                            return;
-                        }
                         let (public_on, clone_on) = match self.panel_app.share_settings_state.rights_preset.as_str() {
                             "view_only" => (true, false),
                             "private" => (false, true),
@@ -5583,15 +5568,15 @@ impl ChartApp {
         if let Some(which) = widget_id.strip_prefix("share_live:") {
             match which {
                 "live" => {
-                    let live = !self.panel_app.share_settings_state.live_on;
+                    let live = !self.share_live_on();
                     self.set_share_live(live);
                 }
                 "viewport" => {
-                    let on = !self.panel_app.share_settings_state.live_viewport;
+                    let on = !self.share_live_viewport_on();
                     self.set_share_viewport(on);
                 }
                 "cursor" => {
-                    let on = !self.panel_app.share_settings_state.live_cursor;
+                    let on = !self.share_live_cursor_on();
                     self.set_share_cursor(on);
                 }
                 _ => {}

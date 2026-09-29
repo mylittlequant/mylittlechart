@@ -13,18 +13,25 @@ use mlc_core::preset::snapshots::{IndicatorSnapshot, OutputConfigSnapshot};
 
 use crate::ChartApp;
 
+/// How long a local Live click outranks what a pull reports. The PATCH that
+/// stores the click is still in flight, so an older pull answers with the
+/// previous value; after this window the server's answer wins again.
+pub const LIVE_INTENT_HOLD_MS: f64 = 6_000.0;
+
 #[derive(Clone, Debug)]
 pub struct ShareStream {
     pub token: String,
     pub cursor: i64,
-    /// Author's Live toggle. Off: cadence. On: the channel.
+    /// This tab's Live state. The only copy: off is the cadence, on is the
+    /// channel. Written by the local click and by a pull, never by another tab.
     pub live: bool,
+    /// Until this instant (link clock, ms) a pull cannot change `live`.
+    pub live_hold_until_ms: f64,
     /// Pan/zoom rides the channel. Only meaningful while `live` is on.
     pub live_viewport: bool,
     pub live_cursor: bool,
     pub cursor_sent: String,
     pub preview_sent: String,
-    pub baseline: bool,
     /// The full chart has been posted once. Until then the gap does not
     /// apply: a reload has only what the server stored.
     pub seeded: bool,
@@ -55,11 +62,11 @@ impl ShareStream {
             token,
             cursor: 0,
             live: false,
+            live_hold_until_ms: 0.0,
             live_viewport: false,
             live_cursor: false,
             cursor_sent: String::new(),
             preview_sent: String::new(),
-            baseline: false,
             seeded: false,
             last_push_ms: 0.0,
             last_pull_ms: 0.0,
@@ -74,6 +81,17 @@ impl ShareStream {
             viewport_sent: String::new(),
             preview_local: None,
         }
+    }
+
+    /// Forget what was last sent on the socket. A new connection is a new
+    /// publisher in the room, so the next frame set must carry everything.
+    pub(crate) fn forget_sent(&mut self) {
+        self.edge_phase.clear();
+        self.edge_point.clear();
+        self.gesture_sent.clear();
+        self.cursor_sent.clear();
+        self.preview_sent.clear();
+        self.viewport_sent.clear();
     }
 }
 
@@ -137,6 +155,34 @@ impl ChartApp {
         })
     }
 
+    /// This tab's stream, created on first use and rebuilt when the token it
+    /// was made for is no longer the tab's token.
+    pub(crate) fn ensure_share_stream(&mut self, preset_id: &str, token: &str) -> &mut ShareStream {
+        let stream = self
+            .share_streams
+            .entry(preset_id.to_string())
+            .or_insert_with(|| ShareStream::new(token.to_string()));
+        if stream.token != token {
+            *stream = ShareStream::new(token.to_string());
+        }
+        stream
+    }
+
+    /// The active tab's Live state. `false` when the tab has no channel.
+    pub fn share_live_on(&self) -> bool {
+        self.share_streams.get(&self.panel_app.active_preset_id).is_some_and(|s| s.live)
+    }
+
+    /// Whether the active tab streams its viewport.
+    pub fn share_live_viewport_on(&self) -> bool {
+        self.share_streams.get(&self.panel_app.active_preset_id).is_some_and(|s| s.live && s.live_viewport)
+    }
+
+    /// Whether the active tab streams its cursor.
+    pub fn share_live_cursor_on(&self) -> bool {
+        self.share_streams.get(&self.panel_app.active_preset_id).is_some_and(|s| s.live && s.live_cursor)
+    }
+
     /// An edit grant arrived for the open share tab. Drawing is allowed.
     pub fn note_share_can_send(&mut self, preset_id: &str, can_send: bool) {
         let Some(meta) = self.shared_chart_meta.get_mut(preset_id) else {
@@ -159,10 +205,7 @@ impl ChartApp {
         }
         let preset_id = follow.preset_id.clone();
         let token = follow.token.clone();
-        let stream = self.share_streams.entry(preset_id.clone()).or_insert_with(|| ShareStream::new(token.clone()));
-        if stream.token != token {
-            *stream = ShareStream::new(token.clone());
-        }
+        self.ensure_share_stream(&preset_id, &token);
         self.ensure_share_keys(&preset_id);
         let gesture = self.share_gesture(&preset_id);
         let phase_now = gesture.as_ref().map(|g| g.0.as_str()).unwrap_or("");
@@ -220,7 +263,6 @@ impl ChartApp {
         stream.gesture_phase = phase_now.to_string();
         if ops.is_empty() {
             stream.seeded = true;
-            stream.baseline = true;
             return None;
         }
         let mut recorded = stream.last.clone();
@@ -235,16 +277,11 @@ impl ChartApp {
         Some((token, ops))
     }
 
-    /// Token whose live socket should be open. Viewers included.
+    /// Token whose live socket should be open: the active tab's, while that
+    /// tab's own Live state is on. Viewers included.
     pub fn edge_live_token(&self) -> Option<String> {
         let follow = self.share_follow_target()?;
-        let stream_live = self.share_streams.get(&follow.preset_id).is_some_and(|s| s.live);
-        let ui_live = self.panel_app.share_settings_state.live_on && follow.can_send;
-        if stream_live || ui_live {
-            Some(follow.token)
-        } else {
-            None
-        }
+        self.share_streams.get(&follow.preset_id).is_some_and(|s| s.live).then_some(follow.token)
     }
 
     /// Drag, control-point move, in-progress drawing, and the cursor.
@@ -298,24 +335,18 @@ impl ChartApp {
     /// Frames for the edge socket. Empty when Live is off. The moving line
     /// is one of these frames, not a row in the control-box log.
     pub fn take_edge_frames(&mut self) -> Option<(String, Vec<String>)> {
+        // The server's welcome decides who may send. A tab that is only
+        // watching never produces a frame, whatever its local rights say.
+        if !self.live_link_publishing() {
+            return None;
+        }
         let follow = self.share_follow_target()?;
         if !follow.can_send {
             return None;
         }
         let preset_id = follow.preset_id.clone();
-        let ui_live = self.panel_app.share_settings_state.live_on;
-        let ui_view = self.panel_app.share_settings_state.live_viewport;
-        let ui_cursor = self.panel_app.share_settings_state.live_cursor;
-        let alive = self.share_streams.get(&preset_id).is_some_and(|s| s.live) || ui_live;
-        if !alive {
+        if !self.share_streams.get(&preset_id).is_some_and(|s| s.live) {
             return None;
-        }
-        if let Some(stream) = self.share_streams.get_mut(&preset_id) {
-            if ui_live {
-                stream.live = true;
-            }
-            stream.live_viewport = ui_live && ui_view;
-            stream.live_cursor = ui_live && ui_cursor;
         }
         let token = follow.token.clone();
         let gesture = self.share_gesture(&preset_id);
@@ -393,6 +424,14 @@ impl ChartApp {
             return;
         };
         let kind = value.get("t").and_then(|v| v.as_str()).unwrap_or("");
+        if kind == "welcome" {
+            let publish = value.get("publish").and_then(|v| v.as_bool()).unwrap_or(false);
+            self.live_link_welcome(publish);
+            return;
+        }
+        if !self.live_link.is_open() {
+            return;
+        }
         let Some(follow) = self.share_follow_target() else {
             return;
         };
@@ -484,10 +523,7 @@ impl ChartApp {
 
     pub fn share_pull_due(&mut self, now_ms: f64) -> Option<(String, i64)> {
         let follow = self.share_follow_target()?;
-        let stream = self.share_streams.entry(follow.preset_id.clone()).or_insert_with(|| ShareStream::new(follow.token.clone()));
-        if stream.token != follow.token {
-            *stream = ShareStream::new(follow.token.clone());
-        }
+        let stream = self.ensure_share_stream(&follow.preset_id, &follow.token);
         let gap = if stream.live { 250.0 } else { 8000.0 };
         if now_ms - stream.last_pull_ms < gap {
             return None;
@@ -496,57 +532,42 @@ impl ChartApp {
         Some((follow.token, stream.cursor))
     }
 
-    pub fn note_share_channel(&mut self, token: &str, live: bool) {
-        self.panel_app.share_settings_state.live_on = live;
-        let preset = self.panel_app.active_preset_id.clone();
-        if let Some(stream) = self.share_streams.get_mut(&preset) {
-            if stream.token == token {
-                stream.live = live;
-            }
-        }
-    }
-
+    /// Turn Live on or off for the active tab. The tab's own stream is the
+    /// only place the state lives; the PATCH stores it for the viewers.
+    /// Does nothing on a tab that has no share to stream on.
     pub fn set_share_live(&mut self, live: bool) {
-        self.panel_app.share_settings_state.live_on = live;
         let active = self.panel_app.active_preset_id.clone();
-        if let Some(stream) = self.share_streams.get_mut(&active) {
-            stream.live = live;
-            if !live {
-                stream.live_viewport = false;
-                stream.live_cursor = false;
-            }
-        }
-        if !live {
-            self.panel_app.share_settings_state.live_viewport = false;
-            self.panel_app.share_settings_state.live_cursor = false;
-        }
         let token = self
             .shared_chart_meta(&active)
             .filter(|m| m.has_right("edit"))
             .map(|m| m.token.clone())
             .or_else(|| self.panel_app.chart_share_tokens.get(&active).cloned());
-        if let Some(token) = token {
-            self.pending_share_admin = Some(crate::ShareAdminCmd::Patch {
-                token,
-                body: format!(r#"{{"live":{live}}}"#),
-            });
-            self.panel_app.share_settings_state.status = "Saved for this chart".to_string();
-        } else {
-            self.panel_app.share_settings_state.status =
-                "Saved as the default for the next Share".to_string();
+        let Some(token) = token else {
+            log::debug!("[Share] Live {live} ignored: this tab has no share");
+            return;
+        };
+        let hold_until = self.live_link.clock_ms() + LIVE_INTENT_HOLD_MS;
+        let stream = self.ensure_share_stream(&active, &token);
+        stream.live = live;
+        stream.live_hold_until_ms = hold_until;
+        if !live {
+            stream.live_viewport = false;
+            stream.live_cursor = false;
         }
+        self.pending_share_admin = Some(crate::ShareAdminCmd::Patch {
+            token,
+            body: format!(r#"{{"live":{live}}}"#),
+        });
+        self.panel_app.share_settings_state.status = "Saved for this chart".to_string();
     }
 
     pub fn set_share_cursor(&mut self, on: bool) {
-        if !self.panel_app.share_settings_state.live_on {
-            return;
-        }
-        self.panel_app.share_settings_state.live_cursor = on;
         let active = self.panel_app.active_preset_id.clone();
-        if let Some(stream) = self.share_streams.get_mut(&active) {
-            stream.live_cursor = on;
-            stream.cursor_sent.clear();
-        }
+        let Some(stream) = self.share_streams.get_mut(&active).filter(|s| s.live) else {
+            return;
+        };
+        stream.live_cursor = on;
+        stream.cursor_sent.clear();
         if !on {
             if let Some(window) = self.panel_app.panel_grid.active_container_mut() {
                 window.crosshair.follow_remote = false;
@@ -555,16 +576,13 @@ impl ChartApp {
     }
 
     pub fn set_share_viewport(&mut self, on: bool) {
-        if !self.panel_app.share_settings_state.live_on {
-            return;
-        }
-        self.panel_app.share_settings_state.live_viewport = on;
         let active = self.panel_app.active_preset_id.clone();
-        if let Some(stream) = self.share_streams.get_mut(&active) {
-            stream.live_viewport = on;
-            if !on {
-                stream.viewport_sent.clear();
-            }
+        let Some(stream) = self.share_streams.get_mut(&active).filter(|s| s.live) else {
+            return;
+        };
+        stream.live_viewport = on;
+        if !on {
+            stream.viewport_sent.clear();
         }
     }
 
@@ -597,22 +615,25 @@ impl ChartApp {
         if can_send {
             self.note_share_can_send(&preset_id, true);
         }
+        let now_ms = self.live_link.clock_ms();
         let ended = {
-            let stream = self.share_streams.entry(preset_id.clone()).or_insert_with(|| ShareStream::new(token.to_string()));
-            if stream.token != token {
-                *stream = ShareStream::new(token.to_string());
-            }
+            let stream = self.ensure_share_stream(&preset_id, token);
             let was_live = stream.live;
-            stream.live = live;
-            was_live && !live
+            // A pull that was answered before the PATCH of a local click
+            // landed still carries the old value. It cannot undo the click;
+            // once the server agrees, or the hold runs out, it can again.
+            if live == stream.live || now_ms >= stream.live_hold_until_ms {
+                stream.live = live;
+                stream.live_hold_until_ms = 0.0;
+            }
+            if !stream.live {
+                stream.live_viewport = false;
+                stream.live_cursor = false;
+            }
+            was_live && !stream.live
         };
         if ended && self.shared_chart_meta.contains_key(&preset_id) {
             self.stream_ended = Some(preset_id.clone());
-        }
-        self.panel_app.share_settings_state.live_on = live;
-        if !live {
-            self.panel_app.share_settings_state.live_viewport = false;
-            self.panel_app.share_settings_state.live_cursor = false;
         }
         if reset {
             if let Some(stream) = self.share_streams.get_mut(&preset_id) {
@@ -641,7 +662,6 @@ impl ChartApp {
                         _ => {}
                     }
                 }
-                stream.baseline = true;
             }
         }
     }
@@ -934,23 +954,6 @@ impl ChartApp {
             window.follow_remote_view = true;
         }
         window.apply_shared_view(view_start, bar_spacing, price);
-    }
-
-    /// Last socket frames when Live goes off: viewers release the viewport
-    /// and the crosshair. Sent once, then the socket closes.
-    pub fn take_live_stop_frames(&mut self) -> Option<(String, Vec<String>)> {
-        let follow = self.share_follow_target()?;
-        if !follow.can_send {
-            return None;
-        }
-        Some((
-            follow.token,
-            vec![
-                "{\"t\":\"c\",\"off\":true}".to_string(),
-                "{\"t\":\"v\",\"off\":true}".to_string(),
-                "{\"t\":\"end\"}".to_string(),
-            ],
-        ))
     }
 
     fn apply_share_cursor(&mut self, value: &serde_json::Value) {

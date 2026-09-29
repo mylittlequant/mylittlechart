@@ -421,7 +421,14 @@ pub fn process_event(
                     } else {
                         let wid = uzor::WidgetId::from(format!("toolbar:{}", btn_id));
                         toolbar_tooltip.update(Some(wid.clone()), time_ms, dropdown_open);
-                        if let Some(text) = mlc_core::toolbar::find_toolbar_tooltip(btn_id) {
+                        // The camcorder explains its own state: off, connecting,
+                        // live, viewing, error.
+                        let tip = if btn_id == "share_stream" {
+                            Some(chart.share_stream_tooltip())
+                        } else {
+                            mlc_core::toolbar::find_toolbar_tooltip(btn_id)
+                        };
+                        if let Some(text) = tip {
                             toolbar_tooltip.request_tooltip(wid, text.to_string(), (x, y), time_ms);
                         }
                     }
