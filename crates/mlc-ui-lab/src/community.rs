@@ -45,9 +45,10 @@ use mlc_app_layout::ui::modal_settings::{
     BoardUi, CommunityState, CommunityTab, DmConversationUi, DmMessageBody, DmMessageUi, DmState,
     DmUnavailableReason, DmView, ForumReplyV2Ui, ForumThreadV2Detail, ForumV2State, ForumV2View,
 };
+use mlc_core::state::toolbar_geometry::WidgetRect;
 use mlc_core::theme::ThemeManager;
 use uzor::input::{InputCoordinator, InputState};
-use uzor::render::{Painter, ShapeHelpers};
+use uzor::render::{Painter, ShapeHelpers, TextAlign, TextBaseline, TextRenderer};
 
 use crate::render_context::LabRenderContext;
 use crate::theme;
@@ -104,6 +105,11 @@ enum PageState {
     /// exists in this crate (this module's own top doc), so the menu is
     /// simply always open for this state.
     MessagesMenu,
+    /// `?state=stickers` — proof page for the `mlc-hat` sticker pack
+    /// (`mlc_app_layout::ui::widgets::{draw_sticker, sticker_pack}`): every
+    /// sticker in a grid at two sizes instead of `render_community_modal` —
+    /// see `render_one_frame`'s own branch.
+    Stickers,
 }
 
 impl PageState {
@@ -115,6 +121,7 @@ impl PageState {
             Some("messages-group") => Self::MessagesGroup,
             Some("messages-channel") => Self::MessagesChannel,
             Some("messages-menu") => Self::MessagesMenu,
+            Some("stickers") => Self::Stickers,
             _ => Self::ForumIndex,
         }
     }
@@ -485,6 +492,13 @@ fn community_state_for(page: PageState, now_ms: f64) -> CommunityState {
             };
             CommunityTab::Messages
         }
+        PageState::Stickers => {
+            // Never rendered — `render_one_frame` branches on `page` before
+            // it would call `render_community_modal` for this page. Kept a
+            // real (if unused) `CommunityState` rather than an `Option` just
+            // for this one variant, to keep `CommunityLabState` uniform.
+            CommunityTab::Forum
+        }
     };
 
     let messenger_reply_preview = matches!(page, PageState::MessagesGroup).then(|| {
@@ -600,19 +614,24 @@ fn render_one_frame(state: &Rc<RefCell<CommunityLabState>>) -> Result<(), JsValu
     let toolbar_theme = theme::toolbar_theme(&lab.theme_manager);
 
     lab.coordinator.begin_frame(InputState::new());
-    let provider = lab.messenger_fixture.as_ref().map(|f| f as &dyn mlc_messenger_model::MessengerProvider);
-    render_community_modal(
-        &mut ctx,
-        screen_w.max(WINDOW_W),
-        screen_h.max(WINDOW_H),
-        &lab.community,
-        &frame_theme,
-        &toolbar_theme,
-        current_time_ms,
-        &mut lab.coordinator,
-        false,
-        provider,
-    );
+    if lab.page == PageState::Stickers {
+        let text_color = lab.theme_manager.current().colors.text_primary.clone();
+        render_stickers_page(&mut ctx, &text_color, current_time_ms);
+    } else {
+        let provider = lab.messenger_fixture.as_ref().map(|f| f as &dyn mlc_messenger_model::MessengerProvider);
+        render_community_modal(
+            &mut ctx,
+            screen_w.max(WINDOW_W),
+            screen_h.max(WINDOW_H),
+            &lab.community,
+            &frame_theme,
+            &toolbar_theme,
+            current_time_ms,
+            &mut lab.coordinator,
+            false,
+            provider,
+        );
+    }
 
     // Concept v1 screen "2 · меню чата" — a static context-menu overlay
     // (this crate hosts no click dispatch at all, this module's own top
@@ -686,4 +705,36 @@ fn draw_messages_menu_overlay(
     menu_state.open(118.0, 190.0, ContextMenuTarget::DmChatRow("3".to_string()), items);
     let dropdown_theme = DropdownTheme::from_toolbar(toolbar_theme);
     render_context_menu(ctx, &menu_state, &dropdown_theme, None, coordinator);
+}
+
+/// `PageState::Stickers` proof page — every sticker in the `mlc-hat` pack,
+/// in a grid at 96px and 160px, animating off `elapsed_ms` (any monotonic
+/// millisecond clock works — see `draw_sticker`'s own doc for why).
+/// `fallback_text_color` draws the alt text for any id `draw_sticker` does
+/// not recognise (never happens for this pack's own six ids, but is the
+/// documented contract for an unknown one).
+fn render_stickers_page(ctx: &mut LabRenderContext, fallback_text_color: &str, elapsed_ms: u64) {
+    use mlc_app_layout::ui::widgets::{draw_sticker, sticker_pack};
+
+    const SIZES: [f64; 2] = [96.0, 160.0];
+    const GAP: f64 = 24.0;
+    const MARGIN_X: f64 = 40.0;
+
+    let infos = sticker_pack("mlc-hat");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+
+    let mut y = 40.0;
+    for &size in &SIZES {
+        let mut x = MARGIN_X;
+        for info in infos {
+            let rect = WidgetRect::new(x, y, size, size);
+            if !draw_sticker(ctx, rect, "mlc-hat", info.id, elapsed_ms) {
+                ctx.set_fill_color(fallback_text_color);
+                ctx.fill_text(info.alt, x + size / 2.0, y + size / 2.0);
+            }
+            x += size + GAP;
+        }
+        y += size + GAP;
+    }
 }

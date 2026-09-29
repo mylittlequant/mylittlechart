@@ -1,0 +1,41 @@
+{
+  "pack": "mlc-hat",
+  "stickers": [
+    {
+      "id": "bounce",
+      "alt": "Bounce",
+      "frames": 16,
+      "frame_ms": 150
+    },
+    {
+      "id": "spin",
+      "alt": "Spin",
+      "frames": 16,
+      "frame_ms": 150
+    },
+    {
+      "id": "wave",
+      "alt": "Wave",
+      "frames": 16,
+      "frame_ms": 150
+    },
+    {
+      "id": "twinkle",
+      "alt": "Twinkle",
+      "frames": 16,
+      "frame_ms": 175
+    },
+    {
+      "id": "flip",
+      "alt": "Flip",
+      "frames": 16,
+      "frame_ms": 200
+    },
+    {
+      "id": "turntable",
+      "alt": "Turntable",
+      "frames": 16,
+      "frame_ms": 150
+    }
+  ]
+}

@@ -1,0 +1,135 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" style="--seek: 0s; --play-state: running;">
+  <title>MyLittleChart magic hat tip wave</title>
+  <desc>The cone bends softly from its anchored base, its tip follows with a slight delay, and the brim gives a small elastic recoil.</desc>
+  <style>
+    #hat-brim,
+    #hat-cone-flex,
+    #hat-cone-shape,
+    #hat-symbols-tip,
+    #hat-symbols-mid {
+      animation-duration: 2.4s;
+      animation-timing-function: cubic-bezier(0.45, 0, 0.2, 1);
+      animation-iteration-count: infinite;
+      animation-delay: calc(0s - var(--seek));
+      animation-play-state: var(--play-state);
+    }
+
+    #hat-brim {
+      transform-box: fill-box;
+      transform-origin: 52% 54%;
+      animation-name: magic-hat-brim-recoil;
+    }
+
+    #hat-cone-flex {
+      transform-box: fill-box;
+      transform-origin: 55% 91%;
+      animation-name: magic-hat-cone-flex;
+    }
+
+    #hat-cone-shape {
+      animation-name: magic-hat-cone-bend;
+    }
+
+    #hat-symbols-tip {
+      transform-box: fill-box;
+      transform-origin: 64% 82%;
+      animation-name: magic-hat-tip-follow;
+    }
+
+    #hat-symbols-mid {
+      transform-box: fill-box;
+      transform-origin: 50% 82%;
+      animation-name: magic-hat-mid-follow;
+    }
+
+    @keyframes magic-hat-brim-recoil {
+      0%, 100% { transform: translateY(0) scale(1, 1) rotate(0deg); }
+      18% { transform: translateY(-0.35px) scale(0.996, 1.008) rotate(-0.15deg); }
+      31% { transform: translateY(0.8px) scale(1.012, 0.984) rotate(0.2deg); }
+      47% { transform: translateY(-0.35px) scale(0.997, 1.007) rotate(-0.12deg); }
+      62% { transform: translateY(0.65px) scale(1.009, 0.988) rotate(0.14deg); }
+      79% { transform: translateY(-0.2px) scale(0.998, 1.004) rotate(-0.08deg); }
+      91% { transform: translateY(0.12px) scale(1.002, 0.997) rotate(0deg); }
+    }
+
+    @keyframes magic-hat-cone-flex {
+      0%, 100% { transform: translate(0, 0) rotate(0deg) skewX(0deg) scale(1, 1); }
+      13% { transform: translate(0, 0.2px) rotate(-0.45deg) skewX(-0.55deg) scale(1.004, 0.996); }
+      25% { transform: translate(-0.2px, -0.15px) rotate(-0.9deg) skewX(-0.9deg) scale(0.997, 1.006); }
+      45% { transform: translate(0.25px, 0.3px) rotate(0.8deg) skewX(0.85deg) scale(1.006, 0.993); }
+      64% { transform: translate(-0.15px, -0.1px) rotate(-0.55deg) skewX(-0.55deg) scale(0.998, 1.004); }
+      80% { transform: translate(0.1px, 0.15px) rotate(0.3deg) skewX(0.3deg) scale(1.003, 0.997); }
+      92% { transform: translate(0, 0) rotate(-0.1deg) skewX(-0.1deg) scale(1, 1); }
+    }
+
+    @keyframes magic-hat-cone-bend {
+      0%, 100% {
+        d: path("M 90.33,18.84 C 77.06,8.71 67.07,5.08 58.56,5.51 C 45.81,6.13 29.71,19.48 21.81,29.04 C 16.22,35.88 10.11,45.16 12.48,47.74 C 13.99,49.34 17.29,47.13 20.46,45.29 C 28.36,40.72 34.91,38.18 43.96,35.61 C 47.29,47.33 49.13,59.09 49.91,71.63 C 50.54,80.74 55.56,89.25 66.14,101.11 C 75.7,108.4 90.2,105.3 104.8,96.6 C 122.6,86.1 128.8,82.2 135.8,78.2 C 145.8,72.5 153,71.4 153.1,67.2 C 153.2,63.2 147.8,59.4 141.8,55 C 128.5,45 104,27.8 90.33,18.84 Z");
+      }
+      27% {
+        d: path("M 89.8,19.6 C 76.2,8.2 65.8,4.3 56.8,5 C 43.8,6 28,18.1 19.8,27 C 13.4,34 7.6,43 10.2,45.8 C 11.8,47.4 15,45.4 18.4,43.6 C 27,39 34.5,37.1 43.9,35.6 C 47.4,47.5 49.3,59.2 50.1,71.6 C 50.7,80.7 55.6,89.2 66.14,101.11 C 75.7,108.4 90.2,105.3 104.8,96.6 C 122.6,86.1 128.8,82.2 135.8,78.2 C 145.8,72.5 153,71.4 153.1,67.2 C 153.2,63.2 147.8,59.4 141.8,55 C 128.3,44.8 103.5,27.5 89.8,19.6 Z");
+      }
+      50% {
+        d: path("M 90.8,18 C 78.2,9.3 68.1,6.1 59.5,6.3 C 47.5,7 33.1,21 25.2,31.5 C 19.5,39.2 14,49.5 16.6,52.1 C 18.1,53.7 21.4,50.5 24.2,47.9 C 31.5,41.5 37,38.3 44.2,35.7 C 47.1,47.1 49,59 49.8,71.6 C 50.4,80.7 55.5,89.3 66.14,101.11 C 75.7,108.4 90.2,105.3 104.8,96.6 C 122.6,86.1 128.8,82.2 135.8,78.2 C 145.8,72.5 153,71.4 153.1,67.2 C 153.2,63.2 147.8,59.4 141.8,55 C 128.7,45.3 104.5,27.9 90.8,18 Z");
+      }
+      69% {
+        d: path("M 90.05,19.25 C 76.7,8.5 66.4,4.7 57.5,5.2 C 44.6,6.1 29.1,18.8 20.9,28 C 14.8,34.8 9,44 11.5,46.5 C 13,48.1 16.2,45.8 19.5,43.9 C 27.8,39.2 35,37.3 43.95,35.6 C 47.35,47.4 49.2,59.15 50,71.6 C 50.6,80.7 55.55,89.25 66.14,101.11 C 75.7,108.4 90.2,105.3 104.8,96.6 C 122.6,86.1 128.8,82.2 135.8,78.2 C 145.8,72.5 153,71.4 153.1,67.2 C 153.2,63.2 147.8,59.4 141.8,55 C 128.4,44.9 103.8,27.6 90.05,19.25 Z");
+      }
+      85% {
+        d: path("M 90.5,18.55 C 77.5,9.05 67.5,5.5 58.9,5.8 C 46.3,6.5 31.2,20.1 23.1,29.9 C 17.4,36.9 11.7,46.2 14.2,48.6 C 15.7,50.2 18.9,47.5 22,45.5 C 29.7,40.5 35.5,38 44.05,35.65 C 47.2,47.25 49.05,59.05 49.85,71.6 C 50.5,80.7 55.5,89.25 66.14,101.11 C 75.7,108.4 90.2,105.3 104.8,96.6 C 122.6,86.1 128.8,82.2 135.8,78.2 C 145.8,72.5 153,71.4 153.1,67.2 C 153.2,63.2 147.8,59.4 141.8,55 C 128.6,45.15 104.2,27.75 90.5,18.55 Z");
+      }
+    }
+
+    @keyframes magic-hat-tip-follow {
+      0%, 100% { transform: translate(0, 0) rotate(0deg) scale(1, 1); }
+      16% { transform: translate(-0.35px, -0.1px) rotate(-0.4deg) scale(1.002, 0.998); }
+      31% { transform: translate(-1.2px, -0.8px) rotate(-2.2deg) scale(0.995, 1.006); }
+      54% { transform: translate(1.5px, 1.05px) rotate(2.8deg) scale(1.006, 0.994); }
+      73% { transform: translate(-0.75px, -0.45px) rotate(-1.35deg) scale(0.997, 1.003); }
+      88% { transform: translate(0.3px, 0.2px) rotate(0.55deg) scale(1.001, 0.999); }
+    }
+
+    @keyframes magic-hat-mid-follow {
+      0%, 100% { transform: translate(0, 0) rotate(0deg); }
+      29% { transform: translate(-0.35px, -0.2px) rotate(-0.45deg); }
+      52% { transform: translate(0.45px, 0.3px) rotate(0.55deg); }
+      71% { transform: translate(-0.2px, -0.1px) rotate(-0.25deg); }
+      87% { transform: translate(0.08px, 0.05px) rotate(0.1deg); }
+    }
+  </style>
+  <g id="magic-hat" transform="translate(56 114) scale(2)">
+    <g id="hat-brim">
+      <path d="M 26,100 C 46,92 68,84 89,80 C 115,70 142,62 160,58 C 176,54 188,55 192,61 C 196,68 185,78 166,86 C 140,97 108,111 78,121 C 54,130 33,135 19,130 C 9,127 5,120 8,113 C 11,107 17,103 26,100 Z" fill="url(#tip_brim_gradient)" stroke="#000000" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+    <g id="hat-cone">
+      <g id="hat-cone-flex">
+        <path id="hat-cone-shape" d="M 90.33,18.84 C 77.06,8.71 67.07,5.08 58.56,5.51 C 45.81,6.13 29.71,19.48 21.81,29.04 C 16.22,35.88 10.11,45.16 12.48,47.74 C 13.99,49.34 17.29,47.13 20.46,45.29 C 28.36,40.72 34.91,38.18 43.96,35.61 C 47.29,47.33 49.13,59.09 49.91,71.63 C 50.54,80.74 55.56,89.25 66.14,101.11 C 75.7,108.4 90.2,105.3 104.8,96.6 C 122.6,86.1 128.8,82.2 135.8,78.2 C 145.8,72.5 153,71.4 153.1,67.2 C 153.2,63.2 147.8,59.4 141.8,55 C 128.5,45 104,27.8 90.33,18.84 Z" fill="url(#tip_cone_gradient)" stroke="#000000" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <g id="hat-symbols">
+          <g id="hat-symbols-tip">
+            <path d="M 26.19,28.08 L 29.97,23.06 L 32.19,22.08 L 32.78,26.9 L 36.08,29.11 L 30.61,30.95 L 27.76,33.91 L 26.19,28.08 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M 47.16,37.23 L 50.46,29.38 L 54.5,34.91 L 60.96,35.33 L 57.66,40.8 L 59.38,46.85 L 52.47,46.1 L 50.03,47.94 L 47.16,37.23 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M 64.16,17.61 L 68.92,15.39 L 69.51,9.2 L 77.41,12.66 L 79.63,20.03 L 71.73,20.95 L 70.55,25.27 L 67.69,18.84 L 64.16,17.61 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </g>
+          <g id="hat-symbols-mid">
+            <path d="M 106.21,49.96 L 111.68,47.33 L 112.27,41.28 L 118.73,46.24 L 124.19,55.8 L 116.83,55.11 L 113.53,58.91 L 112.94,53.21 L 106.21,49.96 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M 86.83,35.61 C 79.22,35.61 72.42,42.21 72.42,50.06 C 72.42,57.92 78.75,63.41 86.36,63.02 C 92.01,62.69 96.21,59.02 97.82,54.7 C 95.7,56.54 93.69,57.13 90.39,57.06 C 83.87,56.81 80.31,51.85 80.31,46.85 C 80.31,42.21 82.91,38.18 86.83,36.61 V 35.61 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </g>
+          <g id="hat-symbols-lower">
+            <path d="M 53.65,68.63 L 60.56,67.08 L 61.62,60.08 L 65.66,65.04 L 71.02,65.11 L 67.41,70.36 L 69.18,76.11 L 62.85,74.95 L 59.69,78.91 L 58.51,71.22 L 53.65,68.63 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+            <path id="hat-star-lower-right" d="M 108.4,75 L 111.7,75.5 L 113.8,72.1 L 115.2,76.2 L 119.3,77.1 L 116.2,79.8 L 116.4,84 L 112.8,81.7 L 109.1,83.4 L 110.2,79.4 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          </g>
+        </g>
+      </g>
+    </g>
+  </g>
+  <defs>
+    <linearGradient id="tip_brim_gradient" x1="99.0291" y1="56.9531" x2="99.0291" y2="137.91" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2158A4"/>
+      <stop offset="1" stop-color="#21498E"/>
+    </linearGradient>
+    <linearGradient id="tip_cone_gradient" x1="80.2996" y1="5.4375" x2="80.2996" y2="101.109" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2158A4"/>
+      <stop offset="1" stop-color="#21498E"/>
+    </linearGradient>
+  </defs>
+</svg>
