@@ -57,6 +57,11 @@ test-support = []
 
 [dev-dependencies]
 mylittlechart-messenger = { path = ".", features = ["test-support"] }
+# `tests/live_two_core.rs` (all `#[ignore]`) drives real `MessengerDriver`s
+# over HTTP against a local `mylittlechart-server` stand. Same reqwest 0.12 /
+# rustls-tls shape the native shell already uses, plus `blocking` so the pump
+# stays a plain std-thread loop; `Cargo.lock` gains no package from it.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 
 [lints]
 workspace = true
