@@ -311,7 +311,9 @@ fn build_room_summary<C: RecordCodec>(
     };
     let my_power_level = PowerLevel(state.power_level_for(self_user_id));
     let post_level = state.power_levels.events.get("m.room.message").copied().unwrap_or(state.power_levels.events_default);
-    let can_post = my_power_level.0 >= post_level;
+    // Only a joined member can post at all (an invite, or a not-yet-joined
+    // channel, cannot), whatever the power-level table says.
+    let can_post = is_joined && my_power_level.0 >= post_level;
 
     Some(RoomSummary {
         id: RoomId::from(room_id.as_str()),
@@ -344,23 +346,39 @@ fn current_tags<C: RecordCodec>(core: &MessengerCore<C>, room_id: &crate::ids::R
         .unwrap_or_default()
 }
 
+/// How many other members' names an unnamed group/channel lists before
+/// collapsing the rest into " +N".
+const UNNAMED_ROOM_NAME_MEMBERS: usize = 3;
+
 fn room_display_name(state: &RoomState, kind: CoreRoomKind, self_user_id: &crate::ids::UserId) -> String {
     if let Some(name) = &state.name {
         return name.clone();
     }
     if kind == CoreRoomKind::Dm {
         if let Some((peer_id, peer_state)) = state.members.iter().find(|(user_id, _)| *user_id != self_user_id) {
-            if let Some(display_name) = &peer_state.displayname {
-                return display_name.clone();
-            }
-            return localpart(peer_id);
+            return peer_state.displayname.clone().unwrap_or_else(|| localpart(peer_id));
         }
+        return "Direct".to_string();
     }
-    // No `m.room.name` and either not a DM or no other member cached yet
-    // -- the task brief only specifies a DM's own fallback chain; a
-    // Group/Channel with no name falls back to an empty string here
-    // (documented deviation, see this crate's own P2 handoff report).
-    String::new()
+    // No `m.room.name`: the joined members' own names, self excluded.
+    let others: Vec<String> = state
+        .members
+        .iter()
+        .filter(|(user_id, member)| *user_id != self_user_id && member.membership == Membership::Join)
+        .map(|(user_id, member)| member.displayname.clone().unwrap_or_else(|| localpart(user_id)))
+        .collect();
+    if others.is_empty() {
+        return match kind {
+            CoreRoomKind::Channel => "Channel",
+            _ => "Group",
+        }
+        .to_string();
+    }
+    let mut name = others.iter().take(UNNAMED_ROOM_NAME_MEMBERS).cloned().collect::<Vec<_>>().join(", ");
+    if others.len() > UNNAMED_ROOM_NAME_MEMBERS {
+        name.push_str(&format!(" +{}", others.len() - UNNAMED_ROOM_NAME_MEMBERS));
+    }
+    name
 }
 
 fn map_room_kind(kind: CoreRoomKind) -> RoomKind {
@@ -1191,27 +1209,37 @@ mod tests {
     }
 
     /// Feeds `body` back as the response to the currently outstanding
-    /// `/sync` request, minting one first if none is outstanding yet. A
-    /// single [`MessengerCore::releasable_requests`] call already returns
-    /// an existing, already-flushed `Sync` request directly; only a truly
-    /// fresh mint (this call's own `ensure_sync_enqueued` side effect)
-    /// needs the extra "flush the mint itself, then ask again" round —
-    /// same two-call dance `crate::core`'s own tests use (its own
-    /// `sync_token_persisted_after_everything_it_covers` test), just not
-    /// unconditionally, so this never discards an unrelated request
-    /// another helper left pending (`MessengerCore::releasable_requests`'s
-    /// own "never discard a non-empty result" doc).
+    /// `/sync` request, minting one first if none is outstanding yet (a
+    /// fresh mint needs one more "flush it, then ask again" round before it
+    /// is releasable -- `crate::core`'s own `sync_token_persisted_after_
+    /// everything_it_covers` test does the same). Every OTHER request a
+    /// call returns is answered with a bare `200 {}`: dropping it would
+    /// leave it in flight forever, and the account-data lane is single
+    /// flight, so one stranded write would block every later one
+    /// (`MessengerCore::releasable_requests`'s own "never discard a
+    /// non-empty result" doc).
     fn sync_with_body(core: &mut MessengerCore<InsecurePlainCodecForTests>, body: &serde_json::Value) {
-        flush_and_ack(core);
-        let mut requests = core.releasable_requests(0);
-        if !requests.iter().any(|r| r.kind == OutgoingRequestKind::Sync) {
-            assert!(requests.is_empty(), "sync_with_body assumes nothing else is pending release at this point");
+        for _ in 0..3 {
             flush_and_ack(core);
-            requests = core.releasable_requests(0);
+            let mut sync_request = None;
+            for request in core.releasable_requests(0) {
+                if request.kind == OutgoingRequestKind::Sync && sync_request.is_none() {
+                    sync_request = Some(request);
+                } else {
+                    core.on_response(request.id.clone(), HttpResponseDescriptor { status: 200, body: b"{}".to_vec() }, 0);
+                }
+            }
+            if let Some(sync_request) = sync_request {
+                core.on_response(
+                    sync_request.id,
+                    HttpResponseDescriptor { status: 200, body: serde_json::to_vec(body).expect("valid JSON") },
+                    0,
+                );
+                flush_and_ack(core);
+                return;
+            }
         }
-        let sync_request = requests.into_iter().find(|r| r.kind == OutgoingRequestKind::Sync).expect("a sync request is enqueued");
-        core.on_response(sync_request.id, HttpResponseDescriptor { status: 200, body: serde_json::to_vec(body).expect("valid JSON") }, 0);
-        flush_and_ack(core);
+        panic!("no sync request became releasable");
     }
 
     /// [`MessengerCore::releasable_requests`] must never have a non-empty
@@ -1235,24 +1263,29 @@ mod tests {
         rest
     }
 
-    /// [`releasable_non_sync`] plus one more piece of test hygiene: `Lane::
-    /// Other` caps concurrent in-flight requests
-    /// (`crate::outgoing_queue::OTHER_LANE_CONCURRENCY`), so a test that
-    /// finds the one request it cares about and leaves every OTHER
-    /// concurrently-releasable one unanswered would eventually starve a
-    /// LATER assertion of lane capacity for no reason relevant to what it
-    /// is actually testing. This answers every request that is not `kind`
-    /// with a bare `200 {}` before returning the one that is.
+    /// Releases and answers requests (bundled `Sync` requests via
+    /// [`releasable_non_sync`]) until one of `kind` shows up, and returns
+    /// it UNANSWERED. Every other request is answered with a bare
+    /// `200 {}` so nothing is left stranded in flight: `Lane::Other` caps
+    /// concurrency and the account-data lane is single flight, so a
+    /// forgotten request would starve a LATER assertion for no reason
+    /// relevant to what it tests.
     fn take_and_answer_rest(core: &mut MessengerCore<InsecurePlainCodecForTests>, kind: OutgoingRequestKind) -> OutgoingRequest {
-        let mut target = None;
-        for request in releasable_non_sync(core) {
-            if target.is_none() && request.kind == kind {
-                target = Some(request);
-            } else {
-                core.on_response(request.id.clone(), HttpResponseDescriptor { status: 200, body: b"{}".to_vec() }, 0);
+        for _ in 0..8 {
+            flush_and_ack(core);
+            let mut target = None;
+            for request in releasable_non_sync(core) {
+                if target.is_none() && request.kind == kind {
+                    target = Some(request);
+                } else {
+                    core.on_response(request.id.clone(), HttpResponseDescriptor { status: 200, body: b"{}".to_vec() }, 0);
+                }
+            }
+            if let Some(target) = target {
+                return target;
             }
         }
-        target.unwrap_or_else(|| panic!("no releasable request of kind {kind:?}"))
+        panic!("no releasable request of kind {kind:?}");
     }
 
     fn join_body(room_id: &str, room_value: serde_json::Value, next_batch: &str) -> serde_json::Value {
@@ -1326,6 +1359,7 @@ mod tests {
         assert!(summary.is_encrypted);
         let preview = summary.last_event.as_ref().expect("a last_event preview");
         assert_eq!(preview.content, PreviewContent::Encrypted);
+        assert!(summary.can_post, "a joined member of an ordinary room can post");
     }
 
     #[test]
@@ -1562,6 +1596,7 @@ mod tests {
         let summary = view.rooms.iter().find(|r| r.id.as_str() == "!ch:example.org").expect("room present");
         assert_eq!(summary.kind, RoomKind::Channel);
         assert_eq!(summary.my_role, MemberRole::Subscriber);
+        assert!(!summary.can_post, "a channel this account has not joined cannot be posted to");
     }
 
     #[test]
@@ -1576,5 +1611,90 @@ mod tests {
         .unwrap_err();
         let message = err.to_string();
         assert!(message.contains("!missing:example.org"), "error should name the offending room id: {message}");
+    }
+
+    fn member_event(user: &str, membership: &str, displayname: Option<&str>) -> Value {
+        let mut content = serde_json::json!({ "membership": membership });
+        if let Some(name) = displayname {
+            content["displayname"] = Value::String(name.to_string());
+        }
+        serde_json::json!({
+            "event_id": format!("$m-{user}"), "type": "m.room.member", "sender": user,
+            "origin_server_ts": 1, "state_key": user, "content": content
+        })
+    }
+
+    #[test]
+    fn a_member_who_is_only_invited_cannot_post() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        let state = vec![member_event("@alice:example.org", "invite", None), member_event("@bob:example.org", "join", None)];
+        sync_with_body(&mut core, &join_body("!g:example.org", serde_json::json!({ "state": { "events": state } }), "s1"));
+
+        let view = build_view(&core, 0);
+        let summary = view.rooms.iter().find(|r| r.id.as_str() == "!g:example.org").expect("room present");
+        assert!(!summary.can_post, "an invite is not a membership that may post, whatever the power levels say");
+    }
+
+    #[test]
+    fn unnamed_room_name_falls_back_to_joined_member_names() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        let state = vec![
+            member_event("@alice:example.org", "join", None),
+            member_event("@bob:example.org", "join", Some("Bob Trader")),
+            member_event("@carol:example.org", "join", None),
+            member_event("@dave:example.org", "join", None),
+            member_event("@erin:example.org", "join", None),
+            member_event("@frank:example.org", "invite", Some("Frank")),
+        ];
+        sync_with_body(&mut core, &join_body("!g:example.org", serde_json::json!({ "state": { "events": state } }), "s1"));
+        // Only this account: nobody else to name.
+        sync_with_body(&mut core, &group_sync_body("@alice:example.org", "!solo:example.org", "s2"));
+        // A channel (public, announcement-shaped) with nobody else joined.
+        let channel_state = vec![
+            member_event("@alice:example.org", "join", None),
+            serde_json::json!({
+                "event_id": "$j1:example.org", "type": "m.room.join_rules", "sender": "@alice:example.org",
+                "origin_server_ts": 1, "state_key": "", "content": { "join_rule": "public" }
+            }),
+            serde_json::json!({
+                "event_id": "$p1:example.org", "type": "m.room.power_levels", "sender": "@alice:example.org",
+                "origin_server_ts": 1, "state_key": "", "content": { "events_default": 50, "users_default": 0 }
+            }),
+        ];
+        sync_with_body(&mut core, &join_body("!ch:example.org", serde_json::json!({ "state": { "events": channel_state } }), "s3"));
+
+        let view = build_view(&core, 0);
+        let name_of = |id: &str| view.rooms.iter().find(|r| r.id.as_str() == id).expect("room present").clone();
+        let group = name_of("!g:example.org");
+        assert_eq!(group.name, "Bob Trader, carol, dave +1", "up to three joined members, self and invitees excluded, then +N");
+        assert_eq!(group.initials, "BT");
+        assert_eq!(name_of("!solo:example.org").name, "Group");
+        let channel = name_of("!ch:example.org");
+        assert_eq!(channel.kind, RoomKind::Channel);
+        assert_eq!(channel.name, "Channel");
+    }
+
+    #[test]
+    fn reply_to_unloaded_target_keeps_ellipsis_with_an_empty_sender() {
+        let mut core = open_core(core_user("@alice:example.org"), "ALICEDEV");
+        let state = vec![member_event("@alice:example.org", "join", None)];
+        let timeline = vec![serde_json::json!({
+            "event_id": "$reply:example.org", "type": "m.room.message", "sender": "@alice:example.org", "origin_server_ts": 5,
+            "content": {
+                "msgtype": "m.text", "body": "re",
+                "m.relates_to": { "m.in_reply_to": { "event_id": "$gone:example.org" } }
+            }
+        })];
+        sync_with_body(
+            &mut core,
+            &join_body("!g:example.org", serde_json::json!({ "state": { "events": state }, "timeline": { "events": timeline } }), "s1"),
+        );
+
+        let view = build_view(&core, 0);
+        let items = view.timelines.get(&RoomId::from("!g:example.org")).expect("timeline present");
+        let reply = items[0].reply_to.as_ref().expect("a reply preview");
+        assert_eq!(reply.event_id.as_str(), "$gone:example.org");
+        assert_eq!(reply.preview, "…");
+        assert_eq!(reply.sender.as_str(), "", "the model requires a UserId; an unloaded target's sender is unknown, so it is empty");
     }
 }

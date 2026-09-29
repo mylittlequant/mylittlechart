@@ -507,8 +507,10 @@ pub enum MessengerCommand {
     /// /user/{userId}/rooms/{roomId}/account_data/{type}`) -- optimistically
     /// applied to [`MessengerCore::room_account_data`] in the same call.
     /// [`MessengerCommand::SetTag`]/`RemoveTag` are the `"m.tag"`-specific
-    /// counterpart to this general command and do NOT share this
-    /// optimistic-update behaviour (this module's own doc on those two).
+    /// counterpart to this general command and behave the same way. Every
+    /// account-data write travels on [`crate::outgoing_queue::Lane::
+    /// AccountData`]: strictly FIFO, one in flight, so two writes to the
+    /// same key can neither race nor land out of order.
     SetRoomAccountData {
         /// The room the account data is scoped to.
         room_id: RoomId,
@@ -1686,7 +1688,7 @@ impl<C: RecordCodec> MessengerCore<C> {
         let request_id = self.next_request_id()?;
         let value = serde_json::to_value(&direct)?;
         let request = OutgoingRequest::account_data(request_id, &self.config.user_id, "m.direct", value);
-        self.enqueue_request(request, Lane::Other)?;
+        self.enqueue_request(request, Lane::AccountData)?;
         Ok(())
     }
 
@@ -1931,14 +1933,14 @@ impl<C: RecordCodec> MessengerCore<C> {
                 self.global_account_data.insert(event_type.clone(), content.clone());
                 let request_id = self.next_request_id()?;
                 let request = OutgoingRequest::account_data(request_id, &self.config.user_id, &event_type, content);
-                self.enqueue_request(request, Lane::Other)?;
+                self.enqueue_request(request, Lane::AccountData)?;
             }
             MessengerCommand::SetRoomAccountData { room_id, event_type, content } => {
                 self.room_account_data.entry(room_id.clone()).or_default().insert(event_type.clone(), content.clone());
                 let request_id = self.next_request_id()?;
                 let request =
                     OutgoingRequest::room_account_data(request_id, &self.config.user_id, &room_id, &event_type, content);
-                self.enqueue_request(request, Lane::Other)?;
+                self.enqueue_request(request, Lane::AccountData)?;
             }
             MessengerCommand::SearchPublicRooms { term } => {
                 let request_id = self.next_request_id()?;
@@ -2007,8 +2009,13 @@ impl<C: RecordCodec> MessengerCore<C> {
     fn enqueue_tag_update(&mut self, room_id: RoomId, content: TagContent) -> Result<(), MessengerError> {
         let request_id = self.next_request_id()?;
         let value = serde_json::to_value(&content)?;
+        // Optimistic, same as `SetRoomAccountData`: the very next tag edit
+        // must build on THIS content, not on whatever `/sync` last echoed,
+        // or two back-to-back edits would each start from the same stale
+        // copy and the later PUT would drop the earlier one's change.
+        self.room_account_data.entry(room_id.clone()).or_default().insert("m.tag".to_string(), value.clone());
         let request = OutgoingRequest::room_account_data(request_id, &self.config.user_id, &room_id, "m.tag", value);
-        self.enqueue_request(request, Lane::Other)?;
+        self.enqueue_request(request, Lane::AccountData)?;
         Ok(())
     }
 
@@ -3253,5 +3260,79 @@ mod tests {
         core.on_response(second_request.id, HttpResponseDescriptor { status: 200, body: serde_json::to_vec(&fresh_body).expect("json") }, 0);
         assert_eq!(core.public_rooms_result().len(), 1);
         assert_eq!(core.public_rooms_result()[0].room_id, RoomId::parse("!fresh:example.org").expect("valid room id"));
+    }
+
+    fn is_account_data_write(request: &OutgoingRequest) -> bool {
+        matches!(request.kind, OutgoingRequestKind::AccountData | OutgoingRequestKind::RoomAccountData)
+    }
+
+    #[test]
+    fn pin_then_archive_back_to_back_keeps_both_tags() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        let room_id = RoomId::parse("!r:example.org").expect("valid room id");
+        for tag in ["m.favourite", "u.mlc.archived"] {
+            core.dispatch(MessengerCommand::SetTag { room_id: room_id.clone(), tag: tag.to_string(), order: None }, 0)
+                .expect("dispatch succeeds");
+        }
+
+        // Optimistic: the cache already holds both tags, before any round trip.
+        let cached = core.room_account_data(&room_id, "m.tag").expect("m.tag cached");
+        assert!(cached["tags"].get("m.favourite").is_some());
+        assert!(cached["tags"].get("u.mlc.archived").is_some());
+
+        flush_and_ack(&mut core);
+        let first_release = core.releasable_requests(0);
+        let first_writes: Vec<&OutgoingRequest> = first_release.iter().filter(|r| is_account_data_write(r)).collect();
+        assert_eq!(first_writes.len(), 1, "the second PUT is not released while the first is in flight");
+        let first_body = first_writes[0].body.clone().expect("a body");
+        assert!(first_body["tags"].get("m.favourite").is_some());
+        assert!(first_body["tags"].get("u.mlc.archived").is_none(), "the first PUT carries only what existed when it was built");
+
+        core.on_response(first_writes[0].id.clone(), HttpResponseDescriptor { status: 200, body: b"{}".to_vec() }, 0);
+        flush_and_ack(&mut core);
+        let second_release = core.releasable_requests(0);
+        let second = second_release.iter().find(|r| is_account_data_write(r)).expect("the second PUT is released after the first completed");
+        let second_body = second.body.clone().expect("a body");
+        assert!(second_body["tags"].get("m.favourite").is_some(), "the later PUT still carries the earlier tag");
+        assert!(second_body["tags"].get("u.mlc.archived").is_some());
+    }
+
+    #[test]
+    fn account_data_lane_is_fifo_single_flight() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        let room_id = RoomId::parse("!r:example.org").expect("valid room id");
+        core.dispatch(MessengerCommand::SetAccountData { event_type: "org.t.one".to_string(), content: serde_json::json!({}) }, 0)
+            .expect("dispatch succeeds");
+        core.dispatch(
+            MessengerCommand::SetRoomAccountData {
+                room_id: room_id.clone(),
+                event_type: "org.t.two".to_string(),
+                content: serde_json::json!({}),
+            },
+            0,
+        )
+        .expect("dispatch succeeds");
+        core.dispatch(MessengerCommand::SetAccountData { event_type: "org.t.three".to_string(), content: serde_json::json!({}) }, 0)
+            .expect("dispatch succeeds");
+        core.dispatch(MessengerCommand::RemoveTag { room_id: room_id.clone(), tag: "m.favourite".to_string() }, 0)
+            .expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+
+        let mut released_paths = Vec::new();
+        for _ in 0..4 {
+            let release = core.releasable_requests(0);
+            let writes: Vec<&OutgoingRequest> = release.iter().filter(|r| is_account_data_write(r)).collect();
+            assert_eq!(writes.len(), 1, "exactly one account-data write in flight at a time");
+            released_paths.push(writes[0].path.clone());
+            core.on_response(writes[0].id.clone(), HttpResponseDescriptor { status: 200, body: b"{}".to_vec() }, 0);
+            flush_and_ack(&mut core);
+        }
+        assert!(released_paths[0].ends_with("/account_data/org.t.one"));
+        assert!(released_paths[1].ends_with("/account_data/org.t.two"));
+        assert!(released_paths[2].ends_with("/account_data/org.t.three"));
+        assert!(released_paths[3].ends_with("/account_data/m.tag"));
+        assert!(core.releasable_requests(0).iter().all(|r| !is_account_data_write(r)), "the lane is drained");
     }
 }

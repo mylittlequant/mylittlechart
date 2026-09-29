@@ -23,6 +23,7 @@
 //! | [`Lane::Sync`] | 1 (global) | Only one `/sync` long-poll makes sense at a time. |
 //! | [`Lane::ToDevice`] | 1 (global) | Per-device Olm ratchets are consumed in a strict sequence; two to-device sends racing (including a retry racing the next fresh send) would desynchronize a peer's ratchet. |
 //! | [`Lane::Room`]`(room_id)` | 1 per room | Preserves the room's own send order (and, for encrypted rooms, its Megolm ratchet order) without serializing unrelated rooms against each other. |
+//! | [`Lane::AccountData`] | 1 (global), strict FIFO | Every account-data write replaces the WHOLE value under its `(room, type)` key, so two racing PUTs (or a retry overtaken by a later PUT) would silently lose an update: a later request in this lane never overtakes an earlier one, not even while the earlier one is backing off before a retry. |
 //! | [`Lane::Other`] | up to [`OTHER_LANE_CONCURRENCY`] | Everything with no ordering requirement of its own (profile lookups, user-directory search, `/keys/query`, ...) — bounded so this queue cannot flood a homeserver with unlimited concurrent calls. |
 //!
 //! [`OutgoingQueue::releasable`] always returns requests in the order they
@@ -124,7 +125,7 @@
 use crate::ids::{RequestId, RoomId};
 use crate::persist::{FlushBatch, FlushEpoch, RequiredSeq};
 use crate::store::{StateStore, StoreError};
-use crate::wire::{HttpResponseDescriptor, OutgoingRequest};
+use crate::wire::{HttpResponseDescriptor, OutgoingRequest, OutgoingRequestKind};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -152,6 +153,11 @@ pub enum Lane {
     /// A room-scoped call — ordered per room, at most one in flight per
     /// room id.
     Room(RoomId),
+    /// Every account-data write (`PUT .../account_data/...`, global and
+    /// room-scoped) -- strictly FIFO, at most one in flight. A record
+    /// persisted before this lane existed carries [`Lane::Other`] instead;
+    /// [`OutgoingQueue::load`] moves those into this lane.
+    AccountData,
     /// Everything else — unordered, bounded concurrency
     /// ([`OTHER_LANE_CONCURRENCY`]).
     Other,
@@ -277,7 +283,15 @@ impl OutgoingQueue {
         let mut records = store.pending_requests()?;
         records.sort_by(|a, b| a.request.id.cmp(&b.request.id));
         let mut queue = Self::new();
-        for record in records {
+        for mut record in records {
+            // Account-data writes persisted before `Lane::AccountData`
+            // existed were enqueued on `Lane::Other`; they must keep their
+            // relative order after an upgrade too.
+            if record.lane == Lane::Other
+                && matches!(record.request.kind, OutgoingRequestKind::AccountData | OutgoingRequestKind::RoomAccountData)
+            {
+                record.lane = Lane::AccountData;
+            }
             let id = record.request.id.clone();
             queue.order.push(id.clone());
             queue.pending.insert(id, record);
@@ -326,8 +340,18 @@ impl OutgoingQueue {
     pub fn releasable<S: FlushEpoch>(&mut self, store: &S, now_ms: i64) -> Vec<OutgoingRequest> {
         let mut out = Vec::new();
         let ids = self.order.clone();
+        let mut account_data_blocked = false;
         for id in ids {
             let Some(pending) = self.pending.get(&id) else { continue };
+            if pending.lane == Lane::AccountData {
+                // Strict FIFO: only the head of this lane is ever a
+                // candidate, whatever state it is in (in flight, backing
+                // off, waiting on its flush) -- everything behind it waits.
+                if account_data_blocked {
+                    continue;
+                }
+                account_data_blocked = true;
+            }
             if self.in_flight.contains(&id) {
                 continue;
             }
@@ -420,6 +444,8 @@ impl OutgoingQueue {
             Lane::Sync => !self.sync_in_flight,
             Lane::ToDevice => !self.to_device_in_flight,
             Lane::Room(room_id) => !self.room_in_flight.contains(room_id),
+            // Head-of-line ordering is enforced in `releasable` itself.
+            Lane::AccountData => true,
             Lane::Other => self.other_in_flight.len() < OTHER_LANE_CONCURRENCY,
         }
     }
@@ -431,6 +457,7 @@ impl OutgoingQueue {
             Lane::Room(room_id) => {
                 self.room_in_flight.insert(room_id.clone());
             }
+            Lane::AccountData => {}
             Lane::Other => {
                 self.other_in_flight.insert(id.clone());
             }
@@ -445,6 +472,7 @@ impl OutgoingQueue {
             Lane::Room(room_id) => {
                 self.room_in_flight.remove(room_id);
             }
+            Lane::AccountData => {}
             Lane::Other => {
                 self.other_in_flight.remove(id);
             }
@@ -738,5 +766,60 @@ mod tests {
             now += after_ms as i64;
         }
         assert_eq!(last_after_ms, BACKOFF_CAP_MS, "after enough retries, backoff saturates at the cap");
+    }
+
+    fn account_data_request(seed: u64) -> OutgoingRequest {
+        let user = crate::ids::UserId::parse("@alice:example.org").expect("valid user id");
+        OutgoingRequest::account_data(RequestId::next(seed), &user, "org.example.t", serde_json::json!({ "n": seed }))
+    }
+
+    #[test]
+    fn account_data_lane_holds_followers_behind_a_head_that_is_backing_off() {
+        let mut store = Store::new(device_id(), InsecurePlainCodecForTests);
+        let mut queue = OutgoingQueue::new();
+        let requests: Vec<OutgoingRequest> = (0..3).map(account_data_request).collect();
+        for request in &requests {
+            if let Some(batch) = queue.enqueue(&mut store, request.clone(), Lane::AccountData).expect("enqueue") {
+                store.ack_flush(batch.id);
+            }
+        }
+
+        assert_eq!(queue.releasable(&store, 0), vec![requests[0].clone()], "only the head is released");
+        assert!(queue.releasable(&store, 0).is_empty(), "nothing behind an in-flight head");
+
+        let mut jitter = FixedJitter(0.0);
+        let unavailable = HttpResponseDescriptor { status: 503, body: b"{}".to_vec() };
+        let outcome = queue.on_response(&mut store, &requests[0].id, unavailable, 0, &mut jitter).expect("no error");
+        assert!(matches!(outcome, Some(ResponseOutcome::Retry { .. })));
+        assert!(
+            queue.releasable(&store, 0).is_empty(),
+            "followers never overtake a head that is only backing off before its retry"
+        );
+
+        assert_eq!(queue.releasable(&store, 10_000), vec![requests[0].clone()], "the head retries once its backoff elapsed");
+        let ok = HttpResponseDescriptor { status: 200, body: b"{}".to_vec() };
+        queue.on_response(&mut store, &requests[0].id, ok, 10_000, &mut jitter).expect("no error");
+        assert_eq!(queue.releasable(&store, 10_000), vec![requests[1].clone()], "FIFO order continues");
+    }
+
+    #[test]
+    fn account_data_requests_persisted_on_the_other_lane_load_into_the_account_data_lane() {
+        let mut store = Store::new(device_id(), InsecurePlainCodecForTests);
+        let mut queue = OutgoingQueue::new();
+        let mut records = Vec::new();
+        for seed in 0..2 {
+            if let Some(batch) = queue.enqueue(&mut store, account_data_request(seed), Lane::Other).expect("enqueue") {
+                records.extend(batch.records);
+            }
+        }
+        records.extend(store.take_flush_batch().expect("the last record is still dirty").records);
+
+        let reloaded = Store::load(records, InsecurePlainCodecForTests, device_id()).expect("load succeeds");
+        let mut restored = OutgoingQueue::load(&reloaded).expect("queue reloads");
+        assert_eq!(
+            restored.releasable(&reloaded, 0),
+            vec![account_data_request(0)],
+            "a pre-AccountData-lane record keeps its relative order after an upgrade"
+        );
     }
 }
