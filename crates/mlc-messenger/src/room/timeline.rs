@@ -119,6 +119,12 @@ pub enum ItemContent {
     Encrypted {
         /// The Megolm session this item was encrypted with.
         session_id: String,
+        /// The still-sealed ciphertext, base64-encoded, exactly as it
+        /// arrived on the wire -- a UI-facing adapter renders this
+        /// verbatim (dimmed) rather than a placeholder, the same
+        /// "ciphertext proves the encryption is real" posture the DM pane
+        /// already has (owner ruling 2026-09-10).
+        ciphertext_b64: String,
     },
     /// Decryption was attempted and structurally cannot succeed (no
     /// session, withheld, ...) -- a real UTD, not a transient state.
@@ -252,7 +258,9 @@ pub(crate) fn interpret_content(event_type: &str, state_key: Option<&str>, conte
             _ => ItemContent::Unknown,
         },
         EVENT_ROOM_ENCRYPTED => match serde_json::from_value::<RoomEncryptedContent>(content.clone()) {
-            Ok(RoomEncryptedContent::Megolm(inner)) => ItemContent::Encrypted { session_id: inner.session_id },
+            Ok(RoomEncryptedContent::Megolm(inner)) => {
+                ItemContent::Encrypted { session_id: inner.session_id, ciphertext_b64: inner.ciphertext }
+            }
             _ => ItemContent::Undecryptable {
                 reason: "m.room.encrypted event in a room timeline was not the megolm algorithm".to_string(),
             },
@@ -423,6 +431,18 @@ impl Timeline {
     /// The item with this confirmed event id, if this timeline has one.
     pub fn item_by_event_id(&self, event_id: &EventId) -> Option<&TimelineItem> {
         self.by_event_id.get(event_id).map(|&idx| &self.items[idx])
+    }
+
+    /// Every relating event currently folded onto `target`'s own
+    /// [`RelationsBundle`] -- its full contributor list, in the order they
+    /// were folded. [`RelationsBundle::reactions`] only ever exposes the
+    /// AGGREGATE (which users reacted with which key), never the individual
+    /// relating events' own ids; this is how a caller (e.g. a provider
+    /// implementing `MessengerIntent::Unreact`) finds exactly which
+    /// `m.reaction` event(s) to redact for one sender's own reaction.
+    /// Empty if `target` has no contributor at all, or is not loaded.
+    pub fn relating_events_for(&self, target: &EventId) -> &[RelatingEvent] {
+        self.relating_events_by_target.get(target).map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// The gap left by the most recent `limited: true` `/sync` window, if

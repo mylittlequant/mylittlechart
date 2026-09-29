@@ -491,6 +491,49 @@ pub enum MessengerCommand {
         /// The room to page further back into.
         room_id: RoomId,
     },
+    /// Sets one piece of this account's own global account data (`PUT
+    /// /user/{userId}/account_data/{type}`) -- optimistically applied to
+    /// [`MessengerCore::global_account_data`] in the same call (this
+    /// module's own doc: the account-data endpoint replaces the whole
+    /// value, so there is nothing to merge).
+    SetAccountData {
+        /// The account-data type being set (e.g.
+        /// `"org.mylittlechart.folders"`).
+        event_type: String,
+        /// The full new value.
+        content: serde_json::Value,
+    },
+    /// Sets one piece of `room_id`'s own room-scoped account data (`PUT
+    /// /user/{userId}/rooms/{roomId}/account_data/{type}`) -- optimistically
+    /// applied to [`MessengerCore::room_account_data`] in the same call.
+    /// [`MessengerCommand::SetTag`]/`RemoveTag` are the `"m.tag"`-specific
+    /// counterpart to this general command and do NOT share this
+    /// optimistic-update behaviour (this module's own doc on those two).
+    SetRoomAccountData {
+        /// The room the account data is scoped to.
+        room_id: RoomId,
+        /// The account-data type being set (e.g.
+        /// `"org.mylittlechart.muted"`).
+        event_type: String,
+        /// The full new value.
+        content: serde_json::Value,
+    },
+    /// Searches the public-room directory (`POST /publicRooms`). The
+    /// latest result set is read back through
+    /// [`MessengerCore::public_rooms_result`]; a response to a search
+    /// superseded by a later one is dropped (this module's own doc).
+    SearchPublicRooms {
+        /// The search term.
+        term: String,
+    },
+    /// Searches the user directory (`POST /user_directory/search`). The
+    /// latest result set is read back through
+    /// [`MessengerCore::user_search_result`]; same supersession rule as
+    /// [`MessengerCommand::SearchPublicRooms`].
+    SearchUsers {
+        /// The search term.
+        term: String,
+    },
 }
 
 /// One user-visible change a shell/adapter should re-read from a snapshot
@@ -532,6 +575,14 @@ pub enum MessengerEvent {
         /// The device whose keys changed.
         device_id: DeviceId,
     },
+    /// [`MessengerCore::public_rooms_result`] changed (a
+    /// [`MessengerCommand::SearchPublicRooms`] response landed and was not
+    /// superseded).
+    PublicRoomsChanged,
+    /// [`MessengerCore::user_search_result`] changed (a
+    /// [`MessengerCommand::SearchUsers`] response landed and was not
+    /// superseded).
+    UserSearchChanged,
 }
 
 /// One Megolm room event this core could not decrypt yet, kept so a later
@@ -583,6 +634,63 @@ struct SendResponseBody {
 #[derive(Deserialize)]
 struct CreateRoomResponseBody {
     room_id: RoomId,
+}
+
+/// One row of a `POST /publicRooms` result -- read back through
+/// [`MessengerCore::public_rooms_result`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct PublicRoomsResultEntry {
+    /// The room's own id.
+    pub room_id: RoomId,
+    /// The room's display name, if it set one.
+    pub name: Option<String>,
+    /// The room's topic, if it set one.
+    pub topic: Option<String>,
+    /// The room's own joined-member count.
+    pub num_joined_members: u64,
+}
+
+/// `POST /publicRooms`'s own response shape — the parts this module reads.
+#[derive(Deserialize)]
+struct PublicRoomsResponseBody {
+    #[serde(default)]
+    chunk: Vec<PublicRoomsChunkEntry>,
+}
+
+#[derive(Deserialize)]
+struct PublicRoomsChunkEntry {
+    room_id: RoomId,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    topic: Option<String>,
+    #[serde(default)]
+    num_joined_members: u64,
+}
+
+/// One row of a `POST /user_directory/search` result -- read back through
+/// [`MessengerCore::user_search_result`].
+#[derive(Clone, Debug, PartialEq)]
+pub struct UserDirectoryResultEntry {
+    /// The user's own id.
+    pub user_id: UserId,
+    /// The user's display name, if they set one.
+    pub display_name: Option<String>,
+}
+
+/// `POST /user_directory/search`'s own response shape — the parts this
+/// module reads.
+#[derive(Deserialize)]
+struct UserDirectorySearchResponseBody {
+    #[serde(default)]
+    results: Vec<UserDirectorySearchResultEntry>,
+}
+
+#[derive(Deserialize)]
+struct UserDirectorySearchResultEntry {
+    user_id: UserId,
+    #[serde(default)]
+    display_name: Option<String>,
 }
 
 /// One room-scoped send's own content, before it is turned into wire bytes
@@ -714,6 +822,21 @@ pub struct MessengerCore<C: RecordCodec> {
     typing: BTreeMap<RoomId, Vec<UserId>>,
     receipts: BTreeMap<RoomId, ReceiptContent>,
 
+    /// The latest [`MessengerCommand::SearchPublicRooms`] result set, read
+    /// back through [`MessengerCore::public_rooms_result`].
+    public_rooms_result: Vec<PublicRoomsResultEntry>,
+    /// The [`RequestId`] of the most recently dispatched
+    /// [`MessengerCommand::SearchPublicRooms`] -- a response naming any
+    /// other id is a superseded search and is dropped (this module's own
+    /// doc).
+    latest_public_rooms_request: Option<RequestId>,
+    /// The latest [`MessengerCommand::SearchUsers`] result set, read back
+    /// through [`MessengerCore::user_search_result`].
+    user_search_result: Vec<UserDirectoryResultEntry>,
+    /// Same supersession tracking as `latest_public_rooms_request`, for
+    /// [`MessengerCommand::SearchUsers`].
+    latest_user_search_request: Option<RequestId>,
+
     pending_decrypt: BTreeMap<RoomId, BTreeMap<EventId, PendingDecryptItem>>,
     /// Every `org.mylittlechart.legacy_dm` item currently waiting on a
     /// `legacy_dm_key` state change -- [`crate::legacy_dm`]'s own
@@ -836,6 +959,10 @@ impl<C: RecordCodec> MessengerCore<C> {
             room_account_data: BTreeMap::new(),
             typing: BTreeMap::new(),
             receipts: BTreeMap::new(),
+            public_rooms_result: Vec::new(),
+            latest_public_rooms_request: None,
+            user_search_result: Vec::new(),
+            latest_user_search_request: None,
             pending_decrypt: BTreeMap::new(),
             pending_legacy_dm: BTreeMap::new(),
             unknown_sender_retry: VecDeque::new(),
@@ -1438,7 +1565,7 @@ impl<C: RecordCodec> MessengerCore<C> {
             // never advancing past a partially-applied `/sync` -- already
             // holds structurally, since `ingest_sync` only persists the
             // new sync token as its very last step.
-            let _ = self.handle_terminal_success(kind, room_messages_room, create_room_kind, response);
+            let _ = self.handle_terminal_success(&request_id, kind, room_messages_room, create_room_kind, response);
         }
 
         if let Some(txn_id) = send_owner {
@@ -1462,6 +1589,7 @@ impl<C: RecordCodec> MessengerCore<C> {
 
     fn handle_terminal_success(
         &mut self,
+        request_id: &RequestId,
         kind: Option<OutgoingRequestKind>,
         room_messages_room: Option<RoomId>,
         create_room_kind: Option<CreateRoomKind>,
@@ -1492,6 +1620,38 @@ impl<C: RecordCodec> MessengerCore<C> {
                     self.on_create_room_response(kind, response)?;
                 }
             }
+            Some(OutgoingRequestKind::PublicRooms) => {
+                // A response to a search this account has already moved
+                // past (a later `SearchPublicRooms` was dispatched since)
+                // is dropped -- only the LATEST search's own result set is
+                // ever visible (this module's own doc).
+                if self.latest_public_rooms_request.as_ref() == Some(request_id) {
+                    let body: PublicRoomsResponseBody = serde_json::from_slice(&response.body)?;
+                    self.public_rooms_result = body
+                        .chunk
+                        .into_iter()
+                        .map(|entry| PublicRoomsResultEntry {
+                            room_id: entry.room_id,
+                            name: entry.name,
+                            topic: entry.topic,
+                            num_joined_members: entry.num_joined_members,
+                        })
+                        .collect();
+                    self.emit(MessengerEvent::PublicRoomsChanged);
+                }
+            }
+            Some(OutgoingRequestKind::UserDirectorySearch) => {
+                // Same supersession rule as `PublicRooms` above.
+                if self.latest_user_search_request.as_ref() == Some(request_id) {
+                    let body: UserDirectorySearchResponseBody = serde_json::from_slice(&response.body)?;
+                    self.user_search_result = body
+                        .results
+                        .into_iter()
+                        .map(|entry| UserDirectoryResultEntry { user_id: entry.user_id, display_name: entry.display_name })
+                        .collect();
+                    self.emit(MessengerEvent::UserSearchChanged);
+                }
+            }
             _ => {}
         }
         Ok(())
@@ -1505,11 +1665,25 @@ impl<C: RecordCodec> MessengerCore<C> {
     fn on_create_room_response(&mut self, kind: CreateRoomKind, response: &HttpResponseDescriptor) -> Result<(), MessengerError> {
         let CreateRoomKind::Dm { peer } = kind else { return Ok(()) };
         let body: CreateRoomResponseBody = serde_json::from_slice(&response.body)?;
+        self.merge_direct_account_data(body.room_id, peer)
+    }
 
+    /// Merges `room_id` into this account's own `m.direct` account data
+    /// under `peer`, optimistically, then sends the full updated value
+    /// (the account-data endpoint replaces the whole value, same as
+    /// [`MessengerCore::enqueue_tag_update`]'s own doc). Shared by
+    /// [`MessengerCore::on_create_room_response`] (the CREATOR side of a
+    /// [`CreateRoomKind::Dm`]) and [`MessengerCommand::JoinRoom`]'s own
+    /// dispatch arm (the INVITEE side, this module's own doc: a DM
+    /// invite's `is_direct` flag is not carried forward once THIS
+    /// account's own join overwrites that membership event, so `m.direct`
+    /// is the only durable "this is a DM" signal this account keeps of
+    /// its own past that point).
+    fn merge_direct_account_data(&mut self, room_id: RoomId, peer: UserId) -> Result<(), MessengerError> {
         let mut direct = self.direct_account_data.clone().unwrap_or_default();
         let rooms_for_peer = direct.0.entry(peer).or_default();
-        if !rooms_for_peer.contains(&body.room_id) {
-            rooms_for_peer.push(body.room_id);
+        if !rooms_for_peer.contains(&room_id) {
+            rooms_for_peer.push(room_id);
         }
         self.direct_account_data = Some(direct.clone());
 
@@ -1586,6 +1760,41 @@ impl<C: RecordCodec> MessengerCore<C> {
     /// `"m.fully_read"`), if this core has seen one.
     pub fn room_account_data(&self, room_id: &RoomId, event_type: &str) -> Option<&serde_json::Value> {
         self.room_account_data.get(room_id).and_then(|by_type| by_type.get(event_type))
+    }
+
+    /// One piece of this account's own global account data (e.g.
+    /// `"org.mylittlechart.folders"`), if this core has seen one.
+    pub fn global_account_data(&self, event_type: &str) -> Option<&serde_json::Value> {
+        self.global_account_data.get(event_type)
+    }
+
+    /// This account's own user id, exactly as configured at
+    /// [`MessengerCore::open`] -- a UI-facing adapter needs this to tell
+    /// its own account apart from every other room member (a DM's peer, a
+    /// reaction's `by_me`, a typing-user list minus self, ...).
+    pub fn user_id(&self) -> &UserId {
+        &self.config.user_id
+    }
+
+    /// Whether this core currently has at least one verified device on
+    /// file for `user_id` (`/keys/query` results already persisted by
+    /// [`crate::crypto::device_tracker::DeviceTracker`]) -- a UI-facing
+    /// adapter's own "has a messaging key" check for a member list, without
+    /// duplicating that module's storage format.
+    pub fn has_tracked_device(&self, user_id: &UserId) -> bool {
+        DeviceTracker::devices_for_user(&self.store, user_id).map(|devices| !devices.is_empty()).unwrap_or(false)
+    }
+
+    /// The latest [`MessengerCommand::SearchPublicRooms`] result set, empty
+    /// until one has landed.
+    pub fn public_rooms_result(&self) -> &[PublicRoomsResultEntry] {
+        &self.public_rooms_result
+    }
+
+    /// The latest [`MessengerCommand::SearchUsers`] result set, empty until
+    /// one has landed.
+    pub fn user_search_result(&self) -> &[UserDirectoryResultEntry] {
+        &self.user_search_result
     }
 
     /// The Matrix `errcode` a failed send (`txn_id`) ended with, if
@@ -1704,6 +1913,33 @@ impl<C: RecordCodec> MessengerCore<C> {
                     OutgoingRequest::room_messages(request_id.clone(), &room_id, &from, "b", Some(LOAD_OLDER_PAGE_SIZE));
                 self.enqueue_request(request, Lane::Room(room_id.clone()))?;
                 self.pending_room_messages.insert(request_id, room_id);
+            }
+            MessengerCommand::SetAccountData { event_type, content } => {
+                self.global_account_data.insert(event_type.clone(), content.clone());
+                let request_id = self.next_request_id()?;
+                let request = OutgoingRequest::account_data(request_id, &self.config.user_id, &event_type, content);
+                self.enqueue_request(request, Lane::Other)?;
+            }
+            MessengerCommand::SetRoomAccountData { room_id, event_type, content } => {
+                self.room_account_data.entry(room_id.clone()).or_default().insert(event_type.clone(), content.clone());
+                let request_id = self.next_request_id()?;
+                let request =
+                    OutgoingRequest::room_account_data(request_id, &self.config.user_id, &room_id, &event_type, content);
+                self.enqueue_request(request, Lane::Other)?;
+            }
+            MessengerCommand::SearchPublicRooms { term } => {
+                let request_id = self.next_request_id()?;
+                let body = serde_json::json!({ "filter": { "generic_search_term": term }, "limit": 50 });
+                let request = OutgoingRequest::public_rooms(request_id.clone(), body);
+                self.latest_public_rooms_request = Some(request_id);
+                self.enqueue_request(request, Lane::Other)?;
+            }
+            MessengerCommand::SearchUsers { term } => {
+                let request_id = self.next_request_id()?;
+                let body = serde_json::json!({ "search_term": term, "limit": 20 });
+                let request = OutgoingRequest::user_directory_search(request_id.clone(), body);
+                self.latest_user_search_request = Some(request_id);
+                self.enqueue_request(request, Lane::Other)?;
             }
         }
         Ok(())
@@ -2097,7 +2333,15 @@ impl<C: RecordCodec> MessengerCore<C> {
                     }
                 }
                 Err(err) => {
-                    let reason = err.to_string();
+                    // Stored as the coarse `UtdReason` variant's own name
+                    // (never the full, per-error-variant `Display` message)
+                    // -- this is the only place a UI-facing adapter can
+                    // recover which of the crate's own [`crate::crypto::
+                    // group_sessions::UtdReason`] variants this failure
+                    // maps to (`GroupDecryptError::utd_reason`'s own doc),
+                    // since [`ItemContent::Undecryptable`] carries a plain
+                    // `String`, not the enum itself.
+                    let reason = format!("{:?}", err.utd_reason());
                     if let Some(timeline) = self.timelines.get_mut(room_id) {
                         timeline.set_decrypted(&event.event_id, ItemContent::Undecryptable { reason });
                     }
@@ -2358,6 +2602,7 @@ fn message_relates_to(message: &OutgoingMessage) -> Option<RelatesTo> {
 mod tests {
     use super::*;
     use crate::store::InsecurePlainCodecForTests;
+    use crate::wire::HttpMethod;
 
     struct FixedJitter(f64);
 
@@ -2875,5 +3120,125 @@ mod tests {
         // `events()`/`on_response`'s own inline return share one queue --
         // nothing left to drain right after.
         assert!(core.events().is_empty());
+    }
+
+    #[test]
+    fn dispatch_set_account_data_updates_optimistically_and_sends_a_put() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        let content = serde_json::json!({ "folders": [] });
+        core.dispatch(
+            MessengerCommand::SetAccountData { event_type: "org.mylittlechart.folders".to_string(), content: content.clone() },
+            0,
+        )
+        .expect("dispatch succeeds");
+
+        assert_eq!(
+            core.global_account_data("org.mylittlechart.folders"),
+            Some(&content),
+            "SetAccountData updates the core's own cache before any round trip"
+        );
+
+        flush_and_ack(&mut core);
+        let requests = core.releasable_requests(0);
+        let request = requests.iter().find(|r| r.kind == OutgoingRequestKind::AccountData).expect("an AccountData request was enqueued");
+        assert_eq!(request.method, HttpMethod::Put);
+        assert_eq!(request.path, "/_matrix/client/v3/user/%40alice%3Aexample.org/account_data/org.mylittlechart.folders");
+        assert_eq!(request.body.as_ref(), Some(&content));
+    }
+
+    #[test]
+    fn dispatch_set_room_account_data_updates_optimistically_and_sends_a_put() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        let room_id = RoomId::parse("!r:example.org").expect("valid room id");
+        let content = serde_json::json!({ "muted": true });
+        core.dispatch(
+            MessengerCommand::SetRoomAccountData {
+                room_id: room_id.clone(),
+                event_type: "org.mylittlechart.muted".to_string(),
+                content: content.clone(),
+            },
+            0,
+        )
+        .expect("dispatch succeeds");
+
+        assert_eq!(
+            core.room_account_data(&room_id, "org.mylittlechart.muted"),
+            Some(&content),
+            "SetRoomAccountData updates the core's own cache before any round trip"
+        );
+
+        flush_and_ack(&mut core);
+        let requests = core.releasable_requests(0);
+        let request =
+            requests.iter().find(|r| r.kind == OutgoingRequestKind::RoomAccountData).expect("a RoomAccountData request was enqueued");
+        assert_eq!(request.method, HttpMethod::Put);
+        assert_eq!(
+            request.path,
+            "/_matrix/client/v3/user/%40alice%3Aexample.org/rooms/%21r%3Aexample.org/account_data/org.mylittlechart.muted"
+        );
+        assert_eq!(request.body.as_ref(), Some(&content));
+    }
+
+    #[test]
+    fn dispatch_search_public_rooms_sends_the_expected_request() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        core.dispatch(MessengerCommand::SearchPublicRooms { term: "trading".to_string() }, 0).expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+        let requests = core.releasable_requests(0);
+        let request = requests.iter().find(|r| r.kind == OutgoingRequestKind::PublicRooms).expect("a PublicRooms request was enqueued");
+        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(request.path, "/_matrix/client/v3/publicRooms");
+        assert_eq!(request.body, Some(serde_json::json!({ "filter": { "generic_search_term": "trading" }, "limit": 50 })));
+    }
+
+    #[test]
+    fn dispatch_search_users_sends_the_expected_request() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        core.dispatch(MessengerCommand::SearchUsers { term: "bob".to_string() }, 0).expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+        let requests = core.releasable_requests(0);
+        let request =
+            requests.iter().find(|r| r.kind == OutgoingRequestKind::UserDirectorySearch).expect("a UserDirectorySearch request was enqueued");
+        assert_eq!(request.method, HttpMethod::Post);
+        assert_eq!(request.path, "/_matrix/client/v3/user_directory/search");
+        assert_eq!(request.body, Some(serde_json::json!({ "search_term": "bob", "limit": 20 })));
+    }
+
+    #[test]
+    fn public_rooms_response_superseded_by_a_later_search_is_dropped() {
+        let mut core = open_fresh_core();
+        flush_and_ack(&mut core);
+        core.dispatch(MessengerCommand::SearchPublicRooms { term: "first".to_string() }, 0).expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+        let first_request = core
+            .releasable_requests(0)
+            .into_iter()
+            .find(|r| r.kind == OutgoingRequestKind::PublicRooms)
+            .expect("the first search's own request");
+
+        // A second search supersedes the first before the first's response
+        // ever lands.
+        core.dispatch(MessengerCommand::SearchPublicRooms { term: "second".to_string() }, 0).expect("dispatch succeeds");
+        flush_and_ack(&mut core);
+        let second_request = core
+            .releasable_requests(0)
+            .into_iter()
+            .find(|r| r.kind == OutgoingRequestKind::PublicRooms)
+            .expect("the second search's own request");
+
+        // The stale response (naming the FIRST request id) is dropped.
+        let stale_body = serde_json::json!({ "chunk": [{ "room_id": "!stale:example.org", "num_joined_members": 1 }] });
+        core.on_response(first_request.id, HttpResponseDescriptor { status: 200, body: serde_json::to_vec(&stale_body).expect("json") }, 0);
+        assert!(core.public_rooms_result().is_empty(), "a response to a superseded search is dropped");
+
+        // The current response is applied.
+        let fresh_body = serde_json::json!({ "chunk": [{ "room_id": "!fresh:example.org", "num_joined_members": 2 }] });
+        core.on_response(second_request.id, HttpResponseDescriptor { status: 200, body: serde_json::to_vec(&fresh_body).expect("json") }, 0);
+        assert_eq!(core.public_rooms_result().len(), 1);
+        assert_eq!(core.public_rooms_result()[0].room_id, RoomId::parse("!fresh:example.org").expect("valid room id"));
     }
 }

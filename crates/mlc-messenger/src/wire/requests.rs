@@ -167,6 +167,8 @@ pub enum OutgoingRequestKind {
     Profile,
     /// `POST /user_directory/search` — search the user directory.
     UserDirectorySearch,
+    /// `POST /publicRooms` — search the public-room directory.
+    PublicRooms,
     /// `GET /room_keys/version` — fetch the current key backup version.
     BackupVersion,
     /// `GET /room_keys/keys/{roomId}/{sessionId}` — fetch one backed-up
@@ -653,6 +655,19 @@ impl OutgoingRequest {
             query: Vec::new(),
             body: Some(body),
             kind: OutgoingRequestKind::UserDirectorySearch,
+        }
+    }
+
+    /// `POST /_matrix/client/v3/publicRooms`.
+    pub fn public_rooms(id: RequestId, body: serde_json::Value) -> Self {
+        const PATH_TEMPLATE: &str = "/_matrix/client/v3/publicRooms";
+        Self {
+            id,
+            method: HttpMethod::Post,
+            path: PATH_TEMPLATE.to_string(),
+            query: Vec::new(),
+            body: Some(body),
+            kind: OutgoingRequestKind::PublicRooms,
         }
     }
 
