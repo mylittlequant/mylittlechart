@@ -2,6 +2,7 @@
 //! menu. Click on those buttons still fires their current action.
 
 use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
+use mlc_core::i18n::{t_share_viewer, ShareViewerKey};
 use uzor::input::{InputCoordinator, LayerId, Sense};
 use uzor::types::Rect as WidgetRect;
 use uzor::WidgetId;
@@ -40,7 +41,8 @@ fn content_height(hits: usize, show_people: bool) -> f64 {
         let rows = hits.min(6).max(1) as f64;
         h += LABEL_H + GAP + FIELD_H + GAP + rows * (HIT_H + 4.0);
     }
-    h + LABEL_H + GAP + BTN_H
+    // Status line, the "use as default" button, Close.
+    h + LABEL_H + GAP + 2.0 * (BTN_H + GAP) - GAP
 }
 
 #[derive(Clone, Debug, Default)]
@@ -209,6 +211,13 @@ fn draw_body(
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(&state.status, x, y);
     y += LABEL_H + GAP;
+
+    // Per-chart rights above only touch this chart's share. This button is
+    // the one place that changes what NEW shares start with.
+    let default_btn = WidgetRect::new(x, y, w, BTN_H);
+    let default_label = t_share_viewer(ShareViewerKey::DefaultRightsAction);
+    draw_secondary_button(ctx, coord, layer_id, "share_settings:default", default_btn, default_label, tt);
+    y += BTN_H + GAP;
 
     let close = WidgetRect::new(x, y, w, BTN_H);
     draw_secondary_button(ctx, coord, layer_id, "share_settings:close", close, "Close", tt);

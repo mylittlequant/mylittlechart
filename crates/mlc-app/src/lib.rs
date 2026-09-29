@@ -1083,6 +1083,11 @@ pub struct ChartApp {
     /// camcorder shows. Sans-I/O; the shell executes its commands.
     pub(crate) live_link: share_live::LiveLink,
 
+    /// Rights chosen for a chart that has no share yet, by chart (preset) id.
+    /// Applies to that chart's next Share only; the profile default is a
+    /// separate control. RAM only.
+    pub(crate) chart_rights_choice: std::collections::HashMap<String, String>,
+
     /// Pending "open this share" request — set by
     /// `share_viewer::ChartApp::request_open_share`, drained by the shell,
     /// which owns the HTTP fetch (`ChartApp` does no network IO — SWC crate
@@ -3617,6 +3622,7 @@ impl ChartApp {
             share_keep_ids: std::collections::HashSet::new(),
             share_streams: std::collections::HashMap::new(),
             live_link: share_live::LiveLink::default(),
+            chart_rights_choice: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
@@ -4025,6 +4031,7 @@ impl ChartApp {
             share_keep_ids: std::collections::HashSet::new(),
             share_streams: std::collections::HashMap::new(),
             live_link: share_live::LiveLink::default(),
+            chart_rights_choice: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
@@ -4640,6 +4647,7 @@ impl ChartApp {
             share_keep_ids: std::collections::HashSet::new(),
             share_streams: std::collections::HashMap::new(),
             live_link: share_live::LiveLink::default(),
+            chart_rights_choice: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
@@ -5693,10 +5701,10 @@ impl ChartApp {
         cmd
     }
 
-    /// `(clone_allowed, interaction, visibility)` for the next live share.
-    /// Default is public, clone on, view only — no edit right.
+    /// `(clone_allowed, interaction, visibility)` for the active chart's
+    /// next live share. Default is public, clone on, view only: no edit right.
     pub fn share_publish_flags(&self) -> (bool, &'static str, &'static str) {
-        match self.core.user().profile().ui.share_rights_preset.as_str() {
+        match self.active_chart_rights_preset().as_str() {
             "view_only" => (false, "view", "public"),
             "private" => (true, "view", "private"),
             "private_view" => (false, "view", "private"),
@@ -5704,14 +5712,46 @@ impl ChartApp {
         }
     }
 
-    pub fn set_share_rights_preset(&mut self, preset: &str) {
-        let preset = match preset {
-            "view_only" | "private" | "private_view" => preset,
+    /// One of the four known presets; anything else is the public default.
+    fn normalize_rights_preset(preset: &str) -> &'static str {
+        match preset {
+            "view_only" => "view_only",
+            "private" => "private",
+            "private_view" => "private_view",
             _ => "public_clone",
-        };
+        }
+    }
+
+    /// The rights shown and used for the active chart: its own link's when
+    /// the Shares list knows that link, else the choice made for this chart's
+    /// next Share, else the profile default.
+    pub fn active_chart_rights_preset(&self) -> String {
+        let active = &self.panel_app.active_preset_id;
+        if let Some(token) = self.panel_app.chart_share_tokens.get(active) {
+            let known = self.panel_app.user_settings_state.share_rows.iter().find(|row| &row.token == token);
+            if let Some(row) = known {
+                let preset = match (row.visibility.as_str(), row.clone_allowed) {
+                    ("private", true) => "private",
+                    ("private", false) => "private_view",
+                    (_, true) => "public_clone",
+                    (_, false) => "view_only",
+                };
+                return preset.to_string();
+            }
+        }
+        if let Some(choice) = self.chart_rights_choice.get(active) {
+            return choice.clone();
+        }
+        Self::normalize_rights_preset(&self.core.user().profile().ui.share_rights_preset).to_string()
+    }
+
+    /// A rights click for the active chart. Changes THIS chart's share and
+    /// nothing else: with a link it patches that link; without one it is
+    /// remembered for the chart's next Share. The profile default is only
+    /// touched by [`Self::set_default_share_rights`].
+    pub fn set_link_rights(&mut self, preset: &str) {
+        let preset = Self::normalize_rights_preset(preset);
         self.panel_app.share_settings_state.rights_preset = preset.to_string();
-        self.core.user_mut().profile_mut().ui.share_rights_preset = preset.to_string();
-        self.profile_dirty = true;
         let active = self.panel_app.active_preset_id.clone();
         let token = self
             .shared_chart_meta(&active)
@@ -5733,9 +5773,20 @@ impl ChartApp {
             });
             self.panel_app.share_settings_state.status = "Saved for this chart".to_string();
         } else {
+            self.chart_rights_choice.insert(active, preset.to_string());
             self.panel_app.share_settings_state.status =
-                "Saved as the default for the next Share".to_string();
+                mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::RightsNextShare).to_string();
         }
+    }
+
+    /// The profile default for charts shared from now on. Only the "use as
+    /// default" control calls this; a per-chart rights click never does.
+    pub fn set_default_share_rights(&mut self, preset: &str) {
+        let preset = Self::normalize_rights_preset(preset);
+        self.core.user_mut().profile_mut().ui.share_rights_preset = preset.to_string();
+        self.profile_dirty = true;
+        self.panel_app.share_settings_state.status =
+            mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::DefaultRightsSaved).to_string();
     }
 
     /// Bind the author's chart to its live-share link. A change is saved with
@@ -7229,7 +7280,9 @@ impl ChartApp {
                 let inner_proportions_vec = crate::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let split_drawings_guard = self.core.drawings();
-                let split_view = split_drawings_guard.with_bubble(window.current_tag_id);
+                let split_view = split_drawings_guard
+                    .with_bubble(window.current_tag_id)
+                    .with_overlay(self.remote_preview_overlay(window.current_tag_id));
                 let split_indicator_view = indicator_guard_split.with_bubble(window.current_tag_id);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
@@ -7867,7 +7920,9 @@ impl ChartApp {
                 let inner_proportions_vec = crate::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let single_window_drawings_guard = self.core.drawings();
-                let single_window_view = single_window_drawings_guard.with_bubble(window.current_tag_id);
+                let single_window_view = single_window_drawings_guard
+                    .with_bubble(window.current_tag_id)
+                    .with_overlay(self.remote_preview_overlay(window.current_tag_id));
                 let single_indicator_view = indicator_guard_single.with_bubble(window.current_tag_id);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,

@@ -2020,7 +2020,7 @@ pub(super) static CANDLE_PATTERN_SHORT_KEY_TABLE: [[&str; N_LANG]; 21] = [
 ];
 
 // =============================================================================
-// ShareViewerKey table  (8 variants x N_LANG)
+// ShareViewerKey table  (11 variants x N_LANG)
 // =============================================================================
 //
 // Every column filled (shared-tab-reload-anchor arc, 2026-09-23) — unlike
@@ -2028,7 +2028,7 @@ pub(super) static CANDLE_PATTERN_SHORT_KEY_TABLE: [[&str; N_LANG]; 21] = [
 // `every_chart_table_is_fully_translated` below. Column order matches
 // `Language::all()` (`lang.rs`): en, ru, es, de, fr, pt, zh, ja, ko, ar, it,
 // tr, pl, uk, hi.
-pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 8] = [
+pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 11] = [
     /* 0 SharedChartGoneTitle */ [
         "Shared chart unavailable",
         "Общий график недоступен",
@@ -2164,6 +2164,57 @@ pub(super) static SHARE_VIEWER_KEY_TABLE: [[&str; N_LANG]; 8] = [
         "Utracono połączenie. Ponawianie…",
         "Зв'язок зі стрімом втрачено. Повтор…",
         "कनेक्शन टूट गया। फिर कोशिश हो रही है…",
+    ],
+    /* 8 DefaultRightsAction */ [
+        "Use as default for new shares",
+        "Сделать настройкой по умолчанию",
+        "Usar como predeterminado",
+        "Als Standard für neue Freigaben",
+        "Utiliser par défaut",
+        "Usar como padrão",
+        "设为新分享的默认",
+        "新規共有の既定にする",
+        "새 공유의 기본값으로",
+        "استخدمه كإعداد افتراضي",
+        "Usa come predefinito",
+        "Yeni paylaşımlar için varsayılan yap",
+        "Użyj jako domyślne",
+        "Зробити типовим",
+        "नए शेयर के लिए डिफ़ॉल्ट बनाएँ",
+    ],
+    /* 9 DefaultRightsSaved */ [
+        "Saved as the default for new shares",
+        "Сохранено по умолчанию для новых ссылок",
+        "Guardado como predeterminado",
+        "Als Standard für neue Freigaben gespeichert",
+        "Enregistré par défaut",
+        "Salvo como padrão",
+        "已保存为新分享的默认",
+        "新規共有の既定として保存しました",
+        "새 공유의 기본값으로 저장됨",
+        "تم الحفظ كإعداد افتراضي",
+        "Salvato come predefinito",
+        "Yeni paylaşımlar için varsayılan olarak kaydedildi",
+        "Zapisano jako domyślne",
+        "Збережено як типове",
+        "नए शेयर के लिए डिफ़ॉल्ट के रूप में सहेजा गया",
+    ],
+    /* 10 RightsNextShare */ [
+        "Applies to this chart's next share",
+        "Применится к следующей ссылке этого графика",
+        "Se aplicará al próximo enlace de este gráfico",
+        "Gilt für die nächste Freigabe dieses Charts",
+        "S'appliquera au prochain partage de ce graphique",
+        "Vale para o próximo link deste gráfico",
+        "将用于此图表的下一次分享",
+        "このチャートの次の共有に適用されます",
+        "이 차트의 다음 공유에 적용됩니다",
+        "سيُطبَّق على المشاركة التالية لهذا الرسم",
+        "Vale per la prossima condivisione di questo grafico",
+        "Bu grafiğin sonraki paylaşımına uygulanır",
+        "Zostanie użyte przy następnym udostępnieniu tego wykresu",
+        "Застосується до наступного посилання цього графіка",
+        "इस चार्ट के अगले शेयर पर लागू होगा",
     ],
 ];
 
