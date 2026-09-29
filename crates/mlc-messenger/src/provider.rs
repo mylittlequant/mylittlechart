@@ -52,6 +52,9 @@ pub const SLICE_CAPABILITIES: Capabilities = Capabilities {
     replies: true,
     typing: true,
     receipts: true,
+    forward: false,
+    stickers: false,
+    chart_card_send: false,
 };
 
 /// `m.tag`'s pinned-room tag name (client-server API convention).
@@ -552,6 +555,9 @@ fn map_timeline_item<C: RecordCodec>(
         send_state: map_send_state(core, item),
         read_by,
         pinned: false,
+        shared_chart: None,
+        mentions_me: false,
+        forwarded: None,
     })
 }
 
@@ -1043,6 +1049,9 @@ fn apply_intent<C: RecordCodec>(core: &mut MessengerCore<C>, intent: MessengerIn
         }
         MessengerIntent::SearchPublicRooms { term } => core.dispatch(MessengerCommand::SearchPublicRooms { term }, now_ms),
         MessengerIntent::SearchUsers { term } => core.dispatch(MessengerCommand::SearchUsers { term }, now_ms),
+        MessengerIntent::Forward { .. } | MessengerIntent::SendSticker { .. } => {
+            Err(MessengerError::IntentRefused("not wired in this branch".to_string()))
+        }
     }
 }
 

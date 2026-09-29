@@ -25,6 +25,8 @@ pub struct PowerLevel(pub i64);
 /// Matrix-backed provider reports them all true. The UI reads this once per
 /// frame to decide which concept screens/buttons even apply, rather than
 /// hardcoding "does this feature exist" against one specific provider.
+/// A flag that is `false` HIDES its control — the UI never draws a button
+/// the provider would only refuse.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Capabilities {
     pub groups: bool,
@@ -35,6 +37,16 @@ pub struct Capabilities {
     pub replies: bool,
     pub typing: bool,
     pub receipts: bool,
+    /// [`MessengerIntent::Forward`] is carried — gates the bubble's Forward
+    /// action and the forward chat picker.
+    pub forward: bool,
+    /// `m.sticker` events are sent and received ([`crate::MessageContent::Sticker`],
+    /// [`MessengerIntent::SendSticker`]) — gates the composer's sticker tab
+    /// and the sticker picker.
+    pub stickers: bool,
+    /// A chart can be sent into this room as a shared-chart card — gates the
+    /// chart's "Send to chat" entry and the card attach action.
+    pub chart_card_send: bool,
 }
 
 /// This account's own end-to-end device/vault state — gates which timeline
@@ -96,8 +108,20 @@ pub enum MessengerIntent {
     SendText { room: RoomId, text: String, reply_to: Option<EventId> },
     Edit { room: RoomId, event_id: EventId, text: String },
     Redact { room: RoomId, event_id: EventId },
+    /// Forward one event to another room — the provider re-sends the
+    /// content with its own `org.mylittlechart.forwarded_from` attribution
+    /// (event shape agreed with `messenger-proto`), NOT a redaction/move of
+    /// the original; `from_room` is carried so a Matrix-shaped provider can
+    /// resolve whether the source room was encrypted (→ [`crate::
+    /// ForwardedFrom::Hidden`]) or a public channel (→ [`crate::
+    /// ForwardedFrom::Channel`]) without a second round trip.
+    Forward { from_room: RoomId, event_id: EventId, to_room: RoomId },
     React { room: RoomId, event_id: EventId, key: String },
     Unreact { room: RoomId, event_id: EventId },
+    /// Send one sticker from a bundled pack (`m.sticker`, `url mlc-sticker://
+    /// <pack>/<id>`) — the provider fills the event's `alt` from the pack's
+    /// own table; the UI names the sticker by `(pack, id)` only.
+    SendSticker { room: RoomId, pack: String, id: String },
     MarkRead { room: RoomId, event_id: EventId },
     SetTyping { room: RoomId, typing: bool },
     SetMuted { room: RoomId, muted: bool },
@@ -116,6 +140,10 @@ pub enum MessengerIntent {
     /// Join a room — a public channel picked from
     /// [`crate::MessengerProvider::public_rooms`], or an invite accepted.
     JoinRoom { room: RoomId },
+    /// Leave a group/channel, or delete a 1:1 conversation — the provider
+    /// decides which of the two "leaving" means for this room's own kind
+    /// (concept row menu's own "Leave channel" / "Leave group" / "Delete
+    /// chat", one action underneath).
     LeaveRoom { room: RoomId },
     Invite { room: RoomId, user: UserId },
     Kick { room: RoomId, user: UserId },
