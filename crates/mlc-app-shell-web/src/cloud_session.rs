@@ -353,7 +353,11 @@ struct Inner {
     share_admin_busy: bool,
     share_ops_busy: bool,
     share_ops_in: Option<(String, mlc_cloud::ShareOpsResponse)>,
-    share_ops_push_ok: Option<bool>,
+    /// `(tab, ok)` for a finished post: the acknowledgement belongs to the
+    /// tab the push was built for, not to whichever tab is active by now.
+    share_ops_push_ok: Option<(String, bool)>,
+    /// A pull for this token answered 404: the share is gone.
+    share_ops_gone: Option<String>,
     friend_busy: bool,
     friend_accept_tried: bool,
     friend_result: Option<FriendApply>,
@@ -511,6 +515,7 @@ impl CloudSession {
                 share_ops_busy: false,
                 share_ops_in: None,
                 share_ops_push_ok: None,
+                share_ops_gone: None,
                 friend_busy: false,
                 friend_accept_tried: false,
                 friend_result: None,
@@ -1228,8 +1233,11 @@ impl CloudSession {
     }
 
     fn poll_share_ops(&self, chart: &mut ChartApp, now_ms: f64) {
-        if let Some(ok) = self.inner.borrow_mut().share_ops_push_ok.take() {
-            chart.ack_share_push(ok);
+        if let Some((preset_id, ok)) = self.inner.borrow_mut().share_ops_push_ok.take() {
+            chart.ack_share_push(&preset_id, ok);
+        }
+        if let Some(token) = self.inner.borrow_mut().share_ops_gone.take() {
+            chart.share_pull_gone(&token);
         }
         if let Some((token, resp)) = self.inner.borrow_mut().share_ops_in.take() {
             let ops: Vec<mlc_app::share_stream::ShareInboundOp> = resp
@@ -1247,10 +1255,11 @@ impl CloudSession {
         if self.inner.borrow().share_ops_busy {
             return;
         }
-        if let Some((token, ops)) = chart.share_ops_due(now_ms) {
+        if let Some(push) = chart.share_ops_due(now_ms) {
             self.inner.borrow_mut().share_ops_busy = true;
             let transport = self.inner.borrow().transport.snapshot();
             let inner = self.inner.clone();
+            let mlc_app::share_stream::SharePush { preset_id, token, ops } = push;
             let wire: Vec<mlc_cloud::ShareChartOp> = ops
                 .into_iter()
                 .map(|op| mlc_cloud::ShareChartOp {
@@ -1268,7 +1277,7 @@ impl CloudSession {
                         false
                     }
                 };
-                inner.borrow_mut().share_ops_push_ok = Some(ok);
+                inner.borrow_mut().share_ops_push_ok = Some((preset_id, ok));
                 inner.borrow_mut().share_ops_busy = false;
             });
             return;
@@ -1281,6 +1290,9 @@ impl CloudSession {
                 match transport.share_get_ops(&token, after).await {
                     Ok(resp) => {
                         inner.borrow_mut().share_ops_in = Some((token, resp));
+                    }
+                    Err(mlc_cloud::CloudError::Http { status: 404, .. }) => {
+                        inner.borrow_mut().share_ops_gone = Some(token);
                     }
                     Err(e) => {
                         web_sys::console::warn_1(&format!("[share] op pull failed: {e}").into());

@@ -46,9 +46,18 @@ pub struct BubbleDrawingView<'a> {
     bubbles: &'a BubbleStore,
     bid: BubbleId,
     primitives: &'a [Box<dyn Primitive>],
+    /// Ephemeral primitives painted over the real ones; never stored.
+    overlay: &'a [Box<dyn Primitive>],
 }
 
 impl<'a> BubbleDrawingView<'a> {
+    /// Paint `overlay` on top of this bubble's primitives. The slice is
+    /// owned by the caller and never enters the drawing store.
+    pub fn with_overlay(mut self, overlay: &'a [Box<dyn Primitive>]) -> Self {
+        self.overlay = overlay;
+        self
+    }
+
     pub fn count(&self) -> usize {
         self.primitives.len()
     }
@@ -162,6 +171,9 @@ impl<'a> mlc_core::drawing::DrawingRenderView for BubbleDrawingView<'a> {
     fn render_bid(&self) -> Option<BubbleId> {
         Some(self.bid)
     }
+    fn overlay_primitives(&self) -> &[Box<dyn Primitive>] {
+        self.overlay
+    }
 }
 
 /// Read-only facade over `DrawingManager` + `BubbleStore`.
@@ -184,6 +196,7 @@ impl<'a> Drawings<'a> {
             bubbles: &self.bubbles,
             bid,
             primitives: self.mgr.primitives(&self.bubbles, bid),
+            overlay: &[],
         }
     }
 

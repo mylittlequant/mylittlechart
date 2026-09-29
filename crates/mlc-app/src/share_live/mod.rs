@@ -179,7 +179,13 @@ impl ChartApp {
         let want = self.edge_live_token();
         let mut cmds = Vec::new();
         if self.live_link.token != want {
+            // A viewer that loses its socket must not stay pinned to the
+            // author's viewport and cursor: nothing would ever release it.
+            let watching = self.live_link.has_socket() && !self.live_link.is_publishing();
             self.live_link.teardown(&mut cmds);
+            if watching {
+                self.release_remote_follow();
+            }
             self.live_link.token = want;
         }
         if let Some(token) = self.live_link.token.clone() {
@@ -241,10 +247,11 @@ impl ChartApp {
     /// The socket closed, or never opened, with this close code (1006 when
     /// the browser reports no code).
     pub fn live_link_closed(&mut self, code: u16, now_ms: f64) {
-        let link = &mut self.live_link;
-        if !link.has_socket() {
+        if !self.live_link.has_socket() {
             return;
         }
+        let watching = !self.live_link.is_publishing();
+        let link = &mut self.live_link;
         match code {
             CLOSE_RIGHTS_CHANGED if !link.rights_retry => {
                 link.rights_retry = true;
@@ -258,6 +265,9 @@ impl ChartApp {
                 link.fail(now_ms, POLICY_WAIT_MS);
             }
             _ => link.fail(now_ms, 0.0),
+        }
+        if watching {
+            self.release_remote_follow();
         }
     }
 
@@ -309,5 +319,7 @@ impl ChartApp {
     }
 }
 
+#[cfg(test)]
+mod audit_tests;
 #[cfg(test)]
 mod tests;

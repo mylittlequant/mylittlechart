@@ -715,6 +715,16 @@ impl ChartContainer {
         }
     }
 
+    /// Lock or release pan/zoom to a remote Live viewport.
+    pub fn set_follow_remote_view(&mut self, follow: bool) {
+        self.follow_remote_view = follow;
+    }
+
+    /// Lock or release the crosshair to a remote Live cursor.
+    pub fn set_follow_remote_cursor(&mut self, follow: bool) {
+        self.crosshair.follow_remote = follow;
+    }
+
     /// Crosshair state for rendering (respects render flag).
     pub fn crosshair_for_render(&self, render_crosshair: bool) -> Crosshair {
         if render_crosshair {
