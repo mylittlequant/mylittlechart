@@ -1090,7 +1090,10 @@ impl ChartApp {
         // here.
         if let Some(hit) = hit_test(&cm.content.dm_message_line_rects, x, y) {
             let msg_idx = hit.block;
-            let caps = DmMessengerProviderView::new(&self.panel_app.community_state.dm).capabilities();
+            let caps = self
+                .panel_app
+                .messenger_capabilities()
+                .unwrap_or_else(|| DmMessengerProviderView::new(&self.panel_app.community_state.dm).capabilities());
             let items = build_dm_message_context_menu(caps);
             self.panel_app.context_menu_state.open_smart(
                 x, y, ContextMenuTarget::DmMessage(msg_idx), items, w, h,
@@ -1126,14 +1129,24 @@ impl ChartApp {
     /// unconditional).
     #[cfg(feature = "cloud")]
     pub(crate) fn open_dm_chat_row_menu(&mut self, room_id: &str, x: f64, y: f64, w: f64, h: f64) -> bool {
-        use mlc_app_layout::ui::dm_messenger_provider::dm_chat_row_menu_items;
+        use mlc_app_layout::ui::dm_messenger_provider::{chat_row_menu_items, dm_chat_row_menu_items};
 
-        let can_mark_read = room_id
-            .parse::<i64>()
-            .ok()
-            .and_then(|id| self.panel_app.community_state.dm.open_conversation_last_message_id(id))
-            .is_some();
-        let items = dm_chat_row_menu_items(&self.panel_app.community_state.dm, room_id, can_mark_read);
+        let items = match self.panel_app.messenger_view() {
+            // An outside provider backs the tab: the menu is built from its
+            // own room flags, capabilities and folders.
+            Some(provider) => {
+                let can_mark_read = self.panel_app.messenger_can_mark_read(room_id);
+                chat_row_menu_items(provider, room_id, can_mark_read)
+            }
+            None => {
+                let can_mark_read = room_id
+                    .parse::<i64>()
+                    .ok()
+                    .and_then(|id| self.panel_app.community_state.dm.open_conversation_last_message_id(id))
+                    .is_some();
+                dm_chat_row_menu_items(&self.panel_app.community_state.dm, room_id, can_mark_read)
+            }
+        };
         if items.is_empty() {
             return false;
         }

@@ -102,6 +102,11 @@ pub struct ChartPanelApp {
     /// community-modal arc W1 (cloud builds only).
     #[cfg(feature = "cloud")]
     pub community_state: mlc_app_layout::ui::modal_settings::CommunityState,
+    /// The outside `MessengerProvider` backing the Community modal's Messages
+    /// tab, if the shell handed one over — see `messenger_bridge`'s module
+    /// doc (cloud builds only).
+    #[cfg(feature = "cloud")]
+    pub(crate) messenger: crate::messenger_bridge::MessengerBridge,
     /// EWA Engine Settings modal state (owner ask 2026-08-14).
     pub ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState,
     /// Price Action Engine Settings modal state — the non-Elliott sibling
@@ -176,6 +181,8 @@ impl ChartPanelApp {
             cloud_overlay_state: mlc_app_layout::ui::modal_settings::CloudOverlayState::default(),
             #[cfg(feature = "cloud")]
             community_state: mlc_app_layout::ui::modal_settings::CommunityState::default(),
+            #[cfg(feature = "cloud")]
+            messenger: crate::messenger_bridge::MessengerBridge::default(),
             ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState::default(),
             markup_engine_settings_state: mlc_app_layout::ui::modal_settings::MarkupEngineSettingsState::default(),
             clock_popup_state: mlc_app_layout::ui::ClockPopupState::default(),
@@ -1057,7 +1064,7 @@ impl ChartPanelApp {
                 current_time_ms,
                 input_coordinator,
                 community_after_user_settings,
-                None,
+                self.messenger_view(),
             ));
         }
 

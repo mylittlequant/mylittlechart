@@ -94,6 +94,10 @@ impl ChartApp {
     pub fn tick(&mut self, current_time_ms: u64) {
         let events = self.core.tick_writers(current_time_ms);
         self.react_to_events(&events, current_time_ms);
+        // Upkeep of the outside messenger provider, if the shell handed one
+        // over (a no-op otherwise) — see `messenger_bridge`.
+        #[cfg(feature = "cloud")]
+        self.panel_app.pump_messenger();
     }
 
     /// Per-window reaction pass over an already-drained `BubbleEvent` slice.

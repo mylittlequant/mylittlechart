@@ -2877,6 +2877,12 @@ impl ChartApp {
             ContextMenuTarget::DmChatRow(room_id) => {
                 match action {
                     "dm_chat_row:mark_read" => {
+                        if self.panel_app.has_messenger_provider() {
+                            if !self.panel_app.messenger_mark_room_read(&room_id) {
+                                log::debug!("[ChartApp] messenger mark-as-read skipped for room {}, no confirmed event", room_id);
+                            }
+                            return;
+                        }
                         let Ok(id) = room_id.parse::<i64>() else {
                             log::warn!("[ChartApp] DM chat-row context action on a non-numeric room id: {}", room_id);
                             return;
@@ -2907,7 +2913,9 @@ impl ChartApp {
                             "dm_chat_row:archive" => RoomAction::ToggleArchive,
                             _ => RoomAction::Leave,
                         };
-                        room_action(&mut self.panel_app.community_state.dm, &room_id, which);
+                        if !self.panel_app.messenger_room_action(&room_id, which) {
+                            room_action(&mut self.panel_app.community_state.dm, &room_id, which);
+                        }
                     }
                     // The per-folder checklist and "New folder…" have no
                     // `MessengerIntent` to carry them yet (the model has no

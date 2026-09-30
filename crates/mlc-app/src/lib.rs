@@ -33,6 +33,8 @@ pub mod focus;
 pub mod frame_lifecycle;
 pub mod input;
 pub mod chart_panel_app;
+#[cfg(feature = "cloud")]
+mod messenger_bridge;
 pub mod panel_grid;
 pub mod panels_render;
 pub mod panels_store;
@@ -13834,14 +13836,14 @@ impl ChartApp {
         // see a badge pointing at content they cannot reach.
         #[cfg(feature = "cloud")]
         {
-            self.panel_app.toolbar_state.community_unread = self.panel_app.community_state.messages_tab_visible()
-                && self
-                    .panel_app
-                    .community_state
-                    .dm
-                    .conversations
-                    .iter()
-                    .any(|c| c.unread_count > 0);
+            // With an outside messenger provider the badge reads its rooms;
+            // otherwise the legacy DM conversation list.
+            let any_unread = match self.panel_app.messenger_any_unread() {
+                Some(any) => any,
+                None => self.panel_app.community_state.dm.conversations.iter().any(|c| c.unread_count > 0),
+            };
+            self.panel_app.toolbar_state.community_unread =
+                self.panel_app.community_state.messages_tab_visible() && any_unread;
         }
         self.stamp_settings_menu_state();
     }

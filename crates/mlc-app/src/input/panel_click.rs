@@ -6601,11 +6601,20 @@ impl ChartApp {
                         self.open_dm_vault_unlock_overlay();
                         return;
                     }
+                    // With an outside provider backing the tab the draft goes
+                    // to it as a `SendText` intent (`messenger_bridge`); the
+                    // legacy `"send"` arm below is the DM path.
+                    if action == "send" && self.messenger_send_draft() {
+                        return;
+                    }
                     // `dm` moved to `CommunityState` (community-modal arc
                     // W1) — shadow `st` for the rest of this arm, same idiom
                     // the `"forum2:"` arm above uses.
                     let st = &mut self.panel_app.community_state;
                     use mlc_app_layout::ui::modal_settings::{DmMessagePage, DmRequest, DmView};
+                    // An outside provider backs the tab: room ids are opaque
+                    // strings and every mutation is a `MessengerIntent`.
+                    let external = st.messenger_external;
 
                     // Navigation works even with the vault sealed —
                     // `dm.available` (paid + unlocked) gates DECRYPTING and
@@ -6616,6 +6625,10 @@ impl ChartApp {
                     // action as `forum2:load_more` — no write, so it stays
                     // outside the `dm.available` gate below too.
                     match action {
+                        rest2 if rest2.starts_with("conversation:") && external => {
+                            st.open_messenger_room(mlc_messenger_model::RoomId::from(&rest2["conversation:".len()..]));
+                            return;
+                        }
                         rest2 if rest2.starts_with("conversation:") => {
                             if let Ok(id) = rest2["conversation:".len()..].parse::<i64>() {
                                 // `open_conversation` already clears
@@ -6640,7 +6653,11 @@ impl ChartApp {
                             return;
                         }
                         "back" => {
-                            st.dm.reset_to_list();
+                            if external {
+                                st.close_messenger_room();
+                            } else {
+                                st.dm.reset_to_list();
+                            }
                             self.input_coordinator.borrow_mut().text_fields_mut().blur();
                             return;
                         }
@@ -6650,6 +6667,12 @@ impl ChartApp {
                         // own shape. `has_older: true` re-checked here (same
                         // "stale click target" reasoning every other arm in
                         // this dispatch gives its own render-side gate).
+                        "load_older" if external => {
+                            if let Some(room) = st.messenger_open_room() {
+                                self.panel_app.messenger_enqueue(mlc_messenger_model::MessengerIntent::LoadOlder { room });
+                            }
+                            return;
+                        }
                         "load_older" => {
                             if let DmView::Conversation { id, has_older: true, messages, .. } = &st.dm.view {
                                 if let Some(lowest_id) = messages.first().map(|m| m.id) {
@@ -6701,7 +6724,7 @@ impl ChartApp {
                         }
                         _ => {}
                     }
-                    if !st.dm.available {
+                    if !external && !st.dm.available {
                         return;
                     }
                     // Recipient-search dropdown (owner ruling 2026-09-09,
@@ -6718,6 +6741,13 @@ impl ChartApp {
                         // A row in the recipient-search dropdown. Mirrors
                         // `DM_PEER`'s own Enter-on-top-result path
                         // (`text_input::dispatch::text_action_dm_peer`).
+                        rest2 if rest2.starts_with("lookup_result:") && external => {
+                            if let Ok(i) = rest2["lookup_result:".len()..].parse::<usize>() {
+                                let wid = uzor::WidgetId::from(crate::text_input::DM_PEER);
+                                self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+                                self.panel_app.messenger_start_dm_with_hit(i);
+                            }
+                        }
                         rest2 if rest2.starts_with("lookup_result:") => {
                             if let Ok(i) = rest2["lookup_result:".len()..].parse::<usize>() {
                                 if let Some(with_label) = st.dm.lookup_results.get(i).map(|h| h.public_id.clone()) {
@@ -6774,10 +6804,7 @@ impl ChartApp {
                         // this click's own position (this button has no
                         // row rect of its own to right-click).
                         "header_more" => {
-                            let room_id = match &st.dm.view {
-                                DmView::Conversation { id, .. } => id.to_string(),
-                                _ => return,
-                            };
+                            let Some(room_id) = st.messenger_open_room().map(|room| room.to_string()) else { return };
                             let w = self.width as f64;
                             let h = self.height as f64;
                             self.open_dm_chat_row_menu(&room_id, x, y, w, h);
@@ -6786,13 +6813,11 @@ impl ChartApp {
                         // (`messenger_overlay.rs`'s `draw_channel_cta`) —
                         // the same toggle the row menu's Mute item runs.
                         "channel_mute" => {
-                            let room_id = match &st.dm.view {
-                                DmView::Conversation { id, .. } => id.to_string(),
-                                _ => return,
-                            };
-                            mlc_app_layout::ui::dm_messenger_provider::room_action(
-                                &mut st.dm, &room_id, mlc_app_layout::ui::dm_messenger_provider::RoomAction::ToggleMute,
-                            );
+                            use mlc_app_layout::ui::dm_messenger_provider::{room_action, RoomAction};
+                            let Some(room_id) = st.messenger_open_room().map(|room| room.to_string()) else { return };
+                            if !self.panel_app.messenger_room_action(&room_id, RoomAction::ToggleMute) {
+                                room_action(&mut self.panel_app.community_state.dm, &room_id, RoomAction::ToggleMute);
+                            }
                         }
                         // The hovered-bubble quick-action bar's own Reply
                         // icon (messenger UI-2b `qbar`) — mirrors the
@@ -6815,10 +6840,7 @@ impl ChartApp {
                         // currently open room as the source.
                         rest2 if rest2.starts_with("forward:") => {
                             let event_id = rest2["forward:".len()..].to_string();
-                            let from_room = match &st.dm.view {
-                                DmView::Conversation { id, .. } => id.to_string(),
-                                _ => return,
-                            };
+                            let Some(from_room) = st.messenger_open_room().map(|room| room.to_string()) else { return };
                             st.forward_target_picker =
                                 Some(mlc_app_layout::ui::modal_settings::ForwardTargetPicker { from_room, event_id });
                         }
@@ -6836,9 +6858,11 @@ impl ChartApp {
                         rest2 if rest2.starts_with("forward_to:") => {
                             let to_room = rest2["forward_to:".len()..].to_string();
                             if let Some(picker) = st.forward_target_picker.take() {
-                                mlc_app_layout::ui::dm_messenger_provider::forward(
-                                    &mut st.dm, &picker.from_room, &picker.event_id, &to_room,
-                                );
+                                if !self.panel_app.messenger_forward(&picker.from_room, &picker.event_id, &to_room) {
+                                    mlc_app_layout::ui::dm_messenger_provider::forward(
+                                        &mut self.panel_app.community_state.dm, &picker.from_room, &picker.event_id, &to_room,
+                                    );
+                                }
                             }
                         }
                         // A `$SYMBOL` cashtag pill inline in a message's own

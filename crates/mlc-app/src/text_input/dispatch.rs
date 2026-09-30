@@ -1298,6 +1298,11 @@ impl ChartApp {
     #[cfg(feature = "cloud")]
     fn text_action_dm_draft(&mut self, ch: char, action: TextAction) {
         let submit = |chart: &mut ChartApp| {
+            // An outside provider backing the tab takes the draft as a
+            // `SendText` intent; the DM path below is the fallback.
+            if chart.messenger_send_draft() {
+                return;
+            }
             let wid = WidgetId::from(crate::text_input::DM_DRAFT);
             let text = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
             if text.is_empty() {
@@ -1349,6 +1354,10 @@ impl ChartApp {
     /// `"dm:lookup_result:{i}"` click arm for the row-click path.
     #[cfg(feature = "cloud")]
     fn text_action_dm_peer(&mut self, ch: char, action: TextAction) {
+        if self.panel_app.community_state.messenger_external {
+            self.text_action_messenger_peer(ch, action);
+            return;
+        }
         let submit = |chart: &mut ChartApp| {
             let wid = WidgetId::from(crate::text_input::DM_PEER);
             let top_public_id = chart
@@ -1390,6 +1399,33 @@ impl ChartApp {
             }
             _ => {
                 self.panel_app.community_state.dm.arm_lookup_debounce();
+            }
+        }
+    }
+
+    /// [`Self::text_action_dm_peer`] while an outside provider backs the tab:
+    /// every keystroke asks the provider's user directory (`SearchUsers`) and
+    /// the pump shows the hits in the same dropdown; Enter starts a direct
+    /// message with the top hit. Escape closes the dropdown and drops focus.
+    #[cfg(feature = "cloud")]
+    fn text_action_messenger_peer(&mut self, ch: char, action: TextAction) {
+        let wid = WidgetId::from(crate::text_input::DM_PEER);
+        if ch == '\x1b' {
+            self.panel_app.community_state.dm.close_lookup_dropdown();
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            return;
+        }
+        if ch == '\r' || ch == '\n' || matches!(action, TextAction::Commit(_)) {
+            if self.panel_app.messenger_start_dm_with_hit(0) {
+                self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+            }
+            return;
+        }
+        match action {
+            TextAction::Cancel => self.panel_app.community_state.dm.close_lookup_dropdown(),
+            _ => {
+                let term = self.input_coordinator.borrow().text_fields().text(&wid).to_string();
+                self.panel_app.messenger_search_users(&term);
             }
         }
     }
