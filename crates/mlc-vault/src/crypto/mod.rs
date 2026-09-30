@@ -62,6 +62,34 @@ pub const HKDF_GROUP_WRAP_INFO: &[u8] = b"mylittlechart-group-wrap-v1";
 /// DM identity key must never coincide even for the same vault.
 pub const HKDF_CHANNEL_SIGNING_INFO: &[u8] = b"mylittlechart channel signing v1";
 
+/// HKDF info string prefix binding a derived key to one device's messenger
+/// record-sealing key — see [`crate::messenger::MessengerSecrets::derive`].
+/// The device id is appended after this prefix (same convention as
+/// [`HKDF_GROUP_WRAP_INFO`]/[`HKDF_CHANNEL_SIGNING_INFO`] above): every
+/// record `mlc-messenger`'s own store persists is scoped to one device
+/// (`messenger/{device_id}/...`), so the key sealing them is derived per
+/// device too — two devices of the same account must not be able to open
+/// each other's own record store even though both derive from the same
+/// vault key. Distinct from every other `HKDF_*_INFO` constant above,
+/// including [`HKDF_MESSENGER_BACKUP_INFO`] right below (a messenger
+/// record-seal key is a purely local, per-device secret; the backup key is
+/// the opposite — the same on every device of the account — so the two must
+/// never collide).
+pub const HKDF_MESSENGER_STORE_INFO: &[u8] = b"mylittlechart-messenger-store-v1";
+
+/// HKDF info string binding the messenger's server-side key-backup key —
+/// see [`crate::messenger::MessengerSecrets::derive`]. Unlike
+/// [`HKDF_MESSENGER_STORE_INFO`], no id is ever appended to this one: the
+/// whole point of a key backup is that every device of the same account
+/// recovers the SAME key from its own vault key alone, with nothing
+/// device-specific folded in — this is what lets a brand-new device restore
+/// the account's Megolm session history from the server's own backup
+/// without first talking to any of the account's other devices. Not yet
+/// consumed by anything landed in this workspace (M9's own future work) —
+/// domain-separated from day one so its derivation never has to change once
+/// a consumer exists.
+pub const HKDF_MESSENGER_BACKUP_INFO: &[u8] = b"mylittlechart-messenger-backup-v1";
+
 /// AES-GCM nonce size in bytes.
 const NONCE_SIZE: usize = 12;
 

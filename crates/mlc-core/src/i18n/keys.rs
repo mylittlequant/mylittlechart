@@ -26,11 +26,14 @@ use super::tables::{
     CITY_KEY_TABLE,
     HEAD_SHOULDERS_KEY_TABLE,
     CANDLE_PATTERN_KEY_TABLE,
+    CANDLE_PATTERN_SHORT_KEY_TABLE,
     POSITION_POINT_KEY_TABLE,
+    ADMIN_KEY_TABLE,
     SHELL_KEY_TABLE,
     CONCEPT_KEY_TABLE,
     SHARE_VIEWER_KEY_TABLE,
     FORUM_KEY_TABLE,
+    CHECKOUT_KEY_TABLE,
 };
 
 // =============================================================================
@@ -634,6 +637,9 @@ pub enum ToolbarTooltipKey {
     /// Top-toolbar globe button creating a public live-share link for the
     /// active preset (chart-sharing arc).
     ShareChart        = 48,
+    /// Top-toolbar bolt next to Share. Copies the link and opens the
+    /// live overlay. The socket starts; Share itself stays HTTP.
+    ShareStream       = 51,
     /// Bottom-of-right-toolbar button opening the system event log panel
     /// (owner scope §8, `docs/mlc/plans/users-paid-features-scope-2026-09-05.md`).
     Events            = 49,
@@ -644,7 +650,7 @@ pub enum ToolbarTooltipKey {
 }
 
 impl ToolbarTooltipKey {
-    pub const COUNT: usize = 51;
+    pub const COUNT: usize = 52;
 
     #[inline]
     pub fn get(self, lang: Language) -> &'static str {
@@ -1132,10 +1138,18 @@ pub enum UserSettingsKey {
     AccountRedeemLabel              = 60,
     AccountRedeemButton             = 61,
     AccountRedeemSuccessPrefix      = 62,
+
+    // Messenger dock states shown while the Matrix-shaped provider backs the
+    // Messages tab: `MessengerConnecting` while its driver is still booting
+    // (or after a terminal boot failure, next to the provider's own error
+    // line), `MessengerActiveElsewhere` when another browser tab holds the
+    // messenger's Web Lock.
+    MessengerConnecting             = 63,
+    MessengerActiveElsewhere        = 64,
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 63;
+    pub const COUNT: usize = 65;
 
     /// Get translation for this key.
     #[inline]
@@ -1838,10 +1852,23 @@ pub enum PrimitiveNameKey {
     OrderFlowScan       = 98,
     RayLeft             = 99,
     HorizontalRayLeft   = 100,
+    // Autodetector A2 (2026-09-24) — appended at the END for the same
+    // frozen-discriminant reason the VWAP pair and the markup-engine block
+    // above it were (101).
+    ElliottScan         = 101,
+    // Autodetector A3, 5-0 manual primitive (2026-09-24) — same
+    // frozen-discriminant reason (102).
+    FiveZeroPattern     = 102,
+    // Autodetector A3, Harmonics autodetector (2026-09-24) — same
+    // frozen-discriminant reason (103).
+    HarmonicScan        = 103,
+    // Autodetector A4, Fib autodetector (2026-09-24) — same
+    // frozen-discriminant reason (104).
+    FibScan             = 104,
 }
 
 impl PrimitiveNameKey {
-    pub const COUNT: usize = 101;
+    pub const COUNT: usize = 105;
 
     /// Get translation for this key.
     #[inline]
@@ -1954,6 +1981,10 @@ impl PrimitiveNameKey {
             "absorption_mark"          => Some(Self::AbsorptionMark),
             "delta_divergence"         => Some(Self::DeltaDivergence),
             "order_flow_scan"          => Some(Self::OrderFlowScan),
+            "elliott_scan"             => Some(Self::ElliottScan),
+            "five_zero_pattern"        => Some(Self::FiveZeroPattern),
+            "harmonic_scan"            => Some(Self::HarmonicScan),
+            "fib_scan"                 => Some(Self::FibScan),
             _                          => None,
         }
     }
@@ -3546,10 +3577,99 @@ pub enum ConceptKey {
     // already had a reader, `to_delta_divergence_config`, but no row until
     // now). Same append-only reason as `HarmonicKindAltBat` above.
     MarkupThresholdDeltaDivergenceSwingNLabel = 467,
+
+    // ---- Autodetector A2, Elliott (2026-09-24) — `EwaScanKind::label`'s
+    // own Contracting/Expanding split (`elliott::scan_kind`'s own doc):
+    // `WaveKindLeadingDiagonal`/`WaveKindEndingDiagonal` (287-353) name the
+    // DIAGONAL FAMILY, never the Contracting-vs-Expanding split `scan_waves`
+    // itself distinguishes, so that split gets its own 4 rows here rather
+    // than a silent reuse of the family-only label.
+    WaveKindLeadingDiagonalContracting = 468,
+    WaveKindLeadingDiagonalExpanding = 469,
+    WaveKindEndingDiagonalContracting = 470,
+    WaveKindEndingDiagonalExpanding = 471,
+
+    // ---- Autodetector A2/A3 (2026-09-24) — the `min_score`/`tolerance`
+    // "Any/Medium/High/Exact" pills row shared by `ElliottScan`/
+    // `HarmonicScan`'s own Thresholds group (`ScanThresholds`,
+    // `docs/mlc/plans/autodetectors-a2-a4-implementation-2026-09-24.md`,
+    // A2's own settings section) — one label + 4 option rows, reused
+    // verbatim by A3 rather than a second copy.
+    ScanMinScoreLabel = 472,
+    ScanMinScoreAny = 473,
+    ScanMinScoreMedium = 474,
+    ScanMinScoreHigh = 475,
+    ScanMinScoreExact = 476,
+
+    // ---- Autodetector A2/A3 (2026-09-24) — the Hits results table's own
+    // column headers (`[Kind, Pivots, Score, Place]`), shared by
+    // `ElliottScan`/`HarmonicScan`/`FibScan`'s own Hits table (the "Place"
+    // column is the SAME fire-once "click to place" mechanism all three
+    // scans share — see the arc's own "New mechanism" section).
+    ScanHitKindColumnHeader = 477,
+    ScanHitPivotsColumnHeader = 478,
+    ScanHitScoreColumnHeader = 479,
+    ScanHitPlaceColumnHeader = 480,
+    /// The What-to-detect kinds table's own name (`ConfigProperty::table`'s
+    /// `name` param, search text — not the `ScanWhatToDetect` group header,
+    /// which reuses `MarkupTabWhatToDetect`). Mirrors `SmcScanStructuresLabel`'s
+    /// own role for `SmcScan`'s structure table.
+    ScanKindsTableLabel = 481,
+
+    // ---- Autodetector A4, Fib (2026-09-24) — `FibScan`'s own Thresholds
+    // row labels (`swing_mode`/`last_swings_n`/`direction` have no sibling
+    // row on `ElliottScan`/`HarmonicScan`, unlike `swing_n`/`min_score`,
+    // which already reuse `MarkupThresholdSwingNLabel`/`ScanMinScore*`
+    // above) and the What-to-detect levels table's own name. `direction`'s
+    // own VALUES (Up/Down) reuse `TrendValueUp`/`TrendValueDown` (381/382)
+    // rather than a fourth near-duplicate pair here — same wording, same
+    // "Up"/"Down" concept a swing's own leg direction already is.
+    /// `swing_mode` pills row label — "Largest swing" vs "Last N swings".
+    FibScanSwingModeLabel = 482,
+    FibScanSwingModeLargest = 483,
+    FibScanSwingModeLastN = 484,
+    /// `last_swings_n` pills row label — only rendered when `swing_mode ==
+    /// "last_n"` (`FibScan::style_properties`'s own conditional push).
+    FibScanLastSwingsNLabel = 485,
+    /// `direction` pills row label, reused verbatim as the Hits table's own
+    /// "Direction" column header (same wording, two contexts — the SAME
+    /// dual-role `MarkupTabWhatToDetect`/`MarkupTabThresholds` already play
+    /// between the A0 modal tab and this crate's `PropertyGroup` headers).
+    FibScanDirectionLabel = 486,
+    FibScanDirectionAuto = 487,
+    /// The What-to-detect levels table's own name (`ConfigProperty::table`'s
+    /// `name` param, search text) — mirrors `ScanKindsTableLabel`'s own role
+    /// for `ElliottScan`/`HarmonicScan`'s kinds table.
+    FibScanLevelsTableLabel = 488,
+    /// The Hits table's own "Range" column header — the swing's own
+    /// `[start_index, end_index]` bar span, the one column this table has
+    /// that `ScanHitPivotsColumnHeader` does not fit (a Fib swing is a pair
+    /// of bar indices, not a pivot count).
+    FibScanHitRangeColumnHeader = 489,
+
+    // ---- Candle Pattern Scan readable-hits arc (owner complaint 0.5.615,
+    // 2026-09-24) — the word suffixed after a digit count in a collapsed
+    // cluster's own generic label (`"{count} patterns"`); see
+    // `candle_pattern_scan::merge_overlapping_label_boxes`'s own doc for
+    // why a collapsed cluster shows a generic count rather than one
+    // member's own specific pattern name (a cluster on this scan can mix
+    // different pattern kinds, unlike `SmcScan`'s own same-structure
+    // clusters).
+    ScanClusterPatternsSuffix = 490,
+
+    // ---- Order Flow footprint-shadow-feed fix (owner bug, prod 0.5.617,
+    // 2026-09-25) — the second "nothing to report" state `OrderFlowScan`
+    // can hit once its own footprint feed is real: the feed exists but
+    // this survey's own dragged range predates/exceeds what it has
+    // loaded (e.g. older than the venue's retained trade history).
+    // Distinct from `RuleOrderFlowDataMissing` (404 — no feed at all, see
+    // that key's own doc) so the analyst reads "no trade data for THIS
+    // range" rather than a generic "still nothing".
+    RuleOrderFlowRangeNoData = 491,
 }
 
 impl ConceptKey {
-    pub const COUNT: usize = 468;
+    pub const COUNT: usize = 492;
 
     /// Get translation for this key.
     #[inline]
@@ -3700,6 +3820,103 @@ impl uzor::i18n::Translate for CandlePatternKey {
 }
 
 // =============================================================================
+// Candle Pattern SHORT Keys (compact on-chart labels for CandlePatternScan)
+// =============================================================================
+
+/// Compact display names for the subset of [`CandlePatternKey`]'s 39
+/// patterns whose full name is too long to sit as a readable on-chart
+/// label (`patterns::candle_pattern_scan::CandlePatternScan::render`,
+/// owner complaint 0.5.615 — "just marks bars with some unclear dots").
+/// Every candlestick kind already short enough (`Doji`, `Hammer`,
+/// `Marubozu`, the two Tweezers, the two Marubozu colours, the two Star
+/// kinds, ...) and all 5 gap kinds (already 2 words, already fully
+/// localized in [`CandlePatternKey`]'s own table) are deliberately NOT
+/// duplicated here — `pattern_short_display_name` falls back to
+/// [`pattern_display_name`] for exactly those, so this table only carries
+/// the ids that actually need shortening.
+///
+/// Unlike [`CandlePatternKey`] (En/Ru only, by owner-approved scope), this
+/// table carries all 15 columns: columns 2-14 are a best-effort
+/// compositional translation from the same candlestick-pattern vocabulary
+/// [`CandlePatternKey`]'s own Ru column and the gap-kind rows already use,
+/// NOT reviewed by a native speaker of that language — flagged here rather
+/// than silently claimed as reviewed. En (authored) and Ru (authored) are
+/// the two reviewed columns.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CandlePatternShortKey {
+    GravestoneDoji          = 0,
+    LongLeggedDoji          = 1,
+    InvertedHammer          = 2,
+    BullishEngulfing        = 3,
+    BearishEngulfing        = 4,
+    BullishHarami           = 5,
+    BearishHarami           = 6,
+    PiercingPattern         = 7,
+    DarkCloudCover          = 8,
+    MorningDojiStar         = 9,
+    EveningDojiStar         = 10,
+    ThreeWhiteSoldiers      = 11,
+    ThreeBlackCrows         = 12,
+    ThreeInsideUp           = 13,
+    ThreeInsideDown         = 14,
+    ThreeOutsideUp          = 15,
+    ThreeOutsideDown        = 16,
+    RisingThreeMethods      = 17,
+    FallingThreeMethods     = 18,
+    UpsideGapTwoCrows       = 19,
+    DownsideGapThreeMethods = 20,
+}
+
+impl CandlePatternShortKey {
+    pub const COUNT: usize = 21;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&CANDLE_PATTERN_SHORT_KEY_TABLE[self as usize], lang as usize)
+    }
+
+    /// The key for `mli`'s own wire id (`CandlePatternKind::id()`) — `None`
+    /// both for an id this table does not know AND for an id whose full
+    /// name never needed shortening in the first place (see this enum's
+    /// own doc); either way the caller falls back to
+    /// [`CandlePatternKey::from_id`].
+    pub fn from_id(id: &str) -> Option<Self> {
+        match id {
+            "gravestone_doji"            => Some(Self::GravestoneDoji),
+            "long_legged_doji"           => Some(Self::LongLeggedDoji),
+            "inverted_hammer"            => Some(Self::InvertedHammer),
+            "bullish_engulfing"          => Some(Self::BullishEngulfing),
+            "bearish_engulfing"          => Some(Self::BearishEngulfing),
+            "bullish_harami"             => Some(Self::BullishHarami),
+            "bearish_harami"             => Some(Self::BearishHarami),
+            "piercing_pattern"           => Some(Self::PiercingPattern),
+            "dark_cloud_cover"           => Some(Self::DarkCloudCover),
+            "morning_doji_star"          => Some(Self::MorningDojiStar),
+            "evening_doji_star"          => Some(Self::EveningDojiStar),
+            "three_white_soldiers"       => Some(Self::ThreeWhiteSoldiers),
+            "three_black_crows"          => Some(Self::ThreeBlackCrows),
+            "three_inside_up"            => Some(Self::ThreeInsideUp),
+            "three_inside_down"          => Some(Self::ThreeInsideDown),
+            "three_outside_up"           => Some(Self::ThreeOutsideUp),
+            "three_outside_down"         => Some(Self::ThreeOutsideDown),
+            "rising_three_methods"       => Some(Self::RisingThreeMethods),
+            "falling_three_methods"      => Some(Self::FallingThreeMethods),
+            "upside_gap_two_crows"       => Some(Self::UpsideGapTwoCrows),
+            "downside_gap_three_methods" => Some(Self::DownsideGapThreeMethods),
+            _ => None,
+        }
+    }
+}
+
+impl uzor::i18n::Translate for CandlePatternShortKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&CANDLE_PATTERN_SHORT_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
 // Share Viewer Keys (boot-time reopen toast)
 // =============================================================================
 
@@ -3718,10 +3935,28 @@ pub enum ShareViewerKey {
     SharedChartGoneTitle = 0,
     /// Toast body: "This shared chart is no longer available.".
     SharedChartGoneBody = 1,
+    /// Card on a viewer tab after the author turns Live off.
+    StreamEndedTitle = 2,
+    /// Button on that card. Closes the stream tab.
+    StreamEndedAction = 3,
+    /// Camcorder tooltip while the live socket is being opened.
+    StreamStateConnecting = 4,
+    /// Camcorder tooltip while this tab publishes. A click stops the stream.
+    StreamStateLive = 5,
+    /// Camcorder tooltip while this tab only receives the stream.
+    StreamStateViewing = 6,
+    /// Camcorder tooltip while the live socket keeps failing.
+    StreamStateError = 7,
+    /// Share settings: button that makes the shown rights the default for new shares.
+    DefaultRightsAction = 8,
+    /// Share settings status after that button.
+    DefaultRightsSaved = 9,
+    /// Share settings status when a rights click had no link to change yet.
+    RightsNextShare = 10,
 }
 
 impl ShareViewerKey {
-    pub const COUNT: usize = 2;
+    pub const COUNT: usize = 11;
 
     /// Get translation for this key, with En fallback for empty cells.
     #[inline]
@@ -3800,6 +4035,385 @@ impl uzor::i18n::Translate for ForumKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&FORUM_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Admin Keys (Settings -> Admin tab)
+// =============================================================================
+
+/// Strings of the in-app Admin tab of the settings modal (gift codes, grants,
+/// account lookup). The tab is shown only to an account holding the `admin`
+/// role. Sentences that carry values use `{name}` placeholders that the
+/// caller replaces (`mlc_app_layout::ui::admin_tab::fill`); every language
+/// keeps the same placeholder set, which the table tests pin.
+///
+/// Variant order is **frozen** — discriminant == row index in
+/// `ADMIN_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum AdminKey {
+    /// Admin tab label in the settings rail.
+    TabAdmin = 0,
+    /// Section switch: gift codes.
+    SectionCoupons = 1,
+    /// Section switch: paid days and lifetime grants.
+    SectionGrants = 2,
+    /// Section switch: account lookup.
+    SectionUser = 3,
+    /// Mint form heading.
+    MintTitle = 4,
+    /// Days label and batch-table column.
+    LabelDays = 5,
+    /// Count label of the mint form.
+    LabelCount = 6,
+    /// Note label and batch-table column.
+    LabelNote = 7,
+    /// Placeholder of the optional mint note; `{max}` is the length bound.
+    PlaceholderNote = 8,
+    /// Mint button.
+    BtnMint = 9,
+    /// The shown-once warning above freshly minted codes.
+    MintedShownOnce = 10,
+    /// Copy every freshly minted code.
+    BtnCopyAll = 11,
+    /// Copy one code.
+    BtnCopy = 12,
+    /// Dismiss the freshly minted codes.
+    BtnDone = 13,
+    /// Batches table heading.
+    BatchesTitle = 14,
+    /// Reload the batches table.
+    BtnRefresh = 15,
+    /// Empty batches table.
+    BatchesEmpty = 16,
+    /// A fetch is in flight.
+    Loading = 17,
+    /// Batches column: redeemed / count.
+    ColRedeemed = 18,
+    /// Batches column: revoked codes.
+    ColRevoked = 19,
+    /// Batches / grants column: creation time.
+    ColCreated = 20,
+    /// Batches column: who minted it.
+    ColBy = 21,
+    /// Revoke action.
+    BtnRevoke = 22,
+    /// Confirm an armed action.
+    BtnConfirm = 23,
+    /// Cancel an armed action.
+    BtnCancel = 24,
+    /// Confirmation before revoking a batch; `{batch}` is the batch id.
+    ConfirmRevokeBatch = 25,
+    /// Nick label.
+    LabelNick = 26,
+    /// Placeholder of an exact-nick field.
+    PlaceholderNick = 27,
+    /// Grants: paid-days block heading.
+    PaidDaysTitle = 28,
+    /// Grants: add paid days.
+    BtnAddPaidDays = 29,
+    /// Grants: lifetime block heading.
+    LifetimeTitle = 30,
+    /// Placeholder of the required lifetime-grant reason.
+    PlaceholderLifetimeNote = 31,
+    /// Grants: grant lifetime paid.
+    BtnGrantLifetimePaid = 32,
+    /// Grants: grant lifetime anonymous.
+    BtnGrantLifetimeAnon = 33,
+    /// Grants: revoke lifetime paid.
+    BtnRevokeLifetimePaid = 34,
+    /// Grants: revoke lifetime anonymous.
+    BtnRevokeLifetimeAnon = 35,
+    /// Grants: what a lifetime revoke touches.
+    HintRevokeAdminOnly = 36,
+    /// Name of the lifetime-paid grant inside sentences.
+    KindLifetimePaid = 37,
+    /// Name of the lifetime-anonymous grant inside sentences.
+    KindLifetimeAnon = 38,
+    /// Confirmation of a paid-days grant; `{days}`, `{nick}`.
+    ConfirmPaidDays = 39,
+    /// Confirmation of a lifetime grant; `{kind}`, `{nick}`.
+    ConfirmLifetimeGrant = 40,
+    /// Confirmation of a lifetime revoke; `{kind}`, `{nick}`.
+    ConfirmLifetimeRevoke = 41,
+    /// User lookup button.
+    BtnLookup = 42,
+    /// User card: account id.
+    CardUserId = 43,
+    /// User card: time-bound paid grant.
+    CardPaidUntil = 44,
+    /// User card: lifetime paid flag.
+    CardLifetimePaid = 45,
+    /// User card: lifetime anonymous flag.
+    CardLifetimeAnon = 46,
+    /// User card: quant tier.
+    CardQuantTier = 47,
+    /// User card: quant period end.
+    CardQuantUntil = 48,
+    /// User card: forum roles.
+    CardRoles = 49,
+    /// User card: lifetime grant ledger heading.
+    CardGrantsTitle = 50,
+    /// User card: empty ledger.
+    CardNoGrants = 51,
+    /// Ledger column: grant kind.
+    ColGrant = 52,
+    /// Ledger column: admin or invoice.
+    ColSource = 53,
+    /// Boolean true.
+    ValueYes = 54,
+    /// Boolean false.
+    ValueNo = 55,
+    /// Mint succeeded; `{count}`, `{days}`.
+    ResultMinted = 56,
+    /// Batch revoke succeeded; `{n}`.
+    ResultBatchRevoked = 57,
+    /// Paid days added; `{nick}`, `{until}`.
+    ResultPaidUntil = 58,
+    /// Lifetime grant created; `{nick}`, `{kind}`.
+    ResultLifetimeGranted = 59,
+    /// Lifetime grant already in force; `{nick}`, `{kind}`.
+    ResultLifetimeExisting = 60,
+    /// Lifetime revoke done; `{nick}`, `{n}`, `{kind}`.
+    ResultLifetimeRevoked = 61,
+    /// Copy to the clipboard done.
+    ResultCopied = 62,
+    /// A mint finished after the window closed and its codes were dropped.
+    ResultDiscarded = 63,
+    /// A write is in flight.
+    Working = 64,
+    /// Form bound; `{min}`, `{max}`.
+    ErrDaysRange = 65,
+    /// Form bound; `{min}`, `{max}`.
+    ErrCountRange = 66,
+    /// Form bound; `{max}`.
+    ErrNoteTooLong = 67,
+    /// Form bound: control characters.
+    ErrNoteBadChars = 68,
+    /// Form bound: the lifetime reason is required; `{max}`.
+    ErrNoteRequired = 69,
+    /// Form bound: empty nick.
+    ErrNickRequired = 70,
+    /// Form bound; `{max}`.
+    ErrNickTooLong = 71,
+    /// Server refusal 403.
+    FailForbidden = 72,
+    /// Server refusal 404.
+    FailNotFound = 73,
+    /// Server refusal 429 with a Retry-After; `{secs}`.
+    FailRateLimited = 74,
+    /// Server refusal 429 without a Retry-After.
+    FailRateLimitedSoon = 75,
+    /// Server refusal 400; `{detail}` is the server's sentence.
+    FailBadRequest = 76,
+    /// Server refusal 401.
+    FailSignedOut = 77,
+    /// Transport failure; `{detail}`.
+    FailNetwork = 78,
+    /// Any other server failure; `{detail}`.
+    FailServer = 79,
+}
+
+impl AdminKey {
+    pub const COUNT: usize = 80;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&ADMIN_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for AdminKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&ADMIN_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Checkout Keys (in-app checkout modal)
+// =============================================================================
+
+/// Every string of the in-app checkout modal (plans, pay step, anonymous key
+/// gate, status notes and the user-facing sentence for each billing error
+/// code). Placeholders are written `{name}` and substituted by the caller
+/// with a plain `str::replace` — the table cells are static text.
+///
+/// Variant order is **frozen** — discriminant == row index in
+/// `CHECKOUT_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum CheckoutKey {
+    /// Modal header.
+    Title = 0,
+    /// Plans step heading.
+    PlansHeading = 1,
+    /// Plans step section: the account plans.
+    SectionAccount = 2,
+    /// Plans step section: the monthly quant tiers.
+    SectionQuant = 3,
+    /// Lifetime paid account.
+    PlanPaid = 4,
+    /// Lifetime paid account, one line of description.
+    PlanPaidDesc = 5,
+    /// Lifetime anonymous account.
+    PlanAnon = 6,
+    /// Anonymous account description: the key is the only credential.
+    PlanAnonDesc = 7,
+    /// Quant tier name; `{tier}` is the tier rank.
+    PlanQuantTier = 8,
+    /// Quant description when the operator set no quota.
+    PlanQuantDesc = 9,
+    /// Quant description with a quota; `{quota}`.
+    PlanQuantDescQuota = 10,
+    /// Price suffix of a one-time plan.
+    PerOneTime = 11,
+    /// Price suffix of a monthly plan.
+    PerMonth = 12,
+    /// Badge on a plan the account already owns.
+    Owned = 13,
+    /// Badge on the running quant tier.
+    Current = 14,
+    /// Card action / entry-point label: move up a tier.
+    ActionUpgrade = 15,
+    /// Card action: move down a tier.
+    ActionDowngrade = 16,
+    /// Badge on the tier a queued change moves to.
+    Scheduled = 17,
+    /// Card action of an account plan.
+    Buy = 18,
+    /// Card action of a quant tier without a subscription.
+    Subscribe = 19,
+    /// Tag on a Tor-only plan.
+    TorTag = 20,
+    /// Plans step while the list loads.
+    LoadingPlans = 21,
+    /// Retry button.
+    Retry = 22,
+    /// Link to the gift-code field.
+    HaveCode = 23,
+    /// Pay step instruction.
+    PayHint = 24,
+    /// Pay step: amount label.
+    Amount = 25,
+    /// Pay step: address label.
+    Address = 26,
+    /// Copy button.
+    Copy = 27,
+    /// Copy button after a copy.
+    Copied = 28,
+    /// Expiry countdown; `{time}` is `mm:ss` or `h:mm:ss`.
+    ExpiresIn = 29,
+    /// Banner on an expired invoice.
+    InvoiceExpired = 30,
+    /// Button issuing a fresh invoice.
+    NewInvoice = 31,
+    /// Back button.
+    Back = 32,
+    /// Status: nothing seen yet.
+    Waiting = 33,
+    /// Status: a payment is on the network, unconfirmed.
+    Processing = 34,
+    /// Success state title.
+    PaidTitle = 35,
+    /// Success state body.
+    PaidBody = 36,
+    /// Success state while signing in with the account key.
+    SigningIn = 37,
+    /// Success state after that sign-in.
+    SignedInWithKey = 38,
+    /// Upgrade charge line; `{amount}` in USD.
+    UpgradeCharge = 39,
+    /// Downgrade queued; `{date}`.
+    DowngradeScheduled = 40,
+    /// Close button.
+    Close = 41,
+    /// Shown instead of the QR when the processor's SVG cannot be drawn.
+    QrUnavailable = 42,
+    /// Partial payment note; `{received}` `{expected}` `{shortfall}` `{asset}`.
+    NotePartial = 43,
+    /// Overpayment note; `{received}` `{expected}` `{asset}`.
+    NoteOver = 44,
+    /// Late payment note.
+    NoteLate = 45,
+    /// Failed / no-show / anomaly note.
+    NoteFailed = 46,
+    /// Funds were confirming when the invoice expired.
+    NoteFundsPending = 47,
+    /// The network reversed a payment.
+    NoteReverted = 48,
+    /// The payment was refunded.
+    NoteRefunded = 49,
+    /// Anonymous key gate heading.
+    KeyHeading = 50,
+    /// Anonymous key gate explanation.
+    KeyBody = 51,
+    /// Anonymous key gate checkbox.
+    KeySaved = 52,
+    /// Anonymous key gate continue button.
+    KeyContinue = 53,
+    /// After paying while signed in to another account.
+    KeyUseLater = 54,
+    /// Error: `plan_not_available`.
+    ErrPlanNotAvailable = 55,
+    /// Error: `already_owned`.
+    ErrAlreadyOwned = 56,
+    /// Error: `subscription_exists`.
+    ErrSubscriptionExists = 57,
+    /// Error: `plan_unavailable`.
+    ErrPlanUnavailable = 58,
+    /// Error: `billing_not_configured`.
+    ErrNotConfigured = 59,
+    /// Error: `payment_gateway_unavailable`.
+    ErrGateway = 60,
+    /// Error: `rate_limited`.
+    ErrRateLimited = 61,
+    /// Error: `no_active_subscription`.
+    ErrNoSubscription = 62,
+    /// Error: `same_plan`.
+    ErrSamePlan = 63,
+    /// Error: `change_pending`.
+    ErrChangePending = 64,
+    /// Error: `gateway_refused`.
+    ErrGatewayRefused = 65,
+    /// Error: sign-in needed.
+    ErrSignInRequired = 66,
+    /// Error: no answer from the server.
+    ErrNetwork = 67,
+    /// Error: the account key was refused.
+    ErrInvalidKey = 68,
+    /// Error: anything else.
+    ErrGeneric = 69,
+    /// Sign-in overlay entry: buy an anonymous account.
+    BuyAnon = 70,
+    /// Plans step, signed out: link to the account-key sign-in.
+    HaveKey = 71,
+    /// Account-key sign-in heading.
+    KeyEntryHeading = 72,
+    /// Account-key sign-in explanation.
+    KeyEntryBody = 73,
+    /// Account-key field placeholder (the key's shape; same in every language).
+    KeyEntryPlaceholder = 74,
+    /// Account-key sign-in button.
+    SignIn = 75,
+}
+
+impl CheckoutKey {
+    pub const COUNT: usize = 76;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&CHECKOUT_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for CheckoutKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&CHECKOUT_KEY_TABLE[self as usize], lang_index)
     }
 }
 

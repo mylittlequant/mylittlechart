@@ -26,7 +26,7 @@ use mlc_app_layout::ui::modal_settings::{
     PrimitiveSettingsState, IndicatorSettingsState, ChartSettingsState,
     IndicatorOverlayState, OverlaySettingsState, TagsTabsState,
     PresetNameInputState, ChartBrowserState, AlertSettingsState,
-    CompareSettingsState, CredentialsState, ShareOpenState,
+    CompareSettingsState, CredentialsState, ShareOpenState, ShareSettingsState,
 };
 use mlc_app_layout::ui::context_menu::ContextMenuState;
 use mlc_app_layout::layout::render_frame::{ChartModalRenderResult, ChartModalLayout};
@@ -102,6 +102,11 @@ pub struct ChartPanelApp {
     /// community-modal arc W1 (cloud builds only).
     #[cfg(feature = "cloud")]
     pub community_state: mlc_app_layout::ui::modal_settings::CommunityState,
+    /// The outside `MessengerProvider` backing the Community modal's Messages
+    /// tab, if the shell handed one over — see `messenger_bridge`'s module
+    /// doc (cloud builds only).
+    #[cfg(feature = "cloud")]
+    pub(crate) messenger: crate::messenger_bridge::MessengerBridge,
     /// EWA Engine Settings modal state (owner ask 2026-08-14).
     pub ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState,
     /// Price Action Engine Settings modal state — the non-Elliott sibling
@@ -139,6 +144,14 @@ pub struct ChartPanelApp {
     /// 2026-09-06). Not `cfg(feature = "cloud")` — reading a share is
     /// public, so signed-out sessions open it too.
     pub share_open_state: ShareOpenState,
+    pub share_settings_state: ShareSettingsState,
+    /// In-app checkout modal (plans, pay, anonymous key). Not
+    /// `cfg(feature = "cloud")`: the state and drawing are plain data, and the
+    /// entry-point buttons stay hidden until a shell with a driver switches
+    /// them on (`mlc_app_layout::ui::checkout::set_entry_points_enabled`).
+    pub checkout_state: mlc_app_layout::ui::checkout::CheckoutState,
+    /// chart preset id -> live share token, filled when this chart is shared.
+    pub chart_share_tokens: std::collections::HashMap<String, String>,
     /// Chart browser modal state (Open Chart).
     pub chart_browser: ChartBrowserState,
     /// Whether autosave is enabled for presets.
@@ -173,6 +186,8 @@ impl ChartPanelApp {
             cloud_overlay_state: mlc_app_layout::ui::modal_settings::CloudOverlayState::default(),
             #[cfg(feature = "cloud")]
             community_state: mlc_app_layout::ui::modal_settings::CommunityState::default(),
+            #[cfg(feature = "cloud")]
+            messenger: crate::messenger_bridge::MessengerBridge::default(),
             ewa_engine_settings_state: mlc_app_layout::ui::modal_settings::EwaEngineSettingsState::default(),
             markup_engine_settings_state: mlc_app_layout::ui::modal_settings::MarkupEngineSettingsState::default(),
             clock_popup_state: mlc_app_layout::ui::ClockPopupState::default(),
@@ -185,6 +200,9 @@ impl ChartPanelApp {
             open_tabs: Vec::new(),
             preset_name_input: PresetNameInputState::default(),
             share_open_state: ShareOpenState::default(),
+            share_settings_state: ShareSettingsState::default(),
+            checkout_state: mlc_app_layout::ui::checkout::CheckoutState::default(),
+            chart_share_tokens: std::collections::HashMap::new(),
             chart_browser: ChartBrowserState::default(),
             autosave_enabled: true,
         }
@@ -418,13 +436,14 @@ impl ChartPanelApp {
             background: rt.colors.toolbar_bg.clone(),
             dropdown_bg: rt.menu_bg_styled(),
             separator: rt.colors.toolbar_divider.clone(),
+            divider_soft: rt.colors.border_light.clone(),
             item_bg_hover: rt.hover_bg_styled(),
             item_bg_active: rt.active_bg_styled(),
             button_bg:       rt.colors.button_bg.clone(),
             button_bg_hover: rt.colors.button_bg_hover.clone(),
             item_text: rt.colors.text_primary.clone(),
             item_text_muted: rt.colors.text_secondary.clone(),
-            item_text_faint: rt.colors.text_muted.clone(),
+            muted_ink: rt.colors.text_muted.clone(),
             item_text_hidden: mlc_core::apply_opacity(&rt.colors.text_primary, 0.5),
             item_text_hover: rt.colors.text_primary.clone(),
             item_text_active: rt.colors.text_active.clone(),
@@ -860,6 +879,19 @@ impl ChartPanelApp {
                 input_coordinator,
             ));
         }
+        if self.share_settings_state.is_open {
+            use mlc_app_layout::layout::modals::share_settings::render_share_settings_overlay;
+            result.share_settings = Some(render_share_settings_overlay(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                &self.share_settings_state,
+                frame_theme,
+                toolbar_theme,
+                current_time_ms,
+                input_coordinator,
+            ));
+        }
 
         // Template name overlay modal — primitive settings
         if self.primitive_settings_state.save_template_mode {
@@ -1038,6 +1070,7 @@ impl ChartPanelApp {
                 current_time_ms,
                 input_coordinator,
                 community_after_user_settings,
+                self.messenger_view(),
             ));
         }
 
@@ -1171,6 +1204,22 @@ impl ChartPanelApp {
                     ws_result,
                 );
             }
+        }
+
+        // Checkout — last, so it paints above whatever opened it (the Account
+        // tab's Upgrade button, the Messages notice) and, on its own
+        // `ModalOverlay` layer, wins their hit-test ties too.
+        if self.checkout_state.is_open {
+            result.checkout = Some(mlc_app_layout::layout::modals::checkout::render_checkout_modal(
+                ctx,
+                modal_layout.prim_screen_w,
+                modal_layout.prim_screen_h,
+                &self.checkout_state,
+                frame_theme,
+                toolbar_theme,
+                current_time_ms,
+                input_coordinator,
+            ));
         }
 
         result

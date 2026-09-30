@@ -53,6 +53,9 @@ pub enum ActiveSeries<'a> {
     Tpo(&'a [TpoSession]),
 }
 
+/// Spacing assumed when a series is too short to have a measured gap.
+const FALLBACK_GAP_MS: f64 = 60_000.0;
+
 impl<'a> ActiveSeries<'a> {
     /// Number of elements in the active array.
     pub fn len(&self) -> usize {
@@ -115,6 +118,78 @@ impl<'a> ActiveSeries<'a> {
         } else {
             Some(idx - 1)
         }
+    }
+
+    /// Gap (ms) between the first two elements, or [`FALLBACK_GAP_MS`] when
+    /// the series has fewer than two or they do not advance.
+    fn first_gap_ms(&self) -> f64 {
+        match (self.ts_ms_at(0), self.ts_ms_at(1)) {
+            (Some(a), Some(b)) if b > a => (b - a) as f64,
+            _ => FALLBACK_GAP_MS,
+        }
+    }
+
+    /// Gap (ms) between the last two elements, same fallback.
+    fn last_gap_ms(&self) -> f64 {
+        let n = self.len();
+        if n < 2 {
+            return FALLBACK_GAP_MS;
+        }
+        match (self.ts_ms_at(n - 2), self.ts_ms_at(n - 1)) {
+            (Some(a), Some(b)) if b > a => (b - a) as f64,
+            _ => FALLBACK_GAP_MS,
+        }
+    }
+
+    /// Timestamp (ms) at the fractional element position `pos`. Positions
+    /// between elements interpolate; positions before the first or past the
+    /// last extrapolate by the nearest gap. `None` for an empty series or a
+    /// non-finite position.
+    ///
+    /// The live share stream sends viewport and cursor as timestamps, so two
+    /// sides with different loaded history still point at the same moment.
+    pub fn ts_at_position(&self, pos: f64) -> Option<i64> {
+        let n = self.len();
+        if n == 0 || !pos.is_finite() {
+            return None;
+        }
+        let last = (n - 1) as f64;
+        if pos <= 0.0 {
+            return Some(self.ts_ms_at(0)? + (pos * self.first_gap_ms()).round() as i64);
+        }
+        if pos >= last {
+            return Some(self.ts_ms_at(n - 1)? + ((pos - last) * self.last_gap_ms()).round() as i64);
+        }
+        let i = pos.floor() as usize;
+        let frac = pos - i as f64;
+        let a = self.ts_ms_at(i)?;
+        let b = self.ts_ms_at(i + 1)?;
+        Some(a + ((b - a) as f64 * frac).round() as i64)
+    }
+
+    /// Inverse of [`Self::ts_at_position`]: the fractional element position
+    /// of `ts_ms` in THIS series. Before the first element the position is
+    /// negative, past the last it exceeds `len() - 1`. `None` when empty.
+    pub fn position_at_ts(&self, ts_ms: i64) -> Option<f64> {
+        let n = self.len();
+        if n == 0 {
+            return None;
+        }
+        let first = self.ts_ms_at(0)?;
+        if ts_ms <= first {
+            return Some((ts_ms - first) as f64 / self.first_gap_ms());
+        }
+        let last = self.ts_ms_at(n - 1)?;
+        if ts_ms >= last {
+            return Some((n - 1) as f64 + (ts_ms - last) as f64 / self.last_gap_ms());
+        }
+        let i = self.idx_for_ts(ts_ms)?;
+        let a = self.ts_ms_at(i)?;
+        let b = self.ts_ms_at(i + 1)?;
+        if b <= a {
+            return Some(i as f64);
+        }
+        Some(i as f64 + (ts_ms - a) as f64 / (b - a) as f64)
     }
 
     /// (low, high) price range across the visible index window

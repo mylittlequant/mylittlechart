@@ -94,6 +94,10 @@ impl ChartApp {
     pub fn tick(&mut self, current_time_ms: u64) {
         let events = self.core.tick_writers(current_time_ms);
         self.react_to_events(&events, current_time_ms);
+        // Upkeep of the outside messenger provider, if the shell handed one
+        // over (a no-op otherwise) — see `messenger_bridge`.
+        #[cfg(feature = "cloud")]
+        self.panel_app.pump_messenger();
     }
 
     /// Per-window reaction pass over an already-drained `BubbleEvent` slice.
@@ -125,6 +129,18 @@ impl ChartApp {
         // minutes. Self-gated to once a minute internally — cheap to call
         // every tick.
         self.release_idle_parked_presets();
+
+        // Order-flow footprint shadow feed (owner bug, prod 0.5.617,
+        // 2026-09-25 — "Order Flow scan doesn't work"): any bubble carrying
+        // an `order_flow_scan`/`imbalance_zone`/`absorption_mark`/
+        // `delta_divergence` primitive but no footprint feed yet gets one
+        // subscribed here, without touching the bubble's own visible
+        // chart_type — see `BackendCore::ensure_order_flow_footprint_feeds`'s
+        // own doc. Self-limiting, not gated: the subscribe it triggers
+        // stamps `footprint_bars = Some(_)` synchronously, so a bubble that
+        // already has a feed costs one cheap id/primitive scan and nothing
+        // more.
+        self.core.ensure_order_flow_footprint_feeds();
 
         // Load chat history for any restored chat leaves on the very first tick.
         // PTY sessions spawn-on-demand only (user must click [Start]).

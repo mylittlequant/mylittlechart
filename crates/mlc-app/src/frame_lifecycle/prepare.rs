@@ -485,10 +485,17 @@ impl ChartApp {
             self.panel_app.alert_settings_state.all_alerts = self.core.alerts().items_all();
         }
 
-        // Auto-dirty sidebar when active leaf changes (for object tree refresh).
-        let current_leaf = self.panel_app.panel_grid.docking().active_leaf();
-        if current_leaf != self.last_active_leaf {
-            self.last_active_leaf = current_leaf;
+        // Auto-dirty sidebar when the active CHART changes (for object tree
+        // refresh + Synced-panel resync). Keyed on `ChartId`, not `LeafId`
+        // (2026-09-24 fix, see `last_active_chart_id`'s own doc): `LeafId`
+        // is scoped to one docking tree and resets per preset, so two
+        // different presets' active leaves routinely land on the same
+        // small id and a genuine tab switch went undetected — most visibly
+        // on a freshly-opened shared/read-only tab, whose sidebar panels
+        // then never resolved an instrument to subscribe to.
+        let current_chart_id = self.panel_app.panel_grid.active_container_id();
+        if current_chart_id != self.last_active_chart_id {
+            self.last_active_chart_id = current_chart_id;
             self.sidebar_data_dirty = true;
 
             // When the active chart changes, reassign all Synced panels to the new
@@ -501,7 +508,7 @@ impl ChartApp {
                 // symbol included — without this, restored groups carry stale
                 // group.symbol from the prior session and apply_key_to_panels_in_group
                 // overwrites panel state.symbol with that stale value on the very
-                // first frame (when last_active_leaf=None ≠ current_leaf).
+                // first frame (when last_active_chart_id=None ≠ current_chart_id).
                 if let Some(active_cid_sync) = self.panel_app.panel_grid.active_container_id() {
                     // KEY-INTEGRITY (series-leak fix 2026-07-17): the full
                     // (symbol, exchange, AT) key goes through ONE resetting

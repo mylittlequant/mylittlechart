@@ -1,0 +1,47 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" style="--seek: 0s; --play-state: running;">
+  <title>MyLittleChart magic hat spinning</title>
+  <desc>A seamless in-plane rotation of the magic hat on a transparent canvas.</desc>
+  <style>
+    #magic-hat-spin-motion {
+      transform-box: view-box;
+      transform-origin: 256px 256px;
+      animation: magic-hat-spin 2.4s linear infinite;
+      animation-delay: calc(0s - var(--seek));
+      animation-play-state: var(--play-state);
+    }
+
+    @keyframes magic-hat-spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+  </style>
+  <g id="magic-hat-spin-motion">
+    <g id="magic-hat" transform="translate(81 131.75) scale(1.75)">
+      <g id="hat-brim">
+        <path d="M 26,100 C 46,92 68,84 89,80 C 115,70 142,62 160,58 C 176,54 188,55 192,61 C 196,68 185,78 166,86 C 140,97 108,111 78,121 C 54,130 33,135 19,130 C 9,127 5,120 8,113 C 11,107 17,103 26,100 Z" fill="url(#spin_brim_gradient)" stroke="#000000" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+      </g>
+      <g id="hat-cone">
+        <path d="M 90.33,18.84 C 77.06,8.71 67.07,5.08 58.56,5.51 C 45.81,6.13 29.71,19.48 21.81,29.04 C 16.22,35.88 10.11,45.16 12.48,47.74 C 13.99,49.34 17.29,47.13 20.46,45.29 C 28.36,40.72 34.91,38.18 43.96,35.61 C 47.29,47.33 49.13,59.09 49.91,71.63 C 50.54,80.74 55.56,89.25 66.14,101.11 C 75.7,108.4 90.2,105.3 104.8,96.6 C 122.6,86.1 128.8,82.2 135.8,78.2 C 145.8,72.5 153,71.4 153.1,67.2 C 153.2,63.2 147.8,59.4 141.8,55 C 128.5,45 104,27.8 90.33,18.84 Z" fill="url(#spin_cone_gradient)" stroke="#000000" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        <g id="hat-symbols">
+          <path d="M 26.19,28.08 L 29.97,23.06 L 32.19,22.08 L 32.78,26.9 L 36.08,29.11 L 30.61,30.95 L 27.76,33.91 L 26.19,28.08 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M 47.16,37.23 L 50.46,29.38 L 54.5,34.91 L 60.96,35.33 L 57.66,40.8 L 59.38,46.85 L 52.47,46.1 L 50.03,47.94 L 47.16,37.23 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M 64.16,17.61 L 68.92,15.39 L 69.51,9.2 L 77.41,12.66 L 79.63,20.03 L 71.73,20.95 L 70.55,25.27 L 67.69,18.84 L 64.16,17.61 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M 106.21,49.96 L 111.68,47.33 L 112.27,41.28 L 118.73,46.24 L 124.19,55.8 L 116.83,55.11 L 113.53,58.91 L 112.94,53.21 L 106.21,49.96 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M 53.65,68.63 L 60.56,67.08 L 61.62,60.08 L 65.66,65.04 L 71.02,65.11 L 67.41,70.36 L 69.18,76.11 L 62.85,74.95 L 59.69,78.91 L 58.51,71.22 L 53.65,68.63 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path id="hat-star-lower-right" d="M 108.4,75 L 111.7,75.5 L 113.8,72.1 L 115.2,76.2 L 119.3,77.1 L 116.2,79.8 L 116.4,84 L 112.8,81.7 L 109.1,83.4 L 110.2,79.4 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M 86.83,35.61 C 79.22,35.61 72.42,42.21 72.42,50.06 C 72.42,57.92 78.75,63.41 86.36,63.02 C 92.01,62.69 96.21,59.02 97.82,54.7 C 95.7,56.54 93.69,57.13 90.39,57.06 C 83.87,56.81 80.31,51.85 80.31,46.85 C 80.31,42.21 82.91,38.18 86.83,36.61 V 35.61 Z" fill="#F4CD63" stroke="#000000" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/>
+        </g>
+      </g>
+    </g>
+  </g>
+  <defs>
+    <linearGradient id="spin_brim_gradient" x1="99.0291" y1="56.9531" x2="99.0291" y2="137.91" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2158A4"/>
+      <stop offset="1" stop-color="#21498E"/>
+    </linearGradient>
+    <linearGradient id="spin_cone_gradient" x1="80.2996" y1="5.4375" x2="80.2996" y2="101.109" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2158A4"/>
+      <stop offset="1" stop-color="#21498E"/>
+    </linearGradient>
+  </defs>
+</svg>

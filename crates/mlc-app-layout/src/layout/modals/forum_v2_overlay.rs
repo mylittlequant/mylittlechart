@@ -353,7 +353,7 @@ fn draw_text_link(
     tt: &ToolbarTheme,
 ) -> f64 {
     let hovered = coord.is_hovered(&WidgetId::from(widget_id));
-    ctx.set_fill_color(if hovered { hover_color } else { &tt.item_text_faint });
+    ctx.set_fill_color(if hovered { hover_color } else { &tt.muted_ink });
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(label, x, y);
@@ -607,7 +607,7 @@ fn draw_crumb_segment(
     } else if hovered {
         ctx.set_fill_color(&tt.item_text_hover);
     } else {
-        ctx.set_fill_color(&tt.item_text_faint);
+        ctx.set_fill_color(&tt.muted_ink);
     }
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
@@ -814,7 +814,7 @@ fn draw_kind_pill(ctx: &mut dyn RenderContext, x: f64, y: f64, kind: &str, tt: &
     ctx.set_stroke_color(&tt.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rect(x, y, w, PILL_H);
-    ctx.set_fill_color(&tt.item_text_faint);
+    ctx.set_fill_color(&tt.muted_ink);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(&label, x + w / 2.0, y + PILL_H / 2.0);
@@ -895,7 +895,7 @@ fn draw_quick_search_dropdown(
                 None => format!("{} · {}", hit.author, relative_time(&hit.created_at, current_time_ms)),
             };
             ctx.set_font("10px monospace");
-            ctx.set_fill_color(&tt.item_text_faint);
+            ctx.set_fill_color(&tt.muted_ink);
             let meta = crate::ui::widgets::fit_text_to_width(ctx, &meta, rect.width - 12.0);
             ctx.fill_text(&meta, rect.x + 6.0, rect.y + 34.0);
 
@@ -907,7 +907,7 @@ fn draw_quick_search_dropdown(
     let more_rect = WidgetRect::new(box_x + 4.0, ry, box_w - 8.0, QUICK_MORE_ROW_H - 4.0);
     let more_hovered = coord.is_hovered(&WidgetId::from("cloud_overlay:forum2:quick_more"));
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(if more_hovered { &tt.item_text_hover } else { &tt.item_text_faint });
+    ctx.set_fill_color(if more_hovered { &tt.item_text_hover } else { &tt.muted_ink });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text("More results…", more_rect.center_x(), more_rect.center_y());
@@ -1007,7 +1007,7 @@ fn draw_totals_header(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, f: &F
     let threads: i64 = f.boards.iter().map(|b| b.thread_count).sum();
     let posts: i64 = threads + f.boards.iter().map(|b| b.reply_count).sum::<i64>();
     ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_faint);
+    ctx.set_fill_color(&tt.muted_ink);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     let label = format!(
@@ -1088,7 +1088,7 @@ fn draw_board_idx_header(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, tt
     let cols = board_idx_cols(x, w);
     let lang = current_language();
     ctx.set_font("500 10px sans-serif");
-    ctx.set_fill_color(&tt.item_text_faint);
+    ctx.set_fill_color(&tt.muted_ink);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.set_text_align(TextAlign::Left);
     ctx.fill_text(&ForumKey::ColBoard.get(lang).to_uppercase(), x + 8.0, y);
@@ -1143,7 +1143,7 @@ fn draw_board_idx_row(
             ctx.set_stroke_color(&tt.separator);
             ctx.set_stroke_width(1.0);
             ctx.stroke_rounded_rect(tag_x, y + 2.0, tag_w, 14.0, 3.0);
-            ctx.set_fill_color(&tt.item_text_faint);
+            ctx.set_fill_color(&tt.muted_ink);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(&tag_label, tag_x + 5.0, y + 9.0);
             ctx.set_text_baseline(TextBaseline::Top);
@@ -1181,7 +1181,7 @@ fn draw_board_idx_row(
                 ty += 14.0;
             }
             ctx.set_font("10px monospace");
-            ctx.set_fill_color(&tt.item_text_faint);
+            ctx.set_fill_color(&tt.muted_ink);
             // "author · time" (concept's own `.lp-m`) — the author is
             // omitted, not left blank, on an older server that has not
             // deployed `last_post_author` yet (`BoardUi::last_post_author`'s
@@ -1195,7 +1195,7 @@ fn draw_board_idx_row(
         }
         _ => {
             ctx.set_font("11px sans-serif");
-            ctx.set_fill_color(&tt.item_text_faint);
+            ctx.set_fill_color(&tt.muted_ink);
             ctx.fill_text("No posts yet", cols.last_post_x, y + 2.0);
         }
     }
@@ -1264,7 +1264,7 @@ fn draw_thread_idx_header(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, t
     let cols = thread_idx_cols(x, w);
     let lang = current_language();
     ctx.set_font("500 10px sans-serif");
-    ctx.set_fill_color(&tt.item_text_faint);
+    ctx.set_fill_color(&tt.muted_ink);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.set_text_align(TextAlign::Left);
     ctx.fill_text(&ForumKey::ColTitle.get(lang).to_uppercase(), x + 8.0, y);
@@ -1303,7 +1303,7 @@ fn draw_thread_idx_row(
         title_x += 18.0;
     }
     if t.locked {
-        draw_svg_icon(ctx, Icon::Lock.svg(), title_x, cy - 7.0, 14.0, 14.0, &tt.item_text_faint);
+        draw_svg_icon(ctx, Icon::Lock.svg(), title_x, cy - 7.0, 14.0, 14.0, &tt.muted_ink);
         title_x += 18.0;
     }
     ctx.set_text_align(TextAlign::Left);
@@ -1340,13 +1340,13 @@ fn draw_thread_idx_row(
         // No room to split without the ellipsis landing mid-author — draw
         // as one run in the fainter tone rather than an awkwardly clipped
         // two-colour split.
-        ctx.set_fill_color(&tt.item_text_faint);
+        ctx.set_fill_color(&tt.muted_ink);
         ctx.fill_text(&whole, cols.act_x, cy);
     } else {
         ctx.set_fill_color(&tt.item_text_muted);
         ctx.fill_text(&t.author, cols.act_x, cy);
         let author_w = ctx.measure_text(&t.author);
-        ctx.set_fill_color(&tt.item_text_faint);
+        ctx.set_fill_color(&tt.muted_ink);
         ctx.fill_text(&rest, cols.act_x + author_w, cy);
     }
 
@@ -1679,7 +1679,7 @@ fn draw_post_card(
         ctx.set_font("9px monospace");
         let pill_w = ctx.measure_text(&label) + 10.0;
         let pill_x = auth_cx - pill_w / 2.0;
-        let rank_color = if is_staff { &tt.accent } else { &tt.item_text_faint };
+        let rank_color = if is_staff { &tt.accent } else { &tt.muted_ink };
         ctx.set_stroke_color(if is_staff { &tt.accent } else { &tt.separator });
         ctx.set_stroke_width(1.0);
         ctx.stroke_rounded_rect(pill_x, acy, pill_w, RANK_LINE_H, 3.0);
@@ -1695,7 +1695,7 @@ fn draw_post_card(
     let mut ly = y + CARD_PAD;
 
     ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_faint);
+    ctx.set_fill_color(&tt.muted_ink);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(&format!("#{number}"), body_x, ly);
@@ -1708,7 +1708,7 @@ fn draw_post_card(
     if let Some((parent_number, parent_author)) = in_reply_to {
         let lang = current_language();
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(&tt.item_text_faint);
+        ctx.set_fill_color(&tt.muted_ink);
         let prefix = format!("\u{21b3} {} ", ForumKey::InReplyTo.get(lang));
         ctx.fill_text(&prefix, body_x, ly);
         let prefix_w = ctx.measure_text(&prefix);
@@ -1780,7 +1780,7 @@ fn draw_reply_chip(
 
     let close_rect = WidgetRect::new(rect.x + rect.width - close_w - 4.0, rect.y + (CHIP_H - 16.0) / 2.0, close_w, 16.0);
     let close_hovered = coord.is_hovered(&WidgetId::from("cloud_overlay:forum2:clear_reply_to"));
-    ctx.set_fill_color(if close_hovered { &tt.item_text_hover } else { &tt.item_text_faint });
+    ctx.set_fill_color(if close_hovered { &tt.item_text_hover } else { &tt.muted_ink });
     ctx.set_text_align(TextAlign::Center);
     ctx.fill_text("\u{d7}", close_rect.center_x(), close_rect.center_y());
     coord.register_on_layer("cloud_overlay:forum2:clear_reply_to", close_rect, Sense::CLICK | Sense::HOVER, layer_id);
@@ -1952,7 +1952,7 @@ fn draw_right_thread(
                 title_x += 20.0;
             }
             if t.locked {
-                draw_svg_icon(ctx, Icon::Lock.svg(), title_x, ly + 2.0, 16.0, 16.0, &tt.item_text_faint);
+                draw_svg_icon(ctx, Icon::Lock.svg(), title_x, ly + 2.0, 16.0, 16.0, &tt.muted_ink);
                 title_x += 20.0;
             }
             ctx.set_font("600 14px sans-serif");
@@ -1963,7 +1963,7 @@ fn draw_right_thread(
             ly += TITLE_LINE_H;
 
             ctx.set_font("11px monospace");
-            ctx.set_fill_color(&tt.item_text_faint);
+            ctx.set_fill_color(&tt.muted_ink);
             let meta = thread_meta_line(flat_replies.len(), &t.author, &t.created_at);
             let meta = crate::ui::widgets::fit_text_to_width(ctx, &meta, sw);
             ctx.fill_text(&meta, sx, ly);
@@ -2035,7 +2035,7 @@ fn draw_right_thread(
     } else if !f.caller_signed_in {
         let lang = current_language();
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(&tt.item_text_faint);
+        ctx.set_fill_color(&tt.muted_ink);
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(ForumKey::SignInToReply.get(lang), x + w / 2.0, cy + SIGNIN_LINE_H / 2.0);

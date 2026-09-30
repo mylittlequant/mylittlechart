@@ -32,6 +32,17 @@ mlc-cloud        = { path = "../mlc-cloud",        package = "mylittlechart-clou
 # directly only from `cloud_session.rs`, hence gated with `cloud` below
 # rather than pulled in unconditionally.
 mlc-vault        = { path = "../mlc-vault",        package = "mylittlechart-vault", optional = true }
+# `messenger_io.rs`: the web glue over `mlc_messenger::driver::MessengerDriver` (fetch +
+# IndexedDB + a Web Lock). Gated with `cloud` like `mlc-vault`: the messenger talks to
+# the account server with the cloud bearer token and is keyed by the vault.
+mlc-messenger    = { path = "../mlc-messenger",    package = "mylittlechart-messenger", optional = true }
+# `VaultState` (the "open in another tab" state a waiting tab reports) lives in the
+# messenger view-model leaf; `mlc-messenger` does not re-export it. Already in the
+# graph through `mlc-messenger`, so this adds no new package.
+mlc-messenger-model = { path = "../mlc-messenger-model", package = "mylittlechart-messenger-model", optional = true }
+# `messenger_io.rs` wraps the vault key as `Zeroizing<[u8; 32]>` for `MessengerDriver::new`
+# (same use as `mlc-app-shell-vello`); already a dependency of `mlc-vault`/`mlc-messenger`.
+zeroize          = { version = "1", optional = true }
 
 # uzor web bindings — wasm32-only at runtime, but the Cargo.toml deps are
 # unconditional so cargo can resolve the graph on native (the cfg-gate in
@@ -76,6 +87,30 @@ web-sys              = { version = "0.3", features = [
     "Location",
     "HtmlElement",
     "HtmlAnchorElement",
+    "WebSocket",
+    "MessageEvent",
+    # `messenger_io.rs` (fetch + IndexedDB + Web Locks glue for the messenger driver)
+    "Request",
+    "RequestInit",
+    "RequestMode",
+    "RequestCache",
+    "Headers",
+    "Response",
+    "AbortController",
+    "AbortSignal",
+    "UrlSearchParams",
+    "Event",
+    "EventTarget",
+    "DomStringList",
+    "IdbFactory",
+    "IdbDatabase",
+    "IdbOpenDbRequest",
+    "IdbRequest",
+    "IdbTransaction",
+    "IdbTransactionMode",
+    "IdbObjectStore",
+    "IdbKeyRange",
+    "CloseEvent",
 ] }
 console_error_panic_hook = "0.1"
 serde_json = "1.0"
@@ -103,7 +138,7 @@ base64   = { workspace = true, optional = true }
 default = []
 # Server connectivity (auth + sync via /api/*). Enabled for official builds
 # (package-app.sh passes --features cloud); OSS self-builds stay local-only.
-cloud = ["dep:mlc-cloud", "dep:mlc-vault", "dep:base64", "mlc-core/cloud", "mlc-app-layout/cloud", "mlc-app/cloud", "mlc-app-input-shell/cloud"]
+cloud = ["dep:mlc-cloud", "dep:mlc-vault", "dep:mlc-messenger", "dep:mlc-messenger-model", "dep:zeroize", "dep:base64", "mlc-core/cloud", "mlc-app-layout/cloud", "mlc-app/cloud", "mlc-app-input-shell/cloud"]
 # Uncomment when ready to wire in alternative backends:
 # render-vello-cpu    = ["dep:uzor-render-vello-cpu"]
 # render-vello-hybrid = ["dep:uzor-render-vello-hybrid"]

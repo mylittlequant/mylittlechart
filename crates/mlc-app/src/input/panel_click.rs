@@ -3840,6 +3840,18 @@ impl ChartApp {
                 self.process_chart_out_event(mlc_core::events::ChartOutEvent::ShareLiveChart);
                 return;
             }
+            if item_id == "share_stream" {
+                if !self.panel_app.user_settings_state.account_signed_in {
+                    log::warn!("[ChartApp] share_stream refused: account_signed_in=false");
+                    #[cfg(feature = "cloud")]
+                    {
+                        self.panel_app.cloud_login_state.open();
+                    }
+                    return;
+                }
+                self.process_chart_out_event(mlc_core::events::ChartOutEvent::ShareStreamChart);
+                return;
+            }
 
             // Pinned-favorites quick-pick buttons on the top toolbar (user-
             // granularity-templates-inner arc, кусок 3 — TradingView
@@ -3990,6 +4002,17 @@ impl ChartApp {
             // Format: "dropdown:{dropdown_id}:{item_id}"
             let mut parts = rest.splitn(2, ':');
             if let (Some(dropdown_id), Some(item_id)) = (parts.next(), parts.next()) {
+                // One click on a flyout section's chevron toggles it. The
+                // dropdown stays open. The body of the same row is
+                // `__noop__` and only toggles on double-click.
+                if let Some(ordinal_str) = item_id.strip_prefix("__chevron__:header:") {
+                    if let Ok(ordinal) = ordinal_str.parse::<usize>() {
+                        let section_id = mlc_core::toolbar::flyout_section_id(dropdown_id, ordinal);
+                        self.panel_app.toolbar_state.toggle_flyout_section_collapsed(&section_id);
+                        self.persist_profile();
+                    }
+                    return;
+                }
                 // Noop items (disabled items, headers) use the "__noop__:" prefix.
                 // The click is already consumed by reaching here (it didn't hit __bg__),
                 // so we just return — the dropdown stays open with no action fired.
@@ -4093,6 +4116,22 @@ impl ChartApp {
                 // enforced up top (this dropdown only opens once that gate
                 // already passed), and `open_share` is public regardless of
                 // sign-in.
+                if item_id == mlc_core::toolbar::SHARE_SETTINGS_ACTION_ID
+                    && (dropdown_id == "share_chart" || dropdown_id == "screenshot")
+                {
+                    self.panel_app.toolbar_state.open_dropdown_id = None;
+                    self.panel_app.share_settings_state.is_open = true;
+                    self.panel_app.share_settings_state.status.clear();
+                    self.panel_app.share_settings_state.rights_preset = self.active_chart_rights_preset();
+                    let field_id = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
+                    let mut coord = self.input_coordinator.borrow_mut();
+                    let tf = coord.text_fields_mut();
+                    tf.set_text(&field_id, "");
+                    tf.begin_edit(&field_id);
+                    tf.focus(crate::text_input::SHARE_SETTINGS_NICK);
+                    return;
+                }
+
                 if dropdown_id == "share_chart" {
                     if item_id == "share_chart" {
                         self.process_chart_out_event(mlc_core::events::ChartOutEvent::ShareLiveChart);
@@ -5384,6 +5423,108 @@ impl ChartApp {
         // 2026-09-06) — public even signed-out, so no account gate here
         // (that gate lives on the `share_chart` button's OWN single-click
         // action above).
+        if let Some(rest) = widget_id.strip_prefix("share_settings:") {
+            match rest {
+                "close" | "cancel" => {
+                    self.panel_app.share_settings_state.is_open = false;
+                    self.panel_app.share_settings_state.hits.clear();
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                }
+                "input" => {
+                    let field_id = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
+                    {
+                        let mut coord = self.input_coordinator.borrow_mut();
+                        let tf = coord.text_fields_mut();
+                        tf.begin_edit(&field_id);
+                        tf.focus(crate::text_input::SHARE_SETTINGS_NICK);
+                    }
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                }
+                "modal_bg" => {}
+                "default" => {
+                    let preset = self.panel_app.share_settings_state.rights_preset.clone();
+                    self.set_default_share_rights(&preset);
+                }
+                other => {
+                    if let Some(which) = other.strip_prefix("toggle:") {
+                        if which == "edit" {
+                            self.panel_app.share_settings_state.edit_on =
+                                !self.panel_app.share_settings_state.edit_on;
+                            return;
+                        }
+                        let (public_on, clone_on) = match self.panel_app.share_settings_state.rights_preset.as_str() {
+                            "view_only" => (true, false),
+                            "private" => (false, true),
+                            "private_view" => (false, false),
+                            _ => (true, true),
+                        };
+                        let (public_on, clone_on) = match which {
+                            "public" => (!public_on, clone_on),
+                            "clone" => (public_on, !clone_on),
+                            _ => (public_on, clone_on),
+                        };
+                        let preset = match (public_on, clone_on) {
+                            (true, true) => "public_clone",
+                            (true, false) => "view_only",
+                            (false, true) => "private",
+                            (false, false) => "private_view",
+                        };
+                        self.set_link_rights(preset);
+                    } else if let Some(rest) = other.strip_prefix("pick:") {
+                        let idx: usize = rest.parse().unwrap_or(usize::MAX);
+                        if let Some((nick, _)) = self.panel_app.share_settings_state.hits.get(idx).cloned() {
+                            let field_id = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
+                            {
+                                let mut coord = self.input_coordinator.borrow_mut();
+                                let tf = coord.text_fields_mut();
+                                tf.set_text(&field_id, &nick);
+                                tf.begin_edit(&field_id);
+                                tf.focus(crate::text_input::SHARE_SETTINGS_NICK);
+                            }
+                            let public_on = !matches!(
+                                self.panel_app.share_settings_state.rights_preset.as_str(),
+                                "private" | "private_view"
+                            );
+                            let clone_on = !matches!(
+                                self.panel_app.share_settings_state.rights_preset.as_str(),
+                                "view_only" | "private_view"
+                            );
+                            let mut tiers: Vec<&str> = Vec::new();
+                            if !public_on {
+                                tiers.push(if clone_on { "clone" } else { "view" });
+                            }
+                            if self.panel_app.share_settings_state.edit_on {
+                                tiers.push("edit");
+                            }
+                            self.grant_share_nick(&nick, &tiers);
+                        }
+                    } else if let Some(tier) = other.strip_prefix("grantfield:") {
+                        let field_id = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
+                        let nick = self.input_coordinator.borrow().text_fields().text(&field_id).trim().to_string();
+                        if nick.is_empty() {
+                            self.panel_app.share_settings_state.status = "Type or pick a nick".to_string();
+                        } else {
+                            self.grant_share_nick(&nick, &[tier]);
+                        }
+                    } else if let Some(rest) = other.strip_prefix("grant:") {
+                        let mut parts = rest.split(':');
+                        let idx: usize = parts.next().unwrap_or("").parse().unwrap_or(usize::MAX);
+                        let tier = parts.next().unwrap_or("clone");
+                        if let Some((nick, _)) = self.panel_app.share_settings_state.hits.get(idx).cloned() {
+                            self.grant_share_nick(&nick, &[tier]);
+                        }
+                    }
+                }
+            }
+            return;
+        }
+
+        // === Checkout modal (plans / pay / anonymous key) and its entry points ===
+        if let Some(rest) = widget_id.strip_prefix("checkout:") {
+            self.on_checkout_click(rest, x, y);
+            return;
+        }
+
         if let Some(rest) = widget_id.strip_prefix("share_open:") {
             match rest {
                 "submit" => {
@@ -5416,24 +5557,39 @@ impl ChartApp {
             return;
         }
 
-        // === Shared-chart viewer row "Clone to my charts" click
-        // (native-share-viewer arc, 2026-09-06) — `mlc-app-layout`'s
-        // `ui::share_viewer_row::draw_share_viewer_row` own `share:clone:
-        // <preset_id>` hit-id contract; only ever drawn when
-        // `shared_chart_meta(id).has_right("clone")` is true, but a signed-
-        // out session still needs its own gate here (mirrors `share_chart`'s
-        // own single-click account gate above) since cloning writes a new
-        // preset under this account, unlike opening the read-only tab
-        // itself, which is public.
-        if let Some(preset_id) = widget_id.strip_prefix("share:clone:") {
-            if !self.panel_app.user_settings_state.account_signed_in {
-                log::warn!("[ChartApp] share:clone refused: account_signed_in=false");
-                #[cfg(feature = "cloud")]
-                {
-                    self.panel_app.cloud_login_state.open();
-                }
-                return;
+        // Public share: a signed-out viewer may clone the open chart into
+        // a local tab. Creating a share still requires an account.
+        if widget_id == "share_end:close" {
+            if let Some(id) = self.stream_ended.clone() {
+                self.stream_ended = None;
+                self.close_tab(&id);
             }
+            return;
+        }
+        if widget_id == "share_end:bg" {
+            return;
+        }
+
+        if let Some(which) = widget_id.strip_prefix("share_live:") {
+            match which {
+                "live" => {
+                    let live = !self.share_live_on();
+                    self.set_share_live(live);
+                }
+                "viewport" => {
+                    let on = !self.share_live_viewport_on();
+                    self.set_share_viewport(on);
+                }
+                "cursor" => {
+                    let on = !self.share_live_cursor_on();
+                    self.set_share_cursor(on);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        if let Some(preset_id) = widget_id.strip_prefix("share:clone:") {
             match self.shared_chart_meta(preset_id).map(|m| m.token.clone()) {
                 Some(token) => {
                     self.request_clone_share(&token);
@@ -6435,11 +6591,20 @@ impl ChartApp {
                         self.open_dm_vault_unlock_overlay();
                         return;
                     }
+                    // With an outside provider backing the tab the draft goes
+                    // to it as a `SendText` intent (`messenger_bridge`); the
+                    // legacy `"send"` arm below is the DM path.
+                    if action == "send" && self.messenger_send_draft() {
+                        return;
+                    }
                     // `dm` moved to `CommunityState` (community-modal arc
                     // W1) — shadow `st` for the rest of this arm, same idiom
                     // the `"forum2:"` arm above uses.
                     let st = &mut self.panel_app.community_state;
                     use mlc_app_layout::ui::modal_settings::{DmMessagePage, DmRequest, DmView};
+                    // An outside provider backs the tab: room ids are opaque
+                    // strings and every mutation is a `MessengerIntent`.
+                    let external = st.messenger_external;
 
                     // Navigation works even with the vault sealed —
                     // `dm.available` (paid + unlocked) gates DECRYPTING and
@@ -6450,6 +6615,10 @@ impl ChartApp {
                     // action as `forum2:load_more` — no write, so it stays
                     // outside the `dm.available` gate below too.
                     match action {
+                        rest2 if rest2.starts_with("conversation:") && external => {
+                            st.open_messenger_room(mlc_messenger_model::RoomId::from(&rest2["conversation:".len()..]));
+                            return;
+                        }
                         rest2 if rest2.starts_with("conversation:") => {
                             if let Ok(id) = rest2["conversation:".len()..].parse::<i64>() {
                                 // `open_conversation` already clears
@@ -6462,8 +6631,23 @@ impl ChartApp {
                             }
                             return;
                         }
+                        // A folder-rail row (`messenger_overlay.rs`'s
+                        // `draw_rail_row`): selects which folder the chat
+                        // list shows. The rail's "Folders" settings row is
+                        // not a folder key and selects nothing.
+                        rest2 if rest2.starts_with("folder:") => {
+                            use mlc_app_layout::ui::modal_settings::MessengerFolderSel;
+                            if let Some(sel) = MessengerFolderSel::from_widget_key(&rest2["folder:".len()..]) {
+                                st.messenger_folder = sel;
+                            }
+                            return;
+                        }
                         "back" => {
-                            st.dm.reset_to_list();
+                            if external {
+                                st.close_messenger_room();
+                            } else {
+                                st.dm.reset_to_list();
+                            }
                             self.input_coordinator.borrow_mut().text_fields_mut().blur();
                             return;
                         }
@@ -6473,6 +6657,12 @@ impl ChartApp {
                         // own shape. `has_older: true` re-checked here (same
                         // "stale click target" reasoning every other arm in
                         // this dispatch gives its own render-side gate).
+                        "load_older" if external => {
+                            if let Some(room) = st.messenger_open_room() {
+                                self.panel_app.messenger_enqueue(mlc_messenger_model::MessengerIntent::LoadOlder { room });
+                            }
+                            return;
+                        }
                         "load_older" => {
                             if let DmView::Conversation { id, has_older: true, messages, .. } = &st.dm.view {
                                 if let Some(lowest_id) = messages.first().map(|m| m.id) {
@@ -6524,7 +6714,7 @@ impl ChartApp {
                         }
                         _ => {}
                     }
-                    if !st.dm.available {
+                    if !external && !st.dm.available {
                         return;
                     }
                     // Recipient-search dropdown (owner ruling 2026-09-09,
@@ -6541,6 +6731,13 @@ impl ChartApp {
                         // A row in the recipient-search dropdown. Mirrors
                         // `DM_PEER`'s own Enter-on-top-result path
                         // (`text_input::dispatch::text_action_dm_peer`).
+                        rest2 if rest2.starts_with("lookup_result:") && external => {
+                            if let Ok(i) = rest2["lookup_result:".len()..].parse::<usize>() {
+                                let wid = uzor::WidgetId::from(crate::text_input::DM_PEER);
+                                self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+                                self.panel_app.messenger_start_dm_with_hit(i);
+                            }
+                        }
                         rest2 if rest2.starts_with("lookup_result:") => {
                             if let Ok(i) = rest2["lookup_result:".len()..].parse::<usize>() {
                                 if let Some(with_label) = st.dm.lookup_results.get(i).map(|h| h.public_id.clone()) {
@@ -6590,6 +6787,88 @@ impl ChartApp {
                         // Claimed on mousedown by the store — same "nothing
                         // to do here" idiom the v1/forum2 arms above use.
                         "peer_input" | "draft_input" => { /* claimed on mousedown */ }
+                        // The chat header's own ⋮ button — opens the SAME
+                        // chat-row context menu a right-click on the row
+                        // would (`ChartApp::open_dm_chat_row_menu`'s own
+                        // doc), for the currently open room, anchored at
+                        // this click's own position (this button has no
+                        // row rect of its own to right-click).
+                        "header_more" => {
+                            let Some(room_id) = st.messenger_open_room().map(|room| room.to_string()) else { return };
+                            let w = self.width as f64;
+                            let h = self.height as f64;
+                            self.open_dm_chat_row_menu(&room_id, x, y, w, h);
+                        }
+                        // A channel subscriber's own Mute/Unmute footer
+                        // (`messenger_overlay.rs`'s `draw_channel_cta`) —
+                        // the same toggle the row menu's Mute item runs.
+                        "channel_mute" => {
+                            use mlc_app_layout::ui::dm_messenger_provider::{room_action, RoomAction};
+                            let Some(room_id) = st.messenger_open_room().map(|room| room.to_string()) else { return };
+                            if !self.panel_app.messenger_room_action(&room_id, RoomAction::ToggleMute) {
+                                room_action(&mut self.panel_app.community_state.dm, &room_id, RoomAction::ToggleMute);
+                            }
+                        }
+                        // The hovered-bubble quick-action bar's own Reply
+                        // icon (messenger UI-2b `qbar`) — mirrors the
+                        // pre-existing `"dm_msg:reply"` context-menu action
+                        // (`modals.rs`'s `on_context_menu_action`): today's
+                        // DM provider reports `capabilities().replies ==
+                        // false`, so a real reply-composer UI has nothing to
+                        // arm yet; kept wired for whichever provider sets
+                        // that flag.
+                        rest2 if rest2.starts_with("reply:") => {
+                            let event_id = &rest2["reply:".len()..];
+                            log::debug!(
+                                "[ChartApp] DM message reply requested for event {event_id}, no reply-composer UI yet"
+                            );
+                        }
+                        // The hovered-bubble quick-action bar's own Forward
+                        // icon — opens the forward flow's own chat picker
+                        // (concept: "bubble action → chat picker →
+                        // `MessengerIntent::Forward`"), targeting the
+                        // currently open room as the source.
+                        rest2 if rest2.starts_with("forward:") => {
+                            let event_id = rest2["forward:".len()..].to_string();
+                            let Some(from_room) = st.messenger_open_room().map(|room| room.to_string()) else { return };
+                            st.forward_target_picker =
+                                Some(mlc_app_layout::ui::modal_settings::ForwardTargetPicker { from_room, event_id });
+                        }
+                        "forward_cancel" => {
+                            st.forward_target_picker = None;
+                        }
+                        // A row in the forward picker itself — the picked
+                        // target room. Enqueues through the SAME
+                        // `MessengerProvider::enqueue` mailbox every other
+                        // messenger mutation uses (`dm_messenger_provider::
+                        // forward`'s own doc); today's DM adapter refuses it
+                        // (`DmMessengerProvider::enqueue`'s own catch-all),
+                        // same "kept wired, unreachable today" convention as
+                        // `"dm_msg:reply"` above.
+                        rest2 if rest2.starts_with("forward_to:") => {
+                            let to_room = rest2["forward_to:".len()..].to_string();
+                            if let Some(picker) = st.forward_target_picker.take() {
+                                if !self.panel_app.messenger_forward(&picker.from_room, &picker.event_id, &to_room) {
+                                    mlc_app_layout::ui::dm_messenger_provider::forward(
+                                        &mut self.panel_app.community_state.dm, &picker.from_room, &picker.event_id, &to_room,
+                                    );
+                                }
+                            }
+                        }
+                        // A `$SYMBOL` cashtag pill inline in a message's own
+                        // text (messenger UI-2b `text_tokens`) — the SAME
+                        // "programmatic symbol change, bypassing the
+                        // symbol-search modal" path a watchlist/quick-search
+                        // row click already uses (`ChartApp::apply_symbol`).
+                        // The id carries `msg_idx:line_idx:SYMBOL` for widget
+                        // uniqueness only — the symbol itself is always the
+                        // trailing segment (a ticker never contains `:`).
+                        rest2 if rest2.starts_with("symbol:") => {
+                            let Some(symbol) = rest2.rsplit(':').next().filter(|s| !s.is_empty()) else { return };
+                            let Some(chart_id) = self.panel_app.panel_grid.active_container_id() else { return };
+                            let exchange = self.active_exchange.as_str().to_string();
+                            self.apply_symbol(chart_id, symbol, &exchange, "S");
+                        }
                         _ => {}
                     }
                 }
@@ -6698,8 +6977,126 @@ impl ChartApp {
                     self.panel_app.user_settings_state.profile_rename_focused = false;
                     self.panel_app.user_settings_state.new_profile_name_focused = false;
                 }
+                "discoverable" => {
+                    let on = !self.panel_app.user_settings_state.discoverable;
+                    self.panel_app.user_settings_state.discoverable = on;
+                    self.panel_app.user_settings_state.friend_cmd = Some("discoverable".to_string());
+                }
+                "friend_invite" => {
+                    self.panel_app.user_settings_state.friend_cmd = Some("invite".to_string());
+                }
+                "friend_copy" => {
+                    let url = self.panel_app.user_settings_state.friend_invite.clone();
+                    if !url.is_empty() {
+                        self.clipboard_text = Some(url);
+                        self.panel_app.user_settings_state.friend_note = "Copied".to_string();
+                    }
+                }
+                "friend_nick" => {
+                    let field_id = WidgetId::from(crate::text_input::FRIENDS_NICK);
+                    {
+                        let mut coord = self.input_coordinator.borrow_mut();
+                        let tf = coord.text_fields_mut();
+                        tf.begin_edit(&field_id);
+                        tf.focus(crate::text_input::FRIENDS_NICK);
+                    }
+                    self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
+                }
+                rest if rest.starts_with("friend_add:")
+                    || rest.starts_with("friend_sub:")
+                    || rest.starts_with("friend_approve:")
+                    || rest.starts_with("friend_remove:")
+                    || rest.starts_with("friend_block:")
+                    || rest.starts_with("friend_unblock:")
+                    || rest.starts_with("friend_unsub:") =>
+                {
+                    let (action, nick) = if let Some(nick) = rest.strip_prefix("friend_add:") {
+                        ("request", nick)
+                    } else if let Some(nick) = rest.strip_prefix("friend_sub:") {
+                        ("subscribe", nick)
+                    } else if let Some(nick) = rest.strip_prefix("friend_approve:") {
+                        ("approve", nick)
+                    } else if let Some(nick) = rest.strip_prefix("friend_remove:") {
+                        ("remove", nick)
+                    } else if let Some(nick) = rest.strip_prefix("friend_block:") {
+                        ("block", nick)
+                    } else if let Some(nick) = rest.strip_prefix("friend_unblock:") {
+                        ("unblock", nick)
+                    } else if let Some(nick) = rest.strip_prefix("friend_unsub:") {
+                        ("unsubscribe", nick)
+                    } else {
+                        ("", "")
+                    };
+                    let nick = nick.trim();
+                    if !nick.is_empty() {
+                        self.panel_app.user_settings_state.friend_cmd = Some(format!("{action}:{nick}"));
+                        self.panel_app.user_settings_state.friend_note.clear();
+                    }
+                }
                 "header" => {
                     // Drag start handled in mouse_down.
+                }
+                // Admin tab (gift codes, grants, account lookup) — the ids and
+                // their parsing live with the tab's state.
+                rest if rest.starts_with("admin:") => {
+                    if let Some(admin_action) = mlc_app_layout::ui::admin_tab::AdminAction::parse(rest) {
+                        self.admin_click(admin_action);
+                    }
+                }
+                rest if rest.starts_with("shareadm:") => {
+                    let mut parts = rest.splitn(3, ':');
+                    let _ = parts.next();
+                    let action = parts.next().unwrap_or("");
+                    let token = parts.next().unwrap_or("").to_string();
+                    if token.is_empty() {
+                        return;
+                    }
+                    let (is_pinned, clone_on, to_private) = {
+                        let rows = &self.panel_app.user_settings_state.share_rows;
+                        match rows.iter().find(|r| r.token == token) {
+                            Some(r) => (r.pinned, r.clone_allowed, r.visibility != "private"),
+                            None => (false, false, true),
+                        }
+                    };
+                    if action == "keep" {
+                        self.panel_app.user_settings_state.share_revoke_confirm = None;
+                        self.panel_app.user_settings_state.share_status.clear();
+                        return;
+                    }
+                    if action == "revoke" && is_pinned {
+                        self.panel_app.user_settings_state.share_revoke_confirm = Some(token);
+                        self.panel_app.user_settings_state.share_status =
+                            "Revoke this pinned share?".to_string();
+                        return;
+                    }
+                    self.pending_share_admin = Some(match action {
+                        "revoke" | "revoke_yes" => {
+                            self.panel_app.user_settings_state.share_revoke_confirm = None;
+                            crate::ShareAdminCmd::Revoke { token }
+                        }
+                        "pin" => {
+                            let pinned = !is_pinned;
+                            crate::ShareAdminCmd::Patch {
+                                token,
+                                body: format!(r#"{{"pinned":{pinned}}}"#),
+                            }
+                        }
+                        "clone" => {
+                            crate::ShareAdminCmd::Patch {
+                                token,
+                                body: format!(r#"{{"clone_allowed":{}}}"#, !clone_on),
+                            }
+                        }
+                        "vis" => {
+                            let v = if to_private { "private" } else { "public" };
+                            crate::ShareAdminCmd::Patch {
+                                token,
+                                body: format!(r#"{{"visibility":"{v}"}}"#),
+                            }
+                        }
+                        _ => return,
+                    });
+                    self.panel_app.user_settings_state.share_status = "Saving…".to_string();
                 }
                 // Tab switching
                 rest if rest.starts_with("tab:") => {
@@ -6711,6 +7108,12 @@ impl ChartApp {
                         // other moment that can put it on screen.
                         if tab == UserSettingsTab::Vault {
                             self.sync_credentials_from_core();
+                        }
+                        if tab == UserSettingsTab::Shares {
+                            self.pending_share_admin = Some(crate::ShareAdminCmd::Refresh);
+                        }
+                        if tab == UserSettingsTab::Friends {
+                            self.panel_app.user_settings_state.friend_cmd = Some("load".to_string());
                         }
                         log::debug!("[ChartApp] user_settings tab switched to: {}", tab_id);
                     }
@@ -7971,6 +8374,15 @@ impl ChartApp {
                 if !enabled {
                     return;
                 }
+                // A row that owns a submenu (e.g. the chat-row menu's own
+                // "Add to folder ▸") is a toggle for that panel, not an
+                // action: the menu stays open and the submenu flips.
+                if let Some(parent) = self.panel_app.context_menu_state.items.iter_mut()
+                    .find(|item| item.action == action && !item.submenu.is_empty())
+                {
+                    parent.submenu_open = !parent.submenu_open;
+                    return;
+                }
                 log::debug!("[ChartApp] Context menu action: {}", action);
                 self.on_context_menu_action(action);
                 return;
@@ -8044,6 +8456,15 @@ impl ChartApp {
                     match sub_zone {
                         "gear" => {
                             self.panel_app.open_tags_tabs_for_leaf(leaf_id);
+                        }
+                        "clone" => {
+                            let token = self
+                                .shared_chart_meta(&self.panel_app.active_preset_id)
+                                .filter(|m| m.has_right("clone"))
+                                .map(|m| m.token.clone());
+                            if let Some(token) = token {
+                                self.request_clone_share(&token);
+                            }
                         }
                         "color_tag" => {
                             if let Some(zones) = self.leaf_tab_hit_zones.get(&leaf_id).cloned() {

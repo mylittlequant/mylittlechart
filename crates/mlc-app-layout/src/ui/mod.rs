@@ -1,5 +1,6 @@
 //! Chart UI rendering - self-contained toolbar and overlay rendering
 pub mod widgets;
+pub mod admin_tab;
 pub mod z_order;
 pub mod avatar_widget;
 pub mod chips_input;
@@ -25,6 +26,8 @@ pub mod sync_color_grid;
 pub mod tags_tabs_state;
 pub mod share_viewer_row;
 pub mod toast;
+pub mod checkout;
+pub mod qr_svg;
 
 pub use icons::Icon;
 pub use tags_tabs_state::*;

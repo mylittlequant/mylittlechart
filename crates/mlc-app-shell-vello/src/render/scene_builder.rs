@@ -330,7 +330,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
         // Render toast overlays — restyled to the modal frame (owner ask
         // 2026-09-09, toast restyle-and-anchor follow-up to §8).
         {
-            let mut toast_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
+            let mut toast_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, chrome::CHROME_HEIGHT, None, None);
             pw.chart.render_toasts(&mut toast_ctx, frame_time);
         }
 
@@ -459,7 +459,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                         width as f32,
                         height as f32,
                         0.0,
-                        0.0,
+                        chrome::CHROME_HEIGHT as f32,
                         None,
                         None,
                     );
@@ -566,7 +566,10 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                 }
                 // Render toast overlays — restyled to the modal frame (owner
                 // ask 2026-09-09, toast restyle-and-anchor follow-up to §8).
+                cpu_ctx.save();
+                cpu_ctx.translate(0.0, chrome::CHROME_HEIGHT);
                 pw.chart.render_toasts(&mut cpu_ctx, frame_time);
+                cpu_ctx.restore();
                 // Render tooltips (top-most layer). Suppressed while
                 // capturing a screenshot (screenshot-is-chart-only arc,
                 // 2026-09-05).
@@ -650,7 +653,10 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                 }
                 // Render toast overlays — restyled to the modal frame (owner
                 // ask 2026-09-09, toast restyle-and-anchor follow-up to §8).
+                skia_ctx.save();
+                skia_ctx.translate(0.0, chrome::CHROME_HEIGHT);
                 pw.chart.render_toasts(&mut skia_ctx, frame_time);
+                skia_ctx.restore();
                 // Render tooltips (top-most layer). Suppressed while
                 // capturing a screenshot (screenshot-is-chart-only arc,
                 // 2026-09-05).
@@ -724,7 +730,9 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                 }
                 // Render toast overlays — restyled to the modal frame (owner
                 // ask 2026-09-09, toast restyle-and-anchor follow-up to §8).
+                hybrid_ctx.translate(0.0, chrome::CHROME_HEIGHT);
                 pw.chart.render_toasts(&mut hybrid_ctx, frame_time);
+                hybrid_ctx.translate(0.0, -chrome::CHROME_HEIGHT);
                 // Render tooltips (top-most layer). Suppressed while
                 // capturing a screenshot (screenshot-is-chart-only arc,
                 // 2026-09-05).

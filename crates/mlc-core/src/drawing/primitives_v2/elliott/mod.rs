@@ -11,12 +11,16 @@ mod projection;
 pub mod guard;
 mod wave_hit;
 mod labels;
+pub mod scan_kind;
+pub mod elliott_scan;
 
 pub use elliott_impulse::{ElliottImpulse, ImpulseKind};
 pub use elliott_correction::{ElliottCorrection, CorrectionType};
 pub use elliott_triangle::ElliottTriangle;
 pub use elliott_double_combo::ElliottDoubleCombo;
 pub use elliott_triple_combo::ElliottTripleCombo;
+pub use scan_kind::{EwaScanKind, default_all_kind_ids};
+pub use elliott_scan::ElliottScan;
 pub use count::{
     WaveSlot, WaveLink, ChildSeed, child_seed, SuccessorSeed, successor_seed, successor_kinds,
     PredecessorSeed, predecessor_seed, predecessor_kinds,

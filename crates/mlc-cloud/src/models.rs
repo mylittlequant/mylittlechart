@@ -281,6 +281,15 @@ impl EntitlementsResponse {
 pub struct ShareCreateLiveRequest {
     pub title: String,
     pub preset: serde_json::Value,
+    /// Author chart id. The server reuses the token for this id.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub chart_id: String,
+    /// New links grant clone unless the owner later turns it off.
+    pub clone_allowed: bool,
+    /// `"view"` — the recipient cannot edit the author's chart.
+    pub interaction: String,
+    /// `"public"` or `"private"`.
+    pub visibility: String,
 }
 
 /// Response body from `POST /api/share/live` and `POST /api/share/screenshot`.
@@ -288,10 +297,13 @@ pub struct ShareCreateLiveRequest {
 pub struct ShareCreateResponse {
     pub token: String,
     /// Root-relative link target (`/?share=<token>`) — prefix with the
-    /// origin before handing it to a clipboard.
+    /// origin before handing it to a clipboard. A republish appends `&v=`.
     pub url_path: String,
     /// RFC 3339 instant after which the share stops resolving.
     pub expires_at: String,
+    /// Publish generation. Absent on an older server.
+    #[serde(default)]
+    pub revision: u64,
 }
 
 /// Public view of one share (`GET /api/share/{token}`), tagged by `kind`.
@@ -314,6 +326,19 @@ pub enum SharePublicResponse {
         /// sent this field at all.
         #[serde(default)]
         rights: Vec<String>,
+        /// Author publish generation of this preset. `0` on an older server.
+        #[serde(default)]
+        revision: u64,
+        /// The link's own clone flag, not the caller's resolved tier.
+        /// The owner is always `CloneProtected`, so `rights` contains
+        /// `"clone"` for them even when this is false.
+        #[serde(default)]
+        clone_allowed: bool,
+        /// Op-log head at the moment this preset was served. `0` on an
+        /// older server. Subscribers still read `GET /ops?after=` from
+        /// their own cursor; this is the head, not the cursor.
+        #[serde(default)]
+        op_seq: u64,
     },
     Screenshot {
         title: String,
@@ -336,6 +361,20 @@ pub struct ShareListEntry {
     pub bytes: i64,
     pub created_at: String,
     pub expires_at: String,
+    /// Ring pin. Absent on a server that predates the column.
+    #[serde(default)]
+    pub pinned: bool,
+    #[serde(default)]
+    pub clone_allowed: bool,
+    #[serde(default)]
+    pub interaction: String,
+    #[serde(default)]
+    pub visibility: String,
+    #[serde(default)]
+    pub allow_forward: bool,
+    /// Author chart id this live row is bound to. Empty on older servers.
+    #[serde(default)]
+    pub chart_id: String,
 }
 
 /// Response body from `GET /api/share/mine`.
@@ -878,6 +917,63 @@ pub struct DmLookupHit {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DmLookupResponse {
     pub users: Vec<DmLookupHit>,
+}
+
+/// One row of `GET /api/share/lookup?q=` — an account nick the caller can
+/// grant on a chart. Not a messenger recipient: no DM key is required.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct ShareNickHit {
+    pub nick: String,
+    #[serde(default)]
+    pub label: String,
+}
+
+/// Response body from `GET /api/share/lookup?q=`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareNickLookupResponse {
+    pub users: Vec<ShareNickHit>,
+}
+
+/// One chart op on `POST /api/share/{token}/ops` and the GET reply.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareChartOp {
+    pub kind: String,
+    pub object_id: String,
+    #[serde(default)]
+    pub body: String,
+    #[serde(default)]
+    pub seq: i64,
+}
+
+/// `GET /api/share/{token}/stream-open` — the single-use ticket for the live
+/// socket `GET /api/share-live/{token}?ticket=`. The caller's current right to
+/// publish rides along; the socket's `welcome` frame repeats it and is the
+/// value the client acts on.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareStreamOpen {
+    /// Single-use, bound to this share and to the caller.
+    #[serde(default)]
+    pub ticket: String,
+    /// The caller may send frames on this share right now.
+    #[serde(default)]
+    pub publish: bool,
+    /// Seconds the ticket stays redeemable.
+    #[serde(default)]
+    pub expires_in_s: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareOpsResponse {
+    pub head: i64,
+    #[serde(default)]
+    pub reset: bool,
+    #[serde(default)]
+    pub can_send: bool,
+    /// Author's Live toggle. False means catch up on a cadence.
+    #[serde(default)]
+    pub live: bool,
+    #[serde(default)]
+    pub ops: Vec<ShareChartOp>,
 }
 
 /// The other party to a [`DmConversation`].

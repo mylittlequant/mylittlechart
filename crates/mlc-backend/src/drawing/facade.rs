@@ -46,9 +46,18 @@ pub struct BubbleDrawingView<'a> {
     bubbles: &'a BubbleStore,
     bid: BubbleId,
     primitives: &'a [Box<dyn Primitive>],
+    /// Ephemeral primitives painted over the real ones; never stored.
+    overlay: &'a [Box<dyn Primitive>],
 }
 
 impl<'a> BubbleDrawingView<'a> {
+    /// Paint `overlay` on top of this bubble's primitives. The slice is
+    /// owned by the caller and never enters the drawing store.
+    pub fn with_overlay(mut self, overlay: &'a [Box<dyn Primitive>]) -> Self {
+        self.overlay = overlay;
+        self
+    }
+
     pub fn count(&self) -> usize {
         self.primitives.len()
     }
@@ -162,6 +171,9 @@ impl<'a> mlc_core::drawing::DrawingRenderView for BubbleDrawingView<'a> {
     fn render_bid(&self) -> Option<BubbleId> {
         Some(self.bid)
     }
+    fn overlay_primitives(&self) -> &[Box<dyn Primitive>] {
+        self.overlay
+    }
 }
 
 /// Read-only facade over `DrawingManager` + `BubbleStore`.
@@ -184,6 +196,7 @@ impl<'a> Drawings<'a> {
             bubbles: &self.bubbles,
             bid,
             primitives: self.mgr.primitives(&self.bubbles, bid),
+            overlay: &[],
         }
     }
 
@@ -829,6 +842,19 @@ impl<'a> DrawingsMut<'a> {
 
     pub fn refresh_wave_guards(&mut self, bid: BubbleId) {
         self.mgr.refresh_wave_guards(&mut self.bubbles, bid)
+    }
+
+    /// See `DrawingManager::refresh_footprint_derived` — the footprint
+    /// counterpart of [`Self::refresh_all_derived`]'s own bar-derived pass,
+    /// scoped to one bubble. Ordinary production writes to
+    /// `DataBubble::footprint_bars` already call this via
+    /// `bar_derived_cache::refresh_footprint_derived_caches` at their own
+    /// write point (every trade-fold install); this is for a caller that
+    /// wrote `footprint_bars` directly (`BubblesMut::with_bubble_mut`) and
+    /// needs every order-flow-family primitive's own cache to catch up
+    /// without waiting for the next live trade-fold event.
+    pub fn refresh_footprint_derived(&mut self, bid: BubbleId) {
+        self.mgr.refresh_footprint_derived(&mut self.bubbles, bid)
     }
 
     // ---- Test-harness lifecycle -----------------------------------------

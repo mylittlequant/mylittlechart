@@ -34,12 +34,12 @@ pub use folder::{Folder, FolderExclude, FolderIcon, FolderInclude};
 pub use ids::{EventId, PaginationToken, RoomId, TagName, UserId};
 pub use member::{initials_from_name, Member, MemberRole, RankBadge};
 pub use misc::{
-    BackPagination, Capabilities, CreateRoomRequest, MessengerIntent, PowerLevel, RoomVisibility,
-    Timestamp, VaultState,
+    BackPagination, Capabilities, CreateRoomRequest, MessengerIntent, PowerLevel,
+    PublicRoomEntry, RoomVisibility, Timestamp, UserEntry, VaultState,
 };
-pub use provider::MessengerProvider;
+pub use provider::{MessengerProvider, OWN_USER_ID};
 pub use room::{LastEventPreview, PreviewContent, RoomKind, RoomSummary, Tag};
 pub use timeline::{
-    LegacyContent, MembershipChange, MembershipEvent, MessageContent, ReactionSummary,
-    ReplyPreview, SendState, TimelineItem, UtdReason,
+    ForwardedFrom, LegacyContent, MembershipChange, MembershipEvent, MessageContent, ReactionSummary,
+    ReplyPreview, SendState, SharedChartCard, TimelineItem, UtdReason,
 };

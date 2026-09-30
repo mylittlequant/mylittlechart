@@ -170,6 +170,11 @@ pub fn save_persistent_state(chart: &mut ChartApp, perf: &mut PerfMeter) {
         mlc_core::InlineDockEdge::Free => "Free".to_string(),
     });
     profile.ui.favorites_bar_visible = chart.panel_app.toolbar_state.favorites_bar_visible;
+    // Collapsed flyout sections live on the toolbar, not on the profile
+    // object this function cloned. Without this copy a reload always
+    // comes back expanded.
+    profile.ui.collapsed_flyout_sections =
+        chart.panel_app.toolbar_state.collapsed_flyout_sections.clone();
     // Screenshot destination (screenshot-destination arc) — live toolbar-
     // state value, same carry as the favorites bar above; the camera
     // button's destination dropdown is the only writer.
@@ -294,7 +299,7 @@ pub fn save_persistent_state(chart: &mut ChartApp, perf: &mut PerfMeter) {
         // every fresh `ChartApp::new_window`), silently losing its
         // read-only status. `apply_cloned_preset` never marks its id
         // readonly, so a clone saves normally like any other preset.
-        if chart.is_readonly_tab(&preset.id) {
+        if chart.is_share_link(&preset.id) {
             continue;
         }
         match mlc_core::preset::storage::save_preset(preset) {

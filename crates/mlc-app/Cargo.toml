@@ -17,6 +17,13 @@ mlc-app-sidebar-content = { path = "../mlc-app-sidebar-content", package = "myli
 mlc-app-panels = { path = "../mlc-app-panels", package = "mylittlechart-app-panels" }
 mlc-alert-delivery = { path = "../mlc-alert-delivery", package = "mylittlechart-alert-delivery" }
 mlc-vault = { path = "../mlc-vault", package = "mylittlechart-vault" }
+# `MessengerProvider` / `MessengerIntent` — the seam `ChartApp::set_messenger_provider`
+# hands the Messages tab an outside (Matrix-shaped) provider through. A pure-std,
+# zero-dependency leaf, already a dependency of `mlc-app-layout`.
+mlc-messenger-model = { path = "../mlc-messenger-model", package = "mylittlechart-messenger-model" }
+# Billing wire models for the checkout bridge (`checkout_bridge.rs`): models
+# only, the fetch transport stays in the web shell. Cloud builds only.
+mlc-cloud = { path = "../mlc-cloud", package = "mylittlechart-cloud", optional = true }
 uuid = { version = "1", features = ["v4"] }
 mlc-backend-data-bridge = { path = "../mlc-backend-data-bridge", package = "mylittlechart-backend-data-bridge" }
 mlc-backend-trading-engine = { path = "../mlc-backend-trading-engine", package = "mylittlechart-backend-trading-engine" }
@@ -68,4 +75,4 @@ workspace = true
 
 [features]
 default = []
-cloud = ["mlc-core/cloud", "mlc-app-layout/cloud"]
+cloud = ["mlc-core/cloud", "mlc-app-layout/cloud", "dep:mlc-cloud"]

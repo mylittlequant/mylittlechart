@@ -16,6 +16,32 @@ use crate::platform::{DispatchOut, Platform};
 use crate::state::{DirtyFlags, InputState};
 use crate::tooltip::TooltipState;
 
+/// Hover on the share globe or the camera opens that button's menu
+/// instead of a tooltip. Click still fires the button's own action.
+fn sync_share_hover_menu(chart: &mut mlc_app::ChartApp) {
+    if chart.panel_app.share_settings_state.is_open || chart.panel_app.share_open_state.is_open {
+        return;
+    }
+    let tb = &mut chart.panel_app.toolbar_state;
+    let hover = tb.hovered_top_toolbar_id.clone();
+    let over_menu = tb.hovered_dropdown_item.is_some();
+    let open = tb.open_dropdown_id.clone();
+    let want = match hover.as_deref() {
+        Some("share_chart") | Some("screenshot") => hover,
+        _ => None,
+    };
+    if let Some(id) = want {
+        let replace = open.is_none()
+            || open.as_deref() == Some("share_chart")
+            || open.as_deref() == Some("screenshot");
+        if replace && open.as_deref() != Some(id.as_str()) {
+            tb.open_dropdown_id = Some(id);
+        }
+    } else if matches!(open.as_deref(), Some("share_chart") | Some("screenshot")) && !over_menu {
+        tb.open_dropdown_id = None;
+    }
+}
+
 /// Process one platform-neutral window event.
 ///
 /// GPU resize (`render_cx.resize_surface`) is NOT done here — the vello shell
@@ -372,6 +398,7 @@ pub fn process_event(
                 }
 
                 let time_ms = state.chrome_tooltip_start.elapsed().as_secs_f64() * 1000.0;
+                sync_share_hover_menu(chart);
                 // A chart-toolbar dropdown open answers the same hover a
                 // toolbar-item tooltip would explain — see
                 // `ChartToolbarState::has_open_dropdown` doc comment.
@@ -389,10 +416,21 @@ pub fn process_event(
                     toolbar_tooltip.update(Some(wid.clone()), time_ms, dropdown_open);
                     toolbar_tooltip.request_tooltip(wid, tip_text.to_string(), (x, y), time_ms);
                 } else if let Some(btn_id) = hovered_id {
-                    let wid = uzor::WidgetId::from(format!("toolbar:{}", btn_id));
-                    toolbar_tooltip.update(Some(wid.clone()), time_ms, dropdown_open);
-                    if let Some(text) = mlc_core::toolbar::find_toolbar_tooltip(btn_id) {
-                        toolbar_tooltip.request_tooltip(wid, text.to_string(), (x, y), time_ms);
+                    if btn_id == "share_chart" || btn_id == "screenshot" {
+                        toolbar_tooltip.update(None, time_ms, true);
+                    } else {
+                        let wid = uzor::WidgetId::from(format!("toolbar:{}", btn_id));
+                        toolbar_tooltip.update(Some(wid.clone()), time_ms, dropdown_open);
+                        // The camcorder explains its own state: off, connecting,
+                        // live, viewing, error.
+                        let tip = if btn_id == "share_stream" {
+                            Some(chart.share_stream_tooltip())
+                        } else {
+                            mlc_core::toolbar::find_toolbar_tooltip(btn_id)
+                        };
+                        if let Some(text) = tip {
+                            toolbar_tooltip.request_tooltip(wid, text.to_string(), (x, y), time_ms);
+                        }
                     }
                 } else {
                     let mut sidebar_tip = false;

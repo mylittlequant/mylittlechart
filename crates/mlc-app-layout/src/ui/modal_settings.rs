@@ -5,6 +5,7 @@
 //!
 //! Core re-exports these via `pub use mlc_core::ui::modal_settings::*`.
 
+use crate::ui::admin_tab::{AdminRequest, AdminState};
 use crate::ui::color_picker_state::ColorPickerState;
 use crate::ui::scroll_state::ScrollState;
 #[cfg(feature = "cloud")]
@@ -290,6 +291,43 @@ impl ShareOpenState {
     /// Close the overlay.
     pub fn close(&mut self) {
         self.is_open = false;
+    }
+}
+
+/// Share-settings overlay. Presets pick the default rights for the next
+/// Share and, when this chart already has a link, patch that link.
+/// `hits` is `(nick, label)` from the nick search.
+#[derive(Clone, Debug, Default)]
+pub struct ShareSettingsState {
+    pub is_open: bool,
+    pub status: String,
+    pub hits: Vec<(String, String)>,
+    /// `public_clone` | `view_only` | `private` | `private_view`.
+    pub rights_preset: String,
+    /// When on, a picked nick also receives an edit grant. Independent of
+    /// Public and Clone. The nick field stays available on a public link
+    /// so the author can name an editor.
+    pub edit_on: bool,
+    pub position: Option<(f64, f64)>,
+    pub is_dragging: bool,
+    pub drag_offset: Option<(f64, f64)>,
+}
+
+impl ShareSettingsState {
+    pub fn start_drag(&mut self, mouse_x: f64, mouse_y: f64, modal_x: f64, modal_y: f64) {
+        self.is_dragging = true;
+        self.drag_offset = Some((mouse_x - modal_x, mouse_y - modal_y));
+    }
+
+    pub fn update_drag(&mut self, mouse_x: f64, mouse_y: f64) {
+        if let Some((offset_x, offset_y)) = self.drag_offset {
+            self.position = Some((mouse_x - offset_x, mouse_y - offset_y));
+        }
+    }
+
+    pub fn end_drag(&mut self) {
+        self.is_dragging = false;
+        self.drag_offset = None;
     }
 }
 
@@ -3483,6 +3521,16 @@ pub enum UserSettingsTab {
     /// signed-in caller, so [`Self::visible`] prepends it instead of
     /// filtering it out, the mirror image of `Server`'s own gate below.
     Account,
+    /// The caller's own share links: pin, revoke, and the rights the
+    /// server already stores on each token.
+    Shares,
+    /// Privacy and friends. Signed-in only. Search visibility, the friend
+    /// list, and an invite link. Not part of share settings.
+    Friends,
+    /// Gift codes, grants and account lookup for an account holding the
+    /// `admin` role (`crate::ui::admin_tab`). Never in [`Self::all`]:
+    /// [`Self::visible`] appends it only when asked for the admin view.
+    Admin,
 }
 
 impl UserSettingsTab {
@@ -3495,6 +3543,9 @@ impl UserSettingsTab {
             Self::Performance => "performance",
             Self::Server => "server",
             Self::Account => "account",
+            Self::Shares => "shares",
+            Self::Friends => "friends",
+            Self::Admin => "admin",
         }
     }
 
@@ -3509,6 +3560,9 @@ impl UserSettingsTab {
             Self::Performance => UserSettingsKey::TabPerformance.get(lang),
             Self::Server => UserSettingsKey::TabServer.get(lang),
             Self::Account => UserSettingsKey::TabAccount.get(lang),
+            Self::Shares => "Shares",
+            Self::Friends => "Friends",
+            Self::Admin => mlc_core::i18n::AdminKey::TabAdmin.get(lang),
         }
     }
 
@@ -3530,14 +3584,24 @@ impl UserSettingsTab {
     /// (owner ruling 2026-09-09): the header's own account button opens
     /// straight onto it, so it reads as the account's own home tab, not an
     /// afterthought at the end of the rail.
-    pub fn visible(signed_in: bool) -> Vec<Self> {
-        let mut tabs = Vec::with_capacity(Self::all().len() + 1);
+    ///
+    /// `admin` appends [`Self::Admin`] LAST, and only for a signed-in caller —
+    /// the caller passes `UserSettingsState::admin_tab_visible`, which is true
+    /// only for an account holding the `admin` role on a shell that can serve
+    /// the tab. Everyone else's rail is unchanged.
+    pub fn visible(signed_in: bool, admin: bool) -> Vec<Self> {
+        let mut tabs = Vec::with_capacity(Self::all().len() + 4);
         if signed_in {
             tabs.push(Self::Account);
+            tabs.push(Self::Friends);
+            tabs.push(Self::Shares);
         }
         tabs.extend_from_slice(Self::all());
         if !signed_in {
             tabs.retain(|t| *t != Self::Server);
+        }
+        if signed_in && admin {
+            tabs.push(Self::Admin);
         }
         tabs
     }
@@ -3551,6 +3615,9 @@ impl UserSettingsTab {
             "performance" => Some(Self::Performance),
             "server" => Some(Self::Server),
             "account" => Some(Self::Account),
+            "shares" => Some(Self::Shares),
+            "friends" => Some(Self::Friends),
+            "admin" => Some(Self::Admin),
             _ => None,
         }
     }
@@ -3681,6 +3748,25 @@ pub fn validate_forum_body(body: &str) -> Result<(), String> {
         return Err("Body is too long (max 8192 bytes)".to_string());
     }
     Ok(())
+}
+
+/// One owned share link, as the Shares tab draws it.
+#[derive(Clone, Debug, Default)]
+pub struct ShareAdminRow {
+    pub token: String,
+    pub title: String,
+    pub kind: String,
+    pub pinned: bool,
+    pub clone_allowed: bool,
+    pub interaction: String,
+    pub visibility: String,
+    pub allow_forward: bool,
+    pub expires_at: String,
+    /// Author chart this row is bound to. Empty when the server omitted it.
+    pub chart_id: String,
+    /// RFC 3339 creation instant. The newest live row of a chart is the one a
+    /// republish reuses, so it is the one the author's channel binds to.
+    pub created_at: String,
 }
 
 /// State for the User Settings modal.
@@ -3833,6 +3919,30 @@ pub struct UserSettingsState {
     pub performance_tab_scroll: ScrollState,
     /// Scroll state for the Account tab content.
     pub account_tab_scroll: ScrollState,
+    pub shares_tab_scroll: ScrollState,
+    /// Rows of `GET /api/share/mine`, filled by the shell.
+    pub share_rows: Vec<ShareAdminRow>,
+    /// Whether nick search in messenger and share may find this account.
+    /// Friends can still find a hidden account.
+    pub discoverable: bool,
+    pub friend_nicks: Vec<String>,
+    pub friend_incoming: Vec<String>,
+    pub friend_outgoing: Vec<String>,
+    pub friend_subscriptions: Vec<String>,
+    pub friend_blocked: Vec<String>,
+    pub friend_invite: String,
+    /// Nick-search hits in the Friends tab. Nicks only.
+    pub friend_hits: Vec<String>,
+    pub friend_note: String,
+    /// `load` | `discoverable` | `invite` | `add:{nick}`. The shell drains it.
+    pub friend_cmd: Option<String>,
+    pub share_status: String,
+    /// Token of a pinned share whose Revoke click is waiting for Confirm.
+    /// Unpinned revoke does not arm this.
+    pub share_revoke_confirm: Option<String>,
+    /// The Admin tab (`crate::ui::admin_tab`). Only ever reached through
+    /// [`Self::admin_tab_visible`].
+    pub admin: AdminState,
 
     // ── WELCOME WIZARD ──────────────────────────────────────────────────
     /// True when the first-run welcome wizard should be shown (no profile.json on first launch).
@@ -4141,6 +4251,21 @@ impl Default for UserSettingsState {
             server_tab_scroll: ScrollState::default(),
             performance_tab_scroll: ScrollState::default(),
             account_tab_scroll: ScrollState::default(),
+            shares_tab_scroll: ScrollState::default(),
+            share_rows: Vec::new(),
+            discoverable: true,
+            friend_nicks: Vec::new(),
+            friend_incoming: Vec::new(),
+            friend_outgoing: Vec::new(),
+            friend_subscriptions: Vec::new(),
+            friend_blocked: Vec::new(),
+            friend_invite: String::new(),
+            friend_hits: Vec::new(),
+            friend_note: String::new(),
+            friend_cmd: None,
+            share_status: String::new(),
+            share_revoke_confirm: None,
+            admin: AdminState::default(),
             show_welcome_wizard: false,
             needs_vault_unlock: false,
             vault_unlock_error: None,
@@ -4245,6 +4370,46 @@ impl UserSettingsState {
         // `CloudLoginState::open`'s own reset, moved here with the field).
         self.redeem_requested = false;
         self.redeem_status = RedeemStatus::Idle;
+        // Freshly minted gift codes are shown once: closing drops them (and
+        // the rest of the Admin tab's per-visit data).
+        self.admin.on_close();
+    }
+
+    /// Whether the signed-in account holds the `admin` role, as the
+    /// `GET /api/forum/me` fetch reported it ([`Self::account_roles`]).
+    pub fn is_admin(&self) -> bool {
+        self.account_signed_in && self.account_roles.iter().any(|r| r == "admin")
+    }
+
+    /// Whether the Admin tab is in the rail: an admin, on a shell that can
+    /// serve its requests. Never true for anyone else — the server refuses
+    /// them anyway, this only keeps the tab out of their sight.
+    pub fn admin_tab_visible(&self) -> bool {
+        self.is_admin() && self.admin.served
+    }
+
+    /// The tab strip for this account.
+    pub fn visible_tabs(&self) -> Vec<UserSettingsTab> {
+        UserSettingsTab::visible(self.account_signed_in, self.admin_tab_visible())
+    }
+
+    /// The request the Admin tab wants performed, if any. The web shell calls
+    /// this every frame (through `ChartApp::take_admin_request`); the first
+    /// batches load is queued here so a modal reopened on the Admin tab fills
+    /// itself without a click.
+    pub fn take_admin_request(&mut self) -> Option<AdminRequest> {
+        let on_screen = self.is_open && self.active_tab == UserSettingsTab::Admin && self.admin_tab_visible();
+        self.admin.auto_load(on_screen);
+        self.admin.take_request()
+    }
+
+    /// The account lost the admin view (signed out, or the role went away):
+    /// drop the tab's data and step off it.
+    pub fn drop_admin_view(&mut self) {
+        self.admin.reset();
+        if self.active_tab == UserSettingsTab::Admin {
+            self.active_tab = UserSettingsTab::General;
+        }
     }
 
     /// Toggle open/closed.
@@ -4258,6 +4423,11 @@ impl UserSettingsState {
 
     /// Switch to a different tab and close any open dropdown.
     pub fn set_tab(&mut self, tab: UserSettingsTab) {
+        // The Admin tab cannot be entered by anyone it is hidden from — a
+        // stale click id or a saved tab id lands nowhere.
+        if tab == UserSettingsTab::Admin && !self.admin_tab_visible() {
+            return;
+        }
         self.active_tab = tab;
         self.active_dropdown = None;
     }
@@ -6751,6 +6921,80 @@ impl CommunityTab {
     }
 }
 
+/// The messenger composer's own "replying to" banner (concept `.cbar`) —
+/// set by clicking Reply on a bubble, cleared by its own ✕ or by sending.
+/// Carries only what the banner needs to PAINT (sender label, quoted
+/// preview); the `event_id` a real `MessengerIntent::SendText`'s own
+/// `reply_to` would attach is a later click-dispatch piece's job, same
+/// "paint now, wire the mutation later" split `messenger_overlay.rs`'s own
+/// top doc already draws for the folder rail's active-folder selection.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct MessengerReplyPreview {
+    pub sender_label: String,
+    pub preview: String,
+}
+
+/// The forward flow's own chat-picker overlay (concept "bubble action →
+/// chat picker → `MessengerIntent::Forward`") — opened by the hovered-
+/// bubble quick-action bar's own Forward icon, closed by picking a target
+/// room, cancelling, or sending the forward. Every id here is an OPAQUE
+/// room/event-id STRING, never `mlc_messenger_model::RoomId`/`EventId`
+/// themselves — `mlc-app` (this struct's own writer) is not a direct
+/// dependency of that crate (see `dm_messenger_provider::
+/// DmMessengerProviderView::capabilities`'s own doc for why).
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, PartialEq)]
+pub struct ForwardTargetPicker {
+    pub from_room: String,
+    pub event_id: String,
+}
+
+/// Which folder the messenger's left rail has selected — UI-side state, the
+/// provider has no notion of it. A custom folder is identified by its tag
+/// name as an opaque string (never `mlc_messenger_model::TagName`, for the
+/// reason [`ForwardTargetPicker`]'s own doc gives). The archived rooms are
+/// shown ONLY under [`Self::Archive`]; every other selection hides them.
+#[cfg(feature = "cloud")]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum MessengerFolderSel {
+    #[default]
+    All,
+    Personal,
+    Groups,
+    Channels,
+    Archive,
+    Custom(String),
+}
+
+#[cfg(feature = "cloud")]
+impl MessengerFolderSel {
+    /// The rail row's widget-id suffix (`cloud_overlay:dm:folder:{key}`).
+    pub fn widget_key(&self) -> String {
+        match self {
+            Self::All => "all".to_string(),
+            Self::Personal => "personal".to_string(),
+            Self::Groups => "groups".to_string(),
+            Self::Channels => "channels".to_string(),
+            Self::Archive => "archive".to_string(),
+            Self::Custom(tag) => format!("tag:{tag}"),
+        }
+    }
+
+    /// Inverse of [`Self::widget_key`]; `None` for a key that is not a
+    /// selectable folder (e.g. the rail's own "Folders" settings row).
+    pub fn from_widget_key(key: &str) -> Option<Self> {
+        match key {
+            "all" => Some(Self::All),
+            "personal" => Some(Self::Personal),
+            "groups" => Some(Self::Groups),
+            "channels" => Some(Self::Channels),
+            "archive" => Some(Self::Archive),
+            _ => key.strip_prefix("tag:").filter(|t| !t.is_empty()).map(|t| Self::Custom(t.to_string())),
+        }
+    }
+}
+
 /// State for the Community modal (Forum + Messages). Pure UI state + the
 /// forum-v2/DM state it now owns — effects live in the shell driver, same
 /// mailbox contract as [`CloudOverlayState`].
@@ -6808,6 +7052,24 @@ pub struct CommunityState {
     /// [`UserSettingsState::focus_seq`]'s own doc for the "last opened is
     /// on top" rule this drives against that field.
     pub focus_seq: u64,
+    /// The messenger composer's own reply banner — see
+    /// [`MessengerReplyPreview`]'s own doc. `None` while nothing is queued
+    /// as a reply target.
+    pub messenger_reply_preview: Option<MessengerReplyPreview>,
+    /// The forward flow's own open chat picker — see
+    /// [`ForwardTargetPicker`]'s own doc. `None` while closed.
+    pub forward_target_picker: Option<ForwardTargetPicker>,
+    /// The rail's selected folder — see [`MessengerFolderSel`]'s own doc.
+    pub messenger_folder: MessengerFolderSel,
+    /// True while an outside `MessengerProvider` (the Matrix-shaped one the
+    /// shell hands to `ChartApp::set_messenger_provider`) backs the Messages
+    /// tab instead of the legacy DM path. The overlay then reads the
+    /// provider's own vault state / last error / user id, and navigation
+    /// lives in [`Self::messenger_room`] rather than [`DmState::view`].
+    pub messenger_external: bool,
+    /// The open room while [`Self::messenger_external`] is set — an opaque
+    /// provider room id (a Matrix room id), not a DM conversation number.
+    pub messenger_room: Option<mlc_messenger_model::RoomId>,
 }
 
 #[cfg(feature = "cloud")]
@@ -6827,6 +7089,11 @@ impl Default for CommunityState {
             forum2: ForumV2State::default(),
             dm: DmState::default(),
             focus_seq: 0,
+            messenger_reply_preview: None,
+            forward_target_picker: None,
+            messenger_folder: MessengerFolderSel::default(),
+            messenger_external: false,
+            messenger_room: None,
         }
     }
 }
@@ -6847,6 +7114,55 @@ impl CommunityState {
         self.drag_offset = None;
         self.forum2.reset_to_boards();
         self.dm.reset_to_list();
+        self.messenger_room = None;
+    }
+
+    /// The room the Messages tab has open, whichever backend drives it: the
+    /// outside provider's own room id while [`Self::messenger_external`] is
+    /// set, otherwise the open DM conversation's number rendered as a room
+    /// id (the DM adapter's own id scheme). `None` on the list view.
+    pub fn messenger_open_room(&self) -> Option<mlc_messenger_model::RoomId> {
+        if self.messenger_external {
+            return self.messenger_room.clone();
+        }
+        match &self.dm.view {
+            DmView::Conversation { id, .. } => Some(mlc_messenger_model::RoomId::from(id.to_string())),
+            DmView::List => None,
+        }
+    }
+
+    /// Switches the Messages tab between the legacy DM path and an outside
+    /// provider. Either way the open room is dropped — ids of the two
+    /// backends never mean the same room.
+    pub fn set_messenger_external(&mut self, external: bool) {
+        if self.messenger_external != external {
+            self.messenger_external = external;
+            self.messenger_room = None;
+            self.dm.reset_to_list();
+            self.forward_target_picker = None;
+            self.messenger_reply_preview = None;
+        }
+    }
+
+    /// Opens `room` in the Messages tab's chat pane (outside-provider mode):
+    /// scroll and per-conversation scratch state reset like a DM open.
+    pub fn open_messenger_room(&mut self, room: mlc_messenger_model::RoomId) {
+        self.messenger_room = Some(room);
+        self.scroll.reset();
+        self.dm.selection = None;
+        self.dm.selection_drag_active = false;
+        self.dm.close_lookup_dropdown();
+        self.forward_target_picker = None;
+        self.messenger_reply_preview = None;
+    }
+
+    /// Back to the chat list (outside-provider mode).
+    pub fn close_messenger_room(&mut self) {
+        self.messenger_room = None;
+        self.dm.selection = None;
+        self.dm.selection_drag_active = false;
+        self.forward_target_picker = None;
+        self.messenger_reply_preview = None;
     }
 
     pub fn close(&mut self) {
@@ -6996,6 +7312,66 @@ impl ResizableModal for CommunityState {
 }
 
 #[cfg(all(test, feature = "cloud"))]
+mod messenger_external_tests {
+    use mlc_messenger_model::RoomId;
+
+    use super::{CommunityState, DmView};
+
+    #[test]
+    fn the_dm_path_reports_the_open_conversation_as_a_room_id() {
+        let mut state = CommunityState::default();
+        assert_eq!(state.messenger_open_room(), None);
+        state.dm.open_conversation(42);
+        assert_eq!(state.messenger_open_room(), Some(RoomId::from("42")));
+        assert!(matches!(state.dm.view, DmView::Conversation { id: 42, .. }));
+    }
+
+    #[test]
+    fn an_external_provider_owns_navigation_and_the_dm_view_is_ignored() {
+        let mut state = CommunityState::default();
+        state.dm.open_conversation(42);
+        state.set_messenger_external(true);
+        assert_eq!(state.messenger_open_room(), None, "switching backends drops the open room");
+        assert!(matches!(state.dm.view, DmView::List), "and the DM view with it");
+
+        state.open_messenger_room(RoomId::from("!abc:example.org"));
+        assert_eq!(state.messenger_open_room(), Some(RoomId::from("!abc:example.org")));
+
+        state.close_messenger_room();
+        assert_eq!(state.messenger_open_room(), None);
+    }
+
+    #[test]
+    fn switching_back_to_the_dm_path_drops_the_provider_room() {
+        let mut state = CommunityState::default();
+        state.set_messenger_external(true);
+        state.open_messenger_room(RoomId::from("!abc:example.org"));
+        state.set_messenger_external(false);
+        assert_eq!(state.messenger_open_room(), None);
+        assert_eq!(state.messenger_room, None);
+    }
+
+    #[test]
+    fn setting_the_same_backend_again_keeps_the_open_room() {
+        let mut state = CommunityState::default();
+        state.set_messenger_external(true);
+        state.open_messenger_room(RoomId::from("!abc:example.org"));
+        state.set_messenger_external(true);
+        assert_eq!(state.messenger_open_room(), Some(RoomId::from("!abc:example.org")));
+    }
+
+    #[test]
+    fn opening_the_modal_lands_on_the_chat_list_again() {
+        let mut state = CommunityState::default();
+        state.set_messenger_external(true);
+        state.open_messenger_room(RoomId::from("!abc:example.org"));
+        state.open();
+        assert_eq!(state.messenger_open_room(), None);
+        assert!(state.messenger_external, "opening the modal does not change the backend");
+    }
+}
+
+#[cfg(all(test, feature = "cloud"))]
 mod messenger_available_tests {
     use super::ForumV2State;
 
@@ -7037,5 +7413,135 @@ mod messenger_available_tests {
     fn signed_out_is_not_available() {
         let st = forum2(false, &["public", "user", "paid"]);
         assert!(!st.messenger_available());
+    }
+}
+
+#[cfg(test)]
+mod admin_tab_visibility_tests {
+    //! The Admin tab is in the rail only for an admin, on a shell that can
+    //! serve it — and never reachable by anyone else.
+    use super::*;
+    use crate::ui::admin_tab::{AdminMinted, AdminOutcome, AdminSection};
+
+    fn state(signed_in: bool, roles: &[&str], served: bool) -> UserSettingsState {
+        let mut st = UserSettingsState::default();
+        st.account_signed_in = signed_in;
+        st.account_roles = roles.iter().map(|r| r.to_string()).collect();
+        st.admin.served = served;
+        st
+    }
+
+    #[test]
+    fn the_tab_is_hidden_for_a_member_with_no_role() {
+        let st = state(true, &[], true);
+        assert!(!st.admin_tab_visible());
+        assert!(!st.visible_tabs().contains(&UserSettingsTab::Admin));
+    }
+
+    #[test]
+    fn the_tab_is_hidden_for_a_moderator() {
+        let st = state(true, &["moderator"], true);
+        assert!(!st.admin_tab_visible());
+        assert!(!st.visible_tabs().contains(&UserSettingsTab::Admin));
+    }
+
+    #[test]
+    fn the_tab_is_hidden_while_signed_out_even_with_a_stale_role() {
+        let st = state(false, &["admin"], true);
+        assert!(!st.admin_tab_visible());
+        assert!(!st.visible_tabs().contains(&UserSettingsTab::Admin));
+    }
+
+    #[test]
+    fn the_tab_is_hidden_on_a_shell_that_cannot_serve_it() {
+        let st = state(true, &["admin"], false);
+        assert!(st.is_admin());
+        assert!(!st.admin_tab_visible());
+        assert!(!st.visible_tabs().contains(&UserSettingsTab::Admin));
+    }
+
+    #[test]
+    fn the_tab_is_last_in_the_rail_for_an_admin() {
+        let st = state(true, &["admin"], true);
+        assert!(st.admin_tab_visible());
+        let tabs = st.visible_tabs();
+        assert_eq!(tabs.last(), Some(&UserSettingsTab::Admin));
+        assert_eq!(tabs.first(), Some(&UserSettingsTab::Account));
+    }
+
+    #[test]
+    fn a_rail_without_the_admin_flag_is_what_it_always_was() {
+        let plain = UserSettingsTab::visible(true, false);
+        let admin = UserSettingsTab::visible(true, true);
+        assert_eq!(&admin[..admin.len() - 1], &plain[..]);
+        assert!(!UserSettingsTab::visible(false, true).contains(&UserSettingsTab::Admin));
+    }
+
+    #[test]
+    fn a_non_admin_cannot_enter_the_tab() {
+        let mut st = state(true, &["moderator"], true);
+        st.set_tab(UserSettingsTab::Admin);
+        assert_eq!(st.active_tab, UserSettingsTab::General);
+        assert_eq!(UserSettingsTab::from_id("admin"), Some(UserSettingsTab::Admin));
+
+        let mut admin = state(true, &["admin"], true);
+        admin.set_tab(UserSettingsTab::Admin);
+        assert_eq!(admin.active_tab, UserSettingsTab::Admin);
+    }
+
+    #[test]
+    fn losing_the_role_steps_off_the_tab_and_drops_its_data() {
+        let mut st = state(true, &["admin"], true);
+        st.set_tab(UserSettingsTab::Admin);
+        st.admin.minted = Some(AdminMinted {
+            batch_id: "gb_1".to_string(),
+            days: 1,
+            count: 1,
+            note: String::new(),
+            codes: vec!["CODE".to_string()],
+        });
+        st.account_roles.clear();
+        st.drop_admin_view();
+        assert_eq!(st.active_tab, UserSettingsTab::General);
+        assert!(st.admin.minted.is_none());
+        assert!(st.admin.served, "the shell's capability is not the account's");
+    }
+
+    #[test]
+    fn closing_the_modal_drops_the_minted_codes() {
+        let mut st = state(true, &["admin"], true);
+        st.open();
+        st.set_tab(UserSettingsTab::Admin);
+        st.admin.busy = true;
+        st.admin.apply(AdminOutcome::Minted(Ok(AdminMinted {
+            batch_id: "gb_1".to_string(),
+            days: 30,
+            count: 1,
+            note: String::new(),
+            codes: vec!["ONLYONCE01".to_string()],
+        })));
+        assert!(st.admin.minted.is_some());
+        st.admin.set_section(AdminSection::User);
+        st.close();
+        assert!(st.admin.minted.is_none(), "closing must drop the codes from state");
+        st.open();
+        assert!(st.admin.minted.is_none());
+        assert_eq!(st.admin.section, AdminSection::Coupons, "a reopened tab starts clean");
+    }
+
+    #[test]
+    fn the_first_load_is_queued_only_for_a_visible_open_admin_tab() {
+        use crate::ui::admin_tab::AdminRequest;
+        let mut st = state(true, &["admin"], true);
+        st.open();
+        assert_eq!(st.take_admin_request(), None, "another tab is showing");
+        st.set_tab(UserSettingsTab::Admin);
+        assert_eq!(st.take_admin_request(), Some(AdminRequest::LoadBatches));
+        assert_eq!(st.take_admin_request(), None);
+
+        let mut hidden = state(true, &["moderator"], true);
+        hidden.open();
+        hidden.active_tab = UserSettingsTab::Admin;
+        assert_eq!(hidden.take_admin_request(), None, "no request for a non-admin");
     }
 }

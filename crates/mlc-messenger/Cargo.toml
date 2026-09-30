@@ -1,0 +1,67 @@
+[package]
+name = "mylittlechart-messenger"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+description = "Sans-I/O Matrix Client-Server-subset sync + E2EE (Olm/Megolm) engine -- no network, no disk; shells execute OutgoingRequests and persist sealed records the core exports through a flush-before-send barrier."
+
+[lib]
+name = "mlc_messenger"
+path = "src/lib.rs"
+
+[dependencies]
+mylittlechart-vodozemac = { path = "../mlc-vodozemac" }
+# The legacy-DM decrypt path (`src/legacy_dm.rs`, M11) reuses
+# `mlc_vault::dm` as-is (X25519 identity, per-conversation ECDH, AES-GCM
+# seal/open, the shared `message_aad` AAD helper) rather than
+# reimplementing it a second time in this sans-I/O crate -- `mlc-vault` is
+# itself a pure leaf (no workspace deps of its own), so this stays a
+# one-way dependency edge, same shape as `mylittlechart-vodozemac` above.
+mylittlechart-vault = { path = "../mlc-vault" }
+# The UI data contract `provider::SnapshotProvider` implements -- a pure-std,
+# zero-dependency leaf, so this adds no supply-chain surface.
+mylittlechart-messenger-model = { path = "../mlc-messenger-model" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+# Zeroizing wrappers for vault-derived key material this crate now holds
+# directly (`core::CoreSecrets::store_seal_key`/`backup_key`,
+# `store::sealed::SealedRecordCodec`'s own key) -- already a direct
+# dependency of `mylittlechart-vault` (see that crate's own Cargo.toml note),
+# so depending on it here too adds no new supply-chain surface.
+zeroize = "1"
+# The record-log codec (`persist_log`, reached as `driver::persist_log`) —
+# frames the native shell's `records.log` as
+# `[len][SHA-256(payload)][payload]` so boot-time replay can tell a torn
+# tail (a crash mid-write) apart from real data. Already in this
+# workspace's dependency graph at this exact version spec via
+# `mylittlechart-vault`'s own `Cargo.toml` (see that crate's note next to
+# its own `sha2` line) -- this adds no new supply-chain surface.
+sha2 = "0.10"
+# Still not called from this piece's own code. `wire::events` (M3) keeps
+# Olm/Megolm ciphertext, Megolm session-key exports, and OTK/backup blobs as
+# opaque base64 *strings* at the wire-parsing layer -- decoding them to bytes
+# is the crypto machine's job (M6+: `crypto::account`, `crypto::olm_sessions`,
+# `crypto::group_sessions`), so this dependency stays reserved until then.
+base64.workspace = true
+
+[features]
+# Enables `store::InsecurePlainCodecForTests`. Off by default so no shell
+# (or any other crate) can compile against a codec that provides zero
+# confidentiality by linking against this crate normally -- only this
+# crate's own test builds turn it on, via the self-referential dev-dependency
+# below (Cargo unifies a dev-dependency's requested features into the same
+# build the corresponding lib/test targets use).
+test-support = []
+
+[dev-dependencies]
+mylittlechart-messenger = { path = ".", features = ["test-support"] }
+# `tests/live_two_core.rs` (all `#[ignore]`) drives real `MessengerDriver`s
+# over HTTP against a local `mylittlechart-server` stand. Same reqwest 0.12 /
+# rustls-tls shape the native shell already uses, plus `blocking` so the pump
+# stays a plain std-thread loop; `Cargo.lock` gains no package from it.
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
+
+[lints]
+workspace = true

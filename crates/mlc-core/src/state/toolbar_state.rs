@@ -322,6 +322,7 @@ pub struct ToggleIconPair {
 use web_time::Instant;
 
 use crate::state::geometry::LayoutRect;
+use crate::state::scroll_state::ScrollState;
 use crate::state::toolbar_geometry::ToolbarRenderResult;
 use crate::state::toolbar_geometry::WidgetRect;
 use crate::chart::types::crosshair::Crosshair;
@@ -547,6 +548,17 @@ pub struct DropdownRenderInfo {
     /// closed or the dropdown rendered is not `settings_gear`. Same
     /// threading role as `granularity_edit_input` above — see its doc.
     pub watermark_text_input: Option<(WidgetRect, Vec<f64>)>,
+    /// Full (unclamped) content height this dropdown's rows would need —
+    /// `mlc_app_layout::ui::dropdown::DropdownConfig::calculate_height()`'s
+    /// answer for the row list actually drawn this frame. Together with
+    /// `viewport_height` this is what `ChartApp::on_scroll`'s
+    /// `"dropdown:__scroll__"` handler feeds `ScrollState::handle_wheel`
+    /// (toolbar-flyout-collapse arc) — equal to `viewport_height` whenever
+    /// the flyout fit without clamping.
+    pub content_height: f64,
+    /// What the flyout actually got clamped to this frame — see
+    /// `content_height`'s own doc.
+    pub viewport_height: f64,
 }
 
 /// Hit-test information for an inline popup dropdown (style or width picker).
@@ -648,6 +660,42 @@ pub enum ScreenshotDestination {
     /// uploads via `POST /api/share/screenshot` and copies the absolute
     /// link; the native shell still stubs it as clipboard + log.
     ShareLink,
+}
+
+/// What the camcorder ("share_stream") button shows for the active tab.
+/// Written each frame by `ChartApp` from the tab's live channel; the toolbar
+/// only reads it (icon + pressed highlight, both from the theme).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ShareStreamButtonState {
+    /// No live channel on this tab.
+    #[default]
+    Off,
+    /// Live is on and the socket is being opened.
+    Connecting,
+    /// Socket is open and this tab publishes.
+    Live,
+    /// Socket is open and this tab only receives.
+    Viewing,
+    /// Live is on but the socket keeps failing.
+    Error,
+}
+
+impl ShareStreamButtonState {
+    /// Icon name for this state, `None` for the button's own icon.
+    pub fn icon_name(self) -> Option<&'static str> {
+        match self {
+            Self::Off => None,
+            Self::Connecting => Some("VideoConnecting"),
+            Self::Live => Some("VideoLive"),
+            Self::Viewing => Some("VideoViewing"),
+            Self::Error => Some("VideoError"),
+        }
+    }
+
+    /// Whether the button paints its pressed highlight.
+    pub fn is_pressed(self) -> bool {
+        matches!(self, Self::Live | Self::Viewing)
+    }
 }
 
 /// Which one-shot magic-hat motion is running (owner ruling 2026-09-10:
@@ -798,6 +846,9 @@ pub struct ChartToolbarState {
     /// Set by the camera button's destination dropdown; read by the shells
     /// when draining the pending-screenshot flag.
     pub screenshot_destination: ScreenshotDestination,
+    /// State of the camcorder button for the active tab. Read by the control
+    /// strip render; written by `ChartApp` (never persisted).
+    pub share_stream: ShareStreamButtonState,
     /// Timestamp of the last `share_chart` (globe) button click — same
     /// double-click-opens-dropdown detection as `last_screenshot_click_time`
     /// (native-share-viewer arc, 2026-09-06). `mlc-app`'s account-signed-in
@@ -875,6 +926,25 @@ pub struct ChartToolbarState {
     /// native shell's redraw-gating loop. `None` (or lapsed) draws the hat
     /// at rest.
     pub mascot_anim: Option<MascotAnim>,
+    /// Collapsed state of drawing-tool flyout sub-sections (toolbar-flyout-
+    /// collapse arc, owner order 2026-09-25) — keyed by the stable,
+    /// language-independent id [`crate::toolbar::flyout_section_id`] mints
+    /// (`"{dropdown_id}#{header_ordinal}"`), never by the localized header
+    /// text. Present = collapsed; absent = expanded (today's behaviour for
+    /// every profile saved before this field existed). Persisted on
+    /// `ProfileUiSettings::collapsed_flyout_sections`, same live-mutated-
+    /// in-place / synced-at-load-and-save class as `favorites_bar_visible`.
+    pub collapsed_flyout_sections: std::collections::BTreeSet<String>,
+    /// Scroll state of the currently open toolbar dropdown/flyout, once its
+    /// content is taller than the panel it opened in (toolbar-flyout-
+    /// collapse arc) — mirrors the modal clamp fix
+    /// (`mlc-app-layout/src/ui/widgets/modal.rs`'s `ModalShellSpec::
+    /// max_content_height`), just for the lighter-weight dropdown popup
+    /// instead of a modal shell. Reset whenever a NEW dropdown opens
+    /// (`ChartApp`'s render call site, keyed off `DropdownRenderInfo::
+    /// dropdown_id` changing) — not persisted, purely transient UI state
+    /// like `top_scroll_offset` above.
+    pub dropdown_scroll: ScrollState,
 }
 
 impl Default for ChartToolbarState {
@@ -917,6 +987,7 @@ impl Default for ChartToolbarState {
             last_magnet_click_time: None,
             last_screenshot_click_time: None,
             screenshot_destination: ScreenshotDestination::default(),
+            share_stream: ShareStreamButtonState::default(),
             last_share_click_time: None,
             floating_inline_bar: FloatingInlineBar::default(),
             favorites_bar: FloatingInlineBar::default(),
@@ -936,6 +1007,8 @@ impl Default for ChartToolbarState {
             open_dropdown_position: None,
             active_param_chart_type: None,
             mascot_anim: None,
+            collapsed_flyout_sections: std::collections::BTreeSet::new(),
+            dropdown_scroll: ScrollState::new(),
         }
     }
 }
@@ -943,6 +1016,21 @@ impl Default for ChartToolbarState {
 impl ChartToolbarState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Whether the flyout sub-section identified by `section_id` (see
+    /// [`crate::toolbar::flyout_section_id`]) is collapsed. Absent from
+    /// `collapsed_flyout_sections` means expanded.
+    pub fn is_flyout_section_collapsed(&self, section_id: &str) -> bool {
+        self.collapsed_flyout_sections.contains(section_id)
+    }
+
+    /// Flip a flyout sub-section's collapsed state — fired on a double-click
+    /// on its header or chevron (owner order 2026-09-25).
+    pub fn toggle_flyout_section_collapsed(&mut self, section_id: &str) {
+        if !self.collapsed_flyout_sections.remove(section_id) {
+            self.collapsed_flyout_sections.insert(section_id.to_string());
+        }
     }
 
     /// Check if a toolbar item is the active tool
@@ -1153,19 +1241,10 @@ impl ChartToolbarState {
     /// toggle. See `screenshot_active()` and the `"screenshot"` arm below.
     const SCREENSHOT_ACTIVE_MS: u64 = 1000;
 
-    /// Window (ms) for the `share_chart` (globe) button's double-click-
-    /// opens-dropdown detection — same shape as `SCREENSHOT_ACTIVE_MS`, no
-    /// visual "just fired" pulse needed since sharing has no persistent
-    /// active state to paint.
-    const SHARE_DROPDOWN_MS: u64 = 1000;
-
     /// Handle a click on the `share_chart` (globe) toolbar button.
     ///
-    /// Returns `true` on the SECOND click within `SHARE_DROPDOWN_MS` — the
-    /// caller must open the `"share_chart"` dropdown (`"Share live chart"` /
-    /// `"Open shared chart…"`) instead of firing another share. Returns
-    /// `false` on the first click, where the caller fires
-    /// `ChartOutEvent::ShareLiveChart` exactly as before this arc.
+    /// Always returns `false`: the click shares. The menu is the hover
+    /// menu, not a second click.
     ///
     /// Factored out of `handle_toolbar_click_with_chart` (unlike magnet/
     /// screenshot, whose double-click arms live inline there) because
@@ -1173,17 +1252,9 @@ impl ChartToolbarState {
     /// this call — a signed-out click never reaches here at all, so this
     /// method never needs to know about sign-in.
     pub fn handle_share_click(&mut self) -> bool {
-        let now = Instant::now();
-        let is_double_click = self.last_share_click_time
-            .map(|t| now.duration_since(t).as_millis() < Self::SHARE_DROPDOWN_MS as u128)
-            .unwrap_or(false);
-        if is_double_click {
-            self.last_share_click_time = None;
-            self.open_dropdown_id = Some("share_chart".to_string());
-        } else {
-            self.last_share_click_time = Some(now);
-        }
-        is_double_click
+        // Hover owns the menu. A click always shares.
+        self.last_share_click_time = Some(Instant::now());
+        false
     }
 
     /// Handle a toolbar click, executing chart-internal actions and returning app-level events.
@@ -1271,24 +1342,10 @@ impl ChartToolbarState {
             // the way the magnet toggle is undone, so only the first click
             // fires) and clear the timestamp so the active phase ends.
             "screenshot" => {
-                let now = Instant::now();
-                let is_double_click = self.last_screenshot_click_time
-                    .map(|t| now.duration_since(t).as_millis() < Self::SCREENSHOT_ACTIVE_MS as u128)
-                    .unwrap_or(false);
-
-                if is_double_click {
-                    self.last_screenshot_click_time = None; // reset so next single-click is fresh
-                    eprintln!("[ChartToolbar] screenshot double-click — open dropdown");
-                    self.open_dropdown_id = Some("screenshot".to_string());
-                    vec![ChartOutEvent::Consumed]
-                } else {
-                    // First click: record time AND fire — starts the
-                    // SCREENSHOT_ACTIVE_MS active phase; if no second click
-                    // arrives within it, this acts as the single-click shot.
-                    self.last_screenshot_click_time = Some(now);
-                    eprintln!("[ChartToolbar] screenshot");
-                    vec![ChartOutEvent::Screenshot]
-                }
+                // Hover owns the destination menu. Every click fires.
+                self.last_screenshot_click_time = Some(Instant::now());
+                eprintln!("[ChartToolbar] screenshot");
+                vec![ChartOutEvent::Screenshot]
             }
 
             // === Chart settings — app-level modal ===
@@ -1819,21 +1876,18 @@ mod tests {
     }
 
     #[test]
-    fn screenshot_double_click_opens_dropdown_without_firing() {
+    fn screenshot_second_click_fires_again() {
         let mut tb = ChartToolbarState::default();
         let mut crosshair = Crosshair::default();
         let mut session = NoopDrawingSession;
 
-        // First click fires.
         let events = tb.handle_toolbar_click_with_chart("screenshot", &mut crosshair, &mut session);
         assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
 
-        // Second click within SCREENSHOT_ACTIVE_MS: opens the destination
-        // dropdown, Consumed (no second Screenshot event).
+        // The destination menu is the hover menu, so a second click still fires.
         let events = tb.handle_toolbar_click_with_chart("screenshot", &mut crosshair, &mut session);
-        assert!(events.iter().all(|e| matches!(e, ChartOutEvent::Consumed)));
-        assert_eq!(tb.open_dropdown_id.as_deref(), Some("screenshot"));
-        assert!(tb.last_screenshot_click_time.is_none());
+        assert!(events.iter().any(|e| matches!(e, ChartOutEvent::Screenshot)));
+        assert!(tb.open_dropdown_id.is_none());
     }
 
     #[test]
@@ -1916,5 +1970,46 @@ mod tests {
             serde_json::to_string(&ScreenshotDestination::ShareLink).unwrap(),
             "\"share_link\""
         );
+    }
+
+    /// Toolbar-flyout-collapse arc (owner order 2026-09-25): a section
+    /// toggles on the SECOND (double) click and stays toggled after the
+    /// profile round-trips through a save (`build_user_profile`'s
+    /// `collapsed_flyout_sections: self.panel_app.toolbar_state.
+    /// collapsed_flyout_sections.clone()`) and a reload (`apply_profile_
+    /// state`'s `self.panel_app.toolbar_state.collapsed_flyout_sections =
+    /// profile.ui.collapsed_flyout_sections.clone()`) — this test exercises
+    /// exactly that shape without needing a full `ChartApp`.
+    #[test]
+    fn a_section_toggles_on_double_click_and_survives_a_profile_reload() {
+        let section_id = crate::toolbar::flyout_section_id("pattern_tools", 2);
+
+        let mut tb = ChartToolbarState::default();
+        assert!(!tb.is_flyout_section_collapsed(&section_id), "starts expanded");
+
+        // First double-click: collapse.
+        tb.toggle_flyout_section_collapsed(&section_id);
+        assert!(tb.is_flyout_section_collapsed(&section_id));
+
+        // Save: mirrors `build_user_profile`'s field mapping.
+        let mut ui = crate::user_profile::ProfileUiSettings::default();
+        ui.collapsed_flyout_sections = tb.collapsed_flyout_sections.clone();
+
+        // Reload into a FRESH toolbar state: mirrors `apply_profile_state`'s
+        // field mapping — the collapse must survive the round trip.
+        let mut reloaded = ChartToolbarState::default();
+        reloaded.collapsed_flyout_sections = ui.collapsed_flyout_sections.clone();
+        assert!(reloaded.is_flyout_section_collapsed(&section_id), "collapse survives save+reload");
+
+        // Second double-click (post-reload): expand again, and the empty
+        // set persists just as cleanly.
+        reloaded.toggle_flyout_section_collapsed(&section_id);
+        assert!(!reloaded.is_flyout_section_collapsed(&section_id));
+        ui.collapsed_flyout_sections = reloaded.collapsed_flyout_sections.clone();
+        assert!(ui.collapsed_flyout_sections.is_empty());
+
+        // A DIFFERENT section's id never collides with this one.
+        let other = crate::toolbar::flyout_section_id("fib_tools", 2);
+        assert!(!reloaded.is_flyout_section_collapsed(&other));
     }
 }

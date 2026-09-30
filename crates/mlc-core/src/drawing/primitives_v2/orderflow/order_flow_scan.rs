@@ -432,8 +432,14 @@ impl Primitive for OrderFlowScan {
         // modal open — measured on the live binary over a BTCUSDT 4H candle
         // chart, 2026-08-25: two plain boundaries, no cue at all. Not gated
         // on `judge_claims`, for the reason `context_violations` documents.
-        let missing = !self.cached_footprint_present;
-        let boundary = if missing {
+        //
+        // Two distinct "nothing to report" states, same visual treatment,
+        // different message — see `context_violations`'s own tri-state and
+        // `orderflow_judge::RANGE_NO_DATA_VIOLATION`'s own doc for why the
+        // second one is not folded into the first.
+        let no_footprint = !self.cached_footprint_present;
+        let no_range_data = !no_footprint && self.cached_window.is_none();
+        let boundary = if no_footprint || no_range_data {
             super::super::elliott::guard::VIOLATION_COLOR
         } else {
             self.data.color.stroke.as_str()
@@ -441,20 +447,21 @@ impl Primitive for OrderFlowScan {
 
         render_scan_bracket(ctx, self.shape, x1, x2, self.p1, self.p2, boundary, self.data.width);
 
-        if missing {
+        if no_footprint || no_range_data {
             // The rule's own message, once, between the boundaries. Nothing
             // else is drawn: `cached_hits` cannot hold anything meaningful
-            // when no sweep ever handed this survey footprint data.
+            // when this survey has no resolved footprint window to read.
             let lang = current_language();
+            let message = if no_footprint {
+                ConceptKey::RuleOrderFlowDataMissing.get(lang)
+            } else {
+                ConceptKey::RuleOrderFlowRangeNoData.get(lang)
+            };
             ctx.set_fill_color(boundary);
             ctx.set_font("11px sans-serif");
             ctx.set_text_align(crate::render::TextAlign::Center);
             ctx.set_text_baseline(crate::render::TextBaseline::Top);
-            ctx.fill_text(
-                ConceptKey::RuleOrderFlowDataMissing.get(lang),
-                (min_x + max_x) / 2.0,
-                8.0 * dpr,
-            );
+            ctx.fill_text(message, (min_x + max_x) / 2.0, 8.0 * dpr);
             return;
         }
 
@@ -617,6 +624,8 @@ impl Primitive for OrderFlowScan {
     fn context_violations(&self) -> &[Violation] {
         if !self.cached_footprint_present {
             &super::orderflow_judge::MISSING_VIOLATION
+        } else if self.cached_window.is_none() {
+            &super::orderflow_judge::RANGE_NO_DATA_VIOLATION
         } else {
             &[]
         }
@@ -816,6 +825,27 @@ mod tests {
         let violations = scan.context_violations();
         assert_eq!(violations.len(), 1);
         assert_eq!(violations[0].rule_id, "order_flow_data_missing");
+    }
+
+    /// A real footprint feed (owner bug fix, prod 0.5.617) whose own
+    /// loaded bars simply do not cover the dragged range — e.g. trades
+    /// older than the venue's retained history — reports the SECOND
+    /// "nothing to report" rule, not the first: the feed exists
+    /// (`cached_footprint_present == true`), it is this range specifically
+    /// that has nothing in it.
+    #[test]
+    fn footprint_present_but_range_uncovered_reports_range_no_data() {
+        let _guard = reset_engine_config();
+        // Footprint bars exist at ts 10_000..12_000; the scan's own range
+        // (0..5_000) sits entirely before them.
+        let footprint = vec![footprint_with_run(10_000), footprint_with_run(11_000), footprint_with_run(12_000)];
+        let mut scan = OrderFlowScan::new(0, 5_000, "#5C6BC0");
+        scan.refresh_footprint_derived_cache(&footprint);
+        assert!(scan.cached_footprint_present);
+        assert!(scan.cached_window.is_none());
+        let violations = scan.context_violations();
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].rule_id, "order_flow_range_no_data");
     }
 
     /// Piece 7: `TwoLines` keeps the stacked-imbalance hit whatever `p1`/

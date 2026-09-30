@@ -21,17 +21,13 @@
 //!
 //! Every field this module sets on `CommunityState`/`ForumV2State`/
 //! `DmState` is public — nothing this task needed was blocked from the
-//! outside. One finding worth flagging for whoever compares a screenshot
-//! against the concept mockups: [`DmConversationUi::last_message_preview`]/
-//! `last_message_mine` are real public fields this fixture populates, but
-//! the chat-list row's own preview line never reads them —
-//! `dm_messenger_provider.rs`'s `reads::rooms` hardcodes
-//! `RoomSummary::last_event: None` regardless (that type's own doc already
-//! names the gap: "today's `routes::dm::list_conversations` caller
-//! populates no such field"). `DmConversationUi::peer_rank`/
-//! `peer_fingerprint` are NOT affected by that gap — the open
-//! conversation's own header reads those two straight off
-//! `state.dm.conversations`, not through the provider, and do show up.
+//! outside. `DmConversationUi::last_message_preview`/`last_message_mine`
+//! feed the chat-list row's own preview line via `dm_messenger_provider.rs`'s
+//! `reads::rooms` (`RoomSummary::last_event`, fixed 2026-09-25 — that method
+//! used to hardcode `None` regardless of these fields; see its own doc for
+//! the current mapping). `DmConversationUi::peer_rank`/`peer_fingerprint`
+//! are read a SECOND way, straight off `state.dm.conversations` by the open
+//! conversation's own header — not through the provider at all.
 //!
 //! Seven states are wired: `forum-index`, `forum-board`, `forum-thread`,
 //! `forum-thread-signed-out`, `forum-search` (the five
@@ -50,9 +46,10 @@ use mlc_app_layout::ui::modal_settings::{
     DmUnavailableReason, DmView, ForumReplyV2Ui, ForumSearchHitUi, ForumThreadV2Detail,
     ForumThreadV2Ui, ForumV2State, ForumV2View,
 };
+use mlc_core::state::toolbar_geometry::WidgetRect;
 use mlc_core::theme::ThemeManager;
 use uzor::input::{InputCoordinator, InputState};
-use uzor::render::{Painter, ShapeHelpers};
+use uzor::render::{Painter, ShapeHelpers, TextAlign, TextBaseline, TextRenderer};
 
 use crate::render_context::LabRenderContext;
 use crate::theme;
@@ -82,7 +79,13 @@ fn query_param(name: &str) -> Option<String> {
 }
 
 /// Which fixture [`CommunityState`] this page shows — `?state=...`, see
-/// this module's own top doc for the full name list.
+/// this module's own top doc for the full name list. `messages-group` (UI-1,
+/// 2026-09-25) is one more: it does NOT feed `DmState` at all — its
+/// `CommunityState.dm` stays a bare shell (just enough for `messenger_
+/// overlay.rs`'s own UI-side reads: which room is open, the draft field id)
+/// — the actual room/timeline data comes from
+/// `community_messenger_fixture::MessengerFixture`, passed to
+/// `render_community_modal`'s own `messenger_provider_override`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PageState {
     ForumIndex,
@@ -92,6 +95,25 @@ enum PageState {
     ForumSearch,
     MessagesLocked,
     MessagesChat,
+    MessagesGroup,
+    /// Concept v1 screen "2 · Канал" — the "BTC levels" channel open,
+    /// subscriber footer (Mute/Unmute). Same `MessengerFixture`-backed
+    /// shell as [`Self::MessagesGroup`] (see that variant's own doc).
+    MessagesChannel,
+    /// Concept v1 screen "2 · меню чата" — the chat-list row context menu
+    /// open (right-click on "ETH flows") with its own "Add to folder"
+    /// submenu open beside it. Same shell as [`Self::MessagesGroup`], plus
+    /// a static [`mlc_app_layout::ui::context_menu::ContextMenuState`]
+    /// this page renders on top with [`mlc_app_layout::layout::modals::
+    /// context_menu::render_context_menu`] directly — no click dispatch
+    /// exists in this crate (this module's own top doc), so the menu is
+    /// simply always open for this state.
+    MessagesMenu,
+    /// `?state=stickers` — proof page for the `mlc-hat` sticker pack
+    /// (`mlc_app_layout::ui::widgets::{draw_sticker, sticker_pack}`): every
+    /// sticker in a grid at two sizes instead of `render_community_modal` —
+    /// see `render_one_frame`'s own branch.
+    Stickers,
 }
 
 impl PageState {
@@ -103,8 +125,19 @@ impl PageState {
             Some("forum-search") => Self::ForumSearch,
             Some("messages-locked") => Self::MessagesLocked,
             Some("messages-chat") => Self::MessagesChat,
+            Some("messages-group") => Self::MessagesGroup,
+            Some("messages-channel") => Self::MessagesChannel,
+            Some("messages-menu") => Self::MessagesMenu,
+            Some("stickers") => Self::Stickers,
             _ => Self::ForumIndex,
         }
+    }
+
+    /// Whether this state hosts its room/timeline data from
+    /// [`crate::community_messenger_fixture::MessengerFixture`] rather than
+    /// `DmState` — see [`Self::MessagesGroup`]'s own doc.
+    fn uses_messenger_fixture(self) -> bool {
+        matches!(self, Self::MessagesGroup | Self::MessagesChannel | Self::MessagesMenu)
     }
 }
 
@@ -626,9 +659,47 @@ fn community_state_for(page: PageState, now_ms: f64) -> CommunityState {
             };
             CommunityTab::Messages
         }
+        PageState::MessagesGroup | PageState::MessagesChannel | PageState::MessagesMenu => {
+            // The messenger data itself comes from `MessengerFixture`, not
+            // `DmState` — this shell only carries what `messenger_overlay.
+            // rs` reads straight off `CommunityState.dm` for UI-side facts
+            // no `MessengerProvider` read covers (which room is open, the
+            // draft field id; see that file's own top doc). `MessagesMenu`
+            // opens the SAME "Trading desk" room as `MessagesGroup` — the
+            // context menu it draws on top targets the CHAT-LIST ROW
+            // ("ETH flows"), not the open conversation, so which room is
+            // open does not matter for that state.
+            let open_room_id = if page == PageState::MessagesChannel { 3 } else { 1 };
+            dm = DmState {
+                view: DmView::Conversation {
+                    id: open_room_id,
+                    messages: Vec::new(),
+                    draft_field_id: "dm_draft".to_string(),
+                    has_older: false,
+                },
+                available: true,
+                unavailable_reason: DmUnavailableReason::None,
+                ..DmState::default()
+            };
+            CommunityTab::Messages
+        }
+        PageState::Stickers => {
+            // Never rendered — `render_one_frame` branches on `page` before
+            // it would call `render_community_modal` for this page. Kept a
+            // real (if unused) `CommunityState` rather than an `Option` just
+            // for this one variant, to keep `CommunityLabState` uniform.
+            CommunityTab::Forum
+        }
     };
 
-    CommunityState { is_open: true, tab, forum2, dm, ..CommunityState::default() }
+    let messenger_reply_preview = matches!(page, PageState::MessagesGroup).then(|| {
+        mlc_app_layout::ui::modal_settings::MessengerReplyPreview {
+            sender_label: "moderator".to_string(),
+            preview: "@admin закрепил правила — глянь, пожалуйста".to_string(),
+        }
+    });
+
+    CommunityState { is_open: true, tab, forum2, dm, messenger_reply_preview, ..CommunityState::default() }
 }
 
 // ─── Render loop ────────────────────────────────────────────────────────────
@@ -637,6 +708,11 @@ struct CommunityLabState {
     theme_manager: ThemeManager,
     coordinator: InputCoordinator,
     community: CommunityState,
+    /// `Some` for every [`PageState::uses_messenger_fixture`] state — see
+    /// [`PageState::MessagesGroup`]'s own doc for why those states'
+    /// `CommunityState.dm` carries no real room data at all.
+    messenger_fixture: Option<crate::community_messenger_fixture::MessengerFixture>,
+    page: PageState,
 }
 
 /// Boot this page in place of the primitive lab — see this module's own top
@@ -676,7 +752,16 @@ pub fn start() -> Result<(), JsValue> {
         coordinator.text_fields_mut().register(search_field.clone(), uzor::input::TextFieldConfig::text());
         coordinator.text_fields_mut().set_text(&search_field, "renko alert");
     }
-    let lab = CommunityLabState { theme_manager, coordinator, community };
+    let messenger_fixture = page
+        .uses_messenger_fixture()
+        .then(|| crate::community_messenger_fixture::MessengerFixture::new(now_ms));
+    let lab = CommunityLabState {
+        theme_manager,
+        coordinator,
+        community,
+        messenger_fixture,
+        page,
+    };
     run_render_loop(lab)
 }
 
@@ -745,18 +830,127 @@ fn render_one_frame(state: &Rc<RefCell<CommunityLabState>>) -> Result<(), JsValu
     let toolbar_theme = theme::toolbar_theme(&lab.theme_manager);
 
     lab.coordinator.begin_frame(InputState::new());
-    render_community_modal(
-        &mut ctx,
-        screen_w.max(WINDOW_W),
-        screen_h.max(WINDOW_H),
-        &lab.community,
-        &frame_theme,
-        &toolbar_theme,
-        current_time_ms,
-        &mut lab.coordinator,
-        false,
-    );
+    if lab.page == PageState::Stickers {
+        let text_color = lab.theme_manager.current().colors.text_primary.clone();
+        render_stickers_page(&mut ctx, &text_color, current_time_ms);
+    } else {
+        let provider = lab.messenger_fixture.as_ref().map(|f| f as &dyn mlc_messenger_model::MessengerProvider);
+        render_community_modal(
+            &mut ctx,
+            screen_w.max(WINDOW_W),
+            screen_h.max(WINDOW_H),
+            &lab.community,
+            &frame_theme,
+            &toolbar_theme,
+            current_time_ms,
+            &mut lab.coordinator,
+            false,
+            provider,
+        );
+    }
+
+    // Concept v1 screen "2 · меню чата" — a static context-menu overlay
+    // (this crate hosts no click dispatch at all, this module's own top
+    // doc) reproducing the row menu open on "ETH flows" plus its own
+    // "Add to folder" submenu, both at once, matching the concept's own
+    // screenshot.
+    if lab.page == PageState::MessagesMenu {
+        draw_messages_menu_overlay(&mut ctx, &toolbar_theme, &mut lab.coordinator);
+    }
+
     let _ = lab.coordinator.end_frame();
 
     Ok(())
+}
+
+/// Build and draw the chat-row context menu + its own open "Add to folder"
+/// submenu for [`PageState::MessagesMenu`] — see [`render_one_frame`]'s own
+/// call site doc.
+fn draw_messages_menu_overlay(
+    ctx: &mut LabRenderContext,
+    toolbar_theme: &mlc_app_layout::ui::toolbar_theme::ToolbarTheme,
+    coordinator: &mut InputCoordinator,
+) {
+    use mlc_app_layout::layout::modals::context_menu::render_context_menu;
+    use mlc_app_layout::ui::context_menu::{build_dm_chat_row_context_menu, ContextMenuState, ContextMenuTarget};
+    use mlc_app_layout::ui::dropdown::DropdownTheme;
+    use mlc_messenger_model::{Capabilities, Folder, FolderExclude, FolderIcon, FolderInclude, RoomKind, TagName};
+
+    let caps = Capabilities {
+        groups: true,
+        channels: true,
+        folders: true,
+        reactions: true,
+        edits: true,
+        replies: true,
+        typing: true,
+        receipts: true,
+        forward: true,
+        stickers: true,
+        chart_card_send: true,
+    };
+    let folders = vec![
+        Folder {
+            id: Some(TagName::from("u.trading-desk")),
+            name: "Trading desk".to_string(),
+            icon: FolderIcon::Candles,
+            include: FolderInclude::default(),
+            exclude: FolderExclude::default(),
+            order: 1.0,
+        },
+        Folder {
+            id: Some(TagName::from("u.research")),
+            name: "Research".to_string(),
+            icon: FolderIcon::Folder,
+            include: FolderInclude::default(),
+            exclude: FolderExclude::default(),
+            order: 2.0,
+        },
+    ];
+    let room_tags = vec![TagName::from("u.trading-desk")];
+    let mut items = build_dm_chat_row_context_menu(caps, true, RoomKind::Channel, false, false, &folders, &room_tags);
+    // The concept's own screenshot shows the row menu AND its "Add to
+    // folder" submenu open at once — flip that one item's own
+    // `submenu_open` for this static page (a later click-dispatch piece
+    // sets this from a real hover, not a hardcoded page fixture).
+    if let Some(add_folder) = items.iter_mut().find(|i| i.action == "dm_chat_row:add_folder") {
+        add_folder.submenu_open = true;
+    }
+
+    let mut menu_state = ContextMenuState::new();
+    menu_state.open(118.0, 190.0, ContextMenuTarget::DmChatRow("3".to_string()), items);
+    let dropdown_theme = DropdownTheme::from_toolbar(toolbar_theme);
+    render_context_menu(ctx, &menu_state, &dropdown_theme, None, coordinator);
+}
+
+/// `PageState::Stickers` proof page — every sticker in the `mlc-hat` pack,
+/// in a grid at 96px and 160px, animating off `elapsed_ms` (any monotonic
+/// millisecond clock works — see `draw_sticker`'s own doc for why).
+/// `fallback_text_color` draws the alt text for any id `draw_sticker` does
+/// not recognise (never happens for this pack's own six ids, but is the
+/// documented contract for an unknown one).
+fn render_stickers_page(ctx: &mut LabRenderContext, fallback_text_color: &str, elapsed_ms: u64) {
+    use mlc_app_layout::ui::widgets::{draw_sticker, sticker_pack};
+
+    const SIZES: [f64; 2] = [96.0, 160.0];
+    const GAP: f64 = 24.0;
+    const MARGIN_X: f64 = 40.0;
+
+    let infos = sticker_pack("mlc-hat");
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+
+    let mut y = 40.0;
+    for &size in &SIZES {
+        let mut x = MARGIN_X;
+        for info in infos {
+            let rect = WidgetRect::new(x, y, size, size);
+            if !draw_sticker(ctx, rect, "mlc-hat", info.id, elapsed_ms) {
+                ctx.set_fill_color(fallback_text_color);
+                ctx.fill_text(info.alt, x + size / 2.0, y + size / 2.0);
+            }
+            x += size + GAP;
+        }
+        y += size + GAP;
+    }
 }

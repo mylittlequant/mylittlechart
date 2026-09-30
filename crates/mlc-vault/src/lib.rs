@@ -12,6 +12,9 @@
 //!   via ECDH + HKDF + AES-256-GCM against `dm`'s identity keys.
 //! - `channel` — channel post signing: a per-channel Ed25519 identity
 //!   derived deterministically from the vault key.
+//! - `messenger` — `mlc-messenger`'s own vault-derived secrets: the
+//!   per-device AES-256-GCM key sealing its record store, and the
+//!   account-wide key backing its server-side Megolm key backup (M9).
 //!
 //! This crate is a pure leaf: depends only on `aes-gcm`, `pbkdf2`, `hkdf`,
 //! `rand`, `sha2`, `hex`, `serde`, `zeroize`, `web-time`, `subtle`,
@@ -21,6 +24,7 @@ pub mod channel;
 pub mod crypto;
 pub mod dm;
 pub mod group;
+pub mod messenger;
 pub mod storage;
 pub mod store;
 pub mod vault;

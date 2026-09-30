@@ -220,6 +220,14 @@ impl ChartApp {
                 system_events: self.system_events.clone(),
                 community_forum_size,
                 community_messages_size,
+                // Collapsed flyout sub-sections (toolbar-flyout-collapse
+                // arc): mutated in-place via `ChartToolbarState::
+                // toggle_flyout_section_collapsed` at double-click time
+                // (`mlc-app`'s `on_double_click`), not via this snapshot
+                // builder — preserve-live-value pattern, same as
+                // `favorite_primitives` above.
+                collapsed_flyout_sections: self.panel_app.toolbar_state.collapsed_flyout_sections.clone(),
+                share_rights_preset: existing.ui.share_rights_preset.clone(),
             },
         }
     }
@@ -298,6 +306,9 @@ impl ChartApp {
             // See `share_viewer::ChartApp::collect_open_shared_tabs`'s own
             // doc (shared-tab-reload-anchor arc, item 1/2).
             open_shared_tabs: self.collect_open_shared_tabs(),
+            // The author's own live-share links (item 3 of the live-hub
+            // client work): restored in `new_window`.
+            author_shares: self.collect_author_shares(),
             active_preset_id: self.panel_app.active_preset_id.clone(),
             x: self.window_x,
             y: self.window_y,

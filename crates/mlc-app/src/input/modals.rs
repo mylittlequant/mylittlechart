@@ -2448,6 +2448,17 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     log::debug!("[ChartApp] close_topmost_modal_layer: share_open closed");
                 }
+                // Checkout: an unfinished purchase is kept (the invoice stays
+                // payable), so Escape and a click outside are harmless.
+                "checkout" => {
+                    self.panel_app.checkout_state.dismiss();
+                    log::debug!("[ChartApp] close_topmost_modal_layer: checkout closed");
+                }
+                "share_settings" => {
+                    self.panel_app.share_settings_state.is_open = false;
+                    self.panel_app.share_settings_state.hits.clear();
+                    self.input_coordinator.borrow_mut().text_fields_mut().blur();
+                }
                 // Watchlist group name input L2 modal — close only this layer.
                 "wl_group_name_input" => {
                     self.standalone_panels.wl_group_name_input.close();
@@ -2872,6 +2883,12 @@ impl ChartApp {
             ContextMenuTarget::DmChatRow(room_id) => {
                 match action {
                     "dm_chat_row:mark_read" => {
+                        if self.panel_app.has_messenger_provider() {
+                            if !self.panel_app.messenger_mark_room_read(&room_id) {
+                                log::debug!("[ChartApp] messenger mark-as-read skipped for room {}, no confirmed event", room_id);
+                            }
+                            return;
+                        }
                         let Ok(id) = room_id.parse::<i64>() else {
                             log::warn!("[ChartApp] DM chat-row context action on a non-numeric room id: {}", room_id);
                             return;
@@ -2893,6 +2910,25 @@ impl ChartApp {
                                 log::debug!("[ChartApp] DM mark-as-read skipped for room #{}, no loaded message id", id);
                             }
                         }
+                    }
+                    "dm_chat_row:toggle_pin" | "dm_chat_row:toggle_mute" | "dm_chat_row:archive" | "dm_chat_row:leave" => {
+                        use mlc_app_layout::ui::dm_messenger_provider::{room_action, RoomAction};
+                        let which = match action {
+                            "dm_chat_row:toggle_pin" => RoomAction::TogglePin,
+                            "dm_chat_row:toggle_mute" => RoomAction::ToggleMute,
+                            "dm_chat_row:archive" => RoomAction::ToggleArchive,
+                            _ => RoomAction::Leave,
+                        };
+                        if !self.panel_app.messenger_room_action(&room_id, which) {
+                            room_action(&mut self.panel_app.community_state.dm, &room_id, which);
+                        }
+                    }
+                    // The per-folder checklist and "New folder…" have no
+                    // `MessengerIntent` to carry them yet (the model has no
+                    // "tag this room" intent — folders editor slice), so a
+                    // click closes the menu and does nothing.
+                    a if a.starts_with("dm_chat_row:add_folder:") || a == "dm_chat_row:new_folder" => {
+                        log::debug!("[ChartApp] DM chat-row folder action {} has no provider intent yet", a);
                     }
                     _ => {
                         log::warn!("[ChartApp] Unhandled DM chat-row context action: {}", action);

@@ -27,6 +27,9 @@ mlc-core        = { path = "../mlc-core",        package = "mylittlechart-core" 
 # of the heavier optional deps (`mlc-cloud`/`mlc-vault`) that gate
 # mlc-app-shell-web's own same-named feature.
 mlc-app-layout  = { path = "../mlc-app-layout",  package = "mylittlechart-app-layout", features = ["cloud"] }
+# The messenger UI's own data contract (`community.rs`'s fixture
+# `MessengerProvider` impl, messenger concept v1 screen 1 parity).
+mlc-messenger-model = { path = "../mlc-messenger-model", package = "mylittlechart-messenger-model" }
 
 # uzor web bindings — wasm32-only at runtime, unconditional in Cargo.toml so
 # cargo can resolve the graph on native (the cfg-gate in src/lib.rs keeps the

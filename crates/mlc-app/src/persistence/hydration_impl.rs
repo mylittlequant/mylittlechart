@@ -34,6 +34,7 @@ impl ChartApp {
         lp_clone_us: u128,
     ) {
                     let lp_cold_start = web_time::Instant::now();
+                    let keep_line_ids = self.keeps_primitive_ids(&preset.id);
                     let _t_prep = web_time::Instant::now();
                     // Recovery: preset files written by the startup-autosave bug
                     // carry empty symbol/exchange. Resurrect them with the
@@ -246,13 +247,19 @@ impl ChartApp {
                                         } else {
                                             &snap.stashed_primitives
                                         };
+                                    let mut id_pairs: Vec<(u64, u64)> = Vec::new();
                                     self.core.bubbles_mut().with_bubble_mut(auto_bid, |auto_bub| {
                                         auto_bub.primitives.clear();
                                         if !restore_snap.is_empty() {
                                             if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
                                                 for prim_snap in restore_snap {
                                                     if let Some(mut prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
-                                                        prim.data_mut().id = mlc_core::drawing::alloc_primitive_id();
+                                                        if !keep_line_ids {
+                                                            let snapshot_id = prim.data().id;
+                                                            let live_id = mlc_core::drawing::alloc_primitive_id();
+                                                            prim.data_mut().id = live_id;
+                                                            id_pairs.push((snapshot_id, live_id));
+                                                        }
                                                         auto_bub.primitives.push(prim);
                                                     }
                                                 }
@@ -265,6 +272,9 @@ impl ChartApp {
                                             auto_bub.command_history = h;
                                         }
                                     });
+                                    for (snapshot_id, live_id) in id_pairs {
+                                        self.hydrate_prim_ids.insert(snapshot_id, live_id);
+                                    }
 
                                     // Restore per-symbol drawing cache
                                     window.symbol_drawings = snap.symbol_drawings_snapshots.clone();
@@ -1936,6 +1946,39 @@ impl ChartApp {
         // recorded them. The counter has to resume ABOVE the highest one, or
         // the first command of this session stamps below the restored ones
         // and undo walks the two histories in the wrong order.
+        // Cold load paints `bubble.primitives` on the bubble the window
+        // actually points at. Drawings captured on the window snapshot are
+        // applied earlier onto a bubble that `bubbles_mut().clear()` then
+        // discards, and a share preset often has those drawings only on the
+        // window. Copy them onto the visible bubble when it is still empty.
+        for snap in &preset.windows {
+            let chart_id = mlc_core::ids::ChartId(snap.window_id);
+            let Some(bid) = self.bubble_for_chart(chart_id) else { continue };
+            let existing: std::collections::HashSet<u64> = self
+                .with_bubble(bid, |b| b.primitives.iter().map(|p| p.data().id).collect())
+                .unwrap_or_default();
+            let source: &[mlc_core::drawing::PrimitiveSnapshot] =
+                if !snap.drawings.primitives.is_empty() {
+                    &snap.drawings.primitives
+                } else {
+                    &snap.stashed_primitives
+                };
+            if source.is_empty() {
+                continue;
+            }
+            if let Ok(reg) = mlc_core::drawing::primitives_v2::registry::PrimitiveRegistry::global().read() {
+                let mut guard = self.core.drawings_mut();
+                for prim_snap in source {
+                    if prim_snap.id().is_some_and(|id| existing.contains(&id)) {
+                        continue;
+                    }
+                    if let Some(prim) = reg.from_json(&prim_snap.type_id, &prim_snap.json) {
+                        guard.add_external(bid, prim);
+                    }
+                }
+            }
+        }
+
         self.resume_undo_sequence();
         // The id sweeps above re-number primitives, which leaves every
         // restored command pointing at an id that no longer exists.

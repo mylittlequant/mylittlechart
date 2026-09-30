@@ -32,11 +32,13 @@
 //! construction — see its own doc.
 
 use mlc_messenger_model::{
-    initials_from_name, BackPagination, Capabilities, EventId, Folder, Member, MemberRole,
-    MessageContent, MessengerIntent, MessengerProvider, PowerLevel, RoomId, RoomKind, RoomSummary,
-    SendState, Timestamp, TimelineItem, UserId, UtdReason, VaultState,
+    initials_from_name, BackPagination, Capabilities, EventId, Folder, LastEventPreview, Member,
+    MemberRole, MessageContent, MessengerIntent, MessengerProvider, PowerLevel, PreviewContent,
+    RoomId, RoomKind, RoomSummary, SendState, TagName, Timestamp, TimelineItem, UserId, UtdReason,
+    VaultState,
 };
 
+use super::context_menu::{build_dm_chat_row_context_menu, ContextMenuItemState};
 use super::modal_settings::{DmMessageBody, DmMessagePage, DmRequest, DmState, DmUnavailableReason, DmView};
 
 /// The `UserId` this adapter uses for the signed-in caller's own messages
@@ -118,6 +120,9 @@ mod reads {
             replies: false,
             typing: false,
             receipts: true,
+            forward: false,
+            stickers: false,
+            chart_card_send: false,
         }
     }
 
@@ -150,13 +155,18 @@ mod reads {
             is_public: false,
             notification_count: c.unread_count.max(0) as u64,
             highlight_count: 0,
-            // `DmConversationUi` carries a last-message TIMESTAMP
-            // (`last_message_at`) but no last-message TEXT/ciphertext at
-            // all — the row preview is drawn from a fetched message list
-            // in today's UI, not a summary field. Honestly `None` rather
-            // than a synthesized "Encrypted" marker with a fabricated
-            // timestamp/sender.
-            last_event: None,
+            // `DmConversationUi::last_message_preview`/`last_message_mine`
+            // ARE real fields a caller can populate (see that field's own
+            // doc) — the chat-list row's own preview line now reads them,
+            // closing the gap this method's own doc used to name. A
+            // conversation whose caller never resolved a preview (today's
+            // production `routes::dm::list_conversations`) still reads
+            // honestly as `None`, not a fabricated placeholder.
+            last_event: c.last_message_preview.as_ref().map(|text| LastEventPreview {
+                sender: if c.last_message_mine { UserId::from(ME) } else { peer_user_id(&c.peer_label) },
+                content: PreviewContent::Text(text.clone()),
+                ts: c.last_message_at.as_deref().map(timestamp).unwrap_or(Timestamp(0)),
+            }),
             muted: false,
             pinned: false,
             archived: false,
@@ -209,6 +219,13 @@ mod reads {
                 send_state: if sending { SendState::Sending } else { SendState::Sent },
                 read_by: if m.read_at.is_some() { vec![peer_user_id(peer_label)] } else { Vec::new() },
                 pinned: false,
+                // Today's DM model carries no shared-chart-attachment or
+                // per-message mention concept — honestly absent rather than
+                // guessed at.
+                shared_chart: None,
+                mentions_me: false,
+                // Today's DM model has no forward concept at all.
+                forwarded: None,
             }
         }).collect()
     }
@@ -438,4 +455,135 @@ impl MessengerProvider for DmMessengerProviderView<'_> {
 
     /// Unreachable by construction — see this type's own doc.
     fn enqueue(&mut self, _intent: MessengerIntent) {}
+}
+
+/// Build the chat-row context menu (concept screen "2 · Канал + меню
+/// чата") for `room_id` — an opaque room-id STRING in, a ready-to-open
+/// `Vec<ContextMenuItemState>` out, so `mlc-app`'s own click dispatch never
+/// has to spell a `mlc_messenger_model` type itself (that crate is not
+/// among `mlc-app`'s own direct dependencies — see [`DmMessengerProviderView::
+/// capabilities`]'s own doc for why). Shared by the row's own right-click
+/// (`ChartApp::try_messenger_right_click`) and the chat header's own ⋮
+/// button, which has no row to right-click and calls this with its own
+/// click position instead. Empty when `room_id` resolves to no room this
+/// account currently holds.
+#[cfg(feature = "cloud")]
+pub fn dm_chat_row_menu_items(state: &DmState, room_id: &str, can_mark_read: bool) -> Vec<ContextMenuItemState> {
+    chat_row_menu_items(&DmMessengerProviderView::new(state), room_id, can_mark_read)
+}
+
+/// [`dm_chat_row_menu_items`] over ANY provider — the menu an outside
+/// (Matrix-shaped) provider's chat-list row opens, built from that provider's
+/// own capabilities, room flags and folders.
+#[cfg(feature = "cloud")]
+pub fn chat_row_menu_items(provider: &dyn MessengerProvider, room_id: &str, can_mark_read: bool) -> Vec<ContextMenuItemState> {
+    let caps = provider.capabilities();
+    let room = RoomId::from(room_id);
+    let Some(summary) = provider.room(&room) else { return Vec::new() };
+    let folders = provider.folders();
+    let room_tags: Vec<TagName> = summary.tags.iter().map(|t| t.name.clone()).collect();
+    build_dm_chat_row_context_menu(caps, can_mark_read, summary.kind, summary.pinned, summary.muted, &folders, &room_tags)
+}
+
+/// Enqueue a [`MessengerIntent::Forward`] — `mlc-app`'s own forward-picker
+/// click dispatch (`panel_click.rs`'s `"forward_to:"` arm) calls this with
+/// three opaque id STRINGS, for the same "no `mlc_messenger_model` type
+/// spelled outside this crate" reason [`dm_chat_row_menu_items`]'s own doc
+/// gives. Today's DM adapter refuses it (`DmMessengerProvider::enqueue`'s
+/// own catch-all) — kept wired for whichever provider actually carries
+/// groups/channels.
+#[cfg(feature = "cloud")]
+pub fn forward(state: &mut DmState, from_room: &str, event_id: &str, to_room: &str) {
+    enqueue_forward(&mut DmMessengerProvider::new(state), from_room, event_id, to_room);
+}
+
+/// [`forward`] into ANY provider's mailbox.
+#[cfg(feature = "cloud")]
+pub fn enqueue_forward(provider: &mut dyn MessengerProvider, from_room: &str, event_id: &str, to_room: &str) {
+    provider.enqueue(MessengerIntent::Forward {
+        from_room: RoomId::from(from_room),
+        event_id: EventId::from(event_id),
+        to_room: RoomId::from(to_room),
+    });
+}
+
+/// One room-level toggle a chat-row context-menu click or the channel
+/// footer's Mute button requests — an `mlc-app-layout`-owned enum so
+/// `mlc-app`'s click dispatch never spells a `mlc_messenger_model` type
+/// (see [`dm_chat_row_menu_items`]'s own doc).
+#[cfg(feature = "cloud")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RoomAction {
+    TogglePin,
+    ToggleMute,
+    ToggleArchive,
+    Leave,
+}
+
+/// Enqueue the [`MessengerIntent`] `action` means for `room_id` — the toggles
+/// read the room's CURRENT flag off this provider's own snapshot (a menu row
+/// is built one frame before its click lands, so the flag is re-derived
+/// here, never trusted from the row). A `room_id` that resolves to no room is
+/// a no-op. Today's DM adapter refuses every one of these with a
+/// `last_error` (`DmMessengerProvider::enqueue`'s own catch-all); kept wired
+/// for whichever provider carries groups/channels.
+#[cfg(feature = "cloud")]
+pub fn room_action(state: &mut DmState, room_id: &str, action: RoomAction) {
+    let room = RoomId::from(room_id);
+    let Some(summary) = reads::room(state, &room) else { return };
+    DmMessengerProvider::new(state).enqueue(room_action_intent(&summary, action));
+}
+
+/// [`room_action`] into ANY provider's mailbox — reads the room's current
+/// flag off that provider's own snapshot.
+#[cfg(feature = "cloud")]
+pub fn enqueue_room_action(provider: &mut dyn MessengerProvider, room_id: &str, action: RoomAction) {
+    let Some(summary) = provider.room(&RoomId::from(room_id)) else { return };
+    provider.enqueue(room_action_intent(&summary, action));
+}
+
+#[cfg(feature = "cloud")]
+fn room_action_intent(summary: &RoomSummary, action: RoomAction) -> MessengerIntent {
+    let room = summary.id.clone();
+    match action {
+        RoomAction::TogglePin => MessengerIntent::SetPinned { room, pinned: !summary.pinned },
+        RoomAction::ToggleMute => MessengerIntent::SetMuted { room, muted: !summary.muted },
+        RoomAction::ToggleArchive => MessengerIntent::SetArchived { room, archived: !summary.archived },
+        RoomAction::Leave => MessengerIntent::LeaveRoom { room },
+    }
+}
+
+#[cfg(all(test, feature = "cloud"))]
+mod tests {
+    use super::super::modal_settings::DmConversationUi;
+    use super::*;
+
+    fn state_with_room(id: i64) -> DmState {
+        let mut state = DmState::default();
+        state.conversations.push(DmConversationUi {
+            id,
+            peer_label: "peer".to_string(),
+            peer_fingerprint: None,
+            last_message_at: None,
+            unread_count: 0,
+            peer_rank: None,
+            last_message_preview: None,
+            last_message_mine: false,
+        });
+        state
+    }
+
+    #[test]
+    fn room_action_on_a_known_room_reaches_the_dm_adapters_refusal() {
+        let mut state = state_with_room(7);
+        room_action(&mut state, "7", RoomAction::TogglePin);
+        assert!(state.last_error.is_some(), "the DM adapter must refuse a pin it cannot carry");
+    }
+
+    #[test]
+    fn room_action_on_an_unknown_room_enqueues_nothing() {
+        let mut state = state_with_room(7);
+        room_action(&mut state, "99", RoomAction::Leave);
+        assert!(state.last_error.is_none());
+    }
 }

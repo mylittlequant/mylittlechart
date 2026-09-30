@@ -49,6 +49,9 @@ mod perf;
 mod persistence;
 #[cfg(all(target_arch = "wasm32", feature = "cloud"))]
 mod cloud_session;
+// wired by the MLC coordinator
+#[cfg(all(target_arch = "wasm32", feature = "cloud"))]
+pub mod messenger_io;
 
 /// Counting global allocator (wasm-leak differential, 2026-07-26).
 ///
@@ -189,7 +192,11 @@ pub fn start() {
     // `?share=<token>` viewer mode (chart-sharing arc) — parsed next to the
     // other boot-time URL gate; the fetch itself is async and runs at the
     // top of `run()`, before any app state exists.
-    let share_token = share_token_from_url();
+    let share_token = share_token_from_url().or_else(share_token_from_cookie);
+    clear_share_cookie();
+    if share_token.is_some() {
+        forget_share_query();
+    }
 
     spawn_local(async move {
         if let Err(e) = run(share_token).await {
@@ -234,8 +241,62 @@ fn share_token_from_url() -> Option<String> {
         .trim_start_matches('?')
         .split('&')
         .find_map(|p| p.strip_prefix("share="))
-        .filter(|t| !t.is_empty())
+        .filter(|t| share_token_chars(t))
         .map(|t| t.to_string())
+}
+
+/// One-shot cookie the server sets while it redirects `/?share=` to `/`.
+/// The address bar stays clean. The tab holds the token.
+#[cfg(target_arch = "wasm32")]
+fn share_token_from_cookie() -> Option<String> {
+    let doc = web_sys::window()?.document()?;
+    let raw = js_sys::Reflect::get(&doc, &"cookie".into()).ok()?.as_string()?;
+    raw.split(';').find_map(|part| {
+        let part = part.trim();
+        let value = part.strip_prefix("mlc_share=")?;
+        share_token_chars(value).then(|| value.to_string())
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+fn share_token_chars(token: &str) -> bool {
+    token.len() == 32 && token.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn clear_share_cookie() {
+    if let Some(doc) = web_sys::window().and_then(|w| w.document()) {
+        let _ = js_sys::Reflect::set(
+            &doc,
+            &"cookie".into(),
+            &"mlc_share=; Max-Age=0; Path=/; Secure; SameSite=Lax".into(),
+        );
+    }
+}
+
+/// Drop `share` from the address bar. The token is already in memory.
+#[cfg(target_arch = "wasm32")]
+fn forget_share_query() {
+    let Some(win) = web_sys::window() else { return };
+    let Ok(search) = win.location().search() else { return };
+    if !search.contains("share=") {
+        return;
+    }
+    let kept: Vec<&str> = search
+        .trim_start_matches('?')
+        .split('&')
+        .filter(|p| !p.is_empty() && !p.starts_with("share=") && !p.starts_with("v="))
+        .collect();
+    let path = win.location().pathname().unwrap_or_else(|_| "/".to_string());
+    let hash = win.location().hash().unwrap_or_default();
+    let next = if kept.is_empty() {
+        format!("{path}{hash}")
+    } else {
+        format!("{path}?{}{hash}", kept.join("&"))
+    };
+    if let Ok(history) = win.history() {
+        let _ = history.replace_state_with_url(&wasm_bindgen::JsValue::NULL, "", Some(&next));
+    }
 }
 
 /// Console log level: `?log=trace|debug|info|warn|error` in the page URL,
@@ -281,7 +342,56 @@ enum ShareBoot {
     /// Live share — the frozen preset plus the meta
     /// `ChartApp::open_shared_preset` needs to label the tab and gate the
     /// Clone action: token, title, owner, kind, effective rights, expiry.
-    Live(mlc_core::preset::preset::ChartPreset, mlc_app::SharedChartMeta),
+    Live(
+        mlc_core::preset::preset::ChartPreset,
+        mlc_app::SharedChartMeta,
+        bool,
+        Vec<mlc_app::share_stream::ShareInboundOp>,
+    ),
+    /// `?share=` named a link the server no longer has (404, 403, 410) or one
+    /// this build cannot open. No tab is made; the person is told.
+    Gone(String),
+    /// `?share=` could not be checked right now (offline, 5xx). No tab is
+    /// made; the token is kept in the saved tabs so the next boot asks again.
+    Dead(String),
+}
+
+/// Every settled object the server has for this token, in seq order.
+/// Failure leaves the preset as it was published; the poll retries.
+#[cfg(all(target_arch = "wasm32", feature = "cloud"))]
+async fn load_share_ops(
+    transport: &mlc_cloud::FetchTransport,
+    token: &str,
+) -> (bool, Vec<mlc_app::share_stream::ShareInboundOp>) {
+    let mut after = 0i64;
+    let mut live = false;
+    let mut out = Vec::new();
+    for _ in 0..40 {
+        let Ok(resp) = transport.share_get_ops(token, after).await else {
+            break;
+        };
+        live = resp.live;
+        if resp.ops.is_empty() {
+            break;
+        }
+        let mut tail = after;
+        for op in resp.ops {
+            if op.seq > tail {
+                tail = op.seq;
+            }
+            out.push(mlc_app::share_stream::ShareInboundOp {
+                seq: op.seq,
+                kind: op.kind,
+                object_id: op.object_id,
+                body: op.body,
+            });
+        }
+        if tail <= after || out.len() > 4000 {
+            break;
+        }
+        after = tail;
+    }
+    (live, out)
 }
 
 /// Resolve a `?share=<token>` boot BEFORE any chart state exists.
@@ -311,12 +421,13 @@ async fn resolve_share_boot(token: Option<String>) -> ShareBoot {
             }
             ShareBoot::Redirect
         }
-        Ok(mlc_cloud::SharePublicResponse::Live { preset, title, owner, expires_at, rights, .. }) => {
+        Ok(mlc_cloud::SharePublicResponse::Live { preset, title, owner, expires_at, rights, revision, .. }) => {
             match serde_json::from_value::<mlc_core::preset::preset::ChartPreset>(preset) {
                 Ok(p) if p.version == mlc_core::preset::preset::PRESET_VERSION => {
                     web_sys::console::log_1(
                         &format!("[share] viewer boot on shared preset '{}' ({}), owner {}", title, p.id, owner).into(),
                     );
+                    let (live, ops) = load_share_ops(&transport, &token).await;
                     let meta = mlc_app::SharedChartMeta {
                         token,
                         title,
@@ -324,29 +435,34 @@ async fn resolve_share_boot(token: Option<String>) -> ShareBoot {
                         kind: "live".to_string(),
                         rights,
                         expires_at,
+                        revision,
                     };
-                    ShareBoot::Live(p, meta)
+                    ShareBoot::Live(p, meta, live, ops)
                 }
                 Ok(p) => {
                     web_sys::console::error_1(
-                        &format!("[share] preset version {} unsupported (client is on {}) — normal boot",
+                        &format!("[share] preset version {} unsupported (client is on {})",
                             p.version, mlc_core::preset::preset::PRESET_VERSION).into(),
                     );
-                    ShareBoot::Normal
+                    ShareBoot::Gone(token)
                 }
                 Err(e) => {
                     web_sys::console::error_1(
-                        &format!("[share] shared preset did not deserialize: {} — normal boot", e).into(),
+                        &format!("[share] shared preset did not deserialize: {}", e).into(),
                     );
-                    ShareBoot::Normal
+                    ShareBoot::Gone(token)
                 }
             }
         }
+        Err(mlc_cloud::CloudError::Http { status, .. }) if matches!(status, 403 | 404 | 410) => {
+            web_sys::console::warn_1(&format!("[share] link answered {status}: gone").into());
+            ShareBoot::Gone(token)
+        }
         Err(e) => {
             web_sys::console::error_1(
-                &format!("[share] share fetch failed ({}): {} — normal boot", token, e).into(),
+                &format!("[share] share fetch failed: {e}").into(),
             );
-            ShareBoot::Normal
+            ShareBoot::Dead(token)
         }
     }
 }
@@ -376,7 +492,7 @@ fn spawn_share_reopen_fetches(
                 attestation: None,
             });
             match transport.share_get_public(&entry.token).await {
-                Ok(mlc_cloud::SharePublicResponse::Live { preset, title, owner, expires_at, rights, .. }) => {
+                Ok(mlc_cloud::SharePublicResponse::Live { preset, title, owner, expires_at, rights, revision, .. }) => {
                     match serde_json::from_value::<mlc_core::preset::preset::ChartPreset>(preset) {
                         Ok(p) if p.version == mlc_core::preset::preset::PRESET_VERSION => {
                             let meta = mlc_app::SharedChartMeta {
@@ -386,10 +502,21 @@ fn spawn_share_reopen_fetches(
                                 kind: "live".to_string(),
                                 rights,
                                 expires_at,
+                                revision,
                             };
+                            let (live, ops) = load_share_ops(&transport, &entry.token).await;
+                            let can_send = meta.rights.iter().any(|r| r == "edit");
+                            let token = meta.token.clone();
                             if let Ok(mut st) = state.try_borrow_mut() {
                                 if let Err(e) = st.chart.fill_shared_placeholder(&entry.placeholder_id, meta, p) {
                                     web_sys::console::error_1(&format!("[share] reopen fill failed: {}", e).into());
+                                } else {
+                                    st.chart.queue_share_catchup(mlc_app::share_stream::ShareCatchup {
+                                        token,
+                                        live,
+                                        can_send,
+                                        ops,
+                                    });
                                 }
                             }
                         }
@@ -620,20 +747,64 @@ async fn run(share_token: Option<String>) -> Result<(), JsValue> {
     // `new_window`'s own restore so the shared tab wins the strip; the
     // visitor's OWN tabs, if any, stay exactly as restored.
     #[cfg(feature = "cloud")]
-    if let ShareBoot::Live(preset, meta) = share_boot {
-        let title = meta.title.clone();
-        match app.open_shared_preset(meta, preset) {
-            Ok(id) => {
-                web_sys::console::log_1(
-                    &format!("[share] opened shared preset '{}' ({}) as a read-only tab", title, id).into(),
-                );
-            }
-            Err(e) => {
-                web_sys::console::error_1(
-                    &format!("[share] failed to open shared preset '{}': {} — staying on the restored tab", title, e).into(),
-                );
+    match share_boot {
+        ShareBoot::Live(preset, meta, live, ops) => {
+            let title = meta.title.clone();
+            let token = meta.token.clone();
+            let can_send = meta.rights.iter().any(|r| r == "edit");
+            let opened = if let Some(id) = app.share_tab_id_for_token(&token) {
+                match app.fill_shared_placeholder(&id, meta, preset) {
+                    Ok(()) => {
+                        web_sys::console::log_1(
+                            &format!("[share] filled existing tab {} for '{}'", id, title).into(),
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        web_sys::console::error_1(
+                            &format!("[share] fill of '{}' failed: {}", title, e).into(),
+                        );
+                        false
+                    }
+                }
+            } else {
+                match app.open_shared_preset(meta, preset) {
+                    Ok(id) => {
+                        web_sys::console::log_1(
+                            &format!("[share] opened shared preset '{}' ({}) as a read-only tab", title, id).into(),
+                        );
+                        true
+                    }
+                    Err(e) => {
+                        web_sys::console::error_1(
+                            &format!("[share] failed to open shared preset '{}': {}", title, e).into(),
+                        );
+                        app.share_link_unavailable();
+                        false
+                    }
+                }
+            };
+            if opened {
+                app.queue_share_catchup(mlc_app::share_stream::ShareCatchup {
+                    token,
+                    live,
+                    can_send,
+                    ops,
+                });
             }
         }
+        ShareBoot::Gone(token) => {
+            // A saved tab for the same token is told by its own re-fetch.
+            if app.share_tab_id_for_token(&token).is_none() {
+                app.share_link_unavailable();
+            }
+        }
+        ShareBoot::Dead(token) => {
+            if app.share_tab_id_for_token(&token).is_none() {
+                app.share_link_deferred(&token);
+            }
+        }
+        ShareBoot::Normal | ShareBoot::Redirect => {}
     }
 
     // First-run courtesy (owner's ruling 2026-08-31): `bootstrap_first_run`
@@ -743,13 +914,12 @@ fn install_persistence_flush_hooks(
                 // session merely because a share link was ever opened. The
                 // OPFS market-data flush below stays ungated regardless —
                 // it is not localStorage.
-                if !st.chart.is_readonly_tab(&st.chart.panel_app.active_preset_id)
-                    && mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
+                if mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
                 {
-                    // Reborrow once: `st.chart`/`st.perf` through two separate
-                    // `RefMut` derefs in the same call don't split as disjoint
-                    // fields (same trap `render_frame`'s tab-sync block below
-                    // already documents for `chrome`/`chart`).
+                    // A shared tab does not block this. `save_persistent_state`
+                    // already skips that preset's body. Skipping the whole
+                    // save used to drop the active-tab id and the collapsed
+                    // flyout sections whenever the share was what was showing.
                     let st = &mut *st;
                     persistence::save_persistent_state(&mut st.chart, &mut st.perf);
                 }
@@ -794,13 +964,8 @@ fn install_persistence_flush_hooks(
                 // session merely because a share link was ever opened. The
                 // OPFS market-data flush below stays ungated regardless —
                 // it is not localStorage.
-                if !st.chart.is_readonly_tab(&st.chart.panel_app.active_preset_id)
-                    && mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
+                if mlc_app::persistence::autosave::is_persist_safe(&st.chart.load_state)
                 {
-                    // Reborrow once: `st.chart`/`st.perf` through two separate
-                    // `RefMut` derefs in the same call don't split as disjoint
-                    // fields (same trap `render_frame`'s tab-sync block below
-                    // already documents for `chrome`/`chart`).
                     let st = &mut *st;
                     persistence::save_persistent_state(&mut st.chart, &mut st.perf);
                 }
@@ -1658,8 +1823,7 @@ fn run_render_loop(
             // loop additionally skips any readonly preset's body regardless
             // of which tab is active, so a shared preset can never reach
             // local preset storage even via an unrelated dirty flag.
-            let active_readonly = st.chart.is_readonly_tab(&st.chart.panel_app.active_preset_id);
-            if !active_readonly && persist_safe
+            if persist_safe
                 && (st.chart.profile_dirty || st.chart.profile_geometry_dirty || st.chart.watchlists_dirty
                     || !st.chart.preset_actions.is_empty())
             {
@@ -2246,9 +2410,19 @@ fn run_render_loop(
                             };
                             match upload {
                                 Some((cloud, title)) => {
-                                    screenshot_region_blob("chart", Some(rect), move |blob| {
-                                        cloud.share_screenshot(blob, title);
+                                    let epoch = cloud.begin_preview();
+                                    let cloud_card = cloud.clone();
+                                    screenshot_region_blob("chart", Some(rect), None, move |blob| {
+                                        cloud.share_screenshot(blob, title, epoch);
                                     });
+                                    screenshot_region_blob(
+                                        "chart",
+                                        Some(rect),
+                                        Some(SHARE_CARD_MAX_EDGE),
+                                        move |card| {
+                                            cloud_card.offer_preview_card(epoch, card);
+                                        },
+                                    );
                                 }
                                 // The dropdown's ShareLink row is hidden for
                                 // anonymous sessions; a shot landing here
@@ -2284,15 +2458,40 @@ fn run_render_loop(
         {
             let request = {
                 let mut st = state_clone.borrow_mut();
+                if st.chart.take_pending_share_copy() {
+                    if let Some(token) = st.chart.active_share_token() {
+                        let url = cloud_session::absolute_share_url(&format!("/?share={token}"));
+                        crate::clipboard_write_text(&url);
+                        st.chart.push_system_event(
+                            mlc_core::SystemEventKind::Share,
+                            "Stream on",
+                            format!("Link copied to clipboard: {url}"),
+                            true,
+                        );
+                    }
+                }
                 if st.chart.drain_pending_share_live() {
                     let id = st.chart.panel_app.active_preset_id.clone();
-                    let preset = st.chart.core.presets().get(&id).cloned();
-                    Some((st.cloud.clone(), preset))
+                    let name = st.chart.core.presets().get(&id).map(|p| p.name.clone()).unwrap_or_default();
+                    // The registry copy is not the open chart. Drawings live
+                    // in the live store until this snapshot. Publishing the
+                    // registry copy overwrites the link with an empty chart.
+                    st.chart.collect_state_into_preset(&id, &name);
+                    if st.chart.load_state.is_loading() {
+                        web_sys::console::warn_1(&"[share] refused: chart is still loading".into());
+                        None
+                    } else {
+                        let preset = st.chart.core.presets().get(&id).cloned();
+                        let rect = st.chart.screenshot_rect();
+                        let flags = st.chart.share_publish_flags();
+                        Some((st.cloud.clone(), preset, rect, flags))
+                    }
                 } else {
                     None
                 }
             };
-            if let Some((cloud, preset)) = request {
+            if let Some((cloud, preset, rect, flags)) = request {
+                let (clone_allowed, interaction, visibility) = flags;
                 match (cloud, preset) {
                     (Some(cloud), Some(preset)) if cloud.is_signed_in() => {
                         // The registry preset as-is: `bars` is
@@ -2300,9 +2499,50 @@ fn run_render_loop(
                         // so the JSON is the restorable skeleton already —
                         // the mlc-updater strip pass exists for OLD files
                         // that still carry bars, not for this in-memory
-                        // serialization.
+                        // serialization. The card PNG is the same chart
+                        // crop the camera uses, capped so the preview
+                        // route accepts it. The link is still created if
+                        // the crop cannot start.
                         match serde_json::to_value(&preset) {
-                            Ok(preset_json) => cloud.share_live(preset.name.clone(), preset_json),
+                            Ok(preset_json) => {
+                                let title = preset.name.clone();
+                                let preset_id = preset.id.clone();
+                                let preset_id_fallback = preset_id.clone();
+                                let title_fallback = title.clone();
+                                let preset_fallback = preset_json.clone();
+                                let cloud_fallback = cloud.clone();
+                                let interaction_owned = interaction.to_string();
+                                let visibility_owned = visibility.to_string();
+                                let interaction_fallback = interaction_owned.clone();
+                                let visibility_fallback = visibility_owned.clone();
+                                let started = screenshot_region_blob(
+                                    "chart",
+                                    Some(rect),
+                                    Some(SHARE_CARD_MAX_EDGE),
+                                    move |blob| {
+                                        cloud.share_live(
+                                            title,
+                                            preset_json,
+                                            preset_id,
+                                            Some(blob),
+                                            clone_allowed,
+                                            interaction_owned,
+                                            visibility_owned,
+                                        );
+                                    },
+                                );
+                                if !started {
+                                    cloud_fallback.share_live(
+                                        title_fallback,
+                                        preset_fallback,
+                                        preset_id_fallback,
+                                        None,
+                                        clone_allowed,
+                                        interaction_fallback,
+                                        visibility_fallback,
+                                    );
+                                }
+                            }
                             Err(e) => {
                                 web_sys::console::error_1(
                                     &format!("[share] preset serialize failed: {}", e).into(),
@@ -3050,9 +3290,16 @@ fn render_frame(state: Rc<RefCell<WebAppState>>, timer: &mut perf::FrameTimer) -
     // and registers the ✕/drag hit zones), so this is its own `borrow_mut`
     // scope rather than sharing the chrome block's read-only `borrow()`.
     {
+        use uzor::render::Painter;
         let mut st = state.borrow_mut();
         if !st.chart.is_capturing_screenshot() {
+            // Hit zones are chart-local (dispatch subtracts the chrome
+            // strip). Paint in that same space, or the ✕ sits a chrome-height
+            // above the widget that should receive the click.
+            ctx.save();
+            ctx.translate(0.0, CHROME_HEIGHT);
             st.chart.render_toasts(&mut ctx, now_ms);
+            ctx.restore();
         }
     }
     {
@@ -3128,12 +3375,20 @@ fn clipboard_write_text(text: &str) {
 ///
 /// The toBlob `Closure` is stored in an `Rc<RefCell<Option<…>>>` so the JS GC
 /// cannot collect it before the callback fires, then it self-destructs.
+///
+/// `max_edge` caps the longer side. The share-card route refuses a PNG above
+/// 2048 px or 2 MiB, so a card capture passes [`SHARE_CARD_MAX_EDGE`]. A
+/// clipboard, download, or screenshot-share body passes `None`.
+///
+/// Returns whether `toBlob` was started. A `false` means `consumer` will not
+/// run (crop failed, or the browser refused the encode).
 #[cfg(target_arch = "wasm32")]
 fn screenshot_region_blob(
     canvas_id: &str,
     rect_css: Option<(u32, u32, u32, u32)>,
+    max_edge: Option<u32>,
     consumer: impl FnOnce(web_sys::Blob) + 'static,
-) {
+) -> bool {
     use wasm_bindgen::JsCast;
 
     let result: Result<web_sys::HtmlCanvasElement, JsValue> = (|| {
@@ -3166,8 +3421,19 @@ fn screenshot_region_blob(
         let tmp = doc
             .create_element("canvas")?
             .dyn_into::<web_sys::HtmlCanvasElement>()?;
-        tmp.set_width(sw);
-        tmp.set_height(sh);
+        let long = sw.max(sh).max(1);
+        let (dw, dh) = match max_edge {
+            Some(max_edge) if long > max_edge => {
+                let scale = max_edge as f64 / long as f64;
+                (
+                    ((sw as f64 * scale).round() as u32).max(1),
+                    ((sh as f64 * scale).round() as u32).max(1),
+                )
+            }
+            _ => (sw, sh),
+        };
+        tmp.set_width(dw);
+        tmp.set_height(dh);
         let tctx = tmp
             .get_context("2d")?
             .ok_or_else(|| JsValue::from_str("no 2d context"))?
@@ -3180,8 +3446,8 @@ fn screenshot_region_blob(
             sh as f64,
             0.0,
             0.0,
-            sw as f64,
-            sh as f64,
+            dw as f64,
+            dh as f64,
         )?;
         Ok(tmp)
     })();
@@ -3190,7 +3456,7 @@ fn screenshot_region_blob(
         Ok(c) => c,
         Err(e) => {
             web_sys::console::error_1(&format!("[screenshot] crop failed: {:?}", e).into());
-            return;
+            return false;
         }
     };
 
@@ -3217,9 +3483,18 @@ fn screenshot_region_blob(
                 &format!("[screenshot] to_blob_with_type failed: {:?}", e).into(),
             );
             let _ = closure_slot.borrow_mut().take();
+            return false;
         }
+        return true;
     }
+    false
 }
+
+/// Longer side of the PNG posted to `POST /api/share/{token}/preview`.
+/// The route rejects either side above 2048 and a body above 2 MiB; 1600
+/// stays under both for a chart crop.
+#[cfg(target_arch = "wasm32")]
+const SHARE_CARD_MAX_EDGE: u32 = 1600;
 
 /// Copies the current chart region (open space + scales, no chrome/toolbars/
 /// sidebar — parity with the native crop) as a PNG to the OS clipboard.
@@ -3228,7 +3503,7 @@ fn screenshot_region_blob(
 /// `navigator.clipboard.write([item])`.
 #[cfg(target_arch = "wasm32")]
 fn trigger_screenshot_to_clipboard(canvas_id: &str, rect_css: Option<(u32, u32, u32, u32)>) {
-    screenshot_region_blob(canvas_id, rect_css, |blob| {
+    screenshot_region_blob(canvas_id, rect_css, None, |blob| {
         let result: Result<(), JsValue> = (|| {
             // Build ClipboardItem: { "image/png": blob }
             let record = js_sys::Object::new();
@@ -3275,7 +3550,7 @@ fn trigger_screenshot_to_clipboard(canvas_id: &str, rect_css: Option<(u32, u32, 
 fn trigger_screenshot_download(canvas_id: &str, rect_css: Option<(u32, u32, u32, u32)>) {
     use wasm_bindgen::JsCast;
 
-    screenshot_region_blob(canvas_id, rect_css, |blob| {
+    screenshot_region_blob(canvas_id, rect_css, None, |blob| {
         let result: Result<(), JsValue> = (|| {
             let url = web_sys::Url::create_object_url_with_blob(&blob)?;
             let win = web_sys::window().ok_or_else(|| JsValue::from_str("no window"))?;

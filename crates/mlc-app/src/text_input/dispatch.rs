@@ -106,6 +106,7 @@ impl ChartApp {
                 | PROFILE_RENAME
                 | ACCOUNT_NICK
                 | REDEEM_CODE
+                | CHECKOUT_KEY_INPUT
                 | NEW_PASSPHRASE
                 | NEW_PROFILE_NAME
                 | RECOVERY_KEY
@@ -128,8 +129,12 @@ impl ChartApp {
             is_early_field |= matches!(
                 focused_id.as_str(),
                 FORUM_TITLE | FORUM_BODY | FORUM_REPLY | FORUM_SEARCH | DM_DRAFT | DM_PEER
+                    | SHARE_SETTINGS_NICK
+                    | FRIENDS_NICK
             );
         }
+        // The Admin tab's seven inputs (`mlc_app_layout::ui::admin_tab`).
+        is_early_field |= mlc_app_layout::ui::admin_tab::AdminField::from_id(focused_id.as_str()).is_some();
         if !is_early_field {
             return false;
         }
@@ -261,6 +266,10 @@ impl ChartApp {
             }
             return;
         }
+        if let Some(field) = mlc_app_layout::ui::admin_tab::AdminField::from_id(id.as_str()) {
+            self.text_action_admin_field(field, ch, action);
+            return;
+        }
         match id.as_str() {
             HEX_COLOR                        => self.text_action_hex_color(action),
             CHART_BROWSER_SEARCH             => self.text_action_chart_browser(action),
@@ -274,6 +283,7 @@ impl ChartApp {
             PROFILE_RENAME                   => self.text_action_profile_rename(action),
             ACCOUNT_NICK                     => self.text_action_account_nick(ch, action),
             REDEEM_CODE                      => self.text_action_redeem_code(ch, action),
+            CHECKOUT_KEY_INPUT               => self.text_action_checkout_key(ch, action),
             SYMBOL_SEARCH | INDICATOR_SEARCH | COMPARE_SEARCH
                                              => self.text_action_search_overlay(action),
             AGENT_CHAT                       => self.text_action_agent_chat(ch, action),
@@ -292,6 +302,9 @@ impl ChartApp {
             DM_PEER                           => self.text_action_dm_peer(ch, action),
             #[cfg(feature = "cloud")]
             DM_CHAT_FILTER                    => self.text_action_dm_chat_filter(ch, action),
+            #[cfg(feature = "cloud")]
+            SHARE_SETTINGS_NICK               => self.text_action_share_settings_nick(ch, action),
+            FRIENDS_NICK                      => self.text_action_friends_nick(ch, action),
             ALERT_TG_TOKEN                   => self.text_action_alert_token(ch, action),
             CRED_WEBHOOK_URL                 => self.text_action_cred_webhook_url(ch, action),
             CRED_ADD_EXCHANGE                => self.text_action_cred_add_field(crate::input::credentials::CredAddField::Exchange, ch, action),
@@ -1063,6 +1076,24 @@ impl ChartApp {
         }
     }
 
+    /// The checkout modal's account-key box. Enter signs in; Escape leaves the
+    /// modal (the box is cleared by the checkout's own per-frame release).
+    fn text_action_checkout_key(&mut self, ch: char, action: TextAction) {
+        if ch == '\r' || ch == '\n' {
+            self.checkout_submit_key();
+            return;
+        }
+        if ch == '\x1b' {
+            self.checkout_dismiss();
+            return;
+        }
+        match action {
+            TextAction::Commit(_) => self.checkout_submit_key(),
+            TextAction::Cancel => self.checkout_dismiss(),
+            _ => {}
+        }
+    }
+
     /// Abandon the Forum-v2 compose form: back to the board list, clear
     /// both fields, drop focus. Used by `FORUM_TITLE`/`FORUM_BODY`'s own
     /// Escape handling below. `panel_click.rs`'s `"forum2:compose_cancel"`
@@ -1293,6 +1324,11 @@ impl ChartApp {
     #[cfg(feature = "cloud")]
     fn text_action_dm_draft(&mut self, ch: char, action: TextAction) {
         let submit = |chart: &mut ChartApp| {
+            // An outside provider backing the tab takes the draft as a
+            // `SendText` intent; the DM path below is the fallback.
+            if chart.messenger_send_draft() {
+                return;
+            }
             let wid = WidgetId::from(crate::text_input::DM_DRAFT);
             let text = chart.input_coordinator.borrow().text_fields().text(&wid).trim().to_string();
             if text.is_empty() {
@@ -1344,6 +1380,10 @@ impl ChartApp {
     /// `"dm:lookup_result:{i}"` click arm for the row-click path.
     #[cfg(feature = "cloud")]
     fn text_action_dm_peer(&mut self, ch: char, action: TextAction) {
+        if self.panel_app.community_state.messenger_external {
+            self.text_action_messenger_peer(ch, action);
+            return;
+        }
         let submit = |chart: &mut ChartApp| {
             let wid = WidgetId::from(crate::text_input::DM_PEER);
             let top_public_id = chart
@@ -1389,6 +1429,33 @@ impl ChartApp {
         }
     }
 
+    /// [`Self::text_action_dm_peer`] while an outside provider backs the tab:
+    /// every keystroke asks the provider's user directory (`SearchUsers`) and
+    /// the pump shows the hits in the same dropdown; Enter starts a direct
+    /// message with the top hit. Escape closes the dropdown and drops focus.
+    #[cfg(feature = "cloud")]
+    fn text_action_messenger_peer(&mut self, ch: char, action: TextAction) {
+        let wid = WidgetId::from(crate::text_input::DM_PEER);
+        if ch == '\x1b' {
+            self.panel_app.community_state.dm.close_lookup_dropdown();
+            self.input_coordinator.borrow_mut().text_fields_mut().blur();
+            return;
+        }
+        if ch == '\r' || ch == '\n' || matches!(action, TextAction::Commit(_)) {
+            if self.panel_app.messenger_start_dm_with_hit(0) {
+                self.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+            }
+            return;
+        }
+        match action {
+            TextAction::Cancel => self.panel_app.community_state.dm.close_lookup_dropdown(),
+            _ => {
+                let term = self.input_coordinator.borrow().text_fields().text(&wid).to_string();
+                self.panel_app.messenger_search_users(&term);
+            }
+        }
+    }
+
     /// The chat-list header's own name filter (messenger UI-2b,
     /// `messenger_overlay.rs`'s `draw_chat_filter_row`). No debounce, no
     /// server round trip, no `Commit`/`Cancel` submit action — filtering is
@@ -1403,6 +1470,42 @@ impl ChartApp {
             let wid = WidgetId::from(crate::text_input::DM_CHAT_FILTER);
             chart.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
             chart.input_coordinator.borrow_mut().text_fields_mut().blur();
+        };
+        if ch == '\x1b' {
+            cancel(self);
+            return;
+        }
+        if let TextAction::Cancel = action {
+            cancel(self);
+        }
+    }
+
+    /// Share settings nick box. The lookup reads the live field text every
+    /// frame, same as the chat-list filter. Escape clears and blurs.
+    #[cfg(feature = "cloud")]
+    fn text_action_share_settings_nick(&mut self, ch: char, action: TextAction) {
+        let cancel = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
+            chart.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+            chart.input_coordinator.borrow_mut().text_fields_mut().blur();
+            chart.panel_app.share_settings_state.hits.clear();
+        };
+        if ch == '\x1b' {
+            cancel(self);
+            return;
+        }
+        if let TextAction::Cancel = action {
+            cancel(self);
+        }
+    }
+
+    /// Friends-tab nick search. Escape clears the box and the hit list.
+    fn text_action_friends_nick(&mut self, ch: char, action: TextAction) {
+        let cancel = |chart: &mut ChartApp| {
+            let wid = WidgetId::from(crate::text_input::FRIENDS_NICK);
+            chart.input_coordinator.borrow_mut().text_fields_mut().clear(&wid);
+            chart.input_coordinator.borrow_mut().text_fields_mut().blur();
+            chart.panel_app.user_settings_state.friend_hits.clear();
         };
         if ch == '\x1b' {
             cancel(self);

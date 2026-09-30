@@ -78,3 +78,90 @@ pub fn draw_share_viewer_row(
 
     coord.register_on_layer(widget_id.as_str(), btn_rect, Sense::CLICK | Sense::HOVER, layer_id);
 }
+
+/// Author's live controls, same corner as the viewer's Clone button.
+/// Live is the socket. View and Cursor ride that socket and drop off with it.
+pub fn draw_share_live_controls(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    rect: WidgetRect,
+    live: bool,
+    viewport: bool,
+    cursor: bool,
+    tt: &ToolbarTheme,
+) {
+    let mut buttons = vec![("share_live:live", "Live", live)];
+    if live {
+        buttons.push(("share_live:viewport", "View", viewport));
+        buttons.push(("share_live:cursor", "Cursor", cursor));
+    }
+    ctx.set_font("600 12px sans-serif");
+    let gap = 4.0;
+    let mut right = rect.x + rect.width;
+    for (id, label, on) in buttons.into_iter().rev() {
+        let w = ctx.measure_text(label) + BTN_PAD_X * 2.0;
+        right -= w;
+        let btn = WidgetRect::new(right, rect.y, w, rect.height);
+        right -= gap;
+        let hovered = coord.is_hovered(&WidgetId::from(id));
+        let bg = if on {
+            tt.accent.as_str()
+        } else if hovered {
+            tt.button_bg_hover.as_str()
+        } else {
+            tt.button_bg.as_str()
+        };
+        ctx.set_fill_color(bg);
+        ctx.fill_rounded_rect(btn.x, btn.y, btn.width, btn.height, BTN_RADIUS);
+        ctx.set_fill_color(if on { "#ffffff" } else { tt.item_text.as_str() });
+        ctx.set_text_align(TextAlign::Center);
+        ctx.set_text_baseline(TextBaseline::Middle);
+        ctx.fill_text(label, btn.center_x(), btn.center_y());
+        coord.register_on_layer(id, btn, Sense::CLICK | Sense::HOVER, layer_id);
+    }
+}
+
+/// The author turned Live off. The chart stays put until the viewer presses
+/// the button, which closes this tab.
+pub fn draw_stream_ended(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    rect: WidgetRect,
+    title: &str,
+    action: &str,
+    chart_bg: &str,
+    tt: &ToolbarTheme,
+) {
+    ctx.set_fill_color(chart_bg);
+    ctx.fill_rect(rect.x, rect.y, rect.width, rect.height);
+    coord.register_on_layer("share_end:bg", rect, Sense::CLICK, layer_id);
+
+    let card_w = 320.0_f64.min(rect.width - 24.0).max(160.0);
+    let card_h = 120.0_f64.min(rect.height - 24.0).max(88.0);
+    let card = WidgetRect::new(
+        rect.x + (rect.width - card_w) / 2.0,
+        rect.y + (rect.height - card_h) / 2.0,
+        card_w,
+        card_h,
+    );
+    ctx.set_fill_color(chart_bg);
+    ctx.fill_rounded_rect(card.x, card.y, card.width, card.height, 8.0);
+
+    ctx.set_font("600 16px sans-serif");
+    ctx.set_fill_color(&tt.item_text);
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Middle);
+    ctx.fill_text(title, card.center_x(), card.y + 36.0);
+
+    ctx.set_font("600 13px sans-serif");
+    let btn_w = ctx.measure_text(action) + 28.0;
+    let btn = WidgetRect::new(card.center_x() - btn_w / 2.0, card.y + card.height - 48.0, btn_w, 32.0);
+    let hovered = coord.is_hovered(&WidgetId::from("share_end:close"));
+    ctx.set_fill_color(if hovered { tt.accent_hover.as_str() } else { tt.accent.as_str() });
+    ctx.fill_rounded_rect(btn.x, btn.y, btn.width, btn.height, BTN_RADIUS);
+    ctx.set_fill_color("#ffffff");
+    ctx.fill_text(action, btn.center_x(), btn.center_y());
+    coord.register_on_layer("share_end:close", btn, Sense::CLICK | Sense::HOVER, layer_id);
+}

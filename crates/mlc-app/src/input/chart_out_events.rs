@@ -169,6 +169,7 @@ impl ChartApp {
         // safe again. Future flush_pending_autosave runs will persist the
         // newly materialised state to disk normally.
         self.load_state = crate::persistence::LoadState::Live;
+        self.drain_share_catchup();
     }
 
     /// Process a `ChartOutEvent`  -  route high-level outcomes back to state.
@@ -1894,7 +1895,9 @@ impl ChartApp {
                     // runs (clippy::significant_drop_in_scrutinee).
                     let outgoing_preset = self.core.presets().get(&prev_id).cloned();
                     if let Some(preset) = outgoing_preset {
-                        self.preset_actions.push(crate::PresetAction::Upsert(preset));
+                        if !self.is_share_link(&prev_id) {
+                            self.preset_actions.push(crate::PresetAction::Upsert(preset));
+                        }
                     }
                     log::debug!(
                         "[ChartApp] LoadPreset: persisted outgoing preset '{}' synchronously before switch (active='{}')",
@@ -2721,6 +2724,10 @@ impl ChartApp {
 
             ChartOutEvent::ShareLiveChart => {
                 self.request_share_live();
+            }
+
+            ChartOutEvent::ShareStreamChart => {
+                self.request_share_stream();
             }
 
             ref other => {

@@ -8,7 +8,7 @@ use crate::catalog::{
     OutputSpec, OutputType as CatalogOutputType,
     HistogramStyle as CatalogHistogramStyle,
     IndicatorCategory as CatalogCategory,
-    IndicatorRoleKind,
+    IndicatorRoleKind, IndicatorSignature,
     ParamType as CatalogParamType,
 };
 
@@ -16,6 +16,37 @@ use super::indicator_manager::{
     IndicatorDefinition, IndicatorCategory, IndicatorOutput, IndicatorOutputType,
     IndicatorParam, HistogramStyle,
 };
+
+/// Streams a live `ComputeInstance` actually receives updates for, today.
+/// `Bar` is always fed (`IndicatorCalculator::calculate_with_id` via
+/// `IndicatorManager::calculate_for_bubble`). `Tick` joined in Arc D step 3
+/// (`BackendCore::tick_writers`'s `TradeUpdate` arm calls
+/// `IndicatorsMut::feed_stream(..., StreamEvent::Tick(...))` —
+/// `mlc-backend/src/lib.rs`).
+///
+/// This is the SINGLE set [`all_streams_fed`] keys off — later Arc D steps
+/// (`docs/mlc/plans/indicator-streams-arc-d-2026-09-25.md` §6 steps 5-6)
+/// extend ONLY this array (`OrderBook` + `Liquidation` in step 5, `Funding`
+/// + `OpenInterest` in step 6) rather than re-deriving the un-hide rule.
+/// `OrderbookDelta` is deliberately absent even though `StreamEvent`/
+/// `feed_stream_event` already dispatch it (step 1): no app-layer producer
+/// calls `feed_stream(..., StreamEvent::OrderbookDelta(...))` anywhere yet
+/// (§3.3's own risk flag — the order-book tracker has no "deltas since
+/// cursor N" read), so its 4 primary entries stay hidden past step 6 too,
+/// not just until a later step in this arc.
+const FED_STREAMS: &[mli::data_loader::stream_kind::StreamKind] = &[
+    mli::data_loader::stream_kind::StreamKind::Bar,
+    mli::data_loader::stream_kind::StreamKind::Tick,
+];
+
+/// Whether EVERY stream `signature` declares (primary + every aux) is in
+/// [`FED_STREAMS`]. A composite with one fed and one unfed stream would
+/// otherwise silently never update its unfed half — the exact R6 symptom
+/// for a different reason (Arc D plan §3.6 case 1).
+fn all_streams_fed(signature: &IndicatorSignature) -> bool {
+    FED_STREAMS.contains(&signature.input_stream)
+        && signature.aux_streams.iter().all(|s| FED_STREAMS.contains(s))
+}
 
 /// Bridge between zengeld-chart-indicators catalog and indicator definitions
 pub struct IndicatorBridge {
@@ -108,22 +139,20 @@ impl IndicatorBridge {
             streams: std::iter::once(info.signature.input_stream)
                 .chain(info.signature.aux_streams.iter().copied())
                 .collect(),
-            // The mlc calculator only ever calls `update_bar`/
-            // `update_bar_with_delta` (`IndicatorCalculator::calculate_with_id`)
-            // — an indicator whose primary stream isn't `Bar` never gets fed
-            // and freezes at its construction-time value. Opaque host-driven
-            // overlays (`machine_id: None` — dom heatmap, funding rate,
-            // liquidation heatmap/projection, OI delta) never go through
-            // `IndicatorCalculator`/`ComputeInstance` at all; they're
-            // rendered straight off the live data bridge regardless of their
-            // declared `input_stream`, so they're always fed. Catalog-listing
-            // consumers filter on this; `self.definitions` (keyed lookup for
-            // instance creation / preset restore) is unaffected.
+            // A compute indicator (`machine_id: Some(..)`) is only visible
+            // once every stream it declares (primary + aux) is one
+            // `IndicatorCalculator`/`IndicatorManager::feed_stream_for_bubble`
+            // actually feeds — see [`FED_STREAMS`]/[`all_streams_fed`].
+            // Opaque host-driven overlays (`machine_id: None` — dom heatmap,
+            // funding rate, liquidation heatmap/projection, OI delta) never
+            // go through `IndicatorCalculator`/`ComputeInstance` at all;
+            // they're rendered straight off the live data bridge regardless
+            // of their declared `input_stream`, so they're always fed.
+            // Catalog-listing consumers filter on this; `self.definitions`
+            // (keyed lookup for instance creation / preset restore) is
+            // unaffected.
             fed_by_engine: info.signature.machine_id.is_none()
-                || matches!(
-                    info.signature.input_stream,
-                    mli::data_loader::stream_kind::StreamKind::Bar
-                ),
+                || all_streams_fed(&info.signature),
             // Pattern-recognition entries (candlestick, fractals, ...)
             // belong to the left-toolbar auto-detector scans, not the
             // indicator catalog — filtered by the same consumers.
@@ -574,5 +603,93 @@ mod tests {
         // ATR should be Volatility
         let atr = bridge.get_definition("ATR").unwrap();
         assert_eq!(atr.category, IndicatorCategory::Volatility);
+    }
+
+    // ── Arc D step 4: fed_by_engine un-hide (docs/mlc/plans/
+    // indicator-streams-arc-d-2026-09-25.md §3.6/§6) ───────────────────────
+
+    /// `fed_by_engine` must equal "every declared stream (primary + aux) is
+    /// in `FED_STREAMS`" for EVERY compute indicator (`machine_id:
+    /// Some(..)`) — checked both ways, so this catches an entry that
+    /// should have un-hidden and didn't, AND an entry that should have
+    /// stayed hidden (or gone hidden, for a Bar-primary composite with an
+    /// unfed aux stream) and didn't.
+    #[test]
+    fn fed_by_engine_matches_fed_streams_set_for_every_compute_entry() {
+        let bridge = IndicatorBridge::new();
+        let all = bridge.get_all_definitions();
+        let compute_defs: Vec<_> = all.iter().filter(|d| d.machine_id.is_some()).collect();
+        assert!(!compute_defs.is_empty());
+
+        for d in &compute_defs {
+            let all_wired = d.streams.iter().all(|s| FED_STREAMS.contains(s));
+            assert_eq!(
+                d.fed_by_engine, all_wired,
+                "{}: fed_by_engine={} but streams={:?} (wired set = {:?})",
+                d.type_id, d.fed_by_engine, d.streams, FED_STREAMS,
+            );
+        }
+    }
+
+    /// Pins the exact count of un-hidden entries (Arc D step 4's own ask,
+    /// §6 step 4: "pinning the exact count of entries that become
+    /// visible" — replaces the plan's hand-waved "~63-67", which covered
+    /// steps 5/6 too; after step 3 only `Tick` joined `Bar`). Excludes the
+    /// opaque host overlays (`machine_id: None`, always visible regardless
+    /// of `streams`) and pure-`Bar` entries (already visible before this
+    /// arc) — counts only NEWLY visible non-`Bar`-primary compute entries.
+    ///
+    /// 10, not the CLAUDE.md stream table's raw "Tick 22" primary count:
+    /// 12 of those 22 declare at least one `aux_streams` entry outside
+    /// `{Bar, Tick}` (composites needing e.g. `OrderBook`/`Funding`
+    /// alongside their `Tick` primary) and correctly stay hidden per the
+    /// composite rule (§3.6 case 1) — a live catalog query is the only
+    /// correct source for this number, matching this task's own
+    /// instruction to verify every plan example against the catalog. The
+    /// 10 (verified live, 2026-09-25): `trade_flow_imbalance`,
+    /// `uptick_downtick_volume`, `aggressor_imbalance`,
+    /// `large_trade_filter`, `tick_volume`, `footprint_chart`,
+    /// `footprint_imb`, `footprint_poc`, `absorption_detector`,
+    /// `trade_cluster_detector`.
+    /// A future step (5 or 6) extending `FED_STREAMS` is expected to move
+    /// this number — update it deliberately, not silently.
+    #[test]
+    fn newly_visible_non_bar_primary_entry_count_is_pinned() {
+        use mli::data_loader::stream_kind::StreamKind;
+        let bridge = IndicatorBridge::new();
+        let all = bridge.get_all_definitions();
+
+        let newly_visible: usize = all.iter()
+            .filter(|d| d.machine_id.is_some())
+            .filter(|d| d.fed_by_engine)
+            .filter(|d| d.streams.first() != Some(&StreamKind::Bar))
+            .count();
+
+        assert_eq!(
+            newly_visible, 10,
+            "newly-visible non-Bar-primary compute entry count drifted from the Arc D step 4 pin (10)"
+        );
+    }
+
+    /// A representative entry per still-hidden non-`Tick` stream (OrderBook,
+    /// Funding, OpenInterest, Liquidation — steps 5/6, not yet landed) stays
+    /// hidden; a representative `Tick`-primary entry (step 3, this task) is
+    /// now visible. Same indicators `mlc-backend-indicator-engine`'s and
+    /// `mlc-backend`'s own step 1-3 tests already exercise, so a name typo
+    /// here would already be caught upstream.
+    #[test]
+    fn representative_entries_per_stream_match_expected_visibility() {
+        let bridge = IndicatorBridge::new();
+
+        let tick = bridge.get_definition("TRADE_FLOW_IMBALANCE").expect("TRADE_FLOW_IMBALANCE in catalog");
+        assert!(tick.fed_by_engine, "Tick-primary entry must be visible after step 3's Tick hook");
+
+        for hidden_id in ["BOOK_IMB", "FUNDING_MOMENTUM", "OI_CHANGE_RATE", "LIQUIDATION_RATE"] {
+            let def = bridge.get_definition(hidden_id).unwrap_or_else(|| panic!("{hidden_id} in catalog"));
+            assert!(
+                !def.fed_by_engine,
+                "{hidden_id} declares a stream steps 5/6 haven't landed yet — must stay hidden"
+            );
+        }
     }
 }

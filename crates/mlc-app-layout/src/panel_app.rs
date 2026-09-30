@@ -558,6 +558,8 @@ pub fn chart_toolbar_render_toolbars(
                     // own doc); `is_active` never consults it.
                     "screenshot" => tb.is_active(id)
                         || tb.screenshot_destination != mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard,
+                    // Camcorder: pressed while this tab publishes or watches.
+                    "share_stream" => tb.is_active(id) || tb.share_stream.is_pressed(),
                     _ => tb.is_active(id),
                 }
             });
@@ -569,6 +571,7 @@ pub fn chart_toolbar_render_toolbars(
                 control_sections,
                 |id| match id {
                     "screenshot" => tb.screenshot_destination != mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard,
+                    "share_stream" => tb.share_stream.icon_name().is_some(),
                     _ => false,
                 },
                 |id| match id {
@@ -577,6 +580,7 @@ pub fn chart_toolbar_render_toolbars(
                         mlc_core::state::toolbar_state::ScreenshotDestination::ShareLink => Some("NewWindow"),
                         mlc_core::state::toolbar_state::ScreenshotDestination::Clipboard => None,
                     },
+                    "share_stream" => tb.share_stream.icon_name(),
                     _ => None,
                 },
             );
@@ -1785,6 +1789,120 @@ fn active_granularity_is_pinned(
 ///
 /// `theme` provides all colors for the popup.  Pass the theme built from the
 /// chart's ThemeManager so dropdowns respect the active preset.
+///
+/// Floor for the clamped viewport height a flyout's own panel offers
+/// (toolbar-flyout-collapse arc) — mirrors `mlc-app-layout/src/ui/widgets/
+/// modal.rs`'s `MIN_BODY_H`, guarding the same pathological tiny-panel case.
+const MIN_FLYOUT_VIEWPORT_H: f64 = 80.0;
+
+/// What [`dropdown_vertical_fit`] decided for one flyout this frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct DropdownVerticalFit {
+    /// The dropdown's own top-left Y, possibly shifted up from the button-
+    /// anchored value the caller passed in.
+    origin_y: f64,
+    /// What the flyout actually gets to draw at — `full_content_height`
+    /// when it fits, the clamped panel height otherwise.
+    viewport_height: f64,
+    /// Feeds `DropdownConfig::max_height` directly — `Some(viewport_height)`
+    /// when clamped, `None` when the content fit unclamped.
+    max_height: Option<f64>,
+    /// Feeds `DropdownConfig::scroll_offset` directly — `0.0` when unclamped.
+    scroll_offset: f64,
+}
+
+/// Decide how a flyout fits inside its panel (toolbar-flyout-collapse arc,
+/// owner order 2026-09-25) — pure geometry, no rendering, so it is testable
+/// without a `RenderContext`. Two cases:
+///   1. The content fits within the WHOLE panel's height: reposition
+///      `origin_y` so it's fully visible (shift up if it would overflow the
+///      bottom, clamp to the top) — no scrolling needed.
+///   2. The content is taller than the entire panel (the actual defect:
+///      `pattern_tools`' "Classic figures" group didn't fit even shifted to
+///      the panel's top edge): pin `origin_y` to the panel's top, clamp the
+///      viewport to the panel's height, and report a `scroll_offset` for the
+///      excess — the caller's `ScrollState::animated_offset()`, clamped to
+///      `[0, full_content_height - viewport_height]` so a stale offset left
+///      over from a taller PREVIOUS flyout never reads past this one's own
+///      content.
+fn dropdown_vertical_fit(
+    full_content_height: f64,
+    origin_y: f64,
+    panel_top: f64,
+    panel_bottom: f64,
+    scroll_animated_offset: f64,
+) -> DropdownVerticalFit {
+    let panel_height = (panel_bottom - panel_top).max(MIN_FLYOUT_VIEWPORT_H);
+    if full_content_height <= panel_height {
+        let overflow = (origin_y + full_content_height) - panel_bottom;
+        let mut origin_y = if overflow > 0.0 { origin_y - overflow } else { origin_y };
+        origin_y = origin_y.max(panel_top);
+        DropdownVerticalFit {
+            origin_y,
+            viewport_height: full_content_height,
+            max_height: None,
+            scroll_offset: 0.0,
+        }
+    } else {
+        let viewport_height = panel_height;
+        let max_scroll = (full_content_height - viewport_height).max(0.0);
+        DropdownVerticalFit {
+            origin_y: panel_top,
+            viewport_height,
+            max_height: Some(viewport_height),
+            scroll_offset: scroll_animated_offset.clamp(0.0, max_scroll),
+        }
+    }
+}
+
+#[cfg(test)]
+mod dropdown_vertical_fit_tests {
+    use super::*;
+
+    #[test]
+    fn content_that_fits_repositions_without_clamping() {
+        // 300px content, 500px panel, opened right at the panel's bottom
+        // edge (owner defect 2026-08-25 shape) — must shift fully into view.
+        let fit = dropdown_vertical_fit(300.0, 450.0, 0.0, 500.0, 0.0);
+        assert_eq!(fit.origin_y, 200.0, "shifted up so the bottom lands exactly on the panel edge");
+        assert_eq!(fit.viewport_height, 300.0);
+        assert_eq!(fit.max_height, None, "no clamp — the whole flyout is visible");
+        assert_eq!(fit.scroll_offset, 0.0);
+    }
+
+    #[test]
+    fn content_taller_than_the_panel_clamps_and_scrolls() {
+        // 900px content ("Classic figures" doesn't fit even at the panel's
+        // own full height), 500px panel.
+        let fit = dropdown_vertical_fit(900.0, 450.0, 0.0, 500.0, 120.0);
+        assert_eq!(fit.origin_y, 0.0, "pinned to the panel's top");
+        assert_eq!(fit.viewport_height, 500.0, "clamped to the panel's own height");
+        assert_eq!(fit.max_height, Some(500.0));
+        assert_eq!(fit.scroll_offset, 120.0, "within [0, max_scroll] — passed through as-is");
+    }
+
+    #[test]
+    fn scroll_offset_clamps_to_the_actual_overflow() {
+        // Same 900/500 flyout, but the caller's live scroll offset (left
+        // over from a PREVIOUS, taller flyout) exceeds this one's own
+        // max_scroll (400) — must clamp down, never read past this
+        // flyout's own content.
+        let fit = dropdown_vertical_fit(900.0, 450.0, 0.0, 500.0, 10_000.0);
+        assert_eq!(fit.scroll_offset, 400.0);
+
+        // A negative stale offset clamps up to zero, not left negative.
+        let fit = dropdown_vertical_fit(900.0, 450.0, 0.0, 500.0, -50.0);
+        assert_eq!(fit.scroll_offset, 0.0);
+    }
+
+    #[test]
+    fn a_pathologically_tiny_panel_still_gets_a_floor_viewport() {
+        let fit = dropdown_vertical_fit(900.0, 20.0, 0.0, 30.0, 0.0);
+        assert_eq!(fit.viewport_height, MIN_FLYOUT_VIEWPORT_H);
+        assert_eq!(fit.max_height, Some(MIN_FLYOUT_VIEWPORT_H));
+    }
+}
+
 fn chart_toolbar_render_dropdown(
     tb: &ChartToolbarState,
     ctx: &mut dyn ChartRenderContext,
@@ -1830,9 +1948,9 @@ fn chart_toolbar_render_dropdown(
             dropdown_id == "new_tab_menu"
                 || dropdown_id == mlc_core::toolbar::FAVORITES_ADD_DROPDOWN_ID
         });
-        let (mut origin, is_left_toolbar) = if let Some(pos) = custom_position {
+        let mut origin = if let Some(pos) = custom_position {
             // Custom position: caller provides exact (x, y) for the dropdown top-left.
-            (pos, false)
+            pos
         } else {
             let button_rect = drawing_result.item_rects.iter()
                 .chain(control_result.item_rects.iter())
@@ -1841,14 +1959,13 @@ fn chart_toolbar_render_dropdown(
 
             // Determine position: right of button for vertical toolbar, below for horizontal
             let is_left_toolbar = drawing_result.item_rects.iter().any(|(id, _)| id == dropdown_id);
-            let origin = if is_left_toolbar {
+            if is_left_toolbar {
                 // Vertical toolbar: dropdown opens to the right of the button
                 (button_rect.right() + 2.0, button_rect.y)
             } else {
                 // Horizontal toolbar: dropdown opens below the button
                 (button_rect.x, button_rect.bottom() + 2.0)
-            };
-            (origin, is_left_toolbar)
+            }
         };
 
         // 2. Find the dropdown items from toolbar definitions.
@@ -1933,6 +2050,32 @@ fn chart_toolbar_render_dropdown(
             items = symbol_quick_dropdown_items(symbol_quick_search_render, quicksearch_minimal);
         }
 
+        // Collapsible flyout sub-sections (toolbar-flyout-collapse arc,
+        // owner order 2026-09-25) — scoped to the left-toolbar drawing-tool
+        // flyouts (`DRAWING_FLYOUT_IDS`), the ones the owner's complaint
+        // named ("Classic figures" in `pattern_tools` didn't even fit on
+        // screen). A Header row starts a new sub-section that runs until
+        // the next Header (or the list's end); collapsing one drops its
+        // Item/Separator/Submenu rows here — before conversion, click
+        // registration or drawing ever see them — while keeping the Header
+        // itself (its chevron + double-click target stay reachable).
+        // Section ids are POSITIONAL (`dropdown_id#header_ordinal`, see
+        // `mlc_core::toolbar::flyout_section_id`), not the localized label
+        // text — stable across a language switch and the SCAN rename.
+        if mlc_core::toolbar::DRAWING_FLYOUT_IDS.contains(&dropdown_id) {
+            let mut header_ordinal = 0usize;
+            let mut skip = false;
+            items.retain(|item| {
+                if matches!(item, DropdownItemDef::Header { .. }) {
+                    let section_id = mlc_core::toolbar::flyout_section_id(dropdown_id, header_ordinal);
+                    skip = tb.is_flyout_section_collapsed(&section_id);
+                    header_ordinal += 1;
+                    return true;
+                }
+                !skip
+            });
+        }
+
         // 3. Convert DropdownItemDef -> DropdownItem
         let active_preset_load_id = format!("preset_load:{}", active_preset_id);
         // Tracks whether the item currently being converted sits inside the
@@ -1946,6 +2089,10 @@ fn chart_toolbar_render_dropdown(
         // customs list, later in the same iteration) gets the full
         // star(+edit+trash) treatment — position, not id, decides which.
         let mut in_favorites_section = false;
+        // Counts Header rows in on-screen order for the collapsible-section
+        // tagging just below — same ordinal source the earlier `retain`
+        // filter used, so both agree on which section a given header is.
+        let mut header_ordinal = 0usize;
         let dropdown_items: Vec<DropdownItem> = items.iter().filter_map(|item| {
             if dropdown_id == "timeframe_selector" {
                 match item {
@@ -1957,6 +2104,19 @@ fn chart_toolbar_render_dropdown(
                 }
             }
             let mut di = convert_dropdown_item(item);
+            // Collapsible flyout sub-section header (toolbar-flyout-collapse
+            // arc): tag the header with its live collapsed/expanded state so
+            // `draw_dropdown` paints the right chevron — see the `retain`
+            // filter above for the matching section-id derivation.
+            if mlc_core::toolbar::DRAWING_FLYOUT_IDS.contains(&dropdown_id) {
+                if let DropdownItem::Header { ref label, .. } = di {
+                    let section_id = mlc_core::toolbar::flyout_section_id(dropdown_id, header_ordinal);
+                    let is_collapsed = tb.is_flyout_section_collapsed(&section_id);
+                    let label = label.clone();
+                    di = DropdownItem::header_collapsible(&label, is_collapsed);
+                    header_ordinal += 1;
+                }
+            }
             // Explicit pin TOGGLE row (defect fix 2026-07-16, owner:
             // "тугл неактивен, нужно именно тугл явный") — the row itself is
             // minted by `push_granularity_pin_toggle_row` as a normal
@@ -2373,40 +2533,28 @@ fn chart_toolbar_render_dropdown(
             ));
         }
 
-        // Vertical fit guard for the left-rail flyout (defect fix
-        // 2026-08-25): a quick_select group opening near the bottom of the
-        // rail (e.g. pattern/smart-money/order-flow tools) would otherwise
-        // draw its lower rows past the window edge — `dropdown.rs` has no
-        // scrolling and no max-height, so anything below the bottom is
-        // simply unreachable. Shift the origin up so the flyout's bottom
-        // stays inside the panel, clamped so the top never rises above the
-        // panel's top edge (content taller than the whole panel pins to the
-        // top instead of overflowing both ends).
-        if is_left_toolbar {
-            let content_height = config.calculate_height();
-            let panel_top = layout.full_rect.y;
-            let panel_bottom = layout.full_rect.y + layout.full_rect.height;
-            let overflow = (origin.1 + content_height) - panel_bottom;
-            if overflow > 0.0 {
-                origin.1 -= overflow;
-            }
-            origin.1 = origin.1.max(panel_top);
-        }
-
-        // Same vertical fit guard for the favorites bar's "+" picker
-        // (favorite-primitives arc) — it opens at a custom position next to
-        // the bar (`is_left_toolbar == false`), so the flyout guard above
-        // does not cover it.
-        if dropdown_id == mlc_core::toolbar::FAVORITES_ADD_DROPDOWN_ID {
-            let content_height = config.calculate_height();
-            let panel_top = layout.full_rect.y;
-            let panel_bottom = layout.full_rect.y + layout.full_rect.height;
-            let overflow = (origin.1 + content_height) - panel_bottom;
-            if overflow > 0.0 {
-                origin.1 -= overflow;
-            }
-            origin.1 = origin.1.max(panel_top);
-        }
+        // Vertical clamp-and-scroll (toolbar-flyout-collapse arc, owner
+        // order 2026-09-25) — same idea as the modal clamp fix
+        // (`ModalShellSpec::max_content_height`/`viewport_height`,
+        // `mlc-app-layout/src/ui/widgets/modal.rs`, cf610763): a flyout
+        // taller than the window must never run off-screen. Replaces the
+        // two origin-shifting guards this block used to carry
+        // (`is_left_toolbar` / `FAVORITES_ADD_DROPDOWN_ID`, each of which
+        // only ever hid the TOP of an overflowing flyout with no way back to
+        // it) with one general rule, applied to every dropdown — see
+        // `dropdown_vertical_fit`'s own doc for the two cases.
+        let full_content_height = config.calculate_height();
+        let fit = dropdown_vertical_fit(
+            full_content_height,
+            origin.1,
+            layout.full_rect.y,
+            layout.full_rect.y + layout.full_rect.height,
+            tb.dropdown_scroll.animated_offset(),
+        );
+        origin.1 = fit.origin_y;
+        config.max_height = fit.max_height;
+        config.scroll_offset = fit.scroll_offset;
+        let viewport_height = fit.viewport_height;
 
         let result = draw_dropdown(
             ctx,
@@ -2690,6 +2838,8 @@ fn chart_toolbar_render_dropdown(
             hovered: hover_hovered,
             granularity_edit_input,
             watermark_text_input,
+            content_height: full_content_height,
+            viewport_height,
         })
     }
 
@@ -3463,6 +3613,7 @@ fn chart_toolbar_find_dropdown_items(
             ];
             if account_signed_in {
                 items.push(DropdownItemDef::action("shot_share_link", "Share Link").with_icon(ToolbarIconId::new("NewWindow")));
+                items.push(DropdownItemDef::action(mlc_core::toolbar::SHARE_SETTINGS_ACTION_ID, "Share settings…"));
             }
             return Some(items);
         }
@@ -3478,6 +3629,7 @@ fn chart_toolbar_find_dropdown_items(
             return Some(vec![
                 DropdownItemDef::action("share_chart", "Share live chart").with_icon(ToolbarIconId::new("Globe")),
                 DropdownItemDef::action(mlc_core::toolbar::OPEN_SHARE_ACTION_ID, "Open shared chart…"),
+                DropdownItemDef::action(mlc_core::toolbar::SHARE_SETTINGS_ACTION_ID, "Share settings…"),
             ]);
         }
 

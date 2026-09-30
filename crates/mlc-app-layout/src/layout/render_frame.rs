@@ -598,6 +598,9 @@ pub struct ChartModalRenderResult {
     /// arc, 2026-09-06). Never `cfg(feature = "cloud")` — reading a share
     /// is public.
     pub share_open: Option<crate::layout::modals::share_open::ShareOpenResult>,
+    pub share_settings: Option<crate::layout::modals::share_settings::ShareSettingsResult>,
+    /// Checkout modal result (if open): the account-key box's geometry.
+    pub checkout: Option<crate::layout::modals::checkout::CheckoutResult>,
     /// Chart browser modal result (if open).
     pub chart_browser: Option<crate::layout::modals::chart_browser::ChartBrowserResult>,
     /// Alert settings modal result (if open).
