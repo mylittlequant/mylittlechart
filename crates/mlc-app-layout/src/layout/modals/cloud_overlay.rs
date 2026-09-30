@@ -77,6 +77,11 @@ pub(crate) const DM_PEER_FIELD: &str = "dm_peer";
 /// `DM_PEER_FIELD`, which searches the SERVER for someone to start a NEW
 /// conversation with (see `messenger_overlay.rs`'s own `draw_chat_filter_row`).
 pub(crate) const DM_CHAT_FILTER_FIELD: &str = "dm_chat_filter";
+/// The `TextFieldStore` id of the message draft box — mirrors
+/// `mlc_app::text_input::DM_DRAFT` and `DmState::open_conversation`'s own
+/// `draft_field_id`; an external provider has no `DmView::Conversation` to
+/// carry it, so the composer names it here.
+pub(crate) const DM_DRAFT_FIELD: &str = "dm_draft";
 
 /// Left-column width in the Community modal's Messages tab
 /// (`messenger_overlay.rs`'s own chat-list column) — W2 of the community-

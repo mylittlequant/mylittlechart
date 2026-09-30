@@ -469,11 +469,18 @@ impl MessengerProvider for DmMessengerProviderView<'_> {
 /// account currently holds.
 #[cfg(feature = "cloud")]
 pub fn dm_chat_row_menu_items(state: &DmState, room_id: &str, can_mark_read: bool) -> Vec<ContextMenuItemState> {
-    let view = DmMessengerProviderView::new(state);
-    let caps = view.capabilities();
+    chat_row_menu_items(&DmMessengerProviderView::new(state), room_id, can_mark_read)
+}
+
+/// [`dm_chat_row_menu_items`] over ANY provider — the menu an outside
+/// (Matrix-shaped) provider's chat-list row opens, built from that provider's
+/// own capabilities, room flags and folders.
+#[cfg(feature = "cloud")]
+pub fn chat_row_menu_items(provider: &dyn MessengerProvider, room_id: &str, can_mark_read: bool) -> Vec<ContextMenuItemState> {
+    let caps = provider.capabilities();
     let room = RoomId::from(room_id);
-    let Some(summary) = MessengerProvider::room(&view, &room) else { return Vec::new() };
-    let folders = MessengerProvider::folders(&view);
+    let Some(summary) = provider.room(&room) else { return Vec::new() };
+    let folders = provider.folders();
     let room_tags: Vec<TagName> = summary.tags.iter().map(|t| t.name.clone()).collect();
     build_dm_chat_row_context_menu(caps, can_mark_read, summary.kind, summary.pinned, summary.muted, &folders, &room_tags)
 }
@@ -487,7 +494,13 @@ pub fn dm_chat_row_menu_items(state: &DmState, room_id: &str, can_mark_read: boo
 /// groups/channels.
 #[cfg(feature = "cloud")]
 pub fn forward(state: &mut DmState, from_room: &str, event_id: &str, to_room: &str) {
-    DmMessengerProvider::new(state).enqueue(MessengerIntent::Forward {
+    enqueue_forward(&mut DmMessengerProvider::new(state), from_room, event_id, to_room);
+}
+
+/// [`forward`] into ANY provider's mailbox.
+#[cfg(feature = "cloud")]
+pub fn enqueue_forward(provider: &mut dyn MessengerProvider, from_room: &str, event_id: &str, to_room: &str) {
+    provider.enqueue(MessengerIntent::Forward {
         from_room: RoomId::from(from_room),
         event_id: EventId::from(event_id),
         to_room: RoomId::from(to_room),
@@ -518,13 +531,26 @@ pub enum RoomAction {
 pub fn room_action(state: &mut DmState, room_id: &str, action: RoomAction) {
     let room = RoomId::from(room_id);
     let Some(summary) = reads::room(state, &room) else { return };
-    let intent = match action {
+    DmMessengerProvider::new(state).enqueue(room_action_intent(&summary, action));
+}
+
+/// [`room_action`] into ANY provider's mailbox — reads the room's current
+/// flag off that provider's own snapshot.
+#[cfg(feature = "cloud")]
+pub fn enqueue_room_action(provider: &mut dyn MessengerProvider, room_id: &str, action: RoomAction) {
+    let Some(summary) = provider.room(&RoomId::from(room_id)) else { return };
+    provider.enqueue(room_action_intent(&summary, action));
+}
+
+#[cfg(feature = "cloud")]
+fn room_action_intent(summary: &RoomSummary, action: RoomAction) -> MessengerIntent {
+    let room = summary.id.clone();
+    match action {
         RoomAction::TogglePin => MessengerIntent::SetPinned { room, pinned: !summary.pinned },
         RoomAction::ToggleMute => MessengerIntent::SetMuted { room, muted: !summary.muted },
         RoomAction::ToggleArchive => MessengerIntent::SetArchived { room, archived: !summary.archived },
         RoomAction::Leave => MessengerIntent::LeaveRoom { room },
-    };
-    DmMessengerProvider::new(state).enqueue(intent);
+    }
 }
 
 #[cfg(all(test, feature = "cloud"))]

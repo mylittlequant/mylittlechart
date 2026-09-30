@@ -1136,10 +1136,18 @@ pub enum UserSettingsKey {
     AccountRedeemLabel              = 60,
     AccountRedeemButton             = 61,
     AccountRedeemSuccessPrefix      = 62,
+
+    // Messenger dock states shown while the Matrix-shaped provider backs the
+    // Messages tab: `MessengerConnecting` while its driver is still booting
+    // (or after a terminal boot failure, next to the provider's own error
+    // line), `MessengerActiveElsewhere` when another browser tab holds the
+    // messenger's Web Lock.
+    MessengerConnecting             = 63,
+    MessengerActiveElsewhere        = 64,
 }
 
 impl UserSettingsKey {
-    pub const COUNT: usize = 63;
+    pub const COUNT: usize = 65;
 
     /// Get translation for this key.
     #[inline]

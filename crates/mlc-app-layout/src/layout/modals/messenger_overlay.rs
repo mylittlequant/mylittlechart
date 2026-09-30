@@ -53,7 +53,7 @@ use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
 use mlc_core::i18n::{current_language, UserSettingsKey};
 use mlc_messenger_model::{
     Folder, FolderIcon, MembershipChange, MembershipEvent, MessageContent, MessengerProvider, PreviewContent,
-    RankBadge, ReactionSummary, ReplyPreview, RoomId, RoomKind, RoomSummary, SendState, SharedChartCard,
+    RankBadge, ReactionSummary, ReplyPreview, RoomKind, RoomSummary, SendState, SharedChartCard,
     Timestamp, UtdReason, VaultState,
 };
 use uzor::input::{InputCoordinator, LayerId, Sense};
@@ -72,7 +72,7 @@ use crate::ui::widgets::{draw_avatar_placeholder, SETTINGS_BUTTON_RADIUS};
 
 use super::cloud_overlay::{
     draw_action_row, draw_expand_row, draw_status, register_scrollbar_hit_zones, scroll_config,
-    wrap_text, CloudOverlayResult, DM_CHAT_FILTER_FIELD, FIELD_H, LIST_COL_W, ROW_GAP, ROW_H,
+    wrap_text, CloudOverlayResult, DM_CHAT_FILTER_FIELD, DM_DRAFT_FIELD, FIELD_H, LIST_COL_W, ROW_GAP, ROW_H,
 };
 use super::community::CommunityListPaneResult;
 use super::dm_overlay::{
@@ -298,16 +298,12 @@ fn dock_h(state: &CommunityState, channel_gate: Option<ChannelGate>) -> f64 {
 const CHAT_HEADER_H: f64 = 52.0;
 const CHAT_HEADER_PAD_L: f64 = 14.0;
 
-/// `TimelineItem::sender`'s own opaque id for the signed-in caller's own
-/// messages — see `dm_messenger_provider::ME`'s own doc: this is the same
-/// fixed marker that adapter stamps onto every "mine" message, documented
-/// there as "stable within one conversation, which is all a single-
-/// provider UI ever compares it against". A future Matrix-shaped provider
-/// stamps the caller's OWN Matrix user id instead — this file would need a
-/// real `MessengerProvider::my_user_id()` method to keep working against
-/// it, a gap noted for that provider's own author rather than guessed at
-/// here.
-const ME: &str = "me";
+/// A user id as a short display label when no member record names it: a
+/// Matrix id `@alice:example.org` reads `alice`; any other id (the DM
+/// adapter's peer label, the lab fixture's names) is shown as it is.
+fn user_label(id: &str) -> &str {
+    id.strip_prefix('@').and_then(|rest| rest.split_once(':')).map(|(local, _)| local).unwrap_or(id)
+}
 
 /// Draw the Messages tab's whole body — folder rail, chat list, chat pane —
 /// against `provider`. The CALLER decides which provider backs this frame:
@@ -941,9 +937,11 @@ fn draw_chat_list(
         };
         draw_status(ctx, tt, lx, ly, lw, msg, None);
     } else {
+        let open_room = state.messenger_open_room();
+        let me = provider.my_user_id();
         for r in &rooms {
-            let is_open = matches!(&state.dm.view, crate::ui::modal_settings::DmView::Conversation { id, .. } if id.to_string() == r.id.as_str());
-            ly += draw_room_row(ctx, coord, layer_id, lx, ly, lw, r, provider, is_open, current_time_ms, tt);
+            let is_open = open_room.as_ref() == Some(&r.id);
+            ly += draw_room_row(ctx, coord, layer_id, lx, ly, lw, r, provider, me.as_str(), is_open, current_time_ms, tt);
         }
     }
 
@@ -993,11 +991,11 @@ struct RoomPreview {
     typing: bool,
 }
 
-fn room_preview(r: &RoomSummary, is_self_chat: bool) -> Option<RoomPreview> {
+fn room_preview(r: &RoomSummary, is_self_chat: bool, me: &str) -> Option<RoomPreview> {
     if !r.typing_user_ids.is_empty() {
         return Some(RoomPreview {
             prefix: None,
-            text: format!("{} is typing…", r.typing_user_ids[0].as_str()),
+            text: format!("{} is typing…", user_label(r.typing_user_ids[0].as_str())),
             encrypted: false,
             typing: true,
         });
@@ -1015,8 +1013,8 @@ fn room_preview(r: &RoomSummary, is_self_chat: bool) -> Option<RoomPreview> {
         // Channels are single-broadcaster-shaped in the concept's own row
         // anatomy (screen 2's own channel rows never prefix an author) —
         // only a multi-sender GROUP row gets one.
-        Some(format!("{}: ", ev.sender.as_str()))
-    } else if ev.sender.as_str() == ME {
+        Some(format!("{}: ", user_label(ev.sender.as_str())))
+    } else if ev.sender.as_str() == me {
         Some("You: ".to_string())
     } else {
         None
@@ -1073,6 +1071,7 @@ fn draw_room_row(
     w: f64,
     r: &RoomSummary,
     provider: &dyn MessengerProvider,
+    me: &str,
     is_open: bool,
     current_time_ms: u64,
     tt: &ToolbarTheme,
@@ -1129,7 +1128,7 @@ fn draw_room_row(
 
     // Line 1 — name [+ rank chip] (left) + [mute glyph] + time (right).
     let peer_rank = if matches!(r.kind, RoomKind::Direct) && !is_self_chat {
-        provider.members(&r.id).into_iter().find(|m| m.user_id.as_str() != ME).and_then(|m| m.rank)
+        provider.members(&r.id).into_iter().find(|m| m.user_id.as_str() != me).and_then(|m| m.rank)
     } else {
         None
     };
@@ -1198,7 +1197,7 @@ fn draw_room_row(
     trailing_draw(ctx, trailing_x);
     let preview_right = if trailing_w > 0.0 { trailing_x - 6.0 } else { text_right };
 
-    if let Some(p) = room_preview(r, is_self_chat) {
+    if let Some(p) = room_preview(r, is_self_chat, me) {
         let mut px = text_x;
         if let Some(prefix) = &p.prefix {
             ctx.set_font("500 12.5px sans-serif");
@@ -1440,6 +1439,19 @@ fn draw_pin_bar(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, item: &mlc_
     PINBAR_H
 }
 
+/// The headline of the chat pane while no room is open. With an external
+/// provider the two dock states that need no room to be seen surface here:
+/// another tab holds the messenger (`ActiveElsewhere`), or the driver is still
+/// booting / failed to boot (`Locked` — the provider's own error line is drawn
+/// above this headline).
+fn empty_pane_headline(vault_state: VaultState, external: bool) -> &'static str {
+    match vault_state {
+        VaultState::ActiveElsewhere if external => UserSettingsKey::MessengerActiveElsewhere.get(current_language()),
+        VaultState::Locked if external => UserSettingsKey::MessengerConnecting.get(current_language()),
+        _ => "Select a conversation from the list on the left, or start a new one above.",
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn draw_chat_pane(
     ctx: &mut dyn RenderContext,
@@ -1459,35 +1471,45 @@ fn draw_chat_pane(
 ) {
     use crate::ui::modal_settings::{DmUnavailableReason, DmView};
 
+    // `external`: an outside (Matrix-shaped) provider backs this tab. Its
+    // access gate was decided before it was handed over, and its own
+    // vault-state / last-error slots replace the DM driver's fields, so every
+    // `state.dm.*` read below applies to the legacy DM path only.
+    let external = state.messenger_external;
+
     // Access-ladder gate — not a `VaultState` fact (see
     // `dm_messenger_provider::reads::vault_state`'s own doc), read
     // straight off `state.dm` same as `dm_overlay.rs` does today.
-    if matches!(state.dm.unavailable_reason, DmUnavailableReason::NotPaid) {
+    if !external && matches!(state.dm.unavailable_reason, DmUnavailableReason::NotPaid) {
         if let Some(err) = &state.dm.last_error {
             draw_error_line(ctx, tt, w, x, y, err);
         }
         return;
     }
 
-    let locked = matches!(provider.vault_state(), VaultState::Locked);
+    let vault_state = provider.vault_state();
+    let locked = matches!(vault_state, VaultState::Locked);
+    let provider_error = if external { provider.last_error() } else { None };
+    let me_id = provider.my_user_id();
+    let me = me_id.as_str();
     let body_y = y;
     let body_viewport_h = viewport_h;
 
-    let DmView::Conversation { id, has_older, .. } = &state.dm.view else {
-        draw_status(
-            ctx, tt, x, body_y, w,
-            "Select a conversation from the list on the left, or start a new one above.", None,
-        );
+    let Some(room_id) = state.messenger_open_room() else {
+        let mut sy = body_y;
+        if let Some(err) = &provider_error {
+            sy += draw_error_line(ctx, tt, w, x, sy, err);
+        }
+        draw_status(ctx, tt, x, sy, w, empty_pane_headline(vault_state, external), None);
         return;
     };
-    if !state.dm.available && !locked {
+    if !external && !state.dm.available && !locked {
         if let Some(err) = &state.dm.last_error {
             draw_error_line(ctx, tt, w, x, body_y, err);
         }
         return;
     }
 
-    let room_id = RoomId::from(id.to_string());
     let Some(room) = provider.room(&room_id) else {
         draw_status(ctx, tt, x, body_y, w, "Conversation not found.", None);
         return;
@@ -1496,12 +1518,17 @@ fn draw_chat_pane(
     let timeline = provider.timeline(&room_id);
     let is_direct = matches!(room.kind, RoomKind::Direct);
 
-    let peer = members.iter().find(|m| m.user_id.as_str() != ME);
-    let conversation = if is_direct { state.dm.conversations.iter().find(|c| c.id == *id) } else { None };
+    // The legacy DM path keys its conversations by a numeric id (the open
+    // room id parses back to it); an external provider's ids are opaque.
+    let dm_id = if external { None } else { room_id.as_str().parse::<i64>().ok() };
+    let dm_view_has_older = !external && matches!(&state.dm.view, DmView::Conversation { has_older: true, .. });
+
+    let peer = members.iter().find(|m| m.user_id.as_str() != me);
+    let conversation = if is_direct { dm_id.and_then(|id| state.dm.conversations.iter().find(|c| c.id == id)) } else { None };
     let fingerprint = conversation.and_then(|c| c.peer_fingerprint.as_deref());
     let peer_rank = conversation.and_then(|c| c.peer_rank.as_deref());
     let has_key = if is_direct { peer.map(|m| m.has_messaging_key).unwrap_or(false) } else { true };
-    let key_changed = is_direct && state.dm.has_peer_key_changed(*id);
+    let key_changed = is_direct && dm_id.is_some_and(|id| state.dm.has_peer_key_changed(id));
 
     // Fixed 52px header (concept `.ch`) — drawn once, above the scrollable
     // feed, rather than as the feed's own first scrolling row.
@@ -1535,11 +1562,12 @@ fn draw_chat_pane(
     if key_changed {
         sy += draw_key_changed_notice(ctx, tt, sw, sx, sy);
     }
-    if let Some(err) = &state.dm.last_error {
+    let feed_error = if external { provider_error.as_deref() } else { state.dm.last_error.as_deref() };
+    if let Some(err) = feed_error {
         sy += draw_error_line(ctx, tt, sw, sx, sy, err);
     }
 
-    let has_older = provider.back_pagination(&room_id).has_more || *has_older;
+    let has_older = provider.back_pagination(&room_id).has_more || dm_view_has_older;
     if has_older {
         draw_expand_row(
             ctx, coord, layer_id, "cloud_overlay:dm:load_older",
@@ -1555,7 +1583,7 @@ fn draw_chat_pane(
         sy += draw_channel_feed(ctx, sx, sy, sw, &timeline, &members, current_time_ms, tt);
     } else {
         sy += draw_timeline(
-            ctx, coord, layer_id, sx, sy, sw, &timeline, &room, &members, is_direct, provider.vault_state(), caps,
+            ctx, coord, layer_id, sx, sy, sw, &timeline, &room, &members, is_direct, me, vault_state, caps,
             current_time_ms, state.dm.selection, tt, result,
         );
     }
@@ -1580,8 +1608,8 @@ fn draw_chat_pane(
     }
 
     draw_composer(
-        ctx, coord, layer_id, x, body_y, w, body_viewport_h, state, locked, has_key, channel_gate, tt, ft,
-        current_time_ms, result,
+        ctx, coord, layer_id, x, body_y, w, body_viewport_h, state, vault_state, provider_error.as_deref(), has_key,
+        channel_gate, tt, ft, current_time_ms, result,
     );
 
     // The forward flow's own chat picker (concept: "bubble action → chat
@@ -1832,6 +1860,7 @@ fn draw_timeline(
     room: &RoomSummary,
     members: &[mlc_messenger_model::Member],
     is_direct: bool,
+    me: &str,
     vault_state: VaultState,
     caps: mlc_messenger_model::Capabilities,
     current_time_ms: u64,
@@ -1870,9 +1899,9 @@ fn draw_timeline(
             msg_idx += 1;
             continue;
         }
-        let mine = group.sender == ME;
+        let mine = group.sender == me;
         let member = members.iter().find(|m| m.user_id.as_str() == group.sender);
-        let sender_display = member.map(|m| m.display_name.as_str()).unwrap_or(group.sender);
+        let sender_display = member.map(|m| m.display_name.as_str()).unwrap_or_else(|| user_label(group.sender));
         let sender_rank = member.and_then(|m| m.rank);
         let show_header = !mine && !is_direct;
         let group_h = draw_message_group(
@@ -2032,7 +2061,8 @@ fn draw_composer(
     w: f64,
     viewport_h: f64,
     state: &CommunityState,
-    locked: bool,
+    vault_state: VaultState,
+    provider_error: Option<&str>,
     has_key: bool,
     channel_gate: Option<ChannelGate>,
     tt: &ToolbarTheme,
@@ -2040,6 +2070,9 @@ fn draw_composer(
     current_time_ms: u64,
     result: &mut CloudOverlayResult,
 ) {
+    let locked = matches!(vault_state, VaultState::Locked);
+    let elsewhere = matches!(vault_state, VaultState::ActiveElsewhere);
+    let external = state.messenger_external;
     let composer_y = y + (viewport_h - dock_h(state, channel_gate)).max(0.0);
     if let Some(gate) = channel_gate {
         if !gate.can_post {
@@ -2072,27 +2105,41 @@ fn draw_composer(
     // Vault locked (owner spec, UI-2a piece 3): ONE row — a lock glyph, the
     // notice, and a COMPACT accent button hugging its own text, right-
     // aligned (not the pane's full width — see [`DOCK_BTN_H`]'s own doc).
-    if locked {
+    // The same row serves an external provider's two dock states: `Locked`
+    // there means "still booting / boot failed" (the provider only exists
+    // while the vault key is held, so an Unlock button would be wrong — the
+    // notice is its own error text, or "connecting"), `ActiveElsewhere`
+    // means another tab runs the messenger.
+    if locked || elsewhere {
         let label = "Unlock vault";
+        let show_unlock = locked && !external;
         ctx.set_font("600 13px sans-serif");
-        let btn_w = ctx.measure_text(label) + DOCK_BTN_PAD_H * 2.0;
+        let btn_w = if show_unlock { ctx.measure_text(label) + DOCK_BTN_PAD_H * 2.0 } else { 0.0 };
         let btn_rect = WidgetRect::new(x + w - btn_w, row_cy - DOCK_BTN_H / 2.0, btn_w, DOCK_BTN_H);
 
         let icon_cx = x + 9.0;
         draw_lock_glyph(ctx, icon_cx, row_cy, 14.0, &tt.item_text_muted);
 
         let text_x = x + 22.0;
-        let text_right = (btn_rect.x - 10.0).max(text_x);
+        let text_right = if show_unlock { (btn_rect.x - 10.0).max(text_x) } else { (x + w).max(text_x) };
         ctx.set_font("11px sans-serif");
         ctx.set_fill_color(&tt.item_text_muted);
         ctx.set_text_align(TextAlign::Left);
         ctx.set_text_baseline(TextBaseline::Middle);
-        let hint = crate::ui::widgets::fit_text_to_width(
-            ctx, "Vault locked. Messages stay encrypted until you unlock it.", (text_right - text_x).max(0.0),
-        );
+        let lang = current_language();
+        let notice = if elsewhere {
+            UserSettingsKey::MessengerActiveElsewhere.get(lang)
+        } else if external {
+            provider_error.unwrap_or_else(|| UserSettingsKey::MessengerConnecting.get(lang))
+        } else {
+            "Vault locked. Messages stay encrypted until you unlock it."
+        };
+        let hint = crate::ui::widgets::fit_text_to_width(ctx, notice, (text_right - text_x).max(0.0));
         ctx.fill_text(&hint, text_x, row_cy);
 
-        draw_action_row(ctx, coord, layer_id, "cloud_overlay:dm:unlock_vault", btn_rect, label, tt);
+        if show_unlock {
+            draw_action_row(ctx, coord, layer_id, "cloud_overlay:dm:unlock_vault", btn_rect, label, tt);
+        }
         return;
     }
     // Peer has no messaging key published yet — a calm, no-button line
@@ -2113,7 +2160,11 @@ fn draw_composer(
     // round accent send button (concept `.cin`: `.ib` + `.field` + `.ib` +
     // `.send`, `gap:4px`). Attach/emoji are inert this pass — see
     // [`COMPOSER_ICON_D`]'s own doc.
-    let crate::ui::modal_settings::DmView::Conversation { draft_field_id, .. } = &state.dm.view else { return };
+    let draft_field_id: &str = match &state.dm.view {
+        crate::ui::modal_settings::DmView::Conversation { draft_field_id, .. } => draft_field_id.as_str(),
+        _ if external => DM_DRAFT_FIELD,
+        _ => return,
+    };
     let icon_y = row_y + (COMPOSER_FIELD_H - COMPOSER_ICON_D) / 2.0;
     let attach_rect = WidgetRect::new(x, icon_y, COMPOSER_ICON_D, COMPOSER_ICON_D);
     draw_composer_icon_button(ctx, coord, layer_id, "cloud_overlay:dm:attach", attach_rect, ComposerIcon::Attach, tt);
@@ -3561,5 +3612,75 @@ mod tests {
     #[test]
     fn a_quote_with_a_blank_preview_shows_an_ellipsis() {
         assert_eq!(quote_preview_text(&test_quote("u1", "  ")), "…");
+    }
+
+    fn preview_room(kind: RoomKind, sender: &str) -> RoomSummary {
+        use mlc_messenger_model::{LastEventPreview, MemberRole, PowerLevel, UserId};
+        RoomSummary {
+            id: mlc_messenger_model::RoomId::from("!r:x"),
+            kind,
+            name: "Room".to_string(),
+            initials: "R".to_string(),
+            is_encrypted: false,
+            is_public: false,
+            notification_count: 0,
+            highlight_count: 0,
+            last_event: Some(LastEventPreview {
+                sender: UserId::from(sender),
+                content: PreviewContent::Text("hello".to_string()),
+                ts: Timestamp(1),
+            }),
+            muted: false,
+            pinned: false,
+            archived: false,
+            tags: Vec::new(),
+            typing_user_ids: Vec::new(),
+            peer_last_active: None,
+            my_role: MemberRole::Member,
+            my_power_level: PowerLevel(0),
+            can_post: true,
+        }
+    }
+
+    #[test]
+    fn user_label_shortens_a_matrix_id_and_leaves_any_other_id_alone() {
+        assert_eq!(user_label("@alice:example.org"), "alice");
+        assert_eq!(user_label("@alice"), "@alice", "no server part: not a Matrix id shape, shown as is");
+        assert_eq!(user_label("Bob Trader"), "Bob Trader");
+        assert_eq!(user_label(""), "");
+    }
+
+    #[test]
+    fn a_direct_rooms_preview_says_you_only_for_the_providers_own_user_id() {
+        // A Matrix provider's own id, not the DM adapter's fixed "me" marker.
+        let mine = room_preview(&preview_room(RoomKind::Direct, "@alice:example.org"), false, "@alice:example.org");
+        assert_eq!(mine.and_then(|p| p.prefix).as_deref(), Some("You: "));
+
+        let theirs = room_preview(&preview_room(RoomKind::Direct, "@bob:example.org"), false, "@alice:example.org");
+        assert_eq!(theirs.and_then(|p| p.prefix), None);
+
+        // The fixed marker only means "me" when the provider says so.
+        let stranger = room_preview(&preview_room(RoomKind::Direct, "me"), false, "@alice:example.org");
+        assert_eq!(stranger.and_then(|p| p.prefix), None);
+    }
+
+    #[test]
+    fn a_group_rooms_preview_names_the_author_by_localpart() {
+        let preview = room_preview(&preview_room(RoomKind::Group, "@bob:example.org"), false, "@alice:example.org");
+        assert_eq!(preview.and_then(|p| p.prefix).as_deref(), Some("bob: "));
+    }
+
+    #[test]
+    fn empty_pane_headline_surfaces_the_external_dock_states_only_for_an_external_provider() {
+        let lang = current_language();
+        assert_eq!(
+            empty_pane_headline(VaultState::ActiveElsewhere, true),
+            UserSettingsKey::MessengerActiveElsewhere.get(lang)
+        );
+        assert_eq!(empty_pane_headline(VaultState::Locked, true), UserSettingsKey::MessengerConnecting.get(lang));
+        let select = "Select a conversation from the list on the left, or start a new one above.";
+        assert_eq!(empty_pane_headline(VaultState::Ready, true), select);
+        assert_eq!(empty_pane_headline(VaultState::Locked, false), select, "the DM path keeps its own lock UI");
+        assert_eq!(empty_pane_headline(VaultState::ActiveElsewhere, false), select);
     }
 }

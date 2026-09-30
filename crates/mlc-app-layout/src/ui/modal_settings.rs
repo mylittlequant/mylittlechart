@@ -6990,6 +6990,15 @@ pub struct CommunityState {
     pub forward_target_picker: Option<ForwardTargetPicker>,
     /// The rail's selected folder — see [`MessengerFolderSel`]'s own doc.
     pub messenger_folder: MessengerFolderSel,
+    /// True while an outside `MessengerProvider` (the Matrix-shaped one the
+    /// shell hands to `ChartApp::set_messenger_provider`) backs the Messages
+    /// tab instead of the legacy DM path. The overlay then reads the
+    /// provider's own vault state / last error / user id, and navigation
+    /// lives in [`Self::messenger_room`] rather than [`DmState::view`].
+    pub messenger_external: bool,
+    /// The open room while [`Self::messenger_external`] is set — an opaque
+    /// provider room id (a Matrix room id), not a DM conversation number.
+    pub messenger_room: Option<mlc_messenger_model::RoomId>,
 }
 
 #[cfg(feature = "cloud")]
@@ -7012,6 +7021,8 @@ impl Default for CommunityState {
             messenger_reply_preview: None,
             forward_target_picker: None,
             messenger_folder: MessengerFolderSel::default(),
+            messenger_external: false,
+            messenger_room: None,
         }
     }
 }
@@ -7032,6 +7043,55 @@ impl CommunityState {
         self.drag_offset = None;
         self.forum2.reset_to_boards();
         self.dm.reset_to_list();
+        self.messenger_room = None;
+    }
+
+    /// The room the Messages tab has open, whichever backend drives it: the
+    /// outside provider's own room id while [`Self::messenger_external`] is
+    /// set, otherwise the open DM conversation's number rendered as a room
+    /// id (the DM adapter's own id scheme). `None` on the list view.
+    pub fn messenger_open_room(&self) -> Option<mlc_messenger_model::RoomId> {
+        if self.messenger_external {
+            return self.messenger_room.clone();
+        }
+        match &self.dm.view {
+            DmView::Conversation { id, .. } => Some(mlc_messenger_model::RoomId::from(id.to_string())),
+            DmView::List => None,
+        }
+    }
+
+    /// Switches the Messages tab between the legacy DM path and an outside
+    /// provider. Either way the open room is dropped — ids of the two
+    /// backends never mean the same room.
+    pub fn set_messenger_external(&mut self, external: bool) {
+        if self.messenger_external != external {
+            self.messenger_external = external;
+            self.messenger_room = None;
+            self.dm.reset_to_list();
+            self.forward_target_picker = None;
+            self.messenger_reply_preview = None;
+        }
+    }
+
+    /// Opens `room` in the Messages tab's chat pane (outside-provider mode):
+    /// scroll and per-conversation scratch state reset like a DM open.
+    pub fn open_messenger_room(&mut self, room: mlc_messenger_model::RoomId) {
+        self.messenger_room = Some(room);
+        self.scroll.reset();
+        self.dm.selection = None;
+        self.dm.selection_drag_active = false;
+        self.dm.close_lookup_dropdown();
+        self.forward_target_picker = None;
+        self.messenger_reply_preview = None;
+    }
+
+    /// Back to the chat list (outside-provider mode).
+    pub fn close_messenger_room(&mut self) {
+        self.messenger_room = None;
+        self.dm.selection = None;
+        self.dm.selection_drag_active = false;
+        self.forward_target_picker = None;
+        self.messenger_reply_preview = None;
     }
 
     pub fn close(&mut self) {
@@ -7177,6 +7237,66 @@ impl ResizableModal for CommunityState {
 
     fn min_size(&self) -> (f64, f64) {
         (520.0, 400.0)
+    }
+}
+
+#[cfg(all(test, feature = "cloud"))]
+mod messenger_external_tests {
+    use mlc_messenger_model::RoomId;
+
+    use super::{CommunityState, DmView};
+
+    #[test]
+    fn the_dm_path_reports_the_open_conversation_as_a_room_id() {
+        let mut state = CommunityState::default();
+        assert_eq!(state.messenger_open_room(), None);
+        state.dm.open_conversation(42);
+        assert_eq!(state.messenger_open_room(), Some(RoomId::from("42")));
+        assert!(matches!(state.dm.view, DmView::Conversation { id: 42, .. }));
+    }
+
+    #[test]
+    fn an_external_provider_owns_navigation_and_the_dm_view_is_ignored() {
+        let mut state = CommunityState::default();
+        state.dm.open_conversation(42);
+        state.set_messenger_external(true);
+        assert_eq!(state.messenger_open_room(), None, "switching backends drops the open room");
+        assert!(matches!(state.dm.view, DmView::List), "and the DM view with it");
+
+        state.open_messenger_room(RoomId::from("!abc:example.org"));
+        assert_eq!(state.messenger_open_room(), Some(RoomId::from("!abc:example.org")));
+
+        state.close_messenger_room();
+        assert_eq!(state.messenger_open_room(), None);
+    }
+
+    #[test]
+    fn switching_back_to_the_dm_path_drops_the_provider_room() {
+        let mut state = CommunityState::default();
+        state.set_messenger_external(true);
+        state.open_messenger_room(RoomId::from("!abc:example.org"));
+        state.set_messenger_external(false);
+        assert_eq!(state.messenger_open_room(), None);
+        assert_eq!(state.messenger_room, None);
+    }
+
+    #[test]
+    fn setting_the_same_backend_again_keeps_the_open_room() {
+        let mut state = CommunityState::default();
+        state.set_messenger_external(true);
+        state.open_messenger_room(RoomId::from("!abc:example.org"));
+        state.set_messenger_external(true);
+        assert_eq!(state.messenger_open_room(), Some(RoomId::from("!abc:example.org")));
+    }
+
+    #[test]
+    fn opening_the_modal_lands_on_the_chat_list_again() {
+        let mut state = CommunityState::default();
+        state.set_messenger_external(true);
+        state.open_messenger_room(RoomId::from("!abc:example.org"));
+        state.open();
+        assert_eq!(state.messenger_open_room(), None);
+        assert!(state.messenger_external, "opening the modal does not change the backend");
     }
 }
 
