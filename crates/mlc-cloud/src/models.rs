@@ -929,16 +929,21 @@ pub struct ShareChartOp {
     pub seq: i64,
 }
 
-/// `GET /api/share/{token}/stream-open` — ticket the edge relay redeems.
-/// The socket itself cannot carry the session cookie across to the relay.
+/// `GET /api/share/{token}/stream-open` — the single-use ticket for the live
+/// socket `GET /api/share-live/{token}?ticket=`. The caller's current right to
+/// publish rides along; the socket's `welcome` frame repeats it and is the
+/// value the client acts on.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShareStreamOpen {
-    #[serde(default)]
-    pub publish: bool,
-    #[serde(default)]
-    pub owner: String,
+    /// Single-use, bound to this share and to the caller.
     #[serde(default)]
     pub ticket: String,
+    /// The caller may send frames on this share right now.
+    #[serde(default)]
+    pub publish: bool,
+    /// Seconds the ticket stays redeemable.
+    #[serde(default)]
+    pub expires_in_s: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

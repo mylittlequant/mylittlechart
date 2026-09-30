@@ -39,6 +39,7 @@ pub mod panel_grid;
 pub mod panels_render;
 pub mod panels_store;
 pub mod scroll_dispatch;
+pub mod share_live;
 pub mod share_stream;
 pub mod share_viewer;
 pub mod standalone_panel;
@@ -1079,6 +1080,15 @@ pub struct ChartApp {
     /// Per-preset op cursor and the last JSON sent or applied, keyed by
     /// the stream's object id (`p:{author_id}` or `n:…`).
     pub(crate) share_streams: std::collections::HashMap<String, share_stream::ShareStream>,
+
+    /// The live socket of the active tab: which ticket, which phase, what the
+    /// camcorder shows. Sans-I/O; the shell executes its commands.
+    pub(crate) live_link: share_live::LiveLink,
+
+    /// Rights chosen for a chart that has no share yet, by chart (preset) id.
+    /// Applies to that chart's next Share only; the profile default is a
+    /// separate control. RAM only.
+    pub(crate) chart_rights_choice: std::collections::HashMap<String, String>,
 
     /// Pending "open this share" request — set by
     /// `share_viewer::ChartApp::request_open_share`, drained by the shell,
@@ -3613,6 +3623,8 @@ impl ChartApp {
             hydrate_prim_ids: std::collections::HashMap::new(),
             share_keep_ids: std::collections::HashSet::new(),
             share_streams: std::collections::HashMap::new(),
+            live_link: share_live::LiveLink::default(),
+            chart_rights_choice: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
@@ -4020,6 +4032,8 @@ impl ChartApp {
             hydrate_prim_ids: std::collections::HashMap::new(),
             share_keep_ids: std::collections::HashSet::new(),
             share_streams: std::collections::HashMap::new(),
+            live_link: share_live::LiveLink::default(),
+            chart_rights_choice: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
@@ -4634,6 +4648,8 @@ impl ChartApp {
             hydrate_prim_ids: std::collections::HashMap::new(),
             share_keep_ids: std::collections::HashSet::new(),
             share_streams: std::collections::HashMap::new(),
+            live_link: share_live::LiveLink::default(),
+            chart_rights_choice: std::collections::HashMap::new(),
             pending_open_share: None,
             pending_clone_share: None,
             pending_reopen_shares: Vec::new(),
@@ -4820,6 +4836,12 @@ impl ChartApp {
             user_manager.snapshots.clone(),
             user_manager.vault_key,
         );
+
+        // The author's own live-share links. Without them a reload leaves the
+        // author's tab with no channel until the next Share click.
+        if let Some(ws) = restore {
+            app.restore_author_shares(&ws.author_shares);
+        }
 
         {
             let presets_guard = app.core.presets();
@@ -5674,13 +5696,17 @@ impl ChartApp {
     /// the serialized preset to `/api/share/live` — the cloud session and
     /// its token live in the shell, not here.
     pub fn take_share_admin(&mut self) -> Option<ShareAdminCmd> {
-        self.pending_share_admin.take()
+        let cmd = self.pending_share_admin.take();
+        if let Some(ShareAdminCmd::Revoke { token }) = &cmd {
+            self.forget_chart_share_token(token);
+        }
+        cmd
     }
 
-    /// `(clone_allowed, interaction, visibility)` for the next live share.
-    /// Default is public, clone on, view only — no edit right.
+    /// `(clone_allowed, interaction, visibility)` for the active chart's
+    /// next live share. Default is public, clone on, view only: no edit right.
     pub fn share_publish_flags(&self) -> (bool, &'static str, &'static str) {
-        match self.core.user().profile().ui.share_rights_preset.as_str() {
+        match self.active_chart_rights_preset().as_str() {
             "view_only" => (false, "view", "public"),
             "private" => (true, "view", "private"),
             "private_view" => (false, "view", "private"),
@@ -5688,14 +5714,46 @@ impl ChartApp {
         }
     }
 
-    pub fn set_share_rights_preset(&mut self, preset: &str) {
-        let preset = match preset {
-            "view_only" | "private" | "private_view" => preset,
+    /// One of the four known presets; anything else is the public default.
+    fn normalize_rights_preset(preset: &str) -> &'static str {
+        match preset {
+            "view_only" => "view_only",
+            "private" => "private",
+            "private_view" => "private_view",
             _ => "public_clone",
-        };
+        }
+    }
+
+    /// The rights shown and used for the active chart: its own link's when
+    /// the Shares list knows that link, else the choice made for this chart's
+    /// next Share, else the profile default.
+    pub fn active_chart_rights_preset(&self) -> String {
+        let active = &self.panel_app.active_preset_id;
+        if let Some(token) = self.panel_app.chart_share_tokens.get(active) {
+            let known = self.panel_app.user_settings_state.share_rows.iter().find(|row| &row.token == token);
+            if let Some(row) = known {
+                let preset = match (row.visibility.as_str(), row.clone_allowed) {
+                    ("private", true) => "private",
+                    ("private", false) => "private_view",
+                    (_, true) => "public_clone",
+                    (_, false) => "view_only",
+                };
+                return preset.to_string();
+            }
+        }
+        if let Some(choice) = self.chart_rights_choice.get(active) {
+            return choice.clone();
+        }
+        Self::normalize_rights_preset(&self.core.user().profile().ui.share_rights_preset).to_string()
+    }
+
+    /// A rights click for the active chart. Changes THIS chart's share and
+    /// nothing else: with a link it patches that link; without one it is
+    /// remembered for the chart's next Share. The profile default is only
+    /// touched by [`Self::set_default_share_rights`].
+    pub fn set_link_rights(&mut self, preset: &str) {
+        let preset = Self::normalize_rights_preset(preset);
         self.panel_app.share_settings_state.rights_preset = preset.to_string();
-        self.core.user_mut().profile_mut().ui.share_rights_preset = preset.to_string();
-        self.profile_dirty = true;
         let active = self.panel_app.active_preset_id.clone();
         let token = self
             .shared_chart_meta(&active)
@@ -5717,18 +5775,115 @@ impl ChartApp {
             });
             self.panel_app.share_settings_state.status = "Saved for this chart".to_string();
         } else {
+            self.chart_rights_choice.insert(active, preset.to_string());
             self.panel_app.share_settings_state.status =
-                "Saved as the default for the next Share".to_string();
+                mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::RightsNextShare).to_string();
         }
     }
 
+    /// The profile default for charts shared from now on. Only the "use as
+    /// default" control calls this; a per-chart rights click never does.
+    pub fn set_default_share_rights(&mut self, preset: &str) {
+        let preset = Self::normalize_rights_preset(preset);
+        self.core.user_mut().profile_mut().ui.share_rights_preset = preset.to_string();
+        self.profile_dirty = true;
+        self.panel_app.share_settings_state.status =
+            mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::DefaultRightsSaved).to_string();
+    }
+
+    /// Bind the author's chart to its live-share link. A change is saved with
+    /// the profile, so a reload finds the channel again.
     pub fn note_chart_share_token(&mut self, chart_id: &str, token: &str) {
         if chart_id.is_empty() || token.is_empty() {
             return;
         }
-        self.panel_app
+        let previous = self
+            .panel_app
             .chart_share_tokens
             .insert(chart_id.to_string(), token.to_string());
+        if previous.as_deref() != Some(token) {
+            self.profile_dirty = true;
+        }
+    }
+
+    /// Drop every binding to `token` (the link was revoked).
+    fn forget_chart_share_token(&mut self, token: &str) {
+        let before = self.panel_app.chart_share_tokens.len();
+        self.panel_app.chart_share_tokens.retain(|_, bound| bound != token);
+        if self.panel_app.chart_share_tokens.len() != before {
+            self.profile_dirty = true;
+        }
+    }
+
+    /// The share token bound to the active chart, if it has one.
+    pub fn active_share_token(&self) -> Option<String> {
+        self.panel_app.chart_share_tokens.get(&self.panel_app.active_preset_id).cloned()
+    }
+
+    /// The account's share list arrived. Fills the Shares tab and binds each
+    /// chart to its NEWEST live row, the one a republish reuses on the
+    /// server, so the author talks to the token his viewers hold.
+    pub fn apply_share_rows(&mut self, rows: Vec<mlc_app_layout::ui::modal_settings::ShareAdminRow>) {
+        let mut newest: Vec<(&str, &str, &str)> = Vec::new();
+        for row in &rows {
+            if row.kind != "live" || row.chart_id.is_empty() {
+                continue;
+            }
+            match newest.iter_mut().find(|(chart, _, _)| *chart == row.chart_id) {
+                Some(best) if row.created_at.as_str() > best.1 => {
+                    *best = (&row.chart_id, &row.created_at, &row.token);
+                }
+                Some(_) => {}
+                None => newest.push((&row.chart_id, &row.created_at, &row.token)),
+            }
+        }
+        let bindings: Vec<(String, String)> = newest
+            .into_iter()
+            .map(|(chart, _, token)| (chart.to_string(), token.to_string()))
+            .collect();
+        let clone_flags: Vec<(String, bool)> =
+            rows.iter().map(|row| (row.token.clone(), row.clone_allowed)).collect();
+        for (chart_id, token) in bindings {
+            self.note_chart_share_token(&chart_id, &token);
+        }
+        self.panel_app.user_settings_state.share_rows = rows;
+        self.panel_app.user_settings_state.share_status.clear();
+        for (token, allowed) in clone_flags {
+            self.set_share_clone_allowed(&token, allowed);
+        }
+    }
+
+    /// The share list could not be fetched or a Shares action failed.
+    pub fn set_share_rows_error(&mut self, message: String) {
+        self.panel_app.user_settings_state.share_status = message.clone();
+        self.panel_app.share_settings_state.status = message;
+    }
+
+    /// The author's chart-to-token bindings, in a stable order, for the profile.
+    pub(crate) fn collect_author_shares(&self) -> Vec<mlc_core::PersistedAuthorShare> {
+        let mut out: Vec<mlc_core::PersistedAuthorShare> = self
+            .panel_app
+            .chart_share_tokens
+            .iter()
+            .map(|(chart_id, token)| mlc_core::PersistedAuthorShare {
+                chart_id: chart_id.clone(),
+                token: token.clone(),
+            })
+            .collect();
+        out.sort_by(|a, b| a.chart_id.cmp(&b.chart_id));
+        out
+    }
+
+    /// Re-bind the author's charts to their links after a reload.
+    pub(crate) fn restore_author_shares(&mut self, shares: &[mlc_core::PersistedAuthorShare]) {
+        for share in shares {
+            if share.chart_id.is_empty() || share.token.is_empty() {
+                continue;
+            }
+            self.panel_app
+                .chart_share_tokens
+                .insert(share.chart_id.clone(), share.token.clone());
+        }
     }
 
     pub fn share_settings_nick_query(&self) -> Option<String> {
@@ -5810,7 +5965,8 @@ impl ChartApp {
         dlog!("[Share] Live-share link requested");
     }
 
-    /// Bolt next to Share. Copies the link and turns the socket on.
+    /// Camcorder next to Share. Off: copies the link and turns Live on. On
+    /// (live, connecting or failing): turns Live off. The button shows which.
     /// The corner overlay is the live controls. No settings modal.
     pub fn request_share_stream(&mut self) {
         if self.is_readonly_tab(&self.panel_app.active_preset_id) {
@@ -5818,8 +5974,12 @@ impl ChartApp {
         }
         let id = self.panel_app.active_preset_id.clone();
         if self.panel_app.chart_share_tokens.contains_key(&id) {
-            self.pending_share_copy = true;
-            self.set_share_live(true);
+            if self.share_live_on() {
+                self.set_share_live(false);
+            } else {
+                self.pending_share_copy = true;
+                self.set_share_live(true);
+            }
             return;
         }
         self.arm_live_after_share = true;
@@ -7122,7 +7282,9 @@ impl ChartApp {
                 let inner_proportions_vec = crate::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let split_drawings_guard = self.core.drawings();
-                let split_view = split_drawings_guard.with_bubble(window.current_tag_id);
+                let split_view = split_drawings_guard
+                    .with_bubble(window.current_tag_id)
+                    .with_overlay(self.remote_preview_overlay(window.current_tag_id));
                 let split_indicator_view = indicator_guard_split.with_bubble(window.current_tag_id);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
@@ -7760,7 +7922,9 @@ impl ChartApp {
                 let inner_proportions_vec = crate::chart_container::collect_inner_proportions(&window.inner_docking);
                 let inner_sub_ids_vec = crate::chart_container::collect_inner_instance_ids(&window.inner_docking);
                 let single_window_drawings_guard = self.core.drawings();
-                let single_window_view = single_window_drawings_guard.with_bubble(window.current_tag_id);
+                let single_window_view = single_window_drawings_guard
+                    .with_bubble(window.current_tag_id)
+                    .with_overlay(self.remote_preview_overlay(window.current_tag_id));
                 let single_indicator_view = indicator_guard_single.with_bubble(window.current_tag_id);
                 let panel_data = ChartPanelRenderData {
                     state: &render_state,
@@ -10422,7 +10586,7 @@ impl ChartApp {
                         &toolbar_theme,
                     );
                 }
-            } else if self.panel_app.share_settings_state.live_on
+            } else if self.share_live_on()
                 && self.panel_app.chart_share_tokens.contains_key(&active_preset_id)
             {
                 let row_y = content_rect.y + 2.0;
@@ -10434,9 +10598,9 @@ impl ChartApp {
                 let row_rect = uzor::types::Rect::new(
                     content_rect.x, row_y, (plot_right_edge - content_rect.x).max(0.0), row_height,
                 );
-                let live = self.panel_app.share_settings_state.live_on;
-                let viewport = self.panel_app.share_settings_state.live_viewport;
-                let cursor_on = self.panel_app.share_settings_state.live_cursor;
+                let live = self.share_live_on();
+                let viewport = self.share_live_viewport_on();
+                let cursor_on = self.share_live_cursor_on();
                 let mut coord = self.input_coordinator.borrow_mut();
                 mlc_app_layout::ui::share_viewer_row::draw_share_live_controls(
                     ctx,

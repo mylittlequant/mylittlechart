@@ -348,8 +348,11 @@ enum ShareBoot {
         bool,
         Vec<mlc_app::share_stream::ShareInboundOp>,
     ),
-    /// `?share=` was in the address bar and the link did not open.
-    /// The tab stays and says so. The query stays, so a reload asks again.
+    /// `?share=` named a link the server no longer has (404, 403, 410) or one
+    /// this build cannot open. No tab is made; the person is told.
+    Gone(String),
+    /// `?share=` could not be checked right now (offline, 5xx). No tab is
+    /// made; the token is kept in the saved tabs so the next boot asks again.
     Dead(String),
 }
 
@@ -438,18 +441,22 @@ async fn resolve_share_boot(token: Option<String>) -> ShareBoot {
                 }
                 Ok(p) => {
                     web_sys::console::error_1(
-                        &format!("[share] preset version {} unsupported (client is on {}) — link tab stays",
+                        &format!("[share] preset version {} unsupported (client is on {})",
                             p.version, mlc_core::preset::preset::PRESET_VERSION).into(),
                     );
-                    ShareBoot::Dead(token)
+                    ShareBoot::Gone(token)
                 }
                 Err(e) => {
                     web_sys::console::error_1(
-                        &format!("[share] shared preset did not deserialize: {} — link tab stays", e).into(),
+                        &format!("[share] shared preset did not deserialize: {}", e).into(),
                     );
-                    ShareBoot::Dead(token)
+                    ShareBoot::Gone(token)
                 }
             }
+        }
+        Err(mlc_cloud::CloudError::Http { status, .. }) if matches!(status, 403 | 404 | 410) => {
+            web_sys::console::warn_1(&format!("[share] link answered {status}: gone").into());
+            ShareBoot::Gone(token)
         }
         Err(e) => {
             web_sys::console::error_1(
@@ -770,9 +777,9 @@ async fn run(share_token: Option<String>) -> Result<(), JsValue> {
                     }
                     Err(e) => {
                         web_sys::console::error_1(
-                            &format!("[share] failed to open shared preset '{}': {} — link tab stays", title, e).into(),
+                            &format!("[share] failed to open shared preset '{}': {}", title, e).into(),
                         );
-                        app.open_dead_share_tab(&token);
+                        app.share_link_unavailable();
                         false
                     }
                 }
@@ -786,9 +793,15 @@ async fn run(share_token: Option<String>) -> Result<(), JsValue> {
                 });
             }
         }
+        ShareBoot::Gone(token) => {
+            // A saved tab for the same token is told by its own re-fetch.
+            if app.share_tab_id_for_token(&token).is_none() {
+                app.share_link_unavailable();
+            }
+        }
         ShareBoot::Dead(token) => {
             if app.share_tab_id_for_token(&token).is_none() {
-                app.open_dead_share_tab(&token);
+                app.share_link_deferred(&token);
             }
         }
         ShareBoot::Normal | ShareBoot::Redirect => {}
@@ -2446,8 +2459,7 @@ fn run_render_loop(
             let request = {
                 let mut st = state_clone.borrow_mut();
                 if st.chart.take_pending_share_copy() {
-                    let id = st.chart.panel_app.active_preset_id.clone();
-                    if let Some(token) = st.chart.panel_app.chart_share_tokens.get(&id).cloned() {
+                    if let Some(token) = st.chart.active_share_token() {
                         let url = cloud_session::absolute_share_url(&format!("/?share={token}"));
                         crate::clipboard_write_text(&url);
                         st.chart.push_system_event(

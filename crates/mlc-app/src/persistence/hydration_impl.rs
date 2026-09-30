@@ -34,7 +34,7 @@ impl ChartApp {
         lp_clone_us: u128,
     ) {
                     let lp_cold_start = web_time::Instant::now();
-                    let keep_line_ids = self.share_keep_ids.contains(&preset.id);
+                    let keep_line_ids = self.keeps_primitive_ids(&preset.id);
                     let _t_prep = web_time::Instant::now();
                     // Recovery: preset files written by the startup-autosave bug
                     // carry empty symbol/exchange. Resurrect them with the

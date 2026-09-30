@@ -116,6 +116,29 @@ pub struct WindowState {
     /// no such list and load with an empty one.
     #[serde(default)]
     pub open_shared_tabs: Vec<PersistedSharedTab>,
+
+    /// The author's own live-share links, one per chart, at save time. The
+    /// token lives only in RAM otherwise, so after a reload the author's tab
+    /// had no channel until the next Share click. `ChartApp` restores each
+    /// entry into its chart→token map at boot; the Live flag itself comes
+    /// back from the server. `#[serde(default)]` — older profile files load
+    /// with an empty list.
+    #[serde(default)]
+    pub author_shares: Vec<PersistedAuthorShare>,
+}
+
+// =============================================================================
+// PersistedAuthorShare
+// =============================================================================
+
+/// The live-share link an author's chart is bound to — the NEWEST active live
+/// row for `chart_id`, the same row a republish reuses server-side.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersistedAuthorShare {
+    /// The author's chart (preset) id.
+    pub chart_id: String,
+    /// The share token bound to that chart.
+    pub token: String,
 }
 
 // =============================================================================

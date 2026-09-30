@@ -4122,12 +4122,7 @@ impl ChartApp {
                     self.panel_app.toolbar_state.open_dropdown_id = None;
                     self.panel_app.share_settings_state.is_open = true;
                     self.panel_app.share_settings_state.status.clear();
-                    let preset = self.core.user().profile().ui.share_rights_preset.clone();
-                    self.panel_app.share_settings_state.rights_preset = if preset.is_empty() {
-                        "public_clone".to_string()
-                    } else {
-                        preset
-                    };
+                    self.panel_app.share_settings_state.rights_preset = self.active_chart_rights_preset();
                     let field_id = WidgetId::from(crate::text_input::SHARE_SETTINGS_NICK);
                     let mut coord = self.input_coordinator.borrow_mut();
                     let tf = coord.text_fields_mut();
@@ -5446,26 +5441,15 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                 }
                 "modal_bg" => {}
+                "default" => {
+                    let preset = self.panel_app.share_settings_state.rights_preset.clone();
+                    self.set_default_share_rights(&preset);
+                }
                 other => {
                     if let Some(which) = other.strip_prefix("toggle:") {
                         if which == "edit" {
                             self.panel_app.share_settings_state.edit_on =
                                 !self.panel_app.share_settings_state.edit_on;
-                            return;
-                        }
-                        if which == "live" {
-                            let live = !self.panel_app.share_settings_state.live_on;
-                            self.set_share_live(live);
-                            return;
-                        }
-                        if which == "viewport" {
-                            let on = !self.panel_app.share_settings_state.live_viewport;
-                            self.set_share_viewport(on);
-                            return;
-                        }
-                        if which == "cursor" {
-                            let on = !self.panel_app.share_settings_state.live_cursor;
-                            self.set_share_cursor(on);
                             return;
                         }
                         let (public_on, clone_on) = match self.panel_app.share_settings_state.rights_preset.as_str() {
@@ -5485,7 +5469,7 @@ impl ChartApp {
                             (false, true) => "private",
                             (false, false) => "private_view",
                         };
-                        self.set_share_rights_preset(preset);
+                        self.set_link_rights(preset);
                     } else if let Some(rest) = other.strip_prefix("pick:") {
                         let idx: usize = rest.parse().unwrap_or(usize::MAX);
                         if let Some((nick, _)) = self.panel_app.share_settings_state.hits.get(idx).cloned() {
@@ -5583,15 +5567,15 @@ impl ChartApp {
         if let Some(which) = widget_id.strip_prefix("share_live:") {
             match which {
                 "live" => {
-                    let live = !self.panel_app.share_settings_state.live_on;
+                    let live = !self.share_live_on();
                     self.set_share_live(live);
                 }
                 "viewport" => {
-                    let on = !self.panel_app.share_settings_state.live_viewport;
+                    let on = !self.share_live_viewport_on();
                     self.set_share_viewport(on);
                 }
                 "cursor" => {
-                    let on = !self.panel_app.share_settings_state.live_cursor;
+                    let on = !self.share_live_cursor_on();
                     self.set_share_cursor(on);
                 }
                 _ => {}

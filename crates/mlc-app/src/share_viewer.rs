@@ -172,6 +172,15 @@ impl ChartApp {
             || self.share_keep_ids.contains(preset_id)
     }
 
+    /// Whether a cold load of `preset_id` keeps the primitive ids it was
+    /// saved with. A link tab keeps the author's ids, and so does the
+    /// author's own chart once it has a link: the stream's object keys ARE
+    /// those ids, so a reload that renumbered them would make every later
+    /// upsert miss the viewer's line and draw a second one.
+    pub(crate) fn keeps_primitive_ids(&self, preset_id: &str) -> bool {
+        self.share_keep_ids.contains(preset_id) || self.panel_app.chart_share_tokens.contains_key(preset_id)
+    }
+
     pub fn is_readonly_tab(&self, preset_id: &str) -> bool {
         self.readonly_preset_ids.contains(preset_id)
     }
@@ -449,37 +458,44 @@ impl ChartApp {
         self.persist_profile();
     }
 
-    /// The re-fetch came back gone (404/403/410). The tab stays — it is the
-    /// link — and its name says the link does not work.
+    /// The re-fetch came back gone (404/410/403). A dead link is not a tab:
+    /// the placeholder is dropped, so it is not saved again and the next boot
+    /// does not ask for it, and the person is told once.
     pub fn share_reopen_gone(&mut self, placeholder_id: &str) {
-        let title = mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneTitle).to_string();
-        if let Some(preset) = self.core.presets_mut().get_mut(placeholder_id) {
-            preset.name = title;
+        self.remove_shared_placeholder_tab(placeholder_id);
+        self.notify_share_unavailable();
+    }
+
+    /// The address bar had `?share=` and the server no longer has that link.
+    /// No tab is made and nothing is saved; the person is told once.
+    pub fn share_link_unavailable(&mut self) {
+        self.notify_share_unavailable();
+    }
+
+    /// The address bar had `?share=` but the link could not be checked right
+    /// now (offline, 5xx). No tab; the token is kept in the saved tabs, so
+    /// the next boot asks again, and the person is told the chart is not
+    /// available for the moment.
+    pub fn share_link_deferred(&mut self, token: &str) {
+        if !self.deferred_share_reopens.iter().any(|entry| entry.token == token) {
+            self.deferred_share_reopens.push(mlc_core::user_profile::profile::PersistedSharedTab {
+                token: token.to_string(),
+                window_id: self.window_id.clone(),
+                index: self.panel_app.open_tabs.len(),
+                was_active: false,
+            });
+            self.persist_profile();
         }
+        self.notify_share_unavailable();
+    }
+
+    fn notify_share_unavailable(&mut self) {
         self.push_system_event(
             SystemEventKind::Share,
             mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneTitle),
             mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneBody),
             true,
         );
-    }
-
-    /// The address bar had `?share=` and the fetch said the link is gone.
-    /// The tab stays. It is still the link, and it says the link does not work.
-    pub fn open_dead_share_tab(&mut self, token: &str) {
-        let id = fresh_preset_id("shared");
-        let title = mlc_core::i18n::t_share_viewer(mlc_core::i18n::ShareViewerKey::SharedChartGoneTitle).to_string();
-        let mut placeholder = ChartPreset::new(title);
-        placeholder.id = id.clone();
-        self.readonly_preset_ids.insert(id.clone());
-        self.share_keep_ids.insert(id.clone());
-        self.pending_share_tokens.insert(id.clone(), token.to_string());
-        self.core.presets_mut().insert(id.clone(), placeholder);
-        if !self.panel_app.open_tabs.iter().any(|t| t == &id) {
-            self.panel_app.open_tabs.push(id.clone());
-        }
-        self.load_preset(&id);
-        self.share_reopen_gone(&id);
     }
 
     /// The re-fetch for `placeholder_id` failed TRANSIENTLY — offline or a

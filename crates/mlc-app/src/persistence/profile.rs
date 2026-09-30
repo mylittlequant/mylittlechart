@@ -306,6 +306,9 @@ impl ChartApp {
             // See `share_viewer::ChartApp::collect_open_shared_tabs`'s own
             // doc (shared-tab-reload-anchor arc, item 1/2).
             open_shared_tabs: self.collect_open_shared_tabs(),
+            // The author's own live-share links (item 3 of the live-hub
+            // client work): restored in `new_window`.
+            author_shares: self.collect_author_shares(),
             active_preset_id: self.panel_app.active_preset_id.clone(),
             x: self.window_x,
             y: self.window_y,

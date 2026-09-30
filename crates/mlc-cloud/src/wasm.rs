@@ -558,8 +558,9 @@ impl FetchTransport {
     }
 
     /// `GET /api/share/{token}/stream-open` — same credential as the ops
-    /// calls. The returned ticket is what the live socket sends first; the
-    /// relay cannot see this request's cookie.
+    /// calls. The returned ticket rides in the live socket's query string.
+    /// 404 unknown, revoked or not-live share; 403 no view right or a full
+    /// room; 503 too many pending tickets.
     pub async fn share_stream_open(&self, token: &str) -> Result<ShareStreamOpen, CloudError> {
         let (status, body) = self
             .exchange("GET", &format!("/api/share/{token}/stream-open"), None, &[])

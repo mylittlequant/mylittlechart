@@ -205,6 +205,70 @@ fn friend_query_token() -> Option<String> {
     None
 }
 
+/// What a live-socket callback saw. Queued by the callback, applied to the
+/// chart by the next `poll_edge`.
+enum LiveEventKind {
+    Message(String),
+    /// The browser reported an error; a close event follows.
+    Errored,
+    /// The socket is gone. 1006 when the browser gave no code.
+    Closed(u16),
+}
+
+struct LiveEvent {
+    gen: u64,
+    kind: LiveEventKind,
+}
+
+/// The browser WebSocket together with the callbacks attached to it. The
+/// callbacks only queue events, so nothing here reaches back into `Inner`.
+struct LiveSocket {
+    ws: web_sys::WebSocket,
+    _on_message: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::MessageEvent)>,
+    _on_close: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::CloseEvent)>,
+    _on_error: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>,
+}
+
+impl LiveSocket {
+    fn open(url: &str, gen: u64, events: &Rc<RefCell<Vec<LiveEvent>>>) -> Result<Self, String> {
+        let ws = web_sys::WebSocket::new(url).map_err(|e| format!("{e:?}"))?;
+        let queue = events.clone();
+        let on_message = wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::MessageEvent| {
+            if let Some(text) = ev.data().as_string() {
+                queue.borrow_mut().push(LiveEvent { gen, kind: LiveEventKind::Message(text) });
+            }
+        }) as Box<dyn FnMut(web_sys::MessageEvent)>);
+        let queue = events.clone();
+        let on_close = wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::CloseEvent| {
+            queue.borrow_mut().push(LiveEvent { gen, kind: LiveEventKind::Closed(ev.code()) });
+        }) as Box<dyn FnMut(web_sys::CloseEvent)>);
+        let queue = events.clone();
+        let on_error = wasm_bindgen::closure::Closure::wrap(Box::new(move |_ev: web_sys::Event| {
+            queue.borrow_mut().push(LiveEvent { gen, kind: LiveEventKind::Errored });
+        }) as Box<dyn FnMut(web_sys::Event)>);
+        ws.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+        ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
+        ws.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+        Ok(Self {
+            ws,
+            _on_message: on_message,
+            _on_close: on_close,
+            _on_error: on_error,
+        })
+    }
+}
+
+impl Drop for LiveSocket {
+    /// Detach first: a closure dropped while the browser can still call it
+    /// would throw on the next event.
+    fn drop(&mut self) {
+        self.ws.set_onmessage(None);
+        self.ws.set_onclose(None);
+        self.ws.set_onerror(None);
+        let _ = self.ws.close();
+    }
+}
+
 struct Inner {
     transport: FetchTransport,
     token: Option<StoredToken>,
@@ -291,7 +355,11 @@ struct Inner {
     share_admin_busy: bool,
     share_ops_busy: bool,
     share_ops_in: Option<(String, mlc_cloud::ShareOpsResponse)>,
-    share_ops_push_ok: Option<bool>,
+    /// `(tab, ok)` for a finished post: the acknowledgement belongs to the
+    /// tab the push was built for, not to whichever tab is active by now.
+    share_ops_push_ok: Option<(String, bool)>,
+    /// A pull for this token answered 404: the share is gone.
+    share_ops_gone: Option<String>,
     friend_busy: bool,
     friend_accept_tried: bool,
     friend_result: Option<FriendApply>,
@@ -299,18 +367,16 @@ struct Inner {
     friend_lookup_at_ms: f64,
     friend_lookup_busy: bool,
     friend_hits_in: Option<Vec<String>>,
-    edge_socket: Option<web_sys::WebSocket>,
-    edge_token: String,
-    edge_in: Vec<String>,
-    /// Ticket from `stream-open`. The socket's first frame is `hello` with
-    /// this value. Empty until that GET returns.
-    edge_ticket: String,
-    edge_ticket_for: String,
-    edge_ticket_busy: bool,
-    edge_ticket_next_ms: f64,
-    edge_hello_sent: bool,
-    /// Live just turned off. Off-frames go out before the socket closes.
-    edge_stop_sent: bool,
+    /// The live socket, if one is open. Owns its callbacks; dropping it
+    /// detaches them and closes the socket.
+    live_socket: Option<LiveSocket>,
+    /// Generation of the current socket. Events from an older one are stale.
+    live_gen: u64,
+    /// What the socket callbacks saw, oldest first. Shared with the callbacks
+    /// (not with `Inner`), so a socket never keeps the session alive.
+    live_events: Rc<RefCell<Vec<LiveEvent>>>,
+    /// `stream-open` answer for `token`, waiting for the next frame.
+    live_ticket_in: Option<(String, Result<String, String>)>,
     /// `(chart_id, token)` from the last successful live publish.
     share_bound: Option<(String, String)>,
     share_lookup_q: String,
@@ -533,6 +599,7 @@ impl CloudSession {
                 share_ops_busy: false,
                 share_ops_in: None,
                 share_ops_push_ok: None,
+                share_ops_gone: None,
                 friend_busy: false,
                 friend_accept_tried: false,
                 friend_result: None,
@@ -540,15 +607,10 @@ impl CloudSession {
                 friend_lookup_at_ms: 0.0,
                 friend_lookup_busy: false,
                 friend_hits_in: None,
-                edge_socket: None,
-                edge_token: String::new(),
-                edge_in: Vec::new(),
-                edge_ticket: String::new(),
-                edge_ticket_for: String::new(),
-                edge_ticket_busy: false,
-                edge_ticket_next_ms: 0.0,
-                edge_hello_sent: false,
-                edge_stop_sent: false,
+                live_socket: None,
+                live_gen: 0,
+                live_events: Rc::new(RefCell::new(Vec::new())),
+                live_ticket_in: None,
                 share_bound: None,
                 share_lookup_q: String::new(),
                 share_lookup_at_ms: 0.0,
@@ -1148,167 +1210,124 @@ impl CloudSession {
         });
     }
 
+    /// The live socket, one frame. `ChartApp` decides; this only performs.
+    /// Socket events and the ticket answer go in first, then the commands
+    /// the chart returns are executed in order.
     fn poll_edge(&self, chart: &mut ChartApp, now_ms: f64) {
-        let incoming = std::mem::take(&mut self.inner.borrow_mut().edge_in);
-        for frame in incoming {
-            chart.apply_edge_frame(&frame);
+        self.apply_live_events(chart, now_ms);
+        let ticket = self.inner.borrow_mut().live_ticket_in.take();
+        if let Some((token, result)) = ticket {
+            chart.live_link_ticket(&token, result, now_ms);
         }
-        let token = chart.edge_live_token();
-        if token.is_none() {
-            let open = self.inner.borrow().edge_socket.as_ref().map(|ws| ws.ready_state()) == Some(1);
-            let stop_sent = self.inner.borrow().edge_stop_sent;
-            if open && !stop_sent {
-                if let Some((_, frames)) = chart.take_live_stop_frames() {
-                    if let Some(ws) = self.inner.borrow().edge_socket.as_ref() {
-                        for frame in &frames {
-                            let _ = ws.send_with_str(frame);
-                        }
+        for command in chart.live_link_step(now_ms) {
+            match command {
+                mlc_app::share_live::LiveCommand::FetchTicket { token } => self.fetch_live_ticket(token),
+                mlc_app::share_live::LiveCommand::Connect { token, ticket } => {
+                    if let Err(message) = self.open_live_socket(&token, &ticket) {
+                        web_sys::console::warn_1(&format!("[share] live socket refused: {message}").into());
+                        chart.live_link_closed(1006, now_ms);
                     }
                 }
-                self.inner.borrow_mut().edge_stop_sent = true;
-                return;
+                mlc_app::share_live::LiveCommand::Send(frames) => self.send_live_frames(&frames),
+                mlc_app::share_live::LiveCommand::Close => self.drop_live_socket(),
             }
-            self.close_edge();
-            self.inner.borrow_mut().edge_stop_sent = false;
-            return;
         }
-        self.inner.borrow_mut().edge_stop_sent = false;
-        let token = token.unwrap();
-        let (have_ticket, busy, ticket_for, next_ms) = {
-            let guard = self.inner.borrow();
-            (
-                !guard.edge_ticket.is_empty() && guard.edge_ticket_for == token,
-                guard.edge_ticket_busy,
-                guard.edge_ticket_for.clone(),
-                guard.edge_ticket_next_ms,
-            )
+    }
+
+    /// Hand what the current socket's callbacks queued to the chart. Events
+    /// of a socket that was already dropped are stale and skipped.
+    fn apply_live_events(&self, chart: &mut ChartApp, now_ms: f64) {
+        let events = {
+            let queue = self.inner.borrow().live_events.clone();
+            let mut queue = queue.borrow_mut();
+            std::mem::take(&mut *queue)
         };
-        if !have_ticket {
-            if busy && ticket_for == token {
-                return;
+        for event in events {
+            if event.gen != self.inner.borrow().live_gen {
+                continue;
             }
-            if now_ms < next_ms && ticket_for == token {
-                return;
-            }
-            {
-                let mut guard = self.inner.borrow_mut();
-                guard.edge_ticket_busy = true;
-                guard.edge_ticket.clear();
-                guard.edge_ticket_for = token.clone();
-                guard.edge_hello_sent = false;
-            }
-            self.close_edge_socket();
-            let transport = self.inner.borrow().transport.snapshot();
-            let inner = self.inner.clone();
-            let token_fetch = token.clone();
-            spawn_local(async move {
-                let result = transport.share_stream_open(&token_fetch).await;
-                let mut guard = inner.borrow_mut();
-                guard.edge_ticket_busy = false;
-                match result {
-                    Ok(body) if !body.ticket.is_empty() && guard.edge_ticket_for == token_fetch => {
-                        guard.edge_ticket = body.ticket;
-                    }
-                    _ => {
-                        if guard.edge_ticket_for == token_fetch {
-                            guard.edge_ticket_for.clear();
-                            guard.edge_ticket_next_ms = now_ms + 1000.0;
-                        }
-                    }
+            match event.kind {
+                LiveEventKind::Message(text) => chart.apply_edge_frame(&text),
+                LiveEventKind::Errored => {
+                    web_sys::console::warn_1(&"[share] live socket error".into());
                 }
-            });
-            return;
+                LiveEventKind::Closed(code) => {
+                    self.drop_live_socket();
+                    chart.live_link_closed(code, now_ms);
+                }
+            }
         }
-        self.ensure_edge(&token);
-        let open = self.inner.borrow().edge_socket.as_ref().map(|ws| ws.ready_state()) == Some(1);
-        if !open || !self.inner.borrow().edge_hello_sent {
-            return;
-        }
-        let Some((_, frames)) = chart.take_edge_frames() else {
-            return;
+    }
+
+    fn fetch_live_ticket(&self, token: String) {
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        spawn_local(async move {
+            let result = match transport.share_stream_open(&token).await {
+                Ok(body) => Ok(body.ticket),
+                Err(e) => {
+                    mark_unauthorized(&inner, &e);
+                    Err(e.to_string())
+                }
+            };
+            inner.borrow_mut().live_ticket_in = Some((token, result));
+        });
+    }
+
+    fn open_live_socket(&self, token: &str, ticket: &str) -> Result<(), String> {
+        self.drop_live_socket();
+        let window = web_sys::window().ok_or_else(|| "no window".to_string())?;
+        let location = window.location();
+        let scheme = match location.protocol() {
+            Ok(p) if p.starts_with("https") => "wss",
+            _ => "ws",
         };
-        let guard = self.inner.borrow();
-        let Some(ws) = guard.edge_socket.as_ref() else {
+        let host = location.host().map_err(|e| format!("{e:?}"))?;
+        let url = format!(
+            "{scheme}://{host}/api/share-live/{}?ticket={}",
+            js_sys::encode_uri_component(token),
+            js_sys::encode_uri_component(ticket),
+        );
+        let (gen, events) = {
+            let mut inner = self.inner.borrow_mut();
+            inner.live_gen = inner.live_gen.wrapping_add(1);
+            (inner.live_gen, inner.live_events.clone())
+        };
+        let socket = LiveSocket::open(&url, gen, &events)?;
+        self.inner.borrow_mut().live_socket = Some(socket);
+        Ok(())
+    }
+
+    fn send_live_frames(&self, frames: &[String]) {
+        let inner = self.inner.borrow();
+        let Some(socket) = inner.live_socket.as_ref() else {
             return;
         };
         for frame in frames {
-            let _ = ws.send_with_str(&frame);
+            if let Err(e) = socket.ws.send_with_str(frame) {
+                web_sys::console::warn_1(&format!("[share] live send failed: {e:?}").into());
+                return;
+            }
         }
     }
 
-    fn close_edge_socket(&self) {
-        let mut guard = self.inner.borrow_mut();
-        if let Some(ws) = guard.edge_socket.take() {
-            let _ = ws.close();
-        }
-        guard.edge_token.clear();
-        guard.edge_hello_sent = false;
-    }
-
-    fn close_edge(&self) {
-        self.close_edge_socket();
-        let mut guard = self.inner.borrow_mut();
-        guard.edge_ticket.clear();
-        guard.edge_ticket_for.clear();
-        guard.edge_ticket_busy = false;
-    }
-
-    fn ensure_edge(&self, token: &str) {
-        let mut dead = false;
-        {
-            let guard = self.inner.borrow();
-            if let Some(ws) = guard.edge_socket.as_ref() {
-                if guard.edge_token == token {
-                    let state = ws.ready_state();
-                    if state == 0 || state == 1 {
-                        return;
-                    }
-                }
-                dead = true;
-            }
-        }
-        if dead {
-            self.close_edge_socket();
-            let mut guard = self.inner.borrow_mut();
-            guard.edge_ticket.clear();
-            guard.edge_ticket_for.clear();
-            return;
-        }
-        let ticket = self.inner.borrow().edge_ticket.clone();
-        let Some(win) = web_sys::window() else { return };
-        let loc = win.location();
-        let proto = loc.protocol().ok().map(|p| if p.starts_with("https") { "wss" } else { "ws" }).unwrap_or("wss");
-        let Ok(host) = loc.host() else { return };
-        let url = format!("{proto}://{host}/api/share-live/{token}");
-        let Ok(ws) = web_sys::WebSocket::new(&url) else { return };
-        let inner = self.inner.clone();
-        let on_msg = wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::MessageEvent| {
-            if let Some(text) = ev.data().as_string() {
-                inner.borrow_mut().edge_in.push(text);
-            }
-        }) as Box<dyn FnMut(web_sys::MessageEvent)>);
-        ws.set_onmessage(Some(on_msg.as_ref().unchecked_ref()));
-        on_msg.forget();
-        let inner_open = self.inner.clone();
-        let on_open = wasm_bindgen::closure::Closure::wrap(Box::new(move || {
-            let hello = format!("{{\"t\":\"hello\",\"k\":\"{ticket}\"}}");
-            let guard = inner_open.borrow();
-            if let Some(sock) = guard.edge_socket.as_ref() {
-                let _ = sock.send_with_str(&hello);
-            }
-            drop(guard);
-            inner_open.borrow_mut().edge_hello_sent = true;
-        }) as Box<dyn FnMut()>);
-        ws.set_onopen(Some(on_open.as_ref().unchecked_ref()));
-        on_open.forget();
-        let mut guard = self.inner.borrow_mut();
-        guard.edge_socket = Some(ws);
-        guard.edge_token = token.to_string();
+    /// Close the socket and drop its callbacks. Its later events, if any
+    /// are already queued, are stale from here on.
+    fn drop_live_socket(&self) {
+        let old = {
+            let mut inner = self.inner.borrow_mut();
+            inner.live_gen = inner.live_gen.wrapping_add(1);
+            inner.live_socket.take()
+        };
+        drop(old);
     }
 
     fn poll_share_ops(&self, chart: &mut ChartApp, now_ms: f64) {
-        if let Some(ok) = self.inner.borrow_mut().share_ops_push_ok.take() {
-            chart.ack_share_push(ok);
+        if let Some((preset_id, ok)) = self.inner.borrow_mut().share_ops_push_ok.take() {
+            chart.ack_share_push(&preset_id, ok);
+        }
+        if let Some(token) = self.inner.borrow_mut().share_ops_gone.take() {
+            chart.share_pull_gone(&token);
         }
         if let Some((token, resp)) = self.inner.borrow_mut().share_ops_in.take() {
             let ops: Vec<mlc_app::share_stream::ShareInboundOp> = resp
@@ -1326,10 +1345,11 @@ impl CloudSession {
         if self.inner.borrow().share_ops_busy {
             return;
         }
-        if let Some((token, ops)) = chart.share_ops_due(now_ms) {
+        if let Some(push) = chart.share_ops_due(now_ms) {
             self.inner.borrow_mut().share_ops_busy = true;
             let transport = self.inner.borrow().transport.snapshot();
             let inner = self.inner.clone();
+            let mlc_app::share_stream::SharePush { preset_id, token, ops } = push;
             let wire: Vec<mlc_cloud::ShareChartOp> = ops
                 .into_iter()
                 .map(|op| mlc_cloud::ShareChartOp {
@@ -1347,7 +1367,7 @@ impl CloudSession {
                         false
                     }
                 };
-                inner.borrow_mut().share_ops_push_ok = Some(ok);
+                inner.borrow_mut().share_ops_push_ok = Some((preset_id, ok));
                 inner.borrow_mut().share_ops_busy = false;
             });
             return;
@@ -1360,6 +1380,9 @@ impl CloudSession {
                 match transport.share_get_ops(&token, after).await {
                     Ok(resp) => {
                         inner.borrow_mut().share_ops_in = Some((token, resp));
+                    }
+                    Err(mlc_cloud::CloudError::Http { status: 404, .. }) => {
+                        inner.borrow_mut().share_ops_gone = Some(token);
                     }
                     Err(e) => {
                         web_sys::console::warn_1(&format!("[share] op pull failed: {e}").into());
@@ -1720,7 +1743,7 @@ impl CloudSession {
         if let Some(rows) = self.inner.borrow_mut().share_admin_rows.take() {
             match rows {
                 Ok(rows) => {
-                    chart.panel_app.user_settings_state.share_rows = rows
+                    let rows = rows
                         .into_iter()
                         .map(|r| mlc_app_layout::ui::modal_settings::ShareAdminRow {
                             token: r.token,
@@ -1737,35 +1760,12 @@ impl CloudSession {
                             allow_forward: r.allow_forward,
                             expires_at: r.expires_at,
                             chart_id: r.chart_id,
+                            created_at: r.created_at,
                         })
                         .collect();
-                    let bound: Vec<(String, String)> = chart
-                        .panel_app
-                        .user_settings_state
-                        .share_rows
-                        .iter()
-                        .filter(|r| !r.chart_id.is_empty())
-                        .map(|r| (r.chart_id.clone(), r.token.clone()))
-                        .collect();
-                    for (chart_id, token) in bound {
-                        chart.note_chart_share_token(&chart_id, &token);
-                    }
-                    chart.panel_app.user_settings_state.share_status.clear();
-                    let flags: Vec<(String, bool)> = chart
-                        .panel_app
-                        .user_settings_state
-                        .share_rows
-                        .iter()
-                        .map(|r| (r.token.clone(), r.clone_allowed))
-                        .collect();
-                    for (token, allowed) in flags {
-                        chart.set_share_clone_allowed(&token, allowed);
-                    }
+                    chart.apply_share_rows(rows);
                 }
-                Err(message) => {
-                    chart.panel_app.user_settings_state.share_status = message.clone();
-                    chart.panel_app.share_settings_state.status = message;
-                }
+                Err(message) => chart.set_share_rows_error(message),
             }
         }
         if !self.inner.borrow().share_admin_busy {
