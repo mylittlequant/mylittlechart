@@ -481,6 +481,14 @@ pub struct AdminBatchRow {
     pub created_by: Option<String>,
 }
 
+impl AdminBatchRow {
+    /// Whether the batch still holds unredeemed codes: `redeemed + revoked`
+    /// short of `count`.
+    pub fn is_revocable(&self) -> bool {
+        self.redeemed + self.revoked < self.count
+    }
+}
+
 /// One lifetime-grant ledger row of the user card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminLedgerRow {
@@ -791,6 +799,15 @@ impl AdminState {
 
     /// Arm the revoke of one batch.
     pub fn arm_revoke_batch(&mut self, batch_id: &str) {
+        // A batch with nothing left to revoke never arms (its button is off).
+        let known_spent = self
+            .batches
+            .as_deref()
+            .and_then(|rows| rows.iter().find(|r| r.batch_id == batch_id))
+            .is_some_and(|r| !r.is_revocable());
+        if known_spent {
+            return;
+        }
         self.notice = None;
         self.confirm = Some(AdminConfirm::RevokeBatch { batch_id: batch_id.to_string() });
     }
@@ -994,6 +1011,9 @@ pub struct BatchLine {
     pub revoked: String,
     pub created: String,
     pub by: String,
+    /// Whether any code of the batch is still unredeemed and unrevoked, i.e.
+    /// whether Revoke has something to do.
+    pub revocable: bool,
 }
 
 /// The batches table body. A batch with no note shows its id in the note
@@ -1007,6 +1027,7 @@ pub fn batch_lines(rows: &[AdminBatchRow]) -> Vec<BatchLine> {
             redeemed: format!("{}/{}", r.redeemed, r.count),
             revoked: r.revoked.to_string(),
             created: short_date(&r.created_at),
+            revocable: r.is_revocable(),
             by: r.created_by.clone().unwrap_or_else(|| "\u{2014}".to_string()),
         })
         .collect()
@@ -1109,10 +1130,25 @@ mod tests {
             days: 30,
             count: 3,
             redeemed: 1,
-            revoked: 2,
+            revoked: 1,
             created_at: "2026-09-29T10:00:00+00:00".to_string(),
             created_by: by.map(str::to_string),
         }
+    }
+
+    #[test]
+    fn a_batch_with_no_unredeemed_codes_is_not_revocable_and_never_arms() {
+        let spent = |redeemed: i64, revoked: i64| AdminBatchRow { redeemed, revoked, ..batch("gb_9", "n", None) };
+        assert!(spent(1, 1).is_revocable(), "one code left");
+        assert!(!spent(3, 0).is_revocable(), "all redeemed");
+        assert!(!spent(0, 3).is_revocable(), "all revoked");
+        assert!(!spent(1, 2).is_revocable(), "redeemed + revoked == count");
+        assert!(!batch_lines(&[spent(1, 2)])[0].revocable);
+
+        let mut st = served();
+        st.batches = Some(vec![spent(1, 2)]);
+        st.arm_revoke_batch("gb_9");
+        assert!(st.confirm.is_none(), "a spent batch does not arm");
     }
 
     fn card() -> AdminUserCard {
@@ -1303,7 +1339,8 @@ mod tests {
         assert_eq!(lines[0].note, "beta wave");
         assert_eq!(lines[0].days, "30");
         assert_eq!(lines[0].redeemed, "1/3");
-        assert_eq!(lines[0].revoked, "2");
+        assert_eq!(lines[0].revoked, "1");
+        assert!(lines[0].revocable);
         assert_eq!(lines[0].created, "2026-09-29");
         assert_eq!(lines[0].by, "alice");
         // No note: the id stands in. No creator: a dash.

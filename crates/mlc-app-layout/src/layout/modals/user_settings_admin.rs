@@ -220,7 +220,7 @@ impl Ui<'_> {
             Some((lo, hi)) => (Some(lo), Some(hi)),
             None => (None, None),
         };
-        let engaged = self.coord.text_fields().is_engaged(&wid);
+        let engaged = shows_live_field(self.coord.text_fields(), &wid);
         let widget_theme: WidgetTheme = toolbar_to_widget_theme(self.tt, self.frame_theme);
         let cfg = InputConfig::new(&text)
             .with_focused(engaged)
@@ -358,6 +358,15 @@ pub(super) fn render_admin_tab(
             layer_id,
         );
     }
+}
+
+/// Whether `id` is the ONE field that draws its focus ring and caret: the
+/// user touched it AND the keyboard is still there. `is_engaged` alone is not
+/// enough: the store clears the flag of the field being focused, never of the
+/// one focus leaves, so after clicking through the three mint boxes all three
+/// stay "engaged" and all three drew the ring at once.
+fn shows_live_field(fields: &uzor::input::TextFieldStore, id: &uzor::WidgetId) -> bool {
+    fields.is_engaged(id) && fields.is_focused(id)
 }
 
 /// The three section buttons, with the working / loading indicator at the
@@ -567,7 +576,7 @@ fn coupons(ui: &mut Ui<'_>, admin: &AdminState, x: f64, mut cy: f64, cw: f64) ->
                     revoke,
                     WidgetRect::new(x + cw - action_w + 8.0, row_y, action_w - 8.0, 20.0),
                     Tone::Danger,
-                    !busy,
+                    !busy && line.revocable,
                 );
                 cy += 24.0;
                 if armed == Some(line.batch_id.as_str()) {
@@ -898,10 +907,31 @@ mod tests {
             days: 30,
             count: 3,
             redeemed: 1,
-            revoked: 2,
+            revoked: 1,
             created_at: "2026-09-29T10:00:00+00:00".to_string(),
             created_by: Some("alice".to_string()),
         }
+    }
+
+    #[test]
+    fn only_the_focused_field_shows_the_ring_after_clicking_through_the_mint_boxes() {
+        use uzor::input::{TextFieldConfig, TextFieldStore};
+        let mut store = TextFieldStore::new();
+        let ids = [AdminField::MintDays, AdminField::MintCount, AdminField::MintNote].map(|f| uzor::WidgetId::from(f.id()));
+        for (i, id) in ids.iter().enumerate() {
+            store.register(id.clone(), TextFieldConfig::text());
+            store.update_field(id, (10.0 + 100.0 * i as f64, 10.0, 90.0, 24.0), vec![10.0 + 100.0 * i as f64]);
+        }
+        for i in 0..3 {
+            store.on_drag_start(20.0 + 100.0 * i as f64, 20.0);
+        }
+        assert!(ids.iter().all(|id| store.is_engaged(id)), "the store leaves every clicked field engaged");
+        let live: Vec<bool> = ids.iter().map(|id| shows_live_field(&store, id)).collect();
+        assert_eq!(live, [false, false, true], "only the focused box draws the ring");
+
+        // A press on nothing editable ends it everywhere.
+        store.on_drag_start(900.0, 500.0);
+        assert!(ids.iter().all(|id| !shows_live_field(&store, id)));
     }
 
     #[test]
@@ -950,6 +980,33 @@ mod tests {
         assert!(has(&texts, "gb_1"), "a note-less batch shows its id");
         assert!(has(&texts, "1/3") && has(&texts, "2026-09-29") && has(&texts, "alice"));
         assert_eq!(texts.iter().filter(|t| *t == "Revoke").count(), 2, "one Revoke per batch");
+    }
+
+    #[test]
+    fn revoke_is_disabled_on_a_batch_with_nothing_left_to_revoke() {
+        let mut st = admin_state();
+        let mut spent = batch("gb_1", "spent");
+        spent.redeemed = 1;
+        spent.revoked = 2; // redeemed + revoked == count
+        st.admin.batches = Some(vec![batch("gb_2", "live"), spent]);
+        let mut ctx = Rec::default();
+        let mut coord = uzor::input::InputCoordinator::new();
+        render_user_settings_modal(
+            &mut ctx,
+            1280.0,
+            800.0,
+            &st,
+            &CredentialsState::default(),
+            &FrameTheme::default(),
+            &ToolbarTheme::default(),
+            0,
+            &mut coord,
+            false,
+        );
+        assert_eq!(ctx.texts.iter().filter(|t| *t == "Revoke").count(), 2, "both rows draw the label");
+        let target = |id: &str| coord.widget_rect(&uzor::WidgetId::from(AdminAction::RevokeBatch(id.into()).hit_id().as_str()));
+        assert!(target("gb_2").is_some(), "a batch with unredeemed codes stays clickable");
+        assert!(target("gb_1").is_none(), "a spent batch has no click target");
     }
 
     #[test]
