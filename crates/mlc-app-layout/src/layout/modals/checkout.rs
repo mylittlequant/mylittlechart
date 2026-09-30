@@ -23,7 +23,7 @@ use uzor::WidgetId;
 use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::checkout::{
-    fill, format_countdown, format_usd_micros, AnonSession, CheckoutError, CheckoutState,
+    chain_label, fill, format_countdown, format_usd_micros, AnonSession, CheckoutError, CheckoutState,
     CheckoutStep, CopyTarget, InvoiceNote, InvoicePhase, PayOptionUi, PlanKind, PlanStatus, PlanUi, SignInPhase,
 };
 use crate::ui::qr_svg::{QrMatrix, QR_DARK, QR_LIGHT};
@@ -832,7 +832,7 @@ fn draw_chips(c: &mut Canvas<'_>, pay: &[PayOptionUi], selected: usize, x: f64, 
     let mut cx = x;
     let mut cy = y;
     for (i, option) in pay.iter().enumerate() {
-        let label = format!("{} \u{00b7} {}", option.asset, option.chain);
+        let label = format!("{} \u{00b7} {}", option.asset, chain_label(&option.chain));
         let chip_w = (c.width_of(&label, FONT_SMALL_STRONG) + 24.0).max(64.0).min(w);
         if cx + chip_w > x + w + 0.5 && cx > x {
             cx = x;
@@ -1419,8 +1419,8 @@ mod tests {
         let st = paying("paid", None);
         let (ctx, r) = render(&st);
         for text in [
-            "USDC \u{00b7} evm:1",
-            "USDT \u{00b7} tron",
+            "USDC \u{00b7} Ethereum",
+            "USDT \u{00b7} TRON",
             "20.000000 USDC",
             "Amount",
             "Address",

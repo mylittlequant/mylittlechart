@@ -139,6 +139,21 @@ impl PlanStatus {
 // Pay step data
 // =============================================================================
 
+/// The network name for a processor chain id (`evm:137` -> `Polygon`); an id
+/// this table does not know is shown as the processor sent it.
+pub fn chain_label(chain: &str) -> &str {
+    match chain {
+        "evm:1" => "Ethereum",
+        "evm:137" => "Polygon",
+        "evm:42161" => "Arbitrum",
+        "evm:10" => "Optimism",
+        "evm:8453" => "Base",
+        "evm:43114" => "Avalanche",
+        "tron" => "TRON",
+        other => other,
+    }
+}
+
 /// One way to pay, exactly as `pay[]` returned it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PayOptionUi {
@@ -1268,6 +1283,23 @@ fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn chain_ids_map_to_network_names_and_unknown_ids_stay_raw() {
+        for (id, name) in [
+            ("evm:1", "Ethereum"),
+            ("evm:137", "Polygon"),
+            ("evm:42161", "Arbitrum"),
+            ("evm:10", "Optimism"),
+            ("evm:8453", "Base"),
+            ("evm:43114", "Avalanche"),
+            ("tron", "TRON"),
+        ] {
+            assert_eq!(chain_label(id), name);
+        }
+        assert_eq!(chain_label("evm:999"), "evm:999");
+        assert_eq!(chain_label(""), "");
+    }
 
     const NOW: u64 = 1_800_000_000_000;
 
