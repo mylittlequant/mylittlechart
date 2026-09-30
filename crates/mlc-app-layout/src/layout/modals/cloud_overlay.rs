@@ -77,16 +77,20 @@ pub(crate) const DM_PEER_FIELD: &str = "dm_peer";
 /// `DM_PEER_FIELD`, which searches the SERVER for someone to start a NEW
 /// conversation with (see `messenger_overlay.rs`'s own `draw_chat_filter_row`).
 pub(crate) const DM_CHAT_FILTER_FIELD: &str = "dm_chat_filter";
+/// The `TextFieldStore` id of the message draft box — mirrors
+/// `mlc_app::text_input::DM_DRAFT` and `DmState::open_conversation`'s own
+/// `draft_field_id`; an external provider has no `DmView::Conversation` to
+/// carry it, so the composer names it here.
+pub(crate) const DM_DRAFT_FIELD: &str = "dm_draft";
 
-/// Left-column width in the Community modal's two-pane layout (boards for
-/// Forum, conversations for Messages) — W2 of the community-modal-and-
-/// forum-ladder arc (`docs/mlc/plans/community-modal-and-forum-ladder-
-/// 2026-09-09.md`). Shared by `forum_v2_overlay.rs`/`dm_overlay.rs` so both
-/// panes' dividers line up regardless of which tab is active.
-pub(crate) const LIST_COL_W: f64 = 220.0;
-/// Gap between the two columns, split evenly by the hairline
-/// [`draw_column_divider`] draws at its midpoint.
-pub(crate) const COL_GAP: f64 = 16.0;
+/// Left-column width in the Community modal's Messages tab
+/// (`messenger_overlay.rs`'s own chat-list column) — W2 of the community-
+/// modal-and-forum-ladder arc (`docs/mlc/plans/community-modal-and-forum-
+/// ladder-2026-09-09.md`), widened for the messenger concept
+/// (`messenger_concept_v1.html`'s `.list{width:290px}`). Forum keeps its
+/// own board-list width, not this constant — the two tabs' left columns
+/// never needed to match.
+pub(crate) const LIST_COL_W: f64 = 290.0;
 
 /// Social/project links shown in the News overlay's LINKS section (id,
 /// label, URL). Keep in sync with the landing footer. The click handler
@@ -509,19 +513,6 @@ pub(crate) fn register_scrollbar_hit_zones(
             layer_id,
         );
     }
-}
-
-/// Vertical divider between the Community modal's two columns — one
-/// hairline at the gap's midpoint, running the full pane height. Shared by
-/// `forum_v2_overlay`/`dm_overlay`'s own two-pane `draw` entry points
-/// (community-modal arc W2).
-pub(crate) fn draw_column_divider(ctx: &mut dyn RenderContext, x: f64, y: f64, h: f64, tt: &ToolbarTheme) {
-    ctx.set_stroke_color(&tt.separator);
-    ctx.set_stroke_width(1.0);
-    ctx.begin_path();
-    ctx.move_to(x, y);
-    ctx.line_to(x, y + h);
-    ctx.stroke();
 }
 
 fn draw_body(

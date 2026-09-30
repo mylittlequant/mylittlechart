@@ -235,6 +235,8 @@ impl PrimitiveRegistry {
         self.register_typed::<super::fibonacci::arcs::FibArcs>(super::fibonacci::arcs::metadata());
         self.register_typed::<super::fibonacci::wedge::FibWedge>(super::fibonacci::wedge::metadata());
         self.register_typed::<super::fibonacci::fan::FibFan>(super::fibonacci::fan::metadata());
+        // Fib autodetector (A4.4) — last item of the Fibonacci theme.
+        self.register_typed::<super::fibonacci::fib_scan::FibScan>(super::fibonacci::fib_scan::metadata());
 
         // Pitchforks
         self.register_typed::<super::pitchforks::pitchfork::Pitchfork>(super::pitchforks::pitchfork::metadata());
@@ -286,6 +288,12 @@ impl PrimitiveRegistry {
         self.register_typed::<super::patterns::abcd_pattern::AbcdPattern>(super::patterns::abcd_pattern::metadata());
         self.register_typed::<super::patterns::triangle_pattern::TrianglePattern>(super::patterns::triangle_pattern::metadata());
         self.register_typed::<super::patterns::three_drives::ThreeDrives>(super::patterns::three_drives::metadata());
+        // 5-0 (Duddella) — A3.1: genuinely 6 points, its own struct/type_id,
+        // real `register_typed` deserializer (not a preset, see this
+        // primitive's own module doc).
+        self.register_typed::<super::patterns::five_zero_pattern::FiveZeroPattern>(super::patterns::five_zero_pattern::metadata());
+        // Harmonics autodetector (A3.5) — last item of the Harmonics theme.
+        self.register_typed::<super::patterns::harmonic_scan::HarmonicScan>(super::patterns::harmonic_scan::metadata());
         self.register_typed::<super::patterns::candle_pattern::CandlePattern>(super::patterns::candle_pattern::metadata());
         self.register_typed::<super::patterns::candle_pattern_scan::CandlePatternScan>(super::patterns::candle_pattern_scan::metadata());
 
@@ -310,6 +318,7 @@ impl PrimitiveRegistry {
         self.register_typed::<super::elliott::elliott_triangle::ElliottTriangle>(super::elliott::elliott_triangle::metadata());
         self.register_typed::<super::elliott::elliott_double_combo::ElliottDoubleCombo>(super::elliott::elliott_double_combo::metadata());
         self.register_typed::<super::elliott::elliott_triple_combo::ElliottTripleCombo>(super::elliott::elliott_triple_combo::metadata());
+        self.register_typed::<super::elliott::elliott_scan::ElliottScan>(super::elliott::elliott_scan::metadata());
 
         // Cycles
         self.register_typed::<super::cycles::cycle_lines::CycleLines>(super::cycles::cycle_lines::metadata());

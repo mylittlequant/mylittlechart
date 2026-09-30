@@ -156,6 +156,11 @@ pub trait DrawingRenderView {
     /// double-click hit-test can match labels to their own chart. Default
     /// `None` = unattributed (test views, headless renders).
     fn render_bid(&self) -> Option<crate::BubbleId> { None }
+    /// Primitives painted on top of the real ones that are NOT part of the
+    /// drawing store: nothing saves, publishes, selects or hit-tests them.
+    /// The live share stream paints a remote author's in-progress drawing
+    /// here. Default: none.
+    fn overlay_primitives(&self) -> &[Box<dyn primitives_v2::Primitive>] { &[] }
 }
 
 // `SignalManager` + `TradeManager` (with `Trade`, `TradeDirection`) were

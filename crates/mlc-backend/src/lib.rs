@@ -1739,6 +1739,21 @@ impl BackendCore {
                         if let Some(ev) = self.trade_built_kline_on_live_trade(bid, raw_trade, exchange_id, &symbol, account_type) {
                             events.push(ev);
                         }
+                        // Arc D step 3 (docs/mlc/plans/indicator-streams-
+                        // arc-d-2026-09-25.md §3.3): feed every `Tick`-
+                        // declaring compute indicator on this bubble the
+                        // SAME live trade, real per-event granularity. No
+                        // new broadcast receiver — this reuses the `rx`
+                        // this whole loop already drains. `is_buy` = taker
+                        // bought = NOT buyer-maker (the adapter table in
+                        // the plan's §1).
+                        let tick = mlc_backend_indicator_engine::Tick::new(
+                            timestamp, price, quantity, !is_buyer_maker,
+                        );
+                        self.indicators_mut().feed_stream(
+                            bid,
+                            &mlc_backend_indicator_engine::StreamEvent::Tick(tick),
+                        );
                     }
                     events.push(BubbleEvent::TradeUpdatePassthrough {
                         exchange_id,
@@ -2579,7 +2594,22 @@ impl BackendCore {
     }
 
     /// Cancel the Open Interest overlay subscription for an instrument.
+    ///
+    /// Guarded like [`Self::unsubscribe_orderbook`] (Arc D plan §3.4) — an
+    /// `OpenInterest`-declaring indicator instance keeps this feed alive
+    /// even with no overlay/panel consumer left. Pre-existing gap fixed as
+    /// a side-effect: before this guard, nothing in `mlc-app` called this
+    /// method at all (grep found zero call sites outside this crate and
+    /// the bridge), so an armed OI feed never tore down for ANY consumer —
+    /// not a regression this arc introduces.
     pub fn unsubscribe_open_interest(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        if self.indicator_still_needs_stream(exchange_id, symbol, account_type, mlc_backend_indicator_engine::StreamKind::OpenInterest) {
+            log::info!(
+                "[BackendCore] unsubscribe_open_interest: keeping {}/{}/{} alive — a stream-consuming indicator still needs it",
+                exchange_id.as_str(), account_type.short_label(), symbol,
+            );
+            return;
+        }
         self.bridge.unsubscribe_open_interest(exchange_id, symbol, account_type);
     }
 
@@ -2589,7 +2619,15 @@ impl BackendCore {
     }
 
     /// Cancel the Funding Rate overlay subscription for an instrument.
+    /// Guarded like [`Self::unsubscribe_open_interest`] above.
     pub fn unsubscribe_funding_rate(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        if self.indicator_still_needs_stream(exchange_id, symbol, account_type, mlc_backend_indicator_engine::StreamKind::Funding) {
+            log::info!(
+                "[BackendCore] unsubscribe_funding_rate: keeping {}/{}/{} alive — a stream-consuming indicator still needs it",
+                exchange_id.as_str(), account_type.short_label(), symbol,
+            );
+            return;
+        }
         self.bridge.unsubscribe_funding_rate(exchange_id, symbol, account_type);
     }
 
@@ -2711,13 +2749,71 @@ impl BackendCore {
         self.bridge.unsubscribe_trades(exchange_id, symbol, account_type);
     }
 
+    /// Whether an indicator instance bound to any bubble at `(exchange_id,
+    /// symbol, account_type)` still declares `kind` among its catalog
+    /// streams — the stream-consuming-indicator analogue of
+    /// [`Self::alert_still_needs_trades`] (Arc D plan §3.4, `docs/mlc/
+    /// plans/indicator-streams-arc-d-2026-09-25.md`).
+    ///
+    /// `ensure_bubble_indicator_feeds` (`mlc-app`) arms `OrderBook`/
+    /// `Liquidation`/`Funding`/`OpenInterest` subscriptions for a
+    /// stream-consuming indicator by re-inserting into the SAME
+    /// panel-owned rosters a DOM/LIQ/OI/Funding panel already maintains
+    /// (§3.4) — an indicator with no panel counterpart is otherwise
+    /// invisible to a panel-only teardown guard, so this scans the same
+    /// shape `alert_still_needs_trades` does: every bubble at this exact
+    /// instrument, every indicator instance bound to it, every stream its
+    /// catalog definition declares.
+    fn indicator_still_needs_stream(
+        &self,
+        exchange_id: ExchangeId,
+        symbol: &str,
+        account_type: AccountType,
+        kind: mlc_backend_indicator_engine::StreamKind,
+    ) -> bool {
+        let at_label = account_type.short_label();
+        // Guard-lifetime note (see BarUpdate arm in `tick_writers`): bind
+        // the bubble-read result into an owned Vec before acquiring the
+        // indicators read lock, so the two guards never overlap.
+        let bids: Vec<_> = self.bubbles().bubbles_for_instrument(exchange_id.as_str(), at_label, symbol);
+        let indicators = self.indicators();
+        bids.into_iter().any(|bid| {
+            indicators
+                .instances_for_bubble(bid)
+                .into_iter()
+                .any(|inst| indicators.definition_streams(&inst.type_id).contains(&kind))
+        })
+    }
+
     /// Remove one consumer interest in the orderbook stream for an instrument.
+    ///
+    /// Guarded the same way [`Self::unsubscribe_trades`] is guarded by
+    /// [`Self::alert_still_needs_trades`] (Arc D plan §3.4): an `OrderBook`-
+    /// declaring indicator instance shares the panel's tracker subscription
+    /// (no separate refcount to bump), but teardown must still see it or a
+    /// DOM-panel-less bubble's indicator would starve the moment the last
+    /// panel closes.
     pub fn unsubscribe_orderbook(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        if self.indicator_still_needs_stream(exchange_id, symbol, account_type, mlc_backend_indicator_engine::StreamKind::OrderBook) {
+            log::info!(
+                "[BackendCore] unsubscribe_orderbook: keeping {}/{}/{} alive — a stream-consuming indicator still needs it",
+                exchange_id.as_str(), account_type.short_label(), symbol,
+            );
+            return;
+        }
         self.bridge.unsubscribe_orderbook(exchange_id, symbol, account_type);
     }
 
-    /// Remove one consumer interest in the liquidation stream for an instrument.
+    /// Remove one consumer interest in the liquidation stream for an
+    /// instrument. Guarded like [`Self::unsubscribe_orderbook`] above.
     pub fn unsubscribe_liquidations(&self, exchange_id: ExchangeId, symbol: &str, account_type: AccountType) {
+        if self.indicator_still_needs_stream(exchange_id, symbol, account_type, mlc_backend_indicator_engine::StreamKind::Liquidation) {
+            log::info!(
+                "[BackendCore] unsubscribe_liquidations: keeping {}/{}/{} alive — a stream-consuming indicator still needs it",
+                exchange_id.as_str(), account_type.short_label(), symbol,
+            );
+            return;
+        }
         self.bridge.unsubscribe_liquidations(exchange_id, symbol, account_type);
     }
 
@@ -3350,6 +3446,173 @@ mod trade_built_kline_gap_fill_tests {
 
         let bars = core.bubbles().with_bubble(bid, |b| b.bars.clone()).unwrap_or_default();
         assert!(!bars.is_empty(), "bubble.bars must not be wiped by the reinstall+reseed FIX 4 leaves reachable for an already-active runtime");
+    }
+}
+
+#[cfg(test)]
+mod arc_d_stream_hook_tests {
+    //! Coverage for the Arc D indicator-streams plan (`docs/mlc/plans/
+    //! indicator-streams-arc-d-2026-09-25.md`), the rest of step 2 (§3.4
+    //! unsubscribe guard extension) and step 3 (§3.3 Tick hook).
+
+    use super::*;
+
+    fn build_core() -> (Arc<BackendCore>, Arc<DataBridge>) {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio rt");
+        let (bridge, _live_rx, _connector_ready_rx) = rt.block_on(DataBridge::new());
+        let bridge = Arc::new(bridge);
+        let core = BackendCore::new(bridge.clone(), None);
+        (core, bridge)
+    }
+
+    /// Step 3: `tick_writers`'s `TradeUpdate` arm must feed the SAME live
+    /// trade into every `Tick`-declaring compute indicator's `ComputeCache`
+    /// on the bubble, real per-event granularity, no new broadcast
+    /// receiver (reuses `BackendCore`'s own `rx` this whole drain already
+    /// owns). `trade_flow_imbalance` declares `Tick` as its only stream and
+    /// is a no-op passthrough on `update_bar` — same indicator step 1's
+    /// `mlc-backend-indicator-engine` test uses, so a catalog id typo here
+    /// would already be caught upstream.
+    #[test]
+    fn trade_update_feeds_tick_declaring_indicator_via_tick_writers() {
+        let (core, bridge) = build_core();
+
+        let bid = core.bubbles_mut().create_bubble("BTCUSDT".to_string(), Timeframe::new("1m", 60_000));
+        core.bubbles_mut().set_exchange_for_bid(bid, "bybit".to_string());
+        core.bubbles_mut().with_bubble_mut(bid, |b| {
+            b.address.account_type = mlc_core::instrument::AccountType::Spot;
+        });
+
+        let iid = core.indicators_mut().add(Some(bid), "trade_flow_imbalance")
+            .expect("trade_flow_imbalance catalog entry exists");
+
+        // Build the ComputeCache — needs at least one bar fed through the
+        // full-recalc path (`IndicatorManager::calculate_for_bubble`).
+        let bars = vec![mlc_core::Bar {
+            timestamp: 0, open: 100.0, high: 101.0, low: 99.0, close: 100.0, volume: 10.0,
+            ..Default::default()
+        }];
+        core.indicators_mut().recalc_bubble(bid, &bars);
+
+        let before = core.indicators().full_clone(iid).map(|i| (*i.values).clone());
+
+        let tx = bridge.debug_broadcast_tx();
+        tx.send(LiveUpdate::TradeUpdate {
+            exchange_id: ExchangeId::Bybit,
+            account_type: AccountType::Spot,
+            symbol: "BTCUSDT".to_string(),
+            price: 100.0,
+            quantity: 5.0,
+            timestamp: 1000,
+            is_buyer_maker: false,
+        }).expect("broadcast send");
+
+        let _events = core.tick_writers(0);
+
+        let after = core.indicators().full_clone(iid).map(|i| (*i.values).clone());
+        assert_ne!(
+            before, after,
+            "TradeUpdate must feed the Tick-declaring indicator's ComputeCache and move its last output value"
+        );
+    }
+
+    /// A bubble with no `Tick`-declaring indicator (a plain `sma` instance,
+    /// `Bar`-primary) must be untouched by the same `TradeUpdate` —
+    /// `feed_stream_for_bubble`'s stream-kind filter (step 2) must not
+    /// fire for a non-matching instance reached through the real
+    /// `tick_writers` drain, not just the direct-call unit tests in
+    /// `mlc-backend/src/indicator/manager.rs`.
+    #[test]
+    fn trade_update_does_not_move_a_bar_only_indicator() {
+        let (core, bridge) = build_core();
+
+        let bid = core.bubbles_mut().create_bubble("BTCUSDT".to_string(), Timeframe::new("1m", 60_000));
+        core.bubbles_mut().set_exchange_for_bid(bid, "bybit".to_string());
+        core.bubbles_mut().with_bubble_mut(bid, |b| {
+            b.address.account_type = mlc_core::instrument::AccountType::Spot;
+        });
+
+        let iid = core.indicators_mut().add(Some(bid), "sma").expect("sma catalog entry exists");
+        let bars = vec![mlc_core::Bar {
+            timestamp: 0, open: 100.0, high: 101.0, low: 99.0, close: 100.0, volume: 10.0,
+            ..Default::default()
+        }];
+        core.indicators_mut().recalc_bubble(bid, &bars);
+
+        let before = core.indicators().full_clone(iid).map(|i| (*i.values).clone());
+
+        let tx = bridge.debug_broadcast_tx();
+        tx.send(LiveUpdate::TradeUpdate {
+            exchange_id: ExchangeId::Bybit,
+            account_type: AccountType::Spot,
+            symbol: "BTCUSDT".to_string(),
+            price: 100.0,
+            quantity: 5.0,
+            timestamp: 1000,
+            is_buyer_maker: false,
+        }).expect("broadcast send");
+
+        let _events = core.tick_writers(0);
+
+        let after = core.indicators().full_clone(iid).map(|i| (*i.values).clone());
+        assert_eq!(before, after, "a Bar-only indicator must not move on a Tick stream event");
+    }
+
+    /// Step 2's leftover: `unsubscribe_orderbook` must keep the bridge
+    /// subscription alive while an `OrderBook`-declaring indicator instance
+    /// is still bound to a bubble at that instrument — even with zero DOM
+    /// panels open (§3.4's guard, mirroring `alert_still_needs_trades`).
+    #[test]
+    fn unsubscribe_orderbook_keeps_feed_alive_for_a_bound_orderbook_indicator() {
+        let (core, _bridge) = build_core();
+
+        let bid = core.bubbles_mut().create_bubble("BTCUSDT".to_string(), Timeframe::new("1m", 60_000));
+        core.bubbles_mut().set_exchange_for_bid(bid, "bybit".to_string());
+        core.bubbles_mut().with_bubble_mut(bid, |b| {
+            b.address.account_type = mlc_core::instrument::AccountType::Spot;
+        });
+        core.indicators_mut().add(Some(bid), "book_imb").expect("book_imb catalog entry exists");
+
+        assert!(
+            core.indicator_still_needs_stream(
+                ExchangeId::Bybit, "BTCUSDT", AccountType::Spot,
+                mlc_backend_indicator_engine::StreamKind::OrderBook,
+            ),
+            "a bound book_imb instance must be found by the guard's own lookup"
+        );
+
+        // Not panicking / erroring is the whole contract here — the guard
+        // suppresses the bridge call and returns early; there is no
+        // observable bridge-subscription-count facade to assert against
+        // from a unit test with no live connector, so this exercises the
+        // same code path `unsubscribe_trades` already proved sound for.
+        core.unsubscribe_orderbook(ExchangeId::Bybit, "BTCUSDT", AccountType::Spot);
+    }
+
+    /// The guard must NOT hold a stream alive once no bound indicator
+    /// declares it — an unrelated `sma` instance on the same bubble is not
+    /// enough to keep `OrderBook` alive.
+    #[test]
+    fn indicator_still_needs_stream_is_false_with_no_matching_instance() {
+        let (core, _bridge) = build_core();
+
+        let bid = core.bubbles_mut().create_bubble("BTCUSDT".to_string(), Timeframe::new("1m", 60_000));
+        core.bubbles_mut().set_exchange_for_bid(bid, "bybit".to_string());
+        core.bubbles_mut().with_bubble_mut(bid, |b| {
+            b.address.account_type = mlc_core::instrument::AccountType::Spot;
+        });
+        core.indicators_mut().add(Some(bid), "sma").expect("sma catalog entry exists");
+
+        assert!(
+            !core.indicator_still_needs_stream(
+                ExchangeId::Bybit, "BTCUSDT", AccountType::Spot,
+                mlc_backend_indicator_engine::StreamKind::OrderBook,
+            ),
+            "a Bar-only sma instance must not keep the OrderBook stream alive"
+        );
     }
 }
 

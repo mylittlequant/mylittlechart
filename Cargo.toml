@@ -2,6 +2,8 @@
 members = [
     "crates/mlc-core",
     "crates/mlc-vault",
+    "crates/mlc-vodozemac",
+    "crates/mlc-messenger",
     "crates/mlc-cloud",
     "crates/mlc-updater",
     "crates/mlc-app-layout",
@@ -61,7 +63,7 @@ ed25519-dalek = { version = "2", features = ["std"] }
 base64 = "0.22"
 
 [workspace.package]
-version = "0.5.616"
+version = "0.5.651"
 edition = "2021"
 license = "BUSL-1.1"
 

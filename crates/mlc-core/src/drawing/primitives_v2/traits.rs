@@ -1311,6 +1311,19 @@ pub trait Primitive: Send + Sync {
     /// Default: no-op.
     fn snap_to_detected_footprint(&mut self, _footprint: &[crate::types::FootprintBar]) {}
 
+    /// Drains this primitive's own pending "place as primitive" requests (a
+    /// Hits-table "Place" cell click, recorded via `apply_style_property`) into
+    /// real, independent primitives ready to insert into the SAME bubble's
+    /// drawing collection. Called once per tick by `DrawingManager`'s existing
+    /// per-primitive sweep, immediately after `refresh_bar_derived_cache` — a
+    /// placement reads the SAME freshly-resolved hit geometry that call just
+    /// cached, never a second detection pass. Default empty: only
+    /// `ElliottScan`/`HarmonicScan`/`FibScan` override this; every other
+    /// primitive has nothing to drain.
+    fn take_scan_placements(&mut self, _bars: &[Bar]) -> Vec<Box<dyn Primitive>> {
+        Vec::new()
+    }
+
     /// Which markup family this primitive belongs to, or `None` for a
     /// drawing that is not a markup claim at all (a trend line, a
     /// Fibonacci grid, an icon).

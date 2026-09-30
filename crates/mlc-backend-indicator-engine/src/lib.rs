@@ -110,4 +110,5 @@ pub use managers::{
     RecalcMode,
     IndicatorBridge,
     IndicatorCalculator, CalculationResult,
+    StreamEvent,
 };

@@ -11,10 +11,25 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, Request, RequestCache, RequestInit, RequestMode, Response};
 
+use crate::billing::*;
 use crate::models::*;
-use crate::{BuildAttestation, CloudConfig, CloudError};
+use crate::{
+    BuildAttestation, CloudConfig, CloudError, StaffBatchRevoked, StaffGiftBatch, StaffLifetimeGrant,
+    StaffLifetimeRequest, StaffLifetimeRevokeRequest, StaffLifetimeRevoked, StaffMintRequest, StaffMintResponse,
+    StaffPaidDays, StaffPaidDaysRequest, StaffUser,
+};
 
 /// Wasm32 cloud transport: one `fetch` per call, no connection state.
+#[derive(Clone, Debug, Default)]
+pub struct FriendRoster {
+    pub discoverable: bool,
+    pub friends: Vec<String>,
+    pub incoming: Vec<String>,
+    pub outgoing: Vec<String>,
+    pub subscriptions: Vec<String>,
+    pub blocked: Vec<String>,
+}
+
 pub struct FetchTransport {
     config: CloudConfig,
 }
@@ -116,6 +131,14 @@ impl FetchTransport {
     /// Execute one built request. Returns the raw status + body for every
     /// completed request; only network/JS failures become `Err`.
     async fn perform(&self, req: &Request) -> Result<(u16, String), CloudError> {
+        let (status, body, _retry_after) = self.perform_full(req).await?;
+        Ok((status, body))
+    }
+
+    /// [`Self::perform`] plus the `Retry-After` header (whole seconds), the
+    /// one response header any caller reads. Only `/api/staff/*` needs it
+    /// today: a 429 there names its wait in the header alone.
+    async fn perform_full(&self, req: &Request) -> Result<(u16, String, Option<u64>), CloudError> {
         let window = web_sys::window().ok_or_else(|| CloudError::Transport("no window".into()))?;
         let resp_value = JsFuture::from(window.fetch_with_request(req))
             .await
@@ -125,6 +148,12 @@ impl FetchTransport {
             .map_err(|e| CloudError::Transport(format!("response cast: {:?}", e)))?;
 
         let status = resp.status();
+        let retry_after = resp
+            .headers()
+            .get("Retry-After")
+            .ok()
+            .flatten()
+            .and_then(|v| v.trim().parse::<u64>().ok());
         let text = JsFuture::from(
             resp.text()
                 .map_err(|e| CloudError::Transport(format!("body(): {:?}", e)))?,
@@ -134,7 +163,7 @@ impl FetchTransport {
         let body = text
             .as_string()
             .ok_or_else(|| CloudError::Decode("body is not a string".into()))?;
-        Ok((status, body))
+        Ok((status, body, retry_after))
     }
 
     /// One HTTP exchange (JSON body or none, bearer attached when
@@ -154,6 +183,29 @@ impl FetchTransport {
             body.map(|b| JsValue::from_str(&b)),
             json_body,
             true,
+            extra_headers,
+        )?;
+        self.perform(&req).await
+    }
+
+    /// One HTTP exchange that never carries the bearer token: the public
+    /// billing routes (`anon-checkout`, `anon-invoice`) and the account-key
+    /// sign-in belong to someone who holds no session yet, and sending a
+    /// different account's credential along is pure leak surface.
+    async fn exchange_public(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<String>,
+        extra_headers: &[(&str, &str)],
+    ) -> Result<(u16, String), CloudError> {
+        let json_body = body.is_some();
+        let req = self.build_request(
+            method,
+            path,
+            body.map(|b| JsValue::from_str(&b)),
+            json_body,
+            false,
             extra_headers,
         )?;
         self.perform(&req).await
@@ -357,6 +409,111 @@ impl FetchTransport {
         self.decode_success(status, &body)
     }
 
+    // ── /api/billing/* ──────────────────────────────────────────────────
+    //
+    // The browser talks to the MLC server only; the server talks to the
+    // payment processor. A failure keeps its status and body so
+    // [`BillingError::from_cloud`] can pick the sentence.
+
+    /// `GET /api/billing/plans` — the plans offered to THIS request (the Tor
+    /// variants only on the onion host).
+    pub async fn billing_plans(&self) -> Result<BillingPlans, CloudError> {
+        let (status, body) = self.exchange("GET", "/api/billing/plans", None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/billing/me` — what the signed-in account already holds.
+    pub async fn billing_me(&self) -> Result<BillingMe, CloudError> {
+        let (status, body) = self.exchange("GET", "/api/billing/me", None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/billing/checkout {plan_id}` — start (or resume) a purchase.
+    /// Repeating the call while the invoice is unpaid returns the same invoice.
+    pub async fn billing_checkout(&self, plan_id: &str) -> Result<BillingCheckout, CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "plan_id": plan_id }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", "/api/billing/checkout", Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/billing/change {plan_id}` — move a running quant
+    /// subscription. An upgrade answers with its prorated charge and `pay[]`;
+    /// a downgrade takes effect at renewal.
+    pub async fn billing_change(&self, plan_id: &str) -> Result<BillingChange, CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "plan_id": plan_id }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", "/api/billing/change", Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/billing/invoice/{id}` — one of the caller's own invoices,
+    /// with the processor's live status.
+    pub async fn billing_invoice(&self, invoice_id: &str) -> Result<BillingInvoice, CloudError> {
+        let path = format!("/api/billing/invoice/{}", encode_query_component(invoice_id));
+        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/billing/anon-checkout {plan_id}` — PUBLIC. Creates a pending
+    /// anonymous account and its invoice; the answer carries the account key,
+    /// shown exactly once.
+    pub async fn billing_anon_checkout(&self, plan_id: &str) -> Result<BillingAnonCheckout, CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "plan_id": plan_id }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange_public("POST", "/api/billing/anon-checkout", Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/billing/anon-invoice/{id}` — the pending anonymous account
+    /// reads its own invoice with `Authorization: AccountKey <key>`.
+    pub async fn billing_anon_invoice(
+        &self,
+        invoice_id: &str,
+        account_key: &str,
+    ) -> Result<BillingInvoice, CloudError> {
+        let path = format!("/api/billing/anon-invoice/{}", encode_query_component(invoice_id));
+        let auth = format!("AccountKey {account_key}");
+        let (status, body) = self
+            .exchange_public("GET", &path, None, &[("Authorization", auth.as_str())])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    // ── account-key sign-in ─────────────────────────────────────────────
+
+    /// `POST /api/auth/account-key {account_key}` — PUBLIC. An ACTIVE
+    /// anonymous account's key becomes a cookie session (`Set-Cookie:
+    /// session_id`, `HttpOnly`); the same-origin browser stores it. A bad,
+    /// unknown or still-pending key all answer `401`.
+    pub async fn account_key_sign_in(&self, account_key: &str) -> Result<AccountKeySession, CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "account_key": account_key }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange_public("POST", "/api/auth/account-key", Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/auth/confirm {code}` — confirm a device code from a
+    /// cookie-session browser. After [`Self::account_key_sign_in`] this is
+    /// what turns the new cookie session into the bearer token every other
+    /// request uses: create the code, confirm it here, then poll it.
+    pub async fn device_code_confirm(&self, code: &str) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "code": code }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange_public("POST", "/api/auth/confirm", Some(payload), &[])
+            .await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
     // ── /api/share/* ────────────────────────────────────────────────────
 
     /// `POST /api/share/live` — freeze the active preset into a public
@@ -366,15 +523,108 @@ impl FetchTransport {
         &self,
         title: &str,
         preset: serde_json::Value,
+        chart_id: &str,
+        clone_allowed: bool,
+        interaction: &str,
+        visibility: &str,
     ) -> Result<ShareCreateResponse, CloudError> {
         let payload = serde_json::to_string(&ShareCreateLiveRequest {
             title: title.to_string(),
             preset,
+            chart_id: chart_id.to_string(),
+            clone_allowed,
+            interaction: interaction.to_string(),
+            visibility: visibility.to_string(),
         })
         .map_err(|e| CloudError::Decode(e.to_string()))?;
         let (status, body) = self
             .exchange("POST", "/api/share/live", Some(payload), &[])
             .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/share/{token}/grants` — owner grants one nick a tier on
+    /// this link. The tier is view or clone. It does not let them write
+    /// the author's chart.
+    pub async fn share_grant(&self, token: &str, nick: &str, tier: &str) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({
+            "grantee_nick": nick,
+            "tier": tier,
+        }))
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", &format!("/api/share/{token}/grants"), Some(payload), &[])
+            .await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    /// `POST /api/share/{token}/ops` — append primitive and indicator ops.
+    pub async fn share_post_ops(&self, token: &str, ops: &[ShareChartOp]) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "ops": ops }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", &format!("/api/share/{token}/ops"), Some(payload), &[])
+            .await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    pub async fn account_friends(&self) -> Result<FriendRoster, CloudError> {
+        let (status, body) = self.exchange("GET", "/api/account/friends", None, &[]).await?;
+        let value: serde_json::Value = self.decode_success(status, &body)?;
+        let names = |key: &str| -> Vec<String> {
+            value
+                .get(key)
+                .and_then(|v| v.as_array())
+                .map(|arr| arr.iter().filter_map(|n| n.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default()
+        };
+        Ok(FriendRoster {
+            discoverable: value.get("discoverable").and_then(|v| v.as_bool()).unwrap_or(true),
+            friends: names("friends"),
+            incoming: names("incoming"),
+            outgoing: names("outgoing"),
+            subscriptions: names("subscriptions"),
+            blocked: names("blocked"),
+        })
+    }
+
+    pub async fn account_friend_act(&self, nick: &str, action: &str) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "nick": nick, "action": action }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.exchange("POST", "/api/account/friends", Some(payload), &[]).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    pub async fn account_set_discoverable(&self, on: bool) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "discoverable": on }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.exchange("PATCH", "/api/account/privacy", Some(payload), &[]).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    pub async fn account_friend_invite(&self) -> Result<String, CloudError> {
+        let (status, body) = self.exchange("POST", "/api/account/friend-invites", Some("{}".to_string()), &[]).await?;
+        let value: serde_json::Value = self.decode_success(status, &body)?;
+        Ok(value.get("url_path").and_then(|v| v.as_str()).unwrap_or("").to_string())
+    }
+
+    pub async fn account_add_friend(&self, nick: &str) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "nick": nick }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.exchange("POST", "/api/account/friends", Some(payload), &[]).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    pub async fn account_accept_friend(&self, token: &str) -> Result<(), CloudError> {
+        let path = format!("/api/account/friend-invites/{token}/accept");
+        let (status, body) = self.exchange("POST", &path, Some("{}".to_string()), &[]).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
+    /// `GET /api/share/{token}/ops?after=`.
+    pub async fn share_get_ops(&self, token: &str, after: i64) -> Result<ShareOpsResponse, CloudError> {
+        let path = format!("/api/share/{token}/ops?after={after}");
+        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
         self.decode_success(status, &body)
     }
 
@@ -398,6 +648,26 @@ impl FetchTransport {
         self.decode_success(status, &body)
     }
 
+    /// `POST /api/share/{token}/preview` — raw PNG body. The server
+    /// re-encodes it into the link-preview card. Owner of `token` only.
+    pub async fn share_upload_preview(
+        &self,
+        token: &str,
+        png: web_sys::Blob,
+    ) -> Result<(), CloudError> {
+        let path = format!("/api/share/{token}/preview");
+        let req = self.build_request(
+            "POST",
+            &path,
+            Some(png.into()),
+            false,
+            true,
+            &[("Content-Type", "image/png")],
+        )?;
+        let (status, body) = self.perform(&req).await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
+    }
+
     /// `GET /api/share/mine` — the caller's own active shares.
     pub async fn share_list(&self) -> Result<Vec<ShareListEntry>, CloudError> {
         let (status, body) = self.exchange("GET", "/api/share/mine", None, &[]).await?;
@@ -406,6 +676,16 @@ impl FetchTransport {
     }
 
     /// `DELETE /api/share/{token}` — owner revoke.
+    /// `PATCH /api/share/{token}` — owner policy. Absent JSON fields are
+    /// left unchanged by the server.
+    pub async fn share_patch(&self, token: &str, body: serde_json::Value) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&body).map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, resp) = self
+            .exchange("PATCH", &format!("/api/share/{}", token), Some(payload), &[])
+            .await?;
+        self.decode_success(status, &resp).map(|_: serde_json::Value| ())
+    }
+
     pub async fn share_revoke(&self, token: &str) -> Result<(), CloudError> {
         let (status, body) = self
             .exchange("DELETE", &format!("/api/share/{}", token), None, &[])
@@ -424,6 +704,17 @@ impl FetchTransport {
         self.decode_success(status, &body)
     }
 
+    /// `GET /api/share/{token}/stream-open` — same credential as the ops
+    /// calls. The returned ticket rides in the live socket's query string.
+    /// 404 unknown, revoked or not-live share; 403 no view right or a full
+    /// room; 503 too many pending tickets.
+    pub async fn share_stream_open(&self, token: &str) -> Result<ShareStreamOpen, CloudError> {
+        let (status, body) = self
+            .exchange("GET", &format!("/api/share/{token}/stream-open"), None, &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
     /// `POST /api/share/{token}/clone` (auth required) — clone a shared
     /// chart into the caller's own presets, already stripped server-side of
     /// any indicator instance the caller holds no license for (rights v1,
@@ -433,6 +724,113 @@ impl FetchTransport {
         let (status, body) = self
             .exchange("POST", &format!("/api/share/{}/clone", token), None, &[])
             .await?;
+        self.decode_success(status, &body)
+    }
+
+    // ── /api/staff/* (admin role) ─────────────────────────────────────────
+    //
+    // Every call carries the session Bearer like the share calls; the server
+    // answers anyone who is not an admin with the same 403. A refusal keeps
+    // its status: [`crate::staff_error`] classifies it, the Admin tab words
+    // it.
+
+    /// One `/api/staff/*` exchange: [`Self::exchange`] with the 429's
+    /// `Retry-After` folded into the body ([`crate::with_retry_after`]).
+    async fn staff_exchange(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<String>,
+    ) -> Result<(u16, String), CloudError> {
+        let json_body = body.is_some();
+        let req = self.build_request(
+            method,
+            path,
+            body.map(|b| JsValue::from_str(&b)),
+            json_body,
+            true,
+            &[],
+        )?;
+        let (status, text, retry_after) = self.perform_full(&req).await?;
+        Ok((status, crate::with_retry_after(status, text, retry_after)))
+    }
+
+    /// `POST /api/staff/gift-codes` — mint a batch of single-use codes. The
+    /// codes come back ONCE; the caller must not log them.
+    pub async fn staff_mint(&self, days: i64, count: i64, note: &str) -> Result<StaffMintResponse, CloudError> {
+        let payload = serde_json::to_string(&StaffMintRequest { days, count, note: note.to_string() })
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.staff_exchange("POST", "/api/staff/gift-codes", Some(payload)).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/staff/gift-batches` — the batches, newest first, no code
+    /// values.
+    pub async fn staff_gift_batches(&self) -> Result<Vec<StaffGiftBatch>, CloudError> {
+        let (status, body) = self.staff_exchange("GET", "/api/staff/gift-batches", None).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/staff/gift-batches/{id}/revoke` — unredeemed codes of the
+    /// batch stop working; redeemed ones keep their days.
+    pub async fn staff_revoke_batch(&self, batch_id: &str) -> Result<StaffBatchRevoked, CloudError> {
+        let path = format!("/api/staff/gift-batches/{}/revoke", encode_query_component(batch_id));
+        let (status, body) = self.staff_exchange("POST", &path, Some("{}".to_string())).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/staff/grants/paid-days` — extend an account's time-bound
+    /// paid grant. 404 is an unknown nick.
+    pub async fn staff_paid_days(&self, nick: &str, days: i64) -> Result<StaffPaidDays, CloudError> {
+        let payload = serde_json::to_string(&StaffPaidDaysRequest { nick: nick.to_string(), days })
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.staff_exchange("POST", "/api/staff/grants/paid-days", Some(payload)).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/staff/grants/lifetime` — add an operator lifetime grant
+    /// (`lifetime_paid` or `lifetime_anon`). `201` when created, `200` with
+    /// `created: false` when the identical grant is already in force; both
+    /// decode to [`StaffLifetimeGrant`].
+    pub async fn staff_lifetime_grant(
+        &self,
+        nick: &str,
+        grant: &str,
+        note: &str,
+    ) -> Result<StaffLifetimeGrant, CloudError> {
+        let payload = serde_json::to_string(&StaffLifetimeRequest {
+            nick: nick.to_string(),
+            grant: grant.to_string(),
+            note: note.to_string(),
+        })
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.staff_exchange("POST", "/api/staff/grants/lifetime", Some(payload)).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/staff/grants/lifetime/revoke` — revoke the admin-source
+    /// grants of that kind; invoice-based grants are not touched.
+    pub async fn staff_lifetime_revoke(
+        &self,
+        nick: &str,
+        grant: &str,
+    ) -> Result<StaffLifetimeRevoked, CloudError> {
+        let payload = serde_json::to_string(&StaffLifetimeRevokeRequest {
+            nick: nick.to_string(),
+            grant: grant.to_string(),
+        })
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .staff_exchange("POST", "/api/staff/grants/lifetime/revoke", Some(payload))
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/staff/user?nick=` — one account's grants and roles (exact
+    /// nick only). 404 is an unknown nick.
+    pub async fn staff_user(&self, nick: &str) -> Result<StaffUser, CloudError> {
+        let path = format!("/api/staff/user?nick={}", encode_query_component(nick));
+        let (status, body) = self.staff_exchange("GET", &path, None).await?;
         self.decode_success(status, &body)
     }
 
@@ -706,6 +1104,16 @@ impl FetchTransport {
         let path = format!("/api/dm/lookup?q={}", encode_query_component(q));
         let (status, body) = self.exchange("GET", &path, None, &[]).await?;
         let resp: DmLookupResponse = self.decode_success(status, &body)?;
+        Ok(resp.users)
+    }
+
+    /// `GET /api/share/lookup?q=` — account nicks for a share grant.
+    /// Distinct from [`Self::dm_lookup`]: no messenger key, no paid gate
+    /// on the target.
+    pub async fn share_nick_lookup(&self, q: &str) -> Result<Vec<ShareNickHit>, CloudError> {
+        let path = format!("/api/share/lookup?q={}", encode_query_component(q));
+        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
+        let resp: ShareNickLookupResponse = self.decode_success(status, &body)?;
         Ok(resp.users)
     }
 

@@ -1,0 +1,404 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none" style="--seek: 0s; --play-state: running;">
+  <title>MyLittleChart magic hat cel Y spin</title>
+  <desc>Sixteen independently drawn vector views form a seamless volumetric turn around the vertical axis.</desc>
+  <style>
+    .hat-frame {
+      opacity: 0;
+      animation-duration: 3.2s;
+      animation-timing-function: steps(1, end);
+      animation-iteration-count: infinite;
+      animation-delay: calc(0s - var(--seek));
+      animation-play-state: var(--play-state);
+    }
+
+    .frame-0 { animation-name: y-spin-frame-0; }
+    .frame-1 { animation-name: y-spin-frame-1; }
+    .frame-2 { animation-name: y-spin-frame-2; }
+    .frame-3 { animation-name: y-spin-frame-3; }
+    .frame-4 { animation-name: y-spin-frame-4; }
+    .frame-5 { animation-name: y-spin-frame-5; }
+    .frame-6 { animation-name: y-spin-frame-6; }
+    .frame-7 { animation-name: y-spin-frame-7; }
+    .frame-8 { animation-name: y-spin-frame-8; }
+    .frame-9 { animation-name: y-spin-frame-9; }
+    .frame-10 { animation-name: y-spin-frame-10; }
+    .frame-11 { animation-name: y-spin-frame-11; }
+    .frame-12 { animation-name: y-spin-frame-12; }
+    .frame-13 { animation-name: y-spin-frame-13; }
+    .frame-14 { animation-name: y-spin-frame-14; }
+    .frame-15 { animation-name: y-spin-frame-15; }
+
+    .outline {
+      stroke: #000000;
+      stroke-width: 7;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .detail {
+      stroke: #000000;
+      stroke-width: 4;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .symbol {
+      fill: #F4CD63;
+      stroke: #000000;
+      stroke-width: 3.2;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .master-outline,
+    .master-cone,
+    .master-lip,
+    .master-symbol {
+      stroke: #000000;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    .master-outline { stroke-width: 3.5; }
+    .master-cone { stroke-width: 3; }
+    .master-lip { stroke-width: 2.7; }
+    .master-symbol {
+      fill: #F4CD63;
+      stroke-width: 1.6;
+    }
+
+    @keyframes y-spin-frame-0 { 0%, 6.249% { opacity: 1; } 6.25%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-1 { 0%, 6.249% { opacity: 0; } 6.25%, 12.499% { opacity: 1; } 12.5%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-2 { 0%, 12.499% { opacity: 0; } 12.5%, 18.749% { opacity: 1; } 18.75%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-3 { 0%, 18.749% { opacity: 0; } 18.75%, 24.999% { opacity: 1; } 25%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-4 { 0%, 24.999% { opacity: 0; } 25%, 31.249% { opacity: 1; } 31.25%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-5 { 0%, 31.249% { opacity: 0; } 31.25%, 37.499% { opacity: 1; } 37.5%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-6 { 0%, 37.499% { opacity: 0; } 37.5%, 43.749% { opacity: 1; } 43.75%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-7 { 0%, 43.749% { opacity: 0; } 43.75%, 49.999% { opacity: 1; } 50%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-8 { 0%, 49.999% { opacity: 0; } 50%, 56.249% { opacity: 1; } 56.25%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-9 { 0%, 56.249% { opacity: 0; } 56.25%, 62.499% { opacity: 1; } 62.5%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-10 { 0%, 62.499% { opacity: 0; } 62.5%, 68.749% { opacity: 1; } 68.75%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-11 { 0%, 68.749% { opacity: 0; } 68.75%, 74.999% { opacity: 1; } 75%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-12 { 0%, 74.999% { opacity: 0; } 75%, 81.249% { opacity: 1; } 81.25%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-13 { 0%, 81.249% { opacity: 0; } 81.25%, 87.499% { opacity: 1; } 87.5%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-14 { 0%, 87.499% { opacity: 0; } 87.5%, 93.749% { opacity: 1; } 93.75%, 100% { opacity: 0; } }
+    @keyframes y-spin-frame-15 { 0%, 93.749% { opacity: 0; } 93.75%, 99.999% { opacity: 1; } 100% { opacity: 0; } }
+  </style>
+
+  <!-- 0 degrees: full front. The rear brim is behind the cone and the front lip occludes its base. -->
+  <g class="hat-frame frame-0" id="y-spin-front">
+    <ellipse cx="256" cy="397" rx="151" ry="14" fill="#07101E" opacity="0.16"/>
+    <g transform="translate(56 114) scale(2)">
+      <path class="master-outline" d="M 26,100 C 46,92 68,84 89,80 C 115,70 142,62 160,58 C 176,54 188,55 192,61 C 196,68 185,78 166,86 C 140,97 108,111 78,121 C 54,130 33,135 19,130 C 9,127 5,120 8,113 C 11,107 17,103 26,100 Z" fill="url(#y_master_brim)"/>
+      <path class="master-cone" d="M 90.33,18.84 C 77.06,8.71 67.07,5.08 58.56,5.51 C 45.81,6.13 29.71,19.48 21.81,29.04 C 16.22,35.88 10.11,45.16 12.48,47.74 C 13.99,49.34 17.29,47.13 20.46,45.29 C 28.36,40.72 34.91,38.18 43.96,35.61 C 47.29,47.33 49.13,59.09 49.91,71.63 C 50.54,80.74 55.56,89.25 66.14,101.11 C 75.7,108.4 90.2,105.3 104.8,96.6 C 122.6,86.1 128.8,82.2 135.8,78.2 C 145.8,72.5 153,71.4 153.1,67.2 C 153.2,63.2 147.8,59.4 141.8,55 C 128.5,45 104,27.8 90.33,18.84 Z" fill="url(#y_master_cone)"/>
+      <g aria-label="master front symbols">
+        <path class="master-symbol" d="M 26.19,28.08 L 29.97,23.06 L 32.19,22.08 L 32.78,26.9 L 36.08,29.11 L 30.61,30.95 L 27.76,33.91 L 26.19,28.08 Z"/>
+        <path class="master-symbol" d="M 47.16,37.23 L 50.46,29.38 L 54.5,34.91 L 60.96,35.33 L 57.66,40.8 L 59.38,46.85 L 52.47,46.1 L 50.03,47.94 L 47.16,37.23 Z"/>
+        <path class="master-symbol" d="M 64.16,17.61 L 68.92,15.39 L 69.51,9.2 L 77.41,12.66 L 79.63,20.03 L 71.73,20.95 L 70.55,25.27 L 67.69,18.84 L 64.16,17.61 Z"/>
+        <path class="master-symbol" d="M 106.21,49.96 L 111.68,47.33 L 112.27,41.28 L 118.73,46.24 L 124.19,55.8 L 116.83,55.11 L 113.53,58.91 L 112.94,53.21 L 106.21,49.96 Z"/>
+        <path class="master-symbol" d="M 53.65,68.63 L 60.56,67.08 L 61.62,60.08 L 65.66,65.04 L 71.02,65.11 L 67.41,70.36 L 69.18,76.11 L 62.85,74.95 L 59.69,78.91 L 58.51,71.22 L 53.65,68.63 Z"/>
+        <path class="master-symbol" id="master-front-lower-right-star" d="M 108.4,75 L 111.7,75.5 L 113.8,72.1 L 115.2,76.2 L 119.3,77.1 L 116.2,79.8 L 116.4,84 L 112.8,81.7 L 109.1,83.4 L 110.2,79.4 Z"/>
+        <path class="master-symbol" d="M 86.83,35.61 C 79.22,35.61 72.42,42.21 72.42,50.06 C 72.42,57.92 78.75,63.41 86.36,63.02 C 92.01,62.69 96.21,59.02 97.82,54.7 C 95.7,56.54 93.69,57.13 90.39,57.06 C 83.87,56.81 80.31,51.85 80.31,46.85 C 80.31,42.21 82.91,38.18 86.83,36.61 V 35.61 Z"/>
+      </g>
+      <path class="master-lip" d="M 8,113 C 28,119 49,118 73,113 C 105,106 141,93 166,82 C 181,76 189,69 192,61 C 196,68 185,78 166,86 C 140,97 108,111 78,121 C 54,130 33,135 19,130 C 9,127 5,120 8,113 Z" fill="url(#y_master_lip)"/>
+    </g>
+  </g>
+
+  <!-- 22.5 degrees: the master silhouette begins to reveal the right-hand volume. -->
+  <g class="hat-frame frame-1" id="y-spin-front-right-transition">
+    <ellipse cx="253" cy="405" rx="139" ry="14" fill="#07101E" opacity="0.155"/>
+    <path class="outline" d="M 87,321 C 122,300 178,282 236,274 C 305,264 372,271 416,294 C 437,305 438,321 423,340 C 400,367 347,387 280,394 C 210,401 139,387 99,357 C 83,345 78,332 87,321 Z" fill="url(#y_brim_front)"/>
+    <path class="outline" d="M 182,337 C 181,301 179,264 172,229 C 166,199 157,180 146,181 C 132,183 119,194 105,202 C 93,209 84,207 81,199 C 77,188 91,169 111,153 C 137,131 166,119 191,126 C 240,139 301,177 345,222 C 379,256 397,293 386,321 C 342,347 237,356 182,337 Z" fill="url(#y_cone_front)"/>
+    <path d="M 279,163 C 318,180 353,207 379,238 C 400,264 405,295 386,321 C 365,334 338,343 309,348 C 326,305 323,259 306,218 C 295,190 285,174 279,163 Z" fill="#173A78" opacity="0.3"/>
+    <g aria-label="22.5 degree symbols">
+      <path class="symbol" d="M 111,166 L 118,152 L 124,165 L 139,168 L 128,178 L 129,193 L 117,185 L 105,191 L 109,178 L 99,169 Z"/>
+      <path class="symbol" d="M 157,147 L 164,130 L 171,146 L 189,149 L 176,161 L 179,178 L 164,170 L 149,178 L 153,161 L 141,151 Z"/>
+      <path class="symbol" d="M 205,151 L 212,134 L 219,150 L 237,153 L 224,165 L 227,182 L 212,174 L 197,182 L 201,165 L 189,155 Z"/>
+      <path class="symbol" d="M 259,201 C 241,204 230,221 233,239 C 236,256 251,266 267,262 C 258,257 253,249 253,239 C 252,227 258,215 268,209 C 266,205 262,202 259,201 Z"/>
+      <path class="symbol" d="M 206,267 L 213,251 L 220,265 L 237,268 L 225,279 L 227,296 L 213,288 L 199,296 L 202,280 L 191,270 Z"/>
+      <path class="symbol" id="transition-22-lower-right-star" d="M 294,272 L 302,274 L 307,262 L 312,276 L 325,279 L 315,289 L 316,302 L 304,294 L 292,300 L 295,287 L 285,279 Z"/>
+    </g>
+    <path class="outline" d="M 87,321 C 135,341 198,350 268,347 C 337,344 392,326 416,294 C 437,305 438,321 423,340 C 400,367 347,387 280,394 C 210,401 139,387 99,357 C 83,345 78,332 87,321 Z" fill="url(#y_lip_front)"/>
+    <path d="M 98,327 C 150,343 207,350 268,347 C 331,344 383,328 408,300" stroke="#2D67B2" stroke-width="5" stroke-linecap="round" opacity="0.74"/>
+  </g>
+
+  <!-- 45 degrees: front-right quarter. -->
+  <g class="hat-frame frame-2" id="y-spin-front-right">
+    <ellipse cx="256" cy="414" rx="126" ry="14" fill="#07101E" opacity="0.15"/>
+    <path class="outline" d="M 104,328 C 139,299 194,286 257,287 C 325,288 382,301 413,328 C 429,342 412,361 379,375 C 342,390 293,397 249,395 C 194,393 142,380 112,356 C 100,346 97,336 104,328 Z" fill="url(#y_brim_quarter)"/>
+    <path class="outline" d="M 166,339 C 171,288 169,242 160,201 C 154,173 143,158 133,164 C 121,171 111,168 109,160 C 106,150 120,133 139,117 C 164,94 191,81 216,84 C 266,89 317,139 347,212 C 365,257 367,307 344,340 C 296,354 218,355 166,339 Z" fill="url(#y_cone_quarter)"/>
+    <path d="M 263,102 C 303,132 332,173 350,216 C 367,258 367,307 344,340 C 326,346 305,350 283,352 C 296,312 296,265 288,218 C 280,171 265,135 263,102 Z" fill="#112F68" opacity="0.34"/>
+    <g aria-label="front-right symbols">
+      <path class="symbol" d="M 143,136 L 150,121 L 157,134 L 172,137 L 161,147 L 162,163 L 150,154 L 137,160 L 141,147 L 131,138 Z"/>
+      <path class="symbol" d="M 187,122 L 194,105 L 201,121 L 219,124 L 206,136 L 209,153 L 194,145 L 179,153 L 183,136 L 171,126 Z"/>
+      <path class="symbol" d="M 234,170 C 216,172 204,189 207,207 C 210,224 225,234 241,231 C 232,225 227,217 227,207 C 226,195 232,183 242,177 C 240,174 237,171 234,170 Z"/>
+      <path class="symbol" d="M 266,212 L 273,195 L 280,210 L 296,213 L 284,225 L 286,242 L 273,233 L 259,242 L 263,226 L 251,216 Z"/>
+      <path class="symbol" id="front-right-lower-star" d="M 293,273 L 300,274 L 305,263 L 309,276 L 322,279 L 312,288 L 313,301 L 302,294 L 290,299 L 293,288 L 284,280 Z"/>
+    </g>
+    <path class="outline" d="M 104,328 C 146,349 201,358 261,357 C 325,356 381,346 413,328 C 429,342 412,361 379,375 C 342,390 293,397 249,395 C 194,393 142,380 112,356 C 100,346 97,336 104,328 Z" fill="url(#y_lip_quarter)"/>
+    <path d="M 114,333 C 160,351 209,358 262,357 C 319,356 371,347 404,333" stroke="#2A62AC" stroke-width="5" stroke-linecap="round" opacity="0.72"/>
+  </g>
+
+  <!-- 67.5 degrees: the front artwork narrows toward the right-side profile. -->
+  <g class="hat-frame frame-3" id="y-spin-right-side-transition">
+    <ellipse cx="256" cy="413" rx="105" ry="13.5" fill="#07101E" opacity="0.14"/>
+    <path class="outline" d="M 132,330 C 156,303 202,291 255,292 C 313,293 358,305 381,330 C 394,344 381,365 353,378 C 320,393 274,398 231,393 C 188,389 149,374 134,354 C 127,345 126,337 132,330 Z" fill="url(#y_brim_quarter)"/>
+    <path class="outline" d="M 187,341 C 192,291 192,246 185,205 C 180,176 176,158 187,148 C 196,140 207,137 213,126 C 219,115 215,104 224,96 C 237,84 254,87 267,100 C 290,123 317,166 334,215 C 350,260 350,310 325,341 C 286,353 229,354 187,341 Z" fill="url(#y_cone_side)"/>
+    <path d="M 267,100 C 297,132 322,174 338,218 C 353,262 349,311 325,341 C 309,347 291,350 273,351 C 285,311 285,266 278,220 C 271,174 263,132 267,100 Z" fill="#112F68" opacity="0.38"/>
+    <path class="detail" d="M 224,96 C 238,86 254,90 267,102 C 276,111 276,122 266,131 C 255,141 250,153 255,166" fill="none"/>
+    <g aria-label="67.5 degree symbols">
+      <path class="symbol" d="M 210,161 L 216,147 L 222,160 L 236,163 L 226,172 L 227,186 L 216,179 L 204,186 L 208,173 L 198,164 Z"/>
+      <path class="symbol" d="M 246,207 C 232,210 223,223 226,238 C 228,252 240,260 253,257 C 245,253 241,246 241,238 C 240,229 245,220 253,215 C 251,211 249,209 246,207 Z"/>
+      <path class="symbol" d="M 267,265 L 273,267 L 278,256 L 282,269 L 294,272 L 285,281 L 286,294 L 275,287 L 264,292 L 267,280 L 258,273 Z"/>
+    </g>
+    <path class="outline" d="M 132,330 C 165,348 208,356 257,356 C 309,356 357,347 381,330 C 394,344 381,365 353,378 C 320,393 274,398 231,393 C 188,389 149,374 134,354 C 127,345 126,337 132,330 Z" fill="url(#y_lip_quarter)"/>
+    <path d="M 141,335 C 173,350 214,356 257,356 C 304,356 347,348 374,335" stroke="#2960A8" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+  </g>
+
+  <!-- 90 degrees: right side. The brim remains a thick oval and the tip crosses the visible face. -->
+  <g class="hat-frame frame-4" id="y-spin-right-side">
+    <ellipse cx="256" cy="413" rx="86" ry="13" fill="#07101E" opacity="0.13"/>
+    <path class="outline" d="M 165,330 C 182,307 216,297 257,298 C 302,299 337,310 349,332 C 359,350 342,371 310,383 C 279,394 232,393 199,380 C 171,369 157,347 165,330 Z" fill="url(#y_brim_side)"/>
+    <path class="outline" d="M 208,343 C 211,294 212,249 209,205 C 207,169 214,132 237,103 C 248,89 264,86 276,98 C 288,110 283,125 271,133 C 258,142 254,152 258,164 C 276,185 295,220 307,260 C 319,298 316,326 304,343 C 276,352 238,352 208,343 Z" fill="url(#y_cone_side)"/>
+    <path class="detail" d="M 237,103 C 252,92 269,93 276,104 C 282,114 276,124 267,130 C 252,140 247,151 254,168" fill="none"/>
+    <path d="M 272,142 C 293,179 307,219 313,261 C 319,299 315,327 304,343 C 291,348 278,350 264,350 C 275,307 278,262 274,217 C 271,183 267,158 272,142 Z" fill="#102D62" opacity="0.42"/>
+    <g aria-label="right edge symbols">
+      <path class="symbol" d="M 244,182 L 250,168 L 256,181 L 269,184 L 259,193 L 261,207 L 250,200 L 239,207 L 242,194 L 232,186 Z"/>
+      <path class="symbol" d="M 254,237 C 242,239 235,250 237,262 C 239,273 249,280 260,278 C 254,274 251,268 251,261 C 250,253 254,246 261,241 C 259,239 257,238 254,237 Z"/>
+    </g>
+    <path class="outline" d="M 165,330 C 190,348 222,355 259,355 C 297,355 331,348 349,332 C 359,350 342,371 310,383 C 279,394 232,393 199,380 C 171,369 157,347 165,330 Z" fill="url(#y_lip_side)"/>
+    <path d="M 173,335 C 194,349 225,355 259,355 C 294,355 324,348 342,336" stroke="#27599E" stroke-width="5" stroke-linecap="round" opacity="0.68"/>
+  </g>
+
+  <!-- 112.5 degrees: the last front markings slip behind the right edge. -->
+  <g class="hat-frame frame-5" id="y-spin-rear-right-transition">
+    <ellipse cx="256" cy="413" rx="105" ry="13.5" fill="#07101E" opacity="0.135"/>
+    <path class="outline" d="M 133,331 C 157,305 201,292 253,293 C 311,294 357,307 381,332 C 394,346 381,366 352,379 C 320,394 274,399 231,394 C 188,390 150,375 135,355 C 128,346 127,338 133,331 Z" fill="url(#y_brim_rear)"/>
+    <path class="outline" d="M 187,342 C 193,291 199,247 210,207 C 220,171 230,144 246,121 C 258,103 272,90 286,93 C 301,96 311,111 322,127 C 332,142 345,156 352,157 C 363,159 370,152 375,157 C 381,164 370,178 357,190 C 338,208 329,232 329,263 C 330,291 335,318 330,342 C 291,354 230,355 187,342 Z" fill="url(#y_cone_rear)"/>
+    <path d="M 286,93 C 303,98 313,113 324,130 C 336,148 346,156 354,158 C 364,160 371,153 376,158 C 381,165 370,179 357,190 C 338,207 329,232 329,263 C 307,226 288,184 282,143 C 279,120 281,103 286,93 Z" fill="#0F2B60" opacity="0.46"/>
+    <path d="M 213,226 C 235,210 260,205 286,213" stroke="#2D63A7" stroke-width="6" stroke-linecap="round" opacity="0.4"/>
+    <g aria-label="112.5 degree symbol sliver">
+      <path class="symbol" d="M 218,252 C 210,254 206,263 208,271 C 210,278 216,283 222,281 C 218,277 216,273 216,268 C 216,261 219,257 224,254 C 222,253 220,252 218,252 Z"/>
+    </g>
+    <path class="outline" d="M 133,331 C 166,349 209,357 257,357 C 309,357 357,349 381,332 C 394,346 381,366 352,379 C 320,394 274,399 231,394 C 188,390 150,375 135,355 C 128,346 127,338 133,331 Z" fill="url(#y_lip_rear)"/>
+    <path d="M 142,336 C 175,351 214,357 257,357 C 303,357 346,349 374,337" stroke="#255493" stroke-width="5" stroke-linecap="round" opacity="0.67"/>
+  </g>
+
+  <!-- 135 degrees: rear-right quarter. Symbols have rotated out of sight. -->
+  <g class="hat-frame frame-6" id="y-spin-rear-right">
+    <ellipse cx="256" cy="414" rx="124" ry="14" fill="#07101E" opacity="0.14"/>
+    <path class="outline" d="M 108,329 C 139,302 196,288 258,289 C 326,290 380,303 409,330 C 424,344 408,362 376,376 C 340,391 293,398 248,396 C 195,394 144,381 115,358 C 104,348 100,337 108,329 Z" fill="url(#y_brim_rear)"/>
+    <path class="outline" d="M 169,340 C 175,287 184,243 202,202 C 221,158 244,119 276,96 C 306,75 337,89 365,124 C 378,140 385,154 378,160 C 372,165 361,156 353,157 C 343,158 339,171 340,187 C 341,230 348,287 349,340 C 300,355 221,356 169,340 Z" fill="url(#y_cone_rear)"/>
+    <path d="M 276,96 C 307,76 338,90 366,126 C 378,142 384,154 378,160 C 371,166 361,157 353,157 C 344,158 340,170 340,186 C 322,152 300,123 276,96 Z" fill="#0E295A" opacity="0.45"/>
+    <path d="M 193,239 C 216,212 247,198 280,198" stroke="#2D63A7" stroke-width="6" stroke-linecap="round" opacity="0.42"/>
+    <path class="outline" d="M 108,329 C 148,349 204,359 262,358 C 323,357 377,347 409,330 C 424,344 408,362 376,376 C 340,391 293,398 248,396 C 195,394 144,381 115,358 C 104,348 100,337 108,329 Z" fill="url(#y_lip_rear)"/>
+    <path d="M 117,334 C 161,351 211,358 262,358 C 317,357 365,348 400,335" stroke="#234F8F" stroke-width="5" stroke-linecap="round" opacity="0.65"/>
+  </g>
+
+  <!-- 157.5 degrees: the unmarked back broadens and the tip reaches the far right. -->
+  <g class="hat-frame frame-7" id="y-spin-back-right-transition">
+    <ellipse cx="256" cy="414" rx="138" ry="14" fill="#07101E" opacity="0.145"/>
+    <path class="outline" d="M 87,329 C 120,300 180,284 249,286 C 324,288 388,302 421,329 C 438,343 421,363 385,377 C 345,393 292,400 242,398 C 183,395 127,382 95,358 C 83,348 79,337 87,329 Z" fill="url(#y_brim_back)"/>
+    <path class="outline" d="M 163,341 C 168,291 176,247 192,205 C 211,156 238,113 275,88 C 311,64 347,76 379,106 C 396,122 411,139 412,150 C 413,160 403,165 393,159 C 380,151 369,154 363,168 C 348,203 348,269 352,341 C 298,357 216,357 163,341 Z" fill="url(#y_cone_back)"/>
+    <path d="M 275,88 C 311,64 347,76 379,106 C 396,122 411,139 412,150 C 413,160 403,165 393,159 C 380,151 369,154 363,168 C 340,139 311,112 275,88 Z" fill="#0C2756" opacity="0.49"/>
+    <path d="M 181,245 C 217,219 269,211 326,225" stroke="#2B5C9D" stroke-width="6.5" stroke-linecap="round" opacity="0.41"/>
+    <path class="outline" d="M 87,329 C 133,350 196,361 264,360 C 333,359 389,348 421,329 C 438,343 421,363 385,377 C 345,393 292,400 242,398 C 183,395 127,382 95,358 C 83,348 79,337 87,329 Z" fill="url(#y_lip_back)"/>
+    <path d="M 97,334 C 149,353 207,360 265,360 C 327,359 380,349 412,334" stroke="#224B86" stroke-width="5" stroke-linecap="round" opacity="0.65"/>
+  </g>
+
+  <!-- 180 degrees: full back. The unmarked back panel and opposite droop are fully visible. -->
+  <g class="hat-frame frame-8" id="y-spin-back">
+    <ellipse cx="256" cy="414" rx="145" ry="15" fill="#07101E" opacity="0.15"/>
+    <path class="outline" d="M 76,328 C 111,298 176,282 250,284 C 331,286 400,301 434,329 C 451,343 432,363 393,378 C 350,394 294,402 241,399 C 177,396 116,382 83,357 C 70,347 68,337 76,328 Z" fill="url(#y_brim_back)"/>
+    <path class="outline" d="M 159,341 C 164,292 172,248 187,207 C 205,157 234,107 282,80 C 323,57 361,72 397,111 C 414,129 424,145 420,153 C 416,163 405,159 396,152 C 385,144 376,150 373,164 C 365,210 359,273 355,341 C 299,358 214,358 159,341 Z" fill="url(#y_cone_back)"/>
+    <path d="M 282,80 C 323,57 361,72 397,111 C 414,129 424,145 420,153 C 416,163 405,159 396,152 C 385,144 376,150 373,164 C 350,130 320,101 282,80 Z" fill="#0B2552" opacity="0.5"/>
+    <path d="M 186,252 C 226,224 289,215 345,231" stroke="#2A5A99" stroke-width="7" stroke-linecap="round" opacity="0.42"/>
+    <path class="outline" d="M 76,328 C 125,350 193,361 265,360 C 339,359 400,348 434,329 C 451,343 432,363 393,378 C 350,394 294,402 241,399 C 177,396 116,382 83,357 C 70,347 68,337 76,328 Z" fill="url(#y_lip_back)"/>
+    <path d="M 87,334 C 142,353 205,361 267,360 C 335,359 392,349 424,334" stroke="#214B87" stroke-width="5" stroke-linecap="round" opacity="0.65"/>
+  </g>
+
+  <!-- 202.5 degrees: the tip passes behind the crown before emerging on the left. -->
+  <g class="hat-frame frame-9" id="y-spin-back-left-transition">
+    <ellipse cx="256" cy="414" rx="138" ry="14" fill="#07101E" opacity="0.145"/>
+    <path class="outline" d="M 86,330 C 119,301 178,285 248,287 C 323,289 387,303 422,330 C 439,344 422,364 386,378 C 346,394 292,401 241,399 C 182,396 126,383 94,359 C 82,349 78,338 86,330 Z" fill="url(#y_brim_back)"/>
+    <path class="outline" d="M 270,93 C 303,66 339,72 372,99 C 392,115 407,131 408,143 C 409,154 399,158 389,153 C 376,146 365,151 359,165 C 351,182 342,194 329,203 C 320,175 299,130 270,93 Z" fill="#0C2756"/>
+    <path class="outline" d="M 160,342 C 166,291 176,246 192,205 C 210,158 235,117 270,93 C 285,111 298,135 309,162 C 323,198 335,246 349,342 C 298,357 214,358 160,342 Z" fill="url(#y_cone_back)"/>
+    <path d="M 270,93 C 285,111 298,135 309,162 C 323,198 335,246 349,342 C 328,349 306,353 282,355 C 293,309 290,263 282,220 C 274,176 268,128 270,93 Z" fill="#0B2552" opacity="0.42"/>
+    <path d="M 182,247 C 219,221 270,213 326,227" stroke="#2A5A99" stroke-width="6.5" stroke-linecap="round" opacity="0.4"/>
+    <path class="outline" d="M 86,330 C 132,351 195,362 264,361 C 333,360 390,349 422,330 C 439,344 422,364 386,378 C 346,394 292,401 241,399 C 182,396 126,383 94,359 C 82,349 78,338 86,330 Z" fill="url(#y_lip_back)"/>
+    <path d="M 96,335 C 148,354 206,361 265,361 C 328,360 381,350 413,335" stroke="#214A84" stroke-width="5" stroke-linecap="round" opacity="0.64"/>
+  </g>
+
+  <!-- 225 degrees: rear-left quarter. The tip starts returning from behind the crown. -->
+  <g class="hat-frame frame-10" id="y-spin-rear-left">
+    <ellipse cx="256" cy="414" rx="124" ry="14" fill="#07101E" opacity="0.14"/>
+    <path class="outline" d="M 103,330 C 134,303 190,289 253,290 C 321,291 378,304 410,331 C 425,345 409,363 376,377 C 340,392 292,399 247,397 C 193,395 141,382 111,359 C 100,349 96,338 103,330 Z" fill="url(#y_brim_rear)"/>
+    <path class="outline" d="M 165,341 C 169,289 167,244 171,205 C 173,175 171,159 161,158 C 151,157 141,166 134,160 C 127,154 135,140 147,124 C 174,89 205,75 236,96 C 270,119 296,159 318,203 C 338,244 347,289 351,341 C 300,356 218,357 165,341 Z" fill="url(#y_cone_rear)"/>
+    <path d="M 147,124 C 174,89 205,75 236,96 C 211,122 190,151 171,187 C 172,173 171,159 161,158 C 151,157 141,166 134,160 C 127,154 135,140 147,124 Z" fill="#0D2858" opacity="0.46"/>
+    <path d="M 194,219 C 228,202 265,205 299,229" stroke="#2C61A3" stroke-width="6" stroke-linecap="round" opacity="0.4"/>
+    <path class="outline" d="M 103,330 C 145,350 201,360 260,359 C 322,358 379,348 410,331 C 425,345 409,363 376,377 C 340,392 292,399 247,397 C 193,395 141,382 111,359 C 100,349 96,338 103,330 Z" fill="url(#y_lip_rear)"/>
+    <path d="M 113,335 C 158,352 207,359 260,359 C 315,358 367,349 401,336" stroke="#234F8F" stroke-width="5" stroke-linecap="round" opacity="0.65"/>
+  </g>
+
+  <!-- 247.5 degrees: the hidden tip reappears beside a still-thick left profile. -->
+  <g class="hat-frame frame-11" id="y-spin-left-side-transition">
+    <ellipse cx="256" cy="413" rx="106" ry="13.5" fill="#07101E" opacity="0.135"/>
+    <path class="outline" d="M 130,332 C 154,305 199,293 252,294 C 310,295 357,308 383,333 C 396,347 383,367 354,380 C 321,395 274,400 230,395 C 187,391 147,376 132,356 C 125,347 124,339 130,332 Z" fill="url(#y_brim_rear)"/>
+    <path class="outline" d="M 185,343 C 189,293 188,248 191,208 C 193,180 190,162 181,160 C 172,158 163,166 156,162 C 148,157 153,144 164,129 C 185,99 212,84 238,98 C 269,115 297,158 319,207 C 338,251 344,302 329,343 C 289,355 228,356 185,343 Z" fill="url(#y_cone_rear)"/>
+    <path d="M 164,129 C 185,99 212,84 238,98 C 218,122 202,150 191,185 C 192,173 190,162 181,160 C 172,158 163,166 156,162 C 148,157 153,144 164,129 Z" fill="#0D2858" opacity="0.48"/>
+    <path d="M 230,139 C 259,169 284,211 300,258 C 313,296 316,325 310,348 C 290,352 269,354 248,354 C 257,310 254,265 247,221 C 240,180 232,153 230,139 Z" fill="#15366B" opacity="0.31"/>
+    <g aria-label="247.5 degree symbol sliver">
+      <path class="symbol" d="M 262,247 C 253,249 248,258 250,267 C 252,276 260,281 268,279 C 263,276 261,271 261,266 C 260,259 264,254 269,251 C 267,249 265,248 262,247 Z"/>
+    </g>
+    <path class="outline" d="M 130,332 C 164,350 208,358 257,358 C 310,358 358,350 383,333 C 396,347 383,367 354,380 C 321,395 274,400 230,395 C 187,391 147,376 132,356 C 125,347 124,339 130,332 Z" fill="url(#y_lip_rear)"/>
+    <path d="M 139,337 C 172,352 214,358 257,358 C 304,358 347,350 376,338" stroke="#255493" stroke-width="5" stroke-linecap="round" opacity="0.67"/>
+  </g>
+
+  <!-- 270 degrees: left side. The folded tip is behind the crown, so only its shaded edge is visible. -->
+  <g class="hat-frame frame-12" id="y-spin-left-side">
+    <ellipse cx="256" cy="413" rx="87" ry="13" fill="#07101E" opacity="0.13"/>
+    <path class="outline" d="M 163,332 C 180,308 215,298 256,299 C 301,300 337,311 351,333 C 361,351 343,372 311,384 C 279,395 231,394 198,381 C 170,370 155,348 163,332 Z" fill="url(#y_brim_side)"/>
+    <path class="outline" d="M 242,104 C 231,90 215,87 203,99 C 192,110 196,124 208,132 C 221,141 225,152 221,164 C 211,187 203,222 204,260 C 204,299 208,326 218,344 L 304,344 C 308,295 307,249 310,206 C 312,170 303,132 280,104 C 269,91 253,89 242,104 Z" fill="url(#y_cone_side)"/>
+    <path d="M 242,104 C 231,90 215,87 203,99 C 192,110 196,124 208,132 C 221,141 225,152 221,164 C 235,145 249,132 263,125 C 257,116 250,109 242,104 Z" fill="#0D295C" opacity="0.5"/>
+    <path class="detail" d="M 242,104 C 230,94 217,95 209,104 C 202,112 207,123 215,129 C 228,139 232,151 225,168" fill="none"/>
+    <path d="M 224,168 C 211,208 207,253 211,298 C 213,319 216,334 220,344 C 234,349 248,351 263,351 C 250,307 246,261 251,215 C 254,181 259,154 263,125 C 247,133 234,147 224,168 Z" fill="#15386F" opacity="0.34"/>
+    <g aria-label="left edge symbol">
+      <path class="symbol" d="M 265,234 C 254,237 248,248 250,259 C 252,270 261,277 272,274 C 266,271 263,265 263,258 C 262,250 266,243 273,239 C 271,237 268,235 265,234 Z"/>
+    </g>
+    <path class="outline" d="M 163,332 C 188,349 221,356 259,356 C 298,356 332,349 351,333 C 361,351 343,372 311,384 C 279,395 231,394 198,381 C 170,370 155,348 163,332 Z" fill="url(#y_lip_side)"/>
+    <path d="M 171,337 C 193,350 225,356 259,356 C 295,356 326,349 344,337" stroke="#27599E" stroke-width="5" stroke-linecap="round" opacity="0.68"/>
+  </g>
+
+  <!-- 292.5 degrees: the front face opens and its markings return from the left edge. -->
+  <g class="hat-frame frame-13" id="y-spin-front-left-transition">
+    <ellipse cx="256" cy="413" rx="106" ry="13.5" fill="#07101E" opacity="0.14"/>
+    <path class="outline" d="M 128,331 C 152,304 198,292 252,293 C 310,294 358,307 384,332 C 397,346 384,366 355,379 C 322,394 274,399 230,394 C 186,390 146,375 130,355 C 123,346 122,338 128,331 Z" fill="url(#y_brim_quarter)"/>
+    <path class="outline" d="M 184,342 C 189,292 197,248 211,207 C 226,164 245,128 269,104 C 287,86 307,86 324,101 C 340,115 350,132 348,144 C 346,154 336,157 326,153 C 315,149 307,158 305,173 C 300,215 310,275 330,342 C 289,354 226,355 184,342 Z" fill="url(#y_cone_quarter)"/>
+    <path d="M 211,207 C 226,164 245,128 269,104 C 283,90 298,87 312,94 C 287,127 268,166 257,211 C 246,258 245,307 253,354 C 227,353 202,349 184,342 C 189,292 197,248 211,207 Z" fill="#2A60A6" opacity="0.28"/>
+    <path class="detail" d="M 269,104 C 288,87 307,88 324,102 C 339,116 350,132 348,144 C 346,154 336,157 326,153 C 315,149 307,159 305,174" fill="none"/>
+    <g aria-label="292.5 degree symbols">
+      <path class="symbol" d="M 280,145 L 286,131 L 292,144 L 307,147 L 296,157 L 297,171 L 286,164 L 274,171 L 278,158 L 268,149 Z"/>
+      <path class="symbol" d="M 252,202 C 238,205 230,218 232,232 C 234,246 246,254 259,251 C 252,247 248,240 248,232 C 247,223 252,214 260,209 C 258,206 255,204 252,202 Z"/>
+      <path class="symbol" d="M 286,266 L 293,268 L 298,257 L 302,270 L 314,273 L 305,282 L 306,295 L 295,288 L 284,293 L 287,281 L 278,274 Z"/>
+    </g>
+    <path class="outline" d="M 128,331 C 162,349 207,357 257,357 C 310,357 359,349 384,332 C 397,346 384,366 355,379 C 322,394 274,399 230,394 C 186,390 146,375 130,355 C 123,346 122,338 128,331 Z" fill="url(#y_lip_quarter)"/>
+    <path d="M 137,336 C 171,351 213,357 257,357 C 304,357 348,349 377,337" stroke="#2960A8" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+  </g>
+
+  <!-- 315 degrees: front-left quarter. Front symbols, including the new lower star, return. -->
+  <g class="hat-frame frame-14" id="y-spin-front-left">
+    <ellipse cx="256" cy="414" rx="127" ry="14" fill="#07101E" opacity="0.15"/>
+    <path class="outline" d="M 100,329 C 133,300 190,286 254,287 C 322,288 380,302 414,329 C 430,343 413,362 380,376 C 343,391 293,398 248,396 C 192,394 139,381 108,357 C 96,347 93,337 100,329 Z" fill="url(#y_brim_quarter)"/>
+    <path class="outline" d="M 162,340 C 168,289 177,244 194,204 C 213,159 235,119 267,91 C 293,69 322,80 347,108 C 367,130 382,151 378,160 C 374,169 362,168 350,161 C 338,153 327,161 322,176 C 310,216 316,273 348,340 C 297,355 215,356 162,340 Z" fill="url(#y_cone_quarter)"/>
+    <path d="M 194,204 C 213,159 235,119 267,91 C 285,76 305,77 324,89 C 292,120 268,161 252,209 C 236,257 232,307 239,353 C 209,351 181,347 162,340 C 168,289 177,244 194,204 Z" fill="#2B62AA" opacity="0.25"/>
+    <g aria-label="front-left symbols">
+      <path class="symbol" d="M 279,112 L 286,95 L 293,110 L 311,113 L 298,125 L 301,142 L 286,134 L 271,143 L 275,126 L 262,116 Z"/>
+      <path class="symbol" d="M 323,137 L 329,122 L 336,135 L 351,138 L 340,148 L 341,164 L 329,155 L 316,162 L 320,148 L 310,140 Z"/>
+      <path class="symbol" d="M 238,169 C 220,172 209,189 211,207 C 214,224 229,234 245,230 C 236,225 231,217 231,207 C 230,195 236,183 246,177 C 244,173 241,170 238,169 Z"/>
+      <path class="symbol" d="M 287,213 L 294,196 L 301,211 L 318,214 L 305,226 L 308,243 L 294,234 L 280,243 L 283,227 L 272,217 Z"/>
+      <path class="symbol" d="M 218,255 L 225,239 L 232,253 L 249,256 L 237,267 L 239,284 L 225,276 L 211,284 L 214,268 L 203,258 Z"/>
+      <path class="symbol" id="front-left-lower-star" d="M 292,274 L 300,276 L 305,264 L 310,278 L 323,281 L 313,291 L 314,304 L 302,296 L 290,302 L 293,289 L 283,281 Z"/>
+    </g>
+    <path class="outline" d="M 100,329 C 143,350 199,359 260,358 C 324,357 382,347 414,329 C 430,343 413,362 380,376 C 343,391 293,398 248,396 C 192,394 139,381 108,357 C 96,347 93,337 100,329 Z" fill="url(#y_lip_quarter)"/>
+    <path d="M 110,334 C 157,352 207,359 261,358 C 318,357 371,348 405,334" stroke="#2A62AC" stroke-width="5" stroke-linecap="round" opacity="0.72"/>
+  </g>
+
+  <!-- 337.5 degrees: the wide diagonal master brim and left-bent tip return before the loop closes. -->
+  <g class="hat-frame frame-15" id="y-spin-front-return-transition">
+    <ellipse cx="252" cy="405" rx="140" ry="14" fill="#07101E" opacity="0.155"/>
+    <path class="outline" d="M 84,320 C 122,299 179,281 239,272 C 310,262 375,269 419,292 C 440,303 441,320 425,339 C 402,367 348,388 279,395 C 208,402 136,388 96,357 C 80,345 75,331 84,320 Z" fill="url(#y_brim_front)"/>
+    <path class="outline" d="M 178,337 C 178,300 176,263 169,227 C 163,198 154,181 143,182 C 131,183 121,193 109,199 C 97,206 88,205 84,197 C 79,187 92,169 111,153 C 136,132 164,120 189,126 C 240,139 304,178 349,223 C 382,256 399,293 388,321 C 343,347 235,356 178,337 Z" fill="url(#y_cone_front)"/>
+    <path d="M 278,162 C 319,181 355,208 381,239 C 402,265 407,296 388,321 C 367,334 339,343 309,349 C 327,305 324,260 306,218 C 295,190 284,173 278,162 Z" fill="#173A78" opacity="0.28"/>
+    <g aria-label="337.5 degree symbols">
+      <path class="symbol" d="M 110,165 L 117,151 L 123,164 L 138,167 L 127,177 L 128,192 L 116,184 L 104,190 L 108,177 L 98,168 Z"/>
+      <path class="symbol" d="M 155,147 L 162,130 L 169,146 L 187,149 L 174,161 L 177,178 L 162,170 L 147,178 L 151,161 L 139,151 Z"/>
+      <path class="symbol" d="M 204,150 L 211,133 L 218,149 L 236,152 L 223,164 L 226,181 L 211,173 L 196,181 L 200,164 L 188,154 Z"/>
+      <path class="symbol" d="M 260,201 C 242,204 231,221 234,239 C 237,256 252,266 268,262 C 259,257 254,249 254,239 C 253,227 259,215 269,209 C 267,205 263,202 260,201 Z"/>
+      <path class="symbol" d="M 204,266 L 211,250 L 218,264 L 235,267 L 223,278 L 225,295 L 211,287 L 197,295 L 200,279 L 189,269 Z"/>
+      <path class="symbol" id="transition-337-lower-right-star" d="M 296,272 L 304,274 L 309,262 L 314,276 L 327,279 L 317,289 L 318,302 L 306,294 L 294,300 L 297,287 L 287,279 Z"/>
+    </g>
+    <path class="outline" d="M 84,320 C 133,340 198,350 269,347 C 339,344 394,325 419,292 C 440,303 441,320 425,339 C 402,367 348,388 279,395 C 208,402 136,388 96,357 C 80,345 75,331 84,320 Z" fill="url(#y_lip_front)"/>
+    <path d="M 95,326 C 148,343 207,350 269,347 C 333,344 385,327 411,298" stroke="#2D67B2" stroke-width="5" stroke-linecap="round" opacity="0.74"/>
+  </g>
+
+  <defs>
+    <linearGradient id="y_master_cone" x1="80.2996" y1="5.4375" x2="80.2996" y2="101.109" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2E6DB9"/>
+      <stop offset="0.58" stop-color="#2158A4"/>
+      <stop offset="1" stop-color="#21498E"/>
+    </linearGradient>
+    <linearGradient id="y_master_brim" x1="99.0291" y1="56.9531" x2="99.0291" y2="137.91" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2B67B2"/>
+      <stop offset="1" stop-color="#21498E"/>
+    </linearGradient>
+    <linearGradient id="y_master_lip" x1="101" y1="61" x2="101" y2="135" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#214F96"/>
+      <stop offset="1" stop-color="#17396F"/>
+    </linearGradient>
+    <linearGradient id="y_cone_front" x1="220" y1="67" x2="244" y2="355" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2E6DB9"/>
+      <stop offset="0.58" stop-color="#2158A4"/>
+      <stop offset="1" stop-color="#21498E"/>
+    </linearGradient>
+    <linearGradient id="y_cone_quarter" x1="228" y1="77" x2="259" y2="355" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2A66B1"/>
+      <stop offset="0.55" stop-color="#1E529A"/>
+      <stop offset="1" stop-color="#183C79"/>
+    </linearGradient>
+    <linearGradient id="y_cone_side" x1="250" y1="86" x2="259" y2="352" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#255DA6"/>
+      <stop offset="0.58" stop-color="#1B4788"/>
+      <stop offset="1" stop-color="#14346B"/>
+    </linearGradient>
+    <linearGradient id="y_cone_rear" x1="264" y1="77" x2="260" y2="356" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1D4B8E"/>
+      <stop offset="0.58" stop-color="#173C76"/>
+      <stop offset="1" stop-color="#102B5D"/>
+    </linearGradient>
+    <linearGradient id="y_cone_back" x1="287" y1="58" x2="259" y2="358" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#193F7B"/>
+      <stop offset="0.58" stop-color="#133467"/>
+      <stop offset="1" stop-color="#0D2855"/>
+    </linearGradient>
+    <linearGradient id="y_brim_front" x1="232" y1="282" x2="253" y2="398" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2B67B2"/>
+      <stop offset="1" stop-color="#21498E"/>
+    </linearGradient>
+    <linearGradient id="y_lip_front" x1="252" y1="326" x2="249" y2="400" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#214F96"/>
+      <stop offset="1" stop-color="#17396F"/>
+    </linearGradient>
+    <linearGradient id="y_brim_quarter" x1="237" y1="286" x2="252" y2="397" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#275FA8"/>
+      <stop offset="1" stop-color="#1D4384"/>
+    </linearGradient>
+    <linearGradient id="y_lip_quarter" x1="251" y1="328" x2="250" y2="398" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1E4789"/>
+      <stop offset="1" stop-color="#143267"/>
+    </linearGradient>
+    <linearGradient id="y_brim_side" x1="249" y1="298" x2="255" y2="394" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#23579E"/>
+      <stop offset="1" stop-color="#183B76"/>
+    </linearGradient>
+    <linearGradient id="y_lip_side" x1="255" y1="331" x2="255" y2="395" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#193F7D"/>
+      <stop offset="1" stop-color="#102957"/>
+    </linearGradient>
+    <linearGradient id="y_brim_rear" x1="251" y1="288" x2="256" y2="398" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1E4C90"/>
+      <stop offset="1" stop-color="#15366E"/>
+    </linearGradient>
+    <linearGradient id="y_lip_rear" x1="254" y1="329" x2="253" y2="399" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#173A73"/>
+      <stop offset="1" stop-color="#0D254F"/>
+    </linearGradient>
+    <linearGradient id="y_brim_back" x1="250" y1="284" x2="256" y2="400" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1A4382"/>
+      <stop offset="1" stop-color="#112E60"/>
+    </linearGradient>
+    <linearGradient id="y_lip_back" x1="254" y1="329" x2="253" y2="401" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#14346A"/>
+      <stop offset="1" stop-color="#0A2148"/>
+    </linearGradient>
+  </defs>
+</svg>

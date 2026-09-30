@@ -15,21 +15,27 @@
 //! app-boot.js by package-app.sh at signing time); without them the server
 //! answers 403 on the attested endpoints once BUILD_ATTEST_ENFORCE=true.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 
 use mlc_app::ChartApp;
+use mlc_app_layout::ui::admin_tab::{
+    AdminBatchRow, AdminFailure, AdminLedgerRow, AdminLifetimeDone, AdminMinted, AdminOutcome, AdminRequest,
+    AdminUserCard, LifetimeKind,
+};
 use mlc_app_layout::ui::modal_settings::{
     dm_has_older, merge_dm_messages, BoardUi, CloudForumReply, CloudForumThread, CloudForumThreadSummary,
     CloudLoginPhase, CloudNewsPost, CloudOverlayData, CloudOverlayKind, CloudReleaseEntry, CommunityTab,
     DmConversationUi, DmLookupHitUi, DmMessageBody, DmMessagePage, DmMessageUi, DmRequest as UiDmRequest,
     DmUnavailableReason, DmView, ForumListState,
     ForumReplyV2Ui, ForumRequest, ForumSearchHitUi, ForumSubView, ForumThreadV2Detail,
-    ForumThreadV2Ui, ForumV2Request, ForumV2View, RedeemStatus, UserSettingsTab, DM_MESSAGE_PAGE_LIMIT,
+    ForumThreadV2Ui, ForumV2Request, ForumV2View, RedeemStatus, DM_MESSAGE_PAGE_LIMIT,
 };
+use crate::messenger_io::{MessengerAuth, MessengerIo, MessengerIoConfig};
 use mlc_cloud::{
     dm_error_message, forum_error_message, forum_v2_error_message, redeem_error_message,
     BuildAttestation, BlogPost, CloudConfig, DeviceAuthPoll, EntitlementsResponse, FetchTransport,
@@ -37,6 +43,8 @@ use mlc_cloud::{
     ForumThreadSummary, ForumThreadV2Response, ForumThreadV2Summary, MeResponse, ReleaseEntry,
     StoredToken, VersionManifest,
 };
+
+mod checkout;
 
 /// Notice shown once the vault is unlocked but the account is not paid.
 const DM_UNPAID_MESSAGE: &str = "Messages need a paid account";
@@ -184,6 +192,89 @@ enum FlowResult {
     },
 }
 
+enum FriendApply {
+    List(mlc_cloud::FriendRoster),
+    Invite(String),
+    Note(String),
+}
+
+fn friend_query_token() -> Option<String> {
+    let window = web_sys::window()?;
+    let search = window.location().search().ok()?;
+    for part in search.trim_start_matches('?').split('&') {
+        if let Some(token) = part.strip_prefix("friend=") {
+            if !token.is_empty() {
+                return Some(token.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// What a live-socket callback saw. Queued by the callback, applied to the
+/// chart by the next `poll_edge`.
+enum LiveEventKind {
+    Message(String),
+    /// The browser reported an error; a close event follows.
+    Errored,
+    /// The socket is gone. 1006 when the browser gave no code.
+    Closed(u16),
+}
+
+struct LiveEvent {
+    gen: u64,
+    kind: LiveEventKind,
+}
+
+/// The browser WebSocket together with the callbacks attached to it. The
+/// callbacks only queue events, so nothing here reaches back into `Inner`.
+struct LiveSocket {
+    ws: web_sys::WebSocket,
+    _on_message: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::MessageEvent)>,
+    _on_close: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::CloseEvent)>,
+    _on_error: wasm_bindgen::closure::Closure<dyn FnMut(web_sys::Event)>,
+}
+
+impl LiveSocket {
+    fn open(url: &str, gen: u64, events: &Rc<RefCell<Vec<LiveEvent>>>) -> Result<Self, String> {
+        let ws = web_sys::WebSocket::new(url).map_err(|e| format!("{e:?}"))?;
+        let queue = events.clone();
+        let on_message = wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::MessageEvent| {
+            if let Some(text) = ev.data().as_string() {
+                queue.borrow_mut().push(LiveEvent { gen, kind: LiveEventKind::Message(text) });
+            }
+        }) as Box<dyn FnMut(web_sys::MessageEvent)>);
+        let queue = events.clone();
+        let on_close = wasm_bindgen::closure::Closure::wrap(Box::new(move |ev: web_sys::CloseEvent| {
+            queue.borrow_mut().push(LiveEvent { gen, kind: LiveEventKind::Closed(ev.code()) });
+        }) as Box<dyn FnMut(web_sys::CloseEvent)>);
+        let queue = events.clone();
+        let on_error = wasm_bindgen::closure::Closure::wrap(Box::new(move |_ev: web_sys::Event| {
+            queue.borrow_mut().push(LiveEvent { gen, kind: LiveEventKind::Errored });
+        }) as Box<dyn FnMut(web_sys::Event)>);
+        ws.set_onmessage(Some(on_message.as_ref().unchecked_ref()));
+        ws.set_onclose(Some(on_close.as_ref().unchecked_ref()));
+        ws.set_onerror(Some(on_error.as_ref().unchecked_ref()));
+        Ok(Self {
+            ws,
+            _on_message: on_message,
+            _on_close: on_close,
+            _on_error: on_error,
+        })
+    }
+}
+
+impl Drop for LiveSocket {
+    /// Detach first: a closure dropped while the browser can still call it
+    /// would throw on the next event.
+    fn drop(&mut self) {
+        self.ws.set_onmessage(None);
+        self.ws.set_onclose(None);
+        self.ws.set_onerror(None);
+        let _ = self.ws.close();
+    }
+}
+
 struct Inner {
     transport: FetchTransport,
     token: Option<StoredToken>,
@@ -259,6 +350,54 @@ struct Inner {
     /// which is the only place `&mut ChartApp` is reachable — the upload's
     /// own `spawn_local` body cannot log a system event directly.
     share_result: Option<(&'static str, Result<String, String>)>,
+    /// Name for the chart a clone is about to create: `title — owner (clone)`.
+    clone_name: Option<String>,
+    share_rights_at_ms: f64,
+    share_rights_busy: bool,
+    /// `(token, clone_allowed)` from a rights poll. Applied on the next drive.
+    /// Never carries a preset.
+    share_rights: Option<(String, bool)>,
+    share_admin_rows: Option<Result<Vec<mlc_cloud::ShareListEntry>, String>>,
+    share_admin_busy: bool,
+    share_ops_busy: bool,
+    share_ops_in: Option<(String, mlc_cloud::ShareOpsResponse)>,
+    /// `(tab, ok)` for a finished post: the acknowledgement belongs to the
+    /// tab the push was built for, not to whichever tab is active by now.
+    share_ops_push_ok: Option<(String, bool)>,
+    /// A pull for this token answered 404: the share is gone.
+    share_ops_gone: Option<String>,
+    friend_busy: bool,
+    friend_accept_tried: bool,
+    friend_result: Option<FriendApply>,
+    friend_lookup_q: String,
+    friend_lookup_at_ms: f64,
+    friend_lookup_busy: bool,
+    friend_hits_in: Option<Vec<String>>,
+    /// The live socket, if one is open. Owns its callbacks; dropping it
+    /// detaches them and closes the socket.
+    live_socket: Option<LiveSocket>,
+    /// Generation of the current socket. Events from an older one are stale.
+    live_gen: u64,
+    /// What the socket callbacks saw, oldest first. Shared with the callbacks
+    /// (not with `Inner`), so a socket never keeps the session alive.
+    live_events: Rc<RefCell<Vec<LiveEvent>>>,
+    /// `stream-open` answer for `token`, waiting for the next frame.
+    live_ticket_in: Option<(String, Result<String, String>)>,
+    /// `(chart_id, token)` from the last successful live publish.
+    share_bound: Option<(String, String)>,
+    share_lookup_q: String,
+    share_lookup_at_ms: f64,
+    share_lookup_busy: bool,
+    share_lookup_hits: Option<Vec<(String, String)>>,
+    share_settings_note: Option<String>,
+    /// Generation for the in-flight screenshot-share card. A late blob from
+    /// the previous click is dropped when this moves.
+    preview_epoch: u64,
+    /// Token of the screenshot share that should receive the card, tagged
+    /// with the epoch that created it.
+    preview_token: Option<(u64, String)>,
+    /// Capped chart PNG waiting for that token.
+    preview_card: Option<(u64, web_sys::Blob)>,
 
     // ── Chart-share clone (shared-viewer arc, 2026-09-06) ────────────────
     // `ChartApp::request_clone_share` is a one-shot mailbox a "Clone to my
@@ -323,6 +462,104 @@ struct Inner {
     /// (unrelated request streams) so neither tab's fetch can block or be
     /// blocked by the other's.
     dm_in_flight: bool,
+
+    // ── Matrix-shaped messenger (web `MessengerIo`) ─────────────────────
+    /// The running messenger I/O, present exactly while the account is
+    /// signed in, the vault key is held and the messenger ladder allows it —
+    /// see [`CloudSession::drive_messenger`].
+    messenger: Option<MessengerRun>,
+
+    // ── Admin tab (`/api/staff/*`) ──────────────────────────────────────
+    /// A staff request is in flight (one at a time).
+    admin_busy: bool,
+    /// Bumped on sign-out: an outcome tagged with an older value belongs to
+    /// the identity that left and is dropped.
+    admin_epoch: u64,
+    /// Mailbox: the last settled request, `(epoch it was fired in, outcome)`.
+    /// Applied by `drive_admin`, the only place `&mut ChartApp` is reachable.
+    admin_result: Option<(u64, AdminOutcome)>,
+
+    // ── Checkout modal (billing) ────────────────────────────────────────
+    /// Answers to checkout requests, oldest first; applied to the modal by
+    /// `drive_checkout` (`checkout.rs`), the only place `&mut ChartApp` and
+    /// the modal's clock meet the mailbox.
+    checkout_events: std::collections::VecDeque<mlc_app_layout::ui::checkout::CheckoutEvent>,
+}
+
+/// One running web messenger: the I/O object plus the inputs it was started
+/// from, so a change of any of them restarts it.
+struct MessengerRun {
+    io: MessengerIo,
+    /// The bearer token `io` authenticates with (the one `FetchTransport`
+    /// holds).
+    token: String,
+    /// The vault key `io`'s driver derives its secrets from.
+    vault_key: mlc_vault::vault::VaultKey,
+    /// The IndexedDB database name (also the Web Lock name suffix).
+    store: String,
+}
+
+/// The IndexedDB database name for `token`'s account: derived from the user
+/// id the server returned, or — for a token stored before that field existed —
+/// its public id. `None` when the token names neither, in which case no store
+/// can be scoped to the account and the messenger does not start.
+fn messenger_store_name(token: &StoredToken) -> Option<String> {
+    if token.user_id != 0 {
+        return Some(format!("mlc-messenger-u{}", token.user_id));
+    }
+    token.public_id.as_deref().filter(|id| !id.is_empty()).map(|id| format!("mlc-messenger-p{id}"))
+}
+
+/// The `MessengerIoConfig::wake` callback: schedules ONE zero-delay timer
+/// that ticks the messenger, however many completions arrive before it fires.
+/// A timer (not the frame loop) so a backgrounded tab — where
+/// `requestAnimationFrame` is throttled to nothing — keeps syncing. It only
+/// touches `Inner`, never `ChartApp`, and never runs inside the caller's
+/// stack, so it cannot re-enter a live `Inner` borrow.
+fn messenger_wake(inner: &Rc<RefCell<Inner>>) -> Rc<dyn Fn()> {
+    let weak = Rc::downgrade(inner);
+    let pending = Rc::new(Cell::new(false));
+    Rc::new(move || {
+        if pending.replace(true) {
+            return;
+        }
+        let weak = weak.clone();
+        let fired = pending.clone();
+        let tick = Closure::once_into_js(move || {
+            fired.set(false);
+            let Some(inner) = weak.upgrade() else { return };
+            let Ok(mut inner) = inner.try_borrow_mut() else { return };
+            if let Some(run) = inner.messenger.as_mut() {
+                run.io.tick(js_sys::Date::now() as i64);
+            }
+        });
+        let scheduled = web_sys::window().and_then(|win| {
+            win.set_timeout_with_callback_and_timeout_and_arguments_0(tick.unchecked_ref(), 0).ok()
+        });
+        if scheduled.is_none() {
+            pending.set(false);
+        }
+    })
+}
+
+/// Stops the messenger when the page goes away (`pagehide` — fires on tab
+/// close, navigation and bfcache entry, unlike `beforeunload`): the driver's
+/// unflushed record batches are queued and the Web Lock is released once they
+/// are written. The next `drive_messenger` frame starts a fresh one if the
+/// page comes back.
+fn install_messenger_pagehide(inner: &Rc<RefCell<Inner>>) {
+    let Some(win) = web_sys::window() else { return };
+    let weak = Rc::downgrade(inner);
+    let cb = Closure::<dyn FnMut()>::new(move || {
+        let Some(inner) = weak.upgrade() else { return };
+        let run = inner.try_borrow_mut().ok().and_then(|mut inner| inner.messenger.take());
+        if let Some(run) = run {
+            run.io.stop();
+        }
+    });
+    let _ = win.add_event_listener_with_callback("pagehide", cb.as_ref().unchecked_ref());
+    // Lives for the page, like every other window listener in this shell.
+    cb.forget();
 }
 
 pub struct CloudSession {
@@ -343,6 +580,8 @@ impl CloudSession {
     /// Build the session from localStorage + `window.MLC_BUILD`.
     /// `server_url` is "" (same-origin) in production.
     pub fn init(server_url: &str) -> Self {
+        // This shell drives the checkout, so its entry-point buttons may show.
+        mlc_app_layout::ui::checkout::set_entry_points_enabled(true);
         let token = load_token();
         let device_id = load_or_create_device_id();
         let attestation = read_build_attestation();
@@ -358,7 +597,7 @@ impl CloudSession {
             device_id,
             attestation,
         });
-        Self {
+        let session = Self {
             inner: Rc::new(RefCell::new(Inner {
                 transport,
                 token,
@@ -375,6 +614,36 @@ impl CloudSession {
                 entitlements_result: None,
                 prev_entitlements: None,
                 share_result: None,
+                clone_name: None,
+                share_rights_at_ms: 0.0,
+                share_rights_busy: false,
+                share_rights: None,
+                share_admin_rows: None,
+                share_admin_busy: false,
+                share_ops_busy: false,
+                share_ops_in: None,
+                share_ops_push_ok: None,
+                share_ops_gone: None,
+                friend_busy: false,
+                friend_accept_tried: false,
+                friend_result: None,
+                friend_lookup_q: String::new(),
+                friend_lookup_at_ms: 0.0,
+                friend_lookup_busy: false,
+                friend_hits_in: None,
+                live_socket: None,
+                live_gen: 0,
+                live_events: Rc::new(RefCell::new(Vec::new())),
+                live_ticket_in: None,
+                share_bound: None,
+                share_lookup_q: String::new(),
+                share_lookup_at_ms: 0.0,
+                share_lookup_busy: false,
+                share_lookup_hits: None,
+                share_settings_note: None,
+                preview_epoch: 0,
+                preview_token: None,
+                preview_card: None,
                 clone_in_flight: false,
                 clone_result: None,
                 forum_in_flight: false,
@@ -385,8 +654,15 @@ impl CloudSession {
                 dm_peer_keys: std::collections::HashMap::new(),
                 dm_backfill_queue: std::collections::VecDeque::new(),
                 dm_in_flight: false,
+                messenger: None,
+                admin_busy: false,
+                admin_epoch: 0,
+                admin_result: None,
+                checkout_events: std::collections::VecDeque::new(),
             })),
-        }
+        };
+        install_messenger_pagehide(&session.inner);
+        session
     }
 
     /// Whether this install holds a stored token — the `account_signed_in`
@@ -444,6 +720,9 @@ impl CloudSession {
     /// callers differ only in wording ("You have been logged out." vs the
     /// server-rejected sentence).
     fn apply_signed_out(&self, chart: &mut ChartApp, reason: &str) {
+        // The messenger goes first: its `sign_out` wipes this device's
+        // records and needs nothing from the token cleared just below.
+        self.stop_messenger(chart, true);
         clear_token();
         clear_tier();
         {
@@ -462,6 +741,16 @@ impl CloudSession {
         chart.panel_app.user_settings_state.account_provider = String::new();
         chart.panel_app.user_settings_state.account_classes = Vec::new();
         chart.panel_app.user_settings_state.account_roles = Vec::new();
+        // The Admin tab's data (fresh gift codes above all) belongs to the
+        // identity that just left; a request still in flight settles into
+        // nothing.
+        chart.drop_admin_view();
+        {
+            let mut inner = self.inner.borrow_mut();
+            inner.admin_epoch = inner.admin_epoch.wrapping_add(1);
+            inner.admin_busy = false;
+            inner.admin_result = None;
+        }
         chart.panel_app.user_settings_state.nick_edit_mode = false;
         chart.panel_app.user_settings_state.nick_edit_focused = false;
         chart.panel_app.user_settings_state.nick_status =
@@ -545,13 +834,14 @@ impl CloudSession {
     /// `POST /api/share/screenshot` — upload the cropped chart-region PNG.
     /// Anonymous sessions are refused up front (the camera dropdown already
     /// hides its ShareLink row for them; this is the belt to its braces).
-    pub fn share_screenshot(&self, png: web_sys::Blob, title: String) {
+    pub fn share_screenshot(&self, png: web_sys::Blob, title: String, epoch: u64) {
         if !self.is_signed_in() {
             web_sys::console::warn_1(&"[share] screenshot share refused: not signed in".into());
             return;
         }
         let transport = self.inner.borrow().transport.snapshot();
         let inner = self.inner.clone();
+        let session = self.clone();
         spawn_local(async move {
             match transport.share_create_screenshot(&title, png).await {
                 Ok(resp) => {
@@ -559,6 +849,7 @@ impl CloudSession {
                     crate::clipboard_write_text(&url);
                     web_sys::console::log_1(&format!("[share] screenshot shared: {}", url).into());
                     inner.borrow_mut().share_result = Some(("screenshot", Ok(url)));
+                    session.offer_preview_token(epoch, resp.token);
                 }
                 Err(e) => {
                     mark_unauthorized(&inner, &e);
@@ -572,7 +863,139 @@ impl CloudSession {
 
     /// `POST /api/share/live` — freeze the active preset into a public link.
     /// Same refusal/result contract as [`Self::share_screenshot`].
-    pub fn share_live(&self, title: String, preset: serde_json::Value) {
+    fn fire_share_admin(&self, cmd: mlc_app::ShareAdminCmd) {
+        if !self.is_signed_in() {
+            return;
+        }
+        if self.inner.borrow().share_admin_busy {
+            return;
+        }
+        self.inner.borrow_mut().share_admin_busy = true;
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        spawn_local(async move {
+            let outcome = match cmd {
+                mlc_app::ShareAdminCmd::Refresh => transport.share_list().await.map_err(|e| e.to_string()),
+                mlc_app::ShareAdminCmd::Revoke { token } => transport
+                    .share_revoke(&token)
+                    .await
+                    .map_err(|e| e.to_string())
+                    .and(transport.share_list().await.map_err(|e| e.to_string())),
+                mlc_app::ShareAdminCmd::Grant { token, nick, tiers } => {
+                    let mut note = format!("Added {nick}");
+                    for tier in &tiers {
+                        if let Err(e) = transport.share_grant(&token, &nick, tier).await {
+                            note = e.to_string();
+                            break;
+                        }
+                        if tier == "edit" {
+                            note = format!("{nick} can edit");
+                        }
+                    }
+                    let mut guard = inner.borrow_mut();
+                    guard.share_admin_busy = false;
+                    guard.share_settings_note = Some(note);
+                    return;
+                }
+                mlc_app::ShareAdminCmd::Patch { token, body } => {
+                    let value = match serde_json::from_str::<serde_json::Value>(&body) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            inner.borrow_mut().share_admin_busy = false;
+                            inner.borrow_mut().share_admin_rows = Some(Err(e.to_string()));
+                            return;
+                        }
+                    };
+                    match transport.share_patch(&token, value).await {
+                        Ok(()) => transport.share_list().await.map_err(|e| e.to_string()),
+                        Err(e) => Err(e.to_string()),
+                    }
+                }
+            };
+            let mut inner = inner.borrow_mut();
+            inner.share_admin_busy = false;
+            inner.share_admin_rows = Some(outcome);
+        });
+    }
+
+    /// Bump the screenshot-card generation and drop anything still queued
+    /// from the previous click.
+    pub fn begin_preview(&self) -> u64 {
+        let mut inner = self.inner.borrow_mut();
+        inner.preview_epoch = inner.preview_epoch.wrapping_add(1);
+        inner.preview_token = None;
+        inner.preview_card = None;
+        inner.preview_epoch
+    }
+
+    /// Chart PNG for the screenshot share that `begin_preview` just armed.
+    /// A blob from an older click is ignored.
+    pub fn offer_preview_card(&self, epoch: u64, card: web_sys::Blob) {
+        {
+            let mut inner = self.inner.borrow_mut();
+            if inner.preview_epoch != epoch {
+                return;
+            }
+            inner.preview_card = Some((epoch, card));
+        }
+        self.flush_preview();
+    }
+
+    fn offer_preview_token(&self, epoch: u64, token: String) {
+        {
+            let mut inner = self.inner.borrow_mut();
+            if inner.preview_epoch != epoch {
+                return;
+            }
+            inner.preview_token = Some((epoch, token));
+        }
+        self.flush_preview();
+    }
+
+    /// When both halves of one epoch are present, POST the card. Either
+    /// half may arrive first.
+    fn flush_preview(&self) {
+        let ready = {
+            let mut inner = self.inner.borrow_mut();
+            match (inner.preview_token.take(), inner.preview_card.take()) {
+                (Some((epoch_t, token)), Some((epoch_c, card))) if epoch_t == epoch_c => {
+                    Some((token, card))
+                }
+                (token, card) => {
+                    inner.preview_token = token;
+                    inner.preview_card = card;
+                    None
+                }
+            }
+        };
+        let Some((token, card)) = ready else {
+            return;
+        };
+        let transport = self.inner.borrow().transport.snapshot();
+        spawn_local(async move {
+            match transport.share_upload_preview(&token, card).await {
+                Ok(()) => {
+                    web_sys::console::log_1(&"[share] preview card uploaded".into());
+                }
+                Err(e) => {
+                    web_sys::console::warn_1(
+                        &format!("[share] preview card upload failed: {e}").into(),
+                    );
+                }
+            }
+        });
+    }
+
+    pub fn share_live(
+        &self,
+        title: String,
+        preset: serde_json::Value,
+        chart_id: String,
+        preview: Option<web_sys::Blob>,
+        clone_allowed: bool,
+        interaction: String,
+        visibility: String,
+    ) {
         if !self.is_signed_in() {
             web_sys::console::warn_1(&"[share] live share refused: not signed in".into());
             return;
@@ -580,11 +1003,29 @@ impl CloudSession {
         let transport = self.inner.borrow().transport.snapshot();
         let inner = self.inner.clone();
         spawn_local(async move {
-            match transport.share_create_live(&title, preset).await {
+            match transport
+                .share_create_live(&title, preset, &chart_id, clone_allowed, &interaction, &visibility)
+                .await
+            {
                 Ok(resp) => {
                     let url = absolute_share_url(&resp.url_path);
                     crate::clipboard_write_text(&url);
                     web_sys::console::log_1(&format!("[share] live chart shared: {}", url).into());
+                    if !chart_id.is_empty() {
+                        inner.borrow_mut().share_bound = Some((chart_id.clone(), resp.token.clone()));
+                    }
+                    if let Some(png) = preview {
+                        match transport.share_upload_preview(&resp.token, png).await {
+                            Ok(()) => {
+                                web_sys::console::log_1(&"[share] preview card uploaded".into());
+                            }
+                            Err(e) => {
+                                web_sys::console::warn_1(
+                                    &format!("[share] preview card upload failed: {e}").into(),
+                                );
+                            }
+                        }
+                    }
                     inner.borrow_mut().share_result = Some(("live", Ok(url)));
                 }
                 Err(e) => {
@@ -597,7 +1038,503 @@ impl CloudSession {
         });
     }
 
+    /// Nick search for the share-settings overlay. Account nicks
+    /// (`GET /api/share/lookup`), not the messenger catalog. A grant needs
+    /// a nick, so nickless accounts are not hits.
+    fn poll_share_nick_search(&self, chart: &ChartApp, now_ms: f64) {
+        let Some(q) = chart.share_settings_nick_query() else {
+            return;
+        };
+        if q.len() < 2 {
+            let mut inner = self.inner.borrow_mut();
+            if !inner.share_lookup_q.is_empty() {
+                inner.share_lookup_q.clear();
+                inner.share_lookup_hits = Some(Vec::new());
+            }
+            return;
+        }
+        {
+            let mut inner = self.inner.borrow_mut();
+            if inner.share_lookup_busy || inner.share_lookup_q == q || now_ms - inner.share_lookup_at_ms < 300.0 {
+                return;
+            }
+            inner.share_lookup_q = q.clone();
+            inner.share_lookup_at_ms = now_ms;
+            inner.share_lookup_busy = true;
+        }
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        spawn_local(async move {
+            let (hits, note) = match transport.share_nick_lookup(&q).await {
+                Ok(users) => {
+                    let hits = users
+                        .into_iter()
+                        .filter_map(|u| {
+                            let nick = u.nick.trim().to_string();
+                            if nick.is_empty() {
+                                return None;
+                            }
+                            let label = if u.label == nick { String::new() } else { u.label };
+                            Some((nick, label))
+                        })
+                        .collect::<Vec<_>>();
+                    (hits, None)
+                }
+                Err(e) => (Vec::new(), Some(e.to_string())),
+            };
+            let mut guard = inner.borrow_mut();
+            guard.share_lookup_busy = false;
+            guard.share_lookup_hits = Some(hits);
+            if let Some(note) = note {
+                guard.share_settings_note = Some(note);
+            }
+        });
+    }
+
+    /// Re-read only the rights of the active shared tab. The preset stays.
+    /// A policy toggle must show or hide Clone without reloading drawings.
+    fn poll_share_rights(&self, chart: &ChartApp, now_ms: f64) {
+        const INTERVAL_MS: f64 = 8000.0;
+        let due = {
+            let mut inner = self.inner.borrow_mut();
+            if inner.share_rights_busy || now_ms - inner.share_rights_at_ms < INTERVAL_MS {
+                return;
+            }
+            let active = chart.panel_app.active_preset_id.clone();
+            let Some(meta) = chart.shared_chart_meta(&active) else {
+                return;
+            };
+            if meta.kind != "live" || meta.token.is_empty() {
+                return;
+            }
+            inner.share_rights_at_ms = now_ms;
+            inner.share_rights_busy = true;
+            meta.token.clone()
+        };
+        let token = due;
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        spawn_local(async move {
+            let allowed = match transport.share_get_public(&token).await {
+                Ok(mlc_cloud::SharePublicResponse::Live { clone_allowed, .. }) => {
+                    Some(clone_allowed)
+                }
+                _ => None,
+            };
+            let mut guard = inner.borrow_mut();
+            guard.share_rights_busy = false;
+            if let Some(allowed) = allowed {
+                guard.share_rights = Some((token, allowed));
+            }
+        });
+    }
+
+    fn poll_friend_lookup(&self, chart: &ChartApp, now_ms: f64) {
+        let Some(q) = chart.friends_nick_query() else {
+            return;
+        };
+        if q.len() < 2 {
+            let mut inner = self.inner.borrow_mut();
+            if !inner.friend_lookup_q.is_empty() {
+                inner.friend_lookup_q.clear();
+                inner.friend_hits_in = Some(Vec::new());
+            }
+            return;
+        }
+        {
+            let mut inner = self.inner.borrow_mut();
+            if inner.friend_lookup_busy || inner.friend_lookup_q == q || now_ms - inner.friend_lookup_at_ms < 300.0 {
+                return;
+            }
+            inner.friend_lookup_q = q.clone();
+            inner.friend_lookup_at_ms = now_ms;
+            inner.friend_lookup_busy = true;
+        }
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        spawn_local(async move {
+            let hits = match transport.share_nick_lookup(&q).await {
+                Ok(users) => users
+                    .into_iter()
+                    .filter_map(|u| {
+                        let nick = u.nick.trim().to_string();
+                        if nick.is_empty() { None } else { Some(nick) }
+                    })
+                    .collect::<Vec<_>>(),
+                Err(_) => Vec::new(),
+            };
+            let mut guard = inner.borrow_mut();
+            guard.friend_lookup_busy = false;
+            guard.friend_hits_in = Some(hits);
+        });
+    }
+
+    fn poll_friends(&self, chart: &mut ChartApp) {
+        if let Some(hits) = self.inner.borrow_mut().friend_hits_in.take() {
+            chart.set_friend_hits(hits);
+        }
+        if let Some(apply) = self.inner.borrow_mut().friend_result.take() {
+            match apply {
+                FriendApply::List(roster) => {
+                    let uss = &mut chart.panel_app.user_settings_state;
+                    uss.discoverable = roster.discoverable;
+                    uss.friend_nicks = roster.friends;
+                    uss.friend_incoming = roster.incoming;
+                    uss.friend_outgoing = roster.outgoing;
+                    uss.friend_subscriptions = roster.subscriptions;
+                    uss.friend_blocked = roster.blocked;
+                    if uss.friend_note != "Copied" {
+                        uss.friend_note.clear();
+                    }
+                }
+                FriendApply::Invite(url) => {
+                    let full = format!("https://chart.example{url}");
+                    chart.panel_app.user_settings_state.friend_invite = full.clone();
+                    chart.clipboard_text = Some(full);
+                    chart.panel_app.user_settings_state.friend_note = "Copied".to_string();
+                }
+                FriendApply::Note(note) => {
+                    chart.panel_app.user_settings_state.friend_note = note;
+                }
+            }
+        }
+        if self.inner.borrow().friend_busy || !self.is_signed_in() {
+            return;
+        }
+        if !self.inner.borrow().friend_accept_tried {
+            self.inner.borrow_mut().friend_accept_tried = true;
+            if let Some(token) = friend_query_token() {
+                self.inner.borrow_mut().friend_busy = true;
+                let transport = self.inner.borrow().transport.snapshot();
+                let inner = self.inner.clone();
+                spawn_local(async move {
+                    let _ = transport.account_accept_friend(&token).await;
+                    if let Ok(roster) = transport.account_friends().await {
+                        inner.borrow_mut().friend_result = Some(FriendApply::List(roster));
+                    }
+                    inner.borrow_mut().friend_busy = false;
+                });
+                return;
+            }
+        }
+        let cmd = chart.panel_app.user_settings_state.friend_cmd.take();
+        let Some(cmd) = cmd else {
+            return;
+        };
+        self.inner.borrow_mut().friend_busy = true;
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        let discoverable = chart.panel_app.user_settings_state.discoverable;
+        spawn_local(async move {
+            let act = ["request", "approve", "remove", "block", "unblock", "subscribe", "unsubscribe"]
+                .iter()
+                .find_map(|action| cmd.strip_prefix(&format!("{action}:")).map(|nick| (*action, nick.to_string())));
+            let result = if cmd == "discoverable" {
+                let _ = transport.account_set_discoverable(discoverable).await;
+                transport.account_friends().await.ok().map(FriendApply::List)
+            } else if cmd == "invite" {
+                transport.account_friend_invite().await.ok().map(FriendApply::Invite)
+            } else if let Some((action, nick)) = act {
+                match transport.account_friend_act(&nick, action).await {
+                    Ok(()) => transport.account_friends().await.ok().map(FriendApply::List),
+                    Err(e) => Some(FriendApply::Note(e.to_string())),
+                }
+            } else {
+                transport.account_friends().await.ok().map(FriendApply::List)
+            };
+            let mut guard = inner.borrow_mut();
+            guard.friend_result = result;
+            guard.friend_busy = false;
+        });
+    }
+
+    /// The live socket, one frame. `ChartApp` decides; this only performs.
+    /// Socket events and the ticket answer go in first, then the commands
+    /// the chart returns are executed in order.
+    fn poll_edge(&self, chart: &mut ChartApp, now_ms: f64) {
+        self.apply_live_events(chart, now_ms);
+        let ticket = self.inner.borrow_mut().live_ticket_in.take();
+        if let Some((token, result)) = ticket {
+            chart.live_link_ticket(&token, result, now_ms);
+        }
+        for command in chart.live_link_step(now_ms) {
+            match command {
+                mlc_app::share_live::LiveCommand::FetchTicket { token } => self.fetch_live_ticket(token),
+                mlc_app::share_live::LiveCommand::Connect { token, ticket } => {
+                    if let Err(message) = self.open_live_socket(&token, &ticket) {
+                        web_sys::console::warn_1(&format!("[share] live socket refused: {message}").into());
+                        chart.live_link_closed(1006, now_ms);
+                    }
+                }
+                mlc_app::share_live::LiveCommand::Send(frames) => self.send_live_frames(&frames),
+                mlc_app::share_live::LiveCommand::Close => self.drop_live_socket(),
+            }
+        }
+    }
+
+    /// Hand what the current socket's callbacks queued to the chart. Events
+    /// of a socket that was already dropped are stale and skipped.
+    fn apply_live_events(&self, chart: &mut ChartApp, now_ms: f64) {
+        let events = {
+            let queue = self.inner.borrow().live_events.clone();
+            let mut queue = queue.borrow_mut();
+            std::mem::take(&mut *queue)
+        };
+        for event in events {
+            if event.gen != self.inner.borrow().live_gen {
+                continue;
+            }
+            match event.kind {
+                LiveEventKind::Message(text) => chart.apply_edge_frame(&text),
+                LiveEventKind::Errored => {
+                    web_sys::console::warn_1(&"[share] live socket error".into());
+                }
+                LiveEventKind::Closed(code) => {
+                    self.drop_live_socket();
+                    chart.live_link_closed(code, now_ms);
+                }
+            }
+        }
+    }
+
+    fn fetch_live_ticket(&self, token: String) {
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        spawn_local(async move {
+            let result = match transport.share_stream_open(&token).await {
+                Ok(body) => Ok(body.ticket),
+                Err(e) => {
+                    mark_unauthorized(&inner, &e);
+                    Err(e.to_string())
+                }
+            };
+            inner.borrow_mut().live_ticket_in = Some((token, result));
+        });
+    }
+
+    fn open_live_socket(&self, token: &str, ticket: &str) -> Result<(), String> {
+        self.drop_live_socket();
+        let window = web_sys::window().ok_or_else(|| "no window".to_string())?;
+        let location = window.location();
+        let scheme = match location.protocol() {
+            Ok(p) if p.starts_with("https") => "wss",
+            _ => "ws",
+        };
+        let host = location.host().map_err(|e| format!("{e:?}"))?;
+        let url = format!(
+            "{scheme}://{host}/api/share-live/{}?ticket={}",
+            js_sys::encode_uri_component(token),
+            js_sys::encode_uri_component(ticket),
+        );
+        let (gen, events) = {
+            let mut inner = self.inner.borrow_mut();
+            inner.live_gen = inner.live_gen.wrapping_add(1);
+            (inner.live_gen, inner.live_events.clone())
+        };
+        let socket = LiveSocket::open(&url, gen, &events)?;
+        self.inner.borrow_mut().live_socket = Some(socket);
+        Ok(())
+    }
+
+    fn send_live_frames(&self, frames: &[String]) {
+        let inner = self.inner.borrow();
+        let Some(socket) = inner.live_socket.as_ref() else {
+            return;
+        };
+        for frame in frames {
+            if let Err(e) = socket.ws.send_with_str(frame) {
+                web_sys::console::warn_1(&format!("[share] live send failed: {e:?}").into());
+                return;
+            }
+        }
+    }
+
+    /// Close the socket and drop its callbacks. Its later events, if any
+    /// are already queued, are stale from here on.
+    fn drop_live_socket(&self) {
+        let old = {
+            let mut inner = self.inner.borrow_mut();
+            inner.live_gen = inner.live_gen.wrapping_add(1);
+            inner.live_socket.take()
+        };
+        drop(old);
+    }
+
+    fn poll_share_ops(&self, chart: &mut ChartApp, now_ms: f64) {
+        if let Some((preset_id, ok)) = self.inner.borrow_mut().share_ops_push_ok.take() {
+            chart.ack_share_push(&preset_id, ok);
+        }
+        if let Some(token) = self.inner.borrow_mut().share_ops_gone.take() {
+            chart.share_pull_gone(&token);
+        }
+        if let Some((token, resp)) = self.inner.borrow_mut().share_ops_in.take() {
+            let ops: Vec<mlc_app::share_stream::ShareInboundOp> = resp
+                .ops
+                .into_iter()
+                .map(|op| mlc_app::share_stream::ShareInboundOp {
+                    seq: op.seq,
+                    kind: op.kind,
+                    object_id: op.object_id,
+                    body: op.body,
+                })
+                .collect();
+            chart.apply_share_ops(&token, resp.reset, resp.can_send, resp.live, &ops);
+        }
+        if self.inner.borrow().share_ops_busy {
+            return;
+        }
+        if let Some(push) = chart.share_ops_due(now_ms) {
+            self.inner.borrow_mut().share_ops_busy = true;
+            let transport = self.inner.borrow().transport.snapshot();
+            let inner = self.inner.clone();
+            let mlc_app::share_stream::SharePush { preset_id, token, ops } = push;
+            let wire: Vec<mlc_cloud::ShareChartOp> = ops
+                .into_iter()
+                .map(|op| mlc_cloud::ShareChartOp {
+                    kind: op.kind,
+                    object_id: op.object_id,
+                    body: op.body,
+                    seq: 0,
+                })
+                .collect();
+            spawn_local(async move {
+                let ok = match transport.share_post_ops(&token, &wire).await {
+                    Ok(()) => true,
+                    Err(e) => {
+                        web_sys::console::warn_1(&format!("[share] op post failed: {e}").into());
+                        false
+                    }
+                };
+                inner.borrow_mut().share_ops_push_ok = Some((preset_id, ok));
+                inner.borrow_mut().share_ops_busy = false;
+            });
+            return;
+        }
+        if let Some((token, after)) = chart.share_pull_due(now_ms) {
+            self.inner.borrow_mut().share_ops_busy = true;
+            let transport = self.inner.borrow().transport.snapshot();
+            let inner = self.inner.clone();
+            spawn_local(async move {
+                match transport.share_get_ops(&token, after).await {
+                    Ok(resp) => {
+                        inner.borrow_mut().share_ops_in = Some((token, resp));
+                    }
+                    Err(mlc_cloud::CloudError::Http { status: 404, .. }) => {
+                        inner.borrow_mut().share_ops_gone = Some(token);
+                    }
+                    Err(e) => {
+                        web_sys::console::warn_1(&format!("[share] op pull failed: {e}").into());
+                    }
+                }
+                inner.borrow_mut().share_ops_busy = false;
+            });
+        }
+    }
+
+    /// Ends the running messenger, if any, and takes its provider away from
+    /// the app so the Messages tab falls back to the legacy DM path.
+    /// `wipe = true` is a real sign-out (`MessengerIo::sign_out` deletes this
+    /// device's stored records); `false` only stops it (`MessengerIo::stop`
+    /// flushes what is unwritten and keeps the records).
+    fn stop_messenger(&self, chart: &mut ChartApp, wipe: bool) {
+        let run = self.inner.borrow_mut().messenger.take();
+        if let Some(run) = run {
+            if wipe {
+                run.io.sign_out();
+            } else {
+                run.io.stop();
+            }
+        }
+        if chart.has_messenger_provider() {
+            chart.set_messenger_provider(None);
+        }
+    }
+
+    /// Keeps the web messenger running exactly while it should:
+    ///
+    /// - signed in (a stored token, whose user id scopes the IndexedDB store);
+    /// - the vault key is held — the same `chart.core.user().vault_key()` the
+    ///   legacy DM path derives its identity from, never a separate key path;
+    /// - the account passes the messenger ladder predicate the whole surface
+    ///   shares (`ForumV2State::messenger_available`).
+    ///
+    /// When any of those stops holding, or the token / vault key / store the
+    /// running instance was started with changes, it is stopped (not wiped —
+    /// only [`Self::apply_signed_out`] wipes) and, if the inputs hold again,
+    /// started afresh; the app's provider slot follows. Every frame it also
+    /// ticks the running instance (`MessengerIoConfig::wake` covers the gaps
+    /// between frames).
+    fn drive_messenger(&self, chart: &mut ChartApp, now_ms: f64) {
+        let vault_key = chart.core.user().vault_key();
+        let allowed = chart.panel_app.community_state.forum2.messenger_available();
+        let wanted = {
+            let inner = self.inner.borrow();
+            match (&inner.token, vault_key, allowed) {
+                (Some(token), Some(key), true) => {
+                    messenger_store_name(token).map(|store| (token.token.clone(), key, store))
+                }
+                _ => None,
+            }
+        };
+
+        let unchanged = {
+            let inner = self.inner.borrow();
+            match (&inner.messenger, &wanted) {
+                (Some(run), Some((token, key, store))) => {
+                    run.token == *token && run.vault_key == *key && run.store == *store
+                }
+                (None, None) => true,
+                _ => false,
+            }
+        };
+        if !unchanged {
+            self.stop_messenger(chart, false);
+        } else if wanted.is_none() && chart.has_messenger_provider() {
+            // Nothing runs, yet the app still holds a handle from before
+            // (the page-hide stop took the run and left it behind).
+            chart.set_messenger_provider(None);
+        }
+
+        if let Some((token, key, store)) = wanted {
+            if self.inner.borrow().messenger.is_none() {
+                let config = MessengerIoConfig {
+                    // Same origin as the rest of the app: the homeserver
+                    // answers under `/_matrix/...` on this host.
+                    base_url: String::new(),
+                    store: store.clone(),
+                    wake: messenger_wake(&self.inner),
+                };
+                let io = MessengerIo::start(&key, MessengerAuth::Bearer(token.clone()), config);
+                chart.set_messenger_provider(Some(Box::new(io.provider())));
+                self.inner.borrow_mut().messenger = Some(MessengerRun { io, token, vault_key: key, store });
+            }
+        }
+
+        if let Some(run) = self.inner.borrow_mut().messenger.as_mut() {
+            run.io.tick(now_ms as i64);
+        }
+    }
+
     pub fn drive(&self, chart: &mut ChartApp, now_ms: f64) {
+        if let Some((token, allowed)) = self.inner.borrow_mut().share_rights.take() {
+            chart.set_share_clone_allowed(&token, allowed);
+        }
+        self.poll_share_rights(chart, now_ms);
+        self.poll_share_nick_search(chart, now_ms);
+        self.poll_friend_lookup(chart, now_ms);
+        if let Some((chart_id, token)) = self.inner.borrow_mut().share_bound.take() {
+            let arm = chart.take_arm_live();
+            chart.note_chart_share_token(&chart_id, &token);
+            if arm {
+                chart.set_share_live(true);
+            }
+        }
+        if let Some(hits) = self.inner.borrow_mut().share_lookup_hits.take() {
+            chart.set_share_lookup_hits(hits);
+        }
+        if let Some(note) = self.inner.borrow_mut().share_settings_note.take() {
+            chart.set_share_settings_note(note);
+        }
         // ── Server-rejected token → signed-out (Arc B1, 2026-09-06) ───────
         // Drained first thing, every frame: any authed call in this driver
         // (boot/post-login `auth_me()`, the entitlements refresh, share
@@ -613,6 +1550,10 @@ impl CloudSession {
                 "The server no longer accepts this session — sign in again.",
             );
         }
+
+        // Matrix-shaped messenger: start/stop/restart it to match the account,
+        // the vault and the ladder, hand its provider to the app, and tick it.
+        self.drive_messenger(chart, now_ms);
 
         // Keep the profile header in sync with the active profile.
         let profile_id = chart.core.user().profile().domain.profile_id.clone();
@@ -642,6 +1583,7 @@ impl CloudSession {
             self.account_label().unwrap_or_default();
         chart.panel_app.user_settings_state.account_provider =
             self.account_provider().unwrap_or_default();
+        self.drive_checkout(chart, now_ms);
 
         // ── Entitlements: boot + periodic background re-ask ────────────────
         // Deliberately its own block, ahead of and independent from the
@@ -831,10 +1773,50 @@ impl CloudSession {
                     );
                 }
                 Err(message) => {
+                    chart.clear_arm_live();
                     chart.push_system_event(mlc_core::SystemEventKind::Share, "Share failed", message, true);
                 }
             }
         }
+
+        if let Some(rows) = self.inner.borrow_mut().share_admin_rows.take() {
+            match rows {
+                Ok(rows) => {
+                    let rows = rows
+                        .into_iter()
+                        .map(|r| mlc_app_layout::ui::modal_settings::ShareAdminRow {
+                            token: r.token,
+                            title: r.title,
+                            kind: r.kind,
+                            pinned: r.pinned,
+                            clone_allowed: r.clone_allowed,
+                            interaction: r.interaction,
+                            visibility: if r.visibility.is_empty() {
+                                "public".to_string()
+                            } else {
+                                r.visibility
+                            },
+                            allow_forward: r.allow_forward,
+                            expires_at: r.expires_at,
+                            chart_id: r.chart_id,
+                            created_at: r.created_at,
+                        })
+                        .collect();
+                    chart.apply_share_rows(rows);
+                }
+                Err(message) => chart.set_share_rows_error(message),
+            }
+        }
+        if !self.inner.borrow().share_admin_busy {
+            if let Some(cmd) = chart.take_share_admin() {
+                self.fire_share_admin(cmd);
+            }
+        }
+        chart.drain_share_catchup();
+        self.poll_share_ops(chart, now_ms);
+        self.poll_edge(chart, now_ms);
+        self.poll_friends(chart);
+        self.drive_admin(chart);
 
         // ── Chart-share clone (shared-viewer arc, 2026-09-06) ──────────────
         // `ChartApp::request_clone_share` is the one-shot mailbox a "Clone to
@@ -843,33 +1825,13 @@ impl CloudSession {
         // here because `&mut ChartApp` — and `apply_cloned_preset`, which
         // needs it — is only reachable inside `drive()`.
         if let Some(token) = chart.take_pending_clone_share() {
-            if !self.is_signed_in() {
-                // Belt-and-braces (plan §3/§5): the effective-rights answer
-                // never carries `"clone"` for a caller who isn't signed in,
-                // so the button that arms this request is never shown to
-                // one — this only fires if something else triggers the
-                // request anyway. Open the sign-in overlay instead of firing
-                // a POST that would just 401.
-                chart.panel_app.cloud_login_state.is_open = true;
-            } else if self.inner.borrow().clone_in_flight {
-                // Doubled trigger while one is already in flight — dropped,
-                // same tolerance the Forum tab's own request mailbox gives a
-                // doubled click (not worth a request queue for).
-                web_sys::console::warn_1(&"[share] clone request dropped: one is already in flight".into());
-            } else {
-                self.inner.borrow_mut().clone_in_flight = true;
-                let transport = self.inner.borrow().transport.snapshot();
-                let inner = self.inner.clone();
-                spawn_local(async move {
-                    let raw = transport.share_clone(&token).await;
-                    if let Err(e) = &raw {
-                        mark_unauthorized(&inner, e);
-                    }
-                    let r = raw
-                        .map(|resp| (resp.preset, resp.stripped))
-                        .map_err(|e| clone_error_message(&e));
-                    inner.borrow_mut().clone_result = Some(r);
-                });
+            if !chart.clone_open_share_locally(&token) {
+                chart.push_system_event(
+                    mlc_core::SystemEventKind::Share,
+                    "Clone failed",
+                    "This shared chart is not open, or clone is not allowed.".to_string(),
+                    true,
+                );
             }
         }
 
@@ -878,7 +1840,10 @@ impl CloudSession {
             match result {
                 Ok((preset_value, stripped)) => {
                     match serde_json::from_value::<mlc_core::preset::preset::ChartPreset>(preset_value) {
-                        Ok(preset) => {
+                        Ok(mut preset) => {
+                            if let Some(name) = self.inner.borrow_mut().clone_name.take() {
+                                preset.name = name;
+                            }
                             let stripped = stripped
                                 .into_iter()
                                 .map(|s| mlc_app::StrippedIndicator { type_id: s.type_id, name: s.name })
@@ -886,6 +1851,7 @@ impl CloudSession {
                             chart.apply_cloned_preset(preset, stripped);
                         }
                         Err(e) => {
+                            self.inner.borrow_mut().clone_name = None;
                             chart.push_system_event(
                                 mlc_core::SystemEventKind::Share,
                                 "Clone failed",
@@ -896,6 +1862,7 @@ impl CloudSession {
                     }
                 }
                 Err(message) => {
+                    self.inner.borrow_mut().clone_name = None;
                     chart.push_system_event(mlc_core::SystemEventKind::Share, "Clone failed", message, true);
                 }
             }
@@ -1478,6 +2445,9 @@ impl CloudSession {
                             // moves `me.classes`/`me.roles` into `forum2`.
                             chart.panel_app.user_settings_state.account_classes = me.classes.clone();
                             chart.panel_app.user_settings_state.account_roles = me.roles.clone();
+                            // The Admin tab's presence in the rail follows
+                            // these roles.
+                            chart.admin_roles_refreshed();
 
                             let ov = &mut chart.panel_app.community_state;
                             ov.forum2.caller_roles = me.roles;
@@ -1530,6 +2500,9 @@ impl CloudSession {
                                         peer_fingerprint: c.peer.fingerprint,
                                         last_message_at: c.last_message_at,
                                         unread_count: c.unread,
+                                        peer_rank: None,
+                                        last_message_preview: None,
+                                        last_message_mine: false,
                                     }
                                 })
                                 .collect();
@@ -1560,6 +2533,9 @@ impl CloudSession {
                                 peer_fingerprint: conversation.peer.fingerprint,
                                 last_message_at: conversation.last_message_at,
                                 unread_count: conversation.unread,
+                                peer_rank: None,
+                                last_message_preview: None,
+                                last_message_mine: false,
                             };
                             if let Some(existing) = ov.conversations.iter_mut().find(|c| c.id == row.id) {
                                 *existing = row;
@@ -2112,9 +3088,11 @@ impl CloudSession {
             // this fetch (`UserSettingsState::account_classes`'s own doc) —
             // it must fire even when the Community modal itself is closed,
             // so the tab's line fills the moment it's looked at rather than
-            // only after the Forum tab happens to have been opened once.
-            let account_tab_visible = chart.panel_app.user_settings_state.is_open
-                && chart.panel_app.user_settings_state.active_tab == UserSettingsTab::Account;
+            // only after the Forum tab happens to have been opened once. The
+            // Admin tab's place in the rail comes from the same answer, and
+            // the rail is on screen whichever tab is active, so any open
+            // Settings modal asks (once — `me_fetched_at` gates the refire).
+            let account_tab_visible = chart.panel_app.user_settings_state.is_open;
 
             let ov = &mut chart.panel_app.community_state;
             let forum2_active = ov.is_open && ov.tab == CommunityTab::Forum;
@@ -3053,7 +4031,7 @@ fn map_forum_search_hit(h: ForumSearchHit) -> ForumSearchHitUi {
 /// `origin + url_path` → the absolute share URL handed to the clipboard.
 /// `url_path` is root-relative (`/?share=<token>`) exactly so the client
 /// pins the origin the share was created on.
-fn absolute_share_url(url_path: &str) -> String {
+pub(crate) fn absolute_share_url(url_path: &str) -> String {
     let origin = web_sys::window()
         .and_then(|w| w.location().origin().ok())
         .unwrap_or_default();
@@ -3086,18 +4064,6 @@ fn log_share_error(what: &str, e: &mlc_cloud::CloudError) {
     }
 }
 
-/// Word a failed `/api/share/{token}/clone` for the system-event log. 403 is
-/// "this link has no clone right" (the owner left `clone_allowed` off, or
-/// the caller's effective rights never granted it) — say so in the server's
-/// own sentence rather than the transport's raw status; anything else is
-/// the transport's own description.
-fn clone_error_message(e: &mlc_cloud::CloudError) -> String {
-    match e {
-        mlc_cloud::CloudError::Forbidden(_) => "This chart cannot be cloned".to_string(),
-        other => format!("Clone failed: {other}"),
-    }
-}
-
 /// Flags [`Inner::unauthorized`] when `e` is a 401 AND a token was actually
 /// held at call time — called from inside a `spawn_local` body, before the
 /// typed `CloudError` is turned into a display string for its own mailbox,
@@ -3121,6 +4087,184 @@ fn mark_unauthorized(inner: &Rc<RefCell<Inner>>, e: &mlc_cloud::CloudError) {
     let mut inner = inner.borrow_mut();
     if mlc_cloud::is_session_revoked_401(inner.token.is_some(), e.is_unauthorized()) {
         inner.unauthorized = true;
+    }
+}
+
+// ── Admin tab (Settings -> Admin, `/api/staff/*`) ────────────────────────
+//
+// `ChartApp` holds the tab's state and one mailbox each way
+// (`take_admin_request` / `apply_admin_outcome`); this is the shell's half:
+// perform the request, classify the failure, hand the outcome back on the
+// next frame. One staff request at a time — the server rate-limits writes per
+// actor, and the tab's own `busy` flag already serialises the buttons.
+
+impl CloudSession {
+    /// Per-frame Admin-tab step: announce that this shell serves the tab,
+    /// apply a settled outcome, then start the next queued request.
+    fn drive_admin(&self, chart: &mut ChartApp) {
+        chart.set_admin_served(true);
+        let settled = self.inner.borrow_mut().admin_result.take();
+        if let Some((epoch, outcome)) = settled {
+            // An outcome from before the last sign-out belongs to nobody now.
+            if epoch == self.inner.borrow().admin_epoch {
+                chart.apply_admin_outcome(outcome);
+            }
+        }
+        if self.inner.borrow().admin_busy {
+            return;
+        }
+        if let Some(request) = chart.take_admin_request() {
+            self.fire_admin(request);
+        }
+    }
+
+    /// Perform one Admin request. A signed-out session settles it at once with
+    /// the sign-in refusal instead of sending anything.
+    fn fire_admin(&self, request: AdminRequest) {
+        let epoch = self.inner.borrow().admin_epoch;
+        if !self.is_signed_in() {
+            let outcome = admin_failed(&request, AdminFailure::SignedOut);
+            self.inner.borrow_mut().admin_result = Some((epoch, outcome));
+            return;
+        }
+        self.inner.borrow_mut().admin_busy = true;
+        let transport = self.inner.borrow().transport.snapshot();
+        let inner = self.inner.clone();
+        spawn_local(async move {
+            let outcome = run_admin(&transport, &inner, request).await;
+            let mut guard = inner.borrow_mut();
+            guard.admin_busy = false;
+            guard.admin_result = Some((epoch, outcome));
+        });
+    }
+}
+
+/// The failed [`AdminOutcome`] for `request`.
+fn admin_failed(request: &AdminRequest, failure: AdminFailure) -> AdminOutcome {
+    match request {
+        AdminRequest::Mint { .. } => AdminOutcome::Minted(Err(failure)),
+        AdminRequest::LoadBatches => AdminOutcome::Batches(Err(failure)),
+        AdminRequest::RevokeBatch { .. } => AdminOutcome::BatchRevoked(Err(failure)),
+        AdminRequest::PaidDays { .. } => AdminOutcome::PaidDays(Err(failure)),
+        AdminRequest::LifetimeGrant { .. } => AdminOutcome::LifetimeGranted(Err(failure)),
+        AdminRequest::LifetimeRevoke { .. } => AdminOutcome::LifetimeRevoked(Err(failure)),
+        AdminRequest::LookupUser { .. } => AdminOutcome::User(Err(failure)),
+    }
+}
+
+/// Classify a transport error for the tab (`mlc_cloud::staff_error`), noting a
+/// revoked session on the way.
+fn admin_error(inner: &Rc<RefCell<Inner>>, e: &mlc_cloud::CloudError) -> AdminFailure {
+    use mlc_cloud::StaffError;
+    mark_unauthorized(inner, e);
+    match mlc_cloud::staff_error(e) {
+        StaffError::Forbidden => AdminFailure::Forbidden,
+        StaffError::NotFound => AdminFailure::NotFound,
+        StaffError::RateLimited { retry_after_secs } => AdminFailure::RateLimited { retry_after_secs },
+        StaffError::BadRequest { detail } => AdminFailure::BadRequest { detail },
+        StaffError::SignedOut => AdminFailure::SignedOut,
+        StaffError::Network { detail } => AdminFailure::Network { detail },
+        StaffError::Server { detail } => AdminFailure::Server { detail },
+    }
+}
+
+/// Server counts are never negative; a bad one reads as zero.
+fn admin_count(n: i64) -> u64 {
+    u64::try_from(n).unwrap_or(0)
+}
+
+/// Run one Admin request against `/api/staff/*` and shape the answer for the tab.
+async fn run_admin(
+    transport: &FetchTransport,
+    inner: &Rc<RefCell<Inner>>,
+    request: AdminRequest,
+) -> AdminOutcome {
+    match request {
+        AdminRequest::Mint { days, count, note } => AdminOutcome::Minted(
+            match transport.staff_mint(days, count, &note).await {
+                Ok(m) => Ok(AdminMinted {
+                    batch_id: m.batch_id,
+                    days: m.days,
+                    count: m.count,
+                    note: m.note,
+                    codes: m.codes,
+                }),
+                Err(e) => Err(admin_error(inner, &e)),
+            },
+        ),
+        AdminRequest::LoadBatches => AdminOutcome::Batches(match transport.staff_gift_batches().await {
+            Ok(rows) => Ok(rows
+                .into_iter()
+                .map(|b| AdminBatchRow {
+                    batch_id: b.batch_id,
+                    note: b.note,
+                    days: b.days,
+                    count: b.count,
+                    redeemed: b.redeemed,
+                    revoked: b.revoked,
+                    created_at: b.created_at,
+                    created_by: b.created_by_nick,
+                })
+                .collect()),
+            Err(e) => Err(admin_error(inner, &e)),
+        }),
+        AdminRequest::RevokeBatch { batch_id } => {
+            AdminOutcome::BatchRevoked(match transport.staff_revoke_batch(&batch_id).await {
+                Ok(r) => Ok(admin_count(r.revoked)),
+                Err(e) => Err(admin_error(inner, &e)),
+            })
+        }
+        AdminRequest::PaidDays { nick, days } => {
+            AdminOutcome::PaidDays(match transport.staff_paid_days(&nick, days).await {
+                Ok(r) => Ok((r.nick, r.paid_until)),
+                Err(e) => Err(admin_error(inner, &e)),
+            })
+        }
+        AdminRequest::LifetimeGrant { nick, kind, note } => AdminOutcome::LifetimeGranted(
+            match transport.staff_lifetime_grant(&nick, kind.wire(), &note).await {
+                Ok(r) => Ok(AdminLifetimeDone {
+                    nick: r.nick,
+                    kind: LifetimeKind::from_wire(&r.grant).unwrap_or(kind),
+                    created: r.created,
+                }),
+                Err(e) => Err(admin_error(inner, &e)),
+            },
+        ),
+        AdminRequest::LifetimeRevoke { nick, kind } => AdminOutcome::LifetimeRevoked(
+            match transport.staff_lifetime_revoke(&nick, kind.wire()).await {
+                Ok(r) => Ok((
+                    r.nick,
+                    LifetimeKind::from_wire(&r.grant).unwrap_or(kind),
+                    admin_count(r.revoked),
+                )),
+                Err(e) => Err(admin_error(inner, &e)),
+            },
+        ),
+        AdminRequest::LookupUser { nick } => AdminOutcome::User(match transport.staff_user(&nick).await {
+            Ok(u) => Ok(AdminUserCard {
+                nick: u.nick,
+                user_id: u.user_id,
+                paid_until: u.paid_until,
+                lifetime_paid: u.lifetime_paid,
+                lifetime_anon: u.lifetime_anon,
+                ledger: u
+                    .lifetime_grants
+                    .into_iter()
+                    .map(|g| AdminLedgerRow {
+                        grant_id: g.grant_id,
+                        grant: g.grant,
+                        source: g.source,
+                        source_ref: g.source_ref,
+                        created_at: g.created_at,
+                        revoked_at: g.revoked_at,
+                    })
+                    .collect(),
+                quant_tier: u.quant_tier,
+                quant_active_until: u.quant_active_until,
+                roles: u.roles,
+            }),
+            Err(e) => Err(admin_error(inner, &e)),
+        }),
     }
 }
 

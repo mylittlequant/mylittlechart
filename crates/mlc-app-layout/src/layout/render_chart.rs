@@ -2831,6 +2831,12 @@ pub fn render_main_chart_primitives(
         }
     }
 
+    // Overlay primitives (a remote author's in-progress drawing): painted in
+    // the same coordinate space, never selected, never in the store.
+    for prim in dm.overlay_primitives() {
+        prim.render(ctx, false);
+    }
+
     // Render drawing preview — cursor-dependent, delegates to standalone fn.
     draw_main_chart_drawing_preview(ctx, state, dm, chart.height);
 

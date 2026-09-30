@@ -12,6 +12,11 @@
       height: 100%;
       /* Canvas pixel buffer is set by Rust; CSS dimensions drive logical size */
     }
+    /* `?page=community` (crate::community) — fixed 1280x800 regardless of
+       the hosting browser window, so a screenshot is reproducible without
+       the caller having to match the CDP viewport pixel-for-pixel. */
+    body.community { display: block; }
+    body.community #chart { width: 1280px; height: 800px; }
   </style>
 </head>
 <body>
@@ -23,6 +28,10 @@
     document.addEventListener('DOMContentLoaded', function () {
       var c = document.getElementById('chart');
       if (c) { c.focus(); }
+      // `?page=community` — see crate::community's own doc and this file's
+      // own `body.community` rule above.
+      var params = new URLSearchParams(location.search);
+      if (params.get('page') === 'community') { document.body.classList.add('community'); }
     });
     window.addEventListener('pointerdown', function () {
       var c = document.getElementById('chart');

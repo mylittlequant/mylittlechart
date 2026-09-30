@@ -22,6 +22,7 @@ use mlc_backend_indicator_engine::managers::indicator_manager::{
     ComputeCache, HistogramStyle, IndicatorCategory, IndicatorDefinition, IndicatorInstance,
     IndicatorOutputType, IndicatorParamType, IndicatorValue, RecalcMode,
 };
+use mlc_backend_indicator_engine::managers::stream_event::StreamEvent;
 
 /// Manages indicator definitions and instances
 pub struct IndicatorManager {
@@ -1050,6 +1051,57 @@ impl IndicatorManager {
         }
     }
 
+    // ── Stream events (non-bar live data) ─────────────────────────────────────
+
+    /// Feed one stream event (tick, order book, order book delta, funding
+    /// rate, open interest, liquidation) to every instance on `bubble_id`
+    /// whose definition declares `ev.kind()` (primary or aux stream).
+    /// No-op for instances with no `ComputeCache` yet — a cache is built
+    /// the first time `calculate_for_bubble` runs (needs at least one bar);
+    /// a freshly-added stream indicator with zero bars has nothing to
+    /// update yet regardless.
+    ///
+    /// Mirrors the `bar_diff == 0` "replace the last output value" path
+    /// above (tick-triggered live-bar update in `calculate_for_bubble`) — a
+    /// stream event updates the CURRENT (in-progress) bar's value in
+    /// place; it never appends a new bar-aligned sample.
+    pub fn feed_stream_for_bubble(&mut self, bubble_id: u64, ev: &StreamEvent) {
+        let ids: Vec<u64> = self.by_bubble_id.get(&bubble_id).cloned().unwrap_or_default();
+        let kind = ev.kind();
+
+        for id in ids {
+            let indicator_id = {
+                let Some(inst) = self.instances.get(&id) else { continue };
+                if inst.bubble_id != Some(bubble_id) {
+                    continue;
+                }
+                let Some(def) = self.definitions.get(&inst.type_id) else { continue };
+                if !def.streams.contains(&kind) {
+                    continue;
+                }
+                match def.machine_id {
+                    Some(mid) => mid,
+                    None => continue,
+                }
+            };
+
+            let Some(cache) = self.compute_caches.get_mut(&id) else { continue };
+            let value = IndicatorCalculator::feed_stream_event(&mut cache.instance, ev);
+            let outputs = IndicatorCalculator::extract_single_outputs(indicator_id, value);
+
+            if let Some(instance) = self.instances.get_mut(&id) {
+                let values_map = Arc::make_mut(&mut instance.values);
+                for (key, val) in outputs {
+                    if let Some(vec) = values_map.get_mut(&key) {
+                        if let Some(last) = vec.last_mut() {
+                            *last = val;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ── Recalculation scheduling helpers ─────────────────────────────────────
 
     /// Mark a symbol as needing indicator recalculation.
@@ -1869,6 +1921,72 @@ mod tests {
                     "Instance should have values for output '{}', but has keys: {:?}",
                     output.name, instance.values.keys().collect::<Vec<_>>());
         }
+    }
+
+    fn flat_bars(n: usize) -> Vec<mlc_core::Bar> {
+        (0..n).map(|i| mlc_core::Bar {
+            timestamp: i as i64,
+            open: 100.0,
+            high: 101.0,
+            low: 99.0,
+            close: 100.0,
+            volume: 10.0,
+            ..Default::default()
+        }).collect()
+    }
+
+    #[test]
+    fn feed_stream_for_bubble_moves_matching_instance_without_touching_bar_bookkeeping() {
+        let mut manager = IndicatorManager::new();
+        // `book_imb` declares `OrderBook` as its only stream and is a
+        // no-op passthrough on `update_bar` — the bar-only baseline never
+        // moves off its construction-time value.
+        let id = manager.create_instance("book_imb").expect("book_imb catalog entry exists");
+        manager.assign_bubble(id, Some(1));
+        manager.calculate_for_bubble(1, &flat_bars(5), None);
+
+        let before_values = (*manager.get_instance(id).unwrap().values).clone();
+        let before_fed_bar_count = manager.compute_caches.get(&id).map(|c| c.fed_bar_count);
+        let before_has_checkpoint = manager.compute_caches.get(&id).map(|c| c.checkpoint.is_some());
+
+        let book = mlc_backend_indicator_engine::types::OrderBook {
+            bids: vec![mlc_backend_indicator_engine::types::OrderBookLevel::new(100.0, 30.0)],
+            asks: vec![mlc_backend_indicator_engine::types::OrderBookLevel::new(101.0, 10.0)],
+            timestamp: 0,
+            ..Default::default()
+        };
+        manager.feed_stream_for_bubble(1, &StreamEvent::OrderBook(book));
+
+        let after_values = (*manager.get_instance(id).unwrap().values).clone();
+        let after_fed_bar_count = manager.compute_caches.get(&id).map(|c| c.fed_bar_count);
+        let after_has_checkpoint = manager.compute_caches.get(&id).map(|c| c.checkpoint.is_some());
+
+        assert_ne!(before_values, after_values, "matching stream event should move the last output value");
+        assert_eq!(before_fed_bar_count, after_fed_bar_count, "stream feed must not touch bar-recalc bookkeeping");
+        assert_eq!(before_has_checkpoint, after_has_checkpoint, "stream feed must not touch the checkpoint");
+    }
+
+    #[test]
+    fn feed_stream_for_bubble_ignores_non_matching_stream_kind() {
+        let mut manager = IndicatorManager::new();
+        // `book_imb` declares only `OrderBook` — a `Funding` event must not
+        // touch it.
+        let id = manager.create_instance("book_imb").expect("book_imb catalog entry exists");
+        manager.assign_bubble(id, Some(1));
+        manager.calculate_for_bubble(1, &flat_bars(5), None);
+
+        let before_values = (*manager.get_instance(id).unwrap().values).clone();
+
+        let fr = mlc_backend_indicator_engine::types::FundingRate {
+            rate: 0.0001,
+            next_funding_time: None,
+            timestamp: 1000,
+            ..Default::default()
+        };
+        manager.feed_stream_for_bubble(1, &StreamEvent::Funding(fr));
+
+        let after_values = (*manager.get_instance(id).unwrap().values).clone();
+        assert_eq!(before_values, after_values, "non-matching stream event must not change the instance's values");
     }
 }
 

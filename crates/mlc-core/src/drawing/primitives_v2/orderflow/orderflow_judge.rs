@@ -35,6 +35,18 @@ use super::super::elliott::guard::Violation;
 pub const MISSING_VIOLATION: [Violation; 1] =
     [Violation { rule_id: "order_flow_data_missing", wave: None, message: ConceptKey::RuleOrderFlowDataMissing }];
 
+/// [`order_flow_scan::OrderFlowScan`](super::order_flow_scan::OrderFlowScan)'s
+/// own second "nothing to report" state — a footprint feed exists
+/// (`cached_footprint_present == true`) but this survey's own resolved
+/// `[start, end]` window came back `None`: the dragged range falls outside
+/// every footprint bar actually loaded (older than the venue's retained
+/// trade history, or simply not backfilled yet). Kept as its own rule
+/// rather than folded into [`MISSING_VIOLATION`] — the two mean different
+/// things to the analyst: "nothing is subscribed" vs "the feed is real and
+/// this range specifically has nothing in it".
+pub const RANGE_NO_DATA_VIOLATION: [Violation; 1] =
+    [Violation { rule_id: "order_flow_range_no_data", wave: None, message: ConceptKey::RuleOrderFlowRangeNoData }];
+
 /// Which side of the book a stacked-imbalance run sits on — the chart's own
 /// small enum for [`ImbalanceRun::side`], distinct from `mli::smc::
 /// Direction` (a price-bias direction, not a book side) so the two are never

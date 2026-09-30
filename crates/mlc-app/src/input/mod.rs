@@ -620,6 +620,8 @@ impl ChartApp {
             || self.panel_app.chart_settings_state.is_open
             || self.panel_app.preset_name_input.is_open
             || self.panel_app.share_open_state.is_open
+            || self.panel_app.share_settings_state.is_open
+            || self.panel_app.checkout_state.is_open
             || self.panel_app.chart_browser.is_open
             || self.panel_app.overlay_settings_state.is_open
             || self.panel_app.tags_tabs_state.is_open
@@ -1068,7 +1070,7 @@ impl ChartApp {
     /// closed, the Forum tab active, or a click on the modal's own chrome.
     #[cfg(feature = "cloud")]
     fn try_messenger_right_click(&mut self, x: f64, y: f64) -> bool {
-        use mlc_app_layout::ui::context_menu::{build_dm_chat_row_context_menu, build_dm_message_context_menu};
+        use mlc_app_layout::ui::context_menu::build_dm_message_context_menu;
         use mlc_app_layout::ui::dm_messenger_provider::DmMessengerProviderView;
         use mlc_app_layout::ui::modal_settings::CommunityTab;
         use mlc_app_layout::ui::selectable_text::hit_test;
@@ -1089,7 +1091,10 @@ impl ChartApp {
         // here.
         if let Some(hit) = hit_test(&cm.content.dm_message_line_rects, x, y) {
             let msg_idx = hit.block;
-            let caps = DmMessengerProviderView::new(&self.panel_app.community_state.dm).capabilities();
+            let caps = self
+                .panel_app
+                .messenger_capabilities()
+                .unwrap_or_else(|| DmMessengerProviderView::new(&self.panel_app.community_state.dm).capabilities());
             let items = build_dm_message_context_menu(caps);
             self.panel_app.context_menu_state.open_smart(
                 x, y, ContextMenuTarget::DmMessage(msg_idx), items, w, h,
@@ -1110,13 +1115,39 @@ impl ChartApp {
         else {
             return false;
         };
-        let caps = DmMessengerProviderView::new(&self.panel_app.community_state.dm).capabilities();
-        let can_mark_read = room_id
-            .parse::<i64>()
-            .ok()
-            .and_then(|id| self.panel_app.community_state.dm.open_conversation_last_message_id(id))
-            .is_some();
-        let items = build_dm_chat_row_context_menu(caps, can_mark_read);
+        self.open_dm_chat_row_menu(room_id, x, y, w, h)
+    }
+
+    /// Build and open the chat-row context menu (concept screen "2 · Канал
+    /// + меню чата") for `room_id` at `(x, y)` — shared by
+    /// [`Self::try_messenger_right_click`]'s own row branch and the chat
+    /// header's own ⋮ button (`panel_click.rs`'s `"header_more"` arm),
+    /// which has no row rect of its own to right-click and passes its own
+    /// click position instead. Returns `false` (opens nothing) when
+    /// [`mlc_app_layout::ui::dm_messenger_provider::dm_chat_row_menu_items`]
+    /// resolves `room_id` to no menu at all (an unknown room, today, since
+    /// that function's own Pin/Mute/Archive/Leave rows are otherwise
+    /// unconditional).
+    #[cfg(feature = "cloud")]
+    pub(crate) fn open_dm_chat_row_menu(&mut self, room_id: &str, x: f64, y: f64, w: f64, h: f64) -> bool {
+        use mlc_app_layout::ui::dm_messenger_provider::{chat_row_menu_items, dm_chat_row_menu_items};
+
+        let items = match self.panel_app.messenger_view() {
+            // An outside provider backs the tab: the menu is built from its
+            // own room flags, capabilities and folders.
+            Some(provider) => {
+                let can_mark_read = self.panel_app.messenger_can_mark_read(room_id);
+                chat_row_menu_items(provider, room_id, can_mark_read)
+            }
+            None => {
+                let can_mark_read = room_id
+                    .parse::<i64>()
+                    .ok()
+                    .and_then(|id| self.panel_app.community_state.dm.open_conversation_last_message_id(id))
+                    .is_some();
+                dm_chat_row_menu_items(&self.panel_app.community_state.dm, room_id, can_mark_read)
+            }
+        };
         if items.is_empty() {
             return false;
         }
@@ -1149,6 +1180,36 @@ impl ChartApp {
         let dbl_clicked_id = self.input_coordinator.borrow_mut().process_click(x, y)
             .map(|w| w.as_str().to_string());
         if let Some(id) = dbl_clicked_id {
+            // Collapsible flyout section header/chevron (toolbar-flyout-
+            // collapse arc, owner order 2026-09-25): double-click toggles
+            // the section; a single click stays a no-op (`dispatch_panel_
+            // click`'s `"__noop__:"` early return, unchanged below). Must
+            // run BEFORE the generic toolbar dispatch further down — that
+            // dispatch would otherwise just re-run the same swallow. Widget
+            // id shape: `"dropdown:{dropdown_id}:__noop__:header:{ordinal}"`
+            // (`draw_dropdown`'s Header draw arm, `mlc-app-layout/src/ui/
+            // dropdown.rs`) — `DRAWING_FLYOUT_IDS` is the only family that
+            // ever renders a collapsible header, so this never needs to
+            // pick between the main and trading-header toolbar instance.
+            if let Some(rest) = id.strip_prefix("dropdown:") {
+                let mut parts = rest.splitn(2, ':');
+                if let (Some(dropdown_id), Some(item_id)) = (parts.next(), parts.next()) {
+                    // The first click of a double-click on the chevron
+                    // already toggled the section. Do not toggle again.
+                    if item_id.starts_with("__chevron__:header:") {
+                        return;
+                    }
+                    if let Some(ordinal_str) = item_id.strip_prefix("__noop__:header:") {
+                        if let Ok(ordinal) = ordinal_str.parse::<usize>() {
+                            let section_id = mlc_core::toolbar::flyout_section_id(dropdown_id, ordinal);
+                            self.panel_app.toolbar_state.toggle_flyout_section_collapsed(&section_id);
+                            self.persist_profile();
+                            return;
+                        }
+                    }
+                }
+            }
+
             let is_toolbar = id.starts_with("toolbar:")
                 || id.starts_with("dtb:")
                 || id.starts_with("csb:")
@@ -1477,6 +1538,14 @@ impl ChartApp {
         // there is no plain-click case to disambiguate against and no 5px
         // promotion threshold needed, unlike `granularity_drag_pending`'s
         // own two-step below.
+        // The ✕ is a click, but a press that moves a few pixels never becomes
+        // one (the shell only calls on_click under 5px). Dismiss on the press.
+        if let Some(id_str) = live_hover.as_deref().and_then(|h| h.strip_prefix("toast:close:")) {
+            if let Ok(toast_id) = id_str.parse::<u64>() {
+                self.dismiss_toast(toast_id);
+                return true;
+            }
+        }
         if let Some(id_str) = live_hover.as_deref().and_then(|h| h.strip_prefix("toast:drag:")) {
             if let Ok(toast_id) = id_str.parse::<u64>() {
                 self.toast_drag = Some((toast_id, x, y));
@@ -2301,6 +2370,15 @@ impl ChartApp {
                             true
                         } else { false }
                     }
+                    "share_settings" => {
+                        let header = self.frame_result.as_ref()
+                            .and_then(|r| r.share_settings.as_ref())
+                            .map(|s| (s.header_rect.x, s.header_rect.y));
+                        if let Some((hx, hy)) = header {
+                            self.panel_app.share_settings_state.start_drag(x, y, hx, hy);
+                            true
+                        } else { false }
+                    }
                     // The welcome wizard renders into the SAME
                     // `result.user_settings` slot (`chart_panel_app.rs`), so
                     // its header rect arrives here under that field — but it
@@ -2553,6 +2631,9 @@ impl ChartApp {
                         UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                         UserSettingsTab::Account => &mut self.panel_app.user_settings_state.account_tab_scroll,
+                        UserSettingsTab::Shares => &mut self.panel_app.user_settings_state.shares_tab_scroll,
+                        UserSettingsTab::Friends => &mut self.panel_app.user_settings_state.account_tab_scroll,
+                        UserSettingsTab::Admin => &mut self.panel_app.user_settings_state.admin.scroll,
                     };
                     scroll.start_drag(y);
                     true
@@ -2838,7 +2919,11 @@ impl ChartApp {
             if self.panel_app.user_settings_state.is_open {
                 if let Some(ref us) = result.user_settings {
                     let hit = us.content_items.iter()
-                        .any(|(id, rect)| id.as_str() == "user_settings:account_redeem_input" && rect.contains(x, y));
+                        .any(|(id, rect)| {
+                            (id.as_str() == "user_settings:account_redeem_input"
+                                || id.starts_with("user_settings:admin:field:"))
+                                && rect.contains(x, y)
+                        });
                     if hit {
                         self.input_coordinator.borrow_mut().text_fields_mut().on_drag_start(x, y);
                         return false;
@@ -3314,6 +3399,9 @@ impl ChartApp {
                         UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                         UserSettingsTab::Account => &mut self.panel_app.user_settings_state.account_tab_scroll,
+                        UserSettingsTab::Shares => &mut self.panel_app.user_settings_state.shares_tab_scroll,
+                        UserSettingsTab::Friends => &mut self.panel_app.user_settings_state.account_tab_scroll,
+                        UserSettingsTab::Admin => &mut self.panel_app.user_settings_state.admin.scroll,
                     };
 
                     // Track click (jump to position)
@@ -3740,6 +3828,19 @@ impl ChartApp {
         } else {
             ChartDragStartHit::Miss
         };
+
+        // A shared tab is a view of the author's chart. Moving a drawing
+        // here would change what this window shows, and a later snapshot
+        // can publish that back. Clone first; the copy is writable.
+        if self.is_readonly_tab(&self.panel_app.active_preset_id)
+            && matches!(
+                drag_start_hit,
+                ChartDragStartHit::Primitive { .. } | ChartDragStartHit::ControlPoint { .. }
+            )
+        {
+            log::warn!("[ChartApp] primitive drag refused: active tab is read-only (shared chart)");
+            return false;
+        }
 
         let (drag_start_mode, extra_actions) = match drag_start_hit {
             ChartDragStartHit::FreehandStarted => {
@@ -4494,6 +4595,10 @@ impl ChartApp {
             self.panel_app.user_settings_state.update_drag(x, y);
             return;
         }
+        if self.panel_app.share_settings_state.is_dragging {
+            self.panel_app.share_settings_state.update_drag(x, y);
+            return;
+        }
         if self.panel_app.user_settings_state.wizard_is_dragging {
             self.panel_app.user_settings_state.wizard_update_drag(x, y);
             return;
@@ -4858,6 +4963,9 @@ impl ChartApp {
                         UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                         UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                         UserSettingsTab::Account => &mut self.panel_app.user_settings_state.account_tab_scroll,
+                        UserSettingsTab::Shares => &mut self.panel_app.user_settings_state.shares_tab_scroll,
+                        UserSettingsTab::Friends => &mut self.panel_app.user_settings_state.account_tab_scroll,
+                        UserSettingsTab::Admin => &mut self.panel_app.user_settings_state.admin.scroll,
                     };
 
                     if try_handle_scrollbar_drag(y, &mut [(&info, scroll_state)]) {
@@ -5658,6 +5766,10 @@ impl ChartApp {
             log::debug!("[ChartApp] user_settings modal drag ended");
             return;
         }
+        if self.panel_app.share_settings_state.is_dragging {
+            self.panel_app.share_settings_state.end_drag();
+            return;
+        }
         if self.panel_app.user_settings_state.wizard_is_dragging {
             self.panel_app.user_settings_state.wizard_end_drag();
             log::debug!("[ChartApp] welcome_wizard modal drag ended");
@@ -6187,11 +6299,17 @@ impl ChartApp {
                 if item_id != "__bg__" && item_id != mlc_core::toolbar::FAVORITES_BAR_EMPTY_ITEM_ID {
                     self.panel_app.toolbar_state.hovered_favorites_id = Some(item_id.to_string());
                 }
-            } else if id_str.starts_with("dropdown:") && id_str != "dropdown:__bg__" {
+            } else if id_str.starts_with("dropdown:") {
                 // "dropdown:{dropdown_id}:{item_id}" → store the item_id part
                 // on WHICHEVER toolbar instance owns the open dropdown (main
                 // topbar vs the trading container's embedded header).
-                let item_id = id_str.splitn(3, ':').nth(2).unwrap_or_default().to_string();
+                // `__bg__` keeps a hover menu open while the pointer is on
+                // the panel padding, and matches no row so nothing highlights.
+                let item_id = if id_str == "dropdown:__bg__" {
+                    "__bg__".to_string()
+                } else {
+                    id_str.splitn(3, ':').nth(2).unwrap_or_default().to_string()
+                };
                 if self.trading_header_tb.open_dropdown_id.is_some() {
                     self.trading_header_tb.hovered_dropdown_item = Some(item_id);
                 } else {
@@ -6210,6 +6328,7 @@ impl ChartApp {
                         self.leaf_tab_hover = match sub_zone {
                             "gear" => mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::GearMenu,
                             "color_tag" => mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::ColorTag,
+                            "clone" => mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::Clone,
                             _ => mlc_app_layout::layout::panel_overlay::LeafTabHoverZone::Body,
                         };
                     }
@@ -7346,6 +7465,29 @@ impl ChartApp {
                             }
                             return;
                         }
+                        "dropdown:__scroll__" => {
+                            // Toolbar-flyout-collapse arc (owner order
+                            // 2026-09-25): a clamped left-toolbar flyout's
+                            // own wheel scroll. Geometry comes from the
+                            // LAST render (`self.last_toolbar_result`), same
+                            // "read the cached snapshot" shape every other
+                            // arm here already uses — `chart_toolbar_render_
+                            // dropdown` only ever clamps the MAIN toolbar
+                            // instance's dropdowns (`DRAWING_FLYOUT_IDS`
+                            // never opens via the trading-header instance),
+                            // so `self.panel_app.toolbar_state.dropdown_
+                            // scroll` is always the right owner.
+                            if let Some(ref result) = self.last_toolbar_result {
+                                if let Some(ref dd) = result.dropdown_result {
+                                    self.panel_app.toolbar_state.dropdown_scroll.handle_wheel(
+                                        scroll_step,
+                                        dd.content_height,
+                                        dd.viewport_height,
+                                    );
+                                }
+                            }
+                            return;
+                        }
                         "user_settings:profile_list_viewport" => {
                             if let Some(ref result) = self.frame_result {
                                 if let Some(ref us) = result.user_settings {
@@ -7470,6 +7612,9 @@ impl ChartApp {
                                     UserSettingsTab::Server => &mut self.panel_app.user_settings_state.server_tab_scroll,
                                     UserSettingsTab::Performance => &mut self.panel_app.user_settings_state.performance_tab_scroll,
                                     UserSettingsTab::Account => &mut self.panel_app.user_settings_state.account_tab_scroll,
+                        UserSettingsTab::Shares => &mut self.panel_app.user_settings_state.shares_tab_scroll,
+                        UserSettingsTab::Friends => &mut self.panel_app.user_settings_state.account_tab_scroll,
+                        UserSettingsTab::Admin => &mut self.panel_app.user_settings_state.admin.scroll,
                                 };
                                 let _ = try_handle_wheel(x, y, scroll_step, &mut [(&info, scroll_state)]);
                             }
@@ -9796,7 +9941,7 @@ impl ChartApp {
         // a read-only tab's edits must never reach disk/localStorage. This is
         // the ONE place every preset id's autosave funnels through for both
         // shells, so the check lives here rather than at each click site.
-        if self.is_readonly_tab(&target_id) {
+        if self.is_share_link(&target_id) {
             return;
         }
         // LoadState gate. While a cold hydrate is in flight, `panel_grid`

@@ -39,6 +39,7 @@ use uzor::types::Rect as WidgetRect;
 use uzor::WidgetId;
 
 use crate::layout::render_chart::FrameTheme;
+use crate::ui::dm_messenger_provider::DmMessengerProviderView;
 use crate::ui::modal_settings::{CommunityState, CommunityTab, ResizableModal};
 use crate::ui::toolbar_theme::ToolbarTheme;
 use crate::ui::widgets::avatar::contrasting_text_color;
@@ -119,7 +120,12 @@ fn content_height(state: &CommunityState, tab: CommunityTab) -> f64 {
 /// Render the Community modal (Forum + Messages, cloud builds only).
 /// `current_time_ms` drives both panes' relative timestamps and their text
 /// fields' caret blink — same clock every other cloud modal compares
-/// against.
+/// against. `messenger_provider_override` lets a caller that already holds
+/// a different [`MessengerProvider`] (a future Matrix-shaped one, or a lab/
+/// test fixture proving this SAME renderer against hand-built rooms) feed
+/// the Messages tab from it instead of the default `DmMessengerProviderView`
+/// this function builds over `state.dm` — `None` (every production call
+/// site today) keeps today's exact behaviour.
 pub fn render_community_modal(
     ctx: &mut dyn RenderContext,
     window_w: f64,
@@ -134,6 +140,7 @@ pub fn render_community_modal(
     // `promote_to_overlay` doc for the full "last opened is on top"/
     // same-z tie-break reasoning this mirrors (owner ruling 2026-09-10).
     promote_to_overlay: bool,
+    messenger_provider_override: Option<&dyn mlc_messenger_model::MessengerProvider>,
 ) -> CommunityResult {
     let theme = ModalTheme::from_toolbar(
         &frame_theme.modal_bg,
@@ -182,13 +189,17 @@ pub fn render_community_modal(
     let (shell, layer_id) =
         begin_modal_shell(ctx, input_coordinator, &spec, &theme, (window_w, window_h));
 
-    // Client-side sum of every loaded conversation's own `unread_count` —
-    // the Messages pill's badge (`messenger_concept_v1.html`'s own `.c`
-    // span). No aggregate "total unread" field exists on the wire; summing
-    // the per-conversation counts already fetched for the left column is
-    // cheap and needs no new one (audit `community-modal-and-forum-vs-
-    // concept.md` §1).
-    let unread: i64 = state.dm.conversations.iter().map(|c| c.unread_count).sum();
+    // Client-side sum of every loaded room's own unread count — the
+    // Messages pill's badge (`messenger_concept_v1.html`'s own `.c` span).
+    // No aggregate "total unread" field exists on the wire; summing the
+    // per-room counts already fetched for the left column is cheap and
+    // needs no new one (audit `community-modal-and-forum-vs-concept.md`
+    // §1). Reads through `messenger_provider_override` when the caller
+    // supplied one, straight off `state.dm` otherwise (today's default).
+    let unread: i64 = match messenger_provider_override {
+        Some(provider) => provider.rooms().iter().map(|r| r.notification_count as i64).sum(),
+        None => state.dm.conversations.iter().map(|c| c.unread_count).sum(),
+    };
     result.tab_rects = draw_header_tabs(
         ctx, input_coordinator, &layer_id, shell.header, shell.close_btn,
         active_tab, messages_visible, unread, toolbar_theme,
@@ -203,10 +214,14 @@ pub fn render_community_modal(
             ctx, input_coordinator, &layer_id, x, y, w, viewport_h, state, frame_theme, toolbar_theme,
             current_time_ms, &mut result.content, &mut result.list,
         ),
-        CommunityTab::Messages => messenger_overlay::draw(
-            ctx, input_coordinator, &layer_id, x, y, w, viewport_h, state, frame_theme, toolbar_theme,
-            current_time_ms, &mut result.content, &mut result.list,
-        ),
+        CommunityTab::Messages => {
+            let default_provider = DmMessengerProviderView::new(&state.dm);
+            let provider = messenger_provider_override.unwrap_or(&default_provider);
+            messenger_overlay::draw(
+                ctx, input_coordinator, &layer_id, x, y, w, viewport_h, state, provider, frame_theme,
+                toolbar_theme, current_time_ms, &mut result.content, &mut result.list,
+            )
+        }
     }
 
     end_modal_shell(ctx, input_coordinator, &spec, &theme, &shell, &layer_id, &[]);

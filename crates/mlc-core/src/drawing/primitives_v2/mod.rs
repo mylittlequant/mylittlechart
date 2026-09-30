@@ -104,6 +104,7 @@ pub mod registry;
 pub mod config;
 pub mod fill_defaults;
 pub mod scan_shape;
+pub mod ewa_scan_shared;
 
 /// Format a price value with smart precision for display in drawing primitives.
 /// Handles everything from BTC ($70000) to PEPE ($0.000000003).
@@ -704,6 +705,7 @@ pub use fill_defaults::{
     default_box_annotation_fill_opacity,
 };
 pub use scan_shape::{ScanShape, render_scan_bracket, price_band_filter};
+pub use ewa_scan_shared::build_wave_primitive;
 
 // Re-export all primitives
 pub use lines::*;

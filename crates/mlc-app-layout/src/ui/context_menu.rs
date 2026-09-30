@@ -357,28 +357,61 @@ pub fn build_dm_message_context_menu(caps: mlc_messenger_model::Capabilities) ->
     items
 }
 
-/// A DM chat-list row's own right-click menu — "Mark as read" only when
-/// the provider's own `Capabilities::receipts` says read state is tracked
-/// at all. `can_mark_read` is a SEPARATE, per-call data-availability gate
-/// (the caller already resolved whether it actually has a message id to
-/// mark up to — a row for a conversation that has never been opened
-/// carries none, `RoomSummary::last_event` is always `None` for today's DM
-/// adapter): the row still SHOWS when the capability supports it, matching
-/// the concept's own "only supported items" rule, but is disabled rather
-/// than silently omitted when this one instance has nothing to act on —
-/// the same fail-visible convention [`ContextMenuItemState::set_enabled`]
-/// already offers everywhere else in this file. Empty (no rows at all)
-/// when `caps.receipts` is false — the caller is expected to skip opening
-/// a menu with nothing in it.
+/// A DM chat-list row's own right-click menu (concept v1 screen "2 · Канал
+/// + меню чата") — Pin/Mute/Archive/Leave show UNCONDITIONALLY (no
+/// `Capabilities` flag gates them; today's DM adapter's own [`crate::ui::
+/// dm_messenger_provider::DmMessengerProvider::enqueue`] refuses the
+/// matching [`mlc_messenger_model::MessengerIntent`] with a `last_error`,
+/// the SAME "kept wired, unreachable today" convention
+/// [`build_dm_message_context_menu`]'s own `Reply` row already uses).
+/// "Mark as read" keeps its pre-existing `caps.receipts` gate. "Add to
+/// folder ▸" shows only when `caps.folders` is set, and is a plain
+/// per-folder CHECKLIST for visual parity — ticking one is NOT wired to a
+/// `MessengerIntent` this pass: the model carries no "tag this room" intent
+/// at all yet (folders are tags, but nothing in [`mlc_messenger_model::
+/// MessengerIntent`] adds/removes a single room's own tag), a gap for a
+/// later pass to close, not invented here. `can_mark_read` is the same
+/// per-call data-availability gate this function always had.
 #[cfg(feature = "cloud")]
 pub fn build_dm_chat_row_context_menu(
     caps: mlc_messenger_model::Capabilities,
     can_mark_read: bool,
+    kind: mlc_messenger_model::RoomKind,
+    pinned: bool,
+    muted: bool,
+    folders: &[mlc_messenger_model::Folder],
+    room_tags: &[mlc_messenger_model::TagName],
 ) -> Vec<ContextMenuItemState> {
-    let mut items = Vec::new();
+    use mlc_messenger_model::RoomKind;
+
+    let mut items = vec![
+        ContextMenuItemState::action("dm_chat_row:toggle_pin", if pinned { "Unpin" } else { "Pin to top" }),
+        ContextMenuItemState::action("dm_chat_row:toggle_mute", if muted { "Unmute" } else { "Mute" }),
+    ];
     if caps.receipts {
         items.push(ContextMenuItemState::action("dm_chat_row:mark_read", "Mark as read").set_enabled(can_mark_read));
     }
+    if caps.folders {
+        let mut rows: Vec<ContextMenuItemState> = folders
+            .iter()
+            .filter_map(|f| {
+                let tag = f.id.as_ref()?;
+                let on = room_tags.iter().any(|t| t == tag);
+                Some(ContextMenuItemState::action(format!("dm_chat_row:add_folder:{}", tag.as_str()), f.name.clone()).with_checkbox(on))
+            })
+            .collect();
+        rows.push(ContextMenuItemState::separator());
+        rows.push(ContextMenuItemState::action("dm_chat_row:new_folder", "New folder…"));
+        items.push(ContextMenuItemState::action("dm_chat_row:add_folder", "Add to folder").with_submenu(rows));
+    }
+    items.push(ContextMenuItemState::action("dm_chat_row:archive", "Archive"));
+    items.push(ContextMenuItemState::separator());
+    let leave_label = match kind {
+        RoomKind::Channel => "Leave channel",
+        RoomKind::Group => "Leave group",
+        RoomKind::Direct => "Delete chat",
+    };
+    items.push(ContextMenuItemState::danger("dm_chat_row:leave", leave_label));
     items
 }
 

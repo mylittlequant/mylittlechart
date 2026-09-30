@@ -49,10 +49,6 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
     // Sync chrome colours from the chart theme.
     #[cfg(target_os = "windows")]
     let dwm_border_color: String;
-    // Spinner colours pulled from the active theme so the loading indicator
-    // doesn't look hand-painted against whichever skin the user picked.
-    let spinner_active_color: String;
-    let spinner_backdrop_color: String;
     {
         let theme = pw.chart.panel_app.theme_manager.current();
         pw.chrome_state.colors.background = theme.chart.background.clone();
@@ -66,8 +62,6 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
         pw.chrome_state.colors.cta_bg_hover = theme.colors.accent_hover.clone();
         pw.chrome_state.colors.tooltip_bg  = theme.colors.button_bg.clone();
         pw.chrome_state.colors.tooltip_text = theme.colors.text_primary.clone();
-        spinner_active_color = theme.colors.accent.clone();
-        spinner_backdrop_color = theme.chart.scale_border.clone();
         #[cfg(target_os = "windows")]
         { dwm_border_color = theme.colors.ui_border.clone(); }
     }
@@ -246,8 +240,6 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                     &mut spin_ctx,
                     &pw.chart.last_loading_spinners,
                     elapsed,
-                    &spinner_active_color,
-                    &spinner_backdrop_color,
                 );
             }
         }
@@ -338,7 +330,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
         // Render toast overlays — restyled to the modal frame (owner ask
         // 2026-09-09, toast restyle-and-anchor follow-up to §8).
         {
-            let mut toast_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
+            let mut toast_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, chrome::CHROME_HEIGHT, None, None);
             pw.chart.render_toasts(&mut toast_ctx, frame_time);
         }
 
@@ -354,7 +346,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
         // Spinner overlay — drawn topmost when the off-thread promote worker is running.
         if let Some(start) = pw.spinner_start {
             let mut spinner_ctx = VelloGpuRenderContext::new(&mut pw.scene, 0.0, 0.0, None, None);
-            render_spinner(&mut spinner_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64, &spinner_active_color, &spinner_backdrop_color);
+            render_spinner(&mut spinner_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
         }
     } else {
         // ── Non-VelloGpu: full backend switch ─────────────────────────────────
@@ -438,8 +430,6 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                         &mut chart_ctx,
                         &pw.chart.last_loading_spinners,
                         elapsed,
-                        &spinner_active_color,
-                        &spinner_backdrop_color,
                     );
                 }
 
@@ -469,7 +459,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                         width as f32,
                         height as f32,
                         0.0,
-                        0.0,
+                        chrome::CHROME_HEIGHT as f32,
                         None,
                         None,
                     );
@@ -504,7 +494,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                         None,
                         None,
                     );
-                    render_spinner(&mut spinner_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64, &spinner_active_color, &spinner_backdrop_color);
+                    render_spinner(&mut spinner_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
                     chart_ctx.inner_mut().draw_commands.extend_from_slice(&spinner_ctx.inner().draw_commands);
                 }
 
@@ -562,8 +552,6 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                         &mut cpu_ctx,
                         &pw.chart.last_loading_spinners,
                         elapsed,
-                        &spinner_active_color,
-                        &spinner_backdrop_color,
                     );
                 }
                 cpu_ctx.restore();
@@ -578,7 +566,10 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                 }
                 // Render toast overlays — restyled to the modal frame (owner
                 // ask 2026-09-09, toast restyle-and-anchor follow-up to §8).
+                cpu_ctx.save();
+                cpu_ctx.translate(0.0, chrome::CHROME_HEIGHT);
                 pw.chart.render_toasts(&mut cpu_ctx, frame_time);
+                cpu_ctx.restore();
                 // Render tooltips (top-most layer). Suppressed while
                 // capturing a screenshot (screenshot-is-chart-only arc,
                 // 2026-09-05).
@@ -588,7 +579,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                 }
                 // Spinner overlay (topmost, when promote worker is running).
                 if let Some(start) = pw.spinner_start {
-                    render_spinner(&mut cpu_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64, &spinner_active_color, &spinner_backdrop_color);
+                    render_spinner(&mut cpu_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
                 }
                 // Rasterize to pixel buffer.
                 let pixel_count = (width as usize) * (height as usize) * 4;
@@ -648,8 +639,6 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                         &mut skia_ctx,
                         &pw.chart.last_loading_spinners,
                         elapsed,
-                        &spinner_active_color,
-                        &spinner_backdrop_color,
                     );
                 }
                 skia_ctx.restore();
@@ -664,7 +653,10 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                 }
                 // Render toast overlays — restyled to the modal frame (owner
                 // ask 2026-09-09, toast restyle-and-anchor follow-up to §8).
+                skia_ctx.save();
+                skia_ctx.translate(0.0, chrome::CHROME_HEIGHT);
                 pw.chart.render_toasts(&mut skia_ctx, frame_time);
+                skia_ctx.restore();
                 // Render tooltips (top-most layer). Suppressed while
                 // capturing a screenshot (screenshot-is-chart-only arc,
                 // 2026-09-05).
@@ -674,7 +666,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                 }
                 // Spinner overlay (topmost, when promote worker is running).
                 if let Some(start) = pw.spinner_start {
-                    render_spinner(&mut skia_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64, &spinner_active_color, &spinner_backdrop_color);
+                    render_spinner(&mut skia_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
                 }
                 let pixels = skia_ctx.inner().pixels();
                 pw.cpu_chart_dims = (width, height);
@@ -724,8 +716,6 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                         &mut hybrid_ctx,
                         &pw.chart.last_loading_spinners,
                         elapsed,
-                        &spinner_active_color,
-                        &spinner_backdrop_color,
                     );
                 }
                 hybrid_ctx.translate(0.0, -chrome::CHROME_HEIGHT);
@@ -740,7 +730,9 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                 }
                 // Render toast overlays — restyled to the modal frame (owner
                 // ask 2026-09-09, toast restyle-and-anchor follow-up to §8).
+                hybrid_ctx.translate(0.0, chrome::CHROME_HEIGHT);
                 pw.chart.render_toasts(&mut hybrid_ctx, frame_time);
+                hybrid_ctx.translate(0.0, -chrome::CHROME_HEIGHT);
                 // Render tooltips (top-most layer). Suppressed while
                 // capturing a screenshot (screenshot-is-chart-only arc,
                 // 2026-09-05).
@@ -750,7 +742,7 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
                 }
                 // Spinner overlay (topmost, when promote worker is running).
                 if let Some(start) = pw.spinner_start {
-                    render_spinner(&mut hybrid_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64, &spinner_active_color, &spinner_backdrop_color);
+                    render_spinner(&mut hybrid_ctx, width as f64, height as f64, start.elapsed().as_millis() as u64);
                 }
                 // Move the inner uzor context (owns the vello_hybrid::Scene)
                 // into PerWindowState for GPU submission.
@@ -813,76 +805,45 @@ pub(crate) fn build_window_scene(pw: &mut PerWindowState, frame_time: u64) -> u6
 /// an empty `last_loading_spinners` list, and this fn paints nothing — the
 /// transition is instant, on the SAME frame that draws the real chart. The
 /// host redraw pump keeps the spinner animated while the list is non-empty.
-fn render_loading_spinners<C>(
-    ctx: &mut C,
+///
+/// Owner order 2026-09-24: the ring is retired — every entry draws the
+/// shared spinning-hat indicator (`mlc_app_layout::ui::widgets::
+/// draw_loading_hat`), same `(cx, cy, radius)` footprint as the ring it
+/// replaces (a `2*radius` square centred on `(cx, cy)`).
+fn render_loading_spinners(
+    ctx: &mut dyn uzor::render::RenderContext,
     spinners: &[(mlc_core::LeafId, (f64, f64, f64))],
     elapsed_ms: u64,
-    active_color: &str,
-    backdrop_color: &str,
-)
-where
-    C: uzor::render::Painter + ?Sized,
-{
-    if spinners.is_empty() {
-        return;
-    }
-    let t = (elapsed_ms % 1200) as f64 / 1200.0;
-    let start_angle = t * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
-    let sweep = std::f64::consts::PI * 3.0 / 2.0;
-
+) {
     for (_leaf, (cx, cy, radius)) in spinners {
-        let stroke_w = (radius * 0.16).clamp(2.0, 4.0);
-        ctx.save();
-        ctx.set_stroke_width(stroke_w);
-        ctx.set_line_dash(&[]);
-        // Backdrop ring.
-        ctx.set_stroke_color(backdrop_color);
-        ctx.begin_path();
-        ctx.arc(*cx, *cy, *radius, 0.0, std::f64::consts::TAU);
-        ctx.stroke();
-        // Active 270° sweep.
-        ctx.set_stroke_color(active_color);
-        ctx.begin_path();
-        ctx.arc(*cx, *cy, *radius, start_angle, start_angle + sweep);
-        ctx.stroke();
-        ctx.restore();
+        let size = radius * 2.0;
+        mlc_app_layout::ui::widgets::draw_loading_hat(
+            ctx,
+            mlc_core::state::toolbar_geometry::WidgetRect::new(cx - size / 2.0, cy - size / 2.0, size, size),
+            elapsed_ms,
+        );
     }
 }
 
+/// Whole-window startup spinner, drawn topmost while the off-thread promote
+/// worker builds the live `ChartApp`. Owner order 2026-09-24: the ring is
+/// retired — draws the shared spinning-hat indicator instead, same centring
+/// rule as before (owner's rule, 2026-09-03: centred on the window minus the
+/// chrome strip along its top, "прям идеально").
 fn render_spinner(
-    ctx: &mut dyn uzor::render::Painter,
+    ctx: &mut dyn uzor::render::RenderContext,
     window_width: f64,
     window_height: f64,
     elapsed_ms: u64,
-    active_color: &str,
-    backdrop_color: &str,
 ) {
     const RADIUS: f64 = 22.0;
-    const STROKE_WIDTH: f64 = 3.0;
-    const SWEEP: f64 = std::f64::consts::PI * 3.0 / 2.0; // 270 degrees — 3/4 ring
 
-    // Centred on what the user can SEE, which is the window minus the chrome
-    // strip along its top. Halving the raw window height put the ring 16px
-    // high — the strip is counted as space the spinner may occupy, and it is
-    // not. Owner's rule, 2026-09-03: a whole-app spinner sits on the centre of
-    // the window "прям идеально", and the strip is chrome, not window.
     let cx = window_width / 2.0;
     let cy = chrome::CHROME_HEIGHT + (window_height - chrome::CHROME_HEIGHT) / 2.0;
-
-    let t = (elapsed_ms % 1200) as f64 / 1200.0;
-    let start_angle = t * std::f64::consts::TAU - std::f64::consts::FRAC_PI_2;
-
-    ctx.save();
-    ctx.set_stroke_width(STROKE_WIDTH);
-    // Backdrop full circle (dim, theme.scale_border).
-    ctx.set_stroke_color(backdrop_color);
-    ctx.begin_path();
-    ctx.arc(cx, cy, RADIUS, 0.0, std::f64::consts::TAU);
-    ctx.stroke();
-    // Active 270° arc (primary, theme.text_primary).
-    ctx.set_stroke_color(active_color);
-    ctx.begin_path();
-    ctx.arc(cx, cy, RADIUS, start_angle, start_angle + SWEEP);
-    ctx.stroke();
-    ctx.restore();
+    let size = RADIUS * 2.0;
+    mlc_app_layout::ui::widgets::draw_loading_hat(
+        ctx,
+        mlc_core::state::toolbar_geometry::WidgetRect::new(cx - size / 2.0, cy - size / 2.0, size, size),
+        elapsed_ms,
+    );
 }

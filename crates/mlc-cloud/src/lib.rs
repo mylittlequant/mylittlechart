@@ -23,7 +23,9 @@
 //! `X-Profile-Id` / `X-Device-Id`; sync endpoints additionally enforce the
 //! build attestation headers when the server has `BUILD_ATTEST_ENFORCE=true`.
 
+pub mod billing;
 pub mod models;
+pub mod staff;
 
 /// The one refusal [`forum_v2_error_message`]/[`dm_error_message`] special-
 /// case rather than surfacing verbatim: a signed-in caller with no
@@ -42,9 +44,15 @@ pub const NICK_REQUIRED_SENTINEL: &str = "__mlc_nick_required__";
 mod wasm;
 
 #[cfg(target_arch = "wasm32")]
-pub use wasm::FetchTransport;
+pub use wasm::{FetchTransport, FriendRoster};
 
+pub use billing::*;
 pub use models::*;
+pub use staff::{
+    staff_error, with_retry_after, StaffBatchRevoked, StaffError, StaffGiftBatch, StaffLedgerRow,
+    StaffLifetimeGrant, StaffLifetimeRequest, StaffLifetimeRevokeRequest, StaffLifetimeRevoked,
+    StaffMintRequest, StaffMintResponse, StaffPaidDays, StaffPaidDaysRequest, StaffUser,
+};
 
 /// Build attestation values, produced at packaging time.
 ///
@@ -153,6 +161,33 @@ mod session_revoked_401_tests {
         // must not be treated as a revocation either — only `Unauthorized`
         // (401) is.
         assert!(!is_session_revoked_401(true, false));
+    }
+}
+
+#[cfg(test)]
+mod stream_open_wire_tests {
+    use super::models::ShareStreamOpen;
+
+    #[test]
+    fn decodes_the_hub_answer() {
+        let body = r#"{"ticket":"abc123","publish":true,"expires_in_s":30}"#;
+        let open: ShareStreamOpen = serde_json::from_str(body).expect("hub answer decodes");
+        assert_eq!(open.ticket, "abc123");
+        assert!(open.publish);
+        assert_eq!(open.expires_in_s, 30);
+    }
+
+    #[test]
+    fn a_viewer_answer_and_an_old_edge_answer_both_decode() {
+        let viewer: ShareStreamOpen =
+            serde_json::from_str(r#"{"ticket":"t","publish":false,"expires_in_s":30}"#).expect("viewer answer");
+        assert!(!viewer.publish);
+        // The edge fields are gone from the contract; a stray one is ignored.
+        let old: ShareStreamOpen =
+            serde_json::from_str(r#"{"ticket":"t","publish":true,"owner":"utah","origin":"x","edge":"ams"}"#)
+                .expect("unknown fields are ignored");
+        assert_eq!(old.ticket, "t");
+        assert_eq!(old.expires_in_s, 0);
     }
 }
 

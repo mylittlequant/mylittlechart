@@ -21,6 +21,15 @@ mlc-core = { path = "../mlc-core", package = "mylittlechart-core" }
 mlc-app-input-shell = { path = "../mlc-app-input-shell", package = "mylittlechart-app-input-shell" }
 mlc-vault = { path = "../mlc-vault", package = "mylittlechart-vault" }
 mlc-app-layout = { path = "../mlc-app-layout", package = "mylittlechart-app-layout" }
+# `messenger_io.rs`'s own I/O glue over `mlc_messenger::driver::MessengerDriver`
+# (M15 piece D1/D2) -- not wired into `ChartApp` yet (the MLC coordinator
+# does that separately).
+mlc-messenger = { path = "../mlc-messenger", package = "mylittlechart-messenger" }
+# `messenger_io.rs` wraps the vault key it's handed as `Zeroizing<[u8; 32]>`
+# before handing it to `MessengerDriver::new` -- already a direct dependency
+# of `mlc-vault`/`mlc-messenger` themselves, so this adds no new
+# supply-chain surface.
+zeroize = "1"
 uzor = "=1.5.2"
 vello = "0.9"
 winit = "0.30"

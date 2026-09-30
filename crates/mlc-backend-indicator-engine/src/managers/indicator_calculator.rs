@@ -20,6 +20,7 @@ use crate::signals::{rules::{SignalEngine, default_profile}, signal::Signal};
 
 use crate::Bar;
 use super::indicator_manager::IndicatorValue;
+use super::stream_event::StreamEvent;
 
 /// Result of indicator calculation including values and signals
 pub struct CalculationResult {
@@ -345,6 +346,25 @@ impl IndicatorCalculator {
         }
     }
 
+    /// Feed one non-bar stream event (tick, order book, funding rate, open
+    /// interest, liquidation) into an existing ComputeInstance and return
+    /// the output value.
+    ///
+    /// Dispatches to the matching `IndicatorInstance::update_*` — a no-op
+    /// passthrough (`self.value()`) for any variant that does not consume
+    /// this stream (the mli dispatch tables' own fallback,
+    /// `instance_factory.rs:9022,9034,9056,9073,9163`).
+    pub fn feed_stream_event(instance: &mut ComputeInstance, ev: &StreamEvent) -> ComputeValue {
+        match ev {
+            StreamEvent::Tick(t) => instance.update_tick(t),
+            StreamEvent::OrderBook(b) => instance.update_orderbook(b),
+            StreamEvent::OrderbookDelta(d) => instance.update_delta(d),
+            StreamEvent::Funding(f) => instance.update_funding(f),
+            StreamEvent::OpenInterest(oi) => instance.update_oi(oi),
+            StreamEvent::Liquidation(l) => instance.update_liquidation(l),
+        }
+    }
+
     /// Extract single-bar outputs from a ComputeValue using rendering metadata.
     ///
     /// Returns a HashMap of output_name -> f64.  Falls back to `"value"` key
@@ -469,5 +489,146 @@ mod tests {
         assert!(result.is_some());
         let values = result.unwrap();
         assert!(!values.is_empty());
+    }
+
+    // ── feed_stream_event: one indicator per StreamEvent variant ──────────
+    //
+    // Each test feeds a synthetic bar (baseline — these indicators are
+    // no-op passthroughs on `update_bar`, per mli's own dispatch tables)
+    // then a synthetic stream event of the matching kind, and asserts the
+    // output value moved off the bar-only baseline.
+
+    fn zero_bar() -> Bar {
+        Bar { time: 0, open: 100.0, high: 101.0, low: 99.0, close: 100.0, volume: 10.0 }
+    }
+
+    #[test]
+    fn feed_stream_event_tick_moves_trade_flow_imbalance() {
+        let config = IndicatorConfig::new(BarIndicatorId::TradeFlowImbalance, "TradeFlowImbalance".to_string(), vec![]);
+        let mut instance = ComputeInstance::create(&config)
+            .expect("TradeFlowImbalance builds with default params");
+
+        let baseline = IndicatorCalculator::feed_bar(&mut instance, &zero_bar());
+        assert_eq!(baseline, ComputeValue::Double(0.0, 0.0));
+
+        let tick = crate::Tick::new(0, 100.0, 5.0, true);
+        let updated = IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::Tick(tick));
+
+        assert_ne!(updated, baseline);
+        assert_eq!(updated, ComputeValue::Double(1.0, 5.0));
+    }
+
+    #[test]
+    fn feed_stream_event_orderbook_moves_book_imbalance() {
+        let config = IndicatorConfig::new(BarIndicatorId::BookImb, "BookImb".to_string(), vec![]);
+        let mut instance = ComputeInstance::create(&config)
+            .expect("BookImb builds with default params");
+
+        let baseline = IndicatorCalculator::feed_bar(&mut instance, &zero_bar());
+        assert_eq!(baseline, ComputeValue::Single(0.0));
+
+        let book = crate::types::OrderBook {
+            bids: vec![crate::types::OrderBookLevel::new(100.0, 30.0)],
+            asks: vec![crate::types::OrderBookLevel::new(101.0, 10.0)],
+            timestamp: 0,
+            ..Default::default()
+        };
+        let updated = IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::OrderBook(book));
+
+        assert_ne!(updated, baseline);
+        assert!((updated.main() - 0.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn feed_stream_event_orderbook_delta_moves_book_churn_rate() {
+        let config = IndicatorConfig::new(BarIndicatorId::BookChurnRate, "BookChurnRate".to_string(), vec![]);
+        let mut instance = ComputeInstance::create(&config)
+            .expect("BookChurnRate builds with default params");
+
+        let baseline = IndicatorCalculator::feed_bar(&mut instance, &zero_bar());
+        assert_eq!(baseline, ComputeValue::Single(0.0));
+
+        let delta = crate::types::OrderbookDelta {
+            bids: vec![
+                crate::types::OrderBookLevel::new(100.0, 5.0),
+                crate::types::OrderBookLevel::new(99.0, 5.0),
+            ],
+            asks: vec![crate::types::OrderBookLevel::new(101.0, 5.0)],
+            timestamp: 1000,
+            first_update_id: None,
+            last_update_id: None,
+            prev_update_id: None,
+            ..Default::default()
+        };
+        let updated = IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::OrderbookDelta(delta));
+
+        assert_ne!(updated, baseline);
+        assert!((updated.main() - 3.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn feed_stream_event_funding_moves_funding_momentum() {
+        let config = IndicatorConfig::new(BarIndicatorId::FundingMomentum, "FundingMomentum".to_string(), vec![]);
+        let mut instance = ComputeInstance::create(&config)
+            .expect("FundingMomentum builds with default period");
+
+        let baseline = IndicatorCalculator::feed_bar(&mut instance, &zero_bar());
+        assert_eq!(baseline, ComputeValue::Double(0.0, 0.0));
+
+        let fr = crate::types::FundingRate {
+            rate: 0.0001,
+            next_funding_time: None,
+            timestamp: 1000,
+            ..Default::default()
+        };
+        let updated = IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::Funding(fr));
+
+        assert_ne!(updated, baseline);
+        assert_eq!(updated, ComputeValue::Double(0.0001, 0.0001));
+    }
+
+    #[test]
+    fn feed_stream_event_open_interest_moves_oi_change_rate() {
+        let config = IndicatorConfig::new(BarIndicatorId::OiChangeRate, "OiChangeRate".to_string(), vec![]);
+        let mut instance = ComputeInstance::create(&config)
+            .expect("OiChangeRate builds with no params");
+
+        let baseline = IndicatorCalculator::feed_bar(&mut instance, &zero_bar());
+        assert_eq!(baseline, ComputeValue::Double(0.0, 0.0));
+
+        let oi = crate::types::OpenInterest {
+            open_interest: 1000.0,
+            open_interest_value: None,
+            timestamp: 0,
+            ..Default::default()
+        };
+        let updated = IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::OpenInterest(oi));
+
+        assert_ne!(updated, baseline);
+        assert_eq!(updated, ComputeValue::Double(0.0, 1000.0));
+    }
+
+    #[test]
+    fn feed_stream_event_liquidation_moves_liquidation_rate() {
+        let config = IndicatorConfig::new(BarIndicatorId::LiquidationRate, "LiquidationRate".to_string(), vec![]);
+        let mut instance = ComputeInstance::create(&config)
+            .expect("LiquidationRate builds with default window");
+
+        let baseline = IndicatorCalculator::feed_bar(&mut instance, &zero_bar());
+        assert_eq!(baseline, ComputeValue::Single(0.0));
+
+        let liq = crate::types::Liquidation {
+            symbol: "BTCUSDT".to_string(),
+            side: crate::types::TradeSide::Buy,
+            price: 30_000.0,
+            quantity: 0.1,
+            timestamp: 0,
+            value: None,
+            ..Default::default()
+        };
+        let updated = IndicatorCalculator::feed_stream_event(&mut instance, &StreamEvent::Liquidation(liq));
+
+        assert_ne!(updated, baseline);
+        assert!((updated.main() - 1.0 / 60.0).abs() < 1e-9);
     }
 }
