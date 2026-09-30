@@ -96,7 +96,12 @@
 //! [`StoredDevice`] for at all marks that user outdated and returns
 //! [`OlmDecryptError::UnknownSenderDevice`] so a caller can retry after a
 //! `/keys/query` round trip, rather than silently trusting an unverified
-//! claim.
+//! claim. That lookup runs BEFORE any session is touched (it needs only the
+//! event's own `sender` and the envelope's `sender_key`, both readable
+//! without decrypting): a pre-key message from a not-yet-known device must
+//! not consume its one-time key or advance a ratchet, or the retry after
+//! the `/keys/query` would be a replay of already-consumed state and the
+//! room key inside it would be lost for good.
 
 use crate::canonical_json;
 use crate::crypto::account::OlmAccountState;
@@ -462,6 +467,15 @@ impl OlmSessionManager {
             .map_err(|source| OlmDecryptError::MalformedCiphertext(source.to_string()))?;
 
         let sender_curve_b64 = content.sender_key.clone();
+
+        // The sender's device must already be known -- checked before any
+        // session is created or advanced (module doc, "Payload binding").
+        let sender_devices = DeviceTracker::devices_for_user(store, event_sender)?;
+        let Some(sender_device) = sender_devices.iter().find(|device| device.curve25519.to_base64() == sender_curve_b64) else {
+            store.mark_user_tracked(event_sender, true)?;
+            return Err(OlmDecryptError::UnknownSenderDevice { user_id: event_sender.clone(), curve25519: sender_curve_b64 });
+        };
+
         // Already at most one snapshot per distinct session id, ordered
         // most-recently-used first (see the module doc) -- a plain walk in
         // that order is "try each known session, newest first" as-is.
@@ -521,17 +535,6 @@ impl OlmSessionManager {
                 event_sender.as_str()
             )));
         }
-
-        let sender_devices = DeviceTracker::devices_for_user(store, event_sender)?;
-        let Some(sender_device) =
-            sender_devices.iter().find(|device| device.curve25519.to_base64() == sender_curve_b64)
-        else {
-            store.mark_user_tracked(event_sender, true)?;
-            return Err(OlmDecryptError::UnknownSenderDevice {
-                user_id: event_sender.clone(),
-                curve25519: sender_curve_b64,
-            });
-        };
 
         if payload.keys.ed25519 != sender_device.ed25519.to_base64() {
             return Err(OlmDecryptError::PayloadMismatch(
@@ -779,5 +782,61 @@ mod tests {
             matches!(replay, Err(OlmDecryptError::SessionEstablishment(_))),
             "got {replay:?}"
         );
+    }
+
+    #[test]
+    fn unknown_sender_prekey_message_stays_decryptable_after_the_device_is_learned() {
+        let mut alice_store = new_store("ALICEDEV");
+        let alice_account = OlmAccountState::load_or_create(&mut alice_store).expect("create alice's account");
+        let alice_user = user("alice");
+        let alice_device_id = device("ALICEDEV");
+
+        let bob_user = user("bob");
+        let bob_device_id = device("BOBDEV");
+        let mut bob_store = new_store("BOBDEV");
+        let mut bob_account = OlmAccountState::load_or_create(&mut bob_store).expect("create bob's account");
+        bob_account.on_sync_counts(&mut bob_store, 0, &fallback_present()).expect("top up bob's OTKs");
+
+        let upload = bob_account
+            .keys_upload_request(RequestId::next(0), &bob_user, &bob_device_id)
+            .expect("builds a request")
+            .expect("something to upload");
+        let claim_body =
+            claim_response_body_from_upload(&upload.body.expect("upload has a body"), &bob_user, &bob_device_id);
+        let bob_device = stored_device(&bob_user, &bob_device_id, &bob_account);
+        OlmSessionManager::on_keys_claim_response(&mut alice_store, &alice_account, &[&bob_device], &claim_body)
+            .expect("alice establishes a session with bob");
+        let message_0 = OlmSessionManager::encrypt_to_device(
+            &mut alice_store,
+            &alice_account,
+            &alice_user,
+            &alice_device_id,
+            &bob_device,
+            "m.test",
+            serde_json::json!({ "i": 0 }),
+        )
+        .expect("encrypt message 0");
+
+        // First attempt: bob has never seen alice's device (the live case: the
+        // to-device room key can arrive before any `/keys/query` for her).
+        let first = OlmSessionManager::decrypt_to_device(&mut bob_store, &mut bob_account, &bob_user, &alice_user, &message_0);
+        assert!(matches!(first, Err(OlmDecryptError::UnknownSenderDevice { .. })), "got {first:?}");
+        let alice_curve = alice_account.identity_keys().curve25519.to_base64();
+        assert!(
+            bob_store.olm_sessions_for_device(&alice_curve).expect("no error").is_empty(),
+            "the refused attempt must not create an inbound session (it would consume the one-time key)"
+        );
+
+        // Bob learns alice's device, then retries the SAME message.
+        let alice_device_keys =
+            alice_account.device_keys_json(&alice_user, &alice_device_id).expect("sign alice's device_keys");
+        let query_body = serde_json::to_vec(&serde_json::json!({
+            "device_keys": { alice_user.as_str(): { alice_device_id.as_str(): alice_device_keys } }
+        }))
+        .expect("valid JSON");
+        DeviceTracker::on_keys_query_response(&mut bob_store, &query_body).expect("bob learns alice's device");
+        let retry = OlmSessionManager::decrypt_to_device(&mut bob_store, &mut bob_account, &bob_user, &alice_user, &message_0)
+            .expect("the retry decrypts: nothing was consumed by the refused attempt");
+        assert_eq!(retry.content, serde_json::json!({ "i": 0 }));
     }
 }
