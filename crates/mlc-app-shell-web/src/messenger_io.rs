@@ -64,9 +64,14 @@
 //!
 //! # Wiring
 //!
-//! Not wired into `ChartApp` or the render loop here — the MLC coordinator does
-//! that, choosing where a `MessengerIo` lives and how `wake` reaches
-//! `requestAnimationFrame`.
+//! `cloud_session.rs` owns the one running `MessengerIo`
+//! (`CloudSession::drive_messenger`): it starts it while the account is signed
+//! in, the vault key is held and the messenger ladder allows it, hands
+//! [`MessengerIo::provider`] to the app through `ChartApp::set_messenger_provider`,
+//! calls [`MessengerIo::tick`] from the per-frame `drive`, stops it on
+//! `pagehide`, and signs it out with the account. `wake` there is a zero-delay
+//! timer that ticks the messenger alone, so a backgrounded tab (no animation
+//! frames) keeps syncing.
 
 use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};

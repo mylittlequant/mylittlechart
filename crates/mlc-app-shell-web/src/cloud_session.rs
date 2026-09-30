@@ -15,9 +15,10 @@
 //! app-boot.js by package-app.sh at signing time); without them the server
 //! answers 403 on the attested endpoints once BUILD_ATTEST_ENFORCE=true.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
+use wasm_bindgen::closure::Closure;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::{spawn_local, JsFuture};
 
@@ -30,6 +31,7 @@ use mlc_app_layout::ui::modal_settings::{
     ForumReplyV2Ui, ForumRequest, ForumSearchHitUi, ForumSubView, ForumThreadV2Detail,
     ForumThreadV2Ui, ForumV2Request, ForumV2View, RedeemStatus, UserSettingsTab, DM_MESSAGE_PAGE_LIMIT,
 };
+use crate::messenger_io::{MessengerAuth, MessengerIo, MessengerIoConfig};
 use mlc_cloud::{
     dm_error_message, forum_error_message, forum_v2_error_message, redeem_error_message,
     BuildAttestation, BlogPost, CloudConfig, DeviceAuthPoll, EntitlementsResponse, FetchTransport,
@@ -388,6 +390,88 @@ struct Inner {
     /// (unrelated request streams) so neither tab's fetch can block or be
     /// blocked by the other's.
     dm_in_flight: bool,
+
+    // ── Matrix-shaped messenger (web `MessengerIo`) ─────────────────────
+    /// The running messenger I/O, present exactly while the account is
+    /// signed in, the vault key is held and the messenger ladder allows it —
+    /// see [`CloudSession::drive_messenger`].
+    messenger: Option<MessengerRun>,
+}
+
+/// One running web messenger: the I/O object plus the inputs it was started
+/// from, so a change of any of them restarts it.
+struct MessengerRun {
+    io: MessengerIo,
+    /// The bearer token `io` authenticates with (the one `FetchTransport`
+    /// holds).
+    token: String,
+    /// The vault key `io`'s driver derives its secrets from.
+    vault_key: mlc_vault::vault::VaultKey,
+    /// The IndexedDB database name (also the Web Lock name suffix).
+    store: String,
+}
+
+/// The IndexedDB database name for `token`'s account: derived from the user
+/// id the server returned, or — for a token stored before that field existed —
+/// its public id. `None` when the token names neither, in which case no store
+/// can be scoped to the account and the messenger does not start.
+fn messenger_store_name(token: &StoredToken) -> Option<String> {
+    if token.user_id != 0 {
+        return Some(format!("mlc-messenger-u{}", token.user_id));
+    }
+    token.public_id.as_deref().filter(|id| !id.is_empty()).map(|id| format!("mlc-messenger-p{id}"))
+}
+
+/// The `MessengerIoConfig::wake` callback: schedules ONE zero-delay timer
+/// that ticks the messenger, however many completions arrive before it fires.
+/// A timer (not the frame loop) so a backgrounded tab — where
+/// `requestAnimationFrame` is throttled to nothing — keeps syncing. It only
+/// touches `Inner`, never `ChartApp`, and never runs inside the caller's
+/// stack, so it cannot re-enter a live `Inner` borrow.
+fn messenger_wake(inner: &Rc<RefCell<Inner>>) -> Rc<dyn Fn()> {
+    let weak = Rc::downgrade(inner);
+    let pending = Rc::new(Cell::new(false));
+    Rc::new(move || {
+        if pending.replace(true) {
+            return;
+        }
+        let weak = weak.clone();
+        let pending = pending.clone();
+        let tick = Closure::once_into_js(move || {
+            pending.set(false);
+            let Some(inner) = weak.upgrade() else { return };
+            let Ok(mut inner) = inner.try_borrow_mut() else { return };
+            if let Some(run) = inner.messenger.as_mut() {
+                run.io.tick(js_sys::Date::now() as i64);
+            }
+        });
+        let scheduled = web_sys::window().and_then(|win| {
+            win.set_timeout_with_callback_and_timeout_and_arguments_0(tick.unchecked_ref(), 0).ok()
+        });
+        if scheduled.is_none() {
+            pending.set(false);
+        }
+    })
+}
+
+/// Stops the messenger when the page goes away (`pagehide` — fires on tab
+/// close, navigation and bfcache entry, unlike `beforeunload`): the driver's
+/// unflushed record batches are queued and the Web Lock is released once they
+/// are written. The next `drive_messenger` frame starts a fresh one if the
+/// page comes back.
+fn install_messenger_pagehide(inner: &Rc<RefCell<Inner>>) {
+    let Some(win) = web_sys::window() else { return };
+    let weak = Rc::downgrade(inner);
+    let cb = Closure::<dyn FnMut()>::new(move || {
+        let Some(inner) = weak.upgrade() else { return };
+        let run = inner.try_borrow_mut().ok().and_then(|mut inner| inner.messenger.take());
+        if let Some(run) = run {
+            run.io.stop();
+        }
+    });
+    let _ = win.add_event_listener_with_callback("pagehide", cb.as_ref().unchecked_ref());
+    // Lives for the page, like every other window listener in this shell.
+    cb.forget();
 }
 
 pub struct CloudSession {
@@ -423,7 +507,7 @@ impl CloudSession {
             device_id,
             attestation,
         });
-        Self {
+        let session = Self {
             inner: Rc::new(RefCell::new(Inner {
                 transport,
                 token,
@@ -484,8 +568,11 @@ impl CloudSession {
                 dm_peer_keys: std::collections::HashMap::new(),
                 dm_backfill_queue: std::collections::VecDeque::new(),
                 dm_in_flight: false,
+                messenger: None,
             })),
-        }
+        };
+        install_messenger_pagehide(&session.inner);
+        session
     }
 
     /// Whether this install holds a stored token — the `account_signed_in`
@@ -543,6 +630,9 @@ impl CloudSession {
     /// callers differ only in wording ("You have been logged out." vs the
     /// server-rejected sentence).
     fn apply_signed_out(&self, chart: &mut ChartApp, reason: &str) {
+        // The messenger goes first: its `sign_out` wipes this device's
+        // records and needs nothing from the token cleared just below.
+        self.stop_messenger(chart, true);
         clear_token();
         clear_tier();
         {
@@ -1280,6 +1370,90 @@ impl CloudSession {
         }
     }
 
+    /// Ends the running messenger, if any, and takes its provider away from
+    /// the app so the Messages tab falls back to the legacy DM path.
+    /// `wipe = true` is a real sign-out (`MessengerIo::sign_out` deletes this
+    /// device's stored records); `false` only stops it (`MessengerIo::stop`
+    /// flushes what is unwritten and keeps the records).
+    fn stop_messenger(&self, chart: &mut ChartApp, wipe: bool) {
+        let run = self.inner.borrow_mut().messenger.take();
+        if let Some(run) = run {
+            if wipe {
+                run.io.sign_out();
+            } else {
+                run.io.stop();
+            }
+        }
+        if chart.has_messenger_provider() {
+            chart.set_messenger_provider(None);
+        }
+    }
+
+    /// Keeps the web messenger running exactly while it should:
+    ///
+    /// - signed in (a stored token, whose user id scopes the IndexedDB store);
+    /// - the vault key is held — the same `chart.core.user().vault_key()` the
+    ///   legacy DM path derives its identity from, never a separate key path;
+    /// - the account passes the messenger ladder predicate the whole surface
+    ///   shares (`ForumV2State::messenger_available`).
+    ///
+    /// When any of those stops holding, or the token / vault key / store the
+    /// running instance was started with changes, it is stopped (not wiped —
+    /// only [`Self::apply_signed_out`] wipes) and, if the inputs hold again,
+    /// started afresh; the app's provider slot follows. Every frame it also
+    /// ticks the running instance (`MessengerIoConfig::wake` covers the gaps
+    /// between frames).
+    fn drive_messenger(&self, chart: &mut ChartApp, now_ms: f64) {
+        let vault_key = chart.core.user().vault_key();
+        let allowed = chart.panel_app.community_state.forum2.messenger_available();
+        let wanted = {
+            let inner = self.inner.borrow();
+            match (&inner.token, vault_key, allowed) {
+                (Some(token), Some(key), true) => {
+                    messenger_store_name(token).map(|store| (token.token.clone(), key, store))
+                }
+                _ => None,
+            }
+        };
+
+        let unchanged = {
+            let inner = self.inner.borrow();
+            match (&inner.messenger, &wanted) {
+                (Some(run), Some((token, key, store))) => {
+                    run.token == *token && run.vault_key == *key && run.store == *store
+                }
+                (None, None) => true,
+                _ => false,
+            }
+        };
+        if !unchanged {
+            self.stop_messenger(chart, false);
+        } else if wanted.is_none() && chart.has_messenger_provider() {
+            // Nothing runs, yet the app still holds a handle from before
+            // (the page-hide stop took the run and left it behind).
+            chart.set_messenger_provider(None);
+        }
+
+        if let Some((token, key, store)) = wanted {
+            if self.inner.borrow().messenger.is_none() {
+                let config = MessengerIoConfig {
+                    // Same origin as the rest of the app: the homeserver
+                    // answers under `/_matrix/...` on this host.
+                    base_url: String::new(),
+                    store: store.clone(),
+                    wake: messenger_wake(&self.inner),
+                };
+                let io = MessengerIo::start(&key, MessengerAuth::Bearer(token.clone()), config);
+                chart.set_messenger_provider(Some(Box::new(io.provider())));
+                self.inner.borrow_mut().messenger = Some(MessengerRun { io, token, vault_key: key, store });
+            }
+        }
+
+        if let Some(run) = self.inner.borrow_mut().messenger.as_mut() {
+            run.io.tick(now_ms as i64);
+        }
+    }
+
     pub fn drive(&self, chart: &mut ChartApp, now_ms: f64) {
         if let Some((token, allowed)) = self.inner.borrow_mut().share_rights.take() {
             chart.set_share_clone_allowed(&token, allowed);
@@ -1315,6 +1489,10 @@ impl CloudSession {
                 "The server no longer accepts this session — sign in again.",
             );
         }
+
+        // Matrix-shaped messenger: start/stop/restart it to match the account,
+        // the vault and the ladder, hand its provider to the app, and tick it.
+        self.drive_messenger(chart, now_ms);
 
         // Keep the profile header in sync with the active profile.
         let profile_id = chart.core.user().profile().domain.profile_id.clone();
