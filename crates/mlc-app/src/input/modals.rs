@@ -2448,6 +2448,12 @@ impl ChartApp {
                     self.input_coordinator.borrow_mut().text_fields_mut().blur();
                     log::debug!("[ChartApp] close_topmost_modal_layer: share_open closed");
                 }
+                // Checkout: an unfinished purchase is kept (the invoice stays
+                // payable), so Escape and a click outside are harmless.
+                "checkout" => {
+                    self.panel_app.checkout_state.dismiss();
+                    log::debug!("[ChartApp] close_topmost_modal_layer: checkout closed");
+                }
                 "share_settings" => {
                     self.panel_app.share_settings_state.is_open = false;
                     self.panel_app.share_settings_state.hits.clear();

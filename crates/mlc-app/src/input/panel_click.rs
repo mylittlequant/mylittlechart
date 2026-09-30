@@ -5519,6 +5519,12 @@ impl ChartApp {
             return;
         }
 
+        // === Checkout modal (plans / pay / anonymous key) and its entry points ===
+        if let Some(rest) = widget_id.strip_prefix("checkout:") {
+            self.on_checkout_click(rest, x, y);
+            return;
+        }
+
         if let Some(rest) = widget_id.strip_prefix("share_open:") {
             match rest {
                 "submit" => {

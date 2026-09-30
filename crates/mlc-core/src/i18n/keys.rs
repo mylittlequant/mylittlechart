@@ -33,6 +33,7 @@ use super::tables::{
     CONCEPT_KEY_TABLE,
     SHARE_VIEWER_KEY_TABLE,
     FORUM_KEY_TABLE,
+    CHECKOUT_KEY_TABLE,
 };
 
 // =============================================================================
@@ -4228,6 +4229,191 @@ impl uzor::i18n::Translate for AdminKey {
     #[inline]
     fn translate(self, lang_index: usize) -> &'static str {
         uzor::table_lookup!(&ADMIN_KEY_TABLE[self as usize], lang_index)
+    }
+}
+
+// =============================================================================
+// Checkout Keys (in-app checkout modal)
+// =============================================================================
+
+/// Every string of the in-app checkout modal (plans, pay step, anonymous key
+/// gate, status notes and the user-facing sentence for each billing error
+/// code). Placeholders are written `{name}` and substituted by the caller
+/// with a plain `str::replace` — the table cells are static text.
+///
+/// Variant order is **frozen** — discriminant == row index in
+/// `CHECKOUT_KEY_TABLE`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(usize)]
+pub enum CheckoutKey {
+    /// Modal header.
+    Title = 0,
+    /// Plans step heading.
+    PlansHeading = 1,
+    /// Plans step section: the account plans.
+    SectionAccount = 2,
+    /// Plans step section: the monthly quant tiers.
+    SectionQuant = 3,
+    /// Lifetime paid account.
+    PlanPaid = 4,
+    /// Lifetime paid account, one line of description.
+    PlanPaidDesc = 5,
+    /// Lifetime anonymous account.
+    PlanAnon = 6,
+    /// Anonymous account description: the key is the only credential.
+    PlanAnonDesc = 7,
+    /// Quant tier name; `{tier}` is the tier rank.
+    PlanQuantTier = 8,
+    /// Quant description when the operator set no quota.
+    PlanQuantDesc = 9,
+    /// Quant description with a quota; `{quota}`.
+    PlanQuantDescQuota = 10,
+    /// Price suffix of a one-time plan.
+    PerOneTime = 11,
+    /// Price suffix of a monthly plan.
+    PerMonth = 12,
+    /// Badge on a plan the account already owns.
+    Owned = 13,
+    /// Badge on the running quant tier.
+    Current = 14,
+    /// Card action / entry-point label: move up a tier.
+    ActionUpgrade = 15,
+    /// Card action: move down a tier.
+    ActionDowngrade = 16,
+    /// Badge on the tier a queued change moves to.
+    Scheduled = 17,
+    /// Card action of an account plan.
+    Buy = 18,
+    /// Card action of a quant tier without a subscription.
+    Subscribe = 19,
+    /// Tag on a Tor-only plan.
+    TorTag = 20,
+    /// Plans step while the list loads.
+    LoadingPlans = 21,
+    /// Retry button.
+    Retry = 22,
+    /// Link to the gift-code field.
+    HaveCode = 23,
+    /// Pay step instruction.
+    PayHint = 24,
+    /// Pay step: amount label.
+    Amount = 25,
+    /// Pay step: address label.
+    Address = 26,
+    /// Copy button.
+    Copy = 27,
+    /// Copy button after a copy.
+    Copied = 28,
+    /// Expiry countdown; `{time}` is `mm:ss` or `h:mm:ss`.
+    ExpiresIn = 29,
+    /// Banner on an expired invoice.
+    InvoiceExpired = 30,
+    /// Button issuing a fresh invoice.
+    NewInvoice = 31,
+    /// Back button.
+    Back = 32,
+    /// Status: nothing seen yet.
+    Waiting = 33,
+    /// Status: a payment is on the network, unconfirmed.
+    Processing = 34,
+    /// Success state title.
+    PaidTitle = 35,
+    /// Success state body.
+    PaidBody = 36,
+    /// Success state while signing in with the account key.
+    SigningIn = 37,
+    /// Success state after that sign-in.
+    SignedInWithKey = 38,
+    /// Upgrade charge line; `{amount}` in USD.
+    UpgradeCharge = 39,
+    /// Downgrade queued; `{date}`.
+    DowngradeScheduled = 40,
+    /// Close button.
+    Close = 41,
+    /// Shown instead of the QR when the processor's SVG cannot be drawn.
+    QrUnavailable = 42,
+    /// Partial payment note; `{received}` `{expected}` `{shortfall}` `{asset}`.
+    NotePartial = 43,
+    /// Overpayment note; `{received}` `{expected}` `{asset}`.
+    NoteOver = 44,
+    /// Late payment note.
+    NoteLate = 45,
+    /// Failed / no-show / anomaly note.
+    NoteFailed = 46,
+    /// Funds were confirming when the invoice expired.
+    NoteFundsPending = 47,
+    /// The network reversed a payment.
+    NoteReverted = 48,
+    /// The payment was refunded.
+    NoteRefunded = 49,
+    /// Anonymous key gate heading.
+    KeyHeading = 50,
+    /// Anonymous key gate explanation.
+    KeyBody = 51,
+    /// Anonymous key gate checkbox.
+    KeySaved = 52,
+    /// Anonymous key gate continue button.
+    KeyContinue = 53,
+    /// After paying while signed in to another account.
+    KeyUseLater = 54,
+    /// Error: `plan_not_available`.
+    ErrPlanNotAvailable = 55,
+    /// Error: `already_owned`.
+    ErrAlreadyOwned = 56,
+    /// Error: `subscription_exists`.
+    ErrSubscriptionExists = 57,
+    /// Error: `plan_unavailable`.
+    ErrPlanUnavailable = 58,
+    /// Error: `billing_not_configured`.
+    ErrNotConfigured = 59,
+    /// Error: `payment_gateway_unavailable`.
+    ErrGateway = 60,
+    /// Error: `rate_limited`.
+    ErrRateLimited = 61,
+    /// Error: `no_active_subscription`.
+    ErrNoSubscription = 62,
+    /// Error: `same_plan`.
+    ErrSamePlan = 63,
+    /// Error: `change_pending`.
+    ErrChangePending = 64,
+    /// Error: `gateway_refused`.
+    ErrGatewayRefused = 65,
+    /// Error: sign-in needed.
+    ErrSignInRequired = 66,
+    /// Error: no answer from the server.
+    ErrNetwork = 67,
+    /// Error: the account key was refused.
+    ErrInvalidKey = 68,
+    /// Error: anything else.
+    ErrGeneric = 69,
+    /// Sign-in overlay entry: buy an anonymous account.
+    BuyAnon = 70,
+    /// Plans step, signed out: link to the account-key sign-in.
+    HaveKey = 71,
+    /// Account-key sign-in heading.
+    KeyEntryHeading = 72,
+    /// Account-key sign-in explanation.
+    KeyEntryBody = 73,
+    /// Account-key field placeholder (the key's shape; same in every language).
+    KeyEntryPlaceholder = 74,
+    /// Account-key sign-in button.
+    SignIn = 75,
+}
+
+impl CheckoutKey {
+    pub const COUNT: usize = 76;
+
+    /// Get translation for this key.
+    #[inline]
+    pub fn get(self, lang: Language) -> &'static str {
+        uzor::table_lookup!(&CHECKOUT_KEY_TABLE[self as usize], lang as usize)
+    }
+}
+
+impl uzor::i18n::Translate for CheckoutKey {
+    #[inline]
+    fn translate(self, lang_index: usize) -> &'static str {
+        uzor::table_lookup!(&CHECKOUT_KEY_TABLE[self as usize], lang_index)
     }
 }
 

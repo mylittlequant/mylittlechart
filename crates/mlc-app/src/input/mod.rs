@@ -621,6 +621,7 @@ impl ChartApp {
             || self.panel_app.preset_name_input.is_open
             || self.panel_app.share_open_state.is_open
             || self.panel_app.share_settings_state.is_open
+            || self.panel_app.checkout_state.is_open
             || self.panel_app.chart_browser.is_open
             || self.panel_app.overlay_settings_state.is_open
             || self.panel_app.tags_tabs_state.is_open

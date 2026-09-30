@@ -44,6 +44,8 @@ use mlc_cloud::{
     StoredToken, VersionManifest,
 };
 
+mod checkout;
+
 /// Notice shown once the vault is unlocked but the account is not paid.
 const DM_UNPAID_MESSAGE: &str = "Messages need a paid account";
 
@@ -476,6 +478,12 @@ struct Inner {
     /// Mailbox: the last settled request, `(epoch it was fired in, outcome)`.
     /// Applied by `drive_admin`, the only place `&mut ChartApp` is reachable.
     admin_result: Option<(u64, AdminOutcome)>,
+
+    // ── Checkout modal (billing) ────────────────────────────────────────
+    /// Answers to checkout requests, oldest first; applied to the modal by
+    /// `drive_checkout` (`checkout.rs`), the only place `&mut ChartApp` and
+    /// the modal's clock meet the mailbox.
+    checkout_events: std::collections::VecDeque<mlc_app_layout::ui::checkout::CheckoutEvent>,
 }
 
 /// One running web messenger: the I/O object plus the inputs it was started
@@ -572,6 +580,8 @@ impl CloudSession {
     /// Build the session from localStorage + `window.MLC_BUILD`.
     /// `server_url` is "" (same-origin) in production.
     pub fn init(server_url: &str) -> Self {
+        // This shell drives the checkout, so its entry-point buttons may show.
+        mlc_app_layout::ui::checkout::set_entry_points_enabled(true);
         let token = load_token();
         let device_id = load_or_create_device_id();
         let attestation = read_build_attestation();
@@ -648,6 +658,7 @@ impl CloudSession {
                 admin_busy: false,
                 admin_epoch: 0,
                 admin_result: None,
+                checkout_events: std::collections::VecDeque::new(),
             })),
         };
         install_messenger_pagehide(&session.inner);
@@ -1572,6 +1583,7 @@ impl CloudSession {
             self.account_label().unwrap_or_default();
         chart.panel_app.user_settings_state.account_provider =
             self.account_provider().unwrap_or_default();
+        self.drive_checkout(chart, now_ms);
 
         // ── Entitlements: boot + periodic background re-ask ────────────────
         // Deliberately its own block, ahead of and independent from the

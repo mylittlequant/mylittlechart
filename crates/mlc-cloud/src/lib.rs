@@ -23,6 +23,7 @@
 //! `X-Profile-Id` / `X-Device-Id`; sync endpoints additionally enforce the
 //! build attestation headers when the server has `BUILD_ATTEST_ENFORCE=true`.
 
+pub mod billing;
 pub mod models;
 pub mod staff;
 
@@ -45,6 +46,7 @@ mod wasm;
 #[cfg(target_arch = "wasm32")]
 pub use wasm::{FetchTransport, FriendRoster};
 
+pub use billing::*;
 pub use models::*;
 pub use staff::{
     staff_error, with_retry_after, StaffBatchRevoked, StaffError, StaffGiftBatch, StaffLedgerRow,

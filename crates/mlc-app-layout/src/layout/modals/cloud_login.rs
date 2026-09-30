@@ -57,15 +57,27 @@ pub struct CloudLoginResult {
     pub header_rect: WidgetRect,
 }
 
+/// Height the "buy an anonymous account" link adds under the providers; zero
+/// while the shell has no checkout driver.
+fn entry_link_h() -> f64 {
+    if crate::ui::checkout::entry_points_enabled() {
+        26.0
+    } else {
+        0.0
+    }
+}
+
 /// Body height per phase — the shell sizes the frame from this.
 fn content_height(state: &CloudLoginState) -> f64 {
     match &state.phase {
         // Providers only — no code block, no polling hint.
         CloudLoginPhase::ChooseProvider => {
             24.0 + OAUTH_PROVIDERS.len() as f64 * (BTN_H + BTN_GAP)
+                + entry_link_h()
         }
         CloudLoginPhase::AwaitingConfirm { .. } => {
             42.0 + OAUTH_PROVIDERS.len() as f64 * (BTN_H + BTN_GAP) + 18.0
+                + entry_link_h()
         }
         // Signed-in text + Sign out button only, now that the gift-code box
         // moved out (2026-09-23) — see this phase's own doc for why nothing
@@ -174,6 +186,17 @@ fn draw_body(
                 );
                 btn_y += BTN_H + BTN_GAP;
             }
+            // No provider account? An anonymous account is bought, not
+            // registered: the checkout opens on it.
+            crate::layout::modals::checkout::draw_entry_link(
+                ctx,
+                coord,
+                layer_id,
+                cx,
+                btn_y + 2.0,
+                mlc_core::i18n::CheckoutKey::BuyAnon.get(mlc_core::i18n::current_language()),
+                tt,
+            );
         }
 
         // Signing in, with the browser away at the provider. The device code
@@ -206,10 +229,20 @@ fn draw_body(
                 btn_y += BTN_H + BTN_GAP;
             }
 
+            crate::layout::modals::checkout::draw_entry_link(
+                ctx,
+                coord,
+                layer_id,
+                cx,
+                btn_y + 2.0,
+                mlc_core::i18n::CheckoutKey::BuyAnon.get(mlc_core::i18n::current_language()),
+                tt,
+            );
+
             ctx.set_font("11px sans-serif");
             ctx.set_fill_color(&tt.item_text_muted);
             ctx.set_text_align(TextAlign::Center);
-            ctx.fill_text("Waiting for the browser…", cx, btn_y + 10.0);
+            ctx.fill_text("Waiting for the browser…", cx, btn_y + 10.0 + entry_link_h());
         }
 
         CloudLoginPhase::Success { display_name } => {

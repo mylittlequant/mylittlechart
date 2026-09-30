@@ -88,6 +88,7 @@ pub use keys::{
     ShareViewerKey,
     ForumKey,
     AdminKey,
+    CheckoutKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.

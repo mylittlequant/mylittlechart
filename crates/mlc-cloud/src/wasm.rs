@@ -11,6 +11,7 @@ use wasm_bindgen::JsValue;
 use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, Request, RequestCache, RequestInit, RequestMode, Response};
 
+use crate::billing::*;
 use crate::models::*;
 use crate::{
     BuildAttestation, CloudConfig, CloudError, StaffBatchRevoked, StaffGiftBatch, StaffLifetimeGrant,
@@ -182,6 +183,29 @@ impl FetchTransport {
             body.map(|b| JsValue::from_str(&b)),
             json_body,
             true,
+            extra_headers,
+        )?;
+        self.perform(&req).await
+    }
+
+    /// One HTTP exchange that never carries the bearer token: the public
+    /// billing routes (`anon-checkout`, `anon-invoice`) and the account-key
+    /// sign-in belong to someone who holds no session yet, and sending a
+    /// different account's credential along is pure leak surface.
+    async fn exchange_public(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<String>,
+        extra_headers: &[(&str, &str)],
+    ) -> Result<(u16, String), CloudError> {
+        let json_body = body.is_some();
+        let req = self.build_request(
+            method,
+            path,
+            body.map(|b| JsValue::from_str(&b)),
+            json_body,
+            false,
             extra_headers,
         )?;
         self.perform(&req).await
@@ -383,6 +407,111 @@ impl FetchTransport {
             .exchange("POST", "/api/account/nick", Some(payload), &[])
             .await?;
         self.decode_success(status, &body)
+    }
+
+    // ── /api/billing/* ──────────────────────────────────────────────────
+    //
+    // The browser talks to the MLC server only; the server talks to the
+    // payment processor. A failure keeps its status and body so
+    // [`BillingError::from_cloud`] can pick the sentence.
+
+    /// `GET /api/billing/plans` — the plans offered to THIS request (the Tor
+    /// variants only on the onion host).
+    pub async fn billing_plans(&self) -> Result<BillingPlans, CloudError> {
+        let (status, body) = self.exchange("GET", "/api/billing/plans", None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/billing/me` — what the signed-in account already holds.
+    pub async fn billing_me(&self) -> Result<BillingMe, CloudError> {
+        let (status, body) = self.exchange("GET", "/api/billing/me", None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/billing/checkout {plan_id}` — start (or resume) a purchase.
+    /// Repeating the call while the invoice is unpaid returns the same invoice.
+    pub async fn billing_checkout(&self, plan_id: &str) -> Result<BillingCheckout, CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "plan_id": plan_id }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", "/api/billing/checkout", Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/billing/change {plan_id}` — move a running quant
+    /// subscription. An upgrade answers with its prorated charge and `pay[]`;
+    /// a downgrade takes effect at renewal.
+    pub async fn billing_change(&self, plan_id: &str) -> Result<BillingChange, CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "plan_id": plan_id }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange("POST", "/api/billing/change", Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/billing/invoice/{id}` — one of the caller's own invoices,
+    /// with the processor's live status.
+    pub async fn billing_invoice(&self, invoice_id: &str) -> Result<BillingInvoice, CloudError> {
+        let path = format!("/api/billing/invoice/{}", encode_query_component(invoice_id));
+        let (status, body) = self.exchange("GET", &path, None, &[]).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/billing/anon-checkout {plan_id}` — PUBLIC. Creates a pending
+    /// anonymous account and its invoice; the answer carries the account key,
+    /// shown exactly once.
+    pub async fn billing_anon_checkout(&self, plan_id: &str) -> Result<BillingAnonCheckout, CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "plan_id": plan_id }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange_public("POST", "/api/billing/anon-checkout", Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/billing/anon-invoice/{id}` — the pending anonymous account
+    /// reads its own invoice with `Authorization: AccountKey <key>`.
+    pub async fn billing_anon_invoice(
+        &self,
+        invoice_id: &str,
+        account_key: &str,
+    ) -> Result<BillingInvoice, CloudError> {
+        let path = format!("/api/billing/anon-invoice/{}", encode_query_component(invoice_id));
+        let auth = format!("AccountKey {account_key}");
+        let (status, body) = self
+            .exchange_public("GET", &path, None, &[("Authorization", auth.as_str())])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    // ── account-key sign-in ─────────────────────────────────────────────
+
+    /// `POST /api/auth/account-key {account_key}` — PUBLIC. An ACTIVE
+    /// anonymous account's key becomes a cookie session (`Set-Cookie:
+    /// session_id`, `HttpOnly`); the same-origin browser stores it. A bad,
+    /// unknown or still-pending key all answer `401`.
+    pub async fn account_key_sign_in(&self, account_key: &str) -> Result<AccountKeySession, CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "account_key": account_key }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange_public("POST", "/api/auth/account-key", Some(payload), &[])
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/auth/confirm {code}` — confirm a device code from a
+    /// cookie-session browser. After [`Self::account_key_sign_in`] this is
+    /// what turns the new cookie session into the bearer token every other
+    /// request uses: create the code, confirm it here, then poll it.
+    pub async fn device_code_confirm(&self, code: &str) -> Result<(), CloudError> {
+        let payload = serde_json::to_string(&serde_json::json!({ "code": code }))
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .exchange_public("POST", "/api/auth/confirm", Some(payload), &[])
+            .await?;
+        self.decode_success::<serde_json::Value>(status, &body).map(|_| ())
     }
 
     // ── /api/share/* ────────────────────────────────────────────────────

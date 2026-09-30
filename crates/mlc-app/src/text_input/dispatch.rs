@@ -106,6 +106,7 @@ impl ChartApp {
                 | PROFILE_RENAME
                 | ACCOUNT_NICK
                 | REDEEM_CODE
+                | CHECKOUT_KEY_INPUT
                 | NEW_PASSPHRASE
                 | NEW_PROFILE_NAME
                 | RECOVERY_KEY
@@ -282,6 +283,7 @@ impl ChartApp {
             PROFILE_RENAME                   => self.text_action_profile_rename(action),
             ACCOUNT_NICK                     => self.text_action_account_nick(ch, action),
             REDEEM_CODE                      => self.text_action_redeem_code(ch, action),
+            CHECKOUT_KEY_INPUT               => self.text_action_checkout_key(ch, action),
             SYMBOL_SEARCH | INDICATOR_SEARCH | COMPARE_SEARCH
                                              => self.text_action_search_overlay(action),
             AGENT_CHAT                       => self.text_action_agent_chat(ch, action),
@@ -1070,6 +1072,24 @@ impl ChartApp {
             TextAction::Cancel => {
                 self.input_coordinator.borrow_mut().text_fields_mut().blur();
             }
+            _ => {}
+        }
+    }
+
+    /// The checkout modal's account-key box. Enter signs in; Escape leaves the
+    /// modal (the box is cleared by the checkout's own per-frame release).
+    fn text_action_checkout_key(&mut self, ch: char, action: TextAction) {
+        if ch == '\r' || ch == '\n' {
+            self.checkout_submit_key();
+            return;
+        }
+        if ch == '\x1b' {
+            self.checkout_dismiss();
+            return;
+        }
+        match action {
+            TextAction::Commit(_) => self.checkout_submit_key(),
+            TextAction::Cancel => self.checkout_dismiss(),
             _ => {}
         }
     }
