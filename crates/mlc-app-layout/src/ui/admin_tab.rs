@@ -2,7 +2,8 @@
 //!
 //! The tab exists for an account holding the `admin` role and drives the
 //! server's `/api/staff/*` routes: gift-code batches (Coupons), paid days and
-//! lifetime grants by nick (Grants), and an exact-nick account lookup (User).
+//! lifetime grants by nick (Grants), an exact-nick account lookup (User), and
+//! registration invites for key accounts (Invites).
 //! The server is the authority — it answers everyone else with the same 403 —
 //! so nothing here is a security boundary; hiding the tab and bounding the
 //! forms only keeps an honest admin from wasting one of their 30 writes a
@@ -12,11 +13,12 @@
 //! follows: this module holds plain state and one-shot flags
 //! ([`AdminState::pending`] out, [`AdminOutcome`] in); the shell does the
 //! fetches (`mlc-app-shell-web`'s `cloud_session`); `mlc-app` wires clicks and
-//! the seven text fields ([`AdminField`]); `layout::modals::
+//! the ten text fields ([`AdminField`]); `layout::modals::
 //! user_settings_admin` draws what is here.
 //!
-//! Gift codes are secrets shown once: [`AdminMinted`] never prints them in
-//! `Debug`, and [`AdminState::on_close`] drops them.
+//! Gift codes and invite codes are secrets shown once: [`AdminMinted`] and
+//! [`AdminIssuedInvite`] never print them in `Debug`, and
+//! [`AdminState::on_close`] drops them.
 
 use mlc_core::i18n::{AdminKey, Language};
 
@@ -42,6 +44,12 @@ pub const MAX_PAID_DAYS: i64 = 3650;
 pub const MAX_NOTE_CHARS: usize = 200;
 /// Longest nick the server accepts in a request.
 pub const MAX_NICK_CHARS: usize = 64;
+/// Paid days an invite may grant (`0` = registration only).
+pub const MIN_INVITE_DAYS: i64 = 0;
+/// Paid days an invite may grant.
+pub const MAX_INVITE_DAYS: i64 = 3650;
+/// Paid days of an invite whose days box is left empty.
+pub const DEFAULT_INVITE_DAYS: i64 = 365;
 
 // =============================================================================
 // Text fields
@@ -61,8 +69,14 @@ pub const FIELD_GRANT_DAYS: &str = "admin_grant_days";
 pub const FIELD_GRANT_NOTE: &str = "admin_grant_note";
 /// Field id of the User section's nick box.
 pub const FIELD_USER_NICK: &str = "admin_user_nick";
+/// Field id of the Invites section's nick box.
+pub const FIELD_INVITE_NICK: &str = "admin_invite_nick";
+/// Field id of the Invites section's paid-days box.
+pub const FIELD_INVITE_DAYS: &str = "admin_invite_days";
+/// Field id of the Invites section's note box.
+pub const FIELD_INVITE_NOTE: &str = "admin_invite_note";
 
-/// One of the tab's seven text inputs. The text itself lives in the
+/// One of the tab's ten text inputs. The text itself lives in the
 /// `TextFieldStore` (`mlc-app`); this names the field and its bounds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdminField {
@@ -73,11 +87,14 @@ pub enum AdminField {
     GrantDays,
     GrantNote,
     UserNick,
+    InviteNick,
+    InviteDays,
+    InviteNote,
 }
 
 impl AdminField {
     /// Every field, in registration order.
-    pub const ALL: [AdminField; 7] = [
+    pub const ALL: [AdminField; 10] = [
         AdminField::MintDays,
         AdminField::MintCount,
         AdminField::MintNote,
@@ -85,6 +102,9 @@ impl AdminField {
         AdminField::GrantDays,
         AdminField::GrantNote,
         AdminField::UserNick,
+        AdminField::InviteNick,
+        AdminField::InviteDays,
+        AdminField::InviteNote,
     ];
 
     /// The `TextFieldStore` id.
@@ -97,6 +117,9 @@ impl AdminField {
             Self::GrantDays => FIELD_GRANT_DAYS,
             Self::GrantNote => FIELD_GRANT_NOTE,
             Self::UserNick => FIELD_USER_NICK,
+            Self::InviteNick => FIELD_INVITE_NICK,
+            Self::InviteDays => FIELD_INVITE_DAYS,
+            Self::InviteNote => FIELD_INVITE_NOTE,
         }
     }
 
@@ -110,10 +133,10 @@ impl AdminField {
     /// "at most N characters" message instead of being cut silently.
     pub const fn max_len(self) -> usize {
         match self {
-            Self::MintDays | Self::GrantDays => 6,
+            Self::MintDays | Self::GrantDays | Self::InviteDays => 6,
             Self::MintCount => 4,
-            Self::MintNote | Self::GrantNote => 400,
-            Self::GrantNick | Self::UserNick => 96,
+            Self::MintNote | Self::GrantNote | Self::InviteNote => 400,
+            Self::GrantNick | Self::UserNick | Self::InviteNick => 96,
         }
     }
 
@@ -129,18 +152,20 @@ impl AdminField {
 // Sections and actions
 // =============================================================================
 
-/// The tab's three sections, switched by a strip above the body.
+/// The tab's four sections, switched by a strip above the body.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AdminSection {
     #[default]
     Coupons,
     Grants,
     User,
+    Invites,
 }
 
 impl AdminSection {
     /// Every section, in strip order.
-    pub const ALL: [AdminSection; 3] = [AdminSection::Coupons, AdminSection::Grants, AdminSection::User];
+    pub const ALL: [AdminSection; 4] =
+        [AdminSection::Coupons, AdminSection::Grants, AdminSection::User, AdminSection::Invites];
 
     /// Stable id used in hit ids.
     pub fn id(self) -> &'static str {
@@ -148,6 +173,7 @@ impl AdminSection {
             Self::Coupons => "coupons",
             Self::Grants => "grants",
             Self::User => "user",
+            Self::Invites => "invites",
         }
     }
 
@@ -162,6 +188,7 @@ impl AdminSection {
             Self::Coupons => AdminKey::SectionCoupons.get(lang),
             Self::Grants => AdminKey::SectionGrants.get(lang),
             Self::User => AdminKey::SectionUser.get(lang),
+            Self::Invites => AdminKey::SectionInvites.get(lang),
         }
     }
 }
@@ -236,6 +263,11 @@ pub enum AdminAction {
     LifetimeGrant(LifetimeKind),
     LifetimeRevoke(LifetimeKind),
     Lookup,
+    IssueInvite,
+    CopyInvite,
+    DismissInvite,
+    RefreshInvites,
+    RevokeInvite(String),
 }
 
 impl AdminAction {
@@ -257,6 +289,11 @@ impl AdminAction {
             Self::LifetimeGrant(k) => format!("life_grant:{}", k.tag()),
             Self::LifetimeRevoke(k) => format!("life_revoke:{}", k.tag()),
             Self::Lookup => "lookup".to_string(),
+            Self::IssueInvite => "invite_issue".to_string(),
+            Self::CopyInvite => "invite_copy".to_string(),
+            Self::DismissInvite => "invite_done".to_string(),
+            Self::RefreshInvites => "invite_refresh".to_string(),
+            Self::RevokeInvite(id) => format!("invite_revoke:{id}"),
         };
         format!("user_settings:admin:{tail}")
     }
@@ -275,6 +312,10 @@ impl AdminAction {
             "no" => Some(Self::ConfirmNo),
             "paid_days" => Some(Self::PaidDays),
             "lookup" => Some(Self::Lookup),
+            "invite_issue" => Some(Self::IssueInvite),
+            "invite_copy" => Some(Self::CopyInvite),
+            "invite_done" => Some(Self::DismissInvite),
+            "invite_refresh" => Some(Self::RefreshInvites),
             _ => {
                 let (head, arg) = tail.split_once(':')?;
                 match head {
@@ -282,6 +323,7 @@ impl AdminAction {
                     "field" => AdminField::from_id(arg).map(Self::Field),
                     "copy" => arg.parse().ok().map(Self::CopyOne),
                     "revoke" if !arg.is_empty() => Some(Self::RevokeBatch(arg.to_string())),
+                    "invite_revoke" if !arg.is_empty() => Some(Self::RevokeInvite(arg.to_string())),
                     "life_grant" => LifetimeKind::from_tag(arg).map(Self::LifetimeGrant),
                     "life_revoke" => LifetimeKind::from_tag(arg).map(Self::LifetimeRevoke),
                     _ => None,
@@ -349,6 +391,16 @@ pub fn parse_gift_count(raw: &str) -> Result<i64, FormError> {
 pub fn parse_paid_days(raw: &str) -> Result<i64, FormError> {
     parse_bounded(raw, MIN_PAID_DAYS, MAX_PAID_DAYS)
         .ok_or(FormError::DaysRange { min: MIN_PAID_DAYS, max: MAX_PAID_DAYS })
+}
+
+/// Paid days of an invite: empty means [`DEFAULT_INVITE_DAYS`], otherwise
+/// `0..=3650`.
+pub fn parse_invite_days(raw: &str) -> Result<i64, FormError> {
+    if raw.trim().is_empty() {
+        return Ok(DEFAULT_INVITE_DAYS);
+    }
+    parse_bounded(raw, MIN_INVITE_DAYS, MAX_INVITE_DAYS)
+        .ok_or(FormError::DaysRange { min: MIN_INVITE_DAYS, max: MAX_INVITE_DAYS })
 }
 
 /// A note, trimmed. `required` makes an empty one an error (the lifetime
@@ -489,6 +541,104 @@ impl AdminBatchRow {
     }
 }
 
+/// A freshly issued invite. The code is shown once and dropped on close.
+#[derive(Clone, PartialEq, Eq)]
+pub struct AdminIssuedInvite {
+    pub nick: String,
+    pub paid_days: i64,
+    pub code: String,
+}
+
+impl std::fmt::Debug for AdminIssuedInvite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AdminIssuedInvite")
+            .field("nick", &self.nick)
+            .field("paid_days", &self.paid_days)
+            .field("code", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Where an invite stands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InviteState {
+    /// Issued, not yet spent: the code works and the nick is reserved.
+    Open,
+    /// Spent on a new account.
+    Redeemed,
+    /// Staff revoked it; the nick is free again.
+    Revoked,
+    /// Lapsed unspent.
+    Expired,
+}
+
+impl InviteState {
+    /// The state's word in `lang`.
+    pub fn label(self, lang: Language) -> &'static str {
+        match self {
+            Self::Open => AdminKey::StateOpen.get(lang),
+            Self::Redeemed => AdminKey::StateRedeemed.get(lang),
+            Self::Revoked => AdminKey::StateRevoked.get(lang),
+            Self::Expired => AdminKey::StateExpired.get(lang),
+        }
+    }
+}
+
+/// One row of the invites table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdminInviteRow {
+    pub id: String,
+    pub nick: String,
+    pub paid_days: i64,
+    pub note: String,
+    pub created_at: String,
+    pub state: InviteState,
+}
+
+/// The state-bearing fields of an invite as the server sent them.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InviteStamps<'a> {
+    pub redeemed_at: Option<&'a str>,
+    pub revoked_at: Option<&'a str>,
+    pub expires_at: Option<&'a str>,
+    /// The server's own state word, when it sends one.
+    pub state: Option<&'a str>,
+}
+
+impl InviteStamps<'_> {
+    /// The state these fields describe. An explicit `state` word wins
+    /// (`redeemed`, `revoked`, `expired`; anything else reads as open);
+    /// without one the timestamps decide: revoked, then redeemed, then a
+    /// lapsed `expires_at` (against `now_ms`), else open.
+    pub fn resolve(&self, now_ms: i64) -> InviteState {
+        let present = |v: Option<&str>| v.is_some_and(|t| !t.is_empty());
+        match self.state.map(str::to_ascii_lowercase).as_deref() {
+            Some("redeemed") => InviteState::Redeemed,
+            Some("revoked") => InviteState::Revoked,
+            Some("expired") => InviteState::Expired,
+            Some(_) => InviteState::Open,
+            None if present(self.revoked_at) => InviteState::Revoked,
+            None if present(self.redeemed_at) => InviteState::Redeemed,
+            None if self
+                .expires_at
+                .and_then(crate::ui::checkout::parse_rfc3339_ms)
+                .is_some_and(|at| at <= now_ms) =>
+            {
+                InviteState::Expired
+            }
+            None => InviteState::Open,
+        }
+    }
+}
+
+impl AdminInviteRow {
+
+    /// Whether Revoke has something to do: only an open invite.
+    pub fn is_revocable(&self) -> bool {
+        self.state == InviteState::Open
+    }
+}
+
 /// One lifetime-grant ledger row of the user card.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdminLedgerRow {
@@ -578,6 +728,9 @@ pub enum AdminRequest {
     LifetimeGrant { nick: String, kind: LifetimeKind, note: String },
     LifetimeRevoke { nick: String, kind: LifetimeKind },
     LookupUser { nick: String },
+    IssueInvite { nick: String, paid_days: i64, note: String },
+    LoadInvites,
+    RevokeInvite { invite_id: String, nick: String },
 }
 
 /// What the shell hands back when a request settles.
@@ -593,6 +746,10 @@ pub enum AdminOutcome {
     /// `(nick, kind, revoked)`.
     LifetimeRevoked(Result<(String, LifetimeKind, u64), AdminFailure>),
     User(Result<AdminUserCard, AdminFailure>),
+    InviteIssued(Result<AdminIssuedInvite, AdminFailure>),
+    Invites(Result<Vec<AdminInviteRow>, AdminFailure>),
+    /// `(nick, invite id)` of the revoked invite.
+    InviteRevoked(Result<(String, String), AdminFailure>),
 }
 
 /// An action armed and waiting for the confirm click.
@@ -602,6 +759,7 @@ pub enum AdminConfirm {
     PaidDays { nick: String, days: i64 },
     LifetimeGrant { nick: String, kind: LifetimeKind, note: String },
     LifetimeRevoke { nick: String, kind: LifetimeKind },
+    RevokeInvite { invite_id: String, nick: String },
 }
 
 impl AdminConfirm {
@@ -623,6 +781,7 @@ impl AdminConfirm {
                 .arg("kind", kind.name(lang))
                 .arg("nick", nick)
                 .done(),
+            Self::RevokeInvite { nick, .. } => Fill::new(AdminKey::ConfirmRevokeInvite.get(lang)).arg("nick", nick).done(),
         }
     }
 
@@ -633,6 +792,7 @@ impl AdminConfirm {
             Self::PaidDays { nick, days } => AdminRequest::PaidDays { nick, days },
             Self::LifetimeGrant { nick, kind, note } => AdminRequest::LifetimeGrant { nick, kind, note },
             Self::LifetimeRevoke { nick, kind } => AdminRequest::LifetimeRevoke { nick, kind },
+            Self::RevokeInvite { invite_id, nick } => AdminRequest::RevokeInvite { invite_id, nick },
         }
     }
 }
@@ -649,6 +809,9 @@ pub enum AdminSuccess {
     LifetimeRevoked { nick: String, kind: LifetimeKind, revoked: u64 },
     Copied,
     Discarded,
+    InviteIssued { nick: String, days: i64 },
+    InviteRevoked { nick: String },
+    InviteDiscarded,
 }
 
 /// The status line under the active section.
@@ -694,6 +857,14 @@ impl AdminNotice {
                 }
                 AdminSuccess::Copied => AdminKey::ResultCopied.get(lang).to_string(),
                 AdminSuccess::Discarded => AdminKey::ResultDiscarded.get(lang).to_string(),
+                AdminSuccess::InviteIssued { nick, days } => Fill::new(AdminKey::ResultInviteIssued.get(lang))
+                    .arg("nick", nick)
+                    .arg("days", days)
+                    .done(),
+                AdminSuccess::InviteRevoked { nick } => {
+                    Fill::new(AdminKey::ResultInviteRevoked.get(lang)).arg("nick", nick).done()
+                }
+                AdminSuccess::InviteDiscarded => AdminKey::ResultInviteDiscarded.get(lang).to_string(),
             },
         }
     }
@@ -721,8 +892,13 @@ pub struct AdminState {
     pub scroll: ScrollState,
     /// The freshly minted codes. Shown once; dropped by [`Self::on_close`].
     pub minted: Option<AdminMinted>,
+    /// The freshly issued invite code. Shown once; dropped by
+    /// [`Self::on_close`].
+    pub issued_invite: Option<AdminIssuedInvite>,
     /// The batches table; `None` until the first fetch lands.
     pub batches: Option<Vec<AdminBatchRow>>,
+    /// The invites table; `None` until the first fetch lands.
+    pub invites: Option<Vec<AdminInviteRow>>,
     /// The User section's card.
     pub user: Option<AdminUserCard>,
     /// Status line under the active section.
@@ -736,6 +912,8 @@ pub struct AdminState {
     /// The first batches load of this visit has been issued (a failed load is
     /// retried by Refresh, not in a loop).
     batches_requested: bool,
+    /// Same as `batches_requested`, for the invites table.
+    invites_requested: bool,
     /// The modal closed while a request was in flight; its outcome is dropped.
     discard_inflight: bool,
 }
@@ -767,9 +945,63 @@ impl AdminState {
     /// never been asked for this visit. `on_screen` is "the Admin tab is the
     /// visible tab of an open modal" — known only to the caller.
     pub fn auto_load(&mut self, on_screen: bool) {
-        if on_screen && self.section == AdminSection::Coupons && !self.batches_requested && self.batches.is_none() {
-            self.refresh_batches();
+        if !on_screen {
+            return;
         }
+        match self.section {
+            AdminSection::Coupons if !self.batches_requested && self.batches.is_none() => self.refresh_batches(),
+            AdminSection::Invites if !self.invites_requested && self.invites.is_none() => self.refresh_invites(),
+            _ => {}
+        }
+    }
+
+    /// Reload the invites table.
+    pub fn refresh_invites(&mut self) {
+        if self.issue(AdminRequest::LoadInvites) {
+            self.invites_requested = true;
+        }
+    }
+
+    /// Validate the invite form (nick, paid days — empty means 365 — and an
+    /// optional note) and queue the request.
+    pub fn submit_invite(&mut self, nick_raw: &str, days_raw: &str, note_raw: &str) {
+        let parsed = (|| {
+            let nick = clean_nick(nick_raw)?;
+            let paid_days = parse_invite_days(days_raw)?;
+            let note = clean_note(note_raw, false)?;
+            Ok::<_, FormError>((nick, paid_days, note))
+        })();
+        match parsed {
+            Ok((nick, paid_days, note)) => {
+                self.notice = None;
+                self.confirm = None;
+                self.issue(AdminRequest::IssueInvite { nick, paid_days, note });
+            }
+            Err(e) => self.notice = Some(AdminNotice::Form(e)),
+        }
+    }
+
+    /// Arm the revoke of one invite. An invite that is no longer open never
+    /// arms (its button is off).
+    pub fn arm_revoke_invite(&mut self, invite_id: &str) {
+        let Some(row) = self.invites.as_deref().and_then(|rows| rows.iter().find(|r| r.id == invite_id)) else {
+            return;
+        };
+        if !row.is_revocable() {
+            return;
+        }
+        self.notice = None;
+        self.confirm = Some(AdminConfirm::RevokeInvite { invite_id: row.id.clone(), nick: row.nick.clone() });
+    }
+
+    /// Drop the freshly issued invite code ("Done").
+    pub fn dismiss_invite(&mut self) {
+        self.issued_invite = None;
+    }
+
+    /// The fresh invite code, for its Copy button.
+    pub fn copy_invite_text(&self) -> Option<String> {
+        self.issued_invite.as_ref().map(|i| i.code.clone()).filter(|c| !c.is_empty())
     }
 
     /// Reload the batches table.
@@ -901,15 +1133,22 @@ impl AdminState {
     pub fn apply(&mut self, outcome: AdminOutcome) {
         self.busy = false;
         let refresh = matches!(outcome, AdminOutcome::Minted(Ok(_)) | AdminOutcome::BatchRevoked(Ok(_)));
+        let refresh_invites = matches!(outcome, AdminOutcome::InviteIssued(Ok(_)) | AdminOutcome::InviteRevoked(Ok(_)));
         if std::mem::take(&mut self.discard_inflight) {
-            // The window closed while this ran. A mint's codes must not
-            // outlive the close, so they are dropped and the admin is told
-            // where to look; everything else is simply not wanted any more.
+            // The window closed while this ran. A mint's codes and an invite
+            // code must not outlive the close, so they are dropped and the
+            // admin is told where to look; everything else is simply not
+            // wanted any more.
             if matches!(outcome, AdminOutcome::Minted(Ok(_))) {
                 self.notice = Some(AdminNotice::Ok(AdminSuccess::Discarded));
             }
+            if matches!(outcome, AdminOutcome::InviteIssued(Ok(_))) {
+                self.notice = Some(AdminNotice::Ok(AdminSuccess::InviteDiscarded));
+            }
             if refresh {
                 self.issue(AdminRequest::LoadBatches);
+            } else if refresh_invites {
+                self.issue(AdminRequest::LoadInvites);
             }
             return;
         }
@@ -944,15 +1183,31 @@ impl AdminState {
                 self.user = None;
                 self.notice = Some(AdminNotice::Failed(failure));
             }
+            AdminOutcome::InviteIssued(Ok(issued)) => {
+                self.notice = Some(AdminNotice::Ok(AdminSuccess::InviteIssued {
+                    nick: issued.nick.clone(),
+                    days: issued.paid_days,
+                }));
+                self.issued_invite = Some(issued);
+            }
+            AdminOutcome::Invites(Ok(rows)) => self.invites = Some(rows),
+            AdminOutcome::InviteRevoked(Ok((nick, _id))) => {
+                self.notice = Some(AdminNotice::Ok(AdminSuccess::InviteRevoked { nick }));
+            }
             AdminOutcome::Minted(Err(f))
             | AdminOutcome::Batches(Err(f))
             | AdminOutcome::BatchRevoked(Err(f))
             | AdminOutcome::PaidDays(Err(f))
             | AdminOutcome::LifetimeGranted(Err(f))
-            | AdminOutcome::LifetimeRevoked(Err(f)) => self.notice = Some(AdminNotice::Failed(f)),
+            | AdminOutcome::LifetimeRevoked(Err(f))
+            | AdminOutcome::InviteIssued(Err(f))
+            | AdminOutcome::Invites(Err(f))
+            | AdminOutcome::InviteRevoked(Err(f)) => self.notice = Some(AdminNotice::Failed(f)),
         }
         if refresh {
             self.issue(AdminRequest::LoadBatches);
+        } else if refresh_invites {
+            self.issue(AdminRequest::LoadInvites);
         }
     }
 
@@ -1029,6 +1284,45 @@ pub fn batch_lines(rows: &[AdminBatchRow]) -> Vec<BatchLine> {
             created: short_date(&r.created_at),
             revocable: r.is_revocable(),
             by: r.created_by.clone().unwrap_or_else(|| "\u{2014}".to_string()),
+        })
+        .collect()
+}
+
+/// Column headers of the invites table, in draw order.
+pub fn invite_headers(lang: Language) -> [&'static str; 5] {
+    [
+        AdminKey::LabelNick.get(lang),
+        AdminKey::LabelDays.get(lang),
+        AdminKey::ColCreated.get(lang),
+        AdminKey::ColState.get(lang),
+        AdminKey::LabelNote.get(lang),
+    ]
+}
+
+/// One invites-table row, formatted for display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InviteLine {
+    pub id: String,
+    pub nick: String,
+    pub days: String,
+    pub created: String,
+    pub state: &'static str,
+    pub note: String,
+    /// Whether Revoke has something to do (the invite is still open).
+    pub revocable: bool,
+}
+
+/// The invites table body. A missing note reads `—`.
+pub fn invite_lines(rows: &[AdminInviteRow], lang: Language) -> Vec<InviteLine> {
+    rows.iter()
+        .map(|r| InviteLine {
+            id: r.id.clone(),
+            nick: r.nick.clone(),
+            days: r.paid_days.to_string(),
+            created: short_date(&r.created_at),
+            state: r.state.label(lang),
+            note: or_dash(Some(r.note.as_str())),
+            revocable: r.is_revocable(),
         })
         .collect()
 }
@@ -1726,5 +2020,210 @@ mod tests {
         ids.dedup();
         assert_eq!(ids.len(), AdminField::ALL.len());
         assert_eq!(AdminField::from_id("friends_nick"), None);
+    }
+
+    // ── invites ─────────────────────────────────────────────────────────
+
+    fn invite_row(id: &str, nick: &str, state: InviteState) -> AdminInviteRow {
+        AdminInviteRow {
+            id: id.to_string(),
+            nick: nick.to_string(),
+            paid_days: 365,
+            note: String::new(),
+            created_at: "2026-10-01T10:00:00+00:00".to_string(),
+            state,
+        }
+    }
+
+    #[test]
+    fn the_invites_section_is_on_the_strip_and_its_ids_round_trip() {
+        assert!(AdminSection::ALL.contains(&AdminSection::Invites));
+        assert_eq!(AdminSection::from_id("invites"), Some(AdminSection::Invites));
+        assert!(!AdminSection::Invites.label(EN).is_empty());
+        for action in [
+            AdminAction::IssueInvite,
+            AdminAction::CopyInvite,
+            AdminAction::DismissInvite,
+            AdminAction::RefreshInvites,
+            AdminAction::RevokeInvite("inv_7".to_string()),
+            AdminAction::Field(AdminField::InviteNick),
+            AdminAction::Field(AdminField::InviteDays),
+            AdminAction::Field(AdminField::InviteNote),
+            AdminAction::Section(AdminSection::Invites),
+        ] {
+            assert_eq!(AdminAction::parse(&action.hit_id()), Some(action));
+        }
+    }
+
+    #[test]
+    fn invite_days_default_to_a_year_and_are_bounded() {
+        assert_eq!(parse_invite_days(""), Ok(365));
+        assert_eq!(parse_invite_days("  "), Ok(365));
+        assert_eq!(parse_invite_days("0"), Ok(0));
+        assert_eq!(parse_invite_days(" 30 "), Ok(30));
+        assert_eq!(parse_invite_days("3650"), Ok(3650));
+        for bad in ["3651", "-1", "abc", "1.5"] {
+            assert_eq!(parse_invite_days(bad), Err(FormError::DaysRange { min: 0, max: 3650 }), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn a_valid_invite_form_queues_one_request_and_an_invalid_one_none() {
+        let mut st = served();
+        st.submit_invite("  nix ", "", " friend ");
+        assert_eq!(
+            st.pending,
+            Some(AdminRequest::IssueInvite { nick: "nix".to_string(), paid_days: 365, note: "friend".to_string() })
+        );
+        assert!(st.busy);
+
+        let mut st = served();
+        st.submit_invite("", "30", "");
+        assert!(st.pending.is_none());
+        assert_eq!(st.notice, Some(AdminNotice::Form(FormError::NickRequired)));
+        st.submit_invite("nix", "9999", "");
+        assert!(st.pending.is_none());
+        assert_eq!(st.notice, Some(AdminNotice::Form(FormError::DaysRange { min: 0, max: 3650 })));
+        st.submit_invite("nix", "30", &"n".repeat(201));
+        assert!(st.pending.is_none());
+        assert_eq!(st.notice, Some(AdminNotice::Form(FormError::NoteTooLong { max: 200 })));
+        st.submit_invite(&"n".repeat(65), "30", "");
+        assert!(st.pending.is_none());
+        assert_eq!(st.notice, Some(AdminNotice::Form(FormError::NickTooLong { max: 64 })));
+    }
+
+    #[test]
+    fn an_issued_invite_code_is_shown_once_and_never_printed() {
+        let mut st = served();
+        st.submit_invite("nix", "365", "");
+        st.take_request();
+        st.apply(AdminOutcome::InviteIssued(Ok(AdminIssuedInvite {
+            nick: "nix".to_string(),
+            paid_days: 365,
+            code: "INV-SECRET-CODE".to_string(),
+        })));
+        assert_eq!(st.copy_invite_text().as_deref(), Some("INV-SECRET-CODE"));
+        assert_eq!(st.notice, Some(AdminNotice::Ok(AdminSuccess::InviteIssued { nick: "nix".to_string(), days: 365 })));
+        assert!(!format!("{st:?}").contains("INV-SECRET-CODE"), "the code reached Debug output");
+        // The table is re-asked.
+        assert_eq!(st.take_request(), Some(AdminRequest::LoadInvites));
+
+        st.dismiss_invite();
+        assert_eq!(st.copy_invite_text(), None);
+    }
+
+    #[test]
+    fn closing_the_window_drops_an_issued_invite_code() {
+        let mut st = served();
+        st.issued_invite =
+            Some(AdminIssuedInvite { nick: "nix".to_string(), paid_days: 365, code: "INV-SECRET-CODE".to_string() });
+        st.on_close();
+        assert_eq!(st.copy_invite_text(), None);
+
+        // An issue that settles after the close is dropped and says so.
+        let mut st = served();
+        st.submit_invite("nix", "365", "");
+        st.take_request();
+        st.on_close();
+        st.apply(AdminOutcome::InviteIssued(Ok(AdminIssuedInvite {
+            nick: "nix".to_string(),
+            paid_days: 365,
+            code: "INV-LATE".to_string(),
+        })));
+        assert_eq!(st.copy_invite_text(), None);
+        assert_eq!(st.notice, Some(AdminNotice::Ok(AdminSuccess::InviteDiscarded)));
+    }
+
+    #[test]
+    fn only_an_open_invite_can_be_revoked_and_the_revoke_needs_a_confirm() {
+        let mut st = served();
+        st.invites = Some(vec![
+            invite_row("inv_1", "nix", InviteState::Open),
+            invite_row("inv_2", "bob", InviteState::Redeemed),
+            invite_row("inv_3", "eve", InviteState::Revoked),
+            invite_row("inv_4", "old", InviteState::Expired),
+        ]);
+        for spent in ["inv_2", "inv_3", "inv_4", "inv_404"] {
+            st.arm_revoke_invite(spent);
+            assert!(st.confirm.is_none(), "{spent} must not arm");
+        }
+        st.arm_revoke_invite("inv_1");
+        assert_eq!(st.confirm, Some(AdminConfirm::RevokeInvite { invite_id: "inv_1".into(), nick: "nix".into() }));
+        assert!(st.pending.is_none(), "nothing is sent before Confirm");
+        let prompt = st.confirm.as_ref().map(|c| c.prompt(EN)).unwrap_or_default();
+        assert!(prompt.contains("nix"), "{prompt}");
+
+        st.confirm_yes();
+        assert_eq!(
+            st.pending,
+            Some(AdminRequest::RevokeInvite { invite_id: "inv_1".to_string(), nick: "nix".to_string() })
+        );
+        assert!(st.confirm.is_none());
+
+        st.take_request();
+        st.apply(AdminOutcome::InviteRevoked(Ok(("nix".to_string(), "inv_1".to_string()))));
+        assert_eq!(st.notice, Some(AdminNotice::Ok(AdminSuccess::InviteRevoked { nick: "nix".to_string() })));
+        assert_eq!(st.take_request(), Some(AdminRequest::LoadInvites));
+    }
+
+    #[test]
+    fn the_invites_table_loads_once_when_its_section_is_on_screen() {
+        let mut st = served();
+        st.set_section(AdminSection::Invites);
+        st.auto_load(false);
+        assert!(st.pending.is_none(), "off screen: nothing");
+        st.auto_load(true);
+        assert_eq!(st.take_request(), Some(AdminRequest::LoadInvites));
+        st.apply(AdminOutcome::Invites(Ok(vec![invite_row("inv_1", "nix", InviteState::Open)])));
+        st.auto_load(true);
+        assert!(st.pending.is_none(), "already loaded");
+
+        // Coupons still loads its own table.
+        let mut st = served();
+        st.auto_load(true);
+        assert_eq!(st.take_request(), Some(AdminRequest::LoadBatches));
+    }
+
+    #[test]
+    fn a_failed_invite_request_is_a_notice_not_a_panic() {
+        let mut st = served();
+        st.submit_invite("taken", "1", "");
+        st.take_request();
+        st.apply(AdminOutcome::InviteIssued(Err(AdminFailure::BadRequest { detail: "nick_taken".to_string() })));
+        assert!(matches!(st.notice, Some(AdminNotice::Failed(AdminFailure::BadRequest { .. }))));
+        assert!(st.issued_invite.is_none());
+        assert!(!st.busy);
+    }
+
+    #[test]
+    fn invite_state_comes_from_the_words_then_the_timestamps() {
+        let stamps = |redeemed_at, revoked_at, expires_at, state| InviteStamps { redeemed_at, revoked_at, expires_at, state };
+        let now = crate::ui::checkout::parse_rfc3339_ms("2026-10-02T00:00:00Z").unwrap_or_default();
+        assert_eq!(stamps(None, None, None, None).resolve(now), InviteState::Open);
+        assert_eq!(stamps(Some("2026-10-01T00:00:00Z"), None, None, None).resolve(now), InviteState::Redeemed);
+        assert_eq!(stamps(None, Some("2026-10-01T00:00:00Z"), None, None).resolve(now), InviteState::Revoked);
+        assert_eq!(
+            stamps(Some("2026-10-01T00:00:00Z"), Some("2026-10-01T00:00:00Z"), None, None).resolve(now),
+            InviteState::Revoked
+        );
+        assert_eq!(stamps(None, None, Some("2026-10-01T00:00:00Z"), None).resolve(now), InviteState::Expired);
+        assert_eq!(stamps(None, None, Some("2026-11-01T00:00:00Z"), None).resolve(now), InviteState::Open);
+        // The server's own word wins over timestamps.
+        assert_eq!(stamps(None, None, None, Some("Redeemed")).resolve(now), InviteState::Redeemed);
+        assert_eq!(stamps(Some("x"), None, None, Some("active")).resolve(now), InviteState::Open);
+    }
+
+    #[test]
+    fn invite_lines_word_the_state_and_dash_an_empty_note() {
+        let rows = vec![invite_row("inv_1", "nix", InviteState::Open), invite_row("inv_2", "bob", InviteState::Redeemed)];
+        let lines = invite_lines(&rows, EN);
+        assert_eq!(lines[0].nick, "nix");
+        assert_eq!(lines[0].days, "365");
+        assert_eq!(lines[0].created, "2026-10-01");
+        assert_eq!(lines[0].state, "Open");
+        assert_eq!(lines[0].note, "\u{2014}");
+        assert!(lines[0].revocable && !lines[1].revocable);
+        assert_eq!(lines[1].state, "Redeemed");
+        assert_eq!(invite_headers(EN).len(), 5);
     }
 }

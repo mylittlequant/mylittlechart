@@ -4226,10 +4226,40 @@ pub enum AdminKey {
     FailNetwork = 78,
     /// Any other server failure; `{detail}`.
     FailServer = 79,
+    /// Section switch: registration invites.
+    SectionInvites = 80,
+    /// Invite form heading.
+    InviteTitle = 81,
+    /// Issue-invite button.
+    BtnIssueInvite = 82,
+    /// The shown-once warning above a freshly issued invite code.
+    InviteShownOnce = 83,
+    /// Empty invites table.
+    InvitesEmpty = 84,
+    /// Invites column: state.
+    ColState = 85,
+    /// Invite state: issued, not yet redeemed.
+    StateOpen = 86,
+    /// Invite state: redeemed.
+    StateRedeemed = 87,
+    /// Invite state: revoked.
+    StateRevoked = 88,
+    /// Invite state: lapsed unredeemed.
+    StateExpired = 89,
+    /// Confirmation before revoking an invite; `{nick}`.
+    ConfirmRevokeInvite = 90,
+    /// Invite issued; `{nick}`, `{days}`.
+    ResultInviteIssued = 91,
+    /// Invite revoked; `{nick}`.
+    ResultInviteRevoked = 92,
+    /// An invite finished after the window closed and its code was dropped.
+    ResultInviteDiscarded = 93,
+    /// Placeholder of the invite form's nick box.
+    PlaceholderInviteNick = 94,
 }
 
 impl AdminKey {
-    pub const COUNT: usize = 80;
+    pub const COUNT: usize = 95;
 
     /// Get translation for this key.
     #[inline]
@@ -4411,10 +4441,26 @@ pub enum CheckoutKey {
     KeyEntryPlaceholder = 74,
     /// Account-key sign-in button.
     SignIn = 75,
+    /// Plans step and sign-in overlay, signed out: link to the invite registration.
+    HaveInvite = 76,
+    /// Invite registration heading.
+    InviteHeading = 77,
+    /// Invite registration explanation.
+    InviteBody = 78,
+    /// Invite code field placeholder.
+    InvitePlaceholder = 79,
+    /// Invite code step: continue to the key.
+    InviteContinue = 80,
+    /// Invite key gate: create the account.
+    InviteRegister = 81,
+    /// Error: the invite code was refused.
+    ErrInvalidInvite = 82,
+    /// Sign-in overlay entry: sign in with an account key.
+    SignInWithKeyLink = 83,
 }
 
 impl CheckoutKey {
-    pub const COUNT: usize = 76;
+    pub const COUNT: usize = 84;
 
     /// Get translation for this key.
     #[inline]

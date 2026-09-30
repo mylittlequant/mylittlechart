@@ -177,13 +177,28 @@ pub fn draw_entry_link(
     label: &str,
     tt: &ToolbarTheme,
 ) {
+    draw_entry_link_to(ctx, coord, layer_id, cx, y, label, OPEN_WIDGET_ID, tt);
+}
+
+/// [`draw_entry_link`] registered under `widget_id` — the sign-in overlay's
+/// "Sign in with a key" and "I have an invite" links route by their own ids.
+pub fn draw_entry_link_to(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    cx: f64,
+    y: f64,
+    label: &str,
+    widget_id: &str,
+    tt: &ToolbarTheme,
+) {
     if !crate::ui::checkout::entry_points_enabled() {
         return;
     }
     ctx.set_font(FONT_SMALL_STRONG);
     let w = ctx.measure_text(label);
     let x = cx - w / 2.0;
-    let hovered = coord.is_hovered(&WidgetId::from(OPEN_WIDGET_ID));
+    let hovered = coord.is_hovered(&WidgetId::from(widget_id));
     let color = if hovered { &tt.accent_hover } else { &tt.accent };
     ctx.set_fill_color(color);
     ctx.set_text_align(TextAlign::Left);
@@ -197,7 +212,7 @@ pub fn draw_entry_link(
         ctx.line_to(x + w, y + 14.0);
         ctx.stroke();
     }
-    coord.register_on_layer(OPEN_WIDGET_ID, WidgetRect::new(x - 4.0, y - 3.0, w + 8.0, 20.0), Sense::CLICK | Sense::HOVER, layer_id);
+    coord.register_on_layer(widget_id, WidgetRect::new(x - 4.0, y - 3.0, w + 8.0, 20.0), Sense::CLICK | Sense::HOVER, layer_id);
 }
 
 // =============================================================================
@@ -410,12 +425,11 @@ impl<'a> Canvas<'a> {
 
     /// The account-key box: focused for as long as the page is up, caret and
     /// selection from the shared text-field store.
-    fn text_field(&mut self, rect: WidgetRect) {
+    fn text_field(&mut self, rect: WidgetRect, placeholder: &str) {
         if !self.drawing() {
             return;
         }
         let (tt, ft, now) = (self.tt, self.ft, self.now_ms);
-        let placeholder = CheckoutKey::KeyEntryPlaceholder.get(self.lang);
         let ctx = &mut *self.ctx;
         let Some((coord, layer)) = self.input.as_mut() else { return };
         let wid = WidgetId::from(KEY_FIELD_ID);
@@ -485,6 +499,8 @@ fn draw_body(c: &mut Canvas<'_>, st: &CheckoutState, x: f64, y: f64, w: f64) -> 
         CheckoutStep::Paid => draw_paid(c, st, x, y, w),
         CheckoutStep::Scheduled => draw_scheduled(c, st, x, y, w),
         CheckoutStep::KeyEntry => draw_key_entry(c, st, x, y, w),
+        CheckoutStep::InviteEntry => draw_invite_entry(c, st, x, y, w),
+        CheckoutStep::InviteGate => draw_key_gate(c, st, x, y, w),
     };
     used.max(120.0)
 }
@@ -573,6 +589,12 @@ fn draw_plans(c: &mut Canvas<'_>, st: &CheckoutState, x: f64, y: f64, w: f64) ->
         c.link("have_key", c.t(CheckoutKey::HaveKey), x, cy, Some(x + w));
     }
     cy += 18.0;
+    if st.have_invite_shown() {
+        // No code, no purchase: a registration invite makes the account.
+        cy += 2.0;
+        c.link("have_invite", c.t(CheckoutKey::HaveInvite), x, cy, None);
+        cy += 18.0;
+    }
     cy - y
 }
 
@@ -667,17 +689,38 @@ fn draw_plan_card(c: &mut Canvas<'_>, st: &CheckoutState, plan: &PlanUi, x: f64,
 // ---- key gate ---------------------------------------------------------------
 
 fn draw_key_row(c: &mut Canvas<'_>, anon: &AnonSession, copied: bool, x: f64, y: f64, w: f64) -> f64 {
-    let box_h = 44.0;
+    // The account key is 14 groups of four: two lines of whole groups, never
+    // truncated (a key that loses its tail cannot be written down).
+    let groups: Vec<&str> = anon.account_key.split('-').collect();
+    let mid = groups.len().div_ceil(2);
+    let lines: Vec<String> = if groups.len() > 4 {
+        vec![groups[..mid].join("-"), groups[mid..].join("-")]
+    } else {
+        vec![anon.account_key.clone()]
+    };
+    let line_h = 20.0;
+    let box_h = (lines.len() as f64 * line_h + 24.0).max(44.0);
     let box_rect = WidgetRect::new(x, y, w, box_h);
     let bg = c.tt.dropdown_bg.clone();
     let border = c.tt.separator.clone();
     c.rounded_box(box_rect, &bg, &border);
     let btn_w = SMALL_BTN_W;
     let key_w = w - btn_w - 28.0;
-    c.ctx.set_font(FONT_MONO_KEY);
-    let key = fit_text_to_width(&*c.ctx, &anon.account_key, key_w.max(40.0));
     let strong = c.strong().to_string();
-    c.text(&key, x + 12.0, y + box_h / 2.0, FONT_MONO_KEY, &strong, TextAlign::Left, TextBaseline::Middle);
+    let text_top = y + (box_h - lines.len() as f64 * line_h) / 2.0;
+    for (i, line) in lines.iter().enumerate() {
+        c.ctx.set_font(FONT_MONO_KEY);
+        let fitted = fit_text_to_width(&*c.ctx, line, key_w.max(40.0));
+        c.text(
+            &fitted,
+            x + 12.0,
+            text_top + i as f64 * line_h + line_h / 2.0,
+            FONT_MONO_KEY,
+            &strong,
+            TextAlign::Left,
+            TextBaseline::Middle,
+        );
+    }
     let btn = WidgetRect::new(x + w - btn_w - 10.0, y + (box_h - SMALL_BTN_H) / 2.0, btn_w, SMALL_BTN_H);
     let label = if copied { c.t(CheckoutKey::Copied) } else { c.t(CheckoutKey::Copy) };
     c.small_button("copy_key", btn, label, copied);
@@ -718,15 +761,24 @@ fn draw_key_gate(c: &mut Canvas<'_>, st: &CheckoutState, x: f64, y: f64, w: f64)
     }
     cy += 22.0 + 20.0;
 
+    let invite = st.step == CheckoutStep::InviteGate;
+    if invite {
+        if let Some(error) = &st.error {
+            cy += error_lines(c, error, x, cy, w) + 8.0;
+        }
+    }
     let half = (w - 10.0) / 2.0;
-    c.button("back", WidgetRect::new(x, cy, half, BTN_H), c.t(CheckoutKey::Back), Btn::Secondary, true);
-    c.button(
-        "key_continue",
-        WidgetRect::new(x + half + 10.0, cy, half, BTN_H),
-        c.t(CheckoutKey::KeyContinue),
-        Btn::Primary,
-        anon.saved,
-    );
+    c.button("back", WidgetRect::new(x, cy, half, BTN_H), c.t(CheckoutKey::Back), Btn::Secondary, !st.key_working);
+    let (label, live) = if invite {
+        if st.key_working {
+            ("\u{2026}", false)
+        } else {
+            (c.t(CheckoutKey::InviteRegister), anon.saved)
+        }
+    } else {
+        (c.t(CheckoutKey::KeyContinue), anon.saved)
+    };
+    c.button("key_continue", WidgetRect::new(x + half + 10.0, cy, half, BTN_H), label, Btn::Primary, live);
     cy += BTN_H;
     cy - y
 }
@@ -743,7 +795,7 @@ fn draw_key_entry(c: &mut Canvas<'_>, st: &CheckoutState, x: f64, y: f64, w: f64
     }
     cy += body.len() as f64 * 15.0 + 12.0;
 
-    c.text_field(WidgetRect::new(x, cy, w, FIELD_H));
+    c.text_field(WidgetRect::new(x, cy, w, FIELD_H), c.t(CheckoutKey::KeyEntryPlaceholder));
     cy += FIELD_H + 10.0;
 
     if let Some(error) = &st.error {
@@ -755,6 +807,39 @@ fn draw_key_entry(c: &mut Canvas<'_>, st: &CheckoutState, x: f64, y: f64, w: f64
     c.button("back", WidgetRect::new(x, cy, half, BTN_H), c.t(CheckoutKey::Back), Btn::Secondary, true);
     let label = if st.key_working { "\u{2026}" } else { c.t(CheckoutKey::SignIn) };
     c.button("key_submit", WidgetRect::new(x + half + 10.0, cy, half, BTN_H), label, Btn::Primary, !st.key_working);
+    cy += BTN_H;
+    cy - y
+}
+
+// ---- invite entry -----------------------------------------------------------
+
+fn draw_invite_entry(c: &mut Canvas<'_>, st: &CheckoutState, x: f64, y: f64, w: f64) -> f64 {
+    let mut cy = y;
+    cy += heading(c, c.t(CheckoutKey::InviteHeading), x, cy);
+    let muted = c.muted().to_string();
+    let body = c.wrap(c.t(CheckoutKey::InviteBody), FONT_SMALL, w);
+    for (i, line) in body.iter().enumerate() {
+        c.label(line, x, cy + i as f64 * 15.0, FONT_SMALL, &muted);
+    }
+    cy += body.len() as f64 * 15.0 + 12.0;
+
+    c.text_field(WidgetRect::new(x, cy, w, FIELD_H), c.t(CheckoutKey::InvitePlaceholder));
+    cy += FIELD_H + 10.0;
+
+    if let Some(error) = &st.error {
+        cy += error_lines(c, error, x, cy, w) + 6.0;
+    }
+    cy += 6.0;
+
+    let half = (w - 10.0) / 2.0;
+    c.button("back", WidgetRect::new(x, cy, half, BTN_H), c.t(CheckoutKey::Back), Btn::Secondary, true);
+    c.button(
+        "key_submit",
+        WidgetRect::new(x + half + 10.0, cy, half, BTN_H),
+        c.t(CheckoutKey::InviteContinue),
+        Btn::Primary,
+        true,
+    );
     cy += BTN_H;
     cy - y
 }
@@ -1108,7 +1193,7 @@ fn draw_scheduled(c: &mut Canvas<'_>, st: &CheckoutState, x: f64, y: f64, w: f64
 mod tests {
     use super::*;
     use crate::ui::checkout::{
-        AmountUi, CheckoutEvent, HoldingsUi, InvoiceReading, PayOptionUi as Pay, PlanKind as Kind,
+        AmountUi, CheckoutEvent, CheckoutOp, HoldingsUi, InvoiceReading, PayOptionUi as Pay, PlanKind as Kind,
     };
 
     // ---- a recording, headless RenderContext -------------------------------
@@ -1270,8 +1355,7 @@ mod tests {
         st
     }
 
-    /// The plans step with the anonymous purchase switched on, so the anonymous
-    /// flow stays covered while `ANON_PURCHASE_ENABLED` is off.
+    /// The plans step with the anonymous purchase switched on.
     fn open_with_plans(signed_in: bool) -> CheckoutState {
         open_with_plans_and_gate(signed_in, true)
     }
@@ -1339,14 +1423,15 @@ mod tests {
     }
 
     #[test]
-    fn the_release_gate_keeps_the_anon_card_and_the_key_link_off_the_plans_step() {
-        // The state as the shell builds it: the gate constant decides.
+    fn the_release_gate_keeps_the_anon_card_and_the_key_links_off_the_plans_step() {
+        // The gate switched off: no way into a key account.
         for signed_in in [false, true] {
-            let st = open_with_plans_and_gate(signed_in, crate::ui::checkout::ANON_PURCHASE_ENABLED);
+            let st = open_with_plans_and_gate(signed_in, false);
             let (ctx, r) = render(&st);
             assert!(!has_hit(&r, "plan:anon"), "no anonymous card (signed_in={signed_in})");
             assert!(!has_text(&ctx, "Anonymous account"), "{:?}", ctx.texts);
             assert!(!has_hit(&r, "have_key"), "no account-key entry (signed_in={signed_in})");
+            assert!(!has_hit(&r, "have_invite"), "no invite entry (signed_in={signed_in})");
             for id in ["plan:paid", "plan:q20", "plan:q50", "have_code"] {
                 assert!(has_hit(&r, id), "missing hit {id}");
             }
@@ -1693,6 +1778,89 @@ mod tests {
     }
 
     // ---- layout ------------------------------------------------------------
+
+    const SHOWN_KEY: &str = "000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-ZHQJ";
+
+    #[test]
+    fn the_plans_step_offers_the_invite_link_only_while_signed_out() {
+        let (_, r) = render(&open_with_plans(false));
+        assert!(has_hit(&r, "have_invite"));
+        let (_, r) = render(&open_with_plans(true));
+        assert!(!has_hit(&r, "have_invite"));
+    }
+
+    #[test]
+    fn the_invite_page_shows_a_code_field_and_a_continue_button() {
+        let mut st = open_with_plans(false);
+        st.click("have_invite", NOW);
+        let (ctx, r) = render(&st);
+        assert!(has_text(&ctx, "Register with an invite"), "{:?}", ctx.texts);
+        for id in ["key_input", "back", "key_submit"] {
+            assert!(has_hit(&r, id), "missing hit {id}");
+        }
+        assert!(has_text(&ctx, "Continue"));
+    }
+
+    #[test]
+    fn the_invite_gate_shows_the_whole_key_on_two_lines_and_keeps_register_dead_until_saved() {
+        let mut st = open_with_plans(false);
+        st.click("have_invite", NOW);
+        st.submit_invite("CODE", SHOWN_KEY.to_string());
+        assert_eq!(st.step, CheckoutStep::InviteGate);
+        let (ctx, r) = render(&st);
+        assert!(has_text(&ctx, "Save your account key"));
+        // Two lines of whole groups: nothing is cut off.
+        assert!(has_text(&ctx, "000G-40R4-0M30-E209-185G-R38E-1W81"), "{:?}", ctx.texts);
+        assert!(has_text(&ctx, "24GK-2GAH-C5RR-34D1-P70X-3RFG-ZHQJ"), "{:?}", ctx.texts);
+        assert!(has_text(&ctx, "opens your vault"));
+        assert!(has_hit(&r, "copy_key") && has_hit(&r, "key_saved") && has_hit(&r, "back"));
+        assert!(!has_hit(&r, "key_continue"), "Create my account is dead before the box is ticked");
+
+        st.click("key_saved", NOW);
+        let (ctx, r) = render(&st);
+        assert!(has_hit(&r, "key_continue"));
+        assert!(has_text(&ctx, "Create my account"));
+
+        st.click("key_continue", NOW);
+        let (ctx, r) = render(&st);
+        assert!(has_text(&ctx, "\u{2026}"), "working: {:?}", ctx.texts);
+        assert!(!has_hit(&r, "key_continue") && !has_hit(&r, "back"), "nothing to press while the invite is spent");
+    }
+
+    #[test]
+    fn a_refused_invite_prints_its_sentence_under_the_key() {
+        let mut st = open_with_plans(false);
+        st.click("have_invite", NOW);
+        st.submit_invite("CODE", SHOWN_KEY.to_string());
+        st.click("key_saved", NOW);
+        st.click("key_continue", NOW);
+        st.take_cmd(NOW);
+        st.apply(CheckoutEvent::Failed { op: CheckoutOp::SignIn, error: CheckoutError::InvalidInvite }, NOW);
+        let (ctx, r) = render(&st);
+        assert!(has_text(&ctx, "The invite code was not accepted."), "{:?}", ctx.texts);
+        assert!(has_hit(&r, "key_continue"), "another try is one click away");
+    }
+
+    #[test]
+    fn the_invite_pages_fit_inside_the_screen() {
+        let mut entry = open_with_plans(false);
+        entry.click("have_invite", NOW);
+        let mut gate = open_with_plans(false);
+        gate.click("have_invite", NOW);
+        gate.submit_invite("CODE", SHOWN_KEY.to_string());
+        for st in [&entry, &gate] {
+            let (_, r) = render(st);
+            let f = r.modal_rect;
+            assert!(f.x >= 0.0 && f.y >= 0.0 && f.right() <= 1280.0 && f.bottom() <= 900.0, "{:?} {:?}", st.step, f);
+            for (id, rect) in &r.hits {
+                assert!(
+                    rect.x >= f.x && rect.right() <= f.right() + 0.5 && rect.y >= f.y && rect.bottom() <= f.bottom() + 0.5,
+                    "{id} {rect:?} escapes the frame {f:?} on {:?}",
+                    st.step
+                );
+            }
+        }
+    }
 
     #[test]
     fn every_step_fits_inside_the_screen_it_is_centred_on() {

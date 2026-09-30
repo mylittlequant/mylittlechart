@@ -19,6 +19,7 @@
 //! any other.
 
 use mlc_core::engine::render::{RenderContext, TextAlign, TextBaseline};
+use mlc_core::i18n::CheckoutKey;
 use uzor::input::{InputCoordinator, LayerId, Sense};
 use uzor::types::Rect as WidgetRect;
 use uzor::WidgetId;
@@ -57,15 +58,64 @@ pub struct CloudLoginResult {
     pub header_rect: WidgetRect,
 }
 
-/// Height the "buy an anonymous account" link adds under the providers; zero
-/// while the shell has no checkout driver or the anonymous purchase is off
+/// Widget id of the "Sign in with a key" link.
+pub const KEY_LINK_ID: &str = "cloud_login:key";
+/// Widget id of the "I have an invite" link.
+pub const INVITE_LINK_ID: &str = "cloud_login:invite";
+
+/// One link under the provider buttons: its widget id and its label key.
+pub type EntryLink = (&'static str, CheckoutKey);
+
+/// The links the overlay offers under the providers, top to bottom: buy an
+/// anonymous account, sign in with a key, register with an invite. Empty
+/// while the shell has no checkout driver or the key accounts are not released
 /// (`ui::checkout::ANON_PURCHASE_ENABLED`).
-fn entry_link_h() -> f64 {
-    if crate::ui::checkout::buy_anon_link_shown() {
-        26.0
-    } else {
-        0.0
+pub fn entry_links(entry_points: bool, key_accounts_released: bool) -> Vec<EntryLink> {
+    if !(entry_points && key_accounts_released) {
+        return Vec::new();
     }
+    vec![
+        (crate::layout::modals::checkout::OPEN_WIDGET_ID, CheckoutKey::BuyAnon),
+        (KEY_LINK_ID, CheckoutKey::SignInWithKeyLink),
+        (INVITE_LINK_ID, CheckoutKey::HaveInvite),
+    ]
+}
+
+/// [`entry_links`] for this process's switches.
+fn shown_entry_links() -> Vec<EntryLink> {
+    entry_links(
+        crate::ui::checkout::entry_points_enabled(),
+        crate::ui::checkout::ANON_PURCHASE_ENABLED,
+    )
+}
+
+/// Height the entry links add under the providers.
+fn entry_link_h() -> f64 {
+    match shown_entry_links().len() {
+        0 => 0.0,
+        n => n as f64 * ENTRY_LINK_STEP + 4.0,
+    }
+}
+
+/// Vertical step between two entry links.
+const ENTRY_LINK_STEP: f64 = 24.0;
+
+/// Draw the entry links starting at `y`; returns the y after the last one.
+fn draw_entry_links(
+    ctx: &mut dyn RenderContext,
+    coord: &mut InputCoordinator,
+    layer_id: &LayerId,
+    cx: f64,
+    y: f64,
+    tt: &ToolbarTheme,
+) -> f64 {
+    let lang = mlc_core::i18n::current_language();
+    let mut ly = y;
+    for (id, key) in shown_entry_links() {
+        crate::layout::modals::checkout::draw_entry_link_to(ctx, coord, layer_id, cx, ly, key.get(lang), id, tt);
+        ly += ENTRY_LINK_STEP;
+    }
+    ly
 }
 
 /// Body height per phase — the shell sizes the frame from this.
@@ -187,20 +237,11 @@ fn draw_body(
                 );
                 btn_y += BTN_H + BTN_GAP;
             }
-            // No provider account? An anonymous account is bought, not
-            // registered: the checkout opens on it. Hidden while the anonymous
-            // purchase is off (`ui::checkout::ANON_PURCHASE_ENABLED`).
-            if crate::ui::checkout::buy_anon_link_shown() {
-                crate::layout::modals::checkout::draw_entry_link(
-                    ctx,
-                    coord,
-                    layer_id,
-                    cx,
-                    btn_y + 2.0,
-                    mlc_core::i18n::CheckoutKey::BuyAnon.get(mlc_core::i18n::current_language()),
-                    tt,
-                );
-            }
+            // No provider account? A key account is bought, signed into with
+            // its key, or registered with an invite: each link opens the
+            // checkout modal on that page. Hidden while key accounts are off
+            // (`ui::checkout::ANON_PURCHASE_ENABLED`).
+            draw_entry_links(ctx, coord, layer_id, cx, btn_y + 2.0, tt);
         }
 
         // Signing in, with the browser away at the provider. The device code
@@ -233,17 +274,7 @@ fn draw_body(
                 btn_y += BTN_H + BTN_GAP;
             }
 
-            if crate::ui::checkout::buy_anon_link_shown() {
-                crate::layout::modals::checkout::draw_entry_link(
-                    ctx,
-                    coord,
-                    layer_id,
-                    cx,
-                    btn_y + 2.0,
-                    mlc_core::i18n::CheckoutKey::BuyAnon.get(mlc_core::i18n::current_language()),
-                    tt,
-                );
-            }
+            draw_entry_links(ctx, coord, layer_id, cx, btn_y + 2.0, tt);
 
             ctx.set_font("11px sans-serif");
             ctx.set_fill_color(&tt.item_text_muted);
@@ -368,4 +399,35 @@ fn draw_button(
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(label, rect.center_x(), rect.center_y());
     coord.register_on_layer(widget_id, rect, Sense::CLICK | Sense::HOVER, layer_id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_overlay_offers_buy_key_and_invite_when_key_accounts_are_released() {
+        let links = entry_links(true, true);
+        let ids: Vec<&str> = links.iter().map(|(id, _)| *id).collect();
+        assert_eq!(ids, ["checkout:open", KEY_LINK_ID, INVITE_LINK_ID]);
+        let keys: Vec<CheckoutKey> = links.iter().map(|(_, k)| *k).collect();
+        assert_eq!(keys, [CheckoutKey::BuyAnon, CheckoutKey::SignInWithKeyLink, CheckoutKey::HaveInvite]);
+    }
+
+    #[test]
+    fn the_overlay_offers_nothing_without_a_checkout_driver_or_a_release() {
+        assert!(entry_links(false, true).is_empty(), "no checkout driver, no links");
+        assert!(entry_links(true, false).is_empty(), "key accounts off, no links");
+        assert!(entry_links(false, false).is_empty());
+    }
+
+    #[test]
+    fn the_two_new_entries_read_in_every_language() {
+        for lang in mlc_core::i18n::Language::all() {
+            assert!(!CheckoutKey::SignInWithKeyLink.get(*lang).is_empty());
+            assert!(!CheckoutKey::HaveInvite.get(*lang).is_empty());
+        }
+        assert_eq!(CheckoutKey::SignInWithKeyLink.get(mlc_core::i18n::Language::En), "Sign in with a key");
+        assert_eq!(CheckoutKey::HaveInvite.get(mlc_core::i18n::Language::En), "I have an invite");
+    }
 }

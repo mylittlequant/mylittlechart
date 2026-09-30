@@ -83,15 +83,24 @@ async fn run_cmd(
                 vec![bridge::failure_event(CheckoutOp::Start, &e)]
             }
         },
-        // Public: someone with no account yet buys one. No credential goes out.
-        CheckoutCmd::AnonCheckout { plan_id } => match transport.billing_anon_checkout(&plan_id).await {
-            Ok(started) => vec![bridge::anon_started_event(&plan_id, started)],
-            Err(e) => vec![bridge::failure_event(CheckoutOp::Start, &e)],
-        },
+        // Public: someone with no account yet buys one. The account key is
+        // drawn here, on this device; only the credential derived from it goes
+        // out, and the key itself goes to the modal to be shown once.
+        CheckoutCmd::AnonCheckout { plan_id } => {
+            let key = mlc_vault::account_key::AccountKey::generate();
+            match transport.billing_anon_checkout(&plan_id, &key.credential_hex()).await {
+                Ok(started) => vec![bridge::anon_started_event(&plan_id, key.display(), started)],
+                Err(e) => vec![bridge::failure_event(CheckoutOp::Start, &e)],
+            }
+        }
         CheckoutCmd::PollInvoice { invoice_id, account_key } => {
             let answer = match account_key.as_deref() {
-                // A pending anonymous account reads its own invoice with its key.
-                Some(key) => transport.billing_anon_invoice(&invoice_id, key).await,
+                // A pending anonymous account reads its own invoice with the
+                // credential derived from its key.
+                Some(typed) => match bridge::key_material(typed) {
+                    Ok(material) => transport.billing_anon_invoice(&invoice_id, &material.credential).await,
+                    Err(error) => return vec![CheckoutEvent::Failed { op: CheckoutOp::Poll, error }],
+                },
                 None => transport.billing_invoice(&invoice_id).await,
             };
             match answer {
@@ -105,6 +114,9 @@ async fn run_cmd(
             }
         }
         CheckoutCmd::SignInWithKey { account_key } => sign_in_with_key(transport, inner, &account_key).await,
+        CheckoutCmd::RedeemInvite { invite_code, account_key } => {
+            redeem_invite(transport, inner, &invite_code, &account_key).await
+        }
     }
 }
 
@@ -130,10 +142,47 @@ async fn load_plans(transport: &FetchTransport, inner: &Rc<RefCell<Inner>>, sign
     events
 }
 
-/// Key -> cookie session -> device code -> confirm -> poll -> bearer token.
-async fn sign_in_with_key(transport: &FetchTransport, inner: &Rc<RefCell<Inner>>, account_key: &str) -> Vec<CheckoutEvent> {
+/// Key -> credential -> cookie session -> device code -> confirm -> poll ->
+/// bearer token. Only the credential derived from the typed key is sent; the
+/// vault key derived beside it is kept for the app.
+async fn sign_in_with_key(transport: &FetchTransport, inner: &Rc<RefCell<Inner>>, typed_key: &str) -> Vec<CheckoutEvent> {
+    let material = match bridge::key_material(typed_key) {
+        Ok(material) => material,
+        Err(error) => return vec![CheckoutEvent::Failed { op: CheckoutOp::SignIn, error }],
+    };
+    if let Err(e) = transport.account_key_sign_in(&material.credential).await {
+        return vec![bridge::failure_event(CheckoutOp::SignIn, &e)];
+    }
+    finish_sign_in(transport, inner, material.vault_key).await
+}
+
+/// Invite code + the new key's credential -> new key account and cookie
+/// session -> the same device-code confirmation as any key sign-in.
+async fn redeem_invite(
+    transport: &FetchTransport,
+    inner: &Rc<RefCell<Inner>>,
+    invite_code: &str,
+    typed_key: &str,
+) -> Vec<CheckoutEvent> {
+    let material = match bridge::key_material(typed_key) {
+        Ok(material) => material,
+        Err(error) => return vec![CheckoutEvent::Failed { op: CheckoutOp::SignIn, error }],
+    };
+    if let Err(e) = transport.invite_redeem(invite_code, &material.credential).await {
+        return vec![bridge::invite_failure_event(&e)];
+    }
+    finish_sign_in(transport, inner, material.vault_key).await
+}
+
+/// The cookie session exists: turn it into the bearer token every other
+/// request uses (`create code -> confirm -> poll`), queue that as the ordinary
+/// sign-in result, and hand the vault key to the app.
+async fn finish_sign_in(
+    transport: &FetchTransport,
+    inner: &Rc<RefCell<Inner>>,
+    vault_key: mlc_vault::crypto::VaultKey,
+) -> Vec<CheckoutEvent> {
     let confirmed = async {
-        transport.account_key_sign_in(account_key).await?;
         let code = transport.device_code_create().await?;
         transport.device_code_confirm(&code.code).await?;
         transport.device_code_poll(&code.code).await
@@ -141,7 +190,9 @@ async fn sign_in_with_key(transport: &FetchTransport, inner: &Rc<RefCell<Inner>>
     .await;
     match confirmed {
         Ok(poll @ DeviceAuthPoll::Confirmed { .. }) => {
-            inner.borrow_mut().results.push_back(FlowResult::Poll(Ok(poll)));
+            let mut state = inner.borrow_mut();
+            state.pending_vault_key = Some(zeroize::Zeroizing::new(vault_key));
+            state.results.push_back(FlowResult::Poll(Ok(poll)));
             vec![CheckoutEvent::SignedIn]
         }
         Ok(_) => vec![bridge::failure_event(

@@ -361,6 +361,18 @@ mod tests {
     }
 
     #[test]
+    fn the_vault_key_of_a_typed_key_opens_a_vault_sealed_with_the_shown_one() {
+        let shown = seq();
+        let typed = AccountKey::parse(&shown.display().to_lowercase()).expect("typed key parses");
+        let sealed = crate::crypto::encrypt(&shown.vault_key(), b"vault payload").expect("seal");
+        let opened = crate::crypto::decrypt(&typed.vault_key(), &sealed).expect("open");
+        assert_eq!(opened, b"vault payload");
+        // Another key's vault key, and the credential, cannot open it.
+        assert!(crate::crypto::decrypt(&AccountKey::from_bytes([9u8; 32]).vault_key(), &sealed).is_err());
+        assert!(crate::crypto::decrypt(&shown.credential(), &sealed).is_err());
+    }
+
+    #[test]
     fn credential_shape_check() {
         assert!(is_credential_hex(&seq().credential_hex()));
         assert!(!is_credential_hex(SEQ_DISPLAY));

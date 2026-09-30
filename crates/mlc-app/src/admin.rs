@@ -2,7 +2,7 @@
 //!
 //! State and logic live in `mlc_app_layout::ui::admin_tab`; the tab is drawn
 //! by `layout::modals::user_settings_admin`. This file is what only the app
-//! can do: read the seven text inputs out of the `TextFieldStore`, put codes
+//! can do: read the ten text inputs out of the `TextFieldStore`, put codes
 //! on the clipboard (`ChartApp::clipboard_text`, the path the shell already
 //! drains for the recovery key and the friend-invite link), and give the shell
 //! one small surface to drive — [`ChartApp::take_admin_request`] out,
@@ -113,6 +113,21 @@ impl ChartApp {
                 let nick = self.admin_field_text(AdminField::UserNick);
                 self.panel_app.user_settings_state.admin.submit_lookup(&nick);
             }
+            AdminAction::IssueInvite => {
+                let nick = self.admin_field_text(AdminField::InviteNick);
+                let days = self.admin_field_text(AdminField::InviteDays);
+                let note = self.admin_field_text(AdminField::InviteNote);
+                self.panel_app.user_settings_state.admin.submit_invite(&nick, &days, &note);
+            }
+            AdminAction::CopyInvite => {
+                let text = self.panel_app.user_settings_state.admin.copy_invite_text();
+                self.admin_copy(text);
+            }
+            AdminAction::DismissInvite => self.panel_app.user_settings_state.admin.dismiss_invite(),
+            AdminAction::RefreshInvites => self.panel_app.user_settings_state.admin.refresh_invites(),
+            AdminAction::RevokeInvite(invite_id) => {
+                self.panel_app.user_settings_state.admin.arm_revoke_invite(&invite_id);
+            }
         }
     }
 
@@ -126,7 +141,7 @@ impl ChartApp {
 
     /// Enter / Escape in one of the Admin tab's inputs. Escape leaves the
     /// field. Enter presses the button that field belongs to — Mint, Add paid
-    /// days, Look up — and does nothing in the two Grants fields that serve
+    /// days, Look up, Issue invite — and does nothing in the two Grants fields that serve
     /// several buttons, so a stray Enter can never pick a grant for the admin.
     pub(crate) fn text_action_admin_field(&mut self, field: AdminField, ch: char, action: TextAction) {
         if ch == '\x1b' || matches!(action, TextAction::Cancel) {
@@ -141,6 +156,7 @@ impl ChartApp {
             AdminField::MintDays | AdminField::MintCount | AdminField::MintNote => Some(AdminAction::Mint),
             AdminField::GrantDays => Some(AdminAction::PaidDays),
             AdminField::UserNick => Some(AdminAction::Lookup),
+            AdminField::InviteNick | AdminField::InviteDays | AdminField::InviteNote => Some(AdminAction::IssueInvite),
             AdminField::GrantNick | AdminField::GrantNote => None,
         };
         if let Some(press) = press {

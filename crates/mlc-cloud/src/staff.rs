@@ -102,6 +102,9 @@ impl std::fmt::Debug for StaffMintResponse {
 #[derive(Clone, Deserialize, PartialEq, Eq)]
 pub struct StaffInviteIssued {
     pub invite_code: String,
+    /// The invite's id (`inv_...`), when the server sends it.
+    #[serde(default)]
+    pub id: String,
 }
 
 impl std::fmt::Debug for StaffInviteIssued {
@@ -130,8 +133,9 @@ pub struct StaffInvite {
     /// Set when the invite lapsed unredeemed.
     #[serde(default)]
     pub expires_at: Option<String>,
-    /// The server's own state word, when it sends one.
-    #[serde(default)]
+    /// The server's own state word (`pending | redeemed | revoked | expired`),
+    /// when it sends one.
+    #[serde(default, alias = "status")]
     pub state: Option<String>,
 }
 
@@ -308,7 +312,9 @@ pub fn staff_error(e: &CloudError) -> StaffError {
                 retry_after_secs: (parsed.retry_after_secs > 0).then_some(parsed.retry_after_secs),
             }
         }
-        CloudError::Http { status: 400, body } => {
+        // 400 is a bad input; 409 is a clash the admin can fix (a nick already
+        // reserved, an invite already redeemed). Both carry the server's sentence.
+        CloudError::Http { status: 400 | 409, body } => {
             let parsed = parse_error_body(body);
             StaffError::BadRequest {
                 detail: if parsed.error.is_empty() { body.trim().to_string() } else { parsed.error },
@@ -373,6 +379,22 @@ mod tests {
         let issued: StaffInviteIssued = serde_json::from_str(r#"{"invite_code":"INV-SECRET-1"}"#).expect("issued");
         assert_eq!(issued.invite_code, "INV-SECRET-1");
         assert!(!format!("{issued:?}").contains("SECRET"));
+    }
+
+    #[test]
+    fn invite_status_words_and_a_nick_clash_read_as_the_servers_sentences() {
+        let row = r#"{"id":"inv_1","nick":"nix","paid_days":0,"note":"","status":"pending",
+            "created_at":"2026-10-01T00:00:00+00:00","expires_at":"2026-10-31T00:00:00+00:00",
+            "redeemed_at":null,"revoked_at":null,"created_by_nick":"root"}"#;
+        let invite: StaffInvite = serde_json::from_str(row).expect("status row");
+        assert_eq!(invite.state.as_deref(), Some("pending"));
+        let issued: StaffInviteIssued = serde_json::from_str(
+            r#"{"id":"inv_1","invite_code":"ABCD-EFGH-JKMN-PQRS-TVWX","nick":"nix","paid_days":0,"note":"","expires_at":"x"}"#,
+        )
+        .expect("issued");
+        assert_eq!((issued.id.as_str(), issued.invite_code.as_str()), ("inv_1", "ABCD-EFGH-JKMN-PQRS-TVWX"));
+        let clash = CloudError::Http { status: 409, body: r#"{"error":"nick taken"}"#.into() };
+        assert_eq!(staff_error(&clash), StaffError::BadRequest { detail: "nick taken".into() });
     }
 
     #[test]

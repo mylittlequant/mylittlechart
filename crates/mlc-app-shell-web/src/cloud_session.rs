@@ -24,8 +24,8 @@ use wasm_bindgen_futures::{spawn_local, JsFuture};
 
 use mlc_app::ChartApp;
 use mlc_app_layout::ui::admin_tab::{
-    AdminBatchRow, AdminFailure, AdminLedgerRow, AdminLifetimeDone, AdminMinted, AdminOutcome, AdminRequest,
-    AdminUserCard, LifetimeKind,
+    AdminBatchRow, AdminFailure, AdminInviteRow, AdminIssuedInvite, AdminLedgerRow, AdminLifetimeDone, AdminMinted,
+    AdminOutcome, AdminRequest, AdminUserCard, InviteStamps, LifetimeKind,
 };
 use mlc_app_layout::ui::modal_settings::{
     dm_has_older, merge_dm_messages, BoardUi, CloudForumReply, CloudForumThread, CloudForumThreadSummary,
@@ -484,6 +484,10 @@ struct Inner {
     /// `drive_checkout` (`checkout.rs`), the only place `&mut ChartApp` and
     /// the modal's clock meet the mailbox.
     checkout_events: std::collections::VecDeque<mlc_app_layout::ui::checkout::CheckoutEvent>,
+    /// The vault key `V` of a key account that just signed in (by key or by
+    /// invite). Derived on this device from the account key, handed to the app
+    /// once (`CloudSession::take_pending_vault_key`) and never sent anywhere.
+    pending_vault_key: Option<zeroize::Zeroizing<mlc_vault::crypto::VaultKey>>,
 }
 
 /// One running web messenger: the I/O object plus the inputs it was started
@@ -659,6 +663,7 @@ impl CloudSession {
                 admin_epoch: 0,
                 admin_result: None,
                 checkout_events: std::collections::VecDeque::new(),
+                pending_vault_key: None,
             })),
         };
         install_messenger_pagehide(&session.inner);
@@ -671,6 +676,13 @@ impl CloudSession {
     /// answer). Read at boot and right after a login/logout flips it.
     pub fn is_signed_in(&self) -> bool {
         self.inner.borrow().token.is_some()
+    }
+
+    /// The vault key of a key account that signed in since the last call
+    /// (one-shot). The shell applies it with
+    /// `ChartApp::apply_account_vault_key`.
+    pub fn take_pending_vault_key(&self) -> Option<zeroize::Zeroizing<mlc_vault::crypto::VaultKey>> {
+        self.inner.borrow_mut().pending_vault_key.take()
     }
 
     /// Per-frame driver. Reads the overlay's phase + one-shot flags, advances
@@ -4151,6 +4163,9 @@ fn admin_failed(request: &AdminRequest, failure: AdminFailure) -> AdminOutcome {
         AdminRequest::LifetimeGrant { .. } => AdminOutcome::LifetimeGranted(Err(failure)),
         AdminRequest::LifetimeRevoke { .. } => AdminOutcome::LifetimeRevoked(Err(failure)),
         AdminRequest::LookupUser { .. } => AdminOutcome::User(Err(failure)),
+        AdminRequest::IssueInvite { .. } => AdminOutcome::InviteIssued(Err(failure)),
+        AdminRequest::LoadInvites => AdminOutcome::Invites(Err(failure)),
+        AdminRequest::RevokeInvite { .. } => AdminOutcome::InviteRevoked(Err(failure)),
     }
 }
 
@@ -4242,6 +4257,44 @@ async fn run_admin(
                 Err(e) => Err(admin_error(inner, &e)),
             },
         ),
+        AdminRequest::IssueInvite { nick, paid_days, note } => AdminOutcome::InviteIssued(
+            match transport.staff_invite_issue(&nick, paid_days, &note).await {
+                Ok(r) => Ok(AdminIssuedInvite { nick, paid_days, code: r.invite_code }),
+                Err(e) => Err(admin_error(inner, &e)),
+            },
+        ),
+        AdminRequest::LoadInvites => AdminOutcome::Invites(match transport.staff_invites().await {
+            Ok(rows) => {
+                let now_ms = js_sys::Date::now() as i64;
+                Ok(rows
+                    .into_iter()
+                    .map(|i| {
+                        let state = InviteStamps {
+                            redeemed_at: i.redeemed_at.as_deref(),
+                            revoked_at: i.revoked_at.as_deref(),
+                            expires_at: i.expires_at.as_deref(),
+                            state: i.state.as_deref(),
+                        }
+                        .resolve(now_ms);
+                        AdminInviteRow {
+                            id: i.id,
+                            nick: i.nick,
+                            paid_days: i.paid_days,
+                            note: i.note,
+                            created_at: i.created_at,
+                            state,
+                        }
+                    })
+                    .collect())
+            }
+            Err(e) => Err(admin_error(inner, &e)),
+        }),
+        AdminRequest::RevokeInvite { invite_id, nick } => {
+            AdminOutcome::InviteRevoked(match transport.staff_invite_revoke(&invite_id).await {
+                Ok(_) => Ok((nick, invite_id)),
+                Err(e) => Err(admin_error(inner, &e)),
+            })
+        }
         AdminRequest::LookupUser { nick } => AdminOutcome::User(match transport.staff_user(&nick).await {
             Ok(u) => Ok(AdminUserCard {
                 nick: u.nick,

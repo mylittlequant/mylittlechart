@@ -35,9 +35,34 @@ impl ChartApp {
     /// has no checkout driver, so a shell without one never opens a modal that
     /// would sit on "Loading plans" forever.
     pub fn open_checkout(&mut self) {
+        if let Some(signed_in) = self.checkout_entry_ready() {
+            self.panel_app.checkout_state.open(signed_in);
+        }
+    }
+
+    /// Open the checkout modal on the account-key page (the sign-in overlay's
+    /// "Sign in with a key").
+    pub fn open_checkout_key_entry(&mut self) {
+        if let Some(signed_in) = self.checkout_entry_ready() {
+            self.panel_app.checkout_state.open_key_entry(signed_in);
+        }
+    }
+
+    /// Open the checkout modal on the invite page (the sign-in overlay's
+    /// "I have an invite").
+    pub fn open_checkout_invite_entry(&mut self) {
+        if let Some(signed_in) = self.checkout_entry_ready() {
+            self.panel_app.checkout_state.open_invite_entry(signed_in);
+        }
+    }
+
+    /// The shared start of every checkout entry: refused (logged) while the
+    /// shell has no checkout driver; otherwise the surfaces the modal replaces
+    /// are closed and the account state is returned.
+    fn checkout_entry_ready(&mut self) -> Option<bool> {
         if !entry_points_enabled() {
-            log::warn!("[ChartApp] open_checkout refused: this shell has no checkout driver");
-            return;
+            log::warn!("[ChartApp] checkout entry refused: this shell has no checkout driver");
+            return None;
         }
         // The sign-in overlay sits above the modal; whoever came from it wants
         // the checkout, not both.
@@ -48,7 +73,7 @@ impl ChartApp {
         // modal, never draws stacked over it. (`close` keeps the account
         // view the checkout reads above.)
         self.panel_app.user_settings_state.close();
-        self.panel_app.checkout_state.open(signed_in);
+        Some(signed_in)
     }
 
     /// Whether the checkout modal is open.
@@ -62,14 +87,14 @@ impl ChartApp {
         let st = &mut self.panel_app.checkout_state;
         st.set_signed_in(signed_in);
         st.tick(now_ms);
-        if !(st.is_open && st.step == CheckoutStep::KeyEntry) {
+        if !(st.is_open && matches!(st.step, CheckoutStep::KeyEntry | CheckoutStep::InviteEntry)) {
             self.release_key_field();
         }
     }
 
-    /// The account-key box is a credential's hiding place: whenever the
-    /// key-entry page is not up it gives back the keyboard and forgets its
-    /// text.
+    /// The account-key box is a credential's hiding place (it doubles as the
+    /// invite-code box): whenever neither page is up it gives back the keyboard
+    /// and forgets its text.
     fn release_key_field(&mut self) {
         let wid = WidgetId::from(crate::text_input::CHECKOUT_KEY_INPUT);
         let mut coord = self.input_coordinator.borrow_mut();
@@ -127,11 +152,18 @@ impl ChartApp {
         }
     }
 
-    /// Sign in with the key typed in the account-key box.
+    /// Submit the text box: sign in with the typed account key, or — on the
+    /// invite page — take the typed invite code and draw the new account key
+    /// for it on this device.
     pub(crate) fn checkout_submit_key(&mut self) {
         let wid = WidgetId::from(crate::text_input::CHECKOUT_KEY_INPUT);
         let typed = self.input_coordinator.borrow().text_fields().text(&wid).to_string();
-        self.panel_app.checkout_state.submit_key(&typed);
+        if self.panel_app.checkout_state.step == CheckoutStep::InviteEntry {
+            let key = mlc_vault::account_key::AccountKey::generate();
+            self.panel_app.checkout_state.submit_invite(&typed, key.display());
+        } else {
+            self.panel_app.checkout_state.submit_key(&typed);
+        }
     }
 
     /// Escape in the account-key box.
@@ -488,6 +520,63 @@ mod tests {
         let coord = app.input_coordinator.borrow();
         assert_eq!(coord.text_fields().text(&wid), "", "the credential does not linger in the box");
         assert_ne!(coord.text_fields().focused(), Some(&wid));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_invite_page_draws_a_key_on_this_device_and_spends_the_invite_only_after_the_gate() {
+        set_entry_points_enabled(true);
+        let mut app = app().await;
+        app.open_checkout_invite_entry();
+        assert_eq!(app.panel_app.checkout_state.step, CheckoutStep::InviteEntry);
+        assert_eq!(app.checkout_take_cmd(NOW), Some(CheckoutCmd::LoadPlans));
+        app.checkout_apply(CheckoutEvent::Plans { plans: Vec::new(), onion: false, enabled: true }, NOW);
+
+        let wid = uzor::WidgetId::from(crate::text_input::CHECKOUT_KEY_INPUT);
+        app.input_coordinator.borrow_mut().text_fields_mut().set_text(&wid, " INVITE-CODE ");
+        app.dispatch_panel_click("checkout:key_submit", 0.0, 0.0);
+        assert_eq!(app.panel_app.checkout_state.step, CheckoutStep::InviteGate);
+        assert_eq!(app.checkout_take_cmd(NOW), None, "nothing is sent behind the gate");
+
+        // The key is drawn here, well formed, and is what the gate shows.
+        let shown = app.panel_app.checkout_state.anon.as_ref().map(|a| a.account_key.clone()).unwrap_or_default();
+        assert!(mlc_vault::account_key::AccountKey::parse(&shown).is_ok(), "{shown}");
+        app.dispatch_panel_click("checkout:copy_key", 0.0, 0.0);
+        assert_eq!(app.clipboard_text.as_deref(), Some(shown.as_str()));
+
+        app.dispatch_panel_click("checkout:key_continue", 0.0, 0.0);
+        assert_eq!(app.checkout_take_cmd(NOW), None, "the gate holds until the box is ticked");
+        app.dispatch_panel_click("checkout:key_saved", 0.0, 0.0);
+        app.dispatch_panel_click("checkout:key_continue", 0.0, 0.0);
+        assert_eq!(
+            app.checkout_take_cmd(NOW),
+            Some(CheckoutCmd::RedeemInvite { invite_code: "INVITE-CODE".into(), account_key: shown })
+        );
+
+        app.checkout_apply(CheckoutEvent::SignedIn, NOW + 10);
+        assert!(!app.checkout_is_open());
+        app.checkout_tick(true, NOW + 20);
+        let coord = app.input_coordinator.borrow();
+        assert_eq!(coord.text_fields().text(&wid), "", "the invite code does not linger in the box");
+        drop(coord);
+        assert!(app.panel_app.checkout_state.anon.is_none(), "the drawn key is forgotten");
+    }
+
+    #[cfg(feature = "cloud")]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_sign_in_overlay_links_open_the_key_and_invite_pages() {
+        set_entry_points_enabled(true);
+        let mut app = app().await;
+        app.panel_app.cloud_login_state.open();
+        app.dispatch_panel_click("cloud_login:key", 0.0, 0.0);
+        assert!(!app.panel_app.cloud_login_state.is_open, "the overlay gives way to the modal");
+        assert!(app.checkout_is_open());
+        assert_eq!(app.panel_app.checkout_state.step, CheckoutStep::KeyEntry);
+
+        app.panel_app.checkout_state.close();
+        app.panel_app.cloud_login_state.open();
+        app.dispatch_panel_click("cloud_login:invite", 0.0, 0.0);
+        assert!(!app.panel_app.cloud_login_state.is_open);
+        assert_eq!(app.panel_app.checkout_state.step, CheckoutStep::InviteEntry);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

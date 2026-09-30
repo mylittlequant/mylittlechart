@@ -5981,6 +5981,9 @@ impl ChartApp {
                 "retry" => {
                     st.phase = mlc_app_layout::ui::modal_settings::CloudLoginPhase::RequestCode;
                 }
+                // Key accounts: the checkout modal opens on the matching page.
+                "key" => self.open_checkout_key_entry(),
+                "invite" => self.open_checkout_invite_entry(),
                 // OAuth provider button — the authorize URL carries our device
                 // code so the server confirms this device after the OAuth dance.
                 rest if rest.starts_with("oauth:") => {

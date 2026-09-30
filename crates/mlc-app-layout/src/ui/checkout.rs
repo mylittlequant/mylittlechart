@@ -56,11 +56,10 @@ pub fn entry_points_enabled() -> bool {
 /// Release gate for buying an anonymous account. While it is `false` the client
 /// hides every way in: the "Buy an anonymous account" link on the sign-in
 /// overlay, the `anon_account` plan cards on the plans step and the "sign in
-/// with an account key" entry (an anonymous account is the only kind that has
-/// such a key). The state machine below keeps the whole anonymous flow — the
-/// key gate, the key entry, the anonymous invoice — so a release that ships the
-/// new key scheme flips this one constant.
-pub const ANON_PURCHASE_ENABLED: bool = false;
+/// with an account key" / "I have an invite" entries (only a key account has
+/// such a key). On since 0.5.652: the client draws the account key itself and
+/// sends only the credential derived from it, so the server never holds a key.
+pub const ANON_PURCHASE_ENABLED: bool = true;
 
 /// Whether the sign-in overlay offers "Buy an anonymous account": the shell can
 /// run the checkout and the anonymous purchase is released.
@@ -300,10 +299,30 @@ pub enum SignInPhase {
     Failed,
 }
 
-/// The anonymous account being bought.
+/// A registration invite code typed by the person being invited. A secret
+/// until it is spent: `Debug` never prints it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct InviteCode(String);
+
+impl InviteCode {
+    /// The code as typed (trimmed).
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for InviteCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("InviteCode(<redacted>)")
+    }
+}
+
+/// The anonymous account being bought, or the key account being registered
+/// with an invite.
 #[derive(Clone, PartialEq)]
 pub struct AnonSession {
-    /// The whole credential. Shown once; never logged, never stored.
+    /// The account key `K`, in its display form. Shown once; never logged,
+    /// never stored, never sent (only the credential derived from it is).
     pub account_key: String,
     /// The buyer ticked "I saved my account key".
     pub saved: bool,
@@ -338,8 +357,12 @@ pub enum CheckoutStep {
     Paid,
     /// A downgrade was queued for the next renewal.
     Scheduled,
-    /// Signed out: type the key of an anonymous account bought earlier.
+    /// Signed out: type the key of an account bought or registered earlier.
     KeyEntry,
+    /// Signed out: type the invite code of a registration invite.
+    InviteEntry,
+    /// The new account key, shown once, before the invite is spent.
+    InviteGate,
 }
 
 /// What the shell must send next.
@@ -355,8 +378,13 @@ pub enum CheckoutCmd {
     AnonCheckout { plan_id: String },
     /// `GET /api/billing/invoice/{id}`, or `anon-invoice` with the key.
     PollInvoice { invoice_id: String, account_key: Option<String> },
-    /// `POST /api/auth/account-key`, then the device-code confirmation.
+    /// `POST /api/auth/account-key`, then the device-code confirmation. The
+    /// shell derives the credential from the key text; only that goes out.
     SignInWithKey { account_key: String },
+    /// `POST /api/auth/invite/redeem`, then the device-code confirmation. The
+    /// key was drawn on this device and shown once; the shell sends the invite
+    /// code and the credential derived from the key.
+    RedeemInvite { invite_code: String, account_key: String },
 }
 
 impl std::fmt::Debug for CheckoutCmd {
@@ -370,6 +398,7 @@ impl std::fmt::Debug for CheckoutCmd {
                 write!(f, "PollInvoice({invoice_id}, key={})", if account_key.is_some() { "<redacted>" } else { "none" })
             }
             CheckoutCmd::SignInWithKey { .. } => write!(f, "SignInWithKey(<redacted>)"),
+            CheckoutCmd::RedeemInvite { .. } => write!(f, "RedeemInvite(<redacted>)"),
         }
     }
 }
@@ -443,8 +472,9 @@ pub enum CheckoutEffect {
     OpenRedeem,
     /// The key-entry page opened: give its text field the keyboard.
     FocusKeyField,
-    /// "Sign in" on the key-entry page: read the field and submit its text
-    /// with [`CheckoutState::submit_key`].
+    /// "Sign in" on the key-entry page (or "Continue" on the invite page): read
+    /// the field and submit its text with [`CheckoutState::submit_key`] or
+    /// [`CheckoutState::submit_invite`], whichever page is up.
     SubmitKey,
 }
 
@@ -470,6 +500,8 @@ pub enum CheckoutError {
     SignInRequired,
     Network,
     InvalidKey,
+    /// The invite code was refused (unknown, spent, revoked or lapsed).
+    InvalidInvite,
     Other,
 }
 
@@ -492,6 +524,8 @@ impl CheckoutError {
             "unauthorized" => Self::SignInRequired,
             "network" => Self::Network,
             "invalid account key" => Self::InvalidKey,
+            "invalid_invite" | "invite_invalid" | "invite_not_found" | "invite_redeemed" | "invite_revoked"
+            | "invite_expired" => Self::InvalidInvite,
             _ => match status {
                 0 => Self::Network,
                 401 => Self::SignInRequired,
@@ -519,6 +553,7 @@ impl CheckoutError {
             Self::SignInRequired => CheckoutKey::ErrSignInRequired,
             Self::Network => CheckoutKey::ErrNetwork,
             Self::InvalidKey => CheckoutKey::ErrInvalidKey,
+            Self::InvalidInvite => CheckoutKey::ErrInvalidInvite,
             Self::Other => CheckoutKey::ErrGeneric,
         }
     }
@@ -584,6 +619,8 @@ pub struct CheckoutState {
     pub error: Option<CheckoutError>,
     pub invoice: Option<InvoiceSession>,
     pub anon: Option<AnonSession>,
+    /// The invite being spent, between the invite page and the redeem answer.
+    pub invite: Option<InviteCode>,
     /// Whether the anonymous purchase is offered at all. Starts as
     /// [`ANON_PURCHASE_ENABLED`]; a field so the flow behind the gate stays
     /// testable while the constant is off.
@@ -619,6 +656,7 @@ impl Default for CheckoutState {
             error: None,
             invoice: None,
             anon: None,
+            invite: None,
             anon_purchase: ANON_PURCHASE_ENABLED,
             scheduled_on: None,
             key_working: false,
@@ -654,6 +692,26 @@ impl CheckoutState {
         self.request_plans();
     }
 
+    /// Open the modal straight on the account-key page (the sign-in overlay's
+    /// "Sign in with a key"). Refused while the anonymous purchase is off.
+    pub fn open_key_entry(&mut self, signed_in: bool) {
+        self.open(signed_in);
+        if self.have_key_shown() {
+            self.key_working = false;
+            self.step = CheckoutStep::KeyEntry;
+        }
+    }
+
+    /// Open the modal straight on the invite page (the sign-in overlay's
+    /// "I have an invite"). Refused while the anonymous purchase is off.
+    pub fn open_invite_entry(&mut self, signed_in: bool) {
+        self.open(signed_in);
+        if self.have_invite_shown() {
+            self.key_working = false;
+            self.step = CheckoutStep::InviteEntry;
+        }
+    }
+
     /// Escape and a click outside the frame. Like [`Self::close`], except that
     /// it leaves the modal up while it still holds an account key the buyer
     /// may not have copied — only the Close button or the ✕ ends that.
@@ -669,7 +727,12 @@ impl CheckoutState {
     pub fn close(&mut self) {
         self.is_open = false;
         self.error = None;
-        if matches!(self.step, CheckoutStep::Paid | CheckoutStep::Scheduled) {
+        // An invite that was not spent leaves no key behind: the next try
+        // draws a fresh one.
+        if matches!(
+            self.step,
+            CheckoutStep::Paid | CheckoutStep::Scheduled | CheckoutStep::InviteEntry | CheckoutStep::InviteGate
+        ) {
             self.forget_session();
         }
     }
@@ -677,6 +740,8 @@ impl CheckoutState {
     fn forget_session(&mut self) {
         self.invoice = None;
         self.anon = None;
+        self.invite = None;
+        self.key_working = false;
         self.scheduled_on = None;
         self.paid_at_ms = None;
         self.last_start = None;
@@ -728,6 +793,12 @@ impl CheckoutState {
     /// visitor, and only while the anonymous purchase is on (only an anonymous
     /// account has such a key).
     pub fn have_key_shown(&self) -> bool {
+        self.anon_purchase && !self.signed_in
+    }
+
+    /// Whether the plans step offers "I have an invite": same audience as
+    /// [`Self::have_key_shown`] — a signed-out visitor, with key accounts on.
+    pub fn have_invite_shown(&self) -> bool {
         self.anon_purchase && !self.signed_in
     }
 
@@ -904,6 +975,13 @@ impl CheckoutState {
                 self.enter_paid(now_ms);
             }
             CheckoutEvent::Invoice(reading) => self.apply_reading(reading, now_ms),
+            CheckoutEvent::SignedIn if self.step == CheckoutStep::InviteGate => {
+                // The invite was spent and the new key account is signed in.
+                self.cmd_in_flight = false;
+                self.entitlements_dirty = true;
+                self.forget_session();
+                self.close();
+            }
             CheckoutEvent::SignedIn if self.step == CheckoutStep::KeyEntry => {
                 // A typed key signed the visitor in: nothing left to do here.
                 self.cmd_in_flight = false;
@@ -1037,6 +1115,8 @@ impl CheckoutState {
                 if self.anon.as_ref().is_some_and(|a| a.saved) && self.step == CheckoutStep::KeyGate {
                     self.step = CheckoutStep::Pay;
                     self.next_poll_ms = now_ms;
+                } else if self.step == CheckoutStep::InviteGate {
+                    self.redeem_invite();
                 }
                 CheckoutEffect::None
             }
@@ -1060,6 +1140,15 @@ impl CheckoutState {
                 self.error = None;
                 self.key_working = false;
                 self.step = CheckoutStep::KeyEntry;
+                CheckoutEffect::FocusKeyField
+            }
+            "have_invite" => {
+                if !self.have_invite_shown() {
+                    return CheckoutEffect::None;
+                }
+                self.error = None;
+                self.key_working = false;
+                self.step = CheckoutStep::InviteEntry;
                 CheckoutEffect::FocusKeyField
             }
             "key_submit" => CheckoutEffect::SubmitKey,
@@ -1138,8 +1227,58 @@ impl CheckoutState {
         self.cmd = Some(CheckoutCmd::SignInWithKey { account_key: key.to_string() });
     }
 
+    /// The invite page's "Continue": `code` is the typed invite code and
+    /// `key_display` the account key the app just drew for it. Moves to the key
+    /// gate, where the key is shown once before the invite is spent.
+    pub fn submit_invite(&mut self, code: &str, key_display: String) {
+        if self.step != CheckoutStep::InviteEntry || self.key_working {
+            return;
+        }
+        let code = code.trim();
+        if code.is_empty() {
+            self.error = Some(CheckoutError::InvalidInvite);
+            return;
+        }
+        self.error = None;
+        self.invite = Some(InviteCode(code.to_string()));
+        self.anon = Some(AnonSession {
+            account_key: key_display,
+            saved: false,
+            auto_sign_in: false,
+            sign_in: SignInPhase::Idle,
+        });
+        self.step = CheckoutStep::InviteGate;
+    }
+
+    /// The key gate's "Create my account", once "I saved it" is ticked.
+    fn redeem_invite(&mut self) {
+        if self.key_working || !self.anon.as_ref().is_some_and(|a| a.saved) {
+            return;
+        }
+        let (Some(invite), Some(anon)) = (self.invite.as_ref(), self.anon.as_ref()) else { return };
+        self.error = None;
+        self.key_working = true;
+        self.cmd = Some(CheckoutCmd::RedeemInvite {
+            invite_code: invite.as_str().to_string(),
+            account_key: anon.account_key.clone(),
+        });
+    }
+
     fn back(&mut self) {
         match self.step {
+            CheckoutStep::InviteEntry => {
+                self.key_working = false;
+                self.step = CheckoutStep::Plans;
+            }
+            CheckoutStep::InviteGate => {
+                // Nothing was spent; the drawn key is dropped.
+                if self.key_working {
+                    return;
+                }
+                self.anon = None;
+                self.invite = None;
+                self.step = CheckoutStep::InviteEntry;
+            }
             CheckoutStep::KeyEntry => {
                 self.key_working = false;
                 self.step = CheckoutStep::Plans;
@@ -2100,15 +2239,15 @@ mod tests {
     }
 
     #[test]
-    fn the_anonymous_purchase_gate_is_off_in_this_release() {
-        assert!(!ANON_PURCHASE_ENABLED);
-        assert!(!CheckoutState::default().anon_purchase, "a fresh state carries the constant");
+    fn the_anonymous_purchase_gate_is_on_in_this_release() {
+        assert!(ANON_PURCHASE_ENABLED);
+        assert!(CheckoutState::default().anon_purchase, "a fresh state carries the constant");
     }
 
     #[test]
     fn the_gate_hides_the_anon_plan_cards_the_key_entry_and_the_overlay_link() {
         // 1. The plans step: no anonymous card, the paid account and the tiers stay.
-        let mut s = CheckoutState::default();
+        let mut s = CheckoutState { anon_purchase: false, ..CheckoutState::default() };
         s.open(false);
         assert_eq!(s.take_cmd(NOW), Some(CheckoutCmd::LoadPlans));
         s.apply(CheckoutEvent::Plans { plans: catalog(), onion: false, enabled: true }, NOW);
@@ -2130,10 +2269,149 @@ mod tests {
         assert!(!s.have_key_shown());
         assert_eq!(s.click("have_key", NOW), CheckoutEffect::None);
         assert_eq!(s.step, CheckoutStep::Plans);
+        assert!(!s.have_invite_shown());
+        assert_eq!(s.click("have_invite", NOW), CheckoutEffect::None);
+        assert_eq!(s.step, CheckoutStep::Plans);
 
         // 3. The sign-in overlay link: hidden even with the checkout driver on.
-        assert!(!anon_link_shown(true, ANON_PURCHASE_ENABLED));
-        assert!(!buy_anon_link_shown());
+        assert!(!anon_link_shown(true, false));
+    }
+
+    // ---- registration invites -------------------------------------------------
+
+    const INVITE_KEY: &str = "000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-ZHQJ";
+
+    fn on_invite_page() -> CheckoutState {
+        let mut s = anon_state();
+        s.open_invite_entry(false);
+        s.take_cmd(NOW);
+        s.apply(CheckoutEvent::Plans { plans: catalog(), onion: false, enabled: true }, NOW);
+        s
+    }
+
+    #[test]
+    fn the_invite_link_opens_the_invite_page_for_a_signed_out_visitor_only() {
+        let mut s = anon_state();
+        s.open(false);
+        s.take_cmd(NOW);
+        s.apply(CheckoutEvent::Plans { plans: catalog(), onion: false, enabled: true }, NOW);
+        assert!(s.have_invite_shown());
+        assert_eq!(s.click("have_invite", NOW), CheckoutEffect::FocusKeyField);
+        assert_eq!(s.step, CheckoutStep::InviteEntry);
+
+        let mut signed_in = open_signed_in();
+        assert!(!signed_in.have_invite_shown());
+        assert_eq!(signed_in.click("have_invite", NOW), CheckoutEffect::None);
+        assert_eq!(signed_in.step, CheckoutStep::Plans);
+    }
+
+    #[test]
+    fn the_sign_in_overlay_entries_open_the_key_and_invite_pages_directly() {
+        let mut s = anon_state();
+        s.open_key_entry(false);
+        assert_eq!((s.is_open, s.step), (true, CheckoutStep::KeyEntry));
+        s.close();
+        s.open_invite_entry(false);
+        assert_eq!((s.is_open, s.step), (true, CheckoutStep::InviteEntry));
+        // Switched off, both stay on the plans.
+        let mut off = CheckoutState { anon_purchase: false, ..CheckoutState::default() };
+        off.open_key_entry(false);
+        assert_eq!(off.step, CheckoutStep::Plans);
+        off.open_invite_entry(false);
+        assert_eq!(off.step, CheckoutStep::Plans);
+    }
+
+    #[test]
+    fn the_invite_flow_shows_the_key_once_then_spends_the_invite_then_signs_in() {
+        let mut s = on_invite_page();
+        // An empty code is refused before anything happens.
+        s.submit_invite("  ", INVITE_KEY.to_string());
+        assert_eq!(s.error, Some(CheckoutError::InvalidInvite));
+        assert_eq!(s.step, CheckoutStep::InviteEntry);
+        assert!(s.anon.is_none());
+
+        // A code moves to the gate with the drawn key; nothing is sent yet.
+        s.submit_invite("  NIX-1234  ", INVITE_KEY.to_string());
+        assert_eq!(s.step, CheckoutStep::InviteGate);
+        assert_eq!(s.anon.as_ref().map(|a| a.account_key.as_str()), Some(INVITE_KEY));
+        assert_eq!(s.take_cmd(NOW), None, "the invite is not spent behind the gate");
+        assert_eq!(s.click("copy_key", NOW), CheckoutEffect::Copy(INVITE_KEY.to_string()));
+
+        // "Create my account" is dead until the box is ticked.
+        s.click("key_continue", NOW);
+        assert_eq!(s.take_cmd(NOW), None);
+        assert!(!s.key_working);
+
+        s.click("key_saved", NOW);
+        s.click("key_continue", NOW + 1);
+        assert!(s.key_working);
+        assert_eq!(
+            s.take_cmd(NOW + 1),
+            Some(CheckoutCmd::RedeemInvite { invite_code: "NIX-1234".into(), account_key: INVITE_KEY.into() })
+        );
+        s.click("key_continue", NOW + 2);
+        assert_eq!(s.take_cmd(NOW + 2), None, "one redeem at a time");
+
+        s.apply(CheckoutEvent::SignedIn, NOW + 10);
+        assert!(!s.is_open);
+        assert!(s.take_entitlements_dirty());
+        assert!(s.anon.is_none() && s.invite.is_none(), "nothing of the key survives the flow");
+        assert!(!s.key_working);
+    }
+
+    #[test]
+    fn a_refused_invite_keeps_the_gate_and_the_same_key_for_another_try() {
+        let mut s = on_invite_page();
+        s.submit_invite("BAD", INVITE_KEY.to_string());
+        s.click("key_saved", NOW);
+        s.click("key_continue", NOW);
+        s.take_cmd(NOW);
+        s.apply(CheckoutEvent::Failed { op: CheckoutOp::SignIn, error: CheckoutError::InvalidInvite }, NOW + 5);
+        assert_eq!(s.error, Some(CheckoutError::InvalidInvite));
+        assert_eq!(s.step, CheckoutStep::InviteGate);
+        assert!(!s.key_working);
+        s.click("key_continue", NOW + 6);
+        assert!(matches!(s.take_cmd(NOW + 6), Some(CheckoutCmd::RedeemInvite { .. })));
+    }
+
+    #[test]
+    fn back_and_close_drop_an_unspent_invite_and_its_key() {
+        let mut s = on_invite_page();
+        s.submit_invite("CODE", INVITE_KEY.to_string());
+        s.click("back", NOW);
+        assert_eq!(s.step, CheckoutStep::InviteEntry);
+        assert!(s.anon.is_none() && s.invite.is_none());
+        s.click("back", NOW);
+        assert_eq!(s.step, CheckoutStep::Plans);
+
+        let mut s = on_invite_page();
+        s.submit_invite("CODE", INVITE_KEY.to_string());
+        s.dismiss();
+        assert!(!s.is_open);
+        assert!(s.anon.is_none() && s.invite.is_none(), "closing forgets the drawn key");
+        assert_eq!(s.step, CheckoutStep::Plans);
+    }
+
+    #[test]
+    fn nothing_prints_an_invite_code_or_its_key() {
+        let mut s = on_invite_page();
+        s.submit_invite("INVITE-SECRET", INVITE_KEY.to_string());
+        let printed = format!("{s:?}");
+        assert!(!printed.contains("INVITE-SECRET"), "{printed}");
+        assert!(!printed.contains("000G-40R4"), "{printed}");
+        s.click("key_saved", NOW);
+        s.click("key_continue", NOW);
+        let cmd = s.take_cmd(NOW);
+        let printed = format!("{cmd:?}");
+        assert!(!printed.contains("INVITE-SECRET") && !printed.contains("000G"), "{printed}");
+    }
+
+    #[test]
+    fn invite_error_codes_map_to_their_sentence() {
+        for code in ["invalid_invite", "invite_revoked", "invite_expired", "invite_redeemed"] {
+            assert_eq!(CheckoutError::from_wire(400, code, None), CheckoutError::InvalidInvite, "{code}");
+        }
+        assert_eq!(CheckoutError::InvalidInvite.key(), CheckoutKey::ErrInvalidInvite);
     }
 
     #[test]

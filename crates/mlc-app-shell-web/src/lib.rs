@@ -1167,6 +1167,13 @@ fn drive_cloud_network(st: &mut WebAppState, now_ms: u64, last_driven_ms: &Rc<st
     last_driven_ms.set(now_ms);
     if let Some(cloud) = &st.cloud {
         cloud.drive(&mut st.chart, now_ms as f64);
+        // A key account just signed in: its vault opens with the key derived
+        // from its account key, with no passphrase prompt.
+        if let Some(vault_key) = cloud.take_pending_vault_key() {
+            if let Err(e) = st.chart.apply_account_vault_key(*vault_key, &mut st.profile_manager) {
+                web_sys::console::warn_1(&format!("[account-key] vault not opened: {e}").into());
+            }
+        }
     }
 }
 

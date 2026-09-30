@@ -1,7 +1,7 @@
 //! The settings modal's **Admin** tab — renderer.
 //!
 //! State and logic live in `crate::ui::admin_tab`; this draws them. A strip of
-//! three sections (Coupons, Grants, User) sits above a scrolling body, laid
+//! four sections (Coupons, Grants, User, Invites) sits above a scrolling body, laid
 //! out like the other settings tabs: `ToolbarTheme` tokens only, translated
 //! strings from `AdminKey`, text inputs through the shared `TextFieldStore`
 //! (geometry published as content items, exactly like the Account tab's
@@ -18,8 +18,9 @@ use crate::layout::render_chart::FrameTheme;
 use crate::layout::render_frame::UserSettingsResult;
 use crate::layout::render_ui::toolbar_to_widget_theme;
 use crate::ui::admin_tab::{
-    batch_headers, batch_lines, ledger_lines, user_card_fields, AdminAction, AdminConfirm, AdminField,
-    AdminSection, AdminState, AdminUserCard, Fill, LifetimeKind, MAX_NOTE_CHARS,
+    batch_headers, batch_lines, invite_headers, invite_lines, ledger_lines, user_card_fields, AdminAction,
+    AdminConfirm, AdminField, AdminSection, AdminState, AdminUserCard, Fill, LifetimeKind, DEFAULT_INVITE_DAYS,
+    MAX_NOTE_CHARS,
 };
 use crate::ui::modal_settings::UserSettingsState;
 use crate::ui::scroll_widget::ScrollableContainer;
@@ -329,6 +330,7 @@ pub(super) fn render_admin_tab(
             AdminSection::Coupons => coupons(&mut ui, admin, x, top, cw),
             AdminSection::Grants => grants(&mut ui, admin, x, top, cw),
             AdminSection::User => user(&mut ui, admin, x, top, cw),
+            AdminSection::Invites => invites(&mut ui, admin, x, top, cw),
         }
     };
     let scroll_result = container.end(ctx, end_y - top, scroll_widget_theme);
@@ -369,7 +371,7 @@ fn shows_live_field(fields: &uzor::input::TextFieldStore, id: &uzor::WidgetId) -
     fields.is_engaged(id) && fields.is_focused(id)
 }
 
-/// The three section buttons, with the working / loading indicator at the
+/// The section buttons, with the working / loading indicator at the
 /// right end.
 fn draw_strip(ui: &mut Ui<'_>, admin: &AdminState, viewport: WidgetRect) {
     let tt = ui.tt;
@@ -580,6 +582,172 @@ fn coupons(ui: &mut Ui<'_>, admin: &AdminState, x: f64, mut cy: f64, cw: f64) ->
                 );
                 cy += 24.0;
                 if armed == Some(line.batch_id.as_str()) {
+                    if let Some(confirm) = &admin.confirm {
+                        cy += ui.confirm_bar(confirm, x, cy, cw);
+                    }
+                }
+                ui.rule(x, cy - 2.0, cw);
+            }
+        }
+    }
+    cy + 12.0
+}
+
+// =============================================================================
+// Invites
+// =============================================================================
+
+fn invites(ui: &mut Ui<'_>, admin: &AdminState, x: f64, mut cy: f64, cw: f64) -> f64 {
+    let lang = ui.lang;
+    let busy = ui.busy;
+
+    // ── Issue form ───────────────────────────────────────────────────────
+    cy += ui.heading(AdminKey::InviteTitle.get(lang), x, cy);
+    let days_w = 72.0;
+    let issue_label = AdminKey::BtnIssueInvite.get(lang);
+    let issue_w = ui.btn_w(issue_label).min(cw * 0.35);
+    let free_w = (cw - days_w - issue_w - GAP * 3.0).max(160.0);
+    let nick_w = free_w * 0.4;
+    let note_w = free_w - nick_w;
+    let nick_x = x;
+    let days_x = nick_x + nick_w + GAP;
+    let note_x = days_x + days_w + GAP;
+    ui.label(AdminKey::LabelNick.get(lang), nick_x, cy);
+    ui.label(AdminKey::LabelDays.get(lang), days_x, cy);
+    ui.label(AdminKey::LabelNote.get(lang), note_x, cy);
+    cy += LINE_H;
+    let note_hint = Fill::new(AdminKey::PlaceholderNote.get(lang)).arg("max", MAX_NOTE_CHARS).done();
+    ui.field(
+        AdminField::InviteNick,
+        WidgetRect::new(nick_x, cy, nick_w, FIELD_H),
+        AdminKey::PlaceholderInviteNick.get(lang),
+    );
+    ui.field(
+        AdminField::InviteDays,
+        WidgetRect::new(days_x, cy, days_w, FIELD_H),
+        &DEFAULT_INVITE_DAYS.to_string(),
+    );
+    ui.field(AdminField::InviteNote, WidgetRect::new(note_x, cy, note_w, FIELD_H), &note_hint);
+    ui.button(
+        &AdminAction::IssueInvite,
+        issue_label,
+        WidgetRect::new(note_x + note_w + GAP, cy, issue_w, FIELD_H),
+        Tone::Primary,
+        !busy,
+    );
+    cy += FIELD_H + 8.0;
+    cy += ui.notice(admin, x, cy, cw);
+
+    // ── Freshly issued code (shown once) ─────────────────────────────────
+    if let Some(issued) = &admin.issued_invite {
+        cy += 4.0;
+        let pad = 10.0;
+        let warn = ui.tt.warning.clone();
+        ui.ctx.set_font(FONT);
+        let lines = wrap_to_width(&*ui.ctx, AdminKey::InviteShownOnce.get(lang), (cw - pad * 2.0).max(40.0));
+        let row_h = 26.0;
+        let panel_h = pad + lines.len() as f64 * LINE_H + 6.0 + row_h + 8.0 + BTN_H + pad;
+        if ui.visible(cy, panel_h) {
+            ui.ctx.set_fill_color(&mlc_core::apply_opacity(&warn, 0.1));
+            ui.ctx.fill_rounded_rect(x, cy, cw, panel_h, 6.0);
+            ui.ctx.set_stroke_color(&mlc_core::apply_opacity(&warn, 0.55));
+            ui.ctx.set_stroke_width(1.0);
+            ui.ctx.stroke_rounded_rect(x, cy, cw, panel_h, 6.0);
+        }
+        let mut py = cy + pad;
+        for line in &lines {
+            if ui.visible(py, LINE_H) {
+                ui.text(line, x + pad, py, FONT, &warn);
+            }
+            py += LINE_H;
+        }
+        py += 6.0;
+        let item_text = ui.tt.item_text.clone();
+        if ui.visible(py, row_h) {
+            ui.text_fit(&issued.code, x + pad, py + 6.0, (cw - pad * 2.0).max(40.0), FONT_CODE, &item_text);
+        }
+        py += row_h + 8.0;
+        let copy = AdminKey::BtnCopy.get(lang).to_string();
+        let done = AdminKey::BtnDone.get(lang).to_string();
+        ui.button_row(
+            x + pad,
+            py,
+            cw - pad * 2.0,
+            &[
+                (AdminAction::CopyInvite, copy, Tone::Primary, true),
+                (AdminAction::DismissInvite, done, Tone::Neutral, true),
+            ],
+        );
+        cy += panel_h + 12.0;
+    }
+
+    // ── Invites table ────────────────────────────────────────────────────
+    cy += 6.0;
+    ui.heading(AdminKey::SectionInvites.get(lang), x, cy + 3.0);
+    let refresh = AdminKey::BtnRefresh.get(lang);
+    let refresh_w = ui.btn_w(refresh);
+    ui.button(
+        &AdminAction::RefreshInvites,
+        refresh,
+        WidgetRect::new(x + cw - refresh_w, cy, refresh_w, BTN_H),
+        Tone::Neutral,
+        !busy,
+    );
+    cy += BTN_H + 8.0;
+
+    let muted = mlc_core::apply_opacity(&ui.tt.item_text, 0.6);
+    let item_text = ui.tt.item_text.clone();
+    match &admin.invites {
+        None => {
+            if busy {
+                ui.text(AdminKey::Loading.get(lang), x, cy, FONT, &muted);
+                cy += 22.0;
+            }
+        }
+        Some(rows) if rows.is_empty() => {
+            ui.text(AdminKey::InvitesEmpty.get(lang), x, cy, FONT, &muted);
+            cy += 22.0;
+        }
+        Some(rows) => {
+            let action_w = 72.0;
+            let table_w = (cw - action_w).max(120.0);
+            let fractions = [0.24, 0.10, 0.18, 0.18, 0.30];
+            let mut col_x = [x; 5];
+            let mut col_w = [0.0; 5];
+            let mut acc = x;
+            for i in 0..5 {
+                col_x[i] = acc;
+                col_w[i] = table_w * fractions[i];
+                acc += col_w[i];
+            }
+            for (i, header) in invite_headers(lang).iter().enumerate() {
+                ui.text_fit(header, col_x[i], cy, (col_w[i] - 4.0).max(1.0), FONT_SMALL, &muted);
+            }
+            cy += 16.0;
+            ui.rule(x, cy, cw);
+            cy += 4.0;
+            let revoke = AdminKey::BtnRevoke.get(lang);
+            let armed = match &admin.confirm {
+                Some(AdminConfirm::RevokeInvite { invite_id, .. }) => Some(invite_id.as_str()),
+                _ => None,
+            };
+            for line in invite_lines(rows, lang) {
+                let row_y = cy;
+                let cells = [line.nick.as_str(), line.days.as_str(), line.created.as_str(), line.state, line.note.as_str()];
+                for (i, cell) in cells.iter().enumerate() {
+                    if ui.visible(row_y, 20.0) {
+                        ui.text_fit(cell, col_x[i], row_y + 4.0, (col_w[i] - 4.0).max(1.0), FONT, &item_text);
+                    }
+                }
+                ui.button(
+                    &AdminAction::RevokeInvite(line.id.clone()),
+                    revoke,
+                    WidgetRect::new(x + cw - action_w + 8.0, row_y, action_w - 8.0, 20.0),
+                    Tone::Danger,
+                    !busy && line.revocable,
+                );
+                cy += 24.0;
+                if armed == Some(line.id.as_str()) {
                     if let Some(confirm) = &admin.confirm {
                         cy += ui.confirm_bar(confirm, x, cy, cw);
                     }
@@ -1139,5 +1307,114 @@ mod tests {
         st.admin.apply(AdminOutcome::Batches(Err(crate::ui::admin_tab::AdminFailure::Forbidden)));
         let (texts, _result) = render(&st);
         assert!(texts.iter().any(|t| t.contains("admin role")), "{texts:?}");
+    }
+
+    fn invite(id: &str, nick: &str, state: crate::ui::admin_tab::InviteState) -> crate::ui::admin_tab::AdminInviteRow {
+        crate::ui::admin_tab::AdminInviteRow {
+            id: id.to_string(),
+            nick: nick.to_string(),
+            paid_days: 365,
+            note: "friend".to_string(),
+            created_at: "2026-10-01T10:00:00+00:00".to_string(),
+            state,
+        }
+    }
+
+    #[test]
+    fn the_strip_carries_the_invites_section() {
+        let (texts, _result) = render(&admin_state());
+        assert!(has(&texts, "Invites"), "section Invites: {texts:?}");
+    }
+
+    #[test]
+    fn the_invites_section_draws_the_issue_form_with_its_three_boxes() {
+        let mut st = admin_state();
+        st.admin.set_section(AdminSection::Invites);
+        let (texts, result) = render(&st);
+        for s in ["Issue a registration invite", "Issue invite", "Nick", "Days", "Note"] {
+            assert!(has(&texts, s), "{s}: {texts:?}");
+        }
+        for field in [AdminField::InviteNick, AdminField::InviteDays, AdminField::InviteNote] {
+            assert!(
+                result.content_items.iter().any(|(k, _)| *k == field.content_key()),
+                "{field:?} publishes its geometry"
+            );
+        }
+        assert!(!has(&texts, "Mint codes"), "the coupons form is not on this section");
+    }
+
+    #[test]
+    fn the_invites_table_renders_rows_with_state_and_revoke_only_on_open_ones() {
+        use crate::ui::admin_tab::InviteState;
+        let mut st = admin_state();
+        st.admin.set_section(AdminSection::Invites);
+        st.admin.invites = Some(vec![invite("inv_1", "nix", InviteState::Open), invite("inv_2", "bob", InviteState::Redeemed)]);
+        let mut ctx = Rec::default();
+        let mut coord = uzor::input::InputCoordinator::new();
+        render_user_settings_modal(
+            &mut ctx,
+            1280.0,
+            800.0,
+            &st,
+            &CredentialsState::default(),
+            &FrameTheme::default(),
+            &ToolbarTheme::default(),
+            0,
+            &mut coord,
+            false,
+        );
+        let texts = &ctx.texts;
+        for s in ["State", "nix", "bob", "2026-10-01", "365", "Open", "Redeemed", "friend"] {
+            assert!(has(texts, s), "{s}: {texts:?}");
+        }
+        assert_eq!(texts.iter().filter(|t| *t == "Revoke").count(), 2, "both rows draw the label");
+        let target = |id: &str| coord.widget_rect(&uzor::WidgetId::from(AdminAction::RevokeInvite(id.into()).hit_id().as_str()));
+        assert!(target("inv_1").is_some(), "an open invite stays clickable");
+        assert!(target("inv_2").is_none(), "a redeemed invite has no click target");
+    }
+
+    #[test]
+    fn an_empty_invites_table_says_so() {
+        let mut st = admin_state();
+        st.admin.set_section(AdminSection::Invites);
+        st.admin.invites = Some(Vec::new());
+        let (texts, _result) = render(&st);
+        assert!(has(&texts, "No invites yet."), "{texts:?}");
+    }
+
+    #[test]
+    fn revoking_an_invite_asks_first() {
+        use crate::ui::admin_tab::InviteState;
+        let mut st = admin_state();
+        st.admin.set_section(AdminSection::Invites);
+        st.admin.invites = Some(vec![invite("inv_1", "nix", InviteState::Open)]);
+        st.admin.arm_revoke_invite("inv_1");
+        let (texts, _result) = render(&st);
+        assert!(texts.iter().any(|t| t.contains("Revoke the invite for nix")), "{texts:?}");
+        assert!(has(&texts, "Confirm") && has(&texts, "Cancel"));
+        assert!(st.admin.pending.is_none(), "nothing is sent before Confirm");
+    }
+
+    #[test]
+    fn an_issued_invite_code_is_drawn_once_with_copy_and_the_shown_once_note() {
+        let mut st = admin_state();
+        st.admin.set_section(AdminSection::Invites);
+        st.admin.issued_invite = Some(crate::ui::admin_tab::AdminIssuedInvite {
+            nick: "nix".to_string(),
+            paid_days: 365,
+            code: "INV-7Q2M-9XPT-A4N8".to_string(),
+        });
+        let (texts, _result) = render(&st);
+        assert!(has(&texts, "INV-7Q2M-9XPT-A4N8"), "{texts:?}");
+        assert!(texts.iter().any(|t| t.contains("Shown once")), "{texts:?}");
+        assert!(has(&texts, "Copy") && has(&texts, "Done"));
+
+        st.close();
+        st.open();
+        st.admin.served = true;
+        st.active_tab = UserSettingsTab::Admin;
+        st.admin.set_section(AdminSection::Invites);
+        let (after, _result) = render(&st);
+        assert!(!has(&after, "INV-7Q2M-9XPT-A4N8"), "closing dropped the code");
     }
 }

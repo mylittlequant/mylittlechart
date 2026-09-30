@@ -800,6 +800,52 @@ impl ChartApp {
         Ok(())
     }
 
+    /// Open the CURRENTLY ACTIVE profile's vault with the vault key `V` of a
+    /// key account (anonymous purchase or invite — see
+    /// `mlc_vault::account_key`), right after a sign-in by key.
+    ///
+    /// There is no passphrase and no prompt: `V` is derived on this device from
+    /// the account key the person just typed or was shown, and it is the vault
+    /// key. An existing `vault.enc` must open under it (then it is unsealed
+    /// live, the same steps as [`Self::apply_recovery_unlock`]); with none, `V`
+    /// becomes the profile's vault key and the profile is marked dirty so
+    /// `vault.enc` is written under it. No recovery key is made — the account
+    /// key is the recovery.
+    ///
+    /// A profile already sealed with a different key (a local passphrase vault
+    /// from before the account key existed) is left sealed and reported as an
+    /// error: a key account never overwrites a vault it cannot open.
+    pub fn apply_account_vault_key(
+        &mut self,
+        vault_key: mlc_vault::vault::VaultKey,
+        profile_manager: &mut crate::user_manager::ProfileManager,
+    ) -> Result<(), String> {
+        let vault_path = mlc_core::active_profile_data_dir().join("vault.enc");
+        let storage_key = crate::user_manager::profile_manager::path_key(&vault_path);
+        if mlc_vault::global_storage().exists(&storage_key) {
+            let secrets = mlc_vault::vault::load_encrypted::<mlc_core::user_profile::VaultSecrets>(
+                &vault_key,
+                &vault_path,
+            )
+            .map_err(|_| "This profile's vault is sealed with a different key".to_string())?;
+            self.core.user_mut().unseal_vault(vault_key, secrets);
+            self.sync_vault_sidecars(&vault_key);
+            self.migrate_notification_secrets_into_sidecar(&vault_key);
+            self.refresh_alert_secrets_mirror();
+            profile_manager.set_vault_key(vault_key);
+            self.panel_app.user_settings_state.needs_vault_unlock = false;
+            return Ok(());
+        }
+        profile_manager.set_vault_key(vault_key);
+        self.core.user_mut().set_vault_key(Some(vault_key));
+        self.core.templates_mut().set_vault_key(Some(vault_key));
+        self.sync_vault_sidecars(&vault_key);
+        // A vault key now exists but `vault.enc` does not yet; nothing else
+        // changed, so nothing else would mark the profile dirty.
+        self.persist_profile();
+        Ok(())
+    }
+
     /// Re-key the CURRENTLY ACTIVE profile's vault with a new passphrase —
     /// the mandatory step after a recovery-key unlock. Delegates the actual
     /// re-encryption to

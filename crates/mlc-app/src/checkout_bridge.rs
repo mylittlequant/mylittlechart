@@ -85,15 +85,54 @@ pub fn started_event(c: &BillingCheckout) -> CheckoutEvent {
 }
 
 /// `POST /api/billing/anon-checkout`. The plan id is the one asked for (the
-/// answer does not repeat it).
-pub fn anon_started_event(plan_id: &str, c: BillingAnonCheckout) -> CheckoutEvent {
+/// answer does not repeat it) and `key_display` is the account key this device
+/// drew for the purchase: the answer carries no key, so the modal is handed the
+/// one the client made.
+pub fn anon_started_event(plan_id: &str, key_display: String, c: BillingAnonCheckout) -> CheckoutEvent {
     CheckoutEvent::Started {
         invoice_id: c.invoice_id,
         plan_id: plan_id.to_string(),
         pay: pay_options(&c.pay),
-        account_key: Some(c.account_key),
+        account_key: Some(key_display),
         charge_usd_micros: None,
     }
+}
+
+/// What an account key yields: the credential that goes on the wire and the
+/// vault key that never does.
+#[derive(Clone)]
+pub struct KeyMaterial {
+    /// `hex(C)` — the only derived value any request carries.
+    pub credential: String,
+    /// `V` — opens the account's vault on this device.
+    pub vault_key: mlc_vault::crypto::VaultKey,
+}
+
+impl std::fmt::Debug for KeyMaterial {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("KeyMaterial(<redacted>)")
+    }
+}
+
+/// Parse the key text a person typed (or the display form the modal holds) and
+/// derive its credential and vault key. A typo, a wrong length or a foreign
+/// character is refused here, before anything is sent.
+pub fn key_material(typed: &str) -> Result<KeyMaterial, CheckoutError> {
+    let key = mlc_vault::account_key::AccountKey::parse(typed).map_err(|_| CheckoutError::InvalidKey)?;
+    Ok(KeyMaterial { credential: key.credential_hex(), vault_key: key.vault_key() })
+}
+
+/// A failed `POST /api/auth/invite/redeem`. Unknown, spent, revoked and lapsed
+/// codes all answer the same `401`, which reads as "the invite was not
+/// accepted"; a `409` (credential or nick clash), the rate limit and a dropped
+/// connection keep their own words.
+pub fn invite_failure_event(e: &CloudError) -> CheckoutEvent {
+    let b = BillingError::from_cloud(e);
+    let error = match b.status {
+        400 | 401 | 403 | 404 | 410 => CheckoutError::InvalidInvite,
+        _ => CheckoutError::from_wire(b.status, &b.code, b.detail.as_deref()),
+    };
+    CheckoutEvent::Failed { op: CheckoutOp::SignIn, error }
 }
 
 /// `POST /api/billing/change`: an upgrade with a charge opens the pay step, a
@@ -217,14 +256,86 @@ mod tests {
     }
 
     #[test]
-    fn the_anonymous_answer_carries_the_key_and_the_plan_asked_for() {
-        let c: BillingAnonCheckout = decode(r#"{"account_key":"0F4Z-KEY","invoice_id":"grp_2","pay":[]}"#);
-        let CheckoutEvent::Started { account_key, plan_id, invoice_id, .. } = anon_started_event("mlc-anon-account-v1", c)
+    fn the_anonymous_event_carries_the_clients_own_key_and_the_plan_asked_for() {
+        let c: BillingAnonCheckout = decode(r#"{"invoice_id":"grp_2","pay":[]}"#);
+        let CheckoutEvent::Started { account_key, plan_id, invoice_id, .. } =
+            anon_started_event("mlc-anon-account-v1", "0F4Z-KEY".to_string(), c)
         else {
             panic!("started event")
         };
         assert_eq!(account_key.as_deref(), Some("0F4Z-KEY"));
         assert_eq!((plan_id.as_str(), invoice_id.as_str()), ("mlc-anon-account-v1", "grp_2"));
+    }
+
+    const SEQ_KEY: &str = "000G-40R4-0M30-E209-185G-R38E-1W81-24GK-2GAH-C5RR-34D1-P70X-3RFG-ZHQJ";
+    const SEQ_C: &str = "b94a08ef8cf6f09519d070ee44d3118a7d6e0dcc27968fb6885cd6ff7fa16302";
+    const SEQ_V: &str = "781cffd79dba499fc386a3e598b502c3ede9ee1c9e35edc4560d17674edfc55b";
+
+    #[test]
+    fn a_typed_key_yields_the_known_credential_and_vault_key() {
+        let m = key_material(SEQ_KEY).expect("a well-formed key");
+        assert_eq!(m.credential, SEQ_C);
+        assert_eq!(m.vault_key.len(), 32);
+        assert_eq!(m.vault_key.iter().map(|b| format!("{b:02x}")).collect::<String>(), SEQ_V);
+        // Case, separators and look-alikes are forgiven.
+        assert_eq!(key_material(&SEQ_KEY.to_lowercase().replace('-', " ")).expect("lenient").credential, SEQ_C);
+        assert!(!format!("{m:?}").contains(SEQ_C));
+    }
+
+    #[test]
+    fn a_mistyped_key_is_an_invalid_key_before_any_request() {
+        let mut typo = SEQ_KEY.to_string();
+        typo.replace_range(5..6, "5");
+        assert_ne!(typo, SEQ_KEY);
+        assert_eq!(key_material(&typo).map(|_| ()), Err(CheckoutError::InvalidKey));
+        assert_eq!(key_material("").map(|_| ()), Err(CheckoutError::InvalidKey));
+        assert_eq!(key_material("0F4Z-KEY").map(|_| ()), Err(CheckoutError::InvalidKey));
+    }
+
+    #[test]
+    fn only_the_credential_ever_reaches_a_request_never_the_key_or_the_vault_key() {
+        let m = key_material(SEQ_KEY).expect("key");
+        let v_hex = SEQ_V;
+        let bodies = [
+            mlc_cloud::anon_checkout_body("mlc-anon-account-v1", &m.credential).expect("anon"),
+            mlc_cloud::credential_body(&m.credential).expect("sign-in"),
+            mlc_cloud::invite_redeem_body("INVITE-1", &m.credential).expect("redeem"),
+            mlc_cloud::account_key_authorization(&m.credential).expect("header"),
+        ];
+        for body in &bodies {
+            assert!(body.contains(SEQ_C), "the credential is what goes out: {body}");
+            assert!(!body.contains("000G") && !body.contains("ZHQJ"), "K must not be sent: {body}");
+            assert!(!body.to_lowercase().contains(v_hex), "V must not be sent: {body}");
+        }
+        // The display form itself is refused as a credential.
+        assert!(mlc_cloud::credential_body(SEQ_KEY).is_err());
+    }
+
+    #[test]
+    fn every_refusal_of_an_invite_reads_as_a_refused_invite() {
+        for status in [400u16, 401, 403, 404, 410] {
+            let e = CloudError::Http { status, body: r#"{"error":"whatever"}"#.into() };
+            assert_eq!(
+                invite_failure_event(&e),
+                CheckoutEvent::Failed { op: CheckoutOp::SignIn, error: CheckoutError::InvalidInvite },
+                "{status}"
+            );
+        }
+        // A clash is not a bad code: it keeps the generic sentence.
+        let clash = CloudError::Http { status: 409, body: r#"{"error":"nick_unavailable"}"#.into() };
+        assert_eq!(
+            invite_failure_event(&clash),
+            CheckoutEvent::Failed { op: CheckoutOp::SignIn, error: CheckoutError::Other }
+        );
+        let limited = CloudError::Http { status: 429, body: r#"{"error":"rate_limited"}"#.into() };
+        assert_eq!(
+            invite_failure_event(&limited),
+            CheckoutEvent::Failed { op: CheckoutOp::SignIn, error: CheckoutError::RateLimited }
+        );
+        assert_eq!(
+            invite_failure_event(&CloudError::Transport("offline".into())),
+            CheckoutEvent::Failed { op: CheckoutOp::SignIn, error: CheckoutError::Network }
+        );
     }
 
     #[test]
