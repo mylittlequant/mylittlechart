@@ -1670,7 +1670,6 @@ impl ChartApp {
                         self.expanded_pane.insert(cid.0, mlc_core::state::modal_data::ExpandedPane::SubPane(instance_id));
                     }
                 }
-                self.autosave_snapshot();
             }
             SubPaneButton::Restore => {
                 // Remove the expanded entry — layout reverts to normal tree
@@ -1678,7 +1677,6 @@ impl ChartApp {
                 if let Some(cid) = target_cid {
                     self.expanded_pane.remove(&cid.0);
                 }
-                self.autosave_snapshot();
             }
             SubPaneButton::IndicatorEye => {
                 self.core.indicators_mut().toggle_visibility(instance_id);
@@ -1731,7 +1729,6 @@ impl ChartApp {
             return;
         }
         toggle_expanded_pane(&mut self.expanded_pane, cid.0, mlc_core::state::modal_data::ExpandedPane::Main);
-        self.autosave_snapshot();
     }
 
     /// Toggle a sub-pane's own exclusive-expand state for `cid`. Called by
@@ -1744,7 +1741,6 @@ impl ChartApp {
             cid.0,
             mlc_core::state::modal_data::ExpandedPane::SubPane(instance_id),
         );
-        self.autosave_snapshot();
     }
 
     /// Handle a click that landed on the chart canvas (not a widget).

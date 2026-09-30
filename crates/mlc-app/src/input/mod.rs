@@ -33,6 +33,8 @@ pub(crate) mod credentials;
 // two-hop shape as `KeyPress`.
 pub use credentials::VaultSetupOutcome;
 mod inline_text;
+#[cfg(test)]
+mod pane_expand_tests;
 pub(crate) mod drawing_session;
 mod trading_container_bind;
 
@@ -1391,7 +1393,10 @@ impl ChartApp {
         // (owner item 3).
         let was_drawing = self.panel_app.panel_grid.active_container()
             .map(|w| w.current_tag_id)
-            .is_some_and(|bid| self.core.drawings().is_drawing(bid));
+            .is_some_and(|bid| {
+                let drawings = self.core.drawings();
+                drawings.is_drawing(bid) || drawings.current_tool(bid).is_some()
+            });
 
         let actions = self.input_handler.process_action(
             ChartInputAction::DoubleClick { x, y },
