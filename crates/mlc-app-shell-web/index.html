@@ -63,8 +63,8 @@
       height: 100%;
       /* Canvas pixel buffer is set by Rust; CSS dimensions drive logical size */
     }
-    /* Boot splash — visible only until wasm init resolves (a second or two
-       on a warm cache) AND the chart has real data, then fades out and is
+    /* Boot splash — visible only until wasm init resolves and the UI has painted its
+       first frame (never waits for market data), then fades out and is
        removed from the DOM. Background: dark by default, light under
        `prefers-color-scheme` for a true first visit (no stored session
        yet) — a stored `mlc.boot.bg` (see the inline script below) always
@@ -346,24 +346,26 @@
     //   window.__MLC_WASM_MEM_MB()
     window.__MLC_WASM = mod;
     window.__MLC_WASM_MEM_MB = () => Math.round(mod.memory.buffer.byteLength / 1048576);
-    // Boot splash: wasm is up, but the chart still has no data — hold the
-    // overlay until the first bars arrived AND a real frame had a chance to
-    // paint, otherwise the user sees the empty-chart "pop-in" behind a
-    // prematurely dismissed splash. Poll the debug mirror the wasm exposes;
-    // bail out after ~20 s so a data-path failure can't pin the splash
-    // forever (captureError above would have shown the cause by then anyway).
-    (function dismissSplashWhenLive() {
+    // Boot splash: dismiss once the app has painted its UI (the wasm frame
+    // loop sets `window.__MLC_UI_PAINTED__` after its first completed
+    // render). NEVER wait for market data: a chart whose venue is
+    // unreachable (CORS, 429, dead proxy) shows its own empty/error state
+    // behind the splash; holding the splash for bars pinned every boot
+    // forever once a shared tab with such a venue was persisted. The
+    // MAX_WAIT cap covers a frame loop that never paints (captureError
+    // above has already put the cause on the splash by then).
+    (function dismissSplashWhenPainted() {
       var boot = document.getElementById('boot');
       if (!boot) return;
+      var MAX_WAIT_MS = 6000;
       var waited = 0;
       var timer = setInterval(function() {
         waited += 100;
-        var live = window.MLC_DEBUG && window.MLC_DEBUG.bars > 0;
-        if (!live && waited < 20000) return;
+        var painted = window.__MLC_UI_PAINTED__ === true;
+        if (!painted && waited < MAX_WAIT_MS) return;
         clearInterval(timer);
-        if (window.__MLC_BOOT_CAPTION_STOP__) window.__MLC_BOOT_CAPTION_STOP__();
-        // Two rAFs: let the frame with the freshly arrived bars actually hit
-        // the canvas before we start the fade.
+        // Two rAFs: let the painted frame actually hit the canvas before
+        // the fade starts.
         requestAnimationFrame(function() {
           requestAnimationFrame(function() {
             boot.style.opacity = '0';

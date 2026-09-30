@@ -579,6 +579,22 @@ fn spawn_share_reopen_fetches(
 ) {
 }
 
+/// Tell the boot page (`index.html` / the published `app-boot.js`) that the
+/// UI has painted its first frame, so it can dismiss the splash. Set once;
+/// the splash never waits for market data.
+#[cfg(target_arch = "wasm32")]
+fn mark_ui_painted() {
+    thread_local! {
+        static DONE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    }
+    if DONE.with(|d| d.replace(true)) {
+        return;
+    }
+    if let Some(win) = web_sys::window() {
+        let _ = js_sys::Reflect::set(&win, &"__MLC_UI_PAINTED__".into(), &true.into());
+    }
+}
+
 // ─── Boot-time theme helpers ────────────────────────────────────────────────
 
 /// Resolve the starting theme from the browser's own colour-scheme
@@ -2338,8 +2354,11 @@ fn run_render_loop(
         // whole call, only in short-lived scopes, so handing it a plain
         // `&mut FrameTimer` on the stack doesn't fight those borrows.
         let render_result = render_frame(state_clone.clone(), &mut frame_timer);
-        if let Err(e) = render_result {
-            web_sys::console::error_1(&format!("[mlc-app-shell-web] render error: {:?}", e).into());
+        match render_result {
+            Ok(_) => mark_ui_painted(),
+            Err(e) => {
+                web_sys::console::error_1(&format!("[mlc-app-shell-web] render error: {:?}", e).into());
+            }
         }
         // Screenshot/share/cure/background-warm below are post-render
         // bookkeeping drains, not paint work — back into `Drains` (see
@@ -3582,4 +3601,40 @@ fn trigger_screenshot_download(canvas_id: &str, rect_css: Option<(u32, u32, u32,
             );
         }
     });
+}
+
+/// Static checks on the boot page: the splash must never depend on market
+/// data (B1 — a persisted shared tab on an unreachable venue pinned every boot).
+#[cfg(test)]
+mod boot_page_tests {
+    const INDEX_HTML: &str = include_str!("../index.html");
+
+    /// The body of the splash-dismiss script.
+    fn dismiss_script() -> &'static str {
+        let start = INDEX_HTML
+            .find("function dismissSplashWhenPainted")
+            .expect("dismiss function present");
+        &INDEX_HTML[start..]
+    }
+
+    #[test]
+    fn splash_dismisses_on_ui_paint_not_on_bars() {
+        let script = dismiss_script();
+        assert!(script.contains("__MLC_UI_PAINTED__"), "splash keys off the paint flag");
+        assert!(!script.contains("MLC_DEBUG"), "splash must not read the data mirror");
+        assert!(!script.contains(".bars"), "splash must not wait for bars");
+    }
+
+    #[test]
+    fn splash_has_a_bounded_wait() {
+        let script = dismiss_script();
+        assert!(script.contains("MAX_WAIT_MS"), "a frame loop that never paints cannot pin the splash");
+    }
+
+    #[test]
+    fn wasm_shell_sets_the_paint_flag() {
+        let lib = include_str!("lib.rs");
+        assert!(lib.contains("\"__MLC_UI_PAINTED__\""));
+        assert!(lib.contains("Ok(_) => mark_ui_painted()"));
+    }
 }

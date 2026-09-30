@@ -1568,6 +1568,14 @@ impl DataBridge {
     /// json-shaped error surfaces as a parse/field error, not a false
     /// `BarsLoaded`), but it is worth remembering if this list is ever
     /// consulted to decide "is a 200 trustworthy" instead of just routing.
+    ///
+    /// 2026-09-30: Upbit and Bitstamp are back ON the list. A signed-out
+    /// viewer on prod (0.5.651) hit CORS errors on `api.upbit.com` and
+    /// `www.bitstamp.net` (share link, XRP-KRW), so the earlier direct-OK
+    /// measurement does not hold for every viewer/endpoint. Both hosts are in
+    /// the `/archive-proxy` allowlist (nginx-mlc-site.conf). Upbit's WS
+    /// (`wss://api.upbit.com`, 429) cannot ride the HTTP proxy; the chart
+    /// stays on REST polling there.
     const CORS_BLOCKED_REST: &'static [ExchangeId] = &[
         ExchangeId::BingX,
         ExchangeId::Bitfinex,
@@ -1576,6 +1584,8 @@ impl DataBridge {
         ExchangeId::Deribit,
         ExchangeId::KuCoin,
         ExchangeId::MEXC,
+        ExchangeId::Upbit,
+        ExchangeId::Bitstamp,
     ];
 
     /// Route a CORS-blocked venue's REST through the proxy the archive
@@ -5446,5 +5456,19 @@ mod dated_contract_tests {
         assert!(!is_dated_contract_symbol("BTC-USDT-SWAP"));
         assert!(!is_dated_contract_symbol("BTC_USDT"));
         assert!(!is_dated_contract_symbol("1000PEPEUSDT"));
+    }
+}
+
+#[cfg(test)]
+mod cors_proxy_tests {
+    use super::DataBridge;
+    use digdigdig3::ExchangeId;
+
+    /// Prod 0.5.651: a signed-out viewer's XRP-KRW share link was blocked by
+    /// CORS on api.upbit.com and www.bitstamp.net. Both must ride the proxy.
+    #[test]
+    fn upbit_and_bitstamp_go_through_the_proxy() {
+        assert!(DataBridge::CORS_BLOCKED_REST.contains(&ExchangeId::Upbit));
+        assert!(DataBridge::CORS_BLOCKED_REST.contains(&ExchangeId::Bitstamp));
     }
 }
