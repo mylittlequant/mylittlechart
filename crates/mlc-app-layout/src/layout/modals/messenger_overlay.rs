@@ -2441,8 +2441,29 @@ fn system_notice_text(content: &MessageContent) -> Option<String> {
     }
 }
 
+/// The nick part of a Matrix user id: `@38afb0c1:server` -> `38afb0c1`. An id
+/// without the `@..:..` shape is returned as is.
+fn nick_part(user_id: &str) -> &str {
+    user_id
+        .strip_prefix('@')
+        .and_then(|rest| rest.split_once(':'))
+        .map(|(local, _)| local)
+        .filter(|local| !local.is_empty())
+        .unwrap_or(user_id)
+}
+
+/// Who a membership row is about: the member's display name, else the nick
+/// part of the id, never the full `@id:server`.
+fn membership_subject(ev: &MembershipEvent) -> &str {
+    ev.display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| nick_part(ev.user.as_str()))
+}
+
 fn membership_text(ev: &MembershipEvent) -> String {
-    let who = ev.user.as_str();
+    let who = membership_subject(ev);
     match ev.change {
         MembershipChange::Joined => format!("{who} joined"),
         MembershipChange::Left => format!("{who} left"),
@@ -3236,6 +3257,29 @@ fn clock_hm(ts: Timestamp) -> String {
 mod tests {
     use super::*;
 
+    fn membership(user: &str, display_name: Option<&str>, change: MembershipChange) -> MembershipEvent {
+        MembershipEvent { user: mlc_messenger_model::UserId::from(user), display_name: display_name.map(str::to_string), change }
+    }
+
+    #[test]
+    fn membership_rows_read_the_display_name_and_never_the_full_matrix_id() {
+        let joined = membership("@38afb0c1:chart.example", Some("Bob Trader"), MembershipChange::Joined);
+        assert_eq!(membership_text(&joined), "Bob Trader joined");
+
+        // No display name: the nick part of the id, not `@id:server`.
+        let left = membership("@38afb0c1:chart.example", None, MembershipChange::Left);
+        assert_eq!(membership_text(&left), "38afb0c1 left");
+        let blank = membership("@38afb0c1:chart.example", Some("  "), MembershipChange::Invited);
+        assert_eq!(membership_text(&blank), "38afb0c1 was invited");
+        for text in [membership_text(&joined), membership_text(&left), membership_text(&blank)] {
+            assert!(!text.contains('@') && !text.contains(':'), "{text}");
+        }
+
+        // An id that is not in the `@local:server` shape is shown as is.
+        assert_eq!(nick_part("plainname"), "plainname");
+        assert_eq!(nick_part("@:server"), "@:server");
+    }
+
     #[test]
     fn civil_from_days_matches_the_unix_epoch() {
         assert_eq!(civil_from_days(0), (1970, 1, 1));
@@ -3466,7 +3510,7 @@ mod tests {
     fn test_room(kind: RoomKind, muted: bool, notification_count: u64) -> RoomSummary {
         use mlc_messenger_model::{MemberRole, PowerLevel};
         RoomSummary {
-            id: RoomId::from("!r:x"),
+            id: mlc_messenger_model::RoomId::from("!r:x"),
             kind,
             name: "x".to_string(),
             initials: "X".to_string(),

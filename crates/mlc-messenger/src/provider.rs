@@ -529,10 +529,17 @@ fn map_timeline_item<C: RecordCodec>(
     item_index: usize,
     read_by_map: &BTreeMap<usize, Vec<crate::ids::UserId>>,
 ) -> Option<TimelineItem> {
-    let (content, edited) = match &item.relations.latest_edit {
+    let (mut content, edited) = match &item.relations.latest_edit {
         Some(edit) => (room_message_content_to_model(&edit.content)?, true),
         None => (item_content_to_model(&item.content)?, false),
     };
+    // A leave/kick event usually carries no `displayname`: borrow the latest
+    // one the timeline knows for that member so the row reads a name, not an id.
+    if let MessageContent::Membership(event) = &mut content {
+        if event.display_name.is_none() {
+            event.display_name = member_display_name_in(timeline, event.user.as_str());
+        }
+    }
 
     let event_id = match (&item.event_id, &item.txn_id) {
         (Some(confirmed), _) => EventId::from(confirmed.as_str()),
@@ -676,11 +683,30 @@ fn item_content_to_model(content: &ItemContent) -> Option<MessageContent> {
         }
         ItemContent::LegacyPlain(text) => Some(MessageContent::Legacy(LegacyContent::Text(text.clone()))),
         ItemContent::Redacted => Some(MessageContent::Text(String::new())),
-        ItemContent::StateChange(StateChangeSummary::Member { user_id, membership, .. }) => {
-            map_membership_change(membership).map(|change| MessageContent::Membership(MembershipEvent { user: UserId::from(user_id.as_str()), change }))
+        ItemContent::StateChange(StateChangeSummary::Member { user_id, membership, displayname }) => {
+            map_membership_change(membership).map(|change| {
+                MessageContent::Membership(MembershipEvent {
+                    user: UserId::from(user_id.as_str()),
+                    display_name: displayname.clone().filter(|name| !name.trim().is_empty()),
+                    change,
+                })
+            })
         }
         ItemContent::StateChange(_) | ItemContent::Unknown => None,
     }
+}
+
+/// The newest non-blank display name any `m.room.member` item of `timeline`
+/// carries for `user_id`.
+fn member_display_name_in(timeline: &Timeline, user_id: &str) -> Option<String> {
+    timeline.items().iter().rev().find_map(|item| match &item.content {
+        ItemContent::StateChange(StateChangeSummary::Member { user_id: subject, displayname: Some(name), .. })
+            if subject == user_id && !name.trim().is_empty() =>
+        {
+            Some(name.clone())
+        }
+        _ => None,
+    })
 }
 
 fn map_utd_reason(reason: &str) -> UtdReason {
@@ -1444,6 +1470,44 @@ mod tests {
         let preview = summary.last_event.as_ref().expect("a last_event preview");
         assert_eq!(preview.content, PreviewContent::Encrypted);
         assert!(summary.can_post, "a joined member of an ordinary room can post");
+    }
+
+    #[test]
+    fn membership_rows_carry_the_members_display_name_even_on_a_leave_without_one() {
+        let alice = "@alice:example.org";
+        let bob = "@38afb0c1:example.org";
+        let mut core = open_core(core_user(alice), "ALICEDEV");
+        let mut body = group_sync_body(alice, "!r:example.org", "s1");
+        body["rooms"]["join"]["!r:example.org"]["timeline"] = serde_json::json!({ "events": [
+            {
+                "event_id": "$j1:example.org", "type": "m.room.member", "sender": bob, "origin_server_ts": 10,
+                "state_key": bob, "content": { "membership": "join", "displayname": "Bob Trader" }
+            },
+            {
+                "event_id": "$l1:example.org", "type": "m.room.member", "sender": bob, "origin_server_ts": 20,
+                "state_key": bob, "content": { "membership": "leave" }
+            }
+        ] });
+        sync_with_body(&mut core, &body);
+
+        let view = build_view(&core, 0);
+        let items = view.timelines.get(&RoomId::from("!r:example.org")).expect("timeline present");
+        let memberships: Vec<&MembershipEvent> = items
+            .iter()
+            .filter_map(|item| match &item.content {
+                MessageContent::Membership(event) if event.user.as_str() == bob => Some(event),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(memberships.len(), 2, "one join row and one leave row: {items:?}");
+        assert_eq!(memberships[0].change, MembershipChange::Joined);
+        assert_eq!(memberships[0].display_name.as_deref(), Some("Bob Trader"));
+        assert_eq!(memberships[1].change, MembershipChange::Left);
+        assert_eq!(
+            memberships[1].display_name.as_deref(),
+            Some("Bob Trader"),
+            "a leave event has no displayname of its own; the join's name is reused"
+        );
     }
 
     #[test]

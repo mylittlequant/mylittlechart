@@ -44,6 +44,11 @@ pub enum MembershipChange {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MembershipEvent {
     pub user: UserId,
+    /// The member's display name from the `m.room.member` event (or, when that
+    /// event carries none, the latest one the room's timeline knows for the
+    /// same member). `None` falls back to the nick part of `user`, never the
+    /// full `@id:server`.
+    pub display_name: Option<String>,
     pub change: MembershipChange,
 }
 
