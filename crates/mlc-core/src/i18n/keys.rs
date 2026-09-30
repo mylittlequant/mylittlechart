@@ -1710,10 +1710,16 @@ pub enum SidebarKey {
     DataCapabilities     = 49,
     /// "Kline Config"
     KlineConfig          = 50,
+
+    // ---- Agents panel on a shell that cannot run agents (web) ----
+    /// "Agents run in the desktop app"
+    AgentsDesktopOnly    = 51,
+    /// "The web version will connect to a running desktop app or CLI later."
+    AgentsDesktopOnlyBody = 52,
 }
 
 impl SidebarKey {
-    pub const COUNT: usize = 51;
+    pub const COUNT: usize = 53;
 
     /// Get translation for this key.
     #[inline]

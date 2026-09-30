@@ -5810,6 +5810,48 @@ pub fn agent_backend_labels(id: &str) -> (&'static str, &'static str) {
 // Agents panel — split-grid layout
 // =============================================================================
 
+/// The Agents panel on a shell that cannot run agents: the empty-state box the
+/// panel already uses, carrying the reason and what is coming. Draws text only
+/// and registers no widget.
+fn render_agents_desktop_notice(
+    ctx: &mut dyn RenderContext,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    theme: &ToolbarTheme,
+) {
+    let lang = current_language();
+    ctx.set_fill_color(&theme.terminal_bg);
+    ctx.fill_rounded_rect(x, y, w, h, 4.0);
+    let pad = 16.0;
+    let text_w = (w - pad * 2.0).max(40.0);
+    ctx.set_font("11px sans-serif");
+    let body_lines = word_wrap_text(ctx, SidebarKey::AgentsDesktopOnlyBody.get(lang), text_w);
+    ctx.set_font("600 13px sans-serif");
+    let title_lines = word_wrap_text(ctx, SidebarKey::AgentsDesktopOnly.get(lang), text_w);
+    let title_line_h = 18.0;
+    let body_line_h = 15.0;
+    let total = title_lines.len() as f64 * title_line_h + 8.0 + body_lines.len() as f64 * body_line_h;
+    let mut ty = y + ((h - total) / 2.0).max(pad);
+    let cx = x + w / 2.0;
+    ctx.set_text_align(TextAlign::Center);
+    ctx.set_text_baseline(TextBaseline::Top);
+    ctx.set_font("600 13px sans-serif");
+    ctx.set_fill_color(&theme.item_text);
+    for line in &title_lines {
+        ctx.fill_text(line, cx, ty);
+        ty += title_line_h;
+    }
+    ty += 8.0;
+    ctx.set_font("11px sans-serif");
+    ctx.set_fill_color(&theme.item_text_muted);
+    for line in &body_lines {
+        ctx.fill_text(line, cx, ty);
+        ty += body_line_h;
+    }
+}
+
 /// Renders the AI agents panel with a split-grid docking layout.
 ///
 /// Layout:
@@ -5840,6 +5882,14 @@ fn render_agents_panel(
     let x = rect.x;
     let inner_w = content_width;
     let mut y = content_y;
+
+    // A shell that cannot run agents (web) shows a notice in place of the
+    // pane: no grid, no buttons, nothing registered.
+    if !crate::shell_caps::agents_control_available() {
+        let notice_h = (rect.height - header_height).max(60.0);
+        render_agents_desktop_notice(ctx, x, y, inner_w, notice_h, theme);
+        return notice_h;
+    }
 
 
     // ── Grid area ─────────────────────────────────────────────────────────────
@@ -7713,5 +7763,152 @@ mod slot_spawn_dropdown_tests {
         for kind in SlotKind::ALL {
             assert!(!slot_spawn_items(kind).is_empty(), "{:?} has no spawn items", kind);
         }
+    }
+}
+
+#[cfg(test)]
+mod agents_panel_shell_tests {
+    use super::*;
+    use crate::shell_caps::{agents_control_available, set_agents_control_available};
+
+    #[derive(Default)]
+    struct Rec {
+        texts: Vec<String>,
+    }
+
+    impl uzor::render::Painter for Rec {
+        fn save(&mut self) {}
+        fn restore(&mut self) {}
+        fn translate(&mut self, _x: f64, _y: f64) {}
+        fn rotate(&mut self, _angle: f64) {}
+        fn scale(&mut self, _x: f64, _y: f64) {}
+        fn set_fill_color(&mut self, _color: &str) {}
+        fn set_global_alpha(&mut self, _alpha: f64) {}
+        fn set_stroke_color(&mut self, _color: &str) {}
+        fn set_stroke_width(&mut self, _width: f64) {}
+        fn set_line_dash(&mut self, _pattern: &[f64]) {}
+        fn set_line_cap(&mut self, _cap: &str) {}
+        fn set_line_join(&mut self, _join: &str) {}
+        fn begin_path(&mut self) {}
+        fn move_to(&mut self, _x: f64, _y: f64) {}
+        fn line_to(&mut self, _x: f64, _y: f64) {}
+        fn close_path(&mut self) {}
+        fn rect(&mut self, _x: f64, _y: f64, _w: f64, _h: f64) {}
+        fn arc(&mut self, _cx: f64, _cy: f64, _r: f64, _s: f64, _e: f64) {}
+        fn ellipse(&mut self, _cx: f64, _cy: f64, _rx: f64, _ry: f64, _rot: f64, _s: f64, _e: f64) {}
+        fn quadratic_curve_to(&mut self, _cpx: f64, _cpy: f64, _x: f64, _y: f64) {}
+        fn bezier_curve_to(&mut self, _a: f64, _b: f64, _c: f64, _d: f64, _x: f64, _y: f64) {}
+        fn stroke(&mut self) {}
+        fn fill(&mut self) {}
+    }
+    impl uzor::render::TextRenderer for Rec {
+        fn set_font(&mut self, _font: &str) {}
+        fn set_text_align(&mut self, _align: uzor::render::TextAlign) {}
+        fn set_text_baseline(&mut self, _baseline: uzor::render::TextBaseline) {}
+        fn fill_text(&mut self, text: &str, _x: f64, _y: f64) {
+            self.texts.push(text.to_string());
+        }
+        fn stroke_text(&mut self, _text: &str, _x: f64, _y: f64) {}
+    }
+    impl uzor::render::TextMetrics for Rec {
+        fn measure_text(&self, text: &str) -> f64 {
+            text.chars().count() as f64 * 6.0
+        }
+        fn text_bounds(&self, _text: &str, _font: &str) -> uzor::render::TextBounds {
+            uzor::render::TextBounds { x: 0.0, y: 0.0, w: 0.0, h: 0.0, ascent: 0.0, descent: 0.0 }
+        }
+    }
+    impl uzor::render::Masking for Rec {
+        fn clip(&mut self) {}
+    }
+    impl uzor::render::Effects for Rec {}
+    impl uzor::render::ShapeHelpers for Rec {
+        fn fill_rect(&mut self, _x: f64, _y: f64, _w: f64, _h: f64) {}
+        fn stroke_rect(&mut self, _x: f64, _y: f64, _w: f64, _h: f64) {}
+    }
+    impl uzor::render::GradientPainter for Rec {}
+    impl uzor::render::UiEffectHelpers for Rec {}
+    impl uzor::render::BatchPainter for Rec {}
+    impl uzor::render::RenderContext for Rec {
+        fn dpr(&self) -> f64 {
+            1.0
+        }
+    }
+    impl RenderContext for Rec {
+        fn chart_width(&self) -> f64 {
+            1000.0
+        }
+        fn chart_height(&self) -> f64 {
+            600.0
+        }
+        fn bar_to_x(&self, bar: f64) -> f64 {
+            bar
+        }
+        fn price_to_y(&self, price: f64) -> f64 {
+            price
+        }
+        fn bars(&self) -> &[mlc_core::Bar] {
+            &[]
+        }
+        fn set_coordinate_space(&mut self, _w: f64, _h: f64, _s: f64, _b: f64, _lo: f64, _hi: f64) {}
+    }
+
+    fn draw_panel() -> (Vec<String>, RightSidebarResult, f64) {
+        let mut ctx = Rec::default();
+        let mut state = SidebarState::default();
+        let mut result = RightSidebarResult::default();
+        let mut coord = InputCoordinator::new();
+        let rect = LayoutRect::new(0.0, 0.0, 320.0, 600.0);
+        let h = render_agents_panel(
+            &mut ctx,
+            &rect,
+            40.0,
+            320.0,
+            40.0,
+            &mut state,
+            &ToolbarTheme::default(),
+            &mut result,
+            &mut coord,
+        );
+        (ctx.texts, result, h)
+    }
+
+    /// One test body, because the capability is a process-wide switch: the
+    /// web case and the native case must not interleave with each other.
+    #[test]
+    fn web_shows_the_notice_and_no_controls_while_native_keeps_the_pane() {
+        let before = agents_control_available();
+
+        // Native: the pane's own empty state, no notice.
+        set_agents_control_available(true);
+        let (texts, result, _) = draw_panel();
+        let lang = current_language();
+        assert!(texts.iter().any(|t| t == SidebarKey::PickCliPrompt.get(lang)), "{texts:?}");
+        assert!(!texts.iter().any(|t| t == SidebarKey::AgentsDesktopOnly.get(lang)), "{texts:?}");
+        let native_items = result.item_rects.len();
+
+        // Web: the notice replaces it, and nothing is registered.
+        set_agents_control_available(false);
+        let (texts, result, h) = draw_panel();
+        assert!(texts.iter().any(|t| t.contains("Agents run in the desktop app")), "{texts:?}");
+        assert!(texts.join(" ").contains("connect to a running desktop app or CLI later"), "{texts:?}");
+        assert!(!texts.iter().any(|t| t == SidebarKey::PickCliPrompt.get(lang)), "no pane prompt on web");
+        assert!(result.item_rects.is_empty(), "no control widget on web");
+        assert!(result.item_rects.len() <= native_items);
+        assert!(h >= 60.0, "the notice fills the panel");
+
+        set_agents_control_available(before);
+    }
+
+    #[test]
+    fn the_notice_reads_in_every_language() {
+        for lang in mlc_core::i18n::Language::all() {
+            assert!(!SidebarKey::AgentsDesktopOnly.get(*lang).is_empty());
+            assert!(!SidebarKey::AgentsDesktopOnlyBody.get(*lang).is_empty());
+        }
+        assert_eq!(
+            SidebarKey::AgentsDesktopOnly.get(mlc_core::i18n::Language::Ru),
+            "Агенты работают в десктопном приложении"
+        );
     }
 }

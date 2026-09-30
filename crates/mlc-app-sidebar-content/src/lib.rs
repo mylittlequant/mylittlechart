@@ -12,6 +12,7 @@ pub mod gate4agent_stub;
 pub mod agent_types;
 pub mod agents_dock;
 pub mod free_slot;
+pub mod shell_caps;
 pub mod types;
 pub mod state;
 pub mod render;

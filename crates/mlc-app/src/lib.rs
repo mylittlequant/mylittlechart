@@ -9454,7 +9454,9 @@ impl ChartApp {
                 // Agents header (Stage B agents reform): composer toolbar —
                 // mode toggle icon + backend dropdown + gear. Same tch
                 // instance and dispatch as the section headers.
-                if rp == RSP::Agents {
+                // A shell that cannot run agents (web) has no control pane at all:
+                // the panel body carries the notice instead.
+                if rp == RSP::Agents && mlc_app_sidebar_content::shell_caps::agents_control_available() {
                     let is_pty = self.sidebar_state.agent_spawn_mode == gate4agent::InstanceMode::Pty;
                     let (bl_full, bl_short) = mlc_app_sidebar_content::render::agent_backend_labels(
                         &self.sidebar_state.agent_selected_backend,

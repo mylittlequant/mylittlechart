@@ -1186,6 +1186,9 @@ fn run_render_loop(
     bridge: Arc<mlc_backend_data_bridge::DataBridge>,
     profile_manager: mlc_app::user_manager::ProfileManager,
 ) -> Result<(), JsValue> {
+    // The browser cannot run agents: the Agents panel shows a notice instead
+    // of its control pane (`mlc_app_sidebar_content::shell_caps`).
+    mlc_app_sidebar_content::shell_caps::set_agents_control_available(false);
     // Boot-time reopen queue (shared-tab-reload-anchor arc, 2026-09-23):
     // `ChartApp::new_window`'s restore path (in `run`, above) already
     // seeded a placeholder + queue entry per shared tab that survived a
