@@ -492,6 +492,47 @@ async fn a_saved_tab_that_is_gone_is_told_once_and_dropped() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_viewer_tab_whose_link_was_revoked_stops_polling_after_the_404() {
+    let mut app = new_app().await;
+    open_link_tab(&mut app, &[]);
+    app.panel_app.open_tabs.push(LINK_TAB.to_string());
+    let now = 100_000.0;
+    assert_eq!(app.share_pull_due(now), Some((LINK_TOKEN.to_string(), 0)), "the viewer tab is polled");
+    assert_eq!(app.share_pull_due(now + 8_000.0), Some((LINK_TOKEN.to_string(), 0)), "and again every 8 s");
+    app.profile_dirty = false;
+
+    // The pull answered 404: the author revoked the link.
+    app.share_pull_gone(LINK_TOKEN);
+
+    assert!(!app.has_open_tab(LINK_TAB), "the dead link is not a tab any more");
+    assert!(!app.shared_chart_meta.contains_key(LINK_TAB));
+    assert!(app.share_follow_target().is_none(), "no channel is left to follow");
+    assert!(app.share_pull_due(now + 16_000.0).is_none(), "no re-poll after the 404");
+    assert!(app.share_pull_due(now + 1_000_000.0).is_none(), "and never again");
+    assert!(app.live_link_step(now + 2_000_000.0).is_empty(), "no socket for a dead link");
+    assert!(app.profile_dirty, "the smaller tab list must be saved");
+    assert!(app.collect_open_shared_tabs().is_empty(), "the next boot does not ask for it");
+    assert_eq!(unavailable_notices(&app), 1, "the person sees the unavailable notice once");
+
+    // A second 404 answer (one was already in flight) neither notifies again
+    // nor brings anything back.
+    app.share_pull_gone(LINK_TOKEN);
+    assert_eq!(unavailable_notices(&app), 1);
+    assert!(app.share_pull_due(now + 3_000_000.0).is_none());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_404_for_an_unrelated_token_leaves_the_viewer_tab_alone() {
+    let mut app = new_app().await;
+    open_link_tab(&mut app, &[]);
+    app.panel_app.open_tabs.push(LINK_TAB.to_string());
+    app.share_pull_gone("tok-somebody-else");
+    assert!(app.has_open_tab(LINK_TAB));
+    assert_eq!(unavailable_notices(&app), 0);
+    assert!(app.share_pull_due(100_000.0).is_some());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn a_restored_binding_whose_share_is_gone_is_pruned_at_once() {
     let mut app = new_app().await;
     app.panel_app.active_preset_id = AUTHOR_CHART.to_string();

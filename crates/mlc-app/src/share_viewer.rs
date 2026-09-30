@@ -466,6 +466,27 @@ impl ChartApp {
         self.notify_share_unavailable();
     }
 
+    /// An op pull for `token` answered 404 while viewer tabs were open on it:
+    /// the author revoked the link. Same verdict as [`Self::share_reopen_gone`]
+    /// — the tabs are dropped (a dead link is not a tab, so nothing polls it
+    /// and the next boot does not ask for it) and the person is told once.
+    /// Does nothing when no viewer tab is on `token`.
+    pub(crate) fn share_viewer_link_gone(&mut self, token: &str) {
+        let tabs: Vec<String> = self
+            .shared_chart_meta
+            .iter()
+            .filter(|(_, meta)| meta.token == token)
+            .map(|(id, _)| id.clone())
+            .collect();
+        if tabs.is_empty() {
+            return;
+        }
+        for id in &tabs {
+            self.remove_shared_placeholder_tab(id);
+        }
+        self.notify_share_unavailable();
+    }
+
     /// The address bar had `?share=` and the server no longer has that link.
     /// No tab is made and nothing is saved; the person is told once.
     pub fn share_link_unavailable(&mut self) {

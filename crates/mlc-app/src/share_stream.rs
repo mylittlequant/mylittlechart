@@ -565,9 +565,12 @@ impl ChartApp {
     }
 
     /// A pull answered 404: the share is gone. The author's binding to it is
-    /// dropped at once (and saved), so the tab stops asking every few seconds.
+    /// dropped at once (and saved), and a viewer tab on it is closed with the
+    /// "Shared chart unavailable" notice, so nothing asks again every few
+    /// seconds.
     pub fn share_pull_gone(&mut self, token: &str) {
         self.forget_chart_share_token(token);
+        self.share_viewer_link_gone(token);
         self.share_streams.retain(|_, stream| stream.token != token);
     }
 
