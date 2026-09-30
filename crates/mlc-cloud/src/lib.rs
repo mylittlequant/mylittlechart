@@ -24,6 +24,7 @@
 //! build attestation headers when the server has `BUILD_ATTEST_ENFORCE=true`.
 
 pub mod models;
+pub mod staff;
 
 /// The one refusal [`forum_v2_error_message`]/[`dm_error_message`] special-
 /// case rather than surfacing verbatim: a signed-in caller with no
@@ -45,6 +46,11 @@ mod wasm;
 pub use wasm::{FetchTransport, FriendRoster};
 
 pub use models::*;
+pub use staff::{
+    staff_error, with_retry_after, StaffBatchRevoked, StaffError, StaffGiftBatch, StaffLedgerRow,
+    StaffLifetimeGrant, StaffLifetimeRequest, StaffLifetimeRevokeRequest, StaffLifetimeRevoked,
+    StaffMintRequest, StaffMintResponse, StaffPaidDays, StaffPaidDaysRequest, StaffUser,
+};
 
 /// Build attestation values, produced at packaging time.
 ///

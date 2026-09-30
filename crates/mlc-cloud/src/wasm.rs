@@ -12,7 +12,11 @@ use wasm_bindgen_futures::JsFuture;
 use web_sys::{Headers, Request, RequestCache, RequestInit, RequestMode, Response};
 
 use crate::models::*;
-use crate::{BuildAttestation, CloudConfig, CloudError};
+use crate::{
+    BuildAttestation, CloudConfig, CloudError, StaffBatchRevoked, StaffGiftBatch, StaffLifetimeGrant,
+    StaffLifetimeRequest, StaffLifetimeRevokeRequest, StaffLifetimeRevoked, StaffMintRequest, StaffMintResponse,
+    StaffPaidDays, StaffPaidDaysRequest, StaffUser,
+};
 
 /// Wasm32 cloud transport: one `fetch` per call, no connection state.
 #[derive(Clone, Debug, Default)]
@@ -126,6 +130,14 @@ impl FetchTransport {
     /// Execute one built request. Returns the raw status + body for every
     /// completed request; only network/JS failures become `Err`.
     async fn perform(&self, req: &Request) -> Result<(u16, String), CloudError> {
+        let (status, body, _retry_after) = self.perform_full(req).await?;
+        Ok((status, body))
+    }
+
+    /// [`Self::perform`] plus the `Retry-After` header (whole seconds), the
+    /// one response header any caller reads. Only `/api/staff/*` needs it
+    /// today: a 429 there names its wait in the header alone.
+    async fn perform_full(&self, req: &Request) -> Result<(u16, String, Option<u64>), CloudError> {
         let window = web_sys::window().ok_or_else(|| CloudError::Transport("no window".into()))?;
         let resp_value = JsFuture::from(window.fetch_with_request(req))
             .await
@@ -135,6 +147,12 @@ impl FetchTransport {
             .map_err(|e| CloudError::Transport(format!("response cast: {:?}", e)))?;
 
         let status = resp.status();
+        let retry_after = resp
+            .headers()
+            .get("Retry-After")
+            .ok()
+            .flatten()
+            .and_then(|v| v.trim().parse::<u64>().ok());
         let text = JsFuture::from(
             resp.text()
                 .map_err(|e| CloudError::Transport(format!("body(): {:?}", e)))?,
@@ -144,7 +162,7 @@ impl FetchTransport {
         let body = text
             .as_string()
             .ok_or_else(|| CloudError::Decode("body is not a string".into()))?;
-        Ok((status, body))
+        Ok((status, body, retry_after))
     }
 
     /// One HTTP exchange (JSON body or none, bearer attached when
@@ -576,6 +594,113 @@ impl FetchTransport {
         let (status, body) = self
             .exchange("POST", &format!("/api/share/{}/clone", token), None, &[])
             .await?;
+        self.decode_success(status, &body)
+    }
+
+    // ── /api/staff/* (admin role) ─────────────────────────────────────────
+    //
+    // Every call carries the session Bearer like the share calls; the server
+    // answers anyone who is not an admin with the same 403. A refusal keeps
+    // its status: [`crate::staff_error`] classifies it, the Admin tab words
+    // it.
+
+    /// One `/api/staff/*` exchange: [`Self::exchange`] with the 429's
+    /// `Retry-After` folded into the body ([`crate::with_retry_after`]).
+    async fn staff_exchange(
+        &self,
+        method: &str,
+        path: &str,
+        body: Option<String>,
+    ) -> Result<(u16, String), CloudError> {
+        let json_body = body.is_some();
+        let req = self.build_request(
+            method,
+            path,
+            body.map(|b| JsValue::from_str(&b)),
+            json_body,
+            true,
+            &[],
+        )?;
+        let (status, text, retry_after) = self.perform_full(&req).await?;
+        Ok((status, crate::with_retry_after(status, text, retry_after)))
+    }
+
+    /// `POST /api/staff/gift-codes` — mint a batch of single-use codes. The
+    /// codes come back ONCE; the caller must not log them.
+    pub async fn staff_mint(&self, days: i64, count: i64, note: &str) -> Result<StaffMintResponse, CloudError> {
+        let payload = serde_json::to_string(&StaffMintRequest { days, count, note: note.to_string() })
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.staff_exchange("POST", "/api/staff/gift-codes", Some(payload)).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/staff/gift-batches` — the batches, newest first, no code
+    /// values.
+    pub async fn staff_gift_batches(&self) -> Result<Vec<StaffGiftBatch>, CloudError> {
+        let (status, body) = self.staff_exchange("GET", "/api/staff/gift-batches", None).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/staff/gift-batches/{id}/revoke` — unredeemed codes of the
+    /// batch stop working; redeemed ones keep their days.
+    pub async fn staff_revoke_batch(&self, batch_id: &str) -> Result<StaffBatchRevoked, CloudError> {
+        let path = format!("/api/staff/gift-batches/{}/revoke", encode_query_component(batch_id));
+        let (status, body) = self.staff_exchange("POST", &path, Some("{}".to_string())).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/staff/grants/paid-days` — extend an account's time-bound
+    /// paid grant. 404 is an unknown nick.
+    pub async fn staff_paid_days(&self, nick: &str, days: i64) -> Result<StaffPaidDays, CloudError> {
+        let payload = serde_json::to_string(&StaffPaidDaysRequest { nick: nick.to_string(), days })
+            .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.staff_exchange("POST", "/api/staff/grants/paid-days", Some(payload)).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/staff/grants/lifetime` — add an operator lifetime grant
+    /// (`lifetime_paid` or `lifetime_anon`). `201` when created, `200` with
+    /// `created: false` when the identical grant is already in force; both
+    /// decode to [`StaffLifetimeGrant`].
+    pub async fn staff_lifetime_grant(
+        &self,
+        nick: &str,
+        grant: &str,
+        note: &str,
+    ) -> Result<StaffLifetimeGrant, CloudError> {
+        let payload = serde_json::to_string(&StaffLifetimeRequest {
+            nick: nick.to_string(),
+            grant: grant.to_string(),
+            note: note.to_string(),
+        })
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self.staff_exchange("POST", "/api/staff/grants/lifetime", Some(payload)).await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `POST /api/staff/grants/lifetime/revoke` — revoke the admin-source
+    /// grants of that kind; invoice-based grants are not touched.
+    pub async fn staff_lifetime_revoke(
+        &self,
+        nick: &str,
+        grant: &str,
+    ) -> Result<StaffLifetimeRevoked, CloudError> {
+        let payload = serde_json::to_string(&StaffLifetimeRevokeRequest {
+            nick: nick.to_string(),
+            grant: grant.to_string(),
+        })
+        .map_err(|e| CloudError::Decode(e.to_string()))?;
+        let (status, body) = self
+            .staff_exchange("POST", "/api/staff/grants/lifetime/revoke", Some(payload))
+            .await?;
+        self.decode_success(status, &body)
+    }
+
+    /// `GET /api/staff/user?nick=` — one account's grants and roles (exact
+    /// nick only). 404 is an unknown nick.
+    pub async fn staff_user(&self, nick: &str) -> Result<StaffUser, CloudError> {
+        let path = format!("/api/staff/user?nick={}", encode_query_component(nick));
+        let (status, body) = self.staff_exchange("GET", &path, None).await?;
         self.decode_success(status, &body)
     }
 
