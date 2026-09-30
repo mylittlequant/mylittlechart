@@ -7,10 +7,13 @@
 //! code is a grid of whole modules, so the renderer wants integer module
 //! pixels and fixed dark-on-light contrast. The processor's document is the
 //! `qrcode` crate's SVG: a `viewBox="0 0 N N"`, a background `<rect>` and one
-//! `<path d="M x y h1 v1 H x V y ...">` of unit squares. This reader accepts
-//! exactly that family — axis-aligned, integer-coordinate rectangles — and
-//! refuses anything else (`None`), in which case the pay step shows the
-//! address only and says so.
+//! `<path d="M x y h8 v8 H x V y ...">` of module squares. The crate scales
+//! every module to 8 view-box units by default (`default_unit_size`), so a
+//! 45-module canvas has `viewBox="0 0 360 360"`; the reader divides the
+//! view-box by the largest common unit of its coordinates to get back to
+//! whole modules. This reader accepts exactly that family — axis-aligned,
+//! integer-coordinate rectangles — and refuses anything else (`None`), in
+//! which case the pay step shows the address only and says so.
 //!
 //! The document comes from a server response, so the reader is bounded: a
 //! byte cap on the input and a cap on the number of rectangles it will keep.
@@ -29,6 +32,9 @@ const MAX_SVG_BYTES: usize = 128 * 1024;
 const MAX_RECTS: usize = 40_000;
 /// Largest side, in modules, the reader accepts.
 const MAX_SIDE: u32 = 400;
+/// Largest `viewBox` side, in document units, the reader looks at (a module
+/// may be several units wide: the `qrcode` crate draws 8 units per module).
+const MAX_VIEW_BOX: u32 = 8192;
 
 /// A run of dark modules: `w` x `h` modules whose top-left module is `(x, y)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -55,7 +61,7 @@ impl QrMatrix {
         if svg.len() > MAX_SVG_BYTES {
             return None;
         }
-        let size = parse_view_box_side(svg)?;
+        let view = parse_view_box_side(svg)?;
         let mut rects: Vec<QrRect> = Vec::new();
         let mut rest = svg;
         while let Some(at) = rest.find("<path") {
@@ -63,12 +69,25 @@ impl QrMatrix {
             let tag_end = rest[tag_start..].find('>').map(|e| tag_start + e)?;
             let tag = &rest[tag_start..tag_end];
             if let Some(d) = attribute(tag, "d") {
-                parse_path(d, size, &mut rects)?;
+                parse_path(d, view, &mut rects)?;
             }
             rest = &rest[tag_end..];
         }
         if rects.is_empty() {
             return None;
+        }
+        // Module unit: the largest step every coordinate and the view-box
+        // are a whole multiple of (8 for the `qrcode` crate's default).
+        let unit = rects
+            .iter()
+            .flat_map(|r| [r.x, r.y, r.w, r.h])
+            .fold(view, gcd);
+        if unit == 0 || view / unit > MAX_SIDE {
+            return None;
+        }
+        let size = view / unit;
+        for r in &mut rects {
+            *r = QrRect { x: r.x / unit, y: r.y / unit, w: r.w / unit, h: r.h / unit };
         }
         rects.sort_by_key(|r| (r.y, r.x));
         let dark = merge_row_runs(rects);
@@ -85,8 +104,17 @@ impl QrMatrix {
     }
 }
 
-/// The square side of `viewBox="0 0 N N"`, when it is a whole number of
-/// modules within bounds.
+/// Greatest common divisor (`gcd(0, n) == n`).
+fn gcd(a: u32, b: u32) -> u32 {
+    let (mut a, mut b) = (a, b);
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
+}
+
+/// The square side of `viewBox="0 0 N N"` in document units, when it is a
+/// whole number within bounds.
 fn parse_view_box_side(svg: &str) -> Option<u32> {
     let root_start = svg.find("<svg")?;
     let root_end = svg[root_start..].find('>').map(|e| root_start + e)?;
@@ -102,7 +130,7 @@ fn parse_view_box_side(svg: &str) -> Option<u32> {
         return None;
     }
     let side = nums[2];
-    if side.fract() != 0.0 || side < 1.0 || side > f64::from(MAX_SIDE) {
+    if side.fract() != 0.0 || side < 1.0 || side > f64::from(MAX_VIEW_BOX) {
         return None;
     }
     Some(side as u32)
@@ -174,12 +202,12 @@ fn tokenize(d: &str) -> Option<Vec<Token>> {
 }
 
 /// Turn path data into rectangles, one per sub-path. Every point of a
-/// sub-path must sit on the integer grid inside `[0, size]` and every move
+/// sub-path must sit on the integer grid inside `[0, view]` and every move
 /// must be horizontal or vertical; the rectangle is the sub-path's bounding
 /// box. `None` for a curve, a diagonal, a fraction or a point off the grid.
-fn parse_path(d: &str, size: u32, out: &mut Vec<QrRect>) -> Option<()> {
+fn parse_path(d: &str, view: u32, out: &mut Vec<QrRect>) -> Option<()> {
     let tokens = tokenize(d)?;
-    let limit = f64::from(size);
+    let limit = f64::from(view);
     let mut i = 0;
     let (mut cx, mut cy) = (0.0_f64, 0.0_f64);
     let mut bounds: Option<(f64, f64, f64, f64)> = None;
@@ -347,6 +375,65 @@ mod tests {
         // The mock processor in the server tests ships a <script> here; it is
         // not a rectangle path, so the reader keeps nothing.
         assert!(QrMatrix::parse("<svg><script>alert(1)</script></svg>").is_none());
+    }
+
+    /// What `qrcode` 0.14.1 really emits with its defaults (dig2pay-server
+    /// `qr::render_svg`): 8 view-box units per module, one `M..h8v8H..V..`
+    /// square per dark module. A 3x3 plus-shaped code with the crate's
+    /// 4-module quiet zone is an 11-module canvas, `viewBox="0 0 88 88"`.
+    fn crate_svg() -> String {
+        let mut path = String::new();
+        for (mx, my) in [(5u32, 4u32), (4, 5), (5, 5), (6, 5), (5, 6)] {
+            let (x, y) = (mx * 8, my * 8);
+            path.push_str(&format!("M{x} {y}h8v8H{x}V{y}"));
+        }
+        format!(
+            concat!(
+                r#"<?xml version="1.0" standalone="yes"?>"#,
+                r#"<svg xmlns="http://www.w3.org/2000/svg" version="1.1" width="88" height="88" viewBox="0 0 88 88" shape-rendering="crispEdges">"#,
+                r##"<rect x="0" y="0" width="88" height="88" fill="#fff"/>"##,
+                r##"<path fill="#000" d="{}"/></svg>"##,
+            ),
+            path
+        )
+    }
+
+    #[test]
+    fn parses_the_crates_default_eight_units_per_module() {
+        let qr = QrMatrix::parse(&crate_svg()).expect("crate document parses");
+        assert_eq!(qr.size, 11);
+        assert_eq!(
+            qr.dark,
+            vec![
+                QrRect { x: 5, y: 4, w: 1, h: 1 },
+                QrRect { x: 4, y: 5, w: 3, h: 1 },
+                QrRect { x: 5, y: 6, w: 1, h: 1 },
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_a_real_sized_payload_larger_than_400_units() {
+        // A ~70-byte payment URI is a version-5 code: (37 + 8) * 8 = 360; a
+        // longer one crosses 400 units. Build a full-size grid checkerboard.
+        let modules = 57u32; // version 10 (57 modules) + quiet zone 8 = 65 -> 520 units
+        let canvas = modules + 8;
+        let mut path = String::new();
+        for my in 0..modules {
+            for mx in 0..modules {
+                if (mx + my) % 2 == 0 {
+                    let (x, y) = ((mx + 4) * 8, (my + 4) * 8);
+                    path.push_str(&format!("M{x} {y}h8v8H{x}V{y}"));
+                }
+            }
+        }
+        let side = canvas * 8;
+        let svg = format!(
+            r##"<svg viewBox="0 0 {side} {side}"><rect width="{side}" height="{side}" fill="#fff"/><path fill="#000" d="{path}"/></svg>"##
+        );
+        let qr = QrMatrix::parse(&svg).expect("520-unit document parses");
+        assert_eq!(qr.size, canvas);
+        assert_eq!(qr.dark.first(), Some(&QrRect { x: 4, y: 4, w: 1, h: 1 }));
     }
 
     #[test]
