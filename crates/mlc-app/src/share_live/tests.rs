@@ -9,21 +9,21 @@ use mlc_backend_data_bridge::DataBridge;
 use super::*;
 use crate::share_viewer::SharedChartMeta;
 
-const AUTHOR_CHART: &str = "chart_author";
-const AUTHOR_TOKEN: &str = "tok-author";
-const LINK_TAB: &str = "shared_link";
-const LINK_TOKEN: &str = "tok-link";
-const WELCOME_PUBLISH: &str = r#"{"t":"welcome","publish":true}"#;
-const WELCOME_VIEW: &str = r#"{"t":"welcome","publish":false}"#;
+pub(super) const AUTHOR_CHART: &str = "chart_author";
+pub(super) const AUTHOR_TOKEN: &str = "tok-author";
+pub(super) const LINK_TAB: &str = "shared_link";
+pub(super) const LINK_TOKEN: &str = "tok-link";
+pub(super) const WELCOME_PUBLISH: &str = r#"{"t":"welcome","publish":true}"#;
+pub(super) const WELCOME_VIEW: &str = r#"{"t":"welcome","publish":false}"#;
 
-async fn new_app() -> ChartApp {
+pub(super) async fn new_app() -> ChartApp {
     let (bridge, _live_rx, _ready_rx) = DataBridge::new().await;
     let core = mlc_backend::BackendCore::new(Arc::new(bridge), None);
     ChartApp::new_empty(core)
 }
 
 /// An author tab bound to `AUTHOR_TOKEN`, active, Live off.
-async fn author_app() -> ChartApp {
+pub(super) async fn author_app() -> ChartApp {
     let mut app = new_app().await;
     app.panel_app.active_preset_id = AUTHOR_CHART.to_string();
     app.note_chart_share_token(AUTHOR_CHART, AUTHOR_TOKEN);
@@ -31,13 +31,13 @@ async fn author_app() -> ChartApp {
 }
 
 /// Turn Live on at `now_ms` for the active author tab.
-fn go_live(app: &mut ChartApp, now_ms: f64) {
+pub(super) fn go_live(app: &mut ChartApp, now_ms: f64) {
     app.live_link_step(now_ms);
     app.set_share_live(true);
 }
 
 /// Drive the link from Live-on to an open socket with the given welcome.
-fn open_socket(app: &mut ChartApp, now_ms: f64, ticket: &str, welcome: &str) {
+pub(super) fn open_socket(app: &mut ChartApp, now_ms: f64, ticket: &str, welcome: &str) {
     let token = app.edge_live_token().expect("Live is on");
     assert!(matches!(
         app.live_link_step(now_ms).as_slice(),
@@ -52,7 +52,7 @@ fn open_socket(app: &mut ChartApp, now_ms: f64, ticket: &str, welcome: &str) {
 }
 
 /// A link tab that only receives, open on `LINK_TAB`.
-fn open_link_tab(app: &mut ChartApp, rights: &[&str]) {
+pub(super) fn open_link_tab(app: &mut ChartApp, rights: &[&str]) {
     app.panel_app.active_preset_id = LINK_TAB.to_string();
     app.readonly_preset_ids.insert(LINK_TAB.to_string());
     app.shared_chart_meta.insert(
@@ -69,7 +69,7 @@ fn open_link_tab(app: &mut ChartApp, rights: &[&str]) {
     );
 }
 
-fn turn_viewport_streaming_on(app: &mut ChartApp) {
+pub(super) fn turn_viewport_streaming_on(app: &mut ChartApp) {
     let stream = app.share_streams.get_mut(AUTHOR_CHART).expect("author stream exists");
     stream.live_viewport = true;
 }
