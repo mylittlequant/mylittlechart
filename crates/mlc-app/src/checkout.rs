@@ -44,6 +44,10 @@ impl ChartApp {
         #[cfg(feature = "cloud")]
         self.panel_app.cloud_login_state.close();
         let signed_in = self.panel_app.user_settings_state.account_signed_in;
+        // Opened from Settings -> Account: the checkout replaces the settings
+        // modal, never draws stacked over it. (`close` keeps the account
+        // view the checkout reads above.)
+        self.panel_app.user_settings_state.close();
         self.panel_app.checkout_state.open(signed_in);
     }
 
@@ -259,6 +263,22 @@ mod tests {
         assert!(app.checkout_is_open());
         assert!(app.any_blocking_modal_open(), "the chart underneath is inert while paying");
         assert_eq!(app.checkout_take_cmd(NOW), Some(CheckoutCmd::LoadPlans));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn opening_the_checkout_from_settings_replaces_the_settings_modal() {
+        set_entry_points_enabled(true);
+        let mut app = app().await;
+        app.panel_app.user_settings_state.account_signed_in = true;
+        app.panel_app.user_settings_state.open();
+        app.panel_app.user_settings_state.set_tab(UserSettingsTab::Account);
+        assert!(app.panel_app.user_settings_state.is_open);
+
+        app.dispatch_panel_click("checkout:open", 0.0, 0.0);
+
+        assert!(app.checkout_is_open());
+        assert!(!app.panel_app.user_settings_state.is_open, "no two modals stacked");
+        assert!(app.panel_app.user_settings_state.account_signed_in, "the account view survives the close");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
