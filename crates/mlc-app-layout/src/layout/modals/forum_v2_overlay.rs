@@ -78,7 +78,7 @@ use crate::ui::Icon;
 
 use super::cloud_overlay::{
     draw_action_row, draw_expand_row, draw_link_row, draw_status, parse_rfc3339_unix_secs,
-    register_scrollbar_hit_zones, relative_time, scroll_config, wrap_text, CloudOverlayResult,
+    register_scrollbar_hit_zones, relative_time, scroll_config, CloudOverlayResult,
     ACTION_BTN_GAP, FIELD_H, FORUM_BODY_FIELD, FORUM_REPLY_FIELD, FORUM_SEARCH_FIELD,
     FORUM_TITLE_FIELD, ROW_GAP, ROW_H,
 };
@@ -93,10 +93,18 @@ const LINK_ROW_H: f64 = ROW_H;
 // compact search toggle all share one fixed-height row under the tab strip
 // — see `draw_crumb_bar`'s own doc.
 const CRUMB_BAR_H: f64 = FIELD_H + 8.0;
+/// Top padding every view's own body/threadbody starts at, below the crumb
+/// bar's own bottom divider — concept's own `.body{padding:12px 14px}`/
+/// `.threadbody{padding:12px 14px}` (SAME 12px top on every one of the 5
+/// states). Was 0 before this (owner report, forum parity pass 2: "too
+/// tight under the breadcrumb divider" / board index "match the spacing"
+/// between that divider and the stats line) — applied once, uniformly, in
+/// `draw`'s own `body_y`, so it can never drift between views.
+const BODY_PAD_TOP: f64 = 12.0;
 const CRUMB_SEP_W: f64 = 14.0;
 const QUICK_SEARCH_ICON_BOX: f64 = 28.0;
 const QUICK_SEARCH_FIELD_W: f64 = 180.0;
-const QUICK_RESULT_ROW_H: f64 = 36.0;
+const QUICK_RESULT_ROW_H: f64 = 50.0;
 const QUICK_MORE_ROW_H: f64 = 28.0;
 const QUICK_DROPDOWN_MAX_ROWS: usize = 8;
 
@@ -109,7 +117,13 @@ const QUICK_DROPDOWN_MAX_ROWS: usize = 8;
 // showing) — used only for `ModalShellSpec`'s inert `content_height` (see
 // that call site's own doc for why it is inert); `draw`'s own per-view
 // scaffolding computes the SAME numbers again from the same helpers below,
-// so the two can never silently diverge from each other.
+// with ONE documented exception: the Boards/Thread arms call the `_approx`
+// twin of `boards_index_h`/`thread_scroll_content_h` rather than the real
+// thing, because the real ones need a `RenderContext` (pixel-accurate text
+// wrap, forum parity pass 2) that this call site — and this whole function,
+// transitively `community.rs`'s own ctx-free `content_height` — does not
+// have. Both `_approx` twins are declared next to the function they
+// approximate, so the gap stays visible rather than silently drifting.
 // =============================================================================
 
 pub(crate) fn list_height(_state: &CommunityState) -> f64 {
@@ -119,13 +133,14 @@ pub(crate) fn list_height(_state: &CommunityState) -> f64 {
 pub(crate) fn height(state: &CommunityState) -> f64 {
     let f = &state.forum2;
     CRUMB_BAR_H
+        + BODY_PAD_TOP
         + match &f.view {
-            ForumV2View::Boards => boards_index_h(f),
+            ForumV2View::Boards => boards_index_h_approx(f),
             ForumV2View::BoardThreads { slug, threads, next_before } => {
                 board_threads_index_h(f, slug, threads, next_before)
             }
             ForumV2View::Thread { thread, replies_tree, reply_to, .. } => match thread {
-                Some(t) => thread_scroll_content_h(t, replies_tree, f) + thread_composer_h(f, *reply_to),
+                Some(_) => thread_scroll_content_h_approx(replies_tree, f) + thread_composer_h(f, *reply_to),
                 None => 44.0,
             },
             ForumV2View::Search { hits, .. } => search_h(f, hits),
@@ -150,17 +165,27 @@ pub(crate) fn draw(
     _list_result: &mut CommunityListPaneResult,
 ) {
     let crumb_h = draw_crumb_bar(ctx, coord, layer_id, x, y, w, state, ft, tt, current_time_ms, result);
-    let body_y = y + crumb_h;
-    let body_viewport_h = (viewport_h - crumb_h).max(0.0);
+    let body_y = y + crumb_h + BODY_PAD_TOP;
+    let body_viewport_h = (viewport_h - crumb_h - BODY_PAD_TOP).max(0.0);
 
+    // The concept's own `.dim{opacity:.35}` (state 5): whatever view is
+    // showing beneath the quick-search dropdown fades while it is open, so
+    // the floating result list reads as the thing that has focus.
+    let dim = state.forum2.quick_search_open && state.forum2.quick_search_query.is_some();
+    if dim {
+        ctx.set_global_alpha(0.35);
+    }
     match &state.forum2.view {
-        ForumV2View::Boards => draw_right_scrollable(
-            ctx, coord, layer_id, x, body_y, w, body_viewport_h, &state.scroll,
-            boards_index_h(&state.forum2), result,
-            |ctx, coord, layer_id, sx, sy, sw, _result| {
-                draw_boards_index(ctx, coord, layer_id, sx, sy, sw, &state.forum2, current_time_ms, tt);
-            },
-        ),
+        ForumV2View::Boards => {
+            let content_h = boards_index_h(ctx, &state.forum2);
+            draw_right_scrollable(
+                ctx, coord, layer_id, x, body_y, w, body_viewport_h, &state.scroll,
+                content_h, result,
+                |ctx, coord, layer_id, sx, sy, sw, _result| {
+                    draw_boards_index(ctx, coord, layer_id, sx, sy, sw, &state.forum2, current_time_ms, tt);
+                },
+            )
+        }
         ForumV2View::BoardThreads { slug, threads, next_before } => draw_right_scrollable(
             ctx, coord, layer_id, x, body_y, w, body_viewport_h, &state.scroll,
             board_threads_index_h(&state.forum2, slug, threads, next_before), result,
@@ -190,12 +215,15 @@ pub(crate) fn draw(
             },
         ),
     }
+    if dim {
+        ctx.set_global_alpha(1.0);
+    }
 
     // Quick-search dropdown — drawn LAST and unclipped (the crumb bar it
     // anchors to sits above every view's own scroll clip), so it overlays
     // whichever view is showing beneath it (concept state 5: the dimmed
     // board index behind a floating result list).
-    draw_quick_search_dropdown(ctx, coord, layer_id, result.forum_search_rect, &state.forum2, tt);
+    draw_quick_search_dropdown(ctx, coord, layer_id, result.forum_search_rect, x + w, &state.forum2, tt, current_time_ms);
 }
 
 /// Shared scaffolding for a view with NO docked footer (Boards, BoardThreads,
@@ -325,7 +353,7 @@ fn draw_text_link(
     tt: &ToolbarTheme,
 ) -> f64 {
     let hovered = coord.is_hovered(&WidgetId::from(widget_id));
-    ctx.set_fill_color(if hovered { hover_color } else { &tt.item_text_muted });
+    ctx.set_fill_color(if hovered { hover_color } else { &tt.muted_ink });
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(label, x, y);
@@ -363,7 +391,15 @@ enum Block<'a> {
     Link(&'a str),
 }
 
-fn blocks(text: &str) -> Vec<Block<'_>> {
+/// `max_w` is the pixel width Text blocks wrap against, at whatever font the
+/// caller has already set — the concept's own `.ptext` fills the FULL body
+/// column (`forum_concept_v1.html`'s own `.pbody{flex:1;min-width:0}`), not
+/// a fixed character count: a post card's body column is much wider than
+/// the narrow single-column bubbles `wrap_text`'s own 62-char calibration
+/// (still used by News/DM bodies elsewhere in this crate) was chosen for,
+/// and reusing that fixed count here left the right half of every card
+/// empty (owner report, pass 2 of the forum parity arc).
+fn blocks<'a>(ctx: &dyn RenderContext, text: &'a str, max_w: f64) -> Vec<Block<'a>> {
     text.split("\n\n")
         .map(|par| {
             let trimmed = par.trim();
@@ -373,14 +409,18 @@ fn blocks(text: &str) -> Vec<Block<'_>> {
             if is_link {
                 Block::Link(trimmed)
             } else {
-                Block::Text(wrap_text(trimmed, 62))
+                Block::Text(crate::ui::widgets::wrap_text_to_width(ctx, trimmed, max_w))
             }
         })
         .collect()
 }
 
-fn blocks_h(text: &str) -> f64 {
-    blocks(text)
+/// Sizing twin of [`draw_blocks`] — sets the SAME font `draw_blocks` sets
+/// before its own Text-block loop first, since [`blocks`] measures at
+/// whatever font is already current.
+fn blocks_h(ctx: &mut dyn RenderContext, text: &str, max_w: f64) -> f64 {
+    ctx.set_font("12px sans-serif");
+    blocks(ctx, text, max_w)
         .iter()
         .map(|b| match b {
             Block::Text(lines) => lines.len() as f64 * 16.0 + 10.0,
@@ -422,7 +462,8 @@ fn draw_blocks(
     // `result.forum_line_rects` can both walk it without re-measuring text
     // that has already scrolled past.
     let mut pushed: Vec<(u16, f64, String)> = Vec::new();
-    for block in blocks(text) {
+    ctx.set_font("12px sans-serif");
+    for block in blocks(ctx, text, w) {
         match block {
             Block::Text(lines) => {
                 ctx.set_font("12px sans-serif");
@@ -566,7 +607,7 @@ fn draw_crumb_segment(
     } else if hovered {
         ctx.set_fill_color(&tt.item_text_hover);
     } else {
-        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_fill_color(&tt.muted_ink);
     }
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
@@ -581,7 +622,10 @@ fn draw_crumb_segment(
 
 fn draw_crumb_sep(ctx: &mut dyn RenderContext, x: f64, y: f64, h: f64, tt: &ToolbarTheme) {
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(&tt.item_text_muted);
+    // The concept's own `.crumbs .sep{color:var(--border)}` — the ">" glyph
+    // reads as the strong-divider colour, a shade barely there, not any of
+    // the text tokens.
+    ctx.set_fill_color(&tt.separator);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text("\u{203a}", x, y + h / 2.0);
@@ -616,7 +660,8 @@ fn draw_crumb_bar(
         ctx.set_fill_color(&tt.item_bg_hover);
         ctx.fill_rounded_rect(icon_rect.x, icon_rect.y, icon_rect.width, icon_rect.height, SETTINGS_BUTTON_RADIUS);
     }
-    draw_svg_icon(ctx, Icon::Search.svg(), icon_rect.x + 6.0, icon_rect.y + 6.0, 16.0, 16.0, &tt.item_text);
+    let icon_color = if icon_hovered { &tt.item_text } else { &tt.item_text_muted };
+    draw_svg_icon(ctx, Icon::Search.svg(), icon_rect.x + 6.0, icon_rect.y + 6.0, 16.0, 16.0, icon_color);
     coord.register_on_layer("cloud_overlay:forum2:quick_search_toggle", icon_rect, Sense::CLICK | Sense::HOVER, layer_id);
     right_edge -= QUICK_SEARCH_ICON_BOX + 8.0;
 
@@ -687,6 +732,11 @@ fn draw_crumb_bar(
         }
     }
     let _ = cx;
+
+    // The concept's own `.crumbs{border-bottom:1px solid var(--border-soft)}`
+    // — the one divider under the breadcrumb bar, separating it from
+    // whichever view's body is showing beneath it.
+    draw_row_divider(ctx, x, y + h, w, tt);
 
     h
 }
@@ -764,7 +814,7 @@ fn draw_kind_pill(ctx: &mut dyn RenderContext, x: f64, y: f64, kind: &str, tt: &
     ctx.set_stroke_color(&tt.separator);
     ctx.set_stroke_width(1.0);
     ctx.stroke_rect(x, y, w, PILL_H);
-    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_fill_color(&tt.muted_ink);
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text(&label, x + w / 2.0, y + PILL_H / 2.0);
@@ -778,13 +828,16 @@ fn draw_kind_pill(ctx: &mut dyn RenderContext, x: f64, y: f64, kind: &str, tt: &
 /// case this is a no-op). Unclipped: the breadcrumb bar sits above every
 /// view's own scroll clip, so its dropdown is free to overlay the full body
 /// beneath it (concept state 5).
+#[allow(clippy::too_many_arguments)]
 fn draw_quick_search_dropdown(
     ctx: &mut dyn RenderContext,
     coord: &mut InputCoordinator,
     layer_id: &LayerId,
     field_rect: Option<WidgetRect>,
+    content_right: f64,
     f: &ForumV2State,
     tt: &ToolbarTheme,
+    current_time_ms: u64,
 ) {
     let Some(anchor) = field_rect else { return };
     let Some(query) = f.quick_search_query.as_deref() else { return };
@@ -794,8 +847,12 @@ fn draw_quick_search_dropdown(
     let n = f.quick_search_results.len().min(QUICK_DROPDOWN_MAX_ROWS);
     let rows_h = if n == 0 { QUICK_RESULT_ROW_H } else { n as f64 * QUICK_RESULT_ROW_H };
     let box_h = rows_h + QUICK_MORE_ROW_H + 8.0;
-    let box_w = (anchor.width * 1.6).max(260.0);
-    let box_x = (anchor.x + anchor.width - box_w).max(0.0);
+    // Concept's own `.dropdown{width:340px;right:12px}` — a fixed width,
+    // right-anchored to the PANE's own edge (`content_right`), not to the
+    // (narrower, and further left of the pane edge than the panel itself)
+    // search field/icon group.
+    let box_w = 340.0f64.max(anchor.width);
+    let box_x = (content_right - box_w).max(0.0);
     let box_y = anchor.y + anchor.height + 4.0;
 
     ctx.set_fill_color(&tt.dropdown_bg);
@@ -829,6 +886,19 @@ fn draw_quick_search_dropdown(
             let snippet = crate::ui::widgets::fit_text_to_width(ctx, &hit.snippet, rect.width - 12.0);
             draw_highlighted_text(ctx, rect.x + 6.0, rect.y + 18.0, &snippet, query, &tt.item_text_muted, &tt.accent);
 
+            // "Board · author · time" (concept's own `.hit .m`) — the board
+            // segment is omitted, not left blank, on an older server that
+            // has not deployed `board_title` yet (`ForumSearchHitUi::
+            // board_title`'s own doc).
+            let meta = match &hit.board_title {
+                Some(board) => format!("{board} · {} · {}", hit.author, relative_time(&hit.created_at, current_time_ms)),
+                None => format!("{} · {}", hit.author, relative_time(&hit.created_at, current_time_ms)),
+            };
+            ctx.set_font("10px monospace");
+            ctx.set_fill_color(&tt.muted_ink);
+            let meta = crate::ui::widgets::fit_text_to_width(ctx, &meta, rect.width - 12.0);
+            ctx.fill_text(&meta, rect.x + 6.0, rect.y + 34.0);
+
             coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
             ry += QUICK_RESULT_ROW_H;
         }
@@ -837,7 +907,7 @@ fn draw_quick_search_dropdown(
     let more_rect = WidgetRect::new(box_x + 4.0, ry, box_w - 8.0, QUICK_MORE_ROW_H - 4.0);
     let more_hovered = coord.is_hovered(&WidgetId::from("cloud_overlay:forum2:quick_more"));
     ctx.set_font("11px sans-serif");
-    ctx.set_fill_color(if more_hovered { &tt.item_text_hover } else { &tt.item_text_muted });
+    ctx.set_fill_color(if more_hovered { &tt.item_text_hover } else { &tt.muted_ink });
     ctx.set_text_align(TextAlign::Center);
     ctx.set_text_baseline(TextBaseline::Middle);
     ctx.fill_text("More results…", more_rect.center_x(), more_rect.center_y());
@@ -857,9 +927,76 @@ fn draw_quick_search_dropdown(
 const BOARD_IDX_ROW_H: f64 = 60.0;
 const BOARD_IDX_THREADS_COL_W: f64 = 64.0;
 const BOARD_IDX_POSTS_COL_W: f64 = 64.0;
-const BOARD_IDX_LASTPOST_COL_W: f64 = 210.0;
+const BOARD_IDX_LASTPOST_COL_W: f64 = 230.0;
 const TABLE_HEADER_H: f64 = 20.0;
 const TABLE_COL_GAP: f64 = 12.0;
+
+/// `1842` → `"1,842"` — every INDEX-table count column (concept's own
+/// `1,842`/`3,655`, `forum_concept_v1.html` states 1/5) reads this instead
+/// of a bare `to_string()`. Negative counts never occur here (server-side
+/// counters), so this only ever inserts a comma every three digits from the
+/// right of an unsigned magnitude.
+fn format_thousands(n: i64) -> String {
+    let sign = if n < 0 { "-" } else { "" };
+    let digits = n.unsigned_abs().to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, ch) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(ch);
+    }
+    format!("{sign}{out}")
+}
+
+/// A table's own header-row underline (concept's own `table.idx th`/
+/// `table.threads th{border-bottom:1px solid var(--border)}`) — the STRONG
+/// divider (`tt.separator`), distinct from the soft per-row one
+/// ([`draw_row_divider`]) every row beneath it draws in a lighter tone.
+fn draw_header_underline(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, tt: &ToolbarTheme) {
+    ctx.set_stroke_color(&tt.separator);
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(x, y);
+    ctx.line_to(x + w, y);
+    ctx.stroke();
+}
+
+/// Wraps `text` to at most 2 lines at `max_w` (currently-set font) — the
+/// board index's own last-post title never needs a 3rd (the concept's own
+/// `.lp .lp-t` carries no CSS line-clamp, but none of its own fixture
+/// titles run that long either): a would-be 3rd line's words fold into an
+/// ellipsis-truncated 2nd line instead of silently growing the row forever
+/// ([`crate::ui::widgets::fit_text_to_width`]'s own idiom, applied to
+/// whatever [`crate::ui::widgets::wrap_text_to_width`] could not fit in the
+/// first 2 lines).
+fn wrap_two_lines(ctx: &dyn RenderContext, text: &str, max_w: f64) -> Vec<String> {
+    let lines = crate::ui::widgets::wrap_text_to_width(ctx, text, max_w);
+    if lines.len() <= 2 {
+        return lines;
+    }
+    let first = lines[0].clone();
+    let rest = lines[1..].join(" ");
+    let second = crate::ui::widgets::fit_text_to_width(ctx, &rest, max_w);
+    vec![first, second]
+}
+
+/// One index-table row's own bottom divider (concept's own `table.idx td`/
+/// `table.threads td{border-bottom:1px solid var(--border-soft)}`) — the
+/// SOFT divider (`tt.item_bg_hover`, the same token this crate's own row
+/// hover fill already reads: `forum_concept_v1.html`'s own token doc notes
+/// `--border-soft` and `--surface-hover` are the same colour in the Dark
+/// preset, not a coincidence). Drawn at the bottom of the row's own slot
+/// (`row_h` before the caller's inter-row gap, if any), so it lines up with
+/// the hover-highlight rect above it.
+fn draw_row_divider(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, tt: &ToolbarTheme) {
+    ctx.set_stroke_color(&tt.item_bg_hover);
+    ctx.set_stroke_width(1.0);
+    ctx.begin_path();
+    ctx.move_to(x, y);
+    ctx.line_to(x + w, y);
+    ctx.stroke();
+}
 
 fn totals_header_h() -> f64 {
     20.0
@@ -870,16 +1007,60 @@ fn draw_totals_header(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, f: &F
     let threads: i64 = f.boards.iter().map(|b| b.thread_count).sum();
     let posts: i64 = threads + f.boards.iter().map(|b| b.reply_count).sum::<i64>();
     ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_fill_color(&tt.muted_ink);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
-    let label = format!("{boards} boards · {threads} threads · {posts} posts");
+    let label = format!(
+        "{boards} boards · {} threads · {} posts",
+        format_thousands(threads),
+        format_thousands(posts),
+    );
     let label = crate::ui::widgets::fit_text_to_width(ctx, &label, w);
     ctx.fill_text(&label, x, y);
     totals_header_h()
 }
 
-fn boards_index_h(f: &ForumV2State) -> f64 {
+/// A board row's own last-post title, wrapped to at most 2 lines
+/// ([`wrap_two_lines`]) at the fixed [`BOARD_IDX_LASTPOST_COL_W`] — shared
+/// by [`board_idx_row_h`] and [`draw_board_idx_row`] so the two can never
+/// disagree about how tall a wrapped title makes its row. Sets the same
+/// `12px sans-serif` the title itself draws in (the concept's own
+/// `.lp .lp-t`) — callers do not need to set it first. `None` for a board
+/// with no last-post title at all (nothing to wrap).
+fn board_last_post_lines(ctx: &mut dyn RenderContext, board: &BoardUi) -> Option<Vec<String>> {
+    let title = board.last_thread_title.as_deref()?;
+    ctx.set_font("12px sans-serif");
+    Some(wrap_two_lines(ctx, title, BOARD_IDX_LASTPOST_COL_W - 8.0))
+}
+
+/// One board row's own full slot height — [`BOARD_IDX_ROW_H`], grown by one
+/// text line when (only when) its own last-post title wraps to 2 lines
+/// (owner report, forum parity pass 2: "the last-post title wraps to 2
+/// lines… instead of an ellipsis. The row height grows for that row only").
+fn board_idx_row_h(ctx: &mut dyn RenderContext, board: &BoardUi) -> f64 {
+    let extra_lines = board_last_post_lines(ctx, board).map(|lines| lines.len()).unwrap_or(1).saturating_sub(1);
+    BOARD_IDX_ROW_H + extra_lines as f64 * 14.0
+}
+
+fn boards_index_h(ctx: &mut dyn RenderContext, f: &ForumV2State) -> f64 {
+    let err_h = if f.last_error.is_some() { 20.0 } else { 0.0 };
+    let header_h = totals_header_h() + 8.0 + TABLE_HEADER_H + 6.0;
+    let rows_h = if f.boards.is_empty() {
+        24.0
+    } else {
+        let mut sum = 0.0;
+        for b in &f.boards {
+            sum += board_idx_row_h(ctx, b);
+        }
+        sum
+    };
+    err_h + header_h + rows_h
+}
+
+/// Rough stand-in for [`boards_index_h`] — [`height`]'s own inert path (see
+/// that function's own top-of-file doc) uses the flat [`BOARD_IDX_ROW_H`]
+/// per board rather than measuring which last-post titles wrap to 2 lines.
+fn boards_index_h_approx(f: &ForumV2State) -> f64 {
     let err_h = if f.last_error.is_some() { 20.0 } else { 0.0 };
     let header_h = totals_header_h() + 8.0 + TABLE_HEADER_H + 6.0;
     let rows_h = if f.boards.is_empty() { 24.0 } else { f.boards.len() as f64 * BOARD_IDX_ROW_H };
@@ -907,15 +1088,16 @@ fn draw_board_idx_header(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, tt
     let cols = board_idx_cols(x, w);
     let lang = current_language();
     ctx.set_font("500 10px sans-serif");
-    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_fill_color(&tt.muted_ink);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text(ForumKey::ColBoard.get(lang), x + 8.0, y);
+    ctx.fill_text(&ForumKey::ColBoard.get(lang).to_uppercase(), x + 8.0, y);
     ctx.set_text_align(TextAlign::Right);
-    ctx.fill_text(ForumKey::ColThreads.get(lang), cols.threads_x + BOARD_IDX_THREADS_COL_W, y);
-    ctx.fill_text(ForumKey::ColPosts.get(lang), cols.posts_x + BOARD_IDX_POSTS_COL_W, y);
+    ctx.fill_text(&ForumKey::ColThreads.get(lang).to_uppercase(), cols.threads_x + BOARD_IDX_THREADS_COL_W, y);
+    ctx.fill_text(&ForumKey::ColPosts.get(lang).to_uppercase(), cols.posts_x + BOARD_IDX_POSTS_COL_W, y);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text(ForumKey::ColLastPost.get(lang), cols.last_post_x, y);
+    ctx.fill_text(&ForumKey::ColLastPost.get(lang).to_uppercase(), cols.last_post_x, y);
+    draw_header_underline(ctx, x, y + TABLE_HEADER_H, w, tt);
 }
 
 fn draw_board_idx_row(
@@ -930,8 +1112,9 @@ fn draw_board_idx_row(
     tt: &ToolbarTheme,
 ) -> f64 {
     let cols = board_idx_cols(x, w);
+    let row_h = board_idx_row_h(ctx, board);
     let widget_id = format!("cloud_overlay:forum2:board:{}", board.slug);
-    let rect = WidgetRect::new(x, y, w, BOARD_IDX_ROW_H - ROW_GAP);
+    let rect = WidgetRect::new(x, y, w, row_h - ROW_GAP);
     let hovered = coord.is_hovered(&WidgetId::from(widget_id.as_str()));
     if hovered {
         ctx.set_fill_color(&tt.item_bg_hover);
@@ -947,7 +1130,8 @@ fn draw_board_idx_row(
 
     // "write: <class>" tag — only when the caller CANNOT write (owner
     // review 2026-09-09: quiet when they can), drawn right after the title
-    // on the same line rather than its own row (concept's own `.b-tag`).
+    // on the same line rather than its own row (concept's own `.b-tag`: a
+    // bordered pill, no fill).
     if !board.can_write {
         let title_w = ctx.measure_text(&title);
         let tag_x = x + 8.0 + title_w + 8.0;
@@ -956,9 +1140,10 @@ fn draw_board_idx_row(
             ctx.set_font("10px monospace");
             let tag_label = crate::ui::widgets::fit_text_to_width(ctx, &format!("write: {}", board.write_class), tag_budget - 10.0);
             let tag_w = ctx.measure_text(&tag_label) + 10.0;
-            ctx.set_fill_color(&tt.dropdown_bg);
-            ctx.fill_rounded_rect(tag_x, y + 2.0, tag_w, 14.0, 3.0);
-            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.set_stroke_color(&tt.separator);
+            ctx.set_stroke_width(1.0);
+            ctx.stroke_rounded_rect(tag_x, y + 2.0, tag_w, 14.0, 3.0);
+            ctx.set_fill_color(&tt.muted_ink);
             ctx.set_text_baseline(TextBaseline::Middle);
             ctx.fill_text(&tag_label, tag_x + 5.0, y + 9.0);
             ctx.set_text_baseline(TextBaseline::Top);
@@ -973,30 +1158,51 @@ fn draw_board_idx_row(
     ctx.set_font("12px monospace");
     ctx.set_fill_color(&tt.item_text_muted);
     ctx.set_text_align(TextAlign::Right);
-    ctx.fill_text(&board.thread_count.to_string(), cols.threads_x + BOARD_IDX_THREADS_COL_W, y + 2.0);
+    ctx.fill_text(&format_thousands(board.thread_count), cols.threads_x + BOARD_IDX_THREADS_COL_W, y + 2.0);
     let posts = board.thread_count + board.reply_count;
-    ctx.fill_text(&posts.to_string(), cols.posts_x + BOARD_IDX_POSTS_COL_W, y + 2.0);
+    ctx.fill_text(&format_thousands(posts), cols.posts_x + BOARD_IDX_POSTS_COL_W, y + 2.0);
     ctx.set_text_align(TextAlign::Left);
 
     match (&board.last_thread_title, &board.last_post_at) {
-        (Some(title), Some(t)) => {
+        (Some(_), Some(t)) => {
+            // The title wraps to at most 2 lines instead of an ellipsis
+            // (owner report, forum parity pass 2 — the concept's own
+            // `.lp .lp-t` carries no line-clamp; `board_idx_row_h` already
+            // grew this row's own slot to match whatever `lines` comes out
+            // to here, so the two can never disagree).
+            let lines = board_last_post_lines(ctx, board).unwrap_or_default();
             ctx.set_font("12px sans-serif");
             ctx.set_fill_color(&tt.item_text);
-            let title = crate::ui::widgets::fit_text_to_width(ctx, title, BOARD_IDX_LASTPOST_COL_W - 8.0);
-            ctx.fill_text(&title, cols.last_post_x, y + 2.0);
+            ctx.set_text_align(TextAlign::Left);
+            ctx.set_text_baseline(TextBaseline::Top);
+            let mut ty = y + 2.0;
+            for line in &lines {
+                ctx.fill_text(line, cols.last_post_x, ty);
+                ty += 14.0;
+            }
             ctx.set_font("10px monospace");
-            ctx.set_fill_color(&tt.item_text_muted);
-            ctx.fill_text(&relative_time(t, current_time_ms), cols.last_post_x, y + 20.0);
+            ctx.set_fill_color(&tt.muted_ink);
+            // "author · time" (concept's own `.lp-m`) — the author is
+            // omitted, not left blank, on an older server that has not
+            // deployed `last_post_author` yet (`BoardUi::last_post_author`'s
+            // own doc), same graceful degrade `last_thread_title`/
+            // `last_post_at` themselves already use one level up.
+            let meta = match &board.last_post_author {
+                Some(author) => format!("{author} · {}", relative_time(t, current_time_ms)),
+                None => relative_time(t, current_time_ms),
+            };
+            ctx.fill_text(&meta, cols.last_post_x, ty + 4.0);
         }
         _ => {
             ctx.set_font("11px sans-serif");
-            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.set_fill_color(&tt.muted_ink);
             ctx.fill_text("No posts yet", cols.last_post_x, y + 2.0);
         }
     }
 
     coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
-    BOARD_IDX_ROW_H
+    draw_row_divider(ctx, x, y + row_h - ROW_GAP, w, tt);
+    row_h
 }
 
 fn draw_boards_index(
@@ -1058,15 +1264,16 @@ fn draw_thread_idx_header(ctx: &mut dyn RenderContext, x: f64, y: f64, w: f64, t
     let cols = thread_idx_cols(x, w);
     let lang = current_language();
     ctx.set_font("500 10px sans-serif");
-    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_fill_color(&tt.muted_ink);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text(ForumKey::ColTitle.get(lang), x + 8.0, y);
-    ctx.fill_text(ForumKey::ColAuthor.get(lang), cols.author_x, y);
+    ctx.fill_text(&ForumKey::ColTitle.get(lang).to_uppercase(), x + 8.0, y);
+    ctx.fill_text(&ForumKey::ColAuthor.get(lang).to_uppercase(), cols.author_x, y);
     ctx.set_text_align(TextAlign::Right);
-    ctx.fill_text(ForumKey::ColReplies.get(lang), cols.replies_x + THREAD_IDX_REPLIES_COL_W, y);
+    ctx.fill_text(&ForumKey::ColReplies.get(lang).to_uppercase(), cols.replies_x + THREAD_IDX_REPLIES_COL_W, y);
     ctx.set_text_align(TextAlign::Left);
-    ctx.fill_text(ForumKey::ColLastActivity.get(lang), cols.act_x, y);
+    ctx.fill_text(&ForumKey::ColLastActivity.get(lang).to_uppercase(), cols.act_x, y);
+    draw_header_underline(ctx, x, y + TABLE_HEADER_H, w, tt);
 }
 
 fn draw_thread_idx_row(
@@ -1096,7 +1303,7 @@ fn draw_thread_idx_row(
         title_x += 18.0;
     }
     if t.locked {
-        draw_svg_icon(ctx, Icon::Lock.svg(), title_x, cy - 7.0, 14.0, 14.0, &tt.item_text_muted);
+        draw_svg_icon(ctx, Icon::Lock.svg(), title_x, cy - 7.0, 14.0, 14.0, &tt.muted_ink);
         title_x += 18.0;
     }
     ctx.set_text_align(TextAlign::Left);
@@ -1120,15 +1327,31 @@ fn draw_thread_idx_row(
     // The server does not (yet) return who posted the LAST reply — only
     // `last_reply_at`'s timestamp — so this column, like v1's own meta line
     // before it, reads the thread's own author alongside the latest
-    // activity time rather than a wrong or invented name.
+    // activity time rather than a wrong or invented name. Two-tone, matching
+    // the concept's own `.t-act b{color:var(--text-dim)}` inside a
+    // `--text-muted` line: the author name reads a shade lighter than the
+    // "· time" it sits in front of.
     let activity = t.last_reply_at.as_deref().unwrap_or(&t.created_at);
-    let act = format!("{} · {}", t.author, relative_time(activity, current_time_ms));
+    let rest = format!(" · {}", relative_time(activity, current_time_ms));
+    let act_budget = THREAD_IDX_ACT_COL_W - 8.0;
     ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
-    let act = crate::ui::widgets::fit_text_to_width(ctx, &act, THREAD_IDX_ACT_COL_W - 8.0);
-    ctx.fill_text(&act, cols.act_x, cy);
+    let whole = crate::ui::widgets::fit_text_to_width(ctx, &format!("{}{rest}", t.author), act_budget);
+    if whole.ends_with('\u{2026}') {
+        // No room to split without the ellipsis landing mid-author — draw
+        // as one run in the fainter tone rather than an awkwardly clipped
+        // two-colour split.
+        ctx.set_fill_color(&tt.muted_ink);
+        ctx.fill_text(&whole, cols.act_x, cy);
+    } else {
+        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.fill_text(&t.author, cols.act_x, cy);
+        let author_w = ctx.measure_text(&t.author);
+        ctx.set_fill_color(&tt.muted_ink);
+        ctx.fill_text(&rest, cols.act_x + author_w, cy);
+    }
 
     coord.register_on_layer(widget_id.as_str(), rect, Sense::CLICK | Sense::HOVER, layer_id);
+    draw_row_divider(ctx, x, y + THREAD_IDX_ROW_H - ROW_GAP, w, tt);
     THREAD_IDX_ROW_H
 }
 
@@ -1205,7 +1428,7 @@ fn draw_board_threads_index(
 
 const CARD_PAD: f64 = 10.0;
 const CARD_GAP: f64 = 10.0;
-const AUTH_COL_W: f64 = 66.0;
+const AUTH_COL_W: f64 = 76.0;
 const AVATAR_D: f64 = 34.0;
 const AVATAR_NICK_GAP: f64 = 6.0;
 const NICK_LINE_H: f64 = 14.0;
@@ -1224,6 +1447,24 @@ const SIGNIN_LINE_H: f64 = 36.0;
 const TITLE_LINE_H: f64 = 22.0;
 const META_LINE_H: f64 = 18.0;
 const HEADER_GAP: f64 = 12.0;
+/// The docked reply box's own height — the concept's own
+/// `.fakearea{min-height:50px}`, a multi-line-looking box, not the shared
+/// single-line [`FIELD_H`] every other forum text field uses (owner report,
+/// forum parity pass 2: "the concept has a multi-line reply box").
+const REPLY_FIELD_H: f64 = 50.0;
+/// Horizontal padding inside the small "Post reply" button — concept's own
+/// `.btn-new{padding:5px 12px}`.
+const COMPOSER_BTN_PAD_X: f64 = 14.0;
+
+/// One post card's own body column width — the full row width minus the
+/// author column and its three [`CARD_PAD`] gutters (row edge, authcol-to-
+/// body, body-to-row-edge) — the concept's own `.pbody{flex:1;min-width:0}`:
+/// the body fills whatever is left, not a fixed guess. Shared by the actual
+/// draw (`draw_post_card`) and its sizing twin (`thread_scroll_content_h`)
+/// so the two can never wrap the same text to a different width.
+fn post_body_w(w: f64) -> f64 {
+    (w - CARD_PAD * 3.0 - AUTH_COL_W).max(40.0)
+}
 
 /// One reply, flattened out of the server's reply TREE into chronological
 /// order across the WHOLE thread — not tree pre-order: a reply nested under
@@ -1275,15 +1516,24 @@ pub(crate) fn flatten_replies_chronological(tree: &[ForumReplyV2Ui], first_numbe
 /// frame and the trailing [`CARD_GAP`] — see [`post_card_h`] for the full
 /// slot). Takes the same booleans [`draw_post_card`] derives from its own
 /// arguments, so the two can never compute a different number for the same
-/// post.
-fn post_card_inner_h(body: &str, hidden: bool, has_in_reply_to: bool, has_footer: bool, has_rank: bool) -> f64 {
+/// post. `body_w` — see [`post_body_w`] — is the actual pixel width the body
+/// wraps against; `ctx` is needed to measure it ([`blocks_h`]).
+fn post_card_inner_h(
+    ctx: &mut dyn RenderContext,
+    body: &str,
+    body_w: f64,
+    hidden: bool,
+    has_in_reply_to: bool,
+    has_footer: bool,
+    has_rank: bool,
+) -> f64 {
     let auth_h =
         AVATAR_D + AVATAR_NICK_GAP + NICK_LINE_H + if has_rank { RANK_GAP + RANK_LINE_H } else { 0.0 };
     let mut body_h = POST_ROW1_H + POST_ROW1_GAP;
     if has_in_reply_to {
         body_h += REPLYTO_H + REPLYTO_GAP;
     }
-    body_h += if hidden { HIDDEN_LINE_H } else { blocks_h(body) };
+    body_h += if hidden { HIDDEN_LINE_H } else { blocks_h(ctx, body, body_w) };
     if has_footer {
         body_h += FOOT_GAP + FOOT_H;
     }
@@ -1293,8 +1543,17 @@ fn post_card_inner_h(body: &str, hidden: bool, has_in_reply_to: bool, has_footer
 /// Full height of one post card's own slot — frame padding plus content
 /// plus the trailing gap before the next card ([`CARD_GAP`], matching the
 /// concept's own `.posts{gap:10px}`).
-fn post_card_h(body: &str, hidden: bool, has_in_reply_to: bool, has_footer: bool, has_rank: bool) -> f64 {
-    CARD_PAD * 2.0 + post_card_inner_h(body, hidden, has_in_reply_to, has_footer, has_rank) + CARD_GAP
+#[allow(clippy::too_many_arguments)]
+fn post_card_h(
+    ctx: &mut dyn RenderContext,
+    body: &str,
+    body_w: f64,
+    hidden: bool,
+    has_in_reply_to: bool,
+    has_footer: bool,
+    has_rank: bool,
+) -> f64 {
+    CARD_PAD * 2.0 + post_card_inner_h(ctx, body, body_w, hidden, has_in_reply_to, has_footer, has_rank) + CARD_GAP
 }
 
 /// "2026-09-20 14:02 · 3d ago" — the concept's own `.ptime` (states 3/4):
@@ -1391,7 +1650,8 @@ fn draw_post_card(
     let has_footer = reply_widget_id.is_some() || delete_widget_id.is_some();
     let has_rank = rank_label.is_some();
     let has_in_reply_to = in_reply_to.is_some();
-    let inner_h = post_card_inner_h(body, hidden, has_in_reply_to, has_footer, has_rank);
+    let body_w = post_body_w(w);
+    let inner_h = post_card_inner_h(ctx, body, body_w, hidden, has_in_reply_to, has_footer, has_rank);
     let box_h = CARD_PAD * 2.0 + inner_h;
 
     ctx.set_fill_color(&tt.dropdown_bg);
@@ -1400,7 +1660,10 @@ fn draw_post_card(
     // Author column — avatar, nick, rank badge (the concept's own `.authcol`).
     let auth_cx = x + CARD_PAD + AUTH_COL_W / 2.0;
     let mut acy = y + CARD_PAD;
-    draw_avatar_placeholder(ctx, auth_cx, acy + AVATAR_D / 2.0, AVATAR_D / 2.0, author, &tt.item_bg_active);
+    // Concept's own `.avatar{background:var(--surface-hover)}` — a neutral
+    // grey placeholder, not the accent-blue `item_bg_active` the OLD
+    // (pre-drill-down) avatar read.
+    draw_avatar_placeholder(ctx, auth_cx, acy + AVATAR_D / 2.0, AVATAR_D / 2.0, author, &tt.item_bg_hover);
     acy += AVATAR_D + AVATAR_NICK_GAP;
     ctx.set_font("600 12px sans-serif");
     ctx.set_fill_color(&tt.item_text);
@@ -1416,9 +1679,11 @@ fn draw_post_card(
         ctx.set_font("9px monospace");
         let pill_w = ctx.measure_text(&label) + 10.0;
         let pill_x = auth_cx - pill_w / 2.0;
-        ctx.set_fill_color(&tt.dropdown_bg);
-        ctx.fill_rounded_rect(pill_x, acy, pill_w, RANK_LINE_H, 3.0);
-        ctx.set_fill_color(if is_staff { &tt.accent } else { &tt.item_text_muted });
+        let rank_color = if is_staff { &tt.accent } else { &tt.muted_ink };
+        ctx.set_stroke_color(if is_staff { &tt.accent } else { &tt.separator });
+        ctx.set_stroke_width(1.0);
+        ctx.stroke_rounded_rect(pill_x, acy, pill_w, RANK_LINE_H, 3.0);
+        ctx.set_fill_color(rank_color);
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(&label, pill_x + pill_w / 2.0, acy + RANK_LINE_H / 2.0);
@@ -1427,11 +1692,10 @@ fn draw_post_card(
     // Body column — post number + time, optional "in reply to", body,
     // footer (the concept's own `.pbody`).
     let body_x = x + CARD_PAD + AUTH_COL_W + CARD_PAD;
-    let body_w = (x + w - CARD_PAD - body_x).max(40.0);
     let mut ly = y + CARD_PAD;
 
     ctx.set_font("11px monospace");
-    ctx.set_fill_color(&tt.item_text_muted);
+    ctx.set_fill_color(&tt.muted_ink);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Top);
     ctx.fill_text(&format!("#{number}"), body_x, ly);
@@ -1444,12 +1708,12 @@ fn draw_post_card(
     if let Some((parent_number, parent_author)) = in_reply_to {
         let lang = current_language();
         ctx.set_font("11px sans-serif");
-        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_fill_color(&tt.muted_ink);
         let prefix = format!("\u{21b3} {} ", ForumKey::InReplyTo.get(lang));
         ctx.fill_text(&prefix, body_x, ly);
         let prefix_w = ctx.measure_text(&prefix);
         ctx.set_font("600 11px sans-serif");
-        ctx.set_fill_color(&tt.item_text);
+        ctx.set_fill_color(&tt.item_text_muted);
         ctx.fill_text(&format!("@{parent_author} #{parent_number}"), body_x + prefix_w, ly);
         ly += REPLYTO_H + REPLYTO_GAP;
     }
@@ -1506,6 +1770,9 @@ fn draw_reply_chip(
     let rect = WidgetRect::new(x, y, chip_w, CHIP_H);
     ctx.set_fill_color(&tt.dropdown_bg);
     ctx.fill_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
+    ctx.set_stroke_color(&tt.item_bg_hover);
+    ctx.set_stroke_width(1.0);
+    ctx.stroke_rounded_rect(rect.x, rect.y, rect.width, rect.height, SETTINGS_BUTTON_RADIUS);
     ctx.set_fill_color(&tt.item_text_muted);
     ctx.set_text_align(TextAlign::Left);
     ctx.set_text_baseline(TextBaseline::Middle);
@@ -1513,7 +1780,7 @@ fn draw_reply_chip(
 
     let close_rect = WidgetRect::new(rect.x + rect.width - close_w - 4.0, rect.y + (CHIP_H - 16.0) / 2.0, close_w, 16.0);
     let close_hovered = coord.is_hovered(&WidgetId::from("cloud_overlay:forum2:clear_reply_to"));
-    ctx.set_fill_color(if close_hovered { &tt.item_text_hover } else { &tt.item_text_muted });
+    ctx.set_fill_color(if close_hovered { &tt.item_text_hover } else { &tt.muted_ink });
     ctx.set_text_align(TextAlign::Center);
     ctx.fill_text("\u{d7}", close_rect.center_x(), close_rect.center_y());
     coord.register_on_layer("cloud_overlay:forum2:clear_reply_to", close_rect, Sense::CLICK | Sense::HOVER, layer_id);
@@ -1557,25 +1824,45 @@ fn draw_mod_row(
 /// chronological order (the OP as post #1, every reply flattened via
 /// [`flatten_replies_chronological`] from #2). Matches exactly what
 /// `draw_right_thread`'s own scroll region draws, same doctrine every
-/// `*_h`/`draw_*` pair in this file follows.
-fn thread_scroll_content_h(t: &ForumThreadV2Detail, replies_tree: &[ForumReplyV2Ui], f: &ForumV2State) -> f64 {
+/// `*_h`/`draw_*` pair in this file follows. `w` is the SAME content width
+/// `draw_right_thread` itself got — needed to size each card's own body
+/// column ([`post_body_w`]) now that a body wraps at its real pixel width
+/// instead of a fixed character count.
+fn thread_scroll_content_h(
+    ctx: &mut dyn RenderContext,
+    w: f64,
+    t: &ForumThreadV2Detail,
+    replies_tree: &[ForumReplyV2Ui],
+    f: &ForumV2State,
+) -> f64 {
     let header_h = TITLE_LINE_H + META_LINE_H + HEADER_GAP;
     let mod_h = if f.is_moderator_or_admin() { ROW_H } else { 0.0 };
     let composer_visible = thread_composer_visible(f.caller_signed_in, resolve_board_can_write(f));
+    let body_w = post_body_w(w);
 
-    let op_h = post_card_h(&t.body, t.hidden, false, composer_visible, t.author_rank.is_some());
+    let op_h = post_card_h(ctx, &t.body, body_w, t.hidden, false, composer_visible, t.author_rank.is_some());
     let flat = flatten_replies_chronological(replies_tree, 2);
-    let replies_h: f64 = flat
-        .iter()
-        .map(|fr| {
-            post_card_h(
-                &fr.reply.body, fr.reply.hidden, fr.in_reply_to.is_some(),
-                composer_visible || fr.reply.author_is_me, fr.reply.author_rank.is_some(),
-            )
-        })
-        .sum();
+    let mut replies_h = 0.0;
+    for fr in &flat {
+        replies_h += post_card_h(
+            ctx, &fr.reply.body, body_w, fr.reply.hidden, fr.in_reply_to.is_some(),
+            composer_visible || fr.reply.author_is_me, fr.reply.author_rank.is_some(),
+        );
+    }
 
     header_h + mod_h + op_h + replies_h
+}
+
+/// Rough stand-in for [`thread_scroll_content_h`] — [`height`]'s own inert
+/// path has no `RenderContext` to wrap a post body against (see that
+/// function's own top-of-file doc), and nothing reads the number precisely
+/// enough to need one: a flat per-card estimate is close enough.
+fn thread_scroll_content_h_approx(replies_tree: &[ForumReplyV2Ui], f: &ForumV2State) -> f64 {
+    const AVG_POST_CARD_H: f64 = 130.0;
+    let header_h = TITLE_LINE_H + META_LINE_H + HEADER_GAP;
+    let mod_h = if f.is_moderator_or_admin() { ROW_H } else { 0.0 };
+    let post_count = 1 + flatten_replies_chronological(replies_tree, 2).len();
+    header_h + mod_h + post_count as f64 * AVG_POST_CARD_H
 }
 
 /// The docked composer's own height — reply-to chip (if any), the field,
@@ -1589,7 +1876,7 @@ fn thread_composer_h(f: &ForumV2State, reply_to: Option<i64>) -> f64 {
     if thread_composer_visible(f.caller_signed_in, resolve_board_can_write(f)) {
         let err_h = if f.last_error.is_some() { 20.0 } else { 0.0 };
         let chip_h = if reply_to.is_some() { CHIP_H + CHIP_GAP } else { 0.0 };
-        err_h + chip_h + FIELD_H + 8.0 + ROW_H
+        err_h + chip_h + REPLY_FIELD_H + 8.0 + ROW_H
     } else if !f.caller_signed_in {
         SIGNIN_LINE_H
     } else {
@@ -1652,7 +1939,7 @@ fn draw_right_thread(
 
     let composer_h = thread_composer_h(f, reply_to);
     let scroll_h = (viewport_h - composer_h).max(0.0);
-    let content_h = thread_scroll_content_h(t, replies_tree, f);
+    let content_h = thread_scroll_content_h(ctx, w, t, replies_tree, f);
 
     draw_right_scrollable(
         ctx, coord, layer_id, x, y, w, scroll_h, &state.scroll, content_h, result,
@@ -1665,7 +1952,7 @@ fn draw_right_thread(
                 title_x += 20.0;
             }
             if t.locked {
-                draw_svg_icon(ctx, Icon::Lock.svg(), title_x, ly + 2.0, 16.0, 16.0, &tt.item_text_muted);
+                draw_svg_icon(ctx, Icon::Lock.svg(), title_x, ly + 2.0, 16.0, 16.0, &tt.muted_ink);
                 title_x += 20.0;
             }
             ctx.set_font("600 14px sans-serif");
@@ -1676,7 +1963,7 @@ fn draw_right_thread(
             ly += TITLE_LINE_H;
 
             ctx.set_font("11px monospace");
-            ctx.set_fill_color(&tt.item_text_muted);
+            ctx.set_fill_color(&tt.muted_ink);
             let meta = thread_meta_line(flat_replies.len(), &t.author, &t.created_at);
             let meta = crate::ui::widgets::fit_text_to_width(ctx, &meta, sw);
             ctx.fill_text(&meta, sx, ly);
@@ -1726,23 +2013,29 @@ fn draw_right_thread(
             cy += draw_reply_chip(ctx, coord, layer_id, x, cy, target, tt);
         }
 
-        let field_rect = WidgetRect::new(x, cy, w, FIELD_H);
+        let field_rect = WidgetRect::new(x, cy, w, REPLY_FIELD_H);
         let (rect, chars) = draw_field(
             ctx, coord, layer_id, "cloud_overlay:forum2:reply_input", FORUM_REPLY_FIELD, field_rect,
             "Write a reply…", ft, tt, current_time_ms,
         );
         result.forum_reply_rect = Some(rect);
         result.forum_reply_char_positions = chars;
-        cy += FIELD_H + 8.0;
+        cy += REPLY_FIELD_H + 8.0;
 
+        // A small button, right-aligned (concept's own `.composer-foot
+        // {display:flex;justify-content:flex-end}` — NOT the full-width row
+        // every other action button in this file draws).
+        let btn_h = ROW_H - ROW_GAP;
+        ctx.set_font("600 13px sans-serif");
+        let btn_w = ctx.measure_text("Post reply") + COMPOSER_BTN_PAD_X * 2.0;
         draw_action_row(
             ctx, coord, layer_id, "cloud_overlay:forum2:reply_submit",
-            WidgetRect::new(x, cy, w, ROW_H - ROW_GAP), "Post reply", tt,
+            WidgetRect::new(x + w - btn_w, cy, btn_w, btn_h), "Post reply", tt,
         );
     } else if !f.caller_signed_in {
         let lang = current_language();
         ctx.set_font("12px sans-serif");
-        ctx.set_fill_color(&tt.item_text_muted);
+        ctx.set_fill_color(&tt.muted_ink);
         ctx.set_text_align(TextAlign::Center);
         ctx.set_text_baseline(TextBaseline::Middle);
         ctx.fill_text(ForumKey::SignInToReply.get(lang), x + w / 2.0, cy + SIGNIN_LINE_H / 2.0);

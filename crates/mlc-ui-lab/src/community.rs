@@ -16,7 +16,7 @@
 //! `ThemeManager` and a plain root `InputCoordinator` (no scoped region:
 //! `render_community_modal` draws at the window origin, never translated,
 //! so the coordinate spaces already match). Static content, no DOM event
-//! polling — the four fixtures are picked once at boot from the URL, not by
+//! polling — the fixture is picked once at boot from the URL, not by
 //! clicking anything on screen.
 //!
 //! Every field this module sets on `CommunityState`/`ForumV2State`/
@@ -29,11 +29,11 @@
 //! are read a SECOND way, straight off `state.dm.conversations` by the open
 //! conversation's own header — not through the provider at all.
 //!
-//! Only four states are wired (`forum-index`, `forum-thread`,
-//! `messages-locked`, `messages-chat`, `forum-index` is the default for an
-//! unrecognised or missing `state=`) — `ForumV2View::BoardThreads` (a
-//! board's own thread list) exists in the state model too, but is not one
-//! of the four fixed states this page exposes.
+//! Seven states are wired: `forum-index`, `forum-board`, `forum-thread`,
+//! `forum-thread-signed-out`, `forum-search` (the five
+//! `designs/2026-09-23-forum/forum_concept_v1.html` screens, one fixture
+//! each), plus `messages-locked`/`messages-chat` — `forum-index` is the
+//! default for an unrecognised or missing `state=`.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -43,7 +43,8 @@ use wasm_bindgen::prelude::*;
 use mlc_app_layout::layout::modals::community::render_community_modal;
 use mlc_app_layout::ui::modal_settings::{
     BoardUi, CommunityState, CommunityTab, DmConversationUi, DmMessageBody, DmMessageUi, DmState,
-    DmUnavailableReason, DmView, ForumReplyV2Ui, ForumThreadV2Detail, ForumV2State, ForumV2View,
+    DmUnavailableReason, DmView, ForumReplyV2Ui, ForumSearchHitUi, ForumThreadV2Detail,
+    ForumThreadV2Ui, ForumV2State, ForumV2View,
 };
 use mlc_core::state::toolbar_geometry::WidgetRect;
 use mlc_core::theme::ThemeManager;
@@ -78,8 +79,8 @@ fn query_param(name: &str) -> Option<String> {
 }
 
 /// Which fixture [`CommunityState`] this page shows — `?state=...`, see
-/// this module's own top doc for the four names. `messages-group` (UI-1,
-/// 2026-09-25) is a fifth: it does NOT feed `DmState` at all — its
+/// this module's own top doc for the full name list. `messages-group` (UI-1,
+/// 2026-09-25) is one more: it does NOT feed `DmState` at all — its
 /// `CommunityState.dm` stays a bare shell (just enough for `messenger_
 /// overlay.rs`'s own UI-side reads: which room is open, the draft field id)
 /// — the actual room/timeline data comes from
@@ -88,7 +89,10 @@ fn query_param(name: &str) -> Option<String> {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PageState {
     ForumIndex,
+    ForumBoard,
     ForumThread,
+    ForumThreadSignedOut,
+    ForumSearch,
     MessagesLocked,
     MessagesChat,
     MessagesGroup,
@@ -115,7 +119,10 @@ enum PageState {
 impl PageState {
     fn from_query() -> Self {
         match query_param("state").as_deref() {
+            Some("forum-board") => Self::ForumBoard,
             Some("forum-thread") => Self::ForumThread,
+            Some("forum-thread-signed-out") => Self::ForumThreadSignedOut,
+            Some("forum-search") => Self::ForumSearch,
             Some("messages-locked") => Self::MessagesLocked,
             Some("messages-chat") => Self::MessagesChat,
             Some("messages-group") => Self::MessagesGroup,
@@ -158,9 +165,13 @@ fn boards(now_ms: f64) -> Vec<BoardUi> {
             write_class: "admin".to_string(),
             can_write: false,
             thread_count: 12,
-            reply_count: 58,
+            // Concept's own Posts column reads 58 = thread_count + replies
+            // (`BoardUi::reply_count`'s own doc: replies ONLY, excluding
+            // the OP) — 58 - 12 = 46.
+            reply_count: 46,
             last_post_at: Some(ts_before(now_ms, 3.0 * HOUR_MS)),
             last_thread_title: Some("0.5.607 — native wave notes".to_string()),
+            last_post_author: Some("Nemo Trading".to_string()),
         },
         BoardUi {
             slug: "general".to_string(),
@@ -170,9 +181,11 @@ fn boards(now_ms: f64) -> Vec<BoardUi> {
             write_class: "user".to_string(),
             can_write: true,
             thread_count: 214,
-            reply_count: 1842,
+            // Concept Posts = 1,842; 1,842 - 214 = 1,628 replies.
+            reply_count: 1628,
             last_post_at: Some(ts_before(now_ms, 4.0 * HOUR_MS)),
             last_thread_title: Some("How do I set up alerts on Renko bars?".to_string()),
+            last_post_author: Some("j_novak".to_string()),
         },
         BoardUi {
             slug: "feature-requests".to_string(),
@@ -182,9 +195,11 @@ fn boards(now_ms: f64) -> Vec<BoardUi> {
             write_class: "user".to_string(),
             can_write: true,
             thread_count: 96,
-            reply_count: 640,
+            // Concept Posts = 640; 640 - 96 = 544 replies.
+            reply_count: 544,
             last_post_at: Some(ts_before(now_ms, 41.0 * MINUTE_MS)),
             last_thread_title: Some("Multi-timeframe watchlist column".to_string()),
+            last_post_author: Some("qbot_maria".to_string()),
         },
         BoardUi {
             slug: "strategies".to_string(),
@@ -192,11 +207,18 @@ fn boards(now_ms: f64) -> Vec<BoardUi> {
             description: "Strategy breakdowns, backtests, walk-forwards.".to_string(),
             read_class: "public".to_string(),
             write_class: "paid".to_string(),
-            can_write: true,
+            // `false` regardless of `forum_state_base`'s own `caller_classes`
+            // (which does include "paid") — concept state 1 shows this
+            // board's own "write: paid" tag, i.e. illustrates a caller who
+            // canNOT write here; `can_write` is fixture-literal data, not
+            // re-derived from `caller_classes` anywhere in this file.
+            can_write: false,
             thread_count: 58,
-            reply_count: 412,
+            // Concept Posts = 412; 412 - 58 = 354 replies.
+            reply_count: 354,
             last_post_at: Some(ts_before(now_ms, DAY_MS)),
             last_thread_title: Some("Footprint POC mean-reversion, 3mo results".to_string()),
+            last_post_author: Some("desk_yuri".to_string()),
         },
         BoardUi {
             slug: "bug-reports".to_string(),
@@ -206,9 +228,138 @@ fn boards(now_ms: f64) -> Vec<BoardUi> {
             write_class: "user".to_string(),
             can_write: true,
             thread_count: 140,
-            reply_count: 703,
+            // Concept Posts = 703; 703 - 140 = 563 replies.
+            reply_count: 563,
             last_post_at: Some(ts_before(now_ms, 2.0 * HOUR_MS)),
             last_thread_title: Some("Alerts fire twice on reconnect".to_string()),
+            last_post_author: Some("night_owl".to_string()),
+        },
+    ]
+}
+
+/// "General Discussion" board's own thread list — content mirrors
+/// `designs/2026-09-23-forum/forum_concept_v1.html`'s own state 2 (pinned +
+/// locked welcome thread first, five ordinary threads, a "Load more" row —
+/// `next_before: Some(_)` in [`community_state_for`] exercises that row).
+fn board_threads(now_ms: f64) -> Vec<ForumThreadV2Ui> {
+    vec![
+        ForumThreadV2Ui {
+            id: 5001,
+            title: "Welcome — forum rules & how boards work".to_string(),
+            author: "Nemo Trading".to_string(),
+            author_is_me: false,
+            author_rank: Some("moderator".to_string()),
+            created_at: ts_before(now_ms, 3.0 * DAY_MS),
+            updated_at: ts_before(now_ms, 3.0 * DAY_MS),
+            last_reply_at: Some(ts_before(now_ms, 3.0 * DAY_MS)),
+            reply_count: 0,
+            pinned: true,
+            locked: true,
+        },
+        ForumThreadV2Ui {
+            id: 5002,
+            title: "Renko vs range bars for scalping?".to_string(),
+            author: "trader_ivan".to_string(),
+            author_is_me: false,
+            author_rank: Some("user".to_string()),
+            created_at: ts_before(now_ms, DAY_MS),
+            updated_at: ts_before(now_ms, 12.0 * MINUTE_MS),
+            last_reply_at: Some(ts_before(now_ms, 12.0 * MINUTE_MS)),
+            reply_count: 14,
+            pinned: false,
+            locked: false,
+        },
+        ForumThreadV2Ui {
+            id: 5003,
+            title: "Anyone else seeing gaps on the BTC perp chart after reconnect?".to_string(),
+            author: "flow_max".to_string(),
+            author_is_me: false,
+            author_rank: Some("user".to_string()),
+            created_at: ts_before(now_ms, DAY_MS),
+            updated_at: ts_before(now_ms, 38.0 * MINUTE_MS),
+            last_reply_at: Some(ts_before(now_ms, 38.0 * MINUTE_MS)),
+            reply_count: 6,
+            pinned: false,
+            locked: false,
+        },
+        ForumThreadV2Ui {
+            id: 5004,
+            title: "Best hotkeys for quick fib placement".to_string(),
+            author: "sasha_trd".to_string(),
+            author_is_me: false,
+            author_rank: Some("user".to_string()),
+            created_at: ts_before(now_ms, DAY_MS),
+            updated_at: ts_before(now_ms, HOUR_MS),
+            last_reply_at: Some(ts_before(now_ms, HOUR_MS)),
+            reply_count: 3,
+            pinned: false,
+            locked: false,
+        },
+        ForumThreadV2Ui {
+            id: 5005,
+            title: "Dark theme accent color feels too blue for me".to_string(),
+            author: "mira_k".to_string(),
+            author_is_me: false,
+            author_rank: Some("user".to_string()),
+            created_at: ts_before(now_ms, DAY_MS),
+            updated_at: ts_before(now_ms, 2.0 * HOUR_MS),
+            last_reply_at: Some(ts_before(now_ms, 2.0 * HOUR_MS)),
+            reply_count: 9,
+            pinned: false,
+            locked: false,
+        },
+        ForumThreadV2Ui {
+            id: 5102,
+            title: "How do I set up alerts on Renko bars?".to_string(),
+            author: "j_novak".to_string(),
+            author_is_me: false,
+            author_rank: Some("user".to_string()),
+            created_at: ts_before(now_ms, 3.0 * DAY_MS + HOUR_MS),
+            updated_at: ts_before(now_ms, 4.0 * HOUR_MS),
+            last_reply_at: Some(ts_before(now_ms, 4.0 * HOUR_MS)),
+            reply_count: 4,
+            pinned: false,
+            locked: false,
+        },
+    ]
+}
+
+/// Compact quick-search dropdown hits — content mirrors the concept's own
+/// state 5 (query `"renko alert"`, two thread hits and one reply hit).
+fn search_hits(now_ms: f64) -> Vec<ForumSearchHitUi> {
+    vec![
+        ForumSearchHitUi {
+            kind: "thread".to_string(),
+            board_id: 2,
+            thread_id: 5102,
+            reply_id: None,
+            title: Some("How do I set up alerts on Renko bars?".to_string()),
+            snippet: "...fire an alert when a new Renko brick prints in a given direction...".to_string(),
+            author: "j_novak".to_string(),
+            created_at: ts_before(now_ms, 3.0 * DAY_MS),
+            board_title: Some("General Discussion".to_string()),
+        },
+        ForumSearchHitUi {
+            kind: "reply".to_string(),
+            board_id: 2,
+            thread_id: 482,
+            reply_id: Some(1024),
+            title: None,
+            snippet: "...route it through an indicator plot and alert on the zero cross...".to_string(),
+            author: "j_novak".to_string(),
+            created_at: ts_before(now_ms, 3.0 * DAY_MS),
+            board_title: Some("General Discussion".to_string()),
+        },
+        ForumSearchHitUi {
+            kind: "thread".to_string(),
+            board_id: 2,
+            thread_id: 5002,
+            reply_id: None,
+            title: Some("Renko vs range bars for scalping?".to_string()),
+            snippet: "...box size and tick sensitivity for renko bricks on fast scalps...".to_string(),
+            author: "trader_ivan".to_string(),
+            created_at: ts_before(now_ms, 12.0 * MINUTE_MS),
+            board_title: Some("General Discussion".to_string()),
         },
     ]
 }
@@ -425,7 +576,37 @@ fn community_state_for(page: PageState, now_ms: f64) -> CommunityState {
             forum2.view = ForumV2View::Boards;
             CommunityTab::Forum
         }
+        PageState::ForumBoard => {
+            forum2.view = ForumV2View::BoardThreads {
+                slug: "general".to_string(),
+                threads: board_threads(now_ms),
+                // `Some(_)` — the concept's own state 2 shows a "Load more"
+                // row under the thread list.
+                next_before: Some("cursor-5102".to_string()),
+            };
+            CommunityTab::Forum
+        }
         PageState::ForumThread => {
+            forum2.open_thread_board_slug = Some("general".to_string());
+            forum2.view = ForumV2View::Thread {
+                id: 5102,
+                thread: Some(thread_detail(now_ms)),
+                replies_tree: replies_tree(now_ms),
+                // Concept state 3 shows the composer already targeting a
+                // reply ("Replying to #2 · quiet_deska ×").
+                reply_to: Some(2),
+            };
+            CommunityTab::Forum
+        }
+        PageState::ForumThreadSignedOut => {
+            // Concept state 4: the same thread, read-only — no composer, no
+            // per-post "Reply" link, one quiet sign-in line at the bottom
+            // ([`mlc_app_layout::layout::modals::forum_v2_overlay::
+            // thread_composer_visible`] gates all three off `caller_signed_in`
+            // alone).
+            forum2.caller_signed_in = false;
+            forum2.caller_nick = None;
+            forum2.caller_classes = vec!["public".to_string()];
             forum2.open_thread_board_slug = Some("general".to_string());
             forum2.view = ForumV2View::Thread {
                 id: 5102,
@@ -433,6 +614,16 @@ fn community_state_for(page: PageState, now_ms: f64) -> CommunityState {
                 replies_tree: replies_tree(now_ms),
                 reply_to: None,
             };
+            CommunityTab::Forum
+        }
+        PageState::ForumSearch => {
+            // Concept state 5: the board index still showing (dimmed, see
+            // `forum_v2_overlay::draw`'s own `dim` flag) behind the compact
+            // quick-search dropdown.
+            forum2.view = ForumV2View::Boards;
+            forum2.quick_search_open = true;
+            forum2.quick_search_query = Some("renko alert".to_string());
+            forum2.quick_search_results = search_hits(now_ms);
             CommunityTab::Forum
         }
         PageState::MessagesLocked => {
@@ -534,14 +725,39 @@ pub fn start() -> Result<(), JsValue> {
         theme_manager.set_preset(&preset);
     }
 
+    // `&lang=<code>` — lab-only override for parity screenshots against an
+    // English-language concept mockup; every other page in this crate reads
+    // whatever `uzor`'s global lang index already resolved to (usually the
+    // browser's own locale), same as the production app.
+    if let Some(code) = query_param("lang") {
+        if let Some(lang) = mlc_core::i18n::Language::from_code(&code) {
+            mlc_core::i18n::set_language(lang);
+        }
+    }
+
     let page = PageState::from_query();
     let community = community_state_for(page, now_ms);
+    let mut coordinator = InputCoordinator::new();
+    if page == PageState::ForumSearch {
+        // The inline search box's own text lives in the coordinator's
+        // `TextFieldStore`, not `ForumV2State` — `cloud_overlay::
+        // FORUM_SEARCH_FIELD`'s own widget id (`"forum_search"`), `pub(crate)`
+        // in `mlc-app-layout` and so unreachable from here by name; the
+        // literal is stable (`forum_v2_overlay.rs`'s own crumb-bar field
+        // uses it unchanged since the community-modal-drill-down arc).
+        // `set_text` alone is a no-op on a field the store has never seen —
+        // `register` first (same `mlc-app` shell-driver step this page
+        // otherwise skips entirely, having no bootstrap of its own).
+        let search_field = uzor::WidgetId::from("forum_search");
+        coordinator.text_fields_mut().register(search_field.clone(), uzor::input::TextFieldConfig::text());
+        coordinator.text_fields_mut().set_text(&search_field, "renko alert");
+    }
     let messenger_fixture = page
         .uses_messenger_fixture()
         .then(|| crate::community_messenger_fixture::MessengerFixture::new(now_ms));
     let lab = CommunityLabState {
         theme_manager,
-        coordinator: InputCoordinator::new(),
+        coordinator,
         community,
         messenger_fixture,
         page,

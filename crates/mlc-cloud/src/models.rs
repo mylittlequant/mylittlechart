@@ -668,6 +668,12 @@ pub struct ForumBoard {
     /// same conditions as `last_post_at`.
     #[serde(default)]
     pub last_thread_title: Option<String>,
+    /// Author of the post/thread that carries `last_post_at` — `None` under
+    /// the same conditions as `last_post_at` (Forum drill-down parity pass,
+    /// `forum_concept_v1.html`'s own `.lp-m` "author · time" line — same
+    /// soft-rollout `#[serde(default)]` idiom as `last_thread_title`).
+    #[serde(default)]
+    pub last_post_author: Option<String>,
 }
 
 /// Response body from `GET /api/forum/boards`.
@@ -794,6 +800,16 @@ pub struct ForumSearchHit {
     pub snippet: String,
     pub author: String,
     pub created_at: String,
+    /// The hit's own board title, server-resolved — `None` on an older
+    /// server that does not send it yet (Forum drill-down parity pass,
+    /// `forum_concept_v1.html`'s own compact-search `.hit .m` meta line,
+    /// "Board · author · time"). Travels WITH the hit rather than needing a
+    /// client-side `board_id` → title lookup: the client's own loaded
+    /// `boards` list is not guaranteed to include every board a search hit
+    /// can come from (see `ForumV2State::open_thread_board_slug`'s own doc
+    /// for why that lookup is deliberately not built here).
+    #[serde(default)]
+    pub board_title: Option<String>,
 }
 
 /// Response body from `GET /api/forum/search?q=&board=`.

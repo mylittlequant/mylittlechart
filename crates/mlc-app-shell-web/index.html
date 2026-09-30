@@ -237,6 +237,57 @@
   </script>
   <script type="module">
     import init from './mlc_app_shell_web.js';
+    // ── Mobile gate ───────────────────────────────────────────────────────────
+    // Owner ruling: no mobile version. A phone/tablet gets a static "desktop
+    // only" notice and the wasm is never fetched. `?desktop=1` forces the load
+    // (testing). Mobile = a mobile UA, OR a touch-first device (>1 touch points,
+    // coarse primary pointer) with a viewport under 900 px.
+    const MLC_IS_MOBILE = (function() {
+      try {
+        if (new URLSearchParams(location.search).get('desktop') === '1') return false;
+        var ua = navigator.userAgent || '';
+        if (/Android|iPhone|iPad|iPod|Mobile/i.test(ua)) return true;
+        var coarse = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+        return navigator.maxTouchPoints > 1 && coarse && window.innerWidth < 900;
+      } catch (e) {
+        return false;
+      }
+    })();
+    if (MLC_IS_MOBILE) {
+      (function showDesktopOnlyNotice() {
+        var boot = document.getElementById('boot');
+        if (!boot) return;
+        if (window.__MLC_BOOT_CAPTION_STOP__) window.__MLC_BOOT_CAPTION_STOP__();
+        boot.classList.remove('err');
+        while (boot.firstChild) boot.removeChild(boot.firstChild);
+        boot.style.padding = '24px';
+        boot.style.textAlign = 'center';
+        boot.style.background = '#131722';
+        var logo = document.createElement('img');
+        logo.className = 'logo';
+        logo.src = '/boot-hat.svg';
+        logo.alt = '';
+        boot.appendChild(logo);
+        function line(text, css) {
+          var d = document.createElement('div');
+          d.textContent = text;
+          d.style.cssText = css;
+          boot.appendChild(d);
+        }
+        line('MyLittleChart works on desktop only. Open chart.example on a computer.',
+          'color:#d1d4dc;font-size:16px;max-width:420px');
+        line('MyLittleChart работает только на десктопе. Откройте chart.example на компьютере.',
+          'color:#787b86;font-size:14px;max-width:420px');
+        var a = document.createElement('a');
+        a.href = 'https://github.com/ZENG3LD';
+        a.textContent = 'Native apps: Windows · macOS · Linux / Приложения для ПК';
+        a.style.cssText = 'color:#2962ff;font-size:13px;text-decoration:none';
+        boot.appendChild(a);
+      })();
+      // Halt module evaluation: nothing below (wasm glue, wasm fetch) runs.
+      await new Promise(function() {});
+    }
+
     const mod = await init();
     // The #[wasm_bindgen(start)] fn is called automatically by init().
     // Wasm linear-memory probe (leak hunt 2026-07-26): renderer RSS grew to
