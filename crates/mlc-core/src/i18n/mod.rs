@@ -87,6 +87,7 @@ pub use keys::{
     CandlePatternShortKey,
     ShareViewerKey,
     ForumKey,
+    CheckoutKey,
 };
 
 /// Set the active language. Updates uzor global lang-index.
